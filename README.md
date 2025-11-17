@@ -2,3 +2,4 @@
 轻量化AI界面，包含前后端，支持联网和思考功能，支持多个api。下个版本更新路由模型功能。
 个人可以使用，修改，商用需要联系rick080402@gmail.com
 rick.quest选择RAI即可在线体验
+![Uploading RAI模型路由.png…]()
