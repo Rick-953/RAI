@@ -8,6 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>RAI</text></svg>">
+  
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
   
   <style>
@@ -19,7 +21,6 @@
     }
     
     :root {
-      /* 黑白主题 */
       --bg-primary: #0D0D0D;
       --bg-secondary: #1A1A1A;
       --bg-tertiary: #2A2A2A;
@@ -56,6 +57,25 @@
       --z-sidebar: 100;
       --z-header: 90;
     }
+
+    /* ==================== 浅色模式 ==================== */
+    [data-theme="light"] {
+      --bg-primary: #FFFFFF;
+      --bg-secondary: #F5F5F5;
+      --bg-tertiary: #E8E8E8;
+      --bg-hover: #D9D9D9;
+      --text-primary: #1A1A1A;
+      --text-secondary: #666666;
+      --text-tertiary: #999999;
+      --border-color: #E0E0E0;
+      --border-dark: #CCCCCC;
+      --accent-color: #000000;
+      --accent-hover: #333333;
+      --input-bg: #FAFAFA;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+      --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.15);
+      --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -66,6 +86,7 @@
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      transition: background 0.3s, color 0.3s;
     }
     
     .material-symbols-outlined {
@@ -205,7 +226,6 @@
       text-overflow: ellipsis;
     }
     
-    /* ✅ 修复1: 删除按钮始终显示为 X */
     .session-delete-btn {
       position: absolute;
       top: 50%;
@@ -224,7 +244,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      opacity: 1; /* 始终显示 */
+      opacity: 1;
     }
     
     .session-delete-btn:hover {
@@ -445,12 +465,34 @@
     .message.user .message-text {
       background: var(--bg-secondary);
       color: var(--text-primary);
+      max-width: 100%;
+      display: inline-block;
     }
     
     .message.assistant .message-text {
       background: transparent;
       color: var(--text-primary);
       padding: 0;
+    }
+
+    /* ==================== 消息底部模型标签 ==================== */
+    .message-meta {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .model-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 6px;
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      font-weight: 500;
     }
     
     .thinking-indicator {
@@ -513,12 +555,14 @@
       display: block;
     }
     
-    /* ==================== 输入区域==================== */
+    /* ==================== 输入区域悬浮样式 ==================== */
     .input-area {
       padding: var(--spacing-lg);
-      background: var(--bg-primary);
+      padding-bottom: calc(var(--spacing-lg) + 10px);
+      background: transparent;
       flex-shrink: 0;
-      border-top: 1px solid var(--border-color);
+      border-top: none;
+      pointer-events: none;
     }
     
     .input-wrapper {
@@ -526,10 +570,11 @@
       margin: 0 auto;
     }
     
-    /* 修复2: 输入框 */
     .input-container {
       position: relative;
-      background: var(--input-bg);
+      background: rgba(26, 26, 26, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-dark);
       border-radius: var(--radius-xl);
       padding: var(--spacing-md);
@@ -537,14 +582,19 @@
       display: flex;
       flex-direction: column;
       gap: var(--spacing-sm);
+      box-shadow: var(--shadow-lg);
+      pointer-events: auto;
+    }
+
+    [data-theme="light"] .input-container {
+      background: rgba(255, 255, 255, 0.9);
     }
     
     .input-container:focus-within {
       border-color: var(--text-tertiary);
-      box-shadow: 0 0 0 1px var(--text-tertiary);
+      box-shadow: 0 0 0 1px var(--text-tertiary), var(--shadow-lg);
     }
     
-    /* 顶部工具栏 */
     .input-toolbar {
       display: flex;
       align-items: center;
@@ -583,15 +633,48 @@
     .toolbar-btn .material-symbols-outlined {
       font-size: 16px;
     }
+
+    /* ==================== 主题和语言切换按钮 ==================== */
+    .header-controls {
+      position: absolute;
+      top: var(--spacing-lg);
+      right: var(--spacing-lg);
+      display: flex;
+      gap: var(--spacing-sm);
+      z-index: 50;
+    }
+
+    .control-btn {
+      width: 36px;
+      height: 36px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: var(--text-primary);
+    }
+
+    .control-btn:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--border-dark);
+    }
+
+    .control-btn .material-symbols-outlined {
+      font-size: 18px;
+    }
     
-    /* 模型选择下拉 */
+    /* ==================== 自定义模型选择器 ==================== */
     .model-selector {
       position: relative;
       flex: 1;
       max-width: 180px;
     }
     
-    .model-select {
+    .model-select-custom {
       width: 100%;
       padding: 6px 32px 6px 12px;
       background: transparent;
@@ -602,23 +685,80 @@
       cursor: pointer;
       transition: all 0.2s;
       font-weight: 500;
-      appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ACACAC' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 10px center;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
     }
     
-    .model-select:hover {
-      background-color: var(--bg-hover);
+    .model-select-custom:hover {
+      background: var(--bg-hover);
       border-color: var(--border-dark);
     }
     
-    .model-select:focus {
-      outline: none;
-      border-color: var(--text-tertiary);
+    .model-select-arrow {
+      font-size: 16px;
+      color: var(--text-secondary);
+      transition: transform 0.2s;
     }
     
-    /* 底部输入行 */
+    .model-select-custom.open .model-select-arrow {
+      transform: rotate(180deg);
+    }
+    
+    .model-dropdown {
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-lg);
+      z-index: 100;
+      overflow: hidden;
+      display: none;
+    }
+    
+    .model-dropdown.open {
+      display: block;
+      animation: dropdownSlide 0.2s ease-out;
+    }
+    
+    @keyframes dropdownSlide {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .model-option {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: background 0.2s;
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    .model-option:last-child {
+      border-bottom: none;
+    }
+    
+    .model-option:hover {
+      background: var(--bg-hover);
+    }
+    
+    .model-option.selected {
+      background: var(--bg-tertiary);
+      color: var(--accent-color);
+      font-weight: 600;
+    }
+    
     .input-row {
       display: flex;
       align-items: flex-end;
@@ -657,6 +797,10 @@
       flex-shrink: 0;
       background: var(--accent-color);
       color: var(--bg-primary);
+    }
+
+    [data-theme="light"] .send-btn {
+      color: white;
     }
     
     .send-btn:hover:not(:disabled) {
@@ -793,7 +937,7 @@
       color: var(--text-primary);
       margin-bottom: var(--spacing-sm);
     }
-    
+
     .setting-description {
       font-size: 12px;
       color: var(--text-secondary);
@@ -892,6 +1036,10 @@
     .btn-primary {
       background: var(--accent-color);
       color: var(--bg-primary);
+    }
+
+    [data-theme="light"] .btn-primary {
+      color: white;
     }
     
     .btn-primary:hover {
@@ -1011,6 +1159,10 @@
       transition: all 0.2s;
       margin-top: var(--spacing-md);
     }
+
+    [data-theme="light"] .auth-btn {
+      color: white;
+    }
     
     .auth-btn:hover:not(:disabled) {
       background: var(--accent-hover);
@@ -1055,7 +1207,7 @@
       display: block;
     }
     
-    /* ==================== 移动端适配 ==================== */
+    /* ==================== 移动端适配与侧边栏滑动 ==================== */
     .mobile-header {
       display: none;
       padding: var(--spacing-md) var(--spacing-lg);
@@ -1113,6 +1265,12 @@
         --sidebar-width: 85%;
         --spacing-lg: 14px;
         --spacing-xl: 20px;
+      }
+
+      .header-controls {
+        top: auto;
+        bottom: calc(env(safe-area-inset-bottom) + 80px);
+        right: var(--spacing-md);
       }
       
       .app-container {
@@ -1250,6 +1408,112 @@
     *::-webkit-scrollbar-thumb:hover {
       background: var(--border-dark);
     }
+
+    /* ==================== 思考预算控制 ==================== */
+    .thinking-controls {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .thinking-budget-modal {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      z-index: 200;
+      animation: budgetSlideUp 0.2s ease-out;
+    }
+
+    @keyframes budgetSlideUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .thinking-budget-content {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-md);
+      box-shadow: var(--shadow-lg);
+      min-width: 280px;
+    }
+
+    .thinking-budget-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .thinking-budget-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .thinking-budget-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-color);
+    }
+
+    .thinking-budget-description {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: var(--spacing-md);
+    }
+
+    .thinking-budget-slider-container {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+    }
+
+    .thinking-budget-label {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    .thinking-budget-slider {
+      flex: 1;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border-color);
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    .thinking-budget-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: var(--radius-full);
+      background: var(--accent-color);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .thinking-budget-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    .thinking-budget-slider::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: none;
+      border-radius: var(--radius-full);
+      background: var(--accent-color);
+      cursor: pointer;
+    }
   </style>
 </head>
 
@@ -1262,57 +1526,57 @@
       </div>
       
       <div id="loginForm">
-        <h2 class="auth-title">欢迎回来</h2>
-        <p class="auth-subtitle">登录继续使用 RAI</p>
+        <h2 class="auth-title" data-i18n="auth.welcomeBack">欢迎回来</h2>
+        <p class="auth-subtitle" data-i18n="auth.loginSubtitle">登录继续使用 RAI</p>
         
         <div class="error-message" id="loginError"></div>
         
         <form class="auth-form" onsubmit="handleLogin(event)">
           <div class="form-group">
-            <label class="form-label">邮箱</label>
+            <label class="form-label" data-i18n="auth.email">邮箱</label>
             <input type="email" class="form-input" id="loginEmail" placeholder="your@email.com" required>
           </div>
           
           <div class="form-group">
-            <label class="form-label">密码</label>
-            <input type="password" class="form-input" id="loginPassword" placeholder="至少6位字符" required>
+            <label class="form-label" data-i18n="auth.password">密码</label>
+            <input type="password" class="form-input" id="loginPassword" data-i18n-placeholder="auth.passwordPlaceholder" placeholder="至少6位字符" required>
           </div>
           
-          <button type="submit" class="auth-btn" id="loginBtn">登录</button>
+          <button type="submit" class="auth-btn" id="loginBtn" data-i18n="auth.login">登录</button>
         </form>
         
         <div class="auth-switch">
-          还没有账号? <a class="auth-link" onclick="switchToRegister()">立即注册</a>
+          <span data-i18n="auth.noAccount">还没有账号?</span> <a class="auth-link" onclick="switchToRegister()" data-i18n="auth.registerNow">立即注册</a>
         </div>
       </div>
       
       <div id="registerForm" style="display: none;">
-        <h2 class="auth-title">创建账号</h2>
-        <p class="auth-subtitle">加入 RAI 开始对话</p>
+        <h2 class="auth-title" data-i18n="auth.createAccount">创建账号</h2>
+        <p class="auth-subtitle" data-i18n="auth.registerSubtitle">加入 RAI 开始对话</p>
         
         <div class="error-message" id="registerError"></div>
         
         <form class="auth-form" onsubmit="handleRegister(event)">
           <div class="form-group">
-            <label class="form-label">邮箱</label>
+            <label class="form-label" data-i18n="auth.email">邮箱</label>
             <input type="email" class="form-input" id="registerEmail" placeholder="your@email.com" required>
           </div>
           
           <div class="form-group">
-            <label class="form-label">用户名 (可选)</label>
-            <input type="text" class="form-input" id="registerUsername" placeholder="您的昵称">
+            <label class="form-label" data-i18n="auth.username">用户名 (可选)</label>
+            <input type="text" class="form-input" id="registerUsername" data-i18n-placeholder="auth.usernamePlaceholder" placeholder="您的昵称">
           </div>
           
           <div class="form-group">
-            <label class="form-label">密码</label>
-            <input type="password" class="form-input" id="registerPassword" placeholder="至少6位字符" required minlength="6">
+            <label class="form-label" data-i18n="auth.password">密码</label>
+            <input type="password" class="form-input" id="registerPassword" data-i18n-placeholder="auth.passwordPlaceholder" placeholder="至少6位字符" required minlength="6">
           </div>
           
-          <button type="submit" class="auth-btn" id="registerBtn">注册</button>
+          <button type="submit" class="auth-btn" id="registerBtn" data-i18n="auth.register">注册</button>
         </form>
         
         <div class="auth-switch">
-          已有账号? <a class="auth-link" onclick="switchToLogin()">立即登录</a>
+          <span data-i18n="auth.hasAccount">已有账号?</span> <a class="auth-link" onclick="switchToLogin()" data-i18n="auth.loginNow">立即登录</a>
         </div>
       </div>
     </div>
@@ -1340,7 +1604,7 @@
         </div>
         <button class="new-chat-btn" onclick="createNewSession()">
           <span class="material-symbols-outlined">add</span>
-          新对话
+          <span data-i18n="sidebar.newChat">新对话</span>
         </button>
       </div>
       
@@ -1359,11 +1623,11 @@
         <div class="sidebar-actions">
           <button class="sidebar-action-btn" onclick="openSettings()">
             <span class="material-symbols-outlined">settings</span>
-            设置
+            <span data-i18n="sidebar.settings">设置</span>
           </button>
           <button class="sidebar-action-btn" onclick="handleLogout()">
             <span class="material-symbols-outlined">logout</span>
-            退出
+            <span data-i18n="sidebar.logout">退出</span>
           </button>
         </div>
       </div>
@@ -1371,14 +1635,24 @@
     
     <!-- 主内容区 -->
     <div class="main-content">
+      <!-- 右上角控制按钮 -->
+      <div class="header-controls">
+        <button class="control-btn" onclick="toggleTheme()" id="themeToggle" title="切换主题">
+          <span class="material-symbols-outlined">light_mode</span>
+        </button>
+        <button class="control-btn" onclick="toggleLanguage()" id="langToggle" title="切换语言">
+          <span>EN</span>
+        </button>
+      </div>
+
       <div class="chat-container" id="chatContainer">
         <div class="welcome-screen" id="welcomeScreen">
           <div class="welcome-icon">
             <span class="material-symbols-outlined" style="font-size: 64px;">smart_toy</span>
           </div>
-          <h1 class="welcome-title">  时刻准备着！</h1>
-          <p class="welcome-subtitle">
-            可以帮您写作，翻译，构思<br>
+          <h1 class="welcome-title" data-i18n="welcome.title">时刻准备着!</h1>
+          <p class="welcome-subtitle" data-i18n="welcome.subtitle">
+            可以帮您写作,翻译,构思<br>
             您专属RAI助理<br>
           </p>
         </div>
@@ -1387,35 +1661,63 @@
         </div>
       </div>
       
-      <!-- ✅ 修复2: 输入区域 -->
+      <!-- 输入区域 -->
       <div class="input-area">
         <div class="input-wrapper">
           <div class="input-container">
             <!-- 顶部工具栏 -->
             <div class="input-toolbar">
+              <!-- 自定义模型选择器 -->
               <div class="model-selector">
-                <select class="model-select" id="modelSelect" onchange="handleModelChange()">
-                  <option value="qwen-plus">Qwen3-Next</option>
-                  <option value="qwen-max">Qwen3-Max</option>
-                  <option value="deepseek-v3" selected>DeepSeekV3.2</option>
-                </select>
+                <div class="model-select-custom" id="modelSelectCustom" onclick="toggleModelDropdown()">
+                  <span id="selectedModelText">Qwen3Flash</span>
+                  <span class="material-symbols-outlined model-select-arrow">expand_more</span>
+                </div>
+                <div class="model-dropdown" id="modelDropdown">
+                  <div class="model-option selected" data-value="qwen-flash" onclick="selectModel('qwen-flash', 'Qwen3Flash')">Qwen3Flash</div>
+                  <div class="model-option" data-value="qwen-plus" onclick="selectModel('qwen-plus', 'Qwen3-Plus')">Qwen3-Plus</div>
+                  <div class="model-option" data-value="qwen-max" onclick="selectModel('qwen-max', 'Qwen3-Max')">Qwen3-Max</div>
+                  <div class="model-option" data-value="deepseek-v3" onclick="selectModel('deepseek-v3', 'DeepSeekV3.2')">DeepSeekV3.2</div>
+                </div>
               </div>
               
               <button class="toolbar-btn" id="attachBtn" onclick="handleFileUpload()">
                 <span class="material-symbols-outlined">attach_file</span>
-                附件
+                <span data-i18n="toolbar.attachment">附件</span>
               </button>
               
               <button class="toolbar-btn" id="internetBtn" onclick="toggleInternet()">
                 <span class="material-symbols-outlined">language</span>
-                联网
+                <span data-i18n="toolbar.internet">联网</span>
               </button>
               
-              <!-- DeepSeek特有的思考开关 -->
-              <button class="toolbar-btn" id="thinkingBtn" style="display: none;" onclick="toggleThinking()">
-                <span class="material-symbols-outlined">psychology</span>
-                推理
-              </button>
+              <div class="thinking-controls" id="thinkingControls" style="display: flex;">
+                <button class="toolbar-btn" id="thinkingBtn" onclick="toggleThinking()">
+                  <span class="material-symbols-outlined">psychology</span>
+                  <span data-i18n="toolbar.reasoning">推理</span>
+                </button>
+                <button class="toolbar-btn" id="thinkingExpandBtn" style="display: none;" onclick="toggleThinkingBudget()">
+                  <span class="material-symbols-outlined">expand_less</span>
+                </button>
+              </div>
+
+              <!-- 思考预算弹窗 -->
+              <div class="thinking-budget-modal" id="thinkingBudgetModal" style="display: none;">
+                <div class="thinking-budget-content">
+                  <div class="thinking-budget-header">
+                    <span class="thinking-budget-title" data-i18n="toolbar.thinkingBudget">思考预算</span>
+                    <span class="thinking-budget-value" id="thinkingBudgetValue">1024 tokens</span>
+                  </div>
+                  <div class="thinking-budget-description" data-i18n="toolbar.thinkingBudgetDesc">控制思考的最大长度</div>
+                  <div class="thinking-budget-slider-container">
+                    <span class="thinking-budget-label" data-i18n="toolbar.min">最小</span>
+                    <input type="range" class="thinking-budget-slider" id="thinkingBudgetSlider" 
+                           min="1" max="32768" step="256" value="1024" 
+                           oninput="updateThinkingBudget(this.value)">
+                    <span class="thinking-budget-label" data-i18n="toolbar.max">最大</span>
+                  </div>
+                </div>
+              </div>
             </div>
             
             <!-- 底部输入行 -->
@@ -1423,6 +1725,7 @@
               <textarea 
                 class="message-input" 
                 id="messageInput" 
+                data-i18n-placeholder="input.placeholder"
                 placeholder="输入消息... (Shift+Enter 换行)"
                 rows="1"
                 onkeydown="handleInputKeydown(event)"
@@ -1447,7 +1750,7 @@
   <div class="settings-modal" id="settingsModal">
     <div class="settings-content">
       <div class="settings-header">
-        <h2 class="settings-title">设置</h2>
+        <h2 class="settings-title" data-i18n="settings.title">设置</h2>
         <button class="close-btn" onclick="closeSettings()">
           <span class="material-symbols-outlined">close</span>
         </button>
@@ -1455,11 +1758,11 @@
       
       <div class="settings-body">
         <div class="settings-group">
-          <h3 class="settings-group-title">生成参数</h3>
+          <h3 class="settings-group-title" data-i18n="settings.parameters">生成参数</h3>
           
           <div class="setting-item">
             <label class="setting-label">Temperature</label>
-            <p class="setting-description">控制回复的随机性 (0-2)</p>
+            <p class="setting-description" data-i18n="settings.temperatureDesc">控制回复的随机性 (0-2)</p>
             <div class="slider-container">
               <input type="range" class="slider-input" id="temperatureSlider" min="0" max="2" step="0.1" value="0.7" oninput="updateSliderValue('temperature', this.value)">
               <span class="slider-value" id="temperatureValue">0.7</span>
@@ -1468,7 +1771,7 @@
           
           <div class="setting-item">
             <label class="setting-label">Top P</label>
-            <p class="setting-description">核采样参数 (0-1)</p>
+            <p class="setting-description" data-i18n="settings.topPDesc">核采样参数 (0-1)</p>
             <div class="slider-container">
               <input type="range" class="slider-input" id="topPSlider" min="0" max="1" step="0.05" value="0.9" oninput="updateSliderValue('topP', this.value)">
               <span class="slider-value" id="topPValue">0.9</span>
@@ -1477,7 +1780,7 @@
           
           <div class="setting-item">
             <label class="setting-label">Max Tokens</label>
-            <p class="setting-description">最大生成长度 (100-8000)</p>
+            <p class="setting-description" data-i18n="settings.maxTokensDesc">最大生成长度 (100-8000)</p>
             <div class="slider-container">
               <input type="range" class="slider-input" id="maxTokensSlider" min="100" max="8000" step="100" value="2000" oninput="updateSliderValue('maxTokens', this.value)">
               <span class="slider-value" id="maxTokensValue">2000</span>
@@ -1486,7 +1789,7 @@
           
           <div class="setting-item">
             <label class="setting-label">Frequency Penalty</label>
-            <p class="setting-description">频率惩罚 (仅DeepSeek)</p>
+            <p class="setting-description" data-i18n="settings.frequencyDesc">频率惩罚 (仅DeepSeek)</p>
             <div class="slider-container">
               <input type="range" class="slider-input" id="frequencySlider" min="0" max="2" step="0.1" value="0" oninput="updateSliderValue('frequency', this.value)">
               <span class="slider-value" id="frequencyValue">0</span>
@@ -1495,7 +1798,7 @@
           
           <div class="setting-item">
             <label class="setting-label">Presence Penalty</label>
-            <p class="setting-description">存在惩罚 (仅DeepSeek)</p>
+            <p class="setting-description" data-i18n="settings.presenceDesc">存在惩罚 (仅DeepSeek)</p>
             <div class="slider-container">
               <input type="range" class="slider-input" id="presenceSlider" min="0" max="2" step="0.1" value="0" oninput="updateSliderValue('presence', this.value)">
               <span class="slider-value" id="presenceValue">0</span>
@@ -1504,23 +1807,24 @@
         </div>
         
         <div class="settings-group">
-          <h3 class="settings-group-title">系统提示词</h3>
+          <h3 class="settings-group-title" data-i18n="settings.systemPrompt">系统提示词</h3>
           
           <div class="setting-item">
-            <label class="setting-label">自定义系统提示词</label>
-            <p class="setting-description">设置AI的角色和行为</p>
+            <label class="setting-label" data-i18n="settings.customPrompt">自定义系统提示词</label>
+            <p class="setting-description" data-i18n="settings.promptDesc">设置AI的角色和行为</p>
             <textarea 
               class="setting-textarea" 
               id="systemPrompt" 
-              placeholder="例如: 你是一个专业的编程助手，擅长解释代码和解决技术问题..."
+              data-i18n-placeholder="settings.promptPlaceholder"
+              placeholder="例如: 你是一个专业的编程助手,擅长解释代码和解决技术问题..."
             ></textarea>
           </div>
         </div>
       </div>
       
       <div class="settings-footer">
-        <button class="btn btn-secondary" onclick="closeSettings()">取消</button>
-        <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+        <button class="btn btn-secondary" onclick="closeSettings()" data-i18n="settings.cancel">取消</button>
+        <button class="btn btn-primary" onclick="saveSettings()" data-i18n="settings.save">保存设置</button>
       </div>
     </div>
   </div>
@@ -1530,6 +1834,130 @@
   <script>
     const API_BASE = '/api';
     
+    // ==================== 国际化文本 ====================
+    const i18nTexts = {
+      'zh-CN': {
+        auth: {
+          welcomeBack: '欢迎回来',
+          loginSubtitle: '登录继续使用 RAI',
+          email: '邮箱',
+          password: '密码',
+          passwordPlaceholder: '至少6位字符',
+          login: '登录',
+          noAccount: '还没有账号?',
+          registerNow: '立即注册',
+          createAccount: '创建账号',
+          registerSubtitle: '加入 RAI 开始对话',
+          username: '用户名 (可选)',
+          usernamePlaceholder: '您的昵称',
+          register: '注册',
+          hasAccount: '已有账号?',
+          loginNow: '立即登录'
+        },
+        sidebar: {
+          newChat: '新对话',
+          user: '用户',
+          settings: '设置',
+          logout: '退出'
+        },
+        welcome: {
+          title: '时刻准备着!',
+          subtitle: '可以帮您写作,翻译,构思\n您专属RAI助理'
+        },
+        toolbar: {
+          attachment: '附件',
+          internet: '联网',
+          reasoning: '推理',
+          thinkingBudget: '思考预算',
+          thinkingBudgetDesc: '控制思考的最大长度',
+          min: '最小',
+          max: '最大'
+        },
+        input: {
+          placeholder: '输入消息... (Shift+Enter 换行)'
+        },
+        settings: {
+          title: '设置',
+          parameters: '生成参数',
+          temperatureDesc: '控制回复的随机性 (0-2)',
+          topPDesc: '核采样参数 (0-1)',
+          maxTokensDesc: '最大生成长度 (100-8000)',
+          frequencyDesc: '频率惩罚 (仅DeepSeek)',
+          presenceDesc: '存在惩罚 (仅DeepSeek)',
+          systemPrompt: '系统提示词',
+          customPrompt: '自定义系统提示词',
+          promptDesc: '设置AI的角色和行为',
+          promptPlaceholder: '例如: 你是一个专业的编程助手,擅长解释代码和解决技术问题...',
+          cancel: '取消',
+          save: '保存设置'
+        },
+        message: {
+          generatedBy: '由',
+          generated: '生成'
+        }
+      },
+      'en': {
+        auth: {
+          welcomeBack: 'Welcome Back',
+          loginSubtitle: 'Login to continue using RAI',
+          email: 'Email',
+          password: 'Password',
+          passwordPlaceholder: 'At least 6 characters',
+          login: 'Login',
+          noAccount: "Don't have an account?",
+          registerNow: 'Register Now',
+          createAccount: 'Create Account',
+          registerSubtitle: 'Join RAI and start chatting',
+          username: 'Username (Optional)',
+          usernamePlaceholder: 'Your nickname',
+          register: 'Register',
+          hasAccount: 'Already have an account?',
+          loginNow: 'Login Now'
+        },
+        sidebar: {
+          newChat: 'New Chat',
+          user: 'User',
+          settings: 'Settings',
+          logout: 'Logout'
+        },
+        welcome: {
+          title: 'Ready to Help!',
+          subtitle: 'I can help you write, translate, and brainstorm\nYour personal RAI assistant'
+        },
+        toolbar: {
+          attachment: 'Attach',
+          internet: 'Web',
+          reasoning: 'Reason',
+          thinkingBudget: 'Thinking Budget',
+          thinkingBudgetDesc: 'Control maximum thinking length',
+          min: 'Min',
+          max: 'Max'
+        },
+        input: {
+          placeholder: 'Type a message... (Shift+Enter for new line)'
+        },
+        settings: {
+          title: 'Settings',
+          parameters: 'Generation Parameters',
+          temperatureDesc: 'Control randomness (0-2)',
+          topPDesc: 'Nucleus sampling (0-1)',
+          maxTokensDesc: 'Maximum generation length (100-8000)',
+          frequencyDesc: 'Frequency penalty (DeepSeek only)',
+          presenceDesc: 'Presence penalty (DeepSeek only)',
+          systemPrompt: 'System Prompt',
+          customPrompt: 'Custom System Prompt',
+          promptDesc: "Set AI's role and behavior",
+          promptPlaceholder: 'e.g., You are a professional programming assistant...',
+          cancel: 'Cancel',
+          save: 'Save Settings'
+        },
+        message: {
+          generatedBy: 'Generated by',
+          generated: ''
+        }
+      }
+    };
+
     const appState = {
       user: null,
       token: null,
@@ -1538,9 +1966,11 @@
       messages: [],
       currentRequestId: null,
       isStreaming: false,
-      selectedModel: 'deepseek-v3',
+      selectedModel: 'qwen-flash',
       thinkingMode: false,
       internetMode: false,
+      thinkingBudget: 1024,
+      thinkingBudgetOpen: false,
       temperature: 0.7,
       topP: 0.9,
       maxTokens: 2000,
@@ -1548,29 +1978,123 @@
       presencePenalty: 0,
       systemPrompt: '',
       sidebarOpen: false,
-      settingsOpen: false
+      settingsOpen: false,
+      touchStartX: 0,
+      touchStartY: 0,
+      touchMoveX: 0,
+      isSwiping: false,
+      currentTheme: 'dark',
+      currentLang: 'zh-CN'
     };
     
     const MODELS = {
-      'qwen-plus': {
-        name: 'Qwen3-Next',
+      'qwen-flash': {
+        name: 'Qwen3Flash',
+        displayName: { 'zh-CN': 'Qwen Flash', 'en': 'Qwen Flash' },
         provider: 'aliyun',
-        supportsThinking: false
+        supportsThinking: true
+      },
+      'qwen-plus': {
+        name: 'Qwen3-Plus',
+        displayName: { 'zh-CN': 'Qwen Plus', 'en': 'Qwen Plus' },
+        provider: 'aliyun',
+        supportsThinking: true
       },
       'qwen-max': {
         name: 'Qwen3-Max',
+        displayName: { 'zh-CN': 'Qwen Max', 'en': 'Qwen Max' },
         provider: 'aliyun',
-        supportsThinking: false
+        supportsThinking: true
       },
       'deepseek-v3': {
         name: 'DeepSeekV3.2',
+        displayName: { 'zh-CN': 'DeepSeek 推理', 'en': 'DeepSeek Reasoner' },
         provider: 'deepseek',
         supportsThinking: true
       }
     };
+
+    // ==================== 主题切换 ====================
+    function toggleTheme() {
+      const html = document.documentElement;
+      const themeToggle = document.getElementById('themeToggle');
+      const icon = themeToggle.querySelector('.material-symbols-outlined');
+      
+      if (appState.currentTheme === 'dark') {
+        html.setAttribute('data-theme', 'light');
+        icon.textContent = 'dark_mode';
+        appState.currentTheme = 'light';
+      } else {
+        html.setAttribute('data-theme', 'dark');
+        icon.textContent = 'light_mode';
+        appState.currentTheme = 'dark';
+      }
+      
+      localStorage.setItem('rai_theme', appState.currentTheme);
+    }
+
+    // ==================== 语言切换 ====================
+    function toggleLanguage() {
+      const langToggle = document.getElementById('langToggle');
+      
+      if (appState.currentLang === 'zh-CN') {
+        appState.currentLang = 'en';
+        langToggle.textContent = '中';
+      } else {
+        appState.currentLang = 'zh-CN';
+        langToggle.textContent = 'EN';
+      }
+      
+      updateI18n();
+      localStorage.setItem('rai_lang', appState.currentLang);
+    }
+
+    function updateI18n() {
+      const texts = i18nTexts[appState.currentLang];
+      
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        const keys = key.split('.');
+        let value = texts;
+        for (const k of keys) {
+          value = value[k];
+        }
+        if (value) {
+          el.textContent = value;
+        }
+      });
+
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        const keys = key.split('.');
+        let value = texts;
+        for (const k of keys) {
+          value = value[k];
+        }
+        if (value) {
+          el.placeholder = value;
+        }
+      });
+    }
     
     document.addEventListener('DOMContentLoaded', () => {
-      console.log('✅ RAI v3.2 初始化');
+      console.log('✅ RAI v0.2 初始化');
+      
+      // 加载保存的主题
+      const savedTheme = localStorage.getItem('rai_theme') || 'dark';
+      appState.currentTheme = savedTheme;
+      if (savedTheme === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+        document.getElementById('themeToggle').querySelector('.material-symbols-outlined').textContent = 'dark_mode';
+      }
+
+      // 加载保存的语言
+      const savedLang = localStorage.getItem('rai_lang') || 'zh-CN';
+      appState.currentLang = savedLang;
+      if (savedLang === 'en') {
+        document.getElementById('langToggle').textContent = '中';
+      }
+      updateI18n();
       
       const token = localStorage.getItem('rai_token');
       if (token) {
@@ -1581,11 +2105,154 @@
       loadSettings();
       updateModelControls();
       
+      initSwipeGestures();
+      
       if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', handleViewportResize);
       }
+      
+      document.addEventListener('click', (e) => {
+        const dropdown = document.getElementById('modelDropdown');
+        const customSelect = document.getElementById('modelSelectCustom');
+        if (!customSelect.contains(e.target) && !dropdown.contains(e.target)) {
+          closeModelDropdown();
+        }
+        
+        const budgetModal = document.getElementById('thinkingBudgetModal');
+        const expandBtn = document.getElementById('thinkingExpandBtn');
+        if (budgetModal && !budgetModal.contains(e.target) && !expandBtn.contains(e.target)) {
+          appState.thinkingBudgetOpen = false;
+          budgetModal.style.display = 'none';
+          const icon = expandBtn?.querySelector('.material-symbols-outlined');
+          if (icon) icon.textContent = 'expand_less';
+        }
+      });
     });
+
+    // ==================== 侧边栏滑动手势 ====================
+    function initSwipeGestures() {
+      const mainContent = document.querySelector('.main-content');
+      const sidebar = document.getElementById('sidebar');
+      
+      if (!mainContent || !sidebar) return;
+      
+      mainContent.addEventListener('touchstart', (e) => {
+        appState.touchStartX = e.touches[0].clientX;
+        appState.touchStartY = e.touches[0].clientY;
+        appState.isSwiping = false;
+      }, { passive: true });
+      
+      mainContent.addEventListener('touchmove', (e) => {
+        if (!appState.touchStartX) return;
+        
+        appState.touchMoveX = e.touches[0].clientX;
+        const touchMoveY = e.touches[0].clientY;
+        
+        const deltaX = appState.touchMoveX - appState.touchStartX;
+        const deltaY = Math.abs(touchMoveY - appState.touchStartY);
+        
+        if (Math.abs(deltaX) > 30 && Math.abs(deltaX) > deltaY * 2) {
+          appState.isSwiping = true;
+          
+          if (deltaX > 0 && appState.touchStartX < 50 && !appState.sidebarOpen) {
+            const translateX = Math.min(deltaX, sidebar.offsetWidth);
+            sidebar.style.transform = `translateX(calc(-100% + ${translateX}px))`;
+          }
+          else if (deltaX < 0 && appState.sidebarOpen) {
+            const translateX = Math.max(deltaX, -sidebar.offsetWidth);
+            sidebar.style.transform = `translateX(${translateX}px)`;
+          }
+        }
+      }, { passive: true });
+      
+      mainContent.addEventListener('touchend', () => {
+        if (!appState.isSwiping) {
+          appState.touchStartX = 0;
+          return;
+        }
+        
+        const deltaX = appState.touchMoveX - appState.touchStartX;
+        const threshold = sidebar.offsetWidth / 3;
+        
+        if (!appState.sidebarOpen && deltaX > threshold) {
+          openSidebar();
+        } else if (appState.sidebarOpen && deltaX < -threshold) {
+          closeSidebar();
+        } else {
+          sidebar.style.transform = '';
+        }
+        
+        appState.touchStartX = 0;
+        appState.touchMoveX = 0;
+        appState.isSwiping = false;
+      }, { passive: true });
+    }
     
+    function openSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('mobileOverlay');
+      
+      sidebar.classList.add('active');
+      sidebar.style.transform = '';
+      overlay.classList.add('active');
+      appState.sidebarOpen = true;
+    }
+    
+    function closeSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('mobileOverlay');
+      
+      sidebar.classList.remove('active');
+      sidebar.style.transform = '';
+      overlay.classList.remove('active');
+      appState.sidebarOpen = false;
+    }
+    
+    // ==================== 自定义模型选择器 ====================
+    function toggleModelDropdown() {
+      const dropdown = document.getElementById('modelDropdown');
+      const customSelect = document.getElementById('modelSelectCustom');
+      
+      const isOpen = dropdown.classList.contains('open');
+      
+      if (isOpen) {
+        closeModelDropdown();
+      } else {
+        dropdown.classList.add('open');
+        customSelect.classList.add('open');
+      }
+    }
+    
+    function closeModelDropdown() {
+      const dropdown = document.getElementById('modelDropdown');
+      const customSelect = document.getElementById('modelSelectCustom');
+      
+      dropdown.classList.remove('open');
+      customSelect.classList.remove('open');
+    }
+    
+    function selectModel(value, displayName) {
+      appState.selectedModel = value;
+      
+      document.getElementById('selectedModelText').textContent = displayName;
+      
+      document.querySelectorAll('.model-option').forEach(option => {
+        option.classList.remove('selected');
+      });
+      
+      const targetOption = Array.from(document.querySelectorAll('.model-option')).find(option => {
+        const onclick = option.getAttribute('onclick');
+        return onclick && onclick.includes(`selectModel('${value}'`);
+      });
+      
+      if (targetOption) {
+        targetOption.classList.add('selected');
+      }
+      
+      closeModelDropdown();
+      updateModelControls();
+    }
+
     // ==================== 认证相关 ====================
     async function handleLogin(event) {
       event.preventDefault();
@@ -1596,7 +2263,7 @@
       const errorEl = document.getElementById('loginError');
       
       loginBtn.disabled = true;
-      loginBtn.innerHTML = '<span class="loading"></span> 登录中...';
+      loginBtn.innerHTML = '<span class="loading"></span> ' + (appState.currentLang === 'zh-CN' ? '登录中...' : 'Logging in...');
       errorEl.classList.remove('show');
       
       try {
@@ -1616,14 +2283,14 @@
           showApp();
           await loadUserData();
         } else {
-          showError(errorEl, data.error || '登录失败');
+          showError(errorEl, data.error || (appState.currentLang === 'zh-CN' ? '登录失败' : 'Login failed'));
         }
       } catch (error) {
-        showError(errorEl, '网络错误,请检查服务器连接');
+        showError(errorEl, appState.currentLang === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error, please check server connection');
         console.error('❌ 登录错误:', error);
       } finally {
         loginBtn.disabled = false;
-        loginBtn.textContent = '登录';
+        loginBtn.textContent = i18nTexts[appState.currentLang].auth.login;
       }
     }
     
@@ -1637,7 +2304,7 @@
       const errorEl = document.getElementById('registerError');
       
       registerBtn.disabled = true;
-      registerBtn.innerHTML = '<span class="loading"></span> 注册中...';
+      registerBtn.innerHTML = '<span class="loading"></span> ' + (appState.currentLang === 'zh-CN' ? '注册中...' : 'Registering...');
       errorEl.classList.remove('show');
       
       try {
@@ -1657,14 +2324,14 @@
           showApp();
           await loadUserData();
         } else {
-          showError(errorEl, data.error || '注册失败');
+          showError(errorEl, data.error || (appState.currentLang === 'zh-CN' ? '注册失败' : 'Registration failed'));
         }
       } catch (error) {
-        showError(errorEl, '网络错误,请检查服务器连接');
+        showError(errorEl, appState.currentLang === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error, please check server connection');
         console.error('❌ 注册错误:', error);
       } finally {
         registerBtn.disabled = false;
-        registerBtn.textContent = '注册';
+        registerBtn.textContent = i18nTexts[appState.currentLang].auth.register;
       }
     }
     
@@ -1692,7 +2359,8 @@
     }
     
     function handleLogout() {
-      if (confirm('确定要退出登录吗?')) {
+      const confirmText = appState.currentLang === 'zh-CN' ? '确定要退出登录吗?' : 'Are you sure you want to logout?';
+      if (confirm(confirmText)) {
         localStorage.removeItem('rai_token');
         appState.token = null;
         appState.user = null;
@@ -1726,22 +2394,29 @@
       element.classList.add('show');
     }
     
-    // ✅ 修复4: 登录后自动刷新历史对话
     async function loadUserData() {
       try {
         console.log('📥 加载用户数据...');
         
-        // 加载用户配置
         const profileResponse = await fetch(`${API_BASE}/user/profile`, {
           headers: { 'Authorization': `Bearer ${appState.token}` }
         });
         const profile = await profileResponse.json();
-        
-        const displayName = profile.username || (profile.email ? profile.email.split('@') : '用户');
+
+        const realEmail = appState.user?.email || profile.email || '';
+        const displayName = appState.user?.username || profile.username || (realEmail ? realEmail.split('@')[0] : 'User');
+
+        console.log('📧 显示邮箱:', realEmail);
+
         document.getElementById('userName').textContent = displayName;
-        document.getElementById('userEmail').textContent = profile.email || '';
-        document.getElementById('userAvatar').textContent = displayName.toUpperCase();
-        
+        document.getElementById('userEmail').textContent = realEmail;
+        document.getElementById('userAvatar').textContent = realEmail ? realEmail[0].toUpperCase() : 'U';
+
+        appState.user = {
+          username: displayName,
+          email: realEmail
+        };
+
         if (profile.temperature !== undefined) {
           appState.temperature = profile.temperature;
           appState.topP = profile.top_p;
@@ -1759,19 +2434,23 @@
         console.log('📋 加载历史会话...');
         await loadSessions();
         
-        // ✅ 自动加载最新会话或显示欢迎界面
         if (appState.sessions && appState.sessions.length > 0) {
-          console.log(`✅ 找到 ${appState.sessions.length} 个历史会话，自动加载最新会话`);
-          await loadSession(appState.sessions.id);
+          console.log(`✅ 找到 ${appState.sessions.length} 个历史会话,自动加载最新会话`);
+          await loadSession(appState.sessions[0].id);
         } else {
-          console.log('ℹ️ 无历史会话，显示欢迎界面');
+          console.log('ℹ️ 无历史会话,显示欢迎界面');
           showWelcome();
         }
         
         console.log('✅ 用户数据加载完成');
       } catch (error) {
         console.error('❌ 加载用户数据失败:', error);
-        alert('加载数据失败: ' + error.message);
+        if (error.message.includes('500')) {
+          console.warn('⚠️ 用户配置加载失败,使用默认配置继续');
+          showWelcome();
+        } else {
+          alert((appState.currentLang === 'zh-CN' ? '加载失败: ' : 'Load failed: ') + error.message);
+        }
       }
     }
     
@@ -1809,7 +2488,10 @@
       container.innerHTML = '';
       
       if (!appState.sessions || appState.sessions.length === 0) {
-        container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 13px;">暂无历史对话<br>点击"新对话"开始聊天</div>';
+        const emptyText = appState.currentLang === 'zh-CN' 
+          ? '暂无历史对话<br>点击"新对话"开始聊天'
+          : 'No chat history<br>Click "New Chat" to start';
+        container.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 13px;">${emptyText}</div>`;
         return;
       }
       
@@ -1839,7 +2521,7 @@
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            title: '新对话',
+            title: appState.currentLang === 'zh-CN' ? '新对话' : 'New Chat',
             model: appState.selectedModel
           })
         });
@@ -1856,7 +2538,7 @@
         }
       } catch (error) {
         console.error('❌ 创建会话失败:', error);
-        alert('创建对话失败');
+        alert(appState.currentLang === 'zh-CN' ? '创建对话失败' : 'Failed to create chat');
       }
     }
     
@@ -1878,7 +2560,7 @@
         appState.messages = Array.isArray(messages) ? messages : [];
         
         console.log(`✅ 加载到 ${messages.length} 条消息`);
-        
+
         renderMessages();
         renderSessions();
         
@@ -1888,14 +2570,15 @@
         
       } catch (error) {
         console.error('❌ 加载消息失败:', error);
-        alert('加载对话失败');
+        alert(appState.currentLang === 'zh-CN' ? '加载对话失败' : 'Failed to load chat');
       }
     }
     
     async function deleteSession(event, sessionId) {
       event.stopPropagation();
       
-      if (!confirm('确定要删除这个对话吗?')) return;
+      const confirmText = appState.currentLang === 'zh-CN' ? '确定要删除这个对话吗?' : 'Delete this chat?';
+      if (!confirm(confirmText)) return;
       
       try {
         await fetch(`${API_BASE}/sessions/${sessionId}`, {
@@ -1912,7 +2595,7 @@
         await loadSessions();
       } catch (error) {
         console.error('❌ 删除会话失败:', error);
-        alert('删除失败');
+        alert(appState.currentLang === 'zh-CN' ? '删除失败' : 'Delete failed');
       }
     }
     
@@ -1946,7 +2629,7 @@
       
       if (message.role === 'user') {
         const name = appState.user?.username || appState.user?.email || 'U';
-        avatar.textContent = name.toUpperCase();
+        avatar.textContent = name[0].toUpperCase();
       } else {
         avatar.innerHTML = '<span class="material-symbols-outlined">smart_toy</span>';
       }
@@ -1960,11 +2643,12 @@
         
         const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         
+        const thinkingText = appState.currentLang === 'zh-CN' ? '思考过程' : 'Thinking Process';
         thinkingDiv.innerHTML = `
           <div class="thinking-label" onclick="toggleThinkingContent('${thinkingId}')">
             <div class="thinking-label-left">
               <span class="material-symbols-outlined" style="font-size: 16px;">psychology</span>
-              <span>思考过程</span>
+              <span>${thinkingText}</span>
             </div>
             <span class="material-symbols-outlined thinking-expand-icon" id="${thinkingId}-icon">expand_more</span>
           </div>
@@ -1977,6 +2661,28 @@
       textDiv.className = 'message-text';
       textDiv.innerHTML = formatMessage(message.content || '');
       content.appendChild(textDiv);
+
+      // 添加模型标签
+      if (message.role === 'assistant' && message.model) {
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'message-meta';
+        
+        const modelInfo = MODELS[message.model] || { displayName: { 'zh-CN': message.model, 'en': message.model } };
+        const modelName = modelInfo.displayName[appState.currentLang] || modelInfo.name;
+        
+        let badgeContent = modelName;
+        if (message.reasoning_content && message.reasoning_content !== 'null' && message.reasoning_content.trim() !== '') {
+          badgeContent += ' / ' + (appState.currentLang === 'zh-CN' ? '推理' : 'Reasoning');
+        }
+        if (message.used_internet) {
+          badgeContent += ' / ' + (appState.currentLang === 'zh-CN' ? '联网' : 'Web');
+        }
+        
+        const generatedText = i18nTexts[appState.currentLang].message.generatedBy;
+        const suffix = i18nTexts[appState.currentLang].message.generated;
+        metaDiv.innerHTML = `<span class="model-badge">${generatedText} ${badgeContent} ${suffix}</span>`;
+        content.appendChild(metaDiv);
+      }
       
       div.appendChild(avatar);
       div.appendChild(content);
@@ -2029,6 +2735,8 @@
       
       const aiMsgDiv = document.createElement('div');
       aiMsgDiv.className = 'message assistant';
+
+      const thinkingText = appState.currentLang === 'zh-CN' ? '正在思考...' : 'Thinking...';
       aiMsgDiv.innerHTML = `
         <div class="message-avatar">
           <span class="material-symbols-outlined">smart_toy</span>
@@ -2038,7 +2746,7 @@
             <div class="thinking-label" onclick="toggleThinkingContent('thinkingContent')">
               <div class="thinking-label-left">
                 <span class="material-symbols-outlined" style="font-size: 16px;">psychology</span>
-                <span>正在思考...</span>
+                <span>${thinkingText}</span>
               </div>
               <span class="material-symbols-outlined thinking-expand-icon" id="thinkingContent-icon">expand_more</span>
             </div>
@@ -2062,6 +2770,7 @@
             messages: messages,
             model: appState.selectedModel,
             thinkingMode: appState.thinkingMode,
+            thinkingBudget: appState.thinkingBudget,
             internetMode: appState.internetMode,
             temperature: appState.temperature,
             top_p: appState.topP,
@@ -2121,7 +2830,7 @@
                 break;
               } 
               else if (parsed.type === 'error') {
-                alert('AI服务错误: ' + parsed.error);
+                alert((appState.currentLang === 'zh-CN' ? 'AI服务错误: ' : 'AI service error: ') + parsed.error);
                 break;
               }
             } catch (e) {
@@ -2134,15 +2843,38 @@
           role: 'assistant',
           content: fullContent,
           reasoning_content: reasoningContent || null,
+          model: appState.selectedModel,
+          used_internet: appState.internetMode,
           created_at: new Date().toISOString()
         };
         appState.messages.push(aiMsg);
+        
+        // 添加模型标签到刚刚流式输出的消息
+        const messageContent = aiMsgDiv.querySelector('.message-content');
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'message-meta';
+        
+        const modelInfo = MODELS[appState.selectedModel];
+        const modelName = modelInfo.displayName[appState.currentLang] || modelInfo.name;
+        
+        let badgeContent = modelName;
+        if (reasoningContent) {
+          badgeContent += ' / ' + (appState.currentLang === 'zh-CN' ? '推理' : 'Reasoning');
+        }
+        if (appState.internetMode) {
+          badgeContent += ' / ' + (appState.currentLang === 'zh-CN' ? '联网' : 'Web');
+        }
+        
+        const generatedText = i18nTexts[appState.currentLang].message.generatedBy;
+        const suffix = i18nTexts[appState.currentLang].message.generated;
+        metaDiv.innerHTML = `<span class="model-badge">${generatedText} ${badgeContent} ${suffix}</span>`;
+        messageContent.appendChild(metaDiv);
         
         await loadSessions();
         
       } catch (error) {
         console.error('❌ 发送消息错误:', error);
-        alert('发送失败,请检查网络连接');
+        alert(appState.currentLang === 'zh-CN' ? '发送失败,请检查网络连接' : 'Send failed, please check network');
       } finally {
         document.getElementById('sendBtn').style.display = 'flex';
         document.getElementById('stopBtn').style.display = 'none';
@@ -2155,42 +2887,78 @@
       if (!appState.currentRequestId) return;
       
       try {
-        await fetch(`${API_BASE}/chat/stop`, {
+                await fetch(`${API_BASE}/chat/cancel`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${appState.token}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            requestId: appState.currentRequestId
-          })
+          body: JSON.stringify({ requestId: appState.currentRequestId })
         });
-        
-        console.log('🛑 已发送停止请求');
       } catch (error) {
-        console.error('❌ 停止失败:', error);
+        console.error('❌ 取消请求失败:', error);
       }
     }
     
-    // ==================== 模型和工具控制 ====================
-    function handleModelChange() {
-      const select = document.getElementById('modelSelect');
-      appState.selectedModel = select.value;
-      updateModelControls();
+    function handleInputKeydown(event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
     }
     
-    function updateModelControls() {
-      const model = MODELS[appState.selectedModel];
-      const thinkingBtn = document.getElementById('thinkingBtn');
+    function autoResizeInput() {
+      const input = document.getElementById('messageInput');
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    }
+    
+    function formatMessage(text) {
+      if (!text) return '';
       
-      // 只有DeepSeek显示思考按钮
-      if (model.supportsThinking) {
-        thinkingBtn.style.display = 'flex';
+      text = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      
+      text = text.replace(/``````/g, (match, lang, code) => {
+        return `<pre><code class="language-${lang || 'plaintext'}">${code.trim()}</code></pre>`;
+      });
+      
+      text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+      
+      text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      
+      text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      
+      text = text.replace(/\n/g, '<br>');
+      
+      return text;
+    }
+    
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    function toggleThinkingContent(id) {
+      const content = document.getElementById(id);
+      const icon = document.getElementById(`${id}-icon`);
+      
+      if (!content || !icon) return;
+      
+      if (content.classList.contains('expanded')) {
+        content.classList.remove('expanded');
+        icon.classList.remove('expanded');
       } else {
-        thinkingBtn.style.display = 'none';
-        appState.thinkingMode = false;
+        content.classList.add('expanded');
+        icon.classList.add('expanded');
       }
-      
+    }
+    
+    // ==================== 工具栏功能 ====================
+    function toggleInternet() {
+      appState.internetMode = !appState.internetMode;
       updateToolbarUI();
     }
     
@@ -2198,39 +2966,111 @@
       appState.thinkingMode = !appState.thinkingMode;
       updateToolbarUI();
     }
-    
-    function toggleInternet() {
-      appState.internetMode = !appState.internetMode;
-      updateToolbarUI();
+
+    function toggleThinkingBudget() {
+      appState.thinkingBudgetOpen = !appState.thinkingBudgetOpen;
+      const modal = document.getElementById('thinkingBudgetModal');
+      const expandBtn = document.getElementById('thinkingExpandBtn');
+      const icon = expandBtn?.querySelector('.material-symbols-outlined');
+      
+      if (appState.thinkingBudgetOpen) {
+        modal.style.display = 'block';
+        if (icon) icon.textContent = 'expand_more';
+      } else {
+        modal.style.display = 'none';
+        if (icon) icon.textContent = 'expand_less';
+      }
+    }
+
+    function updateThinkingBudget(value) {
+      appState.thinkingBudget = parseInt(value);
+      document.getElementById('thinkingBudgetValue').textContent = `${value} tokens`;
     }
     
     function updateToolbarUI() {
-      const thinkingBtn = document.getElementById('thinkingBtn');
       const internetBtn = document.getElementById('internetBtn');
-      
-      if (appState.thinkingMode) {
-        thinkingBtn.classList.add('active');
-      } else {
-        thinkingBtn.classList.remove('active');
-      }
+      const thinkingBtn = document.getElementById('thinkingBtn');
+      const thinkingExpandBtn = document.getElementById('thinkingExpandBtn');
       
       if (appState.internetMode) {
         internetBtn.classList.add('active');
       } else {
         internetBtn.classList.remove('active');
       }
+      
+      if (appState.thinkingMode) {
+        thinkingBtn.classList.add('active');
+        if (thinkingExpandBtn) {
+          thinkingExpandBtn.style.display = 'flex';
+        }
+      } else {
+        thinkingBtn.classList.remove('active');
+        if (thinkingExpandBtn) {
+          thinkingExpandBtn.style.display = 'none';
+          appState.thinkingBudgetOpen = false;
+          document.getElementById('thinkingBudgetModal').style.display = 'none';
+        }
+      }
     }
     
-    // ==================== 设置相关 ====================
+    function updateModelControls() {
+      const currentModel = MODELS[appState.selectedModel];
+      const thinkingControls = document.getElementById('thinkingControls');
+      
+      if (!currentModel) return;
+      
+      if (currentModel.supportsThinking) {
+        thinkingControls.style.display = 'flex';
+      } else {
+        thinkingControls.style.display = 'none';
+        appState.thinkingMode = false;
+        updateToolbarUI();
+      }
+    }
+    
+    function handleFileUpload() {
+      document.getElementById('fileInput').click();
+    }
+    
+    function handleFileSelected(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      alert((appState.currentLang === 'zh-CN' ? '文件上传功能开发中...' : 'File upload feature coming soon...'));
+      event.target.value = '';
+    }
+    
+    // ==================== 设置面板 ====================
     function openSettings() {
       document.getElementById('settingsModal').classList.add('active');
       appState.settingsOpen = true;
-      updateSettingsUI();
     }
     
     function closeSettings() {
       document.getElementById('settingsModal').classList.remove('active');
       appState.settingsOpen = false;
+    }
+    
+    function updateSliderValue(type, value) {
+      document.getElementById(`${type}Value`).textContent = value;
+      
+      switch(type) {
+        case 'temperature':
+          appState.temperature = parseFloat(value);
+          break;
+        case 'topP':
+          appState.topP = parseFloat(value);
+          break;
+        case 'maxTokens':
+          appState.maxTokens = parseInt(value);
+          break;
+        case 'frequency':
+          appState.frequencyPenalty = parseFloat(value);
+          break;
+        case 'presence':
+          appState.presencePenalty = parseFloat(value);
+          break;
+      }
     }
     
     function updateSettingsUI() {
@@ -2252,57 +3092,41 @@
       document.getElementById('systemPrompt').value = appState.systemPrompt;
     }
     
-    function updateSliderValue(type, value) {
-      const valueEl = document.getElementById(`${type}Value`);
-      valueEl.textContent = value;
-      
-      switch(type) {
-        case 'temperature':
-          appState.temperature = parseFloat(value);
-          break;
-        case 'topP':
-          appState.topP = parseFloat(value);
-          break;
-        case 'maxTokens':
-          appState.maxTokens = parseInt(value);
-          break;
-        case 'frequency':
-          appState.frequencyPenalty = parseFloat(value);
-          break;
-        case 'presence':
-          appState.presencePenalty = parseFloat(value);
-          break;
-      }
-    }
-    
     async function saveSettings() {
       appState.systemPrompt = document.getElementById('systemPrompt').value;
       
+      const settings = {
+        temperature: appState.temperature,
+        top_p: appState.topP,
+        max_tokens: appState.maxTokens,
+        frequency_penalty: appState.frequencyPenalty,
+        presence_penalty: appState.presencePenalty,
+        system_prompt: appState.systemPrompt,
+        thinking_mode: appState.thinkingMode ? 1 : 0,
+        internet_mode: appState.internetMode ? 1 : 0
+      };
+      
       try {
-        await fetch(`${API_BASE}/user/config`, {
-          method: 'PUT',
+        const response = await fetch(`${API_BASE}/user/settings`, {
+          method: 'POST',
           headers: {
             'Authorization': `Bearer ${appState.token}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            default_model: appState.selectedModel,
-            temperature: appState.temperature,
-            top_p: appState.topP,
-            max_tokens: appState.maxTokens,
-            frequency_penalty: appState.frequencyPenalty,
-            presence_penalty: appState.presencePenalty,
-            system_prompt: appState.systemPrompt,
-            thinking_mode: appState.thinkingMode,
-            internet_mode: appState.internetMode
-          })
+          body: JSON.stringify(settings)
         });
         
-        alert('设置已保存');
-        closeSettings();
+        const data = await response.json();
+        
+        if (data.success) {
+          alert(appState.currentLang === 'zh-CN' ? '设置已保存' : 'Settings saved');
+          closeSettings();
+        } else {
+          alert(appState.currentLang === 'zh-CN' ? '保存失败' : 'Save failed');
+        }
       } catch (error) {
         console.error('❌ 保存设置失败:', error);
-        alert('保存失败');
+        alert(appState.currentLang === 'zh-CN' ? '保存失败,请检查网络' : 'Save failed, check network');
       }
     }
     
@@ -2311,132 +3135,70 @@
       if (saved) {
         try {
           const settings = JSON.parse(saved);
-          Object.assign(appState, settings);
+          appState.temperature = settings.temperature || 0.7;
+          appState.topP = settings.topP || 0.9;
+          appState.maxTokens = settings.maxTokens || 2000;
+          appState.frequencyPenalty = settings.frequencyPenalty || 0;
+          appState.presencePenalty = settings.presencePenalty || 0;
+          appState.systemPrompt = settings.systemPrompt || '';
+          
+          updateSettingsUI();
         } catch (e) {
-          console.error('❌ 加载设置失败:', e);
+          console.error('加载设置失败:', e);
         }
       }
     }
     
-    // ==================== 文件上传 ====================
-    function handleFileUpload() {
-      document.getElementById('fileInput').click();
-    }
-    
-    async function handleFileSelected(event) {
-      const file = event.target.files;
-      if (!file) return;
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      try {
-        const response = await fetch(`${API_BASE}/upload`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${appState.token}` },
-          body: formData
-        });
-        
-        const data = await response.json();
-        if (data.success) {
-          const input = document.getElementById('messageInput');
-          input.value += `\n[已上传文件: ${file.name}]`;
-          autoResizeInput();
-        }
-      } catch (error) {
-        console.error('❌ 上传失败:', error);
-        alert('文件上传失败');
-      }
-    }
-    
-    // ==================== 输入处理 ====================
-    function handleInputKeydown(event) {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendMessage();
-      }
-    }
-    
-    function autoResizeInput() {
-      const input = document.getElementById('messageInput');
-      input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-    }
-    
-    // ==================== 移动端相关 ====================
+    // ==================== 移动端适配 ====================
     function toggleSidebar() {
       const sidebar = document.getElementById('sidebar');
       const overlay = document.getElementById('mobileOverlay');
       
-      appState.sidebarOpen = !appState.sidebarOpen;
-      
-      if (appState.sidebarOpen) {
-        sidebar.classList.add('active');
-        overlay.classList.add('active');
+      if (sidebar.classList.contains('active')) {
+        closeSidebar();
       } else {
-        sidebar.classList.remove('active');
-        overlay.classList.remove('active');
+        openSidebar();
       }
     }
     
     function handleViewportResize() {
-      const input = document.getElementById('messageInput');
-      if (document.activeElement === input) {
-        setTimeout(() => {
-          scrollToBottom();
-        }, 300);
+      const vh = window.visualViewport.height * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+    
+    // ==================== 键盘快捷键 ====================
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        document.getElementById('messageInput').focus();
       }
-    }
-    
-    // ==================== 工具函数 ====================
-    function toggleThinkingContent(thinkingId) {
-      const content = document.getElementById(thinkingId);
-      const icon = document.getElementById(`${thinkingId}-icon`);
       
-      if (!content || !icon) return;
-      
-      const isExpanded = content.classList.contains('expanded');
-      
-      if (isExpanded) {
-        content.classList.remove('expanded');
-        icon.classList.remove('expanded');
-      } else {
-        content.classList.add('expanded');
-        icon.classList.add('expanded');
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault();
+        createNewSession();
       }
-    }
-    
-    function formatMessage(text) {
-      return escapeHtml(text)
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        .replace(/`(.*?)`/g, '<code>$1</code>')
-        .replace(/\n/g, '<br>');
-    }
-    
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-    
-    // ==================== 退出保存 ====================
-    window.addEventListener('beforeunload', () => {
-      const settings = {
-        selectedModel: appState.selectedModel,
-        thinkingMode: appState.thinkingMode,
-        internetMode: appState.internetMode,
-        temperature: appState.temperature,
-        topP: appState.topP,
-        maxTokens: appState.maxTokens,
-        frequencyPenalty: appState.frequencyPenalty,
-        presencePenalty: appState.presencePenalty,
-        systemPrompt: appState.systemPrompt
-      };
-      localStorage.setItem('rai_settings', JSON.stringify(settings));
+      
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        if (appState.settingsOpen) {
+          closeSettings();
+        } else {
+          openSettings();
+        }
+      }
+      
+      if (e.key === 'Escape') {
+        if (appState.settingsOpen) {
+          closeSettings();
+        }
+        if (appState.sidebarOpen && window.innerWidth <= 768) {
+          toggleSidebar();
+        }
+      }
     });
     
-    console.log('✅ RAI v0.2 前端已加载');
+    console.log('✅ RAI v0.2 脚本加载完成');
   </script>
 </body>
 </html>
+
