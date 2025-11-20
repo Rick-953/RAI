@@ -327,12 +327,12 @@ function analyzeMessage(message) {
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 'sk-153b50ff114440d2b606dc7e889b988b',
+        apiKey: 'sk',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         models: ['qwen-flash', 'qwen-plus', 'qwen-max']
     },
     deepseek: {
-        apiKey: 'sk-c5994143f9b8448b93e4e711fed08466',
+        apiKey: 'sk',
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
         models: ['deepseek-chat', 'deepseek-reasoner']
     }
