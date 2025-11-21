@@ -13,7 +13,7 @@ const app = express();
 const PORT = process.env.PORT || 3009;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
-// ==================== 🚀 智能路由引擎核心 v4 ====================
+// ==================== 智能路由引擎核心 v4 ====================
 
 // 默认词库 (大幅扩充)
 const defaultKeywords = {
@@ -21,7 +21,8 @@ const defaultKeywords = {
         // 中文情绪词
         '不满意', '很生气', '生气', '愤怒', '错误', '有问题', '我生气了', '你们真烦', '别烦我',
         '糟糕', '太烂', '好烂', '太垃圾', '好垃圾', '好差劲', '太差劲', '好废物', '太废物',
-        '坑爹', '气死', '郁闷', '烦死', '吐槽', '无语', '崩溃', '爆炸',
+        '坑爹', '气死', '郁闷', '烦死', '吐槽', '无语', '崩溃', '爆炸', '瞎说', '胡说', '乱说',
+        '不对', '不是这样', '智障', '弱智', '傻逼', '滚', '闭嘴', '垃圾', '废物',
         // 标点符号
         '!', '!!', '!!!', '！！！！', '!!!!!', '!!!!!!', '……', '。。。', '…………', '！', '！！', '！！！',
         // 中文态度词
@@ -30,7 +31,8 @@ const defaultKeywords = {
         // 英文情绪词
         'angry', 'furious', 'upset', 'disappointed', 'unsatisfied', 'awful', 'terrible', 'horrible',
         'wrong', 'error', 'problem', 'issue', 'urgent', 'critical', 'important', 'immediate',
-        'cannot', 'must not', 'absolutely', 'definitely', 'certainly', 'seriously', 'carefully'
+        'cannot', 'must not', 'absolutely', 'definitely', 'certainly', 'seriously', 'carefully',
+        'bad', 'stop', 'lie', 'lying', 'incorrect', 'false', 'stupid', 'idiot', 'shut up'
     ],
     complexity: [
         // 中文复杂值词
@@ -105,7 +107,7 @@ const defaultKeywords = {
 
 // 路由配置
 const config = {
-    thresholds: { t1: 0.35, t2: 0.70 },
+    thresholds: { t1: 0.40, t2: 0.80 },
     weights: {
         inputLength: 0.15,
         codeDetection: 0.30,
@@ -190,11 +192,11 @@ function evaluateComplexity(message) {
     // 维度1: 输入长度 (0.05-1.0)
     const len = message.length;
     dimensions.inputLength = len <= 15 ? 0.05 :
-        len <= 30 ? 0.12 :
-            len <= 60 ? 0.25 :
-                len <= 150 ? 0.45 :
-                    len <= 300 ? 0.65 :
-                        Math.min(0.85 + (len - 300) / 1000, 1);
+        len <= 30 ? 0.10 :
+            len <= 60 ? 0.20 :
+                len <= 150 ? 0.35 :
+                    len <= 300 ? 0.50 :
+                        Math.min(0.70 + (len - 300) / 1000, 0.9);
 
     // 维度2: 代码检测 (0-1.0)
     let codeScore = keywords.code.detected ? 0.3 + (keywords.code.types.length * 0.15) : 0;
@@ -799,7 +801,7 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
       thinking_mode = excluded.thinking_mode,
       internet_mode = excluded.internet_mode`,
         [
-            req.user.userId, theme || 'dark', default_model || 'deepseek-v3', 
+            req.user.userId, theme || 'dark', default_model || 'deepseek-v3',
             temperature || 0.7, top_p || 0.9, max_tokens || 2000,
             frequency_penalty || 0, presence_penalty || 0, finalSystemPrompt,
             thinking_mode ? 1 : 0, internet_mode ? 1 : 0
@@ -978,28 +980,116 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 生成请求ID
         requestId = `req_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
 
-        // 记录活跃请求
-        db.run(
-            'INSERT INTO active_requests (id, user_id, session_id, is_cancelled) VALUES (?, ?, ?, 0)',
-            [requestId, req.user.userId, sessionId || 'temp']
-        );
+        // ✅ 添加活跃请求记录（用于取消机制）
+        db.run('INSERT INTO active_requests (id, user_id, session_id) VALUES (?, ?, ?)',
+            [requestId, req.user.userId, sessionId || 'anonymous']);
+
+        // ✅ 防御性检查：验证 messages 存在且非空
+        if (!Array.isArray(messages) || messages.length === 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: '消息不能为空' }));
+            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+            return;
+        }
+
+        // 🚀 预设答案快速通道：在所有路由逻辑之前检查，确保所有模式都能生效
+        const lastUserMsg = messages[messages.length - 1];
+        const userContent = typeof lastUserMsg.content === 'string'
+            ? lastUserMsg.content
+            : JSON.stringify(lastUserMsg.content);
+
+        console.log(`📝 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
+
+        const presetAnswers = {
+            '你好': '你好！很高兴见到你 😊',
+            '谢谢': '不客气！很高兴能帮到你 👍',
+            '再见': '再见！期待下次与你交谈 👋',
+            'hello': 'Hello! Nice to meet you!',
+            'hi': 'Hi there! How can I help you?',
+            'thank you': 'You\'re welcome!',
+            'thanks': 'You\'re welcome!',
+            'bye': 'Goodbye! See you next time!'
+        };
+
+        const trimmedContent = userContent.trim().toLowerCase();
+        const presetAnswer = presetAnswers[trimmedContent] || presetAnswers[userContent.trim()]; // 兼容原始大小写
+
+        if (presetAnswer) {
+            console.log(`\n⚡ 命中预设答案: "${userContent.trim()}" -> 直接返回，无需调用AI`);
+
+            // 设置SSE响应头
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.setHeader('X-Request-ID', requestId);
+            res.setHeader('X-Model-Used', 'preset');
+            res.setHeader('X-Model-Reason', 'Preset answer (instant response)');
+            res.flushHeaders();
+
+            // 直接发送预设答案
+            res.write(`data: ${JSON.stringify({ type: 'content', content: presetAnswer })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+
+            // 保存到数据库
+            if (sessionId) {
+                console.log('\n💾 保存预设答案到数据库');
+
+                // 保存用户消息
+                await new Promise((resolve) => {
+                    db.run(
+                        'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
+                        [sessionId, 'user', userContent],
+                        (err) => {
+                            if (err) console.error('❌ 保存用户消息失败:', err);
+                            else console.log(`✅ 用户消息已保存 (${userContent.length}字符)`);
+                            resolve();
+                        }
+                    );
+                });
+
+                // 保存预设答案
+                await new Promise((resolve) => {
+                    db.run(
+                        'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
+                        [sessionId, 'assistant', presetAnswer],
+                        (err) => {
+                            if (err) console.error('❌ 保存预设答案失败:', err);
+                            else console.log(`✅ 预设答案已保存 (${presetAnswer.length}字符)`);
+                            resolve();
+                        }
+                    );
+                });
+
+                // 更新会话时间戳
+                await new Promise((resolve) => {
+                    db.run(
+                        'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [sessionId],
+                        (err) => {
+                            if (err) console.error('❌ 更新会话时间戳失败:', err);
+                            else console.log('✅ 会话时间戳已更新');
+                            resolve();
+                        }
+                    );
+                });
+            }
+
+            res.end();
+            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+            console.log('\n✅ 预设答案处理完成（0成本）\n');
+            return;
+        }
 
         // 🔥 智能路由：根据最后一条用户消息自动选择模型
         let finalModel = model;  // 最终选中的模型类型（qwen-flash/plus/max或deepseek-v3）
         let routing = null;      // 对应的路由配置
         let autoRoutingReason = '';
 
-        console.log(`\n📊 模型选择开始: 用户指定 = ${model}`);
+        console.log(`\n� 模型选择开始: 用户指定 = ${model}`);
+
 
         if (model === 'auto') {
-            // 分析最后一条用户消息
-            const lastUserMsg = messages[messages.length - 1];
-            const userContent = typeof lastUserMsg.content === 'string'
-                ? lastUserMsg.content
-                : JSON.stringify(lastUserMsg.content);
-
-            console.log(`📝 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
-
             // 调用智能路由引擎
             const analysis = analyzeMessage(userContent);
 
@@ -1020,11 +1110,29 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
-        // ✅ 修复：Auto模式下如果开启联网，强制使用支持联网的模型 (Aliyun)
+
+        // ✅ 修复：Auto模式下联网不强制使用max，而是根据智能路由结果选择合适的阿里云模型
+        // 所有阿里云模型（flash/plus/max）都支持联网功能
         if (model === 'auto' && internetMode) {
-            console.log('🌐 Auto模式检测到联网需求，强制切换到 阿里云(qwen-max)');
-            finalModel = 'qwen-max';
-            autoRoutingReason = '联网模式强制使用Qwen-Max';
+            // 如果智能路由选择了DeepSeek，需要切换到阿里云模型（DeepSeek不支持联网）
+            if (finalModel === 'deepseek-v3') {
+                // 根据分析分数选择合适的阿里云模型，而不是一律使用max
+                const analysis = analyzeMessage(messages[messages.length - 1].content);
+                if (analysis.score < config.thresholds.t1) {
+                    finalModel = 'qwen-flash';
+                    autoRoutingReason = '联网模式，切换到Qwen-Flash（仍保持智能路由）';
+                } else if (analysis.score < config.thresholds.t2) {
+                    finalModel = 'qwen-plus';
+                    autoRoutingReason = '联网模式，切换到Qwen-Plus（仍保持智能路由）';
+                } else {
+                    finalModel = 'qwen-max';
+                    autoRoutingReason = '联网模式，切换到Qwen-Max（复杂查询）';
+                }
+                console.log(`🌐 Auto+联网模式: DeepSeek不支持联网，智能切换到${finalModel}`);
+            } else {
+                // 如果已经是阿里云模型，保持智能路由的选择
+                console.log(`🌐 Auto+联网模式: 使用智能路由选择的${finalModel}（支持联网）`);
+            }
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
@@ -1125,10 +1233,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             // ✅ 确保frequency_penalty和presence_penalty是有效的数值
             const freqPenalty = parseFloat(frequency_penalty);
             const presPenalty = parseFloat(presence_penalty);
-            
+
             requestBody.frequency_penalty = (isNaN(freqPenalty) ? 0 : Math.max(0, Math.min(freqPenalty, 2)));
             requestBody.presence_penalty = (isNaN(presPenalty) ? 0 : Math.max(0, Math.min(presPenalty, 2)));
-            
+
             console.log(`📊 DeepSeek参数: frequency_penalty=${requestBody.frequency_penalty}, presence_penalty=${requestBody.presence_penalty}`);
         }
 
@@ -1181,98 +1289,125 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`🌐 正在调用: ${providerConfig.baseURL}`);
         console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
 
-        const apiResponse = await fetch(providerConfig.baseURL, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${providerConfig.apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        });
+        // ✅ 修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
 
-        console.log(`📥 API响应状态: ${apiResponse.status} ${apiResponse.statusText}`);
-
-        // ✅ 修复错误处理
-        if (!apiResponse.ok) {
-            const errorText = await apiResponse.text();
-            console.error(`❌ API返回错误:`);
-            console.error(`   状态码: ${apiResponse.status}`);
-            console.error(`   响应体: ${errorText.substring(0, 500)}`);
-
-            const errorMsg = `AI服务调用失败: ${apiResponse.status} ${errorText.substring(0, 100)}`;
-            res.write(`data: ${JSON.stringify({ type: 'error', error: errorMsg })}\n\n`);
-            res.end();
-
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
-            return;
-        }
-
-        console.log('✅ API连接成功，开始接收流式响应\n');
-
+        // ✅ 关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
         let reasoningContent = '';
-        const reader = apiResponse.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
 
-        // 轮询检查取消状态
-        const checkCancellation = async () => {
-            return new Promise((resolve) => {
-                db.get('SELECT is_cancelled FROM active_requests WHERE id = ?', [requestId], (err, row) => {
-                    resolve(row?.is_cancelled === 1);
-                });
+        try {
+            const apiResponse = await fetch(providerConfig.baseURL, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${providerConfig.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody),
+                signal: controller.signal
             });
-        };
 
-        while (true) {
-            const isCancelled = await checkCancellation();
-            if (isCancelled) {
-                console.log(`🛑 请求被用户取消: ${requestId}`);
-                res.write(`data: ${JSON.stringify({ type: 'cancelled' })}\n\n`);
+            clearTimeout(timeoutId); // 清除超时定时器
+
+            console.log(`📥 API响应状态: ${apiResponse.status} ${apiResponse.statusText}`);
+
+            // ✅ 修复错误处理
+            if (!apiResponse.ok) {
+                const errorText = await apiResponse.text();
+                console.error(`❌ API返回错误:`);
+                console.error(`   状态码: ${apiResponse.status}`);
+                console.error(`   响应体: ${errorText.substring(0, 500)}`);
+
+                const errorMsg = `AI服务调用失败: ${apiResponse.status} ${errorText.substring(0, 100)}`;
+                res.write(`data: ${JSON.stringify({ type: 'error', error: errorMsg })}\n\n`);
                 res.end();
-                reader.cancel();
-                break;
+
+                db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                return;
             }
 
-            const { done, value } = await reader.read();
-            if (done) {
-                console.log('✅ 流式响应结束');
-                break;
-            }
+            console.log('✅ API连接成功，开始接收流式响应\n');
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
+            const reader = apiResponse.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
 
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed || trimmed === 'data: [DONE]') continue;
+            // 轮询检查取消状态
+            const checkCancellation = async () => {
+                return new Promise((resolve) => {
+                    db.get('SELECT is_cancelled FROM active_requests WHERE id = ?', [requestId], (err, row) => {
+                        resolve(row?.is_cancelled === 1);
+                    });
+                });
+            };
 
-                if (trimmed.startsWith('data: ')) {
-                    const data = trimmed.slice(6);
-                    try {
-                        const parsed = JSON.parse(data);
-                        const choice = parsed.choices?.[0];
+            while (true) {
+                const isCancelled = await checkCancellation();
+                if (isCancelled) {
+                    console.log(`🛑 请求被用户取消: ${requestId}`);
+                    res.write(`data: ${JSON.stringify({ type: 'cancelled' })}\n\n`);
+                    res.end();
+                    reader.cancel();
+                    break;
+                }
 
-                        // ✅ 修复：处理推理内容（支持 DeepSeek 和 Qwen）
-                        const delta = choice?.delta || {};
-                        const reasoning = delta.reasoning_content || delta.reasoning;
-                        const content = delta.content;
+                const { done, value } = await reader.read();
+                if (done) {
+                    console.log('✅ 流式响应结束');
+                    break;
+                }
 
-                        if (reasoning) {
-                            reasoningContent += reasoning;
-                            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed === 'data: [DONE]') continue;
+
+                    if (trimmed.startsWith('data: ')) {
+                        const data = trimmed.slice(6);
+                        try {
+                            const parsed = JSON.parse(data);
+                            const choice = parsed.choices?.[0];
+
+                            // ✅ 修复：处理推理内容（支持 DeepSeek 和 Qwen）
+                            const delta = choice?.delta || {};
+                            const reasoning = delta.reasoning_content || delta.reasoning;
+                            const content = delta.content;
+
+                            if (reasoning) {
+                                reasoningContent += reasoning;
+                                res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
+                            }
+
+                            if (content) {
+                                fullContent += content;
+                                res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
+                            }
+                        } catch (e) {
+                            console.error('⚠️ 解析响应行错误:', e.message);
                         }
-
-                        if (content) {
-                            fullContent += content;
-                            res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
-                        }
-                    } catch (e) {
-                        console.error('⚠️ 解析响应行错误:', e.message);
                     }
                 }
             }
+        } catch (fetchError) {
+            clearTimeout(timeoutId);
+            if (fetchError.name === 'AbortError') {
+                console.error('❌ API请求超时 (120s)');
+                res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI服务请求超时(120秒)，请检查网络连接或稍后重试' })}\n\n`);
+            } else if (fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT') {
+                console.error('❌ 连接超时:', fetchError.message);
+                console.error('   可能原因: 1) 网络不稳定 2) API服务响应慢 3) 防火墙阻止');
+                res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI服务连接超时，请检查：1) 网络连接是否正常 2) 服务器防火墙设置 3) API服务状态，然后重试' })}\n\n`);
+            } else {
+                console.error('❌ Fetch错误:', fetchError);
+                res.write(`data: ${JSON.stringify({ type: 'error', error: `网络请求失败: ${fetchError.message}` })}\n\n`);
+            }
+            res.end();
+            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+            return;
         }
 
         // ✅ 完整的消息保存逻辑
