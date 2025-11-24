@@ -414,6 +414,9 @@ db.serialize(() => {
     content TEXT NOT NULL,
     attachments TEXT,
     reasoning_content TEXT,
+    model TEXT,
+    enable_search INTEGER DEFAULT 0,
+    thinking_mode INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )`);
@@ -473,6 +476,33 @@ db.serialize(() => {
                 console.warn(`⚠️ 添加internet_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
                 console.log('✅ 已添加internet_mode列到user_configs表');
+            }
+        });
+
+        // 添加model列到messages表（如果不存在）
+        db.run(`ALTER TABLE messages ADD COLUMN model TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加model列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加model列到messages表');
+            }
+        });
+
+        // 添加enable_search列到messages表（如果不存在）
+        db.run(`ALTER TABLE messages ADD COLUMN enable_search INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加enable_search列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加enable_search列到messages表');
+            }
+        });
+
+        // 添加thinking_mode列到messages表（如果不存在）
+        db.run(`ALTER TABLE messages ADD COLUMN thinking_mode INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加thinking_mode列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加thinking_mode列到messages表');
             }
         });
     });
@@ -1051,8 +1081,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 // 保存预设答案
                 await new Promise((resolve) => {
                     db.run(
-                        'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
-                        [sessionId, 'assistant', presetAnswer],
+                        'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode) VALUES (?, ?, ?, ?, ?, ?)',
+                        [sessionId, 'assistant', presetAnswer, 'preset', 0, 0],
                         (err) => {
                             if (err) console.error('❌ 保存预设答案失败:', err);
                             else console.log(`✅ 预设答案已保存 (${presetAnswer.length}字符)`);
@@ -1442,8 +1472,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const finalContent = fullContent || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO messages (session_id, role, content, reasoning_content) VALUES (?, ?, ?, ?)',
-                    [sessionId, 'assistant', finalContent, reasoningContent || null],
+                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', finalContent, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0],
                     (err) => {
                         if (err) {
                             console.error('❌ 保存AI消息失败:', err);
@@ -1452,6 +1482,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             console.log(`✅ AI回复已保存:`);
                             console.log(`   - 内容: ${fullContent.length}字符`);
                             console.log(`   - 思考: ${reasoningContent.length}字符`);
+                            console.log(`   - 模型: ${finalModel}`);
+                            console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
+                            console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);
                             resolve();
                         }
                     }
