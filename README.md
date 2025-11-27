@@ -77,7 +77,8 @@ MobileKeyboardHandler
 4. 总结
 这是一个功能完备的 AI SaaS 雏形。它不仅封装了主流大模型的 API，还通过本地数据库实现了完整的用户系统和历史记录持久化，并通过自研的路由算法实现了成本控制和体验优化。前端设计精致，交互细节（如流式思考、移动端适配）处理得非常到位。
 
-<img width="2777" height="1718" alt="image" src="https://github.com/user-attachments/assets/28e23a72-94a4-4f00-9c86-6ee203cfdac3" />
+<img width="2584" height="1707" alt="image" src="https://github.com/user-attachments/assets/3e1b6ec5-60bb-47d0-a661-956fa486f59e" />
+
 
 
 
