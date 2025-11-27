@@ -11,13 +11,11 @@
   <title>RAI</title>
 
   <link rel="icon"
-    href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:%23667eea;stop-opacity:1"/><stop offset="100%" style="stop-color:%23764ba2;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:%23a3bffa;stop-opacity:1"/><stop offset="100%" style="stop-color:%23fdfbfb;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
+    href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
 
   <link rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
-  <!-- Three.js CDN -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <!-- Marked.js for Markdown Rendering -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
@@ -102,23 +100,7 @@
       transition: background-color 0.3s, color 0.3s;
     }
 
-    /* ==================== 粒子背景 ==================== */
-    #particleCanvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 0;
-      /* 🔥 改为0，放在body背景之上 */
-      pointer-events: none;
-      /* 不拦截点击 */
-    }
 
-    /* 调整app-container背景为透明，以便显示canvas */
-    .app-container {
-      background-color: transparent;
-    }
 
     .material-symbols-outlined {
       font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 20;
@@ -160,6 +142,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: var(--spacing-md);
       margin-bottom: var(--spacing-lg);
     }
 
@@ -189,7 +172,7 @@
     }
 
     .sidebar-lang-text {
-      font-size: 12px;
+      font-size: 14px;
       font-weight: 600;
       min-width: 18px;
       text-align: center;
@@ -199,7 +182,16 @@
       display: flex;
       align-items: center;
       gap: var(--spacing-md);
-      margin-bottom: var(--spacing-lg);
+      margin-bottom: 0;
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      flex-shrink: 0;
+      background: var(--bg-tertiary);
+      border-radius: 50% 10px 10px 10px;
+      padding: 3px;
     }
 
     .logo {
@@ -224,7 +216,8 @@
       background: transparent;
       color: var(--text-primary);
       border: 1px solid var(--border-dark);
-      border-radius: var(--radius-md);
+      border-radius: 50px;
+      /* 新对话按钮从圆角矩形改成两侧圆形 */
       font-size: 14px;
       font-weight: 500;
       cursor: pointer;
@@ -339,7 +332,9 @@
       gap: var(--spacing-md);
       padding: var(--spacing-md);
       background: var(--bg-tertiary);
-      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      border-radius: 20px 20px 10px 10px;
+      /* 左上和右上圆角为30dp，下面两个圆角为14dp */
       margin-bottom: var(--spacing-md);
     }
 
@@ -353,7 +348,7 @@
       justify-content: center;
       color: var(--text-primary);
       font-weight: 600;
-      font-size: 14px;
+      font-size: 10px;
     }
 
     .user-info {
@@ -388,7 +383,7 @@
       padding: var(--spacing-sm) var(--spacing-md);
       background: transparent;
       border: 1px solid var(--border-color);
-      border-radius: var(--radius-sm);
+      /* border-radius: var(--radius-sm); removed for specific corners */
       font-size: 12px;
       color: var(--text-primary);
       cursor: pointer;
@@ -402,6 +397,29 @@
     .sidebar-action-btn:hover {
       background: var(--bg-hover);
       border-color: var(--border-dark);
+    }
+
+    .sidebar-actions .sidebar-action-btn:first-child {
+      border-radius: 10px 10px 10px 20px;
+      /* 设置按钮 左下角为30dp 其他14dp */
+    }
+
+    .sidebar-actions .sidebar-action-btn:last-child {
+      border-radius: 10px 10px 20px 10px;
+      /* 退出按钮 右下是30dp 其他14dp */
+    }
+
+    .logo-text-col {
+      display: flex;
+      flex-direction: column;
+      line-height: 1;
+    }
+
+    .logo-subtitle {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      margin-top: 2px;
+      font-weight: 400;
     }
 
     /* ==================== 主内容区 ==================== */
@@ -452,10 +470,19 @@
     }
 
     .welcome-icon {
-      font-size: 64px;
-      margin-bottom: var(--spacing-lg);
+      width: 96px;
+      height: 96px;
+      margin-bottom: var(--spacing-xl);
       animation: float 3s ease-in-out infinite;
-      color: var(--text-secondary);
+      filter: drop-shadow(0 4px 12px rgba(245, 213, 71, 0.3));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .welcome-icon svg {
+      width: 100%;
+      height: 100%;
     }
 
     @keyframes float {
@@ -471,17 +498,141 @@
     }
 
     .welcome-title {
-      font-size: 28px;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin-bottom: var(--spacing-md);
+      font-size: 32px;
+      font-weight: 700;
+      background: linear-gradient(90deg, #FFFFFF 0%, #E0E0E0 25%, #888888 50%, #404040 75%, #FFFFFF 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0;
       letter-spacing: -0.5px;
+      text-shadow: 0 2px 10px rgba(255, 255, 255, 0.15);
+      animation: gradientShift 3s linear infinite;
+    }
+
+    @keyframes gradientShift {
+      0% {
+        background-position: 0% 50%;
+      }
+
+      100% {
+        background-position: 200% 50%;
+      }
     }
 
     .welcome-subtitle {
-      font-size: 14px;
+      font-size: 15px;
       color: var(--text-secondary);
       line-height: 1.7;
+      margin-bottom: var(--spacing-xl);
+    }
+
+    .welcome-actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      width: 100%;
+      max-width: 420px;
+      margin-top: 32px;
+    }
+
+    .action-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      padding: 20px;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      aspect-ratio: 1;
+      min-width: 140px;
+      min-height: 140px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .action-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 100%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .action-card:hover::before {
+      opacity: 1;
+    }
+
+    .action-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--border-dark);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .action-card:nth-child(1) {
+      border-radius: 30px 13px 13px 13px;
+    }
+
+    .action-card:nth-child(2) {
+      border-radius: 13px 30px 13px 13px;
+    }
+
+    .action-card:nth-child(3) {
+      border-radius: 13px 13px 13px 30px;
+    }
+
+    .action-card:nth-child(4) {
+      border-radius: 13px 13px 30px 13px;
+    }
+
+    .action-card-icon {
+      font-size: 32px;
+      background: linear-gradient(135deg, #FFFFFF 0%, #D0D0D0 50%, #606060 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .action-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    [data-theme="light"] .welcome-icon {
+      background: linear-gradient(135deg, #404040 0%, #808080 50%, #D0D0D0 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    [data-theme="light"] .welcome-title {
+      background: linear-gradient(90deg, #202020 0%, #404040 25%, #808080 50%, #A0A0A0 75%, #202020 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: gradientShift 3s linear infinite;
+    }
+
+    [data-theme="light"] .action-card-icon {
+      background: linear-gradient(135deg, #303030 0%, #606060 50%, #909090 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     .messages-list {
@@ -570,6 +721,7 @@
       color: var(--text-primary);
       max-width: 100%;
       display: inline-block;
+      padding: var(--spacing-sm) var(--spacing-md);
     }
 
     .message.assistant .message-text {
@@ -703,16 +855,46 @@
       background: var(--bg-tertiary);
       border: 1px solid var(--border-color);
       border-radius: var(--radius-md);
-      padding: 1em;
+      padding: var(--spacing-md);
       overflow-x: auto;
-      margin: 1em 0;
+      margin: 0.8em 0;
     }
 
     .message-text pre code {
-      background: transparent;
+      background: none;
       padding: 0;
+      border-radius: 0;
       font-size: 0.85em;
-      line-height: 1.5;
+    }
+
+    .message-text img {
+      max-width: 100%;
+      border-radius: var(--radius-md);
+      margin: 0.8em 0;
+    }
+
+    /* ==================== 流式输出模糊动画 ==================== */
+    @keyframes streamBlurIn {
+      0% {
+        opacity: 0;
+        filter: blur(8px);
+        transform: translateY(4px);
+      }
+
+      100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+      }
+    }
+
+    .streaming-char {
+      display: inline;
+      animation: streamBlurIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+
+    #streamingContent {
+      animation: streamBlurIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     }
 
     .message-text table {
@@ -1444,13 +1626,13 @@
       margin: 0;
       padding: 0;
       overflow: hidden;
-      /* 🔥 关键：禁止body滚动 */
+      /* 禁止body滚动 */
       background-color: var(--bg-primary);
       color: var(--text-primary);
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       -webkit-font-smoothing: antialiased;
       position: fixed;
-      /* 🔥 关键：防止iOS橡皮筋效果和意外滚动 */
+      /* 防止iOS橡皮筋效果和意外滚动 */
     }
 
     .app-container {
@@ -1941,7 +2123,7 @@
 </head>
 
 <body>
-  <canvas id="particleCanvas"></canvas>
+
   <!-- 登录/注册界面 -->
   <div class="auth-container active" id="authContainer">
     <div class="auth-box">
@@ -2036,8 +2218,29 @@
       <div class="sidebar-header">
         <div class="sidebar-header-top">
           <div class="logo-section">
-            <div class="logo">RAI</div>
-            <span class="version-tag">v0.2</span>
+            <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32">
+              <defs>
+                <linearGradient id="planetGradLogo" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style="stop-color:#f5d547;stop-opacity:1" />
+                  <stop offset="100%" style="stop-color:#e6a824;stop-opacity:1" />
+                </linearGradient>
+                <linearGradient id="ringGradLogo" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" style="stop-color:#f9e79f;stop-opacity:1" />
+                  <stop offset="100%" style="stop-color:#fef5e7;stop-opacity:1" />
+                </linearGradient>
+              </defs>
+              <circle cx="32" cy="32" r="14" fill="url(#planetGradLogo)" />
+              <path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(#ringGradLogo)"
+                stroke-width="4" stroke-linecap="round" opacity="0.8" />
+              <path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(#ringGradLogo)" stroke-width="4"
+                stroke-linecap="round" opacity="0.9" />
+              <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
+            </svg>
+            <div class="logo-text-col">
+              <div class="logo">RAI</div>
+              <div class="logo-subtitle">by Rick</div>
+            </div>
+            <span class="version-tag" style="display:none;">v0.3</span>
           </div>
           <div class="sidebar-header-controls">
             <button class="sidebar-control-btn" onclick="toggleTheme()" title="切换主题">
@@ -2084,13 +2287,52 @@
       <div class="chat-container" id="chatContainer">
         <div class="welcome-screen" id="welcomeScreen">
           <div class="welcome-icon">
-            <span class="material-symbols-outlined" style="font-size: 64px;">smart_toy</span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="96" height="96">
+              <defs>
+                <linearGradient id="planetGradWelcome" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style="stop-color:#f5d547;stop-opacity:1" />
+                  <stop offset="100%" style="stop-color:#e6a824;stop-opacity:1" />
+                </linearGradient>
+                <linearGradient id="ringGradWelcome" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" style="stop-color:#f9e79f;stop-opacity:1" />
+                  <stop offset="100%" style="stop-color:#fef5e7;stop-opacity:1" />
+                </linearGradient>
+              </defs>
+              <circle cx="32" cy="32" r="14" fill="url(#planetGradWelcome)" />
+              <path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(#ringGradWelcome)"
+                stroke-width="4" stroke-linecap="round" opacity="0.8" />
+              <path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(#ringGradWelcome)" stroke-width="4"
+                stroke-linecap="round" opacity="0.9" />
+              <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
+            </svg>
           </div>
-          <h1 class="welcome-title" data-i18n="welcome-title">时刻准备着!</h1>
-          <p class="welcome-subtitle" data-i18n="welcome-subtitle">
-            可以帮您写作,翻译,构思<br>
-            您专属RAI助理<br>
-          </p>
+          <h1 class="welcome-title" data-i18n="welcome-title">How can I help you? ✨</h1>
+
+          <div class="welcome-actions">
+            <div class="action-card"
+              onclick="document.getElementById('messageInput').value='帮我写一篇文章：'; document.getElementById('messageInput').focus();">
+              <span class="material-symbols-outlined action-card-icon">edit_note</span>
+              <span class="action-card-title">写作</span>
+            </div>
+
+            <div class="action-card"
+              onclick="document.getElementById('messageInput').value='搜索：'; document.getElementById('messageInput').focus(); toggleInternet();">
+              <span class="material-symbols-outlined action-card-icon">search</span>
+              <span class="action-card-title">搜索</span>
+            </div>
+
+            <div class="action-card"
+              onclick="document.getElementById('messageInput').value='帮我写代码：'; document.getElementById('messageInput').focus();">
+              <span class="material-symbols-outlined action-card-icon">code</span>
+              <span class="action-card-title">代码</span>
+            </div>
+
+            <div class="action-card"
+              onclick="document.getElementById('messageInput').value='翻译：'; document.getElementById('messageInput').focus();">
+              <span class="material-symbols-outlined action-card-icon">translate</span>
+              <span class="action-card-title">翻译</span>
+            </div>
+          </div>
         </div>
 
         <div class="messages-list" id="messagesList" style="display: none;">
@@ -2315,10 +2557,10 @@
       messages: [],
       currentRequestId: null,
       isStreaming: false,
-      selectedModel: 'auto',  // 🔥 默认为auto模式
+      selectedModel: 'auto',  // 默认为auto模式
       thinkingMode: false,
-      internetMode: true,  // 🔥 默认开启联网
-      inputExpanded: false,  // 🔥 输入框展开状态
+      internetMode: true,  // 默认开启联网
+      inputExpanded: false,  // 输入框展开状态
       thinkingBudget: 1024,
       thinkingBudgetOpen: false,
       temperature: 0.7,
@@ -2326,7 +2568,7 @@
       maxTokens: 2000,
       frequencyPenalty: 0,
       presencePenalty: 0,
-      systemPrompt: '',
+      systemPrompt: '',  // 用户的个人偏好，将附加到内置提示词后
       sidebarOpen: false,
       settingsOpen: false,
       touchStartX: 0,
@@ -2335,8 +2577,8 @@
       isSwiping: false,
       theme: 'dark',
       language: 'zh-CN',
-      lastModelUsed: '',  // 🔥 记录最后使用的实际模型
-      lastRoutingReason: ''  // 🔥 记录路由选择原因
+      lastModelUsed: '',  // 记录最后使用的实际模型
+      lastRoutingReason: ''  // 记录路由选择原因
     };
 
     const MODELS = {
@@ -2368,6 +2610,34 @@
       }
     };
 
+    // 内置系统提示词 - 每次请求强制执行
+    const BUILT_IN_SYSTEM_PROMPT = `你是RAI助理，由Rick开发。你的任务是提供专业、有用且切合上下文的回应，帮助用户完成写作、创意项目、概念解释、总结等任务。
+
+核心要求：
+
+**简洁性原则**
+对简单问题给出简明答案，对复杂问题提供全面解释。使用markdown格式。
+
+**语言风格**
+使用友好对话的语气，主动语态配合具体动词。避免机械重复，确保句子之间自然流畅过渡。用通俗语言解释复杂概念，必要时用例子或类比说明。
+
+**适应性**
+改写内容时匹配原文语气和风格。生成新内容时根据目标受众调整表达方式。
+
+**专业态度**
+即使无法完成请求也保持有帮助的态度，说明限制并提供替代方案。避免使用"我"等第一人称代词，保持客观专业。
+
+**任务后续智能建议**
+每次完成用户请求后，分析当前任务的类型和完成状态，预判用户的下一个自然需求，并主动提供一个针对性建议。
+
+**执行标准**
+准确理解用户意图，提供可操作的建议，用结构化推理确保回应清晰易懂。禁止输出任何违法侵权内容！
+
+**对话标题自动生成**
+在首轮交互完成后，基于用户首个问题和你的回复，生成3-10字的标题。
+输出格式：在回复最后强制以特定标记输出
+[TITLE]生成的标题[/TITLE]`;
+
     // 国际化翻译
     const i18n = {
       'zh-CN': {
@@ -2389,7 +2659,7 @@
         'new-chat': '新对话',
         'settings': '设置',
         'logout': '退出',
-        'welcome-title': '时刻准备着!',
+        'welcome-title': '询问任何问题:D',
         'welcome-subtitle': '可以帮您写作,翻译,构思\n您专属RAI助理',
         'attach': '附件',
         'internet': '联网',
@@ -2438,7 +2708,7 @@
         'new-chat': 'New Chat',
         'settings': 'Settings',
         'logout': 'Logout',
-        'welcome-title': 'Ready to Help!',
+        'welcome-title': 'How can I help you?',
         'welcome-subtitle': 'I can help you write, translate, and brainstorm\nYour personal RAI assistant',
         'attach': 'Attach',
         'internet': 'Web',
@@ -2620,7 +2890,7 @@
 
       expandInput();
 
-      // 🔥 关键修复：点击容器时，如果输入框未聚焦，强制聚焦
+      // 点击容器时，如果输入框未聚焦，强制聚焦
       // 解决 Android "点一下展开，再点一下输入" 的问题
       const input = document.getElementById('messageInput');
       if (input && document.activeElement !== input) {
@@ -2645,7 +2915,7 @@
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      console.log('✅ RAI v0.2 初始化');
+      console.log('✅ RAI v0.3 初始化');
 
       // 初始化主题和语言
       initThemeAndLanguage();
@@ -2686,7 +2956,7 @@
           }
         }
 
-        // 🔥 输入框收缩逻辑：点击空白区域时收缩
+        // 输入框收缩逻辑：点击空白区域时收缩
         const inputContainer = document.getElementById('inputContainer');
         const inputArea = document.querySelector('.input-area');
 
@@ -2996,7 +3266,7 @@
       }
     });
 
-    // 🔥 移动端键盘适配 - 最简单保守方案
+    // 移动端键盘适配 - 最简单保守方案
     // 只处理iOS的滚动问题，让Android使用默认行为
     if (window.visualViewport) {
       window.visualViewport.addEventListener('scroll', () => {
@@ -3218,7 +3488,11 @@
         }
 
         // 显示联网状态
-        if (message.enable_search || message.internet_mode) {
+        // 增强判断逻辑：检查 enable_search 或 internet_mode，并处理可能的类型差异（数字/布尔值）
+        const isInternet = (message.enable_search === 1 || message.enable_search === true) ||
+          (message.internet_mode === 1 || message.internet_mode === true);
+
+        if (isInternet) {
           const internetBadge = document.createElement('span');
           internetBadge.className = 'meta-badge';
           internetBadge.innerHTML = `
@@ -3517,7 +3791,9 @@
             max_tokens: appState.maxTokens,
             frequency_penalty: appState.frequencyPenalty,
             presence_penalty: appState.presencePenalty,
-            systemPrompt: appState.systemPrompt
+            systemPrompt: appState.systemPrompt.trim()
+              ? `${BUILT_IN_SYSTEM_PROMPT}\n\n以下是用户个人偏好，请参考：\n${appState.systemPrompt}`
+              : BUILT_IN_SYSTEM_PROMPT
           })
         });
 
@@ -3577,8 +3853,26 @@
               }
               else if (parsed.type === 'content') {
                 fullContent += parsed.content;
-                if (streamingEl) streamingEl.innerHTML = formatMessage(fullContent);
+                if (streamingEl) {
+                  // 移除标题标记，防止显示给用户
+                  const contentToDisplay = fullContent.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
+                  // 使用marked渲染Markdown，如果available
+                  if (typeof marked !== 'undefined' && marked.parse) {
+                    streamingEl.innerHTML = marked.parse(contentToDisplay);
+                  } else {
+                    streamingEl.innerHTML = formatMessage(contentToDisplay);
+                  }
+                }
                 scrollToBottom();
+              }
+              else if (parsed.type === 'title') {
+                // 处理标题更新
+                if (parsed.title && appState.currentSession) {
+                  appState.currentSession.title = parsed.title;
+                  console.log(`✅ 会话标题已更新: "${parsed.title}"`);
+                  // 异步刷新侧边栏显示
+                  loadSessions().catch(err => console.error('刷新会话列表失败:', err));
+                }
               }
               else if (parsed.type === 'done') {
                 console.log('✅ 流式响应完成');
@@ -3597,9 +3891,12 @@
           }
         }
 
+        // 移除标题标记后再保存到appState
+        const cleanContent = fullContent.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
+
         const aiMsg = {
           role: 'assistant',
-          content: fullContent,
+          content: cleanContent,
           reasoning_content: reasoningContent || null,
           model: appState.lastModelUsed || appState.selectedModel,
           enable_search: appState.internetMode,
@@ -3675,21 +3972,61 @@
     // 修复：改进handleFileUpload
     function handleFileUpload() {
       const fileInput = document.getElementById('fileInput');
-      if (fileInput) {
-        fileInput.value = '';
-        fileInput.click();
+      if (!fileInput) {
+        console.error('❌ 文件输入框未找到');
+        return;
       }
+      // 清除之前的值，确保可以重复选择同一文件
+      fileInput.value = '';
+      fileInput.click();
     }
 
-    // 修复：改进handleFileSelected
+    // 修复：改进handleFileSelected - 添加完整的错误处理
     function handleFileSelected(event) {
-      if (!event || !event.target) return;
+      if (!event || !event.target) {
+        console.error('❌ 事件对象无效');
+        return;
+      }
 
-      const file = event.target.files?.[0];
-      if (!file) return;
+      const files = event.target.files;
+      if (!files || files.length === 0) {
+        console.warn('⚠️ 未选择文件');
+        return;
+      }
 
-      console.log(`✅ 选中文件: ${file.name}`);
-      // 处理文件上传逻辑
+      const file = files[0];
+      console.log(`✅ 选中文件: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+
+      // 文件类型验证
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+      if (!allowedTypes.includes(file.type)) {
+        const msg = appState.language === 'zh-CN'
+          ? `不支持的文件类型: ${file.type}\n支持的类型: 图片(JPG, PNG, GIF, WebP), PDF, 文本文件`
+          : `Unsupported file type: ${file.type}\nSupported: Images (JPG, PNG, GIF, WebP), PDF, Text`;
+        alert(msg);
+        return;
+      }
+
+      // 文件大小验证 (最大10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        const msg = appState.language === 'zh-CN'
+          ? `文件过大: ${(file.size / 1024 / 1024).toFixed(2)} MB\n最大支持: 10 MB`
+          : `File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB\nMax size: 10 MB`;
+        alert(msg);
+        return;
+      }
+
+      // TODO: 实现文件上传到服务器的逻辑
+      // 这里应该将文件上传到后端，并获取URL或ID
+      // 然后可以在发送消息时附加文件信息
+      console.log('📎 文件已准备，等待上传实现');
+
+      // 临时提示用户
+      const msg = appState.language === 'zh-CN'
+        ? `文件 "${file.name}" 已选择\n注意: 文件上传功能尚未完全实现`
+        : `File "${file.name}" selected\nNote: File upload not fully implemented yet`;
+      alert(msg);
     }
 
     // 修复：改进showModelRoutingInfo
@@ -3962,7 +4299,7 @@
           },
           body: JSON.stringify({
             title: appState.language === 'zh-CN' ? '新对话' : 'New Chat',
-            model: appState.selectedModel || 'auto'  // 🔥 默认为auto或当前选择的模型
+            model: appState.selectedModel || 'auto'  // 默认为auto或当前选择的模型
           })
         });
 
@@ -3972,7 +4309,7 @@
           await loadSessions();
           await loadSession(data.sessionId);
 
-          // 🔥 移除移动端自动弹出侧边栏
+          // 移除移动端自动弹出侧边栏
           // if (window.innerWidth <= 768) {
           //   toggleSidebar();
           // }
@@ -4005,7 +4342,7 @@
         renderMessages();
         renderSessions();
 
-        // 🔥 移除移动端自动弹出侧边栏
+        // 移除移动端自动弹出侧边栏
         // if (window.innerWidth <= 768) {
         //   toggleSidebar();
         // }
@@ -4359,345 +4696,8 @@
         debug: false
       });
 
-      // 初始化粒子背景
-      initParticles();
+
     });
-
-    // ==================== 粒子背景效果 (Three.js) ====================
-    function initParticles() {
-      console.log('✨ 初始化粒子背景...');
-      const canvas = document.getElementById('particleCanvas');
-      if (!canvas) {
-        console.error('❌ 未找到 particleCanvas 元素');
-        return;
-      }
-
-      // 场景初始化
-      const scene = new THREE.Scene();
-      // 雾化效果，增加深度感
-      scene.fog = new THREE.FogExp2(0x000000, 0.0008);
-
-      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 2000);
-      camera.position.z = 1000;
-
-      const renderer = new THREE.WebGLRenderer({
-        canvas: canvas,
-        alpha: true, // 透明背景
-        antialias: true
-      });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
-
-      // -------------------- 辅助函数：Simplex Noise (简化版) --------------------
-      const SimplexNoise = (function () {
-        function Grad(x, y, z) {
-          this.x = x; this.y = y; this.z = z;
-        }
-        Grad.prototype.dot2 = function (x, y) { return this.x * x + this.y * y; };
-        Grad.prototype.dot3 = function (x, y, z) { return this.x * x + this.y * y + this.z * z; };
-        var grad3 = [new Grad(1, 1, 0), new Grad(-1, 1, 0), new Grad(1, -1, 0), new Grad(-1, -1, 0),
-        new Grad(1, 0, 1), new Grad(-1, 0, 1), new Grad(1, 0, -1), new Grad(-1, 0, -1),
-        new Grad(0, 1, 1), new Grad(0, -1, 1), new Grad(0, 1, -1), new Grad(0, -1, -1)];
-        var p = [151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229, 122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244, 102, 143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196, 135, 130, 116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123, 5, 202, 38, 147, 118, 126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42, 223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9, 129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228, 251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107, 49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254, 138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180];
-        var perm = new Array(512);
-        var gradP = new Array(512);
-        for (var i = 0; i < 512; i++) {
-          perm[i] = p[i & 255];
-          gradP[i] = grad3[perm[i] % 12];
-        }
-        return {
-          noise3d: function (xin, yin, zin) {
-            var n0, n1, n2, n3;
-            var F3 = 1.0 / 3.0;
-            var s = (xin + yin + zin) * F3;
-            var i = Math.floor(xin + s);
-            var j = Math.floor(yin + s);
-            var k = Math.floor(zin + s);
-            var G3 = 1.0 / 6.0;
-            var t = (i + j + k) * G3;
-            var X0 = i - t;
-            var Y0 = j - t;
-            var Z0 = k - t;
-            var x0 = xin - X0;
-            var y0 = yin - Y0;
-            var z0 = zin - Z0;
-            var i1, j1, k1;
-            var i2, j2, k2;
-            if (x0 >= y0) {
-              if (y0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-              else if (x0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 0; k2 = 1; }
-              else { i1 = 0; j1 = 0; k1 = 1; i2 = 1; j2 = 0; k2 = 1; }
-            } else {
-              if (y0 < z0) { i1 = 0; j1 = 0; k1 = 1; i2 = 0; j2 = 1; k2 = 1; }
-              else if (x0 < z0) { i1 = 0; j1 = 1; k1 = 0; i2 = 0; j2 = 1; k2 = 1; }
-              else { i1 = 0; j1 = 1; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-            }
-            var x1 = x0 - i1 + G3;
-            var y1 = y0 - j1 + G3;
-            var z1 = z0 - k1 + G3;
-            var x2 = x0 - i2 + 2.0 * G3;
-            var y2 = y0 - j2 + 2.0 * G3;
-            var z2 = z0 - k2 + 2.0 * G3;
-            var x3 = x0 - 1.0 + 3.0 * G3;
-            var y3 = y0 - 1.0 + 3.0 * G3;
-            var z3 = z0 - 1.0 + 3.0 * G3;
-            var ii = i & 255;
-            var jj = j & 255;
-            var kk = k & 255;
-            var gi0 = gradP[ii + perm[jj + perm[kk]]];
-            var gi1 = gradP[ii + i1 + perm[jj + j1 + perm[kk + k1]]];
-            var gi2 = gradP[ii + i2 + perm[jj + j2 + perm[kk + k2]]];
-            var gi3 = gradP[ii + 1 + perm[jj + 1 + perm[kk + 1]]];
-            var t0 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
-            if (t0 < 0) n0 = 0.0;
-            else { t0 *= t0; n0 = t0 * t0 * gi0.dot3(x0, y0, z0); }
-            var t1 = 0.6 - x1 * x1 - y1 * y1 - z1 * z1;
-            if (t1 < 0) n1 = 0.0;
-            else { t1 *= t1; n1 = t1 * t1 * gi1.dot3(x1, y1, z1); }
-            var t2 = 0.6 - x2 * x2 - y2 * y2 - z2 * z2;
-            if (t2 < 0) n2 = 0.0;
-            else { t2 *= t2; n2 = t2 * t2 * gi2.dot3(x2, y2, z2); }
-            var t3 = 0.6 - x3 * x3 - y3 * y3 - z3 * z3;
-            if (t3 < 0) n3 = 0.0;
-            else { t3 *= t3; n3 = t3 * t3 * gi3.dot3(x3, y3, z3); }
-            return 32.0 * (n0 + n1 + n2 + n3);
-          }
-        };
-      })();
-
-      // -------------------- 粒子系统配置 --------------------
-      const particleCount = window.innerWidth < 768 ? 800 : 2000;
-      const connectionCount = window.innerWidth < 768 ? 60 : 150;
-      const connectionDistance = 150;
-      const mouseInfluenceRadius = 200; // 鼠标影响半径
-
-      // 粒子数据
-      const particlesData = [];
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(particleCount * 3);
-      const sizes = new Float32Array(particleCount);
-      const opacities = new Float32Array(particleCount);
-
-      // 连线几何体
-      const linesGeometry = new THREE.BufferGeometry();
-      const linesMaterial = new THREE.LineBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.15,
-        vertexColors: false,
-        blending: THREE.AdditiveBlending
-      });
-      const linesMesh = new THREE.LineSegments(linesGeometry, linesMaterial);
-      scene.add(linesMesh);
-
-      // 初始化粒子
-      for (let i = 0; i < particleCount; i++) {
-        const x = Math.random() * 2000 - 1000;
-        const y = Math.random() * 2000 - 1000;
-        const z = Math.random() * 2000 - 1000;
-
-        positions[i * 3] = x;
-        positions[i * 3 + 1] = y;
-        positions[i * 3 + 2] = z;
-
-        // 随机大小
-        sizes[i] = Math.random() * 4 + 2; // 🔥 增大基础大小 (2-6)
-        opacities[i] = Math.random() * 0.5 + 0.2; // 🔥 增加最小不透明度
-
-        particlesData.push({
-          velocity: new THREE.Vector3(0, 0, 0),
-          numConnections: 0,
-          noiseOffset: Math.random() * 1000,
-          baseX: x, // 记录初始位置，用于限制漂移
-          baseY: y,
-          baseZ: z
-        });
-      }
-
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-      geometry.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1));
-
-      // 自定义着色器材质
-      const material = new THREE.ShaderMaterial({
-        uniforms: {
-          color: { value: new THREE.Color(0xffffff) }
-        },
-        vertexShader: `
-          attribute float size;
-          attribute float opacity;
-          varying float vOpacity;
-          void main() {
-            vOpacity = opacity;
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            // 🔥 增大缩放系数: 300.0 -> 800.0
-            gl_PointSize = size * (800.0 / -mvPosition.z);
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `,
-        fragmentShader: `
-          uniform vec3 color;
-          varying float vOpacity;
-          void main() {
-            vec2 xy = gl_PointCoord.xy - vec2(0.5);
-            float ll = length(xy);
-            if (ll > 0.5) discard;
-            float alpha = (0.5 - ll) * 2.0 * vOpacity;
-            gl_FragColor = vec4(color, alpha);
-          }
-        `,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      });
-
-      const particlesMesh = new THREE.Points(geometry, material);
-      scene.add(particlesMesh);
-
-      // -------------------- 交互逻辑 --------------------
-      let mouseX = 0;
-      let mouseY = 0;
-      // 归一化鼠标坐标 (-1 到 1)
-      let ndcMouseX = 0;
-      let ndcMouseY = 0;
-
-      const windowHalfX = window.innerWidth / 2;
-      const windowHalfY = window.innerHeight / 2;
-
-      document.addEventListener('mousemove', (event) => {
-        mouseX = event.clientX - windowHalfX;
-        mouseY = event.clientY - windowHalfY;
-        ndcMouseX = (event.clientX / window.innerWidth) * 2 - 1;
-        ndcMouseY = -(event.clientY / window.innerHeight) * 2 + 1;
-      });
-
-      document.addEventListener('touchmove', (event) => {
-        if (event.touches.length > 0) {
-          mouseX = event.touches[0].clientX - windowHalfX;
-          mouseY = event.touches[0].clientY - windowHalfY;
-          ndcMouseX = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
-          ndcMouseY = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
-        }
-      }, { passive: true });
-
-      // -------------------- 动画循环 --------------------
-      const clock = new THREE.Clock();
-      let time = 0;
-
-      // 创建 Raycaster 用于更精确的鼠标交互
-      const raycaster = new THREE.Raycaster();
-      const mouseVector = new THREE.Vector2();
-
-      function animate() {
-        requestAnimationFrame(animate);
-
-        const delta = clock.getDelta();
-        time += delta * 0.2;
-
-        const positions = particlesMesh.geometry.attributes.position.array;
-        let linePositions = [];
-
-        // 主题颜色适配
-        const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-        const particleColor = isDark ? new THREE.Color(0xaaccff) : new THREE.Color(0x333333);
-        const fogColor = isDark ? new THREE.Color(0x000000) : new THREE.Color(0xffffff);
-
-        material.uniforms.color.value.lerp(particleColor, 0.05);
-        linesMaterial.color.lerp(particleColor, 0.05);
-        scene.fog.color.lerp(fogColor, 0.05);
-
-        // 更新 Raycaster
-        mouseVector.set(ndcMouseX, ndcMouseY);
-        raycaster.setFromCamera(mouseVector, camera);
-        // 假设鼠标在 z=0 平面上的投影点 (简化计算)
-        // 实际上我们可以直接用 mouseX, mouseY 配合 camera z 来估算
-        // 为了性能，我们继续使用简单的距离判断，但基于投影后的坐标
-
-        for (let i = 0; i < particleCount; i++) {
-          const i3 = i * 3;
-          const data = particlesData[i];
-
-          // 1. Perlin 噪声运动 (基于原始位置偏移)
-          const noiseX = SimplexNoise.noise3d(data.baseX * 0.002, data.baseY * 0.002, time + data.noiseOffset);
-          const noiseY = SimplexNoise.noise3d(data.baseX * 0.002 + 100, data.baseY * 0.002, time + data.noiseOffset);
-          const noiseZ = SimplexNoise.noise3d(data.baseX * 0.002 + 200, data.baseY * 0.002, time + data.noiseOffset);
-
-          // 计算新位置 = 基础位置 + 噪声偏移 + 鼠标交互偏移
-          let newX = data.baseX + noiseX * 50; // 噪声幅度
-          let newY = data.baseY + noiseY * 50;
-          let newZ = data.baseZ + noiseZ * 50;
-
-          // 2. 鼠标排斥 (简单距离场)
-          // 将鼠标 2D 坐标映射到粒子 Z 平面太复杂，这里简化：
-          // 假设鼠标是一条射线，计算粒子到射线的距离（或者简单地使用屏幕空间距离）
-          // 这里使用简单的屏幕投影估算：
-          // 粒子投影到屏幕的 x,y
-          // 这是一个近似，但对于背景效果足够了
-          // 更简单的方法：直接比较 world space x,y 和 mouseX, mouseY (假设 camera z 远大于粒子 z 范围)
-          // 我们的 camera.z = 1000. 粒子 z 在 -1000 到 1000.
-          // 当粒子 z 接近 1000，它在屏幕上很大。
-          // 让我们用一个简单的 3D 距离检查，假设鼠标在 z=0 平面移动
-          const dx = mouseX - newX; // mouseX 是相对于中心的 px
-          const dy = -mouseY - newY; // mouseY 也是
-          // 注意：mouseX 是屏幕像素坐标，newX 是世界坐标。
-          // 在 perspective camera 下，屏幕坐标和世界坐标的比例随 z 变化。
-          // 但为了效果，我们直接混合使用，只要数量级差不多就行。
-          // window.innerWidth ~ 1920. World range ~ 2000. 比例接近 1:1.
-
-          const distSq = dx * dx + dy * dy;
-
-          if (distSq < mouseInfluenceRadius * mouseInfluenceRadius) {
-            const dist = Math.sqrt(distSq);
-            const force = (mouseInfluenceRadius - dist) / mouseInfluenceRadius;
-            const angle = Math.atan2(dy, dx);
-
-            // 排斥：向反方向移动
-            newX -= Math.cos(angle) * force * 50;
-            newY -= Math.sin(angle) * force * 50;
-          }
-
-          positions[i3] = newX;
-          positions[i3 + 1] = newY;
-          positions[i3 + 2] = newZ;
-
-          // 4. 连线逻辑
-          if (i < connectionCount) {
-            for (let j = i + 1; j < connectionCount; j++) {
-              const j3 = j * 3;
-              const dx = positions[i3] - positions[j3];
-              const dy = positions[i3 + 1] - positions[j3 + 1];
-              const dz = positions[i3 + 2] - positions[j3 + 2];
-              const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-              if (dist < connectionDistance) {
-                linePositions.push(
-                  positions[i3], positions[i3 + 1], positions[i3 + 2],
-                  positions[j3], positions[j3 + 1], positions[j3 + 2]
-                );
-              }
-            }
-          }
-        }
-
-        particlesMesh.geometry.attributes.position.needsUpdate = true;
-        linesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
-
-        // 整体场景缓慢旋转，增加动感
-        scene.rotation.y = Math.sin(time * 0.1) * 0.05;
-        scene.rotation.x = Math.cos(time * 0.1) * 0.05;
-
-        renderer.render(scene, camera);
-      }
-
-      window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-      });
-
-      animate();
-      console.log('✅ 粒子系统启动完成');
-    }
   </script>
 </body>
 
