@@ -329,12 +329,12 @@ function analyzeMessage(message) {
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 'sk',
+        apiKey: 'sk-',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         models: ['qwen-flash', 'qwen-plus', 'qwen-max']
     },
     deepseek: {
-        apiKey: 'sk',
+        apiKey: 'sk-',
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
         models: ['deepseek-chat', 'deepseek-reasoner']
     }
@@ -417,6 +417,7 @@ db.serialize(() => {
     model TEXT,
     enable_search INTEGER DEFAULT 0,
     thinking_mode INTEGER DEFAULT 0,
+    internet_mode INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )`);
@@ -503,6 +504,15 @@ db.serialize(() => {
                 console.warn(`⚠️ 添加thinking_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
                 console.log('✅ 已添加thinking_mode列到messages表');
+            }
+        });
+
+        // 添加internet_mode列到messages表（如果不存在）
+        db.run(`ALTER TABLE messages ADD COLUMN internet_mode INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加internet_mode列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加internet_mode列到messages表');
             }
         });
     });
@@ -989,6 +999,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             systemPrompt
         } = req.body;
 
+        console.log(`🔍 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}`);
+
         if (!messages || !Array.isArray(messages) || messages.length === 0) {
             return res.status(400).json({ error: '消息不能为空' });
         }
@@ -1081,8 +1093,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 // 保存预设答案
                 await new Promise((resolve) => {
                     db.run(
-                        'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode) VALUES (?, ?, ?, ?, ?, ?)',
-                        [sessionId, 'assistant', presetAnswer, 'preset', 0, 0],
+                        'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [sessionId, 'assistant', presetAnswer, 'preset', 0, 0, 0],
                         (err) => {
                             if (err) console.error('❌ 保存预设答案失败:', err);
                             else console.log(`✅ 预设答案已保存 (${presetAnswer.length}字符)`);
@@ -1468,19 +1480,30 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 });
             }
 
-            // 2. 保存AI回复
-            const finalContent = fullContent || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
+            // 2. 提取并处理标题 (如果存在)
+            let contentToSave = fullContent || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
+            let extractedTitle = null;
+
+            const titleMatch = contentToSave.match(/\[TITLE\](.*?)\[\/TITLE\]/);
+            if (titleMatch && titleMatch[1]) {
+                extractedTitle = titleMatch[1].trim();
+                // 从内容中移除标题标记
+                contentToSave = contentToSave.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
+                console.log(`📋 提取到标题: "${extractedTitle}"`);
+            }
+
+            // 3. 保存AI回复 (已移除标题标记)
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', finalContent, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0],
+                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0],
                     (err) => {
                         if (err) {
                             console.error('❌ 保存AI消息失败:', err);
                             reject(err);
                         } else {
                             console.log(`✅ AI回复已保存:`);
-                            console.log(`   - 内容: ${fullContent.length}字符`);
+                            console.log(`   - 内容: ${contentToSave.length}字符`);
                             console.log(`   - 思考: ${reasoningContent.length}字符`);
                             console.log(`   - 模型: ${finalModel}`);
                             console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
@@ -1491,7 +1514,44 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 );
             });
 
-            // 3. 更新会话时间戳
+            // 4. 如果提取到标题,检查是否需要更新会话标题
+            if (extractedTitle) {
+                // 检查消息数量,只在新对话时更新标题
+                await new Promise((resolve) => {
+                    db.get(
+                        'SELECT COUNT(*) as count FROM messages WHERE session_id = ?',
+                        [sessionId],
+                        (err, row) => {
+                            if (!err && row && row.count <= 2) {
+                                // 这是新对话的首次回复,更新标题
+                                db.run(
+                                    'UPDATE sessions SET title = ? WHERE id = ?',
+                                    [extractedTitle, sessionId],
+                                    (updateErr) => {
+                                        if (!updateErr) {
+                                            console.log(`✅ 会话标题已更新: "${extractedTitle}"`);
+                                            // 通知前端标题更新
+                                            res.write(`data: ${JSON.stringify({
+                                                type: 'title',
+                                                title: extractedTitle
+                                            })}\n\n`);
+                                        } else {
+                                            console.error('❌ 更新会话标题失败:', updateErr);
+                                        }
+                                        resolve();
+                                    }
+                                );
+                            } else {
+                                // 不是新对话,不更新标题
+                                console.log('⏭️ 非首次对话,跳过标题更新');
+                                resolve();
+                            }
+                        }
+                    );
+                });
+            }
+
+            // 5. 更新会话时间戳
             await new Promise((resolve) => {
                 db.run(
                     'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
