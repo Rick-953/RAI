@@ -8,14 +8,9 @@
 抱歉还没时间写 先用ai介绍下 QAQ  
 这是一个基于 Node.js (Express) 和 原生前端技术 (HTML/CSS/JS) 构建的现代化 AI 对话应用，名为 RAI。该项目集成了智能模型路由、多模型支持、流式响应、联网搜索以及深度思考模式等高级功能。
 
-以下是对 
-index.html
- 和 
-server.js
- 的详细中文解析：
 
-1. 核心功能概览 (Core Features)
-该项目不仅仅是一个简单的聊天界面，它包含了一个完整的智能路由决策系统和用户管理系统。
+1. 核心功能概览 (Core Features)  
+包含了一个完整的智能路由决策系统和用户管理系统。
 
 智能模型路由 (Smart Model Routing):
 后端内置了一个“智能路由引擎 v4”，能够自动分析用户输入的复杂度。
@@ -32,9 +27,10 @@ server.js
 支持开启联网模式，允许模型（如 Qwen）进行实时搜索以获取最新信息。
 流式响应 (Streaming):
 使用 Server-Sent Events (SSE) 技术，实现打字机效果的实时回复，包括思考过程的实时流式传输。
+
 2. 后端架构 (
 server.js
-)
+)  
 后端使用 Node.js + Express 框架，配合 SQLite 数据库。
 
 技术栈:
@@ -56,17 +52,19 @@ users: 用户信息。
 sessions: 聊天会话列表。
 messages: 具体的聊天记录（包含 reasoning_content 思考字段）。
 user_configs: 用户偏好设置（主题、默认模型、System Prompt 等）。
+
 3. 前端架构 (
 index.html
-)
+)  
 前端采用 原生开发 (Vanilla JS)，没有使用 React/Vue 等重型框架，保证了极致的加载速度和性能。
 
-技术栈:
+技术栈:  
 HTML5/CSS3: 使用 CSS 变量实现深色/浅色主题切换，使用了大量的 Flexbox 和 Grid 布局。
 JavaScript (ES6+): 处理所有的 UI 交互、API 请求和状态管理。
 Marked.js: 用于将 AI 返回的 Markdown 文本渲染为 HTML。
 Google Fonts: 使用 Material Symbols Outlined 图标库。
-界面与交互:
+
+界面与交互:  
 响应式设计: 完美适配移动端和 PC 端。移动端支持侧边栏滑动手势 (Touch Events)。
 粒子背景: 包含一个基于 Canvas 的粒子动画背景效果。
 输入增强: 输入框支持自动高度调整，集成了模型选择器、附件上传、联网开关和推理开关。
@@ -74,7 +72,8 @@ Google Fonts: 使用 Material Symbols Outlined 图标库。
 移动端键盘优化: 专门编写了 
 MobileKeyboardHandler
  类，解决 iOS/Android 软键盘遮挡输入框的顽疾。
-4. 总结
+ 
+4. 总结  
 这是一个功能完备的 AI SaaS 雏形。它不仅封装了主流大模型的 API，还通过本地数据库实现了完整的用户系统和历史记录持久化，并通过自研的路由算法实现了成本控制和体验优化。前端设计精致，交互细节（如流式思考、移动端适配）处理得非常到位。
 
 <img width="2584" height="1707" alt="image" src="https://github.com/user-attachments/assets/3e1b6ec5-60bb-47d0-a661-956fa486f59e" />
