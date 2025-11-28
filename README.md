@@ -3,6 +3,8 @@
 个人可以使用，修改，商用需要联系rick080402@gmail.com  
 访问rick.quest然后选择RAI即可在线体验！  
 
+强烈建议通过 https://rick.rth2.xyz/ai/main.html#how-it-works 观看介绍
+
 新增功能：ai总结对话标题，修了一堆bug。改了改提示词。给主页背景字体加了动画
 
 抱歉还没时间写 先用ai介绍下 QAQ  
