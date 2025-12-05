@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const https = require('https');  // 用于网页搜索
 
 const app = express();
 const PORT = process.env.PORT || 3009;
@@ -326,17 +327,170 @@ function analyzeMessage(message) {
     };
 }
 
+// ==================== 网页搜索功能 (Tavily API) ====================
+
+// Tavily API 配置
+const TAVILY_API_KEY = 'tvly';
+const TAVILY_API_URL = 'https://api.tavily.com/search';
+
+/**
+ * 执行网页搜索 (使用Tavily API)
+ * Tavily是专为AI代理设计的搜索API，提供高质量、实时的搜索结果
+ * @param {string} query - 搜索查询
+ * @param {number} maxResults - 最大结果数量 (默认5，最大20)
+ * @returns {Promise<Array>} 搜索结果数组
+ */
+async function performWebSearch(query, maxResults = 5) {
+    return new Promise((resolve) => {
+        try {
+            console.log(`🔍 执行Tavily网页搜索: "${query}"`);
+
+            // 构建请求体
+            const requestBody = JSON.stringify({
+                api_key: TAVILY_API_KEY,
+                query: query,
+                search_depth: 'basic',        // 'basic' 或 'advanced' (advanced更深入但更慢)
+                include_answer: true,          // 包含AI生成的摘要答案
+                include_raw_content: false,    // 不需要原始HTML内容
+                max_results: Math.min(maxResults, 20),  // 限制最大20条
+                include_images: false,         // 不需要图片
+                topic: 'general'               // 通用搜索
+            });
+
+            // 解析URL
+            const urlParts = new URL(TAVILY_API_URL);
+
+            const options = {
+                hostname: urlParts.hostname,
+                port: 443,
+                path: urlParts.pathname,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(requestBody)
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+
+                res.on('end', () => {
+                    try {
+                        const result = JSON.parse(data);
+                        const searchResults = [];
+
+                        // 检查API错误
+                        if (result.error) {
+                            console.error('❌ Tavily API错误:', result.error);
+                            resolve([]);
+                            return;
+                        }
+
+                        // 如果有AI生成的答案摘要，添加到结果中
+                        if (result.answer) {
+                            searchResults.push({
+                                title: 'AI 搜索摘要',
+                                snippet: result.answer,
+                                url: '',
+                                source: 'Tavily AI'
+                            });
+                        }
+
+                        // 提取搜索结果
+                        if (result.results && Array.isArray(result.results)) {
+                            result.results.forEach(item => {
+                                searchResults.push({
+                                    title: item.title || '未知标题',
+                                    snippet: item.content || '',
+                                    url: item.url || '',
+                                    source: 'Tavily',
+                                    score: item.score  // 相关性评分
+                                });
+                            });
+                        }
+
+                        console.log(`✅ Tavily搜索完成，获得 ${searchResults.length} 条结果 (响应时间: ${result.responseTime || 'N/A'}s)`);
+                        resolve(searchResults);
+                    } catch (parseError) {
+                        console.error('❌ 解析Tavily搜索结果失败:', parseError);
+                        console.error('原始响应:', data);
+                        resolve([]);
+                    }
+                });
+            });
+
+            req.on('error', (err) => {
+                console.error('❌ Tavily网页搜索请求失败:', err);
+                resolve([]);
+            });
+
+            // 设置超时
+            req.setTimeout(15000, () => {
+                console.error('❌ Tavily搜索请求超时');
+                req.destroy();
+                resolve([]);
+            });
+
+            // 发送请求
+            req.write(requestBody);
+            req.end();
+        } catch (error) {
+            console.error('❌ Tavily网页搜索异常:', error);
+            resolve([]);
+        }
+    });
+}
+
+/**
+ * 格式化搜索结果为提示词
+ * @param {Array} results - 搜索结果
+ * @param {string} query - 原始查询
+ * @returns {string} 格式化的搜索结果文本
+ */
+function formatSearchResults(results, query) {
+    if (!results || results.length === 0) {
+        return '';
+    }
+
+    let formatted = `\n\n[网页搜索结果] 关于"${query}":\n\n`;
+
+    results.forEach((result, index) => {
+        formatted += `${index + 1}. ${result.title}\n`;
+        formatted += `   ${result.snippet}\n`;
+        if (result.url) {
+            formatted += `   来源: ${result.url}\n`;
+        }
+        formatted += `\n`;
+    });
+
+    formatted += `注意：以上是网页搜索结果，请基于这些信息回答用户问题。\n`;
+
+    return formatted;
+}
+
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 'sk-',
+        apiKey: 'sk',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         models: ['qwen-flash', 'qwen-plus', 'qwen-max']
     },
     deepseek: {
-        apiKey: 'sk-',
+        apiKey: 'sk',
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
         models: ['deepseek-chat', 'deepseek-reasoner']
+    },
+    deepseek_v3_2_speciale: {
+        apiKey: 'sk',
+        baseURL: 'https://api.deepseek.com/v3.2_speciale_expires_on_20251215/chat/completions',
+        models: ['deepseek-reasoner'],  // 特殊端点使用标准模型名
+        // 此模型只支持思考模式，支持时间截止至北京时间 2025-12-15 23:59
+        expiresAt: '2025-12-15T23:59:00+08:00',
+        thinkingOnly: true  // 标记只支持思考模式
     }
 };
 
@@ -350,6 +504,14 @@ const MODEL_ROUTING = {
         provider: 'deepseek',
         model: 'deepseek-chat',
         thinkingModel: 'deepseek-reasoner'
+    },
+    // DeepSeek-V3.2-Speciale (只支持思考模式, 支持至 2025-12-15)
+    'deepseek-v3.2-speciale': {
+        provider: 'deepseek_v3_2_speciale',
+        model: 'deepseek-reasoner',  // 特殊端点使用标准的 reasoner 模型名
+        thinkingOnly: true,  // 强制开启思考模式
+        maxTokens: 128000,   // 默认和最大上下文长度都是 128K
+        expiresAt: '2025-12-15T23:59:00+08:00'
     },
     // ✅ 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
     'auto': {
@@ -1178,7 +1340,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
-        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3'];
+        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale'];
         if (!VALID_MODELS.includes(finalModel)) {
             console.warn(`⚠️ 无效模型 ${finalModel},回退到 qwen-flash`);
             finalModel = 'qwen-flash';
@@ -1198,11 +1360,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`\n🔌 路由配置: provider=${routing.provider}, model=${routing.model}`);
 
         let actualModel = routing.model;
-
         // DeepSeek思考模式自动切换
         if (finalModel === 'deepseek-v3' && thinkingMode) {
             actualModel = routing.thinkingModel || 'deepseek-reasoner';
             console.log(`🧠 DeepSeek思考模式: 切换到 ${actualModel}`);
+        }
+
+        // DeepSeek-V3.2-Speciale 强制使用思考模式
+        if (finalModel === 'deepseek-v3.2-speciale') {
+            actualModel = 'deepseek-reasoner';  // 特殊端点使用 reasoner
+            console.log(`🧠 DeepSeek-V3.2-Speciale: 强制使用思考模式 (${actualModel})`);
         }
 
         // ✅ 关键修复：验证提供商配置存在（防止404错误）
@@ -1217,12 +1384,41 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         console.log(`✅ API端点: ${providerConfig.baseURL}`);
 
+        // 🔍 网页搜索功能（针对非阿里云模型）
+        let searchContext = '';
+        if (internetMode && routing.provider !== 'aliyun' && finalModel !== 'deepseek-v3.2-speciale') {
+            console.log(`🌐 执行网页搜索（${routing.provider}不支持原生联网）`);
+
+            // 提取用户最后一条消息作为搜索查询
+            const lastMessage = messages[messages.length - 1];
+            const searchQuery = typeof lastMessage.content === 'string'
+                ? lastMessage.content
+                : JSON.stringify(lastMessage.content);
+
+            // 执行搜索
+            const searchResults = await performWebSearch(searchQuery, 5);
+            if (searchResults && searchResults.length > 0) {
+                searchContext = formatSearchResults(searchResults, searchQuery);
+                console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果)`);
+            } else {
+                console.log(`⚠️ 未获取到搜索结果 - DuckDuckGo API可能对此查询无响应`);
+            }
+        } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
+            console.log(`ℹ️ DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
+        }
+
         // 构建消息数组
         const finalMessages = [...messages];
-        if (systemPrompt) {
+
+        // 添加系统提示词（包含搜索结果）
+        const systemContent = searchContext
+            ? `${systemPrompt || ''}\n${searchContext}`.trim()
+            : systemPrompt;
+
+        if (systemContent) {
             finalMessages.unshift({
                 role: 'system',
-                content: systemPrompt
+                content: systemContent
             });
         }
 
@@ -1514,41 +1710,25 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 );
             });
 
-            // 4. 如果提取到标题,检查是否需要更新会话标题
+            // 4. 如果提取到标题,更新会话标题（每次对话都更新）
             if (extractedTitle) {
-                // 检查消息数量,只在新对话时更新标题
-                await new Promise((resolve) => {
-                    db.get(
-                        'SELECT COUNT(*) as count FROM messages WHERE session_id = ?',
-                        [sessionId],
-                        (err, row) => {
-                            if (!err && row && row.count <= 2) {
-                                // 这是新对话的首次回复,更新标题
-                                db.run(
-                                    'UPDATE sessions SET title = ? WHERE id = ?',
-                                    [extractedTitle, sessionId],
-                                    (updateErr) => {
-                                        if (!updateErr) {
-                                            console.log(`✅ 会话标题已更新: "${extractedTitle}"`);
-                                            // 通知前端标题更新
-                                            res.write(`data: ${JSON.stringify({
-                                                type: 'title',
-                                                title: extractedTitle
-                                            })}\n\n`);
-                                        } else {
-                                            console.error('❌ 更新会话标题失败:', updateErr);
-                                        }
-                                        resolve();
-                                    }
-                                );
-                            } else {
-                                // 不是新对话,不更新标题
-                                console.log('⏭️ 非首次对话,跳过标题更新');
-                                resolve();
-                            }
+                // 每次对话都更新标题，不再限制只在新对话时更新
+                db.run(
+                    'UPDATE sessions SET title = ? WHERE id = ?',
+                    [extractedTitle, sessionId],
+                    (updateErr) => {
+                        if (!updateErr) {
+                            console.log(`✅ 会话标题已更新: "${extractedTitle}"`);
+                            // 通知前端标题更新
+                            res.write(`data: ${JSON.stringify({
+                                type: 'title',
+                                title: extractedTitle
+                            })}\n\n`);
+                        } else {
+                            console.error('❌ 更新会话标题失败:', updateErr);
                         }
-                    );
-                });
+                    }
+                );
             }
 
             // 5. 更新会话时间戳
