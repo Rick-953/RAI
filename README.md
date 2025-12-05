@@ -1,457 +1,264 @@
-# RAI v0.5
-轻量化AI界面，包含前后端，支持联网和思考功能，支持多个api。内置路由模型功能，已经有基础功能。
-个人可以使用，修改，商用需要联系rick080402@gmail.com  
-
-**访问rick.quest然后选择RAI即可在线体验！**   
-
-可以通过 https://rick.rth2.xyz/ai/main.html#how-it-works 观看介绍
-================================================================================
-                           RAI 项目文档 v0.5
-                       (带智能模型路由版本)
-================================================================================
-
-生成日期: 2025-12-05
-项目类型: AI 聊天助手Web应用
-技术栈: HTML + CSS + JavaScript (前端) / Node.js + Express + SQLite (后端)
-
-================================================================================
-                           一、目前已有功能
-================================================================================
-
-【用户系统】
-  ✓ 用户注册/登录 (邮箱 + 密码)
-  ✓ JWT 令牌认证 (30天有效期)
-  ✓ 用户头像上传和更新
-  ✓ 设备指纹记录
-  ✓ 登录限流保护 (15分钟内最多20次)
-
-【会话管理】
-  ✓ 新建对话
-  ✓ 对话列表 (侧边栏显示)
-  ✓ 对话历史记录
-  ✓ 删除对话
-  ✓ 对话标题自动生成和更新
-  ✓ 会话搜索功能
-
-【AI聊天核心】
-  ✓ 流式响应 (SSE) - 打字机效果输出
-  ✓ Markdown 渲染支持
-  ✓ 数学公式渲染 (KaTeX支持 LaTeX语法)
-  ✓ 代码块高亮显示
-  ✓ 消息复制功能
-  ✓ 停止生成功能
-
-【智能模型路由系统】★★★ 核心特色功能 ★★★
-  ✓ Auto模式 - 根据问题复杂度自动选择模型
-  ✓ 五维度复杂度评估:
-      - 输入长度评估
-      - 代码检测 (识别编程语言、代码特征)
-      - 数学公式检测
-      - 推理复杂度分析
-      - 语言混合度分析
-  ✓ 关键词触发机制 (情绪词/专业词汇/复杂值词)
-  ✓ 预设答案快速通道 (常见问候语极速响应)
-
-【多模型支持】
-  ✓ 阿里云通义千问:
-      - qwen-flash (极速模式)
-      - qwen-plus (智能模式)
-      - qwen-max (专家模式)
-  ✓ DeepSeek:
-      - deepseek-v3 (标准对话)
-      - deepseek-reasoner (思考模式)
-      - deepseek-v3.2-speciale (特殊版，仅支持思考模式)
-
-【联网搜索功能】
-  ✓ Tavily API 搜索集成
-  ✓ 阿里云原生联网搜索 (enable_search)
-  ✓ 搜索结果自动注入到对话上下文
-  ✓ 联网模式一键开关
-
-【思考模式 (Chain of Thought)】
-  ✓ DeepSeek 思考模式 (reasoning_content)
-  ✓ 阿里云思考模式 (enable_thinking)
-  ✓ 思考预算控制 (thinking_budget)
-  ✓ 思考过程可视化 (折叠/展开)
-  ✓ 思考过程逐句显示动画
-
-【用户配置】
-  ✓ 主题切换 (深色/浅色)
-  ✓ 默认模型设置
-  ✓ 温度参数 (temperature)
-  ✓ Top-P 参数
-  ✓ 最大输出长度 (max_tokens)
-  ✓ 频率惩罚 (frequency_penalty)
-  ✓ 存在惩罚 (presence_penalty)
-  ✓ 自定义系统提示词
-  ✓ 联网模式默认开启
-  ✓ 思考模式开关
-
-【UI/UX特性】
-  ✓ 响应式设计 (PC/移动端适配)
-  ✓ 侧边栏收缩展开
-  ✓ 欢迎页面带动画效果 (土星图标浮动动画)
-  ✓ 标题金属光泽动画
-  ✓ 消息滑入动画
-  ✓ 流式输出模糊渐入动画
-  ✓ AI头像呼吸/闪烁动画
-  ✓ 快捷操作卡片
-  ✓ 工具栏按钮悬浮提示
-  ✓ 中英文双语支持
-
-【空间管理 (RAG相关)】
-  ✓ 空间创建和管理
-  ✓ 文档上传功能
-  ✓ 空间切换
-  ✓ 空间文档列表
-
-【安全特性】
-  ✓ API限流 (每分钟100次)
-  ✓ 密码加密存储 (bcrypt)
-  ✓ 请求取消机制
-  ✓ 优雅退出处理
-
-================================================================================
-                        二、建议添加的功能
-================================================================================
-
-【高优先级】
-
-  1. 图片/文件分析能力
-     - 支持上传图片并让AI分析
-     - 支持PDF文档内容提取和对话
-     - 多模态模型集成 (如 GPT-4V, Qwen-VL)
-
-  2. 对话导出功能
-     - 导出为 Markdown 文件
-     - 导出为 PDF
-     - 导出为纯文本
-
-  3. 对话分享功能
-     - 生成分享链接
-     - 设置分享有效期
-     - 访问权限控制
-
-  4. 语音输入/输出
-     - 语音转文字 (STT)
-     - 文字转语音 (TTS)
-     - 语音对话模式
-
-  5. 消息编辑和重新生成
-     - 编辑历史消息
-     - 重新生成AI回复
-     - 分支对话支持
-
-【中优先级】
-
-  6. 插件系统
-     - 代码执行插件
-     - 图表生成插件
-     - 天气/新闻等实用插件
-
-  7. 快捷指令/提示词模板
-     - 预设常用提示词
-     - 自定义提示词库
-     - 一键使用模板
-
-  8. 对话标签和分类
-     - 给对话添加标签
-     - 按标签筛选对话
-     - 对话分组管理
-
-  9. 更多模型接入
-     - OpenAI GPT-4/4o
-     - Claude 3.5 Sonnet
-     - Google Gemini
-     - 本地LLM (Ollama/LM Studio)
-
-  10. 使用统计和分析
-      - Token 使用量统计
-      - 费用估算
-      - 对话统计图表
-
-【低优先级】
-
-  11. 移动端应用
-      - PWA 支持 (已部分支持)
-      - 原生移动APP封装
-
-  12. 团队协作功能
-      - 多用户共享对话
-      - 团队空间
-      - 权限管理
-
-  13. 自定义主题
-      - 更多配色方案
-      - 自定义字体
-      - 界面布局自定义
-
-  14. 历史消息搜索
-      - 全文搜索对话内容
-      - 按日期范围筛选
-      - 高级搜索过滤器
-
-  15. 快捷键支持
-      - 键盘快捷键定义
-      - Vim 模式（高级用户）
-
-================================================================================
-                        三、需要改进的地方
-================================================================================
-
-【代码结构】
-
-  1. 代码拆分和模块化
-     - 当前 index.html 有 7389 行，应拆分:
-       - CSS 提取到独立文件
-       - JavaScript 拆分为多个模块
-       - 组件化设计
-     - server.js 有 1854 行，应拆分:
-       - 路由按功能分离 (auth, chat, session, user)
-       - 智能路由引擎独立模块
-       - 工具函数独立模块
-
-  2. TypeScript 迁移
-     - 增加类型检查
-     - 提高代码可维护性
-     - 更好的IDE支持
-
-【性能优化】
-
-  3. 前端性能
-     - 首屏加载优化 (代码分割)
-     - 图片/资源懒加载
-     - CSS 关键路径优化
-     - 缓存策略优化
-
-  4. 后端性能
-     - 数据库查询优化 (添加索引)
-     - 连接池管理
-     - 响应压缩 (gzip)
-     - 静态资源CDN
-
-【用户体验改进】
-
-  5. 错误处理增强
-     - 更友好的错误提示
-     - 网络断开自动重连
-     - 请求失败自动重试
-
-  6. 加载状态优化
-     - 骨架屏加载
-     - 更细致的加载进度
-     - 离线状态提示
-
-  7. 输入体验
-     - 输入框自动聚焦
-     - 更智能的文本换行
-     - 富文本编辑器 (可选)
-
-  8. 移动端体验
-     - 手势操作支持
-     - 虚拟键盘适配
-     - 输入法兼容性
-
-【安全性增强】
-
-  9. API密钥管理
-     - 移除代码中硬编码的API密钥
-     - 使用环境变量配置
-     - 密钥轮换机制
-
-  10. 内容安全
-      - 输入内容过滤
-      - XSS防护增强
-      - CSRF防护
-
-  11. 认证增强
-      - 双因素认证 (2FA)
-      - 密码强度要求
-      - 登录异常提醒
-
-【测试和文档】
-
-  12. 自动化测试
-      - 单元测试覆盖
-      - 集成测试
-      - E2E测试
-
-  13. 文档完善
-      - API文档 (Swagger/OpenAPI)
-      - 部署文档
-      - 开发者指南
-      - 用户使用手册
-
-【其他改进】
-
-  14. 日志系统
-      - 结构化日志
-      - 日志级别控制
-      - 日志持久化和轮转
-
-  15. 监控告警
-      - 服务健康检查
-      - 性能监控
-      - 异常告警
-
-  16. 配置管理
-      - 配置文件化
-      - 环境区分 (开发/测试/生产)
-      - 动态配置更新
-
-================================================================================
-                            附录: 技术细节
-================================================================================
-
-【项目结构】
-ai/
-├── public/
-│   ├── index.html      # 前端主文件 (HTML + CSS + JS)
-│   └── lib/            # 第三方库
-├── server.js           # 后端主文件
-├── ai_data.db          # SQLite 数据库
-├── uploads/            # 上传文件目录
-├── avatars/            # 用户头像目录
-├── package.json        # Node.js 依赖配置
-└── node_modules/       # 依赖包
-
-【数据库表结构】
-- users: 用户信息
-- sessions: 会话记录
-- messages: 消息记录
-- user_configs: 用户配置
-- active_requests: 活跃请求 (用于取消功能)
-- device_fingerprints: 设备指纹
-
-【API端点】
-- POST /api/auth/register - 用户注册
-- POST /api/auth/login - 用户登录
-- GET /api/auth/verify - 验证令牌
-- GET /api/user/profile - 获取用户信息
-- PUT /api/user/config - 更新用户配置
-- GET /api/sessions - 获取会话列表
-- POST /api/sessions - 创建会话
-- DELETE /api/sessions/:id - 删除会话
-- POST /api/chat/stream - 流式聊天
-- POST /api/chat/stop - 停止生成
-
-================================================================================
-                              文档结束
-================================================================================
-
-<img width="2584" height="1707" alt="image" src="https://github.com/user-attachments/assets/3e1b6ec5-60bb-47d0-a661-956fa486f59e" />
-
-
-
-
-
-模型路由：
-<img width="4595" height="5829" alt="RAI模型路由" src="https://github.com/user-attachments/assets/b4726c1b-cba3-4ade-b6d9-68225ab29082" />
+<div align="center">
+
+# RAI
+
+### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
+
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
+[![License](https://img.shields.io/badge/License-Personal_Free-F59E0B?style=flat-square)](#-授权与商用)
+
+**RAI** 是一款支持智能模型路由的 AI 聊天助手，能够根据问题复杂度自动选择最佳模型，提供高效、智能的对话体验。
+
+[English](#english) | [功能特性](#-功能特性) | [快速开始](#-快速开始) | [模型路由](#-智能模型路由) | [在线体验](#-在线体验)
+
+</div>
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/star-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 功能特性
+
+### <img src="https://api.iconify.design/material-symbols/robot-2-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 多模型支持
+- **阿里云通义千问**: Qwen-Flash / Qwen-Plus / Qwen-Max
+- **DeepSeek**: DeepSeek-V3 / DeepSeek-Reasoner / DeepSeek-V3.2-Speciale
+
+### <img src="https://api.iconify.design/material-symbols/psychology.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 智能模型路由 (核心特色)
+- **Auto 模式**: 根据问题复杂度自动选择最佳模型
+- **五维度分析**: 输入长度、代码检测、数学公式、推理复杂度、语言混合度
+- **关键词触发**: 情绪词、专业术语、复杂值词智能识别
+- **预设答案**: 常见问候语极速响应，零成本零延迟
+
+### <img src="https://api.iconify.design/material-symbols/language.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 联网搜索
+- Tavily API 实时搜索集成
+- 阿里云原生联网搜索支持
+- 搜索结果自动注入对话上下文
+
+### <img src="https://api.iconify.design/material-symbols/thinking-problem-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 思考模式 (Chain of Thought)
+- DeepSeek Reasoner 深度推理
+- 阿里云 Qwen 思考模式
+- 思考过程可视化展示
+- 思考预算可调控
+
+### <img src="https://api.iconify.design/material-symbols/devices.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 现代化 UI
+- 响应式设计，完美适配 PC / 移动端
+- 深色 / 浅色主题切换
+- 流式输出，打字机效果
+- Markdown + LaTeX 数学公式渲染
+- 精美动画效果
+
+### <img src="https://api.iconify.design/material-symbols/lock-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 安全可靠
+- JWT 令牌认证
+- API 限流保护
+- 密码加密存储
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/rocket-launch-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 快速开始
+
+### 环境要求
+
+- Node.js 18+
+- npm 或 yarn
+
+### 安装步骤
+
+```bash
+# 克隆项目
+git clone https://github.com/yourusername/RAI.git
+cd RAI/ai
+
+# 安装依赖
+npm install
+
+# 启动服务
+node server.js
+```
+
+### 访问应用
+
+打开浏览器访问: `http://localhost:3009`
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/hub.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 智能模型路由
+
+RAI 的核心特色是**智能模型路由系统**，能够自动分析用户输入并选择最合适的 AI 模型。
+
+<div align="center">
+<img width="800" alt="RAI模型路由" src="https://github.com/user-attachments/assets/b4726c1b-cba3-4ade-b6d9-68225ab29082" />
+</div>
+
+### 路由策略
+
+| 复杂度评分 | 选择模型 | 适用场景 |
+|:---:|:---:|:---|
+| < 0.40 | Qwen-Flash | 简单问答、日常聊天 |
+| 0.40 - 0.80 | Qwen-Plus | 中等复杂度问题 |
+| ≥ 0.80 | Qwen-Max | 专业问题、深度分析 |
+
+### 五维度评估
+
+```
+📏 输入长度     ████████░░  权重: 15%
+💻 代码检测     ████████░░  权重: 30%
+📐 数学公式     ████████░░  权重: 25%
+🧠 推理复杂度   ████████░░  权重: 25%
+🌍 语言混合     ██░░░░░░░░  权重: 5%
+```
+
+### 特殊触发词
+
+- **强制 Max**: 情绪词、强调词、重要标点
+- **专业升级**: 技术术语、编程概念、数学词汇
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/play-circle-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 在线体验
+
+- **在线试用**: 访问 [rick.quest](https://rick.quest) 并选择 **RAI** 即可在线体验。
+- **功能演示**: 观看详细介绍 [RAI 介绍页](https://rick.rth2.xyz/ai/main.html#how-it-works)
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/menu-book-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> API 文档
+
+### 认证相关
+
+| 端点 | 方法 | 描述 |
+|:---|:---:|:---|
+| `/api/auth/register` | POST | 用户注册 |
+| `/api/auth/login` | POST | 用户登录 |
+| `/api/auth/verify` | GET | 验证令牌 |
+
+### 用户相关
+
+| 端点 | 方法 | 描述 |
+|:---|:---:|:---|
+| `/api/user/profile` | GET | 获取用户信息 |
+| `/api/user/config` | PUT | 更新用户配置 |
+| `/api/user/avatar` | POST | 上传头像 |
+
+### 会话相关
+
+| 端点 | 方法 | 描述 |
+|:---|:---:|:---|
+| `/api/sessions` | GET | 获取会话列表 |
+| `/api/sessions` | POST | 创建新会话 |
+| `/api/sessions/:id` | PUT | 更新会话 |
+| `/api/sessions/:id` | DELETE | 删除会话 |
+
+### 聊天相关
+
+| 端点 | 方法 | 描述 |
+|:---|:---:|:---|
+| `/api/chat/stream` | POST | 流式聊天 (SSE) |
+| `/api/chat/stop` | POST | 停止生成 |
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/build-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 技术栈
+
+<div align="center">
+
+| 前端 | 后端 | 数据库 | AI 服务 |
+|:---:|:---:|:---:|:---:|
+| HTML5 | Node.js | SQLite | 阿里云百炼 |
+| CSS3 | Express | - | DeepSeek |
+| JavaScript | JWT | - | Tavily |
+| KaTeX | bcrypt | - | - |
+
+</div>
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/folder-open-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 项目结构
+
+```
+RAI/
+├── ai/
+│   ├── public/
+│   │   ├── index.html      # 前端主文件
+│   │   └── lib/            # 第三方库
+│   ├── server.js           # 后端服务
+│   ├── ai_data.db          # SQLite 数据库
+│   ├── uploads/            # 上传文件
+│   ├── avatars/            # 用户头像
+│   └── package.json        # 依赖配置
+└── README.md
+```
+
+---
+
+## <img src="https://api.iconify.design/material-symbols/license.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 授权与商用
+
+**个人用户免费支持分支**。
+
+如需**商业用途**，请联系：[rick080402@gmail.com](mailto:rick080402@gmail.com)
+
+---
+
+<div align="center">
 
 # English
-Intelligent Model Routing System  
-<img width="5278" height="7299" alt="RAI Intelligent Model Routing System" src="https://github.com/user-attachments/assets/944d7b69-8838-4a94-bd18-7a682d44070a" />
 
+## RAI - Intelligent AI Chat Assistant
 
+A smart AI chat assistant with **Intelligent Model Routing** that automatically selects the best model based on query complexity.
 
+</div>
 
-请容许我整个活：  
+### <img src="https://api.iconify.design/material-symbols/star-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Key Features
 
+- **<img src="https://api.iconify.design/material-symbols/robot-2-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Multi-Model Support**: Qwen (Flash/Plus/Max) + DeepSeek (V3/Reasoner)
+- **<img src="https://api.iconify.design/material-symbols/psychology.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Smart Routing**: Auto-select optimal model based on 5-dimension analysis
+- **<img src="https://api.iconify.design/material-symbols/language.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Web Search**: Real-time internet search via Tavily API
+- **<img src="https://api.iconify.design/material-symbols/thinking-problem-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Thinking Mode**: Chain-of-thought reasoning with visualization
+- **<img src="https://api.iconify.design/material-symbols/devices.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Modern UI**: Responsive design, dark/light themes, streaming output
+- **<img src="https://api.iconify.design/material-symbols/lock-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Secure**: JWT auth, rate limiting, encrypted passwords
 
-# RAI v0.5 定制版上线，高效激活思维引擎
+### <img src="https://api.iconify.design/material-symbols/hub.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Intelligent Model Routing System
 
-**原创 | Rick-953 | RAI智能助手 | 2025年11月27日**
+<div align="center">
+<img width="800" alt="RAI Intelligent Model Routing System" src="https://github.com/user-attachments/assets/944d7b69-8838-4a94-bd18-7a682d44070a" />
+</div>
 
-今天，RAI（Router AI Intelligence）正式推出基于智能路由架构（Mixture of APIs & Reasoning）的定制版思维伙伴——一个专为人类碳基大脑设计的**轻量化认知增强系统**，旨在应对现代人在信息过载、决策疲劳、创意枯竭等场景下的"算力瓶颈"问题。
+The routing engine evaluates queries across **5 dimensions**:
 
-它不仅是一个AI对话界面，更是我们为复杂思考场景专门开发的**智能任务调度引擎**，能够自动识别问题复杂度，动态分配最优模型资源，实现"简单问题秒回，复杂问题深思"的差异化响应策略。
+| Dimension | Weight | Description |
+|:---|:---:|:---|
+| Input Length | 15% | Message character count |
+| Code Detection | 30% | Programming language & syntax |
+| Math Formula | 25% | Mathematical expressions |
+| Reasoning | 25% | Logic complexity indicators |
+| Language Mix | 5% | Multi-language presence |
 
-## SOTA级性能表现
+### <img src="https://api.iconify.design/material-symbols/rocket-launch-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Quick Start
 
-在 **ThinkSpeed-0**（推理速度）、**RouterBench**（路由准确度）、**CostEfficiency**（成本效益比）、**StreamFlow**（流式体验）、**ReasoningDepth**（思考深度）等多项内部基准测试中，RAI v0.5 的表现均达到个人项目的 State of the Art 水平，在复杂推理、代码生成、联网搜索等任务上取得全面提升。
+```bash
+git clone https://github.com/yourusername/RAI.git
+cd RAI/ai
+npm install
+node server.js
+```
 
-现已在 rick.quest 上线体验，支持桌面端与移动端无缝切换。
+Visit `http://localhost:3009` in your browser.
 
-***
+### <img src="https://api.iconify.design/material-symbols/play-circle-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Online Demo
 
-## 智能路由引擎 v4 新突破
+- **Try it out**: Visit [rick.quest](https://rick.quest) and select **RAI**.
+- **Introduction**: Watch how it works at [Introduction Page](https://rick.rth2.xyz/ai/main.html#how-it-works)
 
-不同于市面上的单模型方案，RAI 采用了**动态多模型混合架构**，内置智能路由决策系统。该系统能够实时分析用户输入的"思维负荷"，并自动选择最适配的模型通道：
+### <img src="https://api.iconify.design/material-symbols/license.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> License & Commercial Use
 
-### 三层模型调度策略
+**Free for personal use and supporting branches.**
 
-- **Flash 通道（qwen-flash）**：专注于日常对话、简单查询等低负荷任务，实现毫秒级响应，解决"等待焦虑"问题
-- **Plus 通道（qwen-plus）**：处理中等复杂度任务，在速度与质量间取得最优平衡
-- **Max 通道（qwen-max + deepseek-v3）**：针对代码生成、复杂推理、学术分析等高负荷场景，提供顶级算力支持
+For **commercial use**, please contact: [rick080402@gmail.com](mailto:rick080402@gmail.com)
 
-### 智能分析维度
+---
 
-路由引擎通过多维度特征提取实现精准判断：
+<div align="center">
 
-- **输入长度评估**：自动识别简短问候 vs 长文分析需求
-- **代码特征检测**：识别编程语言、SQL、HTML等技术内容，强制走 Max 通道
-- **推理需求判定**：检测"为什么"、"证明"、"分析"等关键词，提升模型等级
-- **语言复杂度**：评估中英文混合、专业术语密度
+Made with <img src="https://api.iconify.design/material-symbols/favorite.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> by RAI Team
 
-在 **RouterAccuracy-Verified**（路由准确度验证）测试中，RAI 取得了 **94.7%** 的任务-模型匹配精度，成功避免了"大炮打蚊子"和"小刀砍大树"的资源错配问题。
-
-***
-
-## 深度思考模式：Reasoning-as-a-Service
-
-依托 DeepSeek-Reasoner 的推理能力，RAI 实现了**思考过程可视化**功能。用户可以实时看到 AI 的推理链路，就像打开了一个"透明大脑"：
-
-- **Input 层**：问题理解与拆解，构建思考框架
-- **Middle 层**：多步推理展开，逻辑链条推演
-- **Output 层**：结论生成与验证，质量自检机制
-
-在知名的 **Reasoning-Token-Efficiency**（推理效率）测试中，RAI 的思考模式在数学证明、代码调试、逻辑推理等任务上展现出**平均 3.2 倍**的问题解决效率提升。
-
-***
-
-## 两种部署模式
-
-为了适应不同用户的使用习惯，RAI 支持灵活配置：
-
-### 本地部署（Self-Hosted Mode）
-专注于数据隐私与完全控制权。基于 Node.js + SQLite 的轻量架构，可在个人服务器或 VPS 上快速部署。注意：需要自行配置 API 密钥，首次部署可能需要 10-15 分钟环境准备时间。
-
-### 云端体验（Cloud Mode）
-即开即用，无需配置。访问 rick.quest 直接使用，支持账户系统、会话历史、跨设备同步。注意：依赖网络连接，离线场景下无法使用（这是符合云服务特性的 Feature 而非 Bug）。
-
-***
-
-## 别走开，还有一些技术细节
-
-本文由 Rick-953 与 AI 协作完成，记录了 RAI 项目从 v0.1 到 v0.5 的核心迭代。
-
-RAI 的核心价值不仅在于技术实现，更在于**降低了普通人使用多模型 AI 的门槛**。无需理解模型差异、无需手动切换、无需担心成本优化——智能路由引擎会自动完成这一切。
-
-项目完全开源在 GitHub（Rick-953/RAI），我们希望更多开发者看到"路由即智能"的设计理念。
-
-### 技术亮点速览
-
-- **粒子背景动画**：基于 Canvas 的视觉增强
-- **移动端键盘优化**：专门解决 iOS/Android 软键盘遮挡问题
-- **AI 生成对话标题**：自动总结会话主题
-- **流式思考传输**：SSE 技术实现打字机效果的思考过程展示
-
-***
-
-## 要不要现在就来试试？
-
-访问 **rick.quest**，选择 RAI 即可在线体验。
-
-❤️ **温馨提示**：本系统需要联网才能调用 AI 模型。长时间深度思考可能消耗较多 Token，请根据自身需求合理使用。推荐配合"思考预算"功能（Thinking Budget）控制推理深度。
-
-欢迎在评论区分享你与 RAI 的对话截图，我们会精选有趣的使用案例在社区展示！
-
-***
-
-**项目仓库**：https://github.com/Rick-953/RAI  
-**在线体验**：https://rick.quest  
-**联系方式**：rick080402@gmail.com
-
-*路由即智能 | Intelligence Through Routing*
-
-
+</div>
