@@ -9,7 +9,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![License](https://img.shields.io/badge/License-Personal_Free-F59E0B?style=flat-square)](#-授权与商用)
 
-**RAI** 是一款支持智能模型路由的 AI 聊天助手，能够根据问题复杂度自动选择最佳模型，提供高效、智能的对话体验。
+**RAI** 内置模型路由，能够根据问题复杂度自动选择最佳模型，0成本，低延时的机制体验:D
 
 [English](#english) | [功能特性](#-功能特性) | [快速开始](#-快速开始) | [模型路由](#-智能模型路由) | [在线体验](#-在线体验)
 
