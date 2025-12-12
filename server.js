@@ -330,7 +330,7 @@ function analyzeMessage(message) {
 // ==================== 网页搜索功能 (Tavily API) ====================
 
 // Tavily API 配置
-const TAVILY_API_KEY = 'tvly';
+const TAVILY_API_KEY = 'tvly-dev-';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 /**
@@ -354,6 +354,7 @@ async function performWebSearch(query, maxResults = 5) {
                 include_raw_content: false,    // 不需要原始HTML内容
                 max_results: Math.min(maxResults, 20),  // 限制最大20条
                 include_images: false,         // 不需要图片
+                include_favicon: true,         // 包含网站图标
                 topic: 'general'               // 通用搜索
             });
 
@@ -407,6 +408,7 @@ async function performWebSearch(query, maxResults = 5) {
                                     title: item.title || '未知标题',
                                     snippet: item.content || '',
                                     url: item.url || '',
+                                    favicon: item.favicon || '',  // 包含favicon
                                     source: 'Tavily',
                                     score: item.score  // 相关性评分
                                 });
@@ -446,7 +448,7 @@ async function performWebSearch(query, maxResults = 5) {
 }
 
 /**
- * 格式化搜索结果为提示词
+ * 格式化搜索结果为提示词（带角标引用指引）
  * @param {Array} results - 搜索结果
  * @param {string} query - 原始查询
  * @returns {string} 格式化的搜索结果文本
@@ -456,41 +458,273 @@ function formatSearchResults(results, query) {
         return '';
     }
 
-    let formatted = `\n\n[网页搜索结果] 关于"${query}":\n\n`;
+    let formatted = `\n\n[网页搜索结果] 关于"${query}"：\n\n`;
 
-    results.forEach((result, index) => {
-        formatted += `${index + 1}. ${result.title}\n`;
+    // 跳过AI摘要，只使用实际网页来源
+    const webResults = results.filter(r => r.url && r.url.trim() !== '');
+
+    webResults.forEach((result, index) => {
+        const citationNum = index + 1;
+        formatted += `[${citationNum}] ${result.title}\n`;
         formatted += `   ${result.snippet}\n`;
-        if (result.url) {
-            formatted += `   来源: ${result.url}\n`;
-        }
-        formatted += `\n`;
+        formatted += `   来源: ${result.url}\n\n`;
     });
 
-    formatted += `注意：以上是网页搜索结果，请基于这些信息回答用户问题。\n`;
+    // 指示模型使用角标引用
+    formatted += `\n重要指示：
+1. 请基于以上搜索结果回答用户问题
+2. 在回答中使用角标标记信息来源，格式为 [1]、[2] 等
+3. 例如："根据最新数据，该产品售价为999元[1]。"
+4. 每个角标对应上方的搜索结果编号\n`;
 
     return formatted;
+}
+
+/**
+ * 新增：提取用于SSE传输的来源信息
+ * @param {Array} results - 搜索结果
+ * @returns {Array} 简化的来源数组
+ */
+function extractSourcesForSSE(results) {
+    if (!results || results.length === 0) return [];
+
+    // 跳过AI摘要，只返回实际网页来源
+    return results
+        .filter(r => r.url && r.url.trim() !== '')
+        .map((r, index) => ({
+            index: index + 1,
+            title: r.title || '未知标题',
+            url: r.url,
+            favicon: r.favicon || '',
+            site_name: r.url ? new URL(r.url).hostname.replace('www.', '') : ''
+        }));
+}
+
+// ==================== 多模态内容处理 (Qwen3-Omni-Flash) ====================
+
+/**
+ * 检测消息中是否包含多模态内容
+ * @param {object} message - 消息对象
+ * @returns {object} { hasMultimodal: boolean, types: string[] }
+ */
+function detectMultimodalContent(message) {
+    const result = {
+        hasMultimodal: false,
+        types: [],  // 'image', 'audio', 'video'
+        count: 0
+    };
+
+    if (!message || !message.content) return result;
+
+    // 🔍 调试：打印消息结构
+    console.log(`🔍 检测消息多模态内容:`, {
+        role: message.role,
+        contentType: typeof message.content,
+        hasAttachments: !!message.attachments,
+        attachmentsCount: message.attachments?.length || 0
+    });
+
+    // 如果content是数组，检查是否包含多模态内容
+    if (Array.isArray(message.content)) {
+        message.content.forEach(item => {
+            if (item.type === 'image_url' || item.type === 'image') {
+                result.hasMultimodal = true;
+                result.types.push('image');
+                result.count++;
+            }
+            if (item.type === 'input_audio' || item.type === 'audio') {
+                result.hasMultimodal = true;
+                result.types.push('audio');
+                result.count++;
+            }
+            if (item.type === 'video') {
+                result.hasMultimodal = true;
+                result.types.push('video');
+                result.count++;
+            }
+        });
+    }
+
+    // 检查message对象是否有attachments字段
+    if (message.attachments && Array.isArray(message.attachments)) {
+        console.log(`📎 发现附件:`, message.attachments.map(a => ({ type: a.type, fileName: a.fileName })));
+        message.attachments.forEach(att => {
+            if (att.type === 'image') {
+                result.hasMultimodal = true;
+                result.types.push('image');
+                result.count++;
+            }
+            if (att.type === 'audio') {
+                result.hasMultimodal = true;
+                result.types.push('audio');
+                result.count++;
+            }
+            if (att.type === 'video') {
+                result.hasMultimodal = true;
+                result.types.push('video');
+                result.count++;
+            }
+        });
+    }
+
+    console.log(`🔍 检测结果:`, result);
+    return result;
+}
+
+/**
+ * 检测消息数组中是否有多模态内容
+ * @param {Array} messages - 消息数组
+ * @returns {object} 多模态检测结果
+ */
+function detectMultimodalInMessages(messages) {
+    const result = {
+        hasMultimodal: false,
+        types: [],
+        totalCount: 0
+    };
+
+    if (!messages || !Array.isArray(messages)) return result;
+
+    for (const msg of messages) {
+        const detection = detectMultimodalContent(msg);
+        if (detection.hasMultimodal) {
+            result.hasMultimodal = true;
+            result.types.push(...detection.types);
+            result.totalCount += detection.count;
+        }
+    }
+
+    // 去重
+    result.types = [...new Set(result.types)];
+    return result;
+}
+
+/**
+ * 将带附件的消息转换为Qwen3-Omni-Flash格式
+ * @param {object} message - 原始消息
+ * @returns {object} 转换后的消息
+ */
+function convertToOmniFormat(message) {
+    if (!message || !message.content) return message;
+
+    // 如果没有附件，检查content是否已经是数组格式
+    if (!message.attachments || message.attachments.length === 0) {
+        // 如果content已经是数组格式（包含多模态内容），直接返回
+        if (Array.isArray(message.content)) {
+            return message;
+        }
+        // 纯文本消息
+        return message;
+    }
+
+    // 将消息转换为多模态格式
+    const contentArray = [];
+
+    // 处理附件
+    message.attachments.forEach(attachment => {
+        if (attachment.type === 'image') {
+            // 图片使用image_url格式
+            contentArray.push({
+                type: 'image_url',
+                image_url: {
+                    url: attachment.data  // Base64 data URL
+                }
+            });
+        } else if (attachment.type === 'audio') {
+            // 音频使用input_audio格式
+            contentArray.push({
+                type: 'input_audio',
+                input_audio: {
+                    data: attachment.data  // Base64 data URL
+                }
+            });
+        } else if (attachment.type === 'video') {
+            // 视频使用video格式
+            contentArray.push({
+                type: 'video',
+                video: [attachment.data]  // 视频需要数组格式
+            });
+        }
+    });
+
+    // 添加文本内容
+    if (typeof message.content === 'string' && message.content.trim()) {
+        contentArray.push({
+            type: 'text',
+            text: message.content
+        });
+    }
+
+    return {
+        role: message.role,
+        content: contentArray
+    };
+}
+
+/**
+ * 转换消息数组为多模态格式
+ * @param {Array} messages - 原始消息数组
+ * @returns {Array} 转换后的消息数组
+ */
+function convertMessagesToOmniFormat(messages) {
+    if (!messages || !Array.isArray(messages)) return messages;
+
+    return messages.map(msg => {
+        // 只转换可能包含附件的用户消息
+        if (msg.role === 'user') {
+            return convertToOmniFormat(msg);
+        }
+        return msg;
+    });
+}
+
+/**
+ * 获取多模态消息的类型描述
+ * @param {Array} types - 多模态类型数组
+ * @returns {string} 类型描述
+ */
+function getMultimodalTypeDescription(types) {
+    const map = {
+        'image': '图片',
+        'audio': '音频',
+        'video': '视频'
+    };
+    return types.map(t => map[t] || t).join('、');
 }
 
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 'sk',
+        apiKey: 'sk-',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         models: ['qwen-flash', 'qwen-plus', 'qwen-max']
     },
+    // Qwen3-Omni-Flash 多模态模型 (支持图片、音频、视频输入和语音输出)
+    aliyun_omni: {
+        apiKey: 'sk-',
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        models: ['qwen3-omni-flash'],
+        multimodal: true,  // 标记支持多模态
+        audioOutput: true  // 支持语音输出
+    },
     deepseek: {
-        apiKey: 'sk',
+        apiKey: 'sk-',
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
         models: ['deepseek-chat', 'deepseek-reasoner']
     },
     deepseek_v3_2_speciale: {
-        apiKey: 'sk',
+        apiKey: 'sk-',
         baseURL: 'https://api.deepseek.com/v3.2_speciale_expires_on_20251215/chat/completions',
         models: ['deepseek-reasoner'],  // 特殊端点使用标准模型名
         // 此模型只支持思考模式，支持时间截止至北京时间 2025-12-15 23:59
         expiresAt: '2025-12-15T23:59:00+08:00',
         thinkingOnly: true  // 标记只支持思考模式
+    },
+    // 硅基流动 SiliconFlow - Kimi K2 模型
+    siliconflow: {
+        apiKey: 'sk-',
+        baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
+        models: ['moonshotai/Kimi-K2-Thinking', 'moonshotai/Kimi-K2-Instruct-0905']
     }
 };
 
@@ -500,6 +734,14 @@ const MODEL_ROUTING = {
     'qwen-flash': { provider: 'aliyun', model: 'qwen-flash' },
     'qwen-plus': { provider: 'aliyun', model: 'qwen-plus' },
     'qwen-max': { provider: 'aliyun', model: 'qwen-max' },
+    // Qwen3-Omni-Flash 多模态模型 (图片/音频/视频输入 + 语音输出)
+    'qwen3-omni-flash': {
+        provider: 'aliyun_omni',
+        model: 'qwen3-omni-flash',
+        multimodal: true,   // 标记支持多模态
+        audioOutput: true,  // 支持语音输出
+        streamRequired: true // 必须开启流式
+    },
     'deepseek-v3': {
         provider: 'deepseek',
         model: 'deepseek-chat',
@@ -513,7 +755,13 @@ const MODEL_ROUTING = {
         maxTokens: 128000,   // 默认和最大上下文长度都是 128K
         expiresAt: '2025-12-15T23:59:00+08:00'
     },
-    // ✅ 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
+    // Kimi K2 - 月之暗面高性能模型
+    'kimi-k2': {
+        provider: 'siliconflow',
+        model: 'Kimi-K2-Instruct',  // 修复：使用正确的模型名称格式
+        supportsWebSearch: true  // 支持Tavily联网搜索
+    },
+    // 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
     'auto': {
         provider: 'auto',  // 虚拟提供商，表示需要动态决策
         model: 'auto',     // 虚拟模型，表示需要通过智能路由选择
@@ -675,6 +923,15 @@ db.serialize(() => {
                 console.warn(`⚠️ 添加internet_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
                 console.log('✅ 已添加internet_mode列到messages表');
+            }
+        });
+
+        // 添加sources列到messages表（如果不存在）- 存储联网搜索来源信息（JSON格式）
+        db.run(`ALTER TABLE messages ADD COLUMN sources TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加sources列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加sources列到messages表');
             }
         });
     });
@@ -1037,7 +1294,12 @@ app.get('/api/sessions', authenticateToken, (req, res) => {
     db.all(
         `SELECT s.*,
       (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
-      (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message
+      (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message,
+      (SELECT GROUP_CONCAT(attachments, '|||') FROM (
+        SELECT attachments FROM messages 
+        WHERE session_id = s.id AND attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
+        ORDER BY created_at DESC LIMIT 2
+      )) as recent_attachments
     FROM sessions s
     WHERE s.user_id = ? AND s.is_archived = 0
     ORDER BY s.updated_at DESC`,
@@ -1149,7 +1411,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const {
             sessionId,
             messages,
-            model = 'auto',  // 🔥 默认为auto模式
+            model = 'auto',  // 默认为auto模式
             thinkingMode = false,
             thinkingBudget = 1024,
             internetMode = false,
@@ -1162,6 +1424,15 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         } = req.body;
 
         console.log(`🔍 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}`);
+
+        // 🔍 调试：打印收到的消息结构
+        console.log(`📨 收到 ${messages.length} 条消息:`);
+        messages.forEach((m, i) => {
+            console.log(`   [${i}] role=${m.role}, hasAttachments=${!!m.attachments}, attachmentsCount=${m.attachments?.length || 0}`);
+            if (m.attachments && m.attachments.length > 0) {
+                console.log(`       附件详情:`, m.attachments.map(a => ({ type: a.type, fileName: a.fileName, hasData: !!a.data })));
+            }
+        });
 
         if (!messages || !Array.isArray(messages) || messages.length === 0) {
             return res.status(400).json({ error: '消息不能为空' });
@@ -1285,15 +1556,28 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return;
         }
 
-        // 🔥 智能路由：根据最后一条用户消息自动选择模型
+        // 智能路由：根据最后一条用户消息自动选择模型
         let finalModel = model;  // 最终选中的模型类型（qwen-flash/plus/max或deepseek-v3）
         let routing = null;      // 对应的路由配置
         let autoRoutingReason = '';
 
-        console.log(`\n� 模型选择开始: 用户指定 = ${model}`);
+        console.log(`\n🎯 模型选择开始: 用户指定 = ${model}`);
 
+        // 关键修复：多模态检测必须在auto路由之前执行！
+        const multimodalDetection = detectMultimodalInMessages(messages);
+        let isMultimodalRequest = multimodalDetection.hasMultimodal;
 
-        if (model === 'auto') {
+        if (isMultimodalRequest) {
+            console.log(`\n🎨 🎨 🎨 检测到多模态内容!!!`);
+            console.log(`   类型: ${getMultimodalTypeDescription(multimodalDetection.types)}`);
+            console.log(`   数量: ${multimodalDetection.totalCount}`);
+
+            // 强制切换到多模态模型，跳过所有其他路由逻辑
+            finalModel = 'qwen3-omni-flash';
+            autoRoutingReason = `检测到${getMultimodalTypeDescription(multimodalDetection.types)}，自动切换到Qwen3-Omni-Flash多模态模型`;
+            console.log(`   🔄 强制使用模型: qwen3-omni-flash`);
+        } else if (model === 'auto') {
+            // 只有在没有多模态内容时才使用auto路由
             // 调用智能路由引擎
             const analysis = analyzeMessage(userContent);
 
@@ -1340,14 +1624,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
-        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale'];
+        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'kimi-k2'];
+
+        // 注意：多模态检测已在上面执行，这里不再重复
+
         if (!VALID_MODELS.includes(finalModel)) {
             console.warn(`⚠️ 无效模型 ${finalModel},回退到 qwen-flash`);
             finalModel = 'qwen-flash';
             autoRoutingReason = '无效模型,自动回退到Flash';
         }
 
-        // 🔥 关键修复：现在finalModel已经是具体的模型名，再获取routing
+        // 关键修复：现在finalModel已经是具体的模型名，再获取routing
         routing = MODEL_ROUTING[finalModel];
         if (!routing) {
             console.error(`❌ 模型路由配置未找到: ${finalModel}`);
@@ -1386,6 +1673,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         // 🔍 网页搜索功能（针对非阿里云模型）
         let searchContext = '';
+        let searchSources = [];  // 新增：存储搜索来源用于SSE传输
+
         if (internetMode && routing.provider !== 'aliyun' && finalModel !== 'deepseek-v3.2-speciale') {
             console.log(`🌐 执行网页搜索（${routing.provider}不支持原生联网）`);
 
@@ -1399,16 +1688,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const searchResults = await performWebSearch(searchQuery, 5);
             if (searchResults && searchResults.length > 0) {
                 searchContext = formatSearchResults(searchResults, searchQuery);
-                console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果)`);
+                searchSources = extractSourcesForSSE(searchResults);  // 🔥 提取来源信息
+                console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源)`);
             } else {
-                console.log(`⚠️ 未获取到搜索结果 - DuckDuckGo API可能对此查询无响应`);
+                console.log(`⚠️ 未获取到搜索结果`);
             }
         } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
             console.log(`ℹ️ DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
         }
 
         // 构建消息数组
-        const finalMessages = [...messages];
+        let finalMessages = [...messages];
+
+        // 如果是多模态请求，转换消息格式为Omni格式
+        if (isMultimodalRequest) {
+            finalMessages = convertMessagesToOmniFormat(finalMessages);
+            console.log(`🎨 消息已转换为多模态格式`);
+        }
 
         // 添加系统提示词（包含搜索结果）
         const systemContent = searchContext
@@ -1422,15 +1718,28 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             });
         }
 
-        // 🔥 构建API请求体
+        // 构建API请求体
         const requestBody = {
             model: actualModel,
             messages: finalMessages,
             temperature: parseFloat(temperature) || 0.7,
             top_p: parseFloat(top_p) || 0.9,
             max_tokens: parseInt(max_tokens, 10) || 2000,
-            stream: true
+            stream: true  // Qwen3-Omni-Flash要求必须开启流式
         };
+
+        // Qwen3-Omni-Flash 多模态特殊配置
+        if (finalModel === 'qwen3-omni-flash') {
+            // 设置输出模态：文本+音频 或 仅文本
+            // 目前仅输出文本，后续可根据需求添加音频输出
+            requestBody.modalities = ["text"];
+
+            // 如果需要音频输出，启用以下配置：
+            // requestBody.modalities = ["text", "audio"];
+            // requestBody.audio = { voice: "Cherry", format: "wav" };
+
+            console.log(`🎨 Qwen3-Omni-Flash 多模态配置已应用`);
+        }
 
         // ✅ 防御性检查：确保数值解析成功
         if (isNaN(requestBody.temperature) || requestBody.temperature < 0 || requestBody.temperature > 2) {
@@ -1446,7 +1755,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             requestBody.max_tokens = 2000;
         }
 
-        // 🔥 阿里云思考模式（仅Qwen）
+        // 阿里云思考模式（仅Qwen）
         if (thinkingMode && routing.provider === 'aliyun') {
             requestBody.enable_thinking = true;
 
@@ -1459,14 +1768,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`🧠 Qwen思考模式已开启, 预算: ${validBudget} tokens`);
         }
 
-        // 🔥 阿里云互联网模式
+        // 阿里云互联网模式
         if (internetMode && routing.provider === 'aliyun') {
             // ✅ 修复：确保enable_search是布尔值，不能是其他类型
             requestBody.enable_search = true;
-            console.log(`🌐 阿里云互联网搜索已开启`);
+            // 新增：启用搜索来源和角标功能
+            requestBody.search_options = {
+                enable_source: true,        // 返回搜索来源列表
+                enable_citation: true,      // 在回答中插入角标
+                citation_format: "[<number>]"  // 角标格式: [1], [2]
+            };
+            console.log(`🌐 阿里云互联网搜索已开启（启Enable角标引用）`);
         }
 
-        // 🔥 DeepSeek参数
+        // DeepSeek参数
         if (routing.provider === 'deepseek') {
             // ✅ 确保frequency_penalty和presence_penalty是有效的数值
             const freqPenalty = parseFloat(frequency_penalty);
@@ -1512,14 +1827,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
         res.setHeader('X-Request-ID', requestId);
-        res.setHeader('X-Model-Used', finalModel);  // 🔥 返回实际使用的模型
+        res.setHeader('X-Model-Used', finalModel);  // 返回实际使用的模型
 
-        // ✅ 只在有效内容时才设置响应头，且避免纯空格
+        // 只在有效内容时才设置响应头，且避免纯空格
         if (reasonForHeader && reasonForHeader.trim().length > 0) {
-            res.setHeader('X-Model-Reason', reasonForHeader);  // 🔥 返回选择原因
+            res.setHeader('X-Model-Reason', reasonForHeader);  // 返回选择原因
         }
 
         res.flushHeaders();
+
+        // 新增：如果有搜索来源，立即发送给前端
+        if (searchSources && searchSources.length > 0) {
+            res.write(`data: ${JSON.stringify({ type: 'sources', sources: searchSources })}\n\n`);
+            console.log(`📤 已发送 ${searchSources.length} 个搜索来源到前端`);
+        }
 
         console.log(`\n📤 发送请求到 ${routing.provider} - ${actualModel}\n`);
 
@@ -1624,6 +1945,24 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 fullContent += content;
                                 res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
                             }
+
+                            // 处理阿里云原生联网的 search_info
+                            const searchInfo = parsed.search_info || parsed.output?.search_info;
+                            if (searchInfo && searchInfo.search_results && searchInfo.search_results.length > 0) {
+                                const qwenSources = searchInfo.search_results.map(r => ({
+                                    index: r.index || 0,
+                                    title: r.title || '未知来源',
+                                    url: r.url || '',
+                                    favicon: r.icon || '',
+                                    site_name: r.site_name || ''
+                                }));
+                                // 更新 searchSources 变量，确保保存消息时包含来源信息
+                                if (!searchSources || searchSources.length === 0) {
+                                    searchSources = qwenSources;
+                                }
+                                res.write(`data: ${JSON.stringify({ type: 'sources', sources: qwenSources })}\n\n`);
+                                console.log(`📤 阿里云search_info: 已发送 ${qwenSources.length} 个来源`);
+                            }
                         } catch (e) {
                             console.error('⚠️ 解析响应行错误:', e.message);
                         }
@@ -1652,23 +1991,47 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (sessionId) {
             console.log('\n💾 开始保存消息到数据库');
 
-            // 1. 保存用户消息
+            // 1. 保存用户消息（包含附件信息）
             const lastUserMsg = messages[messages.length - 1];
             if (lastUserMsg && lastUserMsg.role === 'user') {
                 const userContent = typeof lastUserMsg.content === 'string'
                     ? lastUserMsg.content
                     : JSON.stringify(lastUserMsg.content);
 
+                // 提取附件信息用于保存（仅保存预览所需的精简数据）
+                let attachmentsJson = null;
+                if (lastUserMsg.attachments && lastUserMsg.attachments.length > 0) {
+                    const previewAttachments = lastUserMsg.attachments.map(att => {
+                        // 对于图片，保存缩小的预览版本（减少数据库存储）
+                        // 对于视频/音频，只保存类型和文件名
+                        if (att.type === 'image' && att.data) {
+                            return {
+                                type: 'image',
+                                fileName: att.fileName,
+                                // 保存原始data用于预览（Base64）
+                                data: att.data
+                            };
+                        } else {
+                            return {
+                                type: att.type,
+                                fileName: att.fileName
+                            };
+                        }
+                    });
+                    attachmentsJson = JSON.stringify(previewAttachments);
+                    console.log(`📎 保存 ${previewAttachments.length} 个附件信息`);
+                }
+
                 await new Promise((resolve, reject) => {
                     db.run(
-                        'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
-                        [sessionId, 'user', userContent],
+                        'INSERT INTO messages (session_id, role, content, attachments) VALUES (?, ?, ?, ?)',
+                        [sessionId, 'user', userContent, attachmentsJson],
                         (err) => {
                             if (err) {
                                 console.error('❌ 保存用户消息失败:', err);
                                 reject(err);
                             } else {
-                                console.log(`✅ 用户消息已保存 (${userContent.length}字符)`);
+                                console.log(`✅ 用户消息已保存 (${userContent.length}字符${attachmentsJson ? ', 含附件' : ''})`);
                                 resolve();
                             }
                         }
@@ -1688,11 +2051,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 console.log(`📋 提取到标题: "${extractedTitle}"`);
             }
 
-            // 3. 保存AI回复 (已移除标题标记)
+            // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
+            // 序列化 sources 为 JSON 字符串
+            const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
+
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0],
+                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson],
                     (err) => {
                         if (err) {
                             console.error('❌ 保存AI消息失败:', err);
@@ -1704,11 +2070,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             console.log(`   - 模型: ${finalModel}`);
                             console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
                             console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);
+                            console.log(`   - 来源数: ${searchSources?.length || 0}`);
                             resolve();
                         }
                     }
                 );
             });
+
 
             // 4. 如果提取到标题,更新会话标题（每次对话都更新）
             if (extractedTitle) {
