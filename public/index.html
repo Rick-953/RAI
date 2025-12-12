@@ -131,6 +131,59 @@
     function restoreAndRenderMath(element) {
       // 不再需要，因为renderMarkdownWithMath已经完成了所有工作
     }
+
+    // 🔥 新增：将文本中的 [1] [2] 等转换为可点击的角标
+    function renderCitations(html, sources) {
+      if (!sources || sources.length === 0) return html;
+
+      // 匹配 [1] [2] 等角标格式
+      return html.replace(/\[(\d+)\]/g, (match, num) => {
+        const index = parseInt(num);
+        const source = sources.find(s => s.index === index);
+        if (source && source.url) {
+          return `<a href="${source.url}" target="_blank" rel="noopener" class="citation-badge" title="${source.title || '来源'}">${num}</a>`;
+        }
+        return match; // 如果没有对应来源，保持原样
+      });
+    }
+
+    // 🔥 新增：渲染来源列表
+    function renderSourcesList(sources, language) {
+      if (!sources || sources.length === 0) return '';
+
+      const headerText = language === 'zh-CN' ? '来源' : 'Sources';
+
+      let html = `
+        <div class="sources-list">
+          <div class="sources-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            </svg>
+            <span>${headerText}</span>
+          </div>
+      `;
+
+      sources.forEach(source => {
+        const domain = source.site_name || (source.url ? new URL(source.url).hostname.replace('www.', '') : '');
+        const faviconHtml = source.favicon
+          ? `<img class="source-favicon" src="${source.favicon}" alt="" onerror="this.style.display='none'">`
+          : `<div class="source-favicon-placeholder">🌐</div>`;
+
+        html += `
+          <a href="${source.url || '#'}" target="_blank" rel="noopener" class="source-card">
+            <span class="source-index">${source.index}</span>
+            ${faviconHtml}
+            <div class="source-info">
+              <div class="source-title">${escapeHtml(source.title || '未知来源')}</div>
+              <div class="source-domain">${escapeHtml(domain)}</div>
+            </div>
+          </a>
+        `;
+      });
+
+      html += '</div>';
+      return html;
+    }
   </script>
 
   <style>
@@ -424,6 +477,95 @@
     .sidebar-scrollable::-webkit-scrollbar-thumb {
       background: var(--border-color);
       border-radius: 3px;
+    }
+
+    /* 侧边栏滚动区域边缘羽化效果 */
+    .sidebar-scrollable-wrapper {
+      position: relative;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-scrollable-wrapper .sidebar-scrollable {
+      flex: 1;
+    }
+
+    /* 侧边栏顶部羽化 - 颜色渐变层 */
+    .sidebar-scrollable-wrapper::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 40px;
+      /* 侧边栏顶部渐变高度 */
+      background: linear-gradient(to bottom,
+          var(--bg-secondary) 0%,
+          rgba(26, 26, 26, 0.7) 40%,
+          transparent 100%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* 侧边栏底部羽化 - 颜色渐变层 */
+    .sidebar-scrollable-wrapper::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 40px;
+      /* 侧边栏底部渐变高度 */
+      background: linear-gradient(to top,
+          var(--bg-secondary) 0%,
+          rgba(26, 26, 26, 0.7) 40%,
+          transparent 100%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* 浅色主题侧边栏羽化 */
+    [data-theme="light"] .sidebar-scrollable-wrapper::before {
+      background: linear-gradient(to bottom,
+          var(--bg-secondary) 0%,
+          rgba(245, 245, 245, 0.7) 40%,
+          transparent 100%);
+    }
+
+    [data-theme="light"] .sidebar-scrollable-wrapper::after {
+      background: linear-gradient(to top,
+          var(--bg-secondary) 0%,
+          rgba(245, 245, 245, 0.7) 40%,
+          transparent 100%);
+    }
+
+    /* 侧边栏边缘模糊层 */
+    .sidebar-edge-blur-top,
+    .sidebar-edge-blur-bottom {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 30px;
+      /* 侧边栏模糊层高度 */
+      pointer-events: none;
+      z-index: 6;
+      backdrop-filter: blur(15px);
+      /* 模糊强度增加5倍 */
+      -webkit-backdrop-filter: blur(15px);
+    }
+
+    .sidebar-edge-blur-top {
+      top: 0;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+    }
+
+    .sidebar-edge-blur-bottom {
+      bottom: 0;
+      mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
     }
 
     /* 分组样式 */
@@ -805,6 +947,49 @@
       opacity: 1;
     }
 
+    /* 侧边栏对话附件预览 */
+    .session-attachments {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+
+    .session-attachment-preview {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      overflow: hidden;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      font-size: 12px;
+    }
+
+    .session-attachment-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .session-attachment-preview .attachment-icon {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .session-attachment-preview.video-preview {
+      position: relative;
+      color: var(--text-secondary);
+    }
+
+    .session-attachment-preview.audio-preview {
+      color: var(--text-secondary);
+    }
+
     /* 固定底部区域 */
     .sidebar-footer-fixed {
       padding: var(--spacing-lg);
@@ -949,7 +1134,7 @@
       flex: 1;
       overflow-y: auto;
       padding: var(--spacing-xl) var(--spacing-lg);
-      padding-bottom: 160px;
+      padding-bottom: 200px;
       display: flex;
       flex-direction: column;
       scrollbar-width: thin;
@@ -967,6 +1152,84 @@
     .chat-container::-webkit-scrollbar-thumb {
       background: var(--border-color);
       border-radius: 3px;
+    }
+
+    /* ==================== 边缘羽化效果 (Feathering / Gradient Mask) ==================== */
+    /* 对话区域边缘羽化 - 使用 main-content 叠加伪元素 */
+    .main-content::before,
+    .main-content::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 50px;
+      /* 对话区颜色渐变高度 */
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* 顶部羽化 - 颜色渐变层 */
+    .main-content::before {
+      top: 0;
+      background: linear-gradient(to bottom,
+          var(--bg-primary) 0%,
+          rgba(13, 13, 13, 0.8) 30%,
+          rgba(13, 13, 13, 0.4) 60%,
+          transparent 100%);
+    }
+
+    /* 底部羽化 - 颜色渐变层 (仅在输入框上方一点) */
+    .main-content::after {
+      bottom: 0;
+      background: linear-gradient(to top,
+          var(--bg-primary) 0%,
+          rgba(13, 13, 13, 0.8) 30%,
+          rgba(13, 13, 13, 0.4) 60%,
+          transparent 100%);
+    }
+
+    /* 浅色主题的边缘羽化 */
+    [data-theme="light"] .main-content::before {
+      background: linear-gradient(to bottom,
+          var(--bg-primary) 0%,
+          rgba(255, 255, 255, 0.8) 30%,
+          rgba(255, 255, 255, 0.4) 60%,
+          transparent 100%);
+    }
+
+    [data-theme="light"] .main-content::after {
+      background: linear-gradient(to top,
+          var(--bg-primary) 0%,
+          rgba(255, 255, 255, 0.8) 30%,
+          rgba(255, 255, 255, 0.4) 60%,
+          transparent 100%);
+    }
+
+    /* 对话区域边缘模糊层 - 叠加在颜色渐变之上 */
+    .chat-edge-blur-top,
+    .chat-edge-blur-bottom {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 40px;
+      /* 对话区模糊层高度 */
+      pointer-events: none;
+      z-index: 11;
+      backdrop-filter: blur(20px);
+      /* 模糊强度增加5倍 */
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    .chat-edge-blur-top {
+      top: 0;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
+    }
+
+    .chat-edge-blur-bottom {
+      bottom: 0;
+      mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
     }
 
     .welcome-screen {
@@ -1225,14 +1488,14 @@
     }
 
     .message-avatar {
-      width: 32px;
-      height: 32px;
+      width: 36px;
+      height: 36px;
       border-radius: var(--radius-full);
       flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 20px;
     }
 
     .message.user .message-avatar {
@@ -1307,12 +1570,80 @@
       overflow-wrap: break-word;
     }
 
+    /* 主界面消息附件预览 */
+    .message-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+      max-width: 100%;
+    }
+
+    .message-attachment-item {
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+    }
+
+    .message-attachment-item.image-attachment {
+      max-width: 200px;
+      max-height: 200px;
+    }
+
+    .message-attachment-item.image-attachment img {
+      width: 100%;
+      height: 100%;
+      max-width: 200px;
+      max-height: 200px;
+      object-fit: cover;
+      display: block;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .message-attachment-item.image-attachment img:hover {
+      transform: scale(1.02);
+    }
+
+    .message-attachment-item.media-attachment {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      min-width: 120px;
+    }
+
+    .message-attachment-item .media-icon {
+      font-size: 24px;
+    }
+
+    .message-attachment-item .media-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .message-attachment-item .media-type {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .message-attachment-item .media-name {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 120px;
+    }
+
     .message.assistant .message-text {
       background: transparent;
       color: var(--text-primary);
       padding: 0;
-      padding-left: 16px;
-      /* 与头像中心/竖线对齐 (头像32px / 2 = 16px) */
+      padding-left: 18px;
+      /* 与头像中心/竖线对齐 (头像36px / 2 = 18px) */
     }
 
     /* 消息元信息和操作栏 */
@@ -1323,7 +1654,7 @@
       margin-top: var(--spacing-sm);
       font-size: 11px;
       color: var(--text-tertiary);
-      padding-left: 16px;
+      padding-left: 18px;
       /* 与头像中心/竖线对齐 */
     }
 
@@ -1374,6 +1705,141 @@
     .copy-btn.copied {
       color: var(--accent-color);
       border-color: var(--accent-color);
+    }
+
+    /* ==================== 引用来源样式 ==================== */
+
+    /* 行内角标样式 [1] [2] 等 */
+    .citation-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      margin: 0 2px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+      vertical-align: middle;
+    }
+
+    .citation-badge:hover {
+      background: var(--accent-color);
+      color: var(--bg-primary);
+      border-color: var(--accent-color);
+      transform: translateY(-1px);
+    }
+
+    /* 来源列表容器 */
+    .sources-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacing-sm);
+      margin-top: var(--spacing-md);
+      padding-top: var(--spacing-md);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .sources-header {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-xs);
+      width: 100%;
+      margin-bottom: var(--spacing-xs);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .sources-header .material-symbols-outlined {
+      font-size: 16px;
+    }
+
+    /* 来源卡片 */
+    .source-card {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.2s;
+      max-width: 280px;
+      text-decoration: none;
+    }
+
+    .source-card:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent-color);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .source-index {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 20px;
+      background: var(--accent-color);
+      color: var(--bg-primary);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .source-favicon {
+      width: 16px;
+      height: 16px;
+      border-radius: 2px;
+      flex-shrink: 0;
+      object-fit: contain;
+    }
+
+    .source-favicon-placeholder {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-hover);
+      border-radius: 2px;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    .source-info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .source-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .source-domain {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     /* ====================Markdown渲染样式 ==================== */
@@ -1578,105 +2044,117 @@
 
 
 
-    /* ==================== Chain of Thought (Thinking) UI - 新版双模式设计 ==================== */
+    /* ==================== Chain of Thought (Thinking) UI - 重构版 ==================== */
 
-    /* 思考区域整体容器 */
+    /* 思考区域整体容器 - 与头像同行 */
     .thinking-indicator {
       position: relative;
-      margin-bottom: var(--spacing-lg);
+      margin-bottom: var(--spacing-md);
       padding-left: 0;
-      margin-top: -28px;
-      /* 将思考区域向上移动，与头像同行 */
+      margin-top: -36px;
+      /* 将思考区域向上移动，与36px头像同行 */
     }
 
-    /* 思考状态栏 - 极简设计，包含切换按钮 */
-    .thinking-label {
-      position: relative;
+    /* 思考头部区域 - 水平布局，在头像正右侧 */
+    .thinking-header {
       display: flex;
       align-items: center;
-      justify-content: flex-start;
-      gap: var(--spacing-sm);
-      padding: 0;
-      padding-left: 40px;
-      /* 头像32px + 8px间距，箭头在头像正右方 */
-      background: none;
-      border: none;
-      cursor: pointer;
-      user-select: none;
-      transition: opacity 0.2s ease;
-      margin-bottom: var(--spacing-sm);
-      height: 32px;
+      gap: 8px;
+      padding-left: 44px;
+      /* 头像36px + 8px间距 = 44px */
+      height: 36px;
       /* 与头像高度一致 */
     }
 
-    .thinking-label:hover {
-      opacity: 0.7;
-    }
-
-    /* 左侧内容 - 显示思路按钮 */
-    .thinking-label-left {
-      display: flex;
+    /* 预览文本容器 - 半透明灰色背景，两侧圆角 */
+    .thinking-preview {
+      display: inline-flex;
       align-items: center;
-      gap: var(--spacing-sm);
-      flex: 0 0 auto;
-      /* 不要flex:1，避免推开箭头 */
-      min-width: 0;
+      padding: 4px 12px;
+      background: rgba(128, 128, 128, 0.25);
+      border-radius: 16px;
+      /* 两侧圆形的圆角矩形 */
+      max-width: 300px;
+      overflow: hidden;
     }
 
-    /* 切换按钮文本 */
-    .thinking-toggle-text {
-      color: var(--text-tertiary);
+    .thinking-preview-text {
+      color: var(--text-secondary);
       font-size: 13px;
-      font-weight: 400;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* 展开/收起按钮 - 圆形半透明灰色背景 */
+    .thinking-toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 4px 10px;
+      background: rgba(128, 128, 128, 0.25);
+      border: none;
+      border-radius: 16px;
       cursor: pointer;
-      transition: color 0.2s;
+      transition: all 0.2s ease;
+      user-select: none;
     }
 
-    .thinking-toggle-text:hover {
+    .thinking-toggle-btn:hover {
+      background: rgba(128, 128, 128, 0.4);
+    }
+
+    .thinking-toggle-btn .toggle-text {
       color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 500;
     }
 
-    /* Chevron 展开/折叠图标 - 灰色 */
-    .thinking-expand-icon {
-      width: 18px;
-      height: 18px;
-      color: var(--text-tertiary);
-      flex-shrink: 0;
-      transition: transform 0.3s ease, color 0.2s ease;
-    }
-
-    .thinking-label:hover .thinking-expand-icon {
+    .thinking-toggle-btn .toggle-icon {
+      width: 16px;
+      height: 16px;
       color: var(--text-secondary);
+      transition: transform 0.3s ease;
     }
 
-    .thinking-expand-icon.expanded {
+    .thinking-toggle-btn.expanded .toggle-icon {
       transform: rotate(180deg);
     }
 
-    /* 竖线样式 - 仅在展开模式显示 */
+    /* 仅箭头按钮模式 - 圆形 */
+    .thinking-toggle-btn.icon-only {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 50%;
+    }
+
+    /* 竖线样式 - 仅在展开模式显示，位于头像中心正下方 */
     .thinking-line {
       position: absolute;
-      left: 16px;
-      top: 0;
+      left: 18px;
+      /* 头像36px的中心 = 18px */
+      top: 36px;
+      /* 从头像底部开始 */
       width: 2px;
-      background-color: var(--color-gray);
+      background: var(--text-tertiary);
       opacity: 0;
+      height: 0;
       transition: opacity 0.3s ease, height 0.3s ease;
       pointer-events: none;
-      display: none;
     }
 
     .thinking-line.visible {
       opacity: 0.3;
-      display: block;
     }
 
     /* 思考内容详情区域 - 展开模式 */
     .thinking-content {
       margin-top: var(--spacing-md);
       padding: 0;
-      padding-left: 24px;
-      /* 在竖线右侧，避免撞到线 (16px + 8px) */
+      padding-left: 28px;
+      /* 在竖线右侧，18px + 10px间距 */
       background: none;
       border: none;
       color: var(--text-secondary);
@@ -1715,39 +2193,21 @@
       background: var(--text-tertiary);
     }
 
-    /* 思考内容中的句子 - 识别**文本**格式 */
+    /* 思考内容中的句子 */
     .thinking-sentence {
       display: block;
       margin-bottom: 8px;
     }
 
-    /* 识别**文本**格式，加粗显示 */
+    /* **文本**格式加粗显示 */
     .thinking-sentence strong {
       font-weight: 600;
       color: var(--text-primary);
     }
 
-    /* 句子轮播显示区域 - 简洁模式 */
+    /* 隐藏旧的sentence-display，不再使用 */
     .sentence-display {
-      position: relative;
-      left: 0;
-      color: var(--text-secondary);
-      font-size: 13px;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: opacity 0.3s ease, transform 0.3s ease;
-      pointer-events: none;
-      max-width: 400px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      padding-left: 40px;
-      /* 与thinking-label对齐，在头像正右方 */
-    }
-
-    .sentence-display.visible {
-      opacity: 1;
-      transform: translateY(0);
+      display: none;
     }
 
     /* AI头像闪烁动画 - 思考时黄色光晕 */
@@ -1875,6 +2335,10 @@
     .input-wrapper {
       max-width: 800px;
       margin: 0 auto;
+      /* flexbox居中，让宽度变化从中心展开 */
+      display: flex;
+      justify-content: center;
+      overflow: visible;
     }
 
     .input-container {
@@ -1885,40 +2349,13 @@
       border: 1px solid var(--border-dark);
       border-radius: var(--radius-xl);
       padding: var(--spacing-md);
-      transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
       display: flex;
       flex-direction: column;
       gap: var(--spacing-sm);
       box-shadow: var(--shadow-lg);
       pointer-events: auto;
-      will-change: width, height, padding, gap;
       cursor: text;
-    }
-
-    /* 简化状态 */
-    .input-container.collapsed {
-      /* 保持圆角一致，避免动画卡顿 */
-      border-radius: var(--radius-xl);
-      padding: 8px 8px 8px 16px;
-      gap: 0;
-    }
-
-    .input-container.collapsed .input-toolbar {
-      max-height: 0;
-      opacity: 0;
-      padding-bottom: 0;
-      border-bottom: none;
-      margin-bottom: 0;
-      pointer-events: none;
-    }
-
-    .input-container.collapsed .message-input {
-      font-size: 14px;
-      padding: 4px 0;
-    }
-
-    .input-container.collapsed .input-row {
-      align-items: center;
+      width: 100%;
     }
 
     [data-theme="light"] .input-container {
@@ -1930,59 +2367,169 @@
       box-shadow: 0 0 0 1px var(--text-tertiary), var(--shadow-lg);
     }
 
+    /* ==================== 附件预览样式 (多模态) ==================== */
+    .attachment-preview {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      margin-bottom: var(--spacing-sm);
+      animation: slideIn 0.2s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .attachment-info {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      flex: 1;
+      min-width: 0;
+    }
+
+    .attachment-thumbnail {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: var(--radius-sm);
+      flex-shrink: 0;
+    }
+
+    .attachment-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .attachment-type {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .attachment-name {
+      font-size: 13px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .attachment-remove {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 50%;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .attachment-remove:hover {
+      background: var(--error-color);
+      color: white;
+    }
+
+    .attachment-remove .remove-icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* 浅色主题附件预览 */
+    [data-theme="light"] .attachment-preview {
+      background: #F3F4F6;
+      border-color: #E5E7EB;
+    }
+
+    /* 底部工具栏：左侧按钮 + 右侧发送 */
     .input-toolbar {
       display: flex;
       align-items: center;
       gap: var(--spacing-sm);
-      padding-bottom: var(--spacing-sm);
-      border-bottom: 1px solid var(--border-color);
-      transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+      padding-top: var(--spacing-sm);
+      /* 取消分割线 */
+      border-top: none;
       opacity: 1;
-      max-height: 100px;
-      overflow: hidden;
-    }
-
-    /* 展开且动画结束后，允许溢出以显示下拉菜单 */
-    .input-toolbar.overflow-visible {
       overflow: visible;
     }
 
     .toolbar-btn {
-      padding: 6px 12px;
+      width: 36px;
+      /* 圆形按钮 */
+      height: 36px;
+      padding: 0;
       background: transparent;
-      border: 1px solid var(--border-color);
-      /* 圆角顺序：左上 右上 右下 左下 */
-      border-radius: 50px 50px 50px 50px;
-      /* 附件、联网、推理等按钮 */
+      border: none;
+      /* 无边框 */
+      border-radius: 50%;
+      /* 圆形 */
       font-size: 12px;
       color: var(--text-secondary);
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, color 0.2s;
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-weight: 500;
+      justify-content: center;
       position: relative;
+      overflow: hidden;
+      /* 涟漪效果需要 */
     }
 
     .toolbar-btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-dark);
       color: var(--text-primary);
     }
 
     .toolbar-btn.active {
       background: var(--bg-tertiary);
-      border-color: var(--accent-color);
       color: var(--accent-color);
+    }
+
+    /* MD涟漪效果 */
+    .ripple-effect {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(0);
+      animation: ripple-animation 0.6s linear;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    @keyframes ripple-animation {
+      to {
+        transform: scale(4);
+        opacity: 0;
+      }
     }
 
     .toolbar-btn .material-symbols-outlined {
       font-size: 16px;
     }
 
-    /* 悬浮显示标签（工具提示） */
-    .toolbar-btn span {
+    /* 悬浮显示标签（工具提示）- 排除涟漪元素 */
+    .toolbar-btn span:not(.ripple-effect) {
       position: absolute;
       bottom: calc(100% + 8px);
       left: 50%;
@@ -2036,6 +2583,11 @@
       }
     }
 
+    /* 工具栏右侧空白区域，用于推动发送按钮到右侧 */
+    .toolbar-spacer {
+      flex: 1;
+    }
+
     /* ==================== 自定义模型选择器 ==================== */
     .model-selector {
       position: relative;
@@ -2045,28 +2597,32 @@
     .model-select-custom {
       width: auto;
       min-width: 80px;
-      padding: 6px 8px 6px 12px;
+      height: 36px;
+      /* 与工具栏按钮同高 */
+      padding: 0 10px 0 14px;
       background: transparent;
-      border: 1px solid var(--border-color);
-      /* 圆角顺序：左上 右上 右下 左下 */
-      border-radius: 50px 50px 50px 50px;
-      /* 模型选择按钮 */
+      border: none;
+      /* 无边框 */
+      border-radius: 18px;
+      /* 胶囊形状 */
       font-size: 12px;
       color: var(--text-primary);
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, color 0.2s;
       font-weight: 500;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
+      gap: 4px;
       user-select: none;
       white-space: nowrap;
+      overflow: hidden;
+      /* 涟漪效果需要 */
+      position: relative;
     }
 
     .model-select-custom:hover {
       background: var(--bg-hover);
-      border-color: var(--border-dark);
     }
 
     .model-select-arrow {
@@ -2087,8 +2643,8 @@
     .model-dropdown-menu {
       position: absolute;
       bottom: calc(100% + 8px);
-      left: 0;
-      /* Positioned on left, changed from 'right: 0' */
+      right: 0;
+      /* Positioned on right to align with send button */
       min-width: 280px;
       background: var(--bg-secondary);
       border: 1px solid var(--border-dark);
@@ -2099,11 +2655,19 @@
       display: none;
       max-height: 70vh;
       overflow-y: auto;
+      /* 内边距使选项与边框保持距离 */
+      padding: 6px;
     }
 
     .model-dropdown-menu.active {
       display: block;
-      animation: dropdownSlideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: dropdownSlideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    /* 关闭动画类 */
+    .model-dropdown-menu.closing {
+      display: block;
+      animation: dropdownSlideDown 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
 
     @keyframes dropdownSlideUp {
@@ -2118,22 +2682,39 @@
       }
     }
 
+    @keyframes dropdownSlideDown {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+    }
+
     .model-menu-item {
       padding: 12px 16px;
       display: flex;
       align-items: center;
       gap: 12px;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.2s, border-radius 0.2s;
       position: relative;
+      /* 圆角矩形效果 */
+      border-radius: 8px;
+      margin: 2px 0;
     }
 
     .model-menu-item:hover {
       background: var(--bg-hover);
+      border-radius: 8px;
     }
 
     .model-menu-item.selected {
       background: var(--bg-tertiary);
+      border-radius: 8px;
     }
 
     .model-menu-item.selected::after {
@@ -2177,8 +2758,8 @@
     .model-menu-divider {
       height: 1px;
       background: var(--border-color);
-      margin: 4px 8px;
-      /* Add left and right spacing */
+      margin: 4px 0;
+      /* 分割线与菜单项对齐 */
     }
 
     /* 全部模型展开区域 */
@@ -2213,11 +2794,11 @@
       font-weight: 600;
     }
 
+    /* 输入行只包含textarea */
     .input-row {
       display: flex;
-      align-items: flex-end;
+      align-items: flex-start;
       gap: var(--spacing-md);
-      transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
     .message-input {
@@ -2676,6 +3257,32 @@
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-lg);
       margin: var(--spacing-lg);
+      position: relative;
+    }
+
+    /* 登录界面语言切换按钮 */
+    .auth-lang-btn {
+      position: absolute;
+      top: var(--spacing-md);
+      right: var(--spacing-md);
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(128, 128, 128, 0.2);
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .auth-lang-btn:hover {
+      background: rgba(128, 128, 128, 0.4);
+      transform: scale(1.05);
     }
 
     .auth-logo {
@@ -2922,6 +3529,18 @@
         z-index: var(--z-header);
       }
 
+      /* 移动端边缘羽化效果 - 调整位置避开顶栏 */
+      .main-content::before {
+        top: var(--header-height);
+        /* 从顶栏下方开始 */
+        height: 50px;
+      }
+
+      .chat-edge-blur-top {
+        top: var(--header-height);
+        /* 从顶栏下方开始 */
+      }
+
       .chat-container {
         padding-top: calc(var(--header-height) + var(--spacing-lg));
         padding-left: var(--spacing-md);
@@ -2939,7 +3558,10 @@
       }
 
       .toolbar-btn {
-        padding: 5px 10px;
+        width: 34px;
+        /* 圆形按钮 */
+        height: 34px;
+        padding: 0;
         font-size: 11px;
       }
 
@@ -2983,48 +3605,48 @@
       /* ==================== Chain of Thought UI 移动端优化 ==================== */
       .thinking-indicator {
         padding-left: 0;
-        /* 不需要额外padding */
+        margin-top: -32px;
+        /* 移动端头像稍小 */
       }
 
-      .thinking-indicator::before {
-        left: 12px;
-        /* 调整垂直线位置 */
+      .thinking-header {
+        padding-left: 40px;
+        /* 移动端头像32px + 8px间距 */
+        height: 32px;
       }
 
-      .thinking-label {
-        padding: 0;
-        padding-left: 36px;
-        /* 移动端头像28px + 8px间距 */
-        height: 28px;
-        /* 移动端头像高度 */
+      .thinking-preview {
+        max-width: 200px;
+        padding: 3px 10px;
       }
 
-      .thinking-icon {
-        width: 18px;
-        height: 18px;
-      }
-
-      .thinking-text>span:first-child {
+      .thinking-preview-text {
         font-size: 12px;
-        /* 减小字体 */
-        max-width: 180px;
-        /* 限制最大宽度，防止溢出 */
       }
 
-      .thinking-timer {
-        font-size: 10px;
-        padding: 2px 6px;
+      .thinking-toggle-btn {
+        padding: 3px 8px;
       }
 
-      .thinking-expand-icon {
-        width: 18px;
-        height: 18px;
+      .thinking-toggle-btn .toggle-text {
+        font-size: 11px;
+      }
+
+      .thinking-toggle-btn.icon-only {
+        width: 24px;
+        height: 24px;
+      }
+
+      .thinking-line {
+        left: 16px;
+        /* 移动端头像中心 */
+        top: 32px;
       }
 
       .thinking-content {
         padding: 0;
-        padding-left: 22px;
-        /* 移动端在竖线右侧 (14px + 8px) */
+        padding-left: 24px;
+        /* 移动端在竖线右侧 */
         font-size: 12px;
         line-height: 1.6;
       }
@@ -3283,6 +3905,11 @@
   <!-- 登录/注册界面 -->
   <div class="auth-container active" id="authContainer">
     <div class="auth-box">
+      <!-- 语言切换按钮 -->
+      <button class="auth-lang-btn" onclick="toggleLanguage()" title="Switch Language / 切换语言">
+        <span id="authLangText">EN</span>
+      </button>
+
       <div class="auth-logo">
         <div class="auth-logo-text">RAI</div>
       </div>
@@ -3438,51 +4065,55 @@
         </button>
       </div>
 
-      <!-- 可滚动中间区域 -->
-      <div class="sidebar-scrollable">
-        <!-- 空间分组 -->
-        <div class="sidebar-group">
-          <div class="sidebar-group-header" onclick="toggleGroup('spaces')">
-            <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-              height="24" fill="currentColor">
-              <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
-            </svg>
-            <span class="sidebar-group-title" data-i18n="sidebar-spaces">空间</span>
-            <svg class="material-symbols-outlined group-toggle-icon" id="spacesToggle"
-              xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-              <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
-            </svg>
-          </div>
-          <div class="sidebar-group-content" id="spacesGroup">
-            <button class="new-space-btn-inline" onclick="createNewSpace()">
+      <!-- 可滚动中间区域 - 带边缘羽化效果 -->
+      <div class="sidebar-scrollable-wrapper">
+        <div class="sidebar-edge-blur-top"></div>
+        <div class="sidebar-scrollable">
+          <!-- 空间分组 -->
+          <div class="sidebar-group">
+            <div class="sidebar-group-header" onclick="toggleGroup('spaces')">
               <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
                 height="24" fill="currentColor">
-                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
               </svg>
-              <span data-i18n="new-space">新建空间</span>
-            </button>
-            <div class="spaces-list" id="spacesList"></div>
+              <span class="sidebar-group-title" data-i18n="sidebar-spaces">空间</span>
+              <svg class="material-symbols-outlined group-toggle-icon" id="spacesToggle"
+                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
+              </svg>
+            </div>
+            <div class="sidebar-group-content" id="spacesGroup">
+              <button class="new-space-btn-inline" onclick="createNewSpace()">
+                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
+                  height="24" fill="currentColor">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                </svg>
+                <span data-i18n="new-space">新建空间</span>
+              </button>
+              <div class="spaces-list" id="spacesList"></div>
+            </div>
           </div>
-        </div>
 
-        <!-- 对话分组 -->
-        <div class="sidebar-group">
-          <div class="sidebar-group-header" onclick="toggleGroup('sessions')">
-            <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-              height="24" fill="currentColor">
-              <path
-                d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z" />
-            </svg>
-            <span class="sidebar-group-title" data-i18n="sidebar-sessions">对话</span>
-            <svg class="material-symbols-outlined group-toggle-icon" id="sessionsToggle"
-              xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-              <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
-            </svg>
-          </div>
-          <div class="sidebar-group-content" id="sessionsGroup">
-            <div class="sessions-container" id="sessionsContainer"></div>
+          <!-- 对话分组 -->
+          <div class="sidebar-group">
+            <div class="sidebar-group-header" onclick="toggleGroup('sessions')">
+              <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
+                height="24" fill="currentColor">
+                <path
+                  d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z" />
+              </svg>
+              <span class="sidebar-group-title" data-i18n="sidebar-sessions">对话</span>
+              <svg class="material-symbols-outlined group-toggle-icon" id="sessionsToggle"
+                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
+              </svg>
+            </div>
+            <div class="sidebar-group-content" id="sessionsGroup">
+              <div class="sessions-container" id="sessionsContainer"></div>
+            </div>
           </div>
         </div>
+        <div class="sidebar-edge-blur-bottom"></div>
       </div>
 
       <!-- 固定底部区域 -->
@@ -3509,6 +4140,9 @@
 
     <!-- 主内容区 -->
     <div class="main-content">
+      <!-- 边缘模糊层（叠加在渐变之上） -->
+      <div class="chat-edge-blur-top"></div>
+      <div class="chat-edge-blur-bottom"></div>
       <div class="chat-container" id="chatContainer">
         <div class="welcome-screen" id="welcomeScreen">
           <div class="welcome-icon">
@@ -3578,13 +4212,78 @@
       <!-- 输入区域 -->
       <div class="input-area">
         <div class="input-wrapper">
-          <div class="input-container collapsed" id="inputContainer">
-            <!-- 顶部工具栏 -->
+          <div class="input-container" id="inputContainer">
+            <!-- 顶部输入行 -->
+            <div class="input-row">
+              <textarea class="message-input" id="messageInput" data-i18n-placeholder="input-placeholder"
+                placeholder="询问问题..." rows="1" inputmode="text" autocomplete="off" autocorrect="off"
+                autocapitalize="sentences" onkeydown="handleInputKeydown(event)" oninput="autoResizeInput()"></textarea>
+            </div>
+
+            <!-- 底部工具栏 -->
             <div class="input-toolbar">
+              <!-- 附件按钮 -->
+              <button class="toolbar-btn" id="attachBtn" onclick="handleFileUpload()">
+                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20"
+                  height="20" fill="currentColor">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" stroke="currentColor" stroke-width="0.5" />
+                </svg>
+                <span data-i18n="attach" style="display: none;">附件</span>
+              </button>
+
+              <!-- 联网按钮 -->
+              <button class="toolbar-btn" id="internetBtn" onclick="toggleInternet()">
+                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
+                  height="24" fill="currentColor">
+                  <path
+                    d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.91-4.33-3.56zm2.95-8H5.08c.96-1.65 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z" />
+                </svg>
+                <span data-i18n="internet" style="display: none;">联网</span>
+              </button>
+
+              <!-- 推理按钮 -->
+              <div class="thinking-controls" id="thinkingControls" style="display: none;">
+                <button class="toolbar-btn" id="thinkingBtn" onclick="toggleThinking()">
+                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" height="24px"
+                    viewBox="0 -960 960 960" width="24px" fill="currentColor">
+                    <path
+                      d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
+                  </svg>
+                  <span data-i18n="reasoning" style="display: none;">推理</span>
+                </button>
+                <button class="toolbar-btn" id="thinkingExpandBtn" style="display: none;"
+                  onclick="toggleThinkingBudget()">
+                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                    width="24" height="24" fill="currentColor">
+                    <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
+                  </svg>
+                </button>
+              </div>
+
+              <!-- 思考预算弹窗 -->
+              <div class="thinking-budget-modal" id="thinkingBudgetModal" style="display: none;">
+                <div class="thinking-budget-content">
+                  <div class="thinking-budget-header">
+                    <span class="thinking-budget-title" data-i18n="thinking-budget">思考预算</span>
+                    <span class="thinking-budget-value" id="thinkingBudgetValue">1024 tokens</span>
+                  </div>
+                  <div class="thinking-budget-description" data-i18n="thinking-budget-desc">控制思考的最大长度</div>
+                  <div class="thinking-budget-slider-container">
+                    <span class="thinking-budget-label" data-i18n="min">最小</span>
+                    <input type="range" class="thinking-budget-slider" id="thinkingBudgetSlider" min="1" max="32768"
+                      step="256" value="1024" oninput="updateThinkingBudget(this.value)">
+                    <span class="thinking-budget-label" data-i18n="max">最大</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右侧发送按钮 -->
+              <div class="toolbar-spacer"></div>
+
               <!-- 自定义模型选择器 -->
               <div class="model-selector">
                 <div class="model-select-custom" id="modelSelectCustom" onclick="openModelModal()">
-                  <span id="selectedModelText">智能模式</span>
+                  <span id="selectedModelText" data-i18n="model-smart">智能模式</span>
                   <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                     <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -3594,14 +4293,15 @@
                 <!-- Grok风格下拉菜单 -->
                 <div class="model-dropdown-menu" id="modelDropdownMenu">
                   <!-- 智能模式 -->
-                  <div class="model-menu-item selected" data-model="auto" onclick="selectModelFromMenu('auto', '智能模式')">
+                  <div class="model-menu-item selected" data-model="auto"
+                    onclick="selectModelFromMenu('auto', '智能模式', 'model-smart')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
                         d="M80-140v-320h320v320H80Zm80-80h160v-160H160v160Zm60-340 220-360 220 360H220Zm142-80h156l-78-126-78 126ZM863-42 757-148q-21 14-45.5 21t-51.5 7q-75 0-127.5-52.5T480-300q0-75 52.5-127.5T660-480q75 0 127.5 52.5T840-300q0 26-7 50.5T813-204L919-98l-56 56ZM660-200q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29ZM320-380Zm120-260Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title">智能模式</div>
+                      <div class="model-menu-title" data-i18n="model-smart">智能模式</div>
                     </div>
                   </div>
 
@@ -3609,28 +4309,29 @@
 
                   <!-- 极速模式 -->
                   <div class="model-menu-item" data-model="qwen-flash"
-                    onclick="selectModelFromMenu('qwen-flash', '极速模式')">
+                    onclick="selectModelFromMenu('qwen-flash', '极速模式', 'model-fast')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
                         d="m226-559 78 33q14-28 29-54t33-52l-56-11-84 84Zm142 83 114 113q42-16 90-49t90-75q70-70 109.5-155.5T806-800q-72-5-158 34.5T492-656q-42 42-75 90t-49 90Zm178-65q-23-23-23-56.5t23-56.5q23-23 57-23t57 23q23 23 23 56.5T660-541q-23 23-57 23t-57-23Zm19 321 84-84-11-56q-26 18-52 32.5T532-299l33 79Zm313-653q19 121-23.5 235.5T708-419l20 99q4 20-2 39t-20 33L538-80l-84-197-171-171-197-84 167-168q14-14 33.5-20t39.5-2l99 20q104-104 218-147t235-24ZM157-321q35-35 85.5-35.5T328-322q35 35 34.5 85.5T327-151q-25 25-83.5 43T82-76q14-103 32-161.5t43-83.5Zm57 56q-10 10-20 36.5T180-175q27-4 53.5-13.5T270-208q12-12 13-29t-11-29q-12-12-29-11.5T214-265Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title">极速模式</div>
+                      <div class="model-menu-title" data-i18n="model-fast">极速模式</div>
                     </div>
                   </div>
 
                   <div class="model-menu-divider"></div>
 
                   <!-- 专家模式 -->
-                  <div class="model-menu-item" data-model="qwen-max" onclick="selectModelFromMenu('qwen-max', '专家模式')">
+                  <div class="model-menu-item" data-model="qwen-max"
+                    onclick="selectModelFromMenu('qwen-max', '专家模式', 'model-expert')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
                         d="M480-80q-26 0-47-12.5T400-126q-33 0-56.5-23.5T320-206v-142q-59-39-94.5-103T190-590q0-121 84.5-205.5T480-880q121 0 205.5 84.5T770-590q0 77-35.5 140T640-348v142q0 33-23.5 56.5T560-126q-12 21-33 33.5T480-80Zm-80-126h160v-36H400v36Zm0-76h160v-38H400v38Zm-8-118h58v-108l-88-88 42-42 76 76 76-76 42 42-88 88v108h58q54-26 88-76.5T690-590q0-88-61-149t-149-61q-88 0-149 61t-61 149q0 63 34 113.5t88 76.5Zm88-162Zm0-38Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title">专家模式</div>
+                      <div class="model-menu-title" data-i18n="model-expert">专家模式</div>
                     </div>
                   </div>
 
@@ -3644,7 +4345,7 @@
                         d="M120-240v-80h520v80H120Zm664-40L584-480l200-200 56 56-144 144 144 144-56 56ZM120-440v-80h400v80H120Zm0-200v-80h520v80H120Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title">全部模型</div>
+                      <div class="model-menu-title" data-i18n="model-all">全部模型</div>
                     </div>
                     <svg class="model-menu-arrow" id="allModelsArrow" xmlns="http://www.w3.org/2000/svg"
                       viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -3708,83 +4409,25 @@
                       </div>
                     </div>
 
+                    <!-- DeepSeek Speciale 已隐藏 (临时模型已过期) -->
+
                     <div class="model-menu-divider"></div>
 
-                    <div class="model-menu-item" data-model="deepseek-v3.2-speciale"
-                      onclick="selectModelFromMenu('deepseek-v3.2-speciale', 'DeepSeek Speciale')">
+                    <!-- Kimi K2 -->
+                    <div class="model-menu-item" data-model="kimi-k2"
+                      onclick="selectModelFromMenu('kimi-k2', 'Kimi K2')">
                       <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
                         fill="currentColor">
                         <path
-                          d="m354-247 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-80l65-281L80-550l288-25 112-265 112 265 288 25-218 189 65 281-247-149L233-80Z" />
+                          d="m226-559 78 33q14-28 29-54t33-52l-56-11-84 84Zm142 83 114 113q42-16 90-49t90-75q70-70 109.5-155.5T806-800q-72-5-158 34.5T492-656q-42 42-75 90t-49 90Zm178-65q-23-23-23-56.5t23-56.5q23-23 57-23t57 23q23 23 23 56.5T660-541q-23 23-57 23t-57-23Zm19 321 84-84-11-56q-26 18-52 32.5T532-299l33 79Zm313-653q19 121-23.5 235.5T708-419l20 99q4 20-2 39t-20 33L538-80l-84-197-171-171-197-84 167-168q14-14 33.5-20t39.5-2l99 20q104-104 218-147t235-24ZM157-321q35-35 85.5-35.5T328-322q35 35 34.5 85.5T327-151q-25 25-83.5 43T82-76q14-103 32-161.5t43-83.5Zm57 56q-10 10-20 36.5T180-175q27-4 53.5-13.5T270-208q12-12 13-29t-11-29q-12-12-29-11.5T214-265Z" />
                       </svg>
                       <div class="model-menu-content">
-                        <div class="model-menu-title">DeepSeek Speciale</div>
+                        <div class="model-menu-title">Kimi K2</div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-
-              <button class="toolbar-btn" id="attachBtn" onclick="handleFileUpload()">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" height="24px"
-                  viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                  <path
-                    d="M440-280h80v-168l64 64 56-56-160-160-160 160 56 56 64-64v168ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z" />
-                </svg>
-                <span data-i18n="attach" style="display: none;">附件</span>
-              </button>
-
-              <button class="toolbar-btn" id="internetBtn" onclick="toggleInternet()">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-                  height="24" fill="currentColor">
-                  <path
-                    d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.91-4.33-3.56zm2.95-8H5.08c.96-1.65 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z" />
-                </svg>
-                <span data-i18n="internet" style="display: none;">联网</span>
-              </button>
-
-              <div class="thinking-controls" id="thinkingControls" style="display: none;">
-                <button class="toolbar-btn" id="thinkingBtn" onclick="toggleThinking()">
-                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" height="24px"
-                    viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                    <path
-                      d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
-                  </svg>
-                  <span data-i18n="reasoning" style="display: none;">推理</span>
-                </button>
-                <button class="toolbar-btn" id="thinkingExpandBtn" style="display: none;"
-                  onclick="toggleThinkingBudget()">
-                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-                    width="24" height="24" fill="currentColor">
-                    <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
-                  </svg>
-                </button>
-              </div>
-
-              <!-- 思考预算弹窗 -->
-              <div class="thinking-budget-modal" id="thinkingBudgetModal" style="display: none;">
-                <div class="thinking-budget-content">
-                  <div class="thinking-budget-header">
-                    <span class="thinking-budget-title" data-i18n="thinking-budget">思考预算</span>
-                    <span class="thinking-budget-value" id="thinkingBudgetValue">1024 tokens</span>
-                  </div>
-                  <div class="thinking-budget-description" data-i18n="thinking-budget-desc">控制思考的最大长度</div>
-                  <div class="thinking-budget-slider-container">
-                    <span class="thinking-budget-label" data-i18n="min">最小</span>
-                    <input type="range" class="thinking-budget-slider" id="thinkingBudgetSlider" min="1" max="32768"
-                      step="256" value="1024" oninput="updateThinkingBudget(this.value)">
-                    <span class="thinking-budget-label" data-i18n="max">最大</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 底部输入行 -->
-            <div class="input-row">
-              <textarea class="message-input" id="messageInput" data-i18n-placeholder="input-placeholder"
-                placeholder="询问任何问题" rows="1" inputmode="text" autocomplete="off" autocorrect="off"
-                autocapitalize="sentences" onkeydown="handleInputKeydown(event)" oninput="autoResizeInput()"
-                onfocus="expandInput()"></textarea>
 
               <button class="send-btn" id="sendBtn" onclick="sendMessage()">
                 <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
@@ -3994,16 +4637,7 @@
           <div class="model-description">深度推理</div>
         </div>
 
-        <!-- DeepSeek Speciale -->
-        <div class="model-card" data-model="deepseek-v3.2-speciale"
-          onclick="selectModelFromModal('deepseek-v3.2-speciale', 'DeepSeek特别版')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path
-              d="m354-247 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-80l65-281L80-550l288-25 112-265 112 265 288 25-218 189 65 281-247-149L233-80Zm247-350Z" />
-          </svg>
-          <div class="model-label">DeepSeek特别版</div>
-          <div class="model-description">限时体验</div>
-        </div>
+        <!-- DeepSeek Speciale 已隐藏 (临时模型已过期) -->
 
         <!-- 文档理解 -->
         <div class="model-card" data-model="qwen-long" onclick="selectModelFromModal('qwen-long', '文档理解')">
@@ -4193,7 +4827,10 @@
       sentenceRotationTimer: null,
       thinkingLineInterval: null, // 新增：用于实时更新竖线高度的定时器
       thinkingSentences: [],
-      currentThinkingMessageId: null
+      currentThinkingMessageId: null,
+      // 智能滚动控制
+      userScrolledUp: false,  // 用户是否主动向上滚动
+      lastScrollTop: 0  // 上次滚动位置
     };
 
     const MODELS = {
@@ -4231,6 +4868,12 @@
         maxTokens: 128000,   // 128K 上下文
         expiresAt: '2025-12-15T23:59:00+08:00'  // 截止时间
       },
+      // Kimi K2 - 月之暗面高性能模型
+      'kimi-k2': {
+        name: 'Kimi K2',
+        provider: 'siliconflow',
+        supportsThinking: true
+      },
       'lmstudio-local': {
         name: 'LMStudio Local',
         provider: 'lmstudio',
@@ -4239,32 +4882,18 @@
     };
 
     // 内置系统提示词 - 每次请求强制执行
-    const BUILT_IN_SYSTEM_PROMPT = `你是RAI助理，由Rick开发。你的任务是提供专业、有用且切合上下文的回应，帮助用户完成写作、创意项目、概念解释、总结等任务。
+    const BUILT_IN_SYSTEM_PROMPT = `你是RAI助理，由Rick开发。你的任务是提供专业、有用且契合上下文的回应，帮助用户完成任务。
 
-核心要求：
-
-**简洁性原则**
-对简单问题给出简明答案，对复杂问题提供全面解释。使用markdown格式。
-
-**语言风格**
-使用友好对话的语气，主动语态配合具体动词。避免机械重复，确保句子之间自然流畅过渡。用通俗语言解释复杂概念，必要时用例子或类比说明。
-
-**适应性**
-改写内容时匹配原文语气和风格。生成新内容时根据目标受众调整表达方式。
-
-**专业态度**
-即使无法完成请求也保持有帮助的态度，说明限制并提供替代方案。避免使用"我"等第一人称代词，保持客观专业。
-
-**执行标准**
-准确理解用户意图，提供可操作的建议，用结构化推理确保回应清晰易懂，在思考时使用**小标题**内容的结构分段思考。禁止输出任何违法侵权内容！
-
-**任务后续智能建议**
+准则：
+先理解用户需求，对简单问题给出简洁明晰的答案，对复杂问题提供全面深度详细的解答。
+Being helpful and useful!回答中使用友善的语气，根据目标受众调整表达方式。
+准确理解用户意图，提供可操作的建议，用结构化推理确保回应清晰易懂，在思考时使用**小标题**内容的结构分段思考。
+智能调用联网工具，
 每次完成用户请求后，分析当前任务的类型和完成状态，预判用户的下一个自然需求，并主动提供一个针对性建议。
-
-**对话标题总结**
-在回复后根据上文你和用户对话内容，生成3-10字的标题。
-在回复最后强制以特定标记输出，输出格式：
-[TITLE]生成的标题[/TITLE]`;
+禁止输出任何违法侵权内容！即使无法完成请求也保持有帮助的态度，说明限制并提供替代方案。
+每次回复后根据上文你和用户对话内容，生成3-9字的标题。
+（TITLE必须为英文）JSON格式输出：
+[TITLE]你总结的对话标题[/TITLE]`;
 
     // 国际化翻译
     const i18n = {
@@ -4305,6 +4934,7 @@
         'min': '最小',
         'max': '最大',
         'input-placeholder': '输入消息... (Shift+Enter 换行)',
+        'input-placeholder-short': '有什么问题?',
         'appearance': '外观',
         'theme-label': '主题',
         'theme-desc': '选择界面主题',
@@ -4323,7 +4953,13 @@
         'system-prompt-desc': '设置AI的角色和行为',
         'system-prompt-placeholder': '例如: 你是一个专业的编程助手,擅长解释代码和解决技术问题...',
         'cancel': '取消',
-        'save-settings': '保存设置'
+        'save-settings': '保存设置',
+        // 模型选择相关
+        'model-smart': '智能模式',
+        'model-fast': '极速模式',
+        'model-expert': '专家模式',
+        'model-all': '全部模型',
+        'select-model': '选择模型'
       },
       'en': {
         'login-title': 'Welcome Back',
@@ -4362,6 +4998,7 @@
         'min': 'Min',
         'max': 'Max',
         'input-placeholder': 'Type a message... (Shift+Enter for new line)',
+        'input-placeholder-short': 'Ask anything...',
         'appearance': 'Appearance',
         'theme-label': 'Theme',
         'theme-desc': 'Choose interface theme',
@@ -4380,7 +5017,13 @@
         'system-prompt-desc': 'Set AI role and behavior',
         'system-prompt-placeholder': 'e.g., You are a professional programming assistant...',
         'cancel': 'Cancel',
-        'save-settings': 'Save Settings'
+        'save-settings': 'Save Settings',
+        // Model selection
+        'model-smart': 'Smart Mode',
+        'model-fast': 'Fast Mode',
+        'model-expert': 'Expert Mode',
+        'model-all': 'All Models',
+        'select-model': 'Select Model'
       }
     };
 
@@ -4456,6 +5099,12 @@
       if (sidebarLangText) {
         sidebarLangText.textContent = lang === 'zh-CN' ? 'EN' : '中';
       }
+
+      // 更新登录页面语言按钮文本
+      const authLangText = document.getElementById('authLangText');
+      if (authLangText) {
+        authLangText.textContent = lang === 'zh-CN' ? 'EN' : '中';
+      }
     }
 
     // 初始化主题和语言
@@ -4521,68 +5170,36 @@
       });
     }
 
-    // ==================== 输入框展开/收缩交互 ====================
+    // ==================== 输入框交互（已简化，无展开/收缩动画）====================
+    // 输入框现在始终展开，不再需要展开/收缩逻辑
     function expandInput() {
-      if (appState.inputExpanded) return;
-
-      const container = document.getElementById('inputContainer');
-      const toolbar = container.querySelector('.input-toolbar');
-
-      if (!container) return;
-
-      container.classList.remove('collapsed');
+      // 保留空函数以兼容现有代码调用
       appState.inputExpanded = true;
-
-      // 动画结束后设置overflow: visible，以便显示下拉菜单
-      setTimeout(() => {
-        if (appState.inputExpanded && toolbar) {
-          toolbar.classList.add('overflow-visible');
-        }
-      }, 500); // 与CSS transition时间匹配
     }
 
     function collapseInput() {
-      if (!appState.inputExpanded) return;
-
-      const container = document.getElementById('inputContainer');
-      const input = document.getElementById('messageInput');
-      const toolbar = container.querySelector('.input-toolbar');
-
-      if (!container) return;
-
-      // 如果输入框有内容或正在流式生成，不收缩
-      if (input && (input.value.trim() !== '' || appState.isStreaming)) {
-        return;
-      }
-
-      // 立即隐藏overflow，防止内容溢出
-      if (toolbar) {
-        toolbar.classList.remove('overflow-visible');
-      }
-
-      container.classList.add('collapsed');
-      appState.inputExpanded = false;
+      // 保留空函数以兼容现有代码调用
+      // 不再收缩输入框
     }
 
     function handleInputContainerClick(event) {
-      // 点击输入容器时展开
+      // 点击输入容器时聚焦输入框
       const target = event.target;
 
       // 如果点击的是工具栏按钮或下拉菜单，不处理
       if (target.closest('.toolbar-btn') ||
         target.closest('.model-dropdown') ||
-        target.closest('.thinking-budget-modal')) {
+        target.closest('.model-selector') ||
+        target.closest('.thinking-budget-modal') ||
+        target.closest('.send-btn') ||
+        target.closest('.stop-btn')) {
         return;
       }
 
-      expandInput();
-
       // 点击容器时，如果输入框未聚焦，强制聚焦
-      // 解决 Android "点一下展开，再点一下输入" 的问题
       const input = document.getElementById('messageInput');
       if (input && document.activeElement !== input) {
-        // 稍微延迟以等待展开动画开始
-        setTimeout(() => input.focus(), 10);
+        input.focus();
       }
     }
 
@@ -4609,7 +5226,6 @@
 
       input.value = text;
       input.focus();
-      expandInput();
     }
 
     function autoResizeInput() {
@@ -4627,27 +5243,153 @@
       }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-      console.log('✅ RAI v0.5 初始化');
+    // ==================== RAuth SSO 配置 ====================
+    const RAUTH_URL = 'http://localhost:3011';  // RAuth 统一认证服务地址
+    const RAUTH_TOKEN_KEY = 'rauth_token';  // SSO token 存储键名
+    const RAI_TOKEN_KEY = 'rai_token';  // 兼容旧 token
 
-      // 绑定输入容器点击事件
+    // SSO: 检测从 RAuth 返回的 token 参数
+    function handleRAuthCallback() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenFromUrl = urlParams.get('token');
+      if (tokenFromUrl) {
+        console.log('📥 从 RAuth 获取到 token');
+        localStorage.setItem(RAUTH_TOKEN_KEY, tokenFromUrl);
+        // 清除 URL 中的 token 参数
+        const url = new URL(window.location.href);
+        url.searchParams.delete('token');
+        window.history.replaceState({}, document.title, url.pathname + url.search);
+        return tokenFromUrl;
+      }
+      return null;
+    }
+
+    // SSO: 检测 RAuth 服务是否可用
+    async function checkRAuthAvailable() {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3秒超时
+        const response = await fetch(`${RAUTH_URL}/api/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: 'test' }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return true; // 服务可用
+      } catch (error) {
+        console.warn('⚠️ RAuth 服务不可用:', error.message);
+        return false;
+      }
+    }
+
+    // SSO: 重定向到 RAuth 登录页面（先检测服务可用性）
+    async function redirectToRAuth() {
+      const isAvailable = await checkRAuthAvailable();
+      if (isAvailable) {
+        const returnUrl = encodeURIComponent(window.location.href);
+        window.location.href = `${RAUTH_URL}?redirect=${returnUrl}`;
+      } else {
+        // RAuth 不可用，显示本地登录界面
+        console.log('⚠️ RAuth 服务不可用，显示本地登录界面');
+        document.getElementById('appContainer').style.display = 'none';
+        document.getElementById('authContainer').classList.add('active');
+      }
+    }
+
+    // SSO: 验证 RAuth token
+    async function verifyRAuthToken(token) {
+      try {
+        const response = await fetch(`${RAUTH_URL}/api/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        const data = await response.json();
+        if (data.valid) {
+          console.log('✅ RAuth token 验证成功');
+          return {
+            userId: data.userId,
+            email: data.email,
+            username: data.username,
+            avatarUrl: data.avatarUrl
+          };
+        }
+        return null;
+      } catch (error) {
+        console.error('❌ RAuth token 验证失败:', error);
+        return null;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      console.log('✅ RAI v0.5 初始化 (SSO 已启用)');
+
+      // 绑定输入容器点击和触摸事件（移动端支持）
       const inputContainer = document.getElementById('inputContainer');
       if (inputContainer) {
         inputContainer.addEventListener('click', handleInputContainerClick);
+        // 移动端触摸支持
+        inputContainer.addEventListener('touchstart', (e) => {
+          // 不阻止默认行为，允许后续的focus事件
+          handleInputContainerClick(e);
+        }, { passive: true });
       }
 
       // 初始化主题和语言
       initThemeAndLanguage();
 
-      const token = localStorage.getItem('rai_token');
+      // ==================== SSO 认证流程 ====================
+      // 1. 检测 URL 中是否有从 RAuth 返回的 token
+      let token = handleRAuthCallback();
+
+      // 2. 如果 URL 中没有 token，检查 localStorage
+      if (!token) {
+        token = localStorage.getItem(RAUTH_TOKEN_KEY) || localStorage.getItem(RAI_TOKEN_KEY);
+      }
+
+      // 3. 如果有 token，验证它
       if (token) {
         appState.token = token;
-        verifyToken();
+        // 优先使用 RAuth 验证（如果是 rauth_token）
+        if (localStorage.getItem(RAUTH_TOKEN_KEY) || handleRAuthCallback()) {
+          const rauthUser = await verifyRAuthToken(token);
+          if (rauthUser) {
+            appState.user = rauthUser;
+            // 同时保存到 rai_token 以兼容后端 API
+            localStorage.setItem(RAI_TOKEN_KEY, token);
+            showApp();
+            await loadUserData();
+          } else {
+            // RAuth token 无效，重定向到 RAuth 重新登录
+            localStorage.removeItem(RAUTH_TOKEN_KEY);
+            localStorage.removeItem(RAI_TOKEN_KEY);
+            redirectToRAuth();
+            return;
+          }
+        } else {
+          // 使用旧的 RAI token 验证
+          verifyToken();
+        }
+      } else {
+        // 4. 没有 token，重定向到 RAuth 登录
+        console.log('⚠️ 未找到有效 token，重定向到 RAuth 登录');
+        redirectToRAuth();
+        return;
       }
 
       loadSettings();
       updateModelControls();
       initSwipeGestures();
+
+      // 初始化智能滚动监听
+      initChatScrollListener();
+
+      // 初始化 MD 涟漪效果
+      initRippleEffect();
+
+      // 初始化工具栏按钮状态（确保联网按钮默认激活）
+      updateToolbarUI();
 
       // 修复：改进model dropdown的点击外关闭逻辑
       document.addEventListener('click', (e) => {
@@ -4675,16 +5417,7 @@
           }
         }
 
-        // 输入框收缩逻辑：点击空白区域时收缩
-        const inputContainer = document.getElementById('inputContainer');
-        const inputArea = document.querySelector('.input-area');
-
-        if (inputContainer && inputArea) {
-          // 检查点击是否在输入区域之外
-          if (!inputArea.contains(e.target)) {
-            collapseInput();
-          }
-        }
+        // 输入框不再收缩，此处逻辑已移除
       });
     });
 
@@ -4774,8 +5507,9 @@
       const selectedModel = appState.selectedModel;
 
       if (thinkingControls) {
-        // DeepSeek模型支持推理模式
-        if (selectedModel === 'deepseek-v3' || selectedModel === 'deepseek-v3.2-speciale') {
+        // DeepSeek模型和Kimi K2模型支持推理模式
+        if (selectedModel === 'deepseek-v3' || selectedModel === 'deepseek-v3.2-speciale' ||
+          selectedModel === 'kimi-k2') {
           thinkingControls.style.display = 'flex';
 
           // DeepSeek-V3.2-Speciale 强制开启思考模式(只支持思考模式)
@@ -4954,86 +5688,45 @@
 
     // ==================== 新版思考UI函数 ====================
 
-    // 解析思考内容，提取以"-"开头的句子
-    function parseThinkingContent(rawContent) {
-      if (!rawContent) return [];
+    // 解析思考内容，提取以"-"开头的第一句作为预览
+    function parseThinkingPreview(rawContent) {
+      if (!rawContent) return '';
 
-      // 匹配以 "- " 开头的行
+      // 匹配以 "- " 开头的行，取第一个
       const lines = rawContent.split('\n');
-      const sentences = [];
 
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.startsWith('- ')) {
-          // 移除开头的 "- "
+          // 移除开头的 "- "，返回第一句
           const sentence = trimmed.substring(2).trim();
           if (sentence) {
-            sentences.push(sentence);
+            // 限制预览长度
+            return sentence.length > 40 ? sentence.substring(0, 40) + '...' : sentence;
           }
         }
       }
 
-      return sentences;
+      return '';
     }
 
-    // 简洁模式句子轮播
-    function startSentenceRotation(thinkingId, sentences) {
-      if (!sentences || sentences.length === 0) return;
-      if (appState.thinkingUIMode !== 'collapsed') return;
+    // 更新预览文本
+    function updateThinkingPreview(previewText) {
+      const previewEl = document.getElementById('thinkingPreviewText');
+      const previewContainer = document.getElementById('thinkingPreview');
 
-      // 修复选择器：在thinking-indicator内查找sentence-display
-      const thinkingIndicator = document.getElementById(thinkingId)?.closest('.thinking-indicator');
-      const sentenceDisplay = thinkingIndicator?.querySelector('.sentence-display');
-
-      if (!sentenceDisplay) {
-        console.warn('sentence-display元素未找到');
-        return;
+      if (previewEl && previewText) {
+        previewEl.textContent = previewText;
+        if (previewContainer) previewContainer.style.display = 'inline-flex';
       }
-
-      let currentIndex = 0;
-
-      function showNextSentence() {
-        if (appState.thinkingUIMode !== 'collapsed') return;
-
-        // 每次重新计算随机间隔：1.8-2.8秒
-        const DISPLAY_DURATION = 1800 + Math.random() * 1000;
-
-        const sentence = sentences[currentIndex];
-        sentenceDisplay.textContent = sentence;
-        sentenceDisplay.classList.add('visible'); // 移除thinking-animation类
-
-        currentIndex = (currentIndex + 1) % sentences.length;
-
-        // 淡出动画
-        setTimeout(() => {
-          sentenceDisplay.classList.remove('visible');
-        }, DISPLAY_DURATION - 300);
-
-        // 设置下一个句子
-        appState.sentenceRotationTimer = setTimeout(showNextSentence, DISPLAY_DURATION);
-      }
-
-      showNextSentence();
-    }
-
-    // 停止句子轮播
-    function stopSentenceRotation() {
-      if (appState.sentenceRotationTimer) {
-        clearTimeout(appState.sentenceRotationTimer);
-        appState.sentenceRotationTimer = null;
-      }
-
-      // 隐藏所有句子显示元素
-      document.querySelectorAll('.sentence-display').forEach(el => {
-        el.classList.remove('visible', 'thinking-animation');
-      });
     }
 
     // 切换思考UI模式（简洁/展开）
     function toggleThinkingUIMode(thinkingId) {
       const thinkingContent = document.getElementById(thinkingId);
-      const icon = document.getElementById(thinkingId + '-icon');
-      const toggleText = document.querySelector(`[data-thinking-id="${thinkingId}"] .thinking-toggle-text`);
+      const toggleBtn = document.getElementById('thinkingToggleBtn');
+      const previewContainer = document.getElementById('thinkingPreview');
+      const thinkingLine = document.getElementById('thinkingLine');
 
       if (!thinkingContent) return;
 
@@ -5043,14 +5736,24 @@
         // 切换到展开模式
         appState.thinkingUIMode = 'expanded';
         thinkingContent.classList.add('expanded');
-        if (icon) icon.classList.add('expanded');
-        if (toggleText) {
-          toggleText.style.display = 'inline'; // 显示按钮文字
-          toggleText.textContent = appState.language === 'zh-CN' ? '收起思路' : 'Hide Thinking';
+
+        // 隐藏预览
+        if (previewContainer) previewContainer.style.display = 'none';
+
+        // 更新按钮：显示"收起思路"和向上箭头
+        if (toggleBtn) {
+          toggleBtn.classList.add('expanded');
+          toggleBtn.classList.remove('icon-only');
+          toggleBtn.innerHTML = `
+            <span class="toggle-text">${appState.language === 'zh-CN' ? '收起思路' : 'Hide'}</span>
+            ${getSvgIcon('expand_less', 'toggle-icon', 16)}
+          `;
         }
 
-        // 停止轮播，显示竖线
-        stopSentenceRotation();
+        // 显示竖线并更新高度
+        if (thinkingLine) {
+          thinkingLine.classList.add('visible');
+        }
         updateThinkingLine(thinkingId);
 
         // 启动实时更新定时器 (0.1s刷新一次)
@@ -5060,9 +5763,15 @@
         // 切换到简洁模式
         appState.thinkingUIMode = 'collapsed';
         thinkingContent.classList.remove('expanded');
-        if (icon) icon.classList.remove('expanded');
-        if (toggleText) {
-          toggleText.style.display = 'none'; // 隐藏按钮文字
+
+        // 显示预览
+        if (previewContainer) previewContainer.style.display = 'inline-flex';
+
+        // 更新按钮：只显示向下箭头
+        if (toggleBtn) {
+          toggleBtn.classList.remove('expanded');
+          toggleBtn.classList.add('icon-only');
+          toggleBtn.innerHTML = `${getSvgIcon('expand_more', 'toggle-icon', 16)}`;
         }
 
         // 停止实时更新定时器
@@ -5072,39 +5781,34 @@
         }
 
         // 隐藏竖线
-        updateThinkingLine(thinkingId);
-
-        // 如果还在思考，恢复轮播
-        const sentences = parseThinkingContent(thinkingContent.textContent);
-        if (sentences.length > 0) {
-          startSentenceRotation(thinkingId, sentences);
+        if (thinkingLine) {
+          thinkingLine.classList.remove('visible');
+          thinkingLine.style.height = '0px';
         }
       }
     }
 
-    // 更新竖线长度 - 控制AI头像下方的竖线
+    // 更新竖线长度 - 直接操作thinking-line元素
     function updateThinkingLine(thinkingId) {
       const thinkingContent = document.getElementById(thinkingId);
-      if (!thinkingContent) return;
+      const thinkingLine = document.getElementById('thinkingLine');
 
-      // 找到对应的message容器和avatar
-      const messageDiv = thinkingContent.closest('.message.assistant');
-      const avatar = messageDiv ? messageDiv.querySelector('.message-avatar') : null;
-
-      if (!avatar) return;
+      if (!thinkingContent || !thinkingLine) return;
 
       // 简洁模式或收起状态，完全隐藏竖线
       if (appState.thinkingUIMode !== 'expanded' || !thinkingContent.classList.contains('expanded')) {
-        avatar.style.setProperty('--thinking-line-height', '0px');
+        thinkingLine.style.height = '0px';
+        thinkingLine.classList.remove('visible');
         return;
       }
 
-      // 展开模式：计算实际内容高度
-      // 使用更长的延迟确保内容完全渲染
+      // 展开模式：计算实际内容高度并设置竖线高度
       const updateHeight = () => {
         if (thinkingContent.classList.contains('expanded')) {
           const contentHeight = thinkingContent.scrollHeight;
-          avatar.style.setProperty('--thinking-line-height', `${contentHeight}px`);
+          // 竖线高度 = 内容高度 + 一些额外空间
+          thinkingLine.style.height = `${contentHeight + 8}px`;
+          thinkingLine.classList.add('visible');
         }
       };
 
@@ -5116,7 +5820,7 @@
     }
 
     // 开始思考动画
-    function startThinkingAnimation(avatarElement, thinkingId, sentences) {
+    function startThinkingAnimation(avatarElement, thinkingId, previewText) {
       if (!avatarElement) return;
 
       // 添加光晕动画，随机周期
@@ -5124,10 +5828,13 @@
       avatarElement.style.animationDuration = `${glowDuration}s`;
       avatarElement.classList.add('thinking');
 
-      // 根据模式启动对应显示
-      if (appState.thinkingUIMode === 'collapsed' && sentences && sentences.length > 0) {
-        startSentenceRotation(thinkingId, sentences);
-      } else if (appState.thinkingUIMode === 'expanded') {
+      // 更新预览文本
+      if (previewText) {
+        updateThinkingPreview(previewText);
+      }
+
+      // 如果是展开模式，更新竖线
+      if (appState.thinkingUIMode === 'expanded') {
         updateThinkingLine(thinkingId);
       }
     }
@@ -5137,7 +5844,6 @@
       if (!avatarElement) return;
 
       avatarElement.classList.remove('thinking');
-      stopSentenceRotation();
 
       // 停止实时更新定时器
       if (appState.thinkingLineInterval) {
@@ -5145,17 +5851,77 @@
         appState.thinkingLineInterval = null;
       }
 
-      // 隐藏竖线
-      const thinkingContent = document.getElementById(thinkingId);
-      if (thinkingContent) {
-        const messageDiv = thinkingContent.closest('.message.assistant');
-        const avatar = messageDiv ? messageDiv.querySelector('.message-avatar') : null;
-        if (avatar) {
-          avatar.style.setProperty('--thinking-line-height', '0px');
+      // 更新按钮文本为"展开思路"
+      const toggleBtn = document.getElementById('thinkingToggleBtn');
+      const previewContainer = document.getElementById('thinkingPreview');
+
+      if (appState.thinkingUIMode === 'collapsed') {
+        // 简洁模式：显示预览和展开按钮
+        if (toggleBtn) {
+          toggleBtn.classList.remove('expanded');
+          toggleBtn.classList.add('icon-only');
+          toggleBtn.innerHTML = `${getSvgIcon('expand_more', 'toggle-icon', 16)}`;
         }
+        if (previewContainer) previewContainer.style.display = 'inline-flex';
       }
     }
 
+
+    // 历史消息的思考UI切换（使用动态ID）
+    function toggleHistoryThinkingUI(thinkingId) {
+      const thinkingContent = document.getElementById(thinkingId);
+      const toggleBtn = document.getElementById(`${thinkingId}-btn`);
+      const previewContainer = document.getElementById(`${thinkingId}-preview`);
+      const thinkingLine = document.getElementById(`${thinkingId}-line`);
+
+      if (!thinkingContent) return;
+
+      const isExpanding = !thinkingContent.classList.contains('expanded');
+
+      if (isExpanding) {
+        // 展开模式
+        thinkingContent.classList.add('expanded');
+
+        // 隐藏预览
+        if (previewContainer) previewContainer.style.display = 'none';
+
+        // 更新按钮
+        if (toggleBtn) {
+          toggleBtn.classList.add('expanded');
+          toggleBtn.classList.remove('icon-only');
+          toggleBtn.innerHTML = `
+            <span class="toggle-text">${appState.language === 'zh-CN' ? '收起思路' : 'Hide'}</span>
+            ${getSvgIcon('expand_less', 'toggle-icon', 16)}
+          `;
+        }
+
+        // 显示竖线
+        if (thinkingLine) {
+          const contentHeight = thinkingContent.scrollHeight;
+          thinkingLine.style.height = `${contentHeight + 8}px`;
+          thinkingLine.classList.add('visible');
+        }
+      } else {
+        // 收起模式
+        thinkingContent.classList.remove('expanded');
+
+        // 显示预览
+        if (previewContainer) previewContainer.style.display = 'inline-flex';
+
+        // 更新按钮
+        if (toggleBtn) {
+          toggleBtn.classList.remove('expanded');
+          toggleBtn.classList.add('icon-only');
+          toggleBtn.innerHTML = `${getSvgIcon('expand_more', 'toggle-icon', 16)}`;
+        }
+
+        // 隐藏竖线
+        if (thinkingLine) {
+          thinkingLine.classList.remove('visible');
+          thinkingLine.style.height = '0px';
+        }
+      }
+    }
 
     // ==================== 模型选择下拉菜单函数 ====================
     function openModelModal() {
@@ -5170,8 +5936,16 @@
 
     function closeModelModal() {
       const menu = document.getElementById('modelDropdownMenu');
-      if (menu) {
+      if (menu && menu.classList.contains('active')) {
+        // 移除active，添加closing触发关闭动画
         menu.classList.remove('active');
+        menu.classList.add('closing');
+
+        // 动画结束后移除closing类
+        menu.addEventListener('animationend', function handler() {
+          menu.classList.remove('closing');
+          menu.removeEventListener('animationend', handler);
+        }, { once: true });
       }
     }
 
@@ -5202,11 +5976,18 @@
       });
     }
 
-    function selectModelFromMenu(model, displayName) {
+    function selectModelFromMenu(model, displayName, i18nKey) {
       appState.selectedModel = model;
       const selectedText = document.getElementById('selectedModelText');
       if (selectedText) {
-        selectedText.textContent = displayName;
+        // 如果有i18n键，使用当前语言的翻译；否则使用传入的displayName
+        if (i18nKey && i18n[appState.language] && i18n[appState.language][i18nKey]) {
+          selectedText.textContent = i18n[appState.language][i18nKey];
+          selectedText.setAttribute('data-i18n', i18nKey);
+        } else {
+          selectedText.textContent = displayName;
+          selectedText.removeAttribute('data-i18n');
+        }
       }
 
       updateModelControls();
@@ -5222,7 +6003,7 @@
 
       if (menu && selector) {
         if (!menu.contains(e.target) && !selector.contains(e.target)) {
-          menu.classList.remove('active');
+          closeModelModal();
         }
       }
     });
@@ -5394,7 +6175,9 @@
         }
       });
 
-      scrollToBottom();
+      // 完整渲染时强制滚动到底部并重置状态
+      appState.userScrolledUp = false;
+      scrollToBottom(true);
     }
 
     // 修复：改进createMessageElement，添加安全的事件处理
@@ -5427,24 +6210,27 @@
 
         const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-        const toggleText = '';
+        // 获取预览文本（第一个 "- " 后的句子）
+        const previewText = parseThinkingPreview(message.reasoning_content);
 
-        const thinkingLabel_el = document.createElement('div');
-        thinkingLabel_el.className = 'thinking-label';
-        thinkingLabel_el.setAttribute('data-thinking-id', thinkingId);
-        thinkingLabel_el.innerHTML = `
-          <div class="thinking-label-left">
-            <span class="thinking-toggle-text" style="display: none;">${toggleText}</span>
+        // 创建思考头部区域
+        const thinkingHeader = document.createElement('div');
+        thinkingHeader.className = 'thinking-header';
+        thinkingHeader.innerHTML = `
+          <div class="thinking-preview" id="${thinkingId}-preview">
+            <span class="thinking-preview-text">${previewText || ''}</span>
           </div>
-          ${getSvgIcon('expand_more', 'material-symbols-outlined thinking-expand-icon', 18).replace('<svg', `<svg id="${thinkingId}-icon"`)}
+          <button class="thinking-toggle-btn icon-only" id="${thinkingId}-btn" data-thinking-id="${thinkingId}">
+            ${getSvgIcon('expand_more', 'toggle-icon', 16)}
+          </button>
         `;
 
-        // 使用新的toggleThinkingUIMode函数
-        thinkingLabel_el.addEventListener('click', function () {
-          const id = this.getAttribute('data-thinking-id');
-          toggleThinkingUIMode(id);
-        });
+        // 创建竖线
+        const thinkingLine = document.createElement('div');
+        thinkingLine.className = 'thinking-line';
+        thinkingLine.id = `${thinkingId}-line`;
 
+        // 创建思考内容
         const thinkingContent = document.createElement('div');
         thinkingContent.className = 'thinking-content';
         thinkingContent.id = thinkingId;
@@ -5466,31 +6252,140 @@
           if (remainingText.trim()) {
             const sentenceSpan = document.createElement('span');
             sentenceSpan.className = 'thinking-sentence';
-            // 识别**文本**格式并转换为<strong>标签
             const formattedText = remainingText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
             sentenceSpan.innerHTML = formattedText;
             thinkingContent.appendChild(sentenceSpan);
           }
         } else {
-          // 如果没有句号分隔符，就直接显示全部内容，识别**文本**格式
+          // 如果没有句号分隔符，就直接显示全部内容
           const formattedText = message.reasoning_content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
           thinkingContent.innerHTML = formattedText;
         }
 
-        thinkingDiv.appendChild(thinkingLabel_el);
-
-        // 注意：不要在历史消息中添加sentence-display元素
-        // sentence-display只用于实时思考时的简洁模式预览
-
+        thinkingDiv.appendChild(thinkingHeader);
+        thinkingDiv.appendChild(thinkingLine);
         thinkingDiv.appendChild(thinkingContent);
         content.appendChild(thinkingDiv);
+
+        // 为历史消息添加展开/收起事件监听
+        setTimeout(() => {
+          const toggleBtn = document.getElementById(`${thinkingId}-btn`);
+          if (toggleBtn) {
+            toggleBtn.addEventListener('click', function () {
+              toggleHistoryThinkingUI(thinkingId);
+            });
+          }
+        }, 0);
+      }
+
+      // 🔥 为用户消息添加附件预览（在文本之前显示）
+      if (message.role === 'user' && message.attachments) {
+        let attachments = message.attachments;
+        // 如果是字符串，尝试解析JSON
+        if (typeof attachments === 'string') {
+          try {
+            attachments = JSON.parse(attachments);
+          } catch (e) {
+            attachments = [];
+          }
+        }
+
+        if (Array.isArray(attachments) && attachments.length > 0) {
+          const attachmentsDiv = document.createElement('div');
+          attachmentsDiv.className = 'message-attachments';
+
+          attachments.forEach(att => {
+            if (!att || !att.type) return;
+
+            const itemDiv = document.createElement('div');
+
+            if (att.type === 'image') {
+              itemDiv.className = 'message-attachment-item image-attachment';
+              if (att.data) {
+                const img = document.createElement('img');
+                img.src = att.data;
+                img.alt = att.fileName || '图片';
+                img.loading = 'lazy';
+                // 点击查看大图
+                img.onclick = () => {
+                  window.open(att.data, '_blank');
+                };
+                itemDiv.appendChild(img);
+              } else {
+                itemDiv.innerHTML = `<div style="padding: 20px; text-align: center;">🖼️</div>`;
+              }
+            } else if (att.type === 'video') {
+              itemDiv.className = 'message-attachment-item media-attachment';
+              itemDiv.innerHTML = `
+                <span class="media-icon">🎬</span>
+                <div class="media-info">
+                  <div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div>
+                  <div class="media-name">${att.fileName || ''}</div>
+                </div>
+              `;
+            } else if (att.type === 'audio') {
+              itemDiv.className = 'message-attachment-item media-attachment';
+              itemDiv.innerHTML = `
+                <span class="media-icon">🎵</span>
+                <div class="media-info">
+                  <div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div>
+                  <div class="media-name">${att.fileName || ''}</div>
+                </div>
+              `;
+            } else if (att.type === 'document') {
+              itemDiv.className = 'message-attachment-item media-attachment';
+              itemDiv.innerHTML = `
+                <span class="media-icon">📄</span>
+                <div class="media-info">
+                  <div class="media-type">${appState.language === 'zh-CN' ? '文档' : 'Document'}</div>
+                  <div class="media-name">${att.fileName || ''}</div>
+                </div>
+              `;
+            }
+
+            if (itemDiv.innerHTML) {
+              attachmentsDiv.appendChild(itemDiv);
+            }
+          });
+
+          if (attachmentsDiv.children.length > 0) {
+            content.appendChild(attachmentsDiv);
+          }
+        }
       }
 
       const textDiv = document.createElement('div');
       textDiv.className = 'message-text';
       // 使用renderMarkdownWithMath渲染Markdown和数学公式
-      textDiv.innerHTML = renderMarkdownWithMath(message.content || '');
+      let renderedContent = renderMarkdownWithMath(message.content || '');
+
+      // 🔥 解析 sources：可能是 JSON 字符串（从数据库加载）或数组对象（流式响应）
+      let sources = message.sources;
+      if (typeof sources === 'string' && sources.trim()) {
+        try {
+          sources = JSON.parse(sources);
+        } catch (e) {
+          console.warn('⚠️ 解析 sources JSON 失败:', e);
+          sources = null;
+        }
+      }
+
+      // 🔥 对AI消息的角标进行转换
+      if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
+        renderedContent = renderCitations(renderedContent, sources);
+      }
+
+      textDiv.innerHTML = renderedContent;
       content.appendChild(textDiv);
+
+
+      // 🔥 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
+      if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
+        const sourcesDiv = document.createElement('div');
+        sourcesDiv.innerHTML = renderSourcesList(sources, appState.language);
+        content.appendChild(sourcesDiv);
+      }
+
 
       // 为AI消息添加元信息和复制按钮
       if (message.role === 'assistant') {
@@ -5677,6 +6572,59 @@
     }
 
     // 修复：改进renderSessions，使用事件委托处理删除按钮
+    // 🔥 新增：支持侧边栏附件预览
+
+    // 解析会话的附件数据
+    function parseSessionAttachments(session) {
+      if (!session.recent_attachments) return [];
+
+      try {
+        const attachmentStrings = session.recent_attachments.split('|||');
+        const attachments = [];
+
+        for (const str of attachmentStrings) {
+          if (str && str.trim()) {
+            try {
+              const parsed = JSON.parse(str);
+              if (Array.isArray(parsed)) {
+                attachments.push(...parsed);
+              } else {
+                attachments.push(parsed);
+              }
+            } catch (e) {
+              // 跳过无法解析的条目
+            }
+          }
+        }
+
+        return attachments.slice(0, 2); // 最多2个
+      } catch (e) {
+        return [];
+      }
+    }
+
+    // 生成单个附件预览HTML
+    function renderSessionAttachmentPreview(attachment) {
+      if (!attachment || !attachment.type) return '';
+
+      if (attachment.type === 'image') {
+        if (attachment.data) {
+          return `<div class="session-attachment-preview">
+            <img src="${attachment.data}" alt="图片" loading="lazy">
+          </div>`;
+        } else {
+          return `<div class="session-attachment-preview">🖼️</div>`;
+        }
+      } else if (attachment.type === 'video') {
+        return `<div class="session-attachment-preview video-preview">🎬</div>`;
+      } else if (attachment.type === 'audio') {
+        return `<div class="session-attachment-preview audio-preview">🎵</div>`;
+      } else if (attachment.type === 'document') {
+        return `<div class="session-attachment-preview">📄</div>`;
+      }
+      return '';
+    }
+
     function renderSessions() {
       const container = document.getElementById('sessionsContainer');
 
@@ -5700,9 +6648,18 @@
         div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}`;
         div.setAttribute('data-session-id', session.id);
 
+        // 🔥 解析附件并生成预览HTML
+        const attachments = parseSessionAttachments(session);
+        let attachmentsHtml = '';
+        if (attachments.length > 0) {
+          const previews = attachments.map(att => renderSessionAttachmentPreview(att)).join('');
+          attachmentsHtml = `<div class="session-attachments">${previews}</div>`;
+        }
+
         div.innerHTML = `
           <div class="session-title">${escapeHtml(session.title || '')}</div>
           <div class="session-preview">${escapeHtml((session.last_message || '').substring(0, 50))}...</div>
+          ${attachmentsHtml}
           <button class="session-delete-btn" type="button">
             ${getSvgIcon('close', 'material-symbols-outlined', 24)}
           </button>
@@ -5731,6 +6688,7 @@
     }
 
     // 修复：改进sendMessage，添加更多的错误处理
+    // 🔥 支持多模态：图片、音频、视频附件
     async function sendMessage() {
       const input = document.getElementById('messageInput');
       if (!input) {
@@ -5740,7 +6698,9 @@
 
       const message = input.value.trim();
 
-      if (!message || appState.isStreaming) return;
+      // 允许只发送附件（无文字内容）
+      if (!message && !currentAttachment) return;
+      if (appState.isStreaming) return;
 
       if (!appState.currentSession) {
         await createNewSession();
@@ -5750,18 +6710,43 @@
       input.value = '';
       autoResizeInput();
 
+      // 🔥 构建带附件的用户消息
       const userMsg = {
         role: 'user',
-        content: message,
+        content: message || '请分析这个文件',  // 如果没有文字，使用默认提示
         created_at: new Date().toISOString()
       };
+
+      // 如果有附件，添加到消息中
+      if (currentAttachment) {
+        userMsg.attachments = [{
+          type: currentAttachment.type,  // 'image', 'audio', 'video'
+          data: currentAttachment.data,  // Base64 data URL
+          fileName: currentAttachment.fileName
+        }];
+        console.log(`📎 消息包含附件: ${currentAttachment.type} - ${currentAttachment.fileName}`);
+      }
+
       appState.messages.push(userMsg);
       renderMessages();
 
-      const messages = appState.messages.map(m => ({
-        role: m.role,
-        content: m.content
-      }));
+      // 🔥 构建发送给服务器的消息数组（包含附件信息）
+      const messages = appState.messages.map(m => {
+        const msgObj = {
+          role: m.role,
+          content: m.content
+        };
+        // 如果有附件，也传递给服务器
+        if (m.attachments && m.attachments.length > 0) {
+          msgObj.attachments = m.attachments;
+        }
+        return msgObj;
+      });
+
+      // 清除当前附件
+      const hadAttachment = !!currentAttachment;
+      currentAttachment = null;
+      updateAttachmentUI();  // 更新UI显示
 
       const sendBtn = document.getElementById('sendBtn');
       const stopBtn = document.getElementById('stopBtn');
@@ -5784,7 +6769,7 @@
 
       aiMsgDiv.innerHTML = `
         <div class="message-avatar">
-          ${getSvgIcon('rai_logo_colored', 'material-symbols-outlined ai-avatar processing', 24)}
+          ${getSvgIcon('rai_logo_colored', 'material-symbols-outlined ai-avatar processing', 28)}
           <span class="loading-status" id="loadingStatus">
             <svg class="status-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 4V2C6.48 2 2 6.48 2 12h2c0-4.41 3.59-8 8-8z"/>
@@ -5794,13 +6779,18 @@
         </div>
         <div class="message-content">
           <div class="thinking-indicator" id="thinkingIndicator" style="display: none;">
-            <div class="thinking-label" data-thinking-id="thinkingContent">
-              <div class="thinking-label-left">
-                <span class="thinking-toggle-text" id="thinkingTitleText" style="display: none;">${thinkingLabelText}</span>
+            <!-- 思考头部区域：预览 + 展开按钮 -->
+            <div class="thinking-header">
+              <div class="thinking-preview" id="thinkingPreview">
+                <span class="thinking-preview-text" id="thinkingPreviewText"></span>
               </div>
-              ${getSvgIcon('expand_more', 'material-symbols-outlined thinking-expand-icon', 18).replace('<svg', '<svg id="thinkingContent-icon"')}
+              <button class="thinking-toggle-btn icon-only" id="thinkingToggleBtn" data-thinking-id="thinkingContent">
+                ${getSvgIcon('expand_more', 'toggle-icon', 16)}
+              </button>
             </div>
-            <div class="sentence-display" data-thinking-id="thinkingContent"></div>
+            <!-- 竖线 -->
+            <div class="thinking-line" id="thinkingLine"></div>
+            <!-- 思考内容 -->
             <div class="thinking-content" id="thinkingContent"></div>
           </div>
           <div class="message-text" id="streamingContent"></div>
@@ -5813,9 +6803,9 @@
       }
 
       // 添加思考折叠功能的事件监听器
-      const thinkingLabel = aiMsgDiv.querySelector('.thinking-label');
-      if (thinkingLabel) {
-        thinkingLabel.addEventListener('click', function () {
+      const thinkingToggleBtn = aiMsgDiv.querySelector('.thinking-toggle-btn');
+      if (thinkingToggleBtn) {
+        thinkingToggleBtn.addEventListener('click', function () {
           const id = this.getAttribute('data-thinking-id');
           toggleThinkingUIMode(id);
         });
@@ -5827,6 +6817,7 @@
       let reasoningContent = '';
       let thinkingSentences = [];
       let isThinkingPhase = false;
+      let currentSources = [];  // 🔥 新增：存储联网搜索来源
 
       try {
         const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -5949,18 +6940,13 @@
                   updateThinkingLine('thinkingContent');
                 }
 
-                // 解析当前的思考内容，提取以 "- " 开头的句子
-                const currentSentences = parseThinkingContent(reasoningContent);
-
-                // 如果是简洁模式，更新轮播
-                if (appState.thinkingUIMode === 'collapsed' && currentSentences.length > 0) {
-                  // 停止旧的轮播
-                  stopSentenceRotation();
-                  // 启动新的轮播
-                  startSentenceRotation('thinkingContent', currentSentences);
+                // 解析预览文本并更新（取第一个 "- " 后的句子）
+                const previewText = parseThinkingPreview(reasoningContent);
+                if (previewText && appState.thinkingUIMode === 'collapsed') {
+                  updateThinkingPreview(previewText);
                 }
 
-                // 检测句号（中英文），逐句显示
+                // 检测句号（中英文），逐句显示到展开内容区域
                 const sentenceRegex = /[^.。!！?？]+[.。!！?？]+/g;
                 const matches = reasoningContent.match(sentenceRegex);
 
@@ -5970,20 +6956,6 @@
                     appendThinkingSentence(sentence);
                     thinkingSentences.push(sentence);
                   });
-
-                  // 动态更新标题：显示最新的一句
-                  if (matches.length > 0) {
-                    const latestSentence = matches[matches.length - 1].trim();
-                    const thinkingTitleEl = document.getElementById('thinkingTitleText');
-                    if (thinkingTitleEl && latestSentence && appState.thinkingUIMode !== 'collapsed') {
-                      // 截断过长的句子
-                      const maxLength = 50;
-                      const displayText = latestSentence.length > maxLength
-                        ? latestSentence.substring(0, maxLength) + '...'
-                        : latestSentence;
-                      thinkingTitleEl.textContent = displayText;
-                    }
-                  }
 
                   // 移除已显示的句子，保留未完成的部分
                   const displayedText = thinkingSentences.join('');
@@ -6010,19 +6982,16 @@
                   // 停止AI头像闪烁
                   if (aiAvatar) aiAvatar.classList.remove('thinking');
 
-                  // 更新标题为完成状态
-                  const thinkingTitleEl = document.getElementById('thinkingTitleText');
-                  if (thinkingTitleEl) {
-                    if (appState.thinkingUIMode === 'collapsed') {
-                      // 简洁模式：保持显示“显示思路↓”
-                      thinkingTitleEl.textContent = appState.language === 'zh-CN'
-                        ? '显示思路 ↓'
-                        : 'Show Thinking ↓';
-                    } else {
-                      // 展开模式：显示完成状态
-                      thinkingTitleEl.textContent = appState.language === 'zh-CN'
-                        ? '已思考'
-                        : 'Thinking completed';
+                  // 思考完成后，确保预览仍然可见（如果是简洁模式）
+                  const previewContainer = document.getElementById('thinkingPreview');
+                  const toggleBtn = document.getElementById('thinkingToggleBtn');
+
+                  if (appState.thinkingUIMode === 'collapsed') {
+                    // 简洁模式：确保预览和展开按钮可见
+                    if (previewContainer) previewContainer.style.display = 'inline-flex';
+                    if (toggleBtn) {
+                      toggleBtn.classList.remove('expanded');
+                      toggleBtn.classList.add('icon-only');
                     }
                   }
 
@@ -6047,6 +7016,13 @@
                   appState.currentSession.title = parsed.title;
                   console.log(`✅ 会话标题已更新: "${parsed.title}"`);
                   loadSessions().catch(err => console.error('刷新会话列表失败:', err));
+                }
+              }
+              // 🔥 新增：处理搜索来源
+              else if (parsed.type === 'sources') {
+                if (parsed.sources && Array.isArray(parsed.sources)) {
+                  currentSources = parsed.sources;
+                  console.log(`📥 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
                 }
               }
               else if (parsed.type === 'done') {
@@ -6088,6 +7064,7 @@
           model: appState.lastModelUsed || appState.selectedModel,
           enable_search: appState.internetMode,
           internet_mode: appState.internetMode,
+          sources: currentSources.length > 0 ? currentSources : null,  // 🔥 新增：存储来源
           created_at: new Date().toISOString()
         };
         appState.messages.push(aiMsg);
@@ -6431,14 +7408,16 @@
     function handleLogout() {
       const confirmMsg = appState.language === 'zh-CN' ? '确定要退出登录吗?' : 'Are you sure you want to logout?';
       if (confirm(confirmMsg)) {
-        localStorage.removeItem('rai_token');
+        // 清除所有认证 token
+        localStorage.removeItem(RAUTH_TOKEN_KEY);
+        localStorage.removeItem(RAI_TOKEN_KEY);
         appState.token = null;
         appState.user = null;
         appState.sessions = [];
         appState.currentSession = null;
 
-        document.getElementById('appContainer').style.display = 'none';
-        document.getElementById('authContainer').classList.add('active');
+        // 重定向到 RAuth 登录页面
+        redirectToRAuth();
       }
     }
 
@@ -6457,6 +7436,12 @@
     function showApp() {
       document.getElementById('authContainer').classList.remove('active');
       document.getElementById('appContainer').style.display = 'flex';
+
+      // 延迟初始化滚动监听器，确保 chatContainer 已存在
+      setTimeout(() => {
+        initChatScrollListener();
+        updateToolbarUI();
+      }, 100);
     }
 
     function showError(element, message) {
@@ -6894,11 +7879,83 @@
     // 别名，确保兼容性
     const renderWelcomeScreen = showWelcome;
 
-    function scrollToBottom() {
+    // 判断用户是否在底部附近（阈值50px）
+    function isNearBottom() {
       const container = document.getElementById('chatContainer');
+      if (!container) return true;
+      const threshold = 50;
+      return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+    }
+
+    // 智能滚动到底部：只有用户在底部附近时才自动滚动
+    function scrollToBottom(force = false) {
+      const container = document.getElementById('chatContainer');
+      if (!container) return;
+
+      // 如果用户主动向上滚动了，不强制滚动（除非 force=true）
+      if (appState.userScrolledUp && !force) {
+        return;
+      }
+
       setTimeout(() => {
         container.scrollTop = container.scrollHeight;
+        appState.userScrolledUp = false;
       }, 100);
+    }
+
+    // 初始化聊天容器的滚动监听
+    let chatScrollListenerInitialized = false;
+
+    function initChatScrollListener() {
+      const container = document.getElementById('chatContainer');
+      if (!container || chatScrollListenerInitialized) return;
+
+      chatScrollListenerInitialized = true;
+
+      container.addEventListener('scroll', () => {
+        const nearBottom = isNearBottom();
+
+        // 如果不在底部附近，说明用户向上滚动了
+        if (!nearBottom) {
+          appState.userScrolledUp = true;
+        } else {
+          // 用户滚到了底部附近，重新启用自动滚动
+          appState.userScrolledUp = false;
+        }
+      }, { passive: true });
+
+      console.log('✅ 智能滚动监听器已初始化');
+    }
+
+    // 初始化 Material Design 涟漪效果
+    function initRippleEffect() {
+      // 为工具栏按钮添加涟漪效果
+      document.addEventListener('click', function (e) {
+        const button = e.target.closest('.toolbar-btn, .model-select-custom');
+        if (!button) return;
+
+        // 创建涟漪元素
+        const ripple = document.createElement('span');
+        ripple.classList.add('ripple-effect');
+
+        // 计算涟漪位置
+        const rect = button.getBoundingClientRect();
+        const size = Math.max(rect.width, rect.height);
+        const x = e.clientX - rect.left - size / 2;
+        const y = e.clientY - rect.top - size / 2;
+
+        ripple.style.width = ripple.style.height = `${size}px`;
+        ripple.style.left = `${x}px`;
+        ripple.style.top = `${y}px`;
+
+        // 添加到按钮
+        button.appendChild(ripple);
+
+        // 动画结束后移除
+        ripple.addEventListener('animationend', () => {
+          ripple.remove();
+        });
+      });
     }
 
     async function createNewSession() {
@@ -7299,30 +8356,52 @@
       }
     }
 
-    // ==================== 文件上传处理 ====================
+    // ==================== 文件上传处理 (多模态支持) ====================
     let currentAttachment = null;
 
     function handleFileUpload() {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt';
+      // 🔥 支持更多多模态文件类型
+      input.accept = 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.ogg,.pdf,.doc,.docx,.txt';
       input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
         const maxSize = 50 * 1024 * 1024;
         if (file.size > maxSize) {
-          alert('文件大小不能超过50MB');
+          alert(appState.language === 'zh-CN' ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
           return;
         }
 
         const fileType = file.type;
         let attachmentType = 'document';
 
-        if (fileType.startsWith('image/')) attachmentType = 'image';
-        else if (fileType.startsWith('video/')) attachmentType = 'video';
+        // 🔥 更精确的类型检测
+        if (fileType.startsWith('image/')) {
+          attachmentType = 'image';
+        } else if (fileType.startsWith('video/')) {
+          attachmentType = 'video';
+        } else if (fileType.startsWith('audio/') ||
+          file.name.match(/\.(mp3|wav|m4a|ogg|flac|aac|wma)$/i)) {
+          attachmentType = 'audio';
+        }
 
-        if (attachmentType === 'document') {
+        // 图片、视频、音频使用Base64编码直接发送给多模态模型
+        if (attachmentType === 'image' || attachmentType === 'video' || attachmentType === 'audio') {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            currentAttachment = {
+              type: attachmentType,
+              data: event.target.result,  // Base64 data URL
+              fileName: file.name
+            };
+            console.log(`✅ ${attachmentType}文件已选择: ${file.name}`);
+            updateAttachmentUI();  // 更新UI显示
+          };
+          reader.readAsDataURL(file);
+        } else {
+          // 文档类型走原有上传流程
           try {
             const formData = new FormData();
             formData.append('file', file);
@@ -7339,28 +8418,92 @@
               fileName: file.name
             };
             console.log('✅ 文档上传成功');
+            updateAttachmentUI();
           } catch (error) {
             console.error('❌ 文档上传失败:', error);
-            alert('文档上传失败');
+            alert(appState.language === 'zh-CN' ? '文档上传失败' : 'Document upload failed');
           }
-        } else {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            currentAttachment = {
-              type: attachmentType,
-              data: event.target.result,
-              fileName: file.name
-            };
-            console.log(`✅ ${attachmentType}文件已选择`);
-          };
-          reader.readAsDataURL(file);
         }
       };
       input.click();
     }
 
+    // 🔥 更新附件UI显示
+    function updateAttachmentUI() {
+      let attachmentPreview = document.getElementById('attachmentPreview');
+
+      if (!currentAttachment) {
+        // 移除预览
+        if (attachmentPreview) {
+          attachmentPreview.remove();
+        }
+        return;
+      }
+
+      // 创建或更新预览元素
+      if (!attachmentPreview) {
+        attachmentPreview = document.createElement('div');
+        attachmentPreview.id = 'attachmentPreview';
+        attachmentPreview.className = 'attachment-preview';
+
+        // 插入到input-row之前
+        const inputContainer = document.getElementById('inputContainer');
+        if (inputContainer) {
+          const inputRow = inputContainer.querySelector('.input-row');
+          if (inputRow) {
+            inputContainer.insertBefore(attachmentPreview, inputRow);
+          } else {
+            // 如果找不到input-row，插入到inputContainer开头
+            inputContainer.insertBefore(attachmentPreview, inputContainer.firstChild);
+          }
+        }
+      }
+
+      // 根据类型显示不同的预览
+      let iconSvg = '';
+      let typeLabel = '';
+
+      switch (currentAttachment.type) {
+        case 'image':
+          iconSvg = getSvgIcon('image', 'attachment-icon', 20);
+          typeLabel = appState.language === 'zh-CN' ? '图片' : 'Image';
+          break;
+        case 'audio':
+          iconSvg = getSvgIcon('headphones', 'attachment-icon', 20);
+          typeLabel = appState.language === 'zh-CN' ? '音频' : 'Audio';
+          break;
+        case 'video':
+          iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
+          typeLabel = appState.language === 'zh-CN' ? '视频' : 'Video';
+          break;
+        default:
+          iconSvg = getSvgIcon('description', 'attachment-icon', 20);
+          typeLabel = appState.language === 'zh-CN' ? '文档' : 'Document';
+      }
+
+      attachmentPreview.innerHTML = `
+        <div class="attachment-info">
+          ${iconSvg}
+          <span class="attachment-type">${typeLabel}</span>
+          <span class="attachment-name">${currentAttachment.fileName}</span>
+        </div>
+        <button class="attachment-remove" onclick="removeAttachment()" title="${appState.language === 'zh-CN' ? '移除' : 'Remove'}">
+          ${getSvgIcon('close', 'remove-icon', 16)}
+        </button>
+      `;
+
+      // 如果是图片，显示缩略图
+      if (currentAttachment.type === 'image' && currentAttachment.data) {
+        const thumbnail = document.createElement('img');
+        thumbnail.src = currentAttachment.data;
+        thumbnail.className = 'attachment-thumbnail';
+        attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
+      }
+    }
+
     function removeAttachment() {
       currentAttachment = null;
+      updateAttachmentUI();
     }
 
     // 初始化
