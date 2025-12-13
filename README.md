@@ -4,12 +4,13 @@
 
 ### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
 
+[![Version](https://img.shields.io/badge/Version-0.8-F59E0B?style=flat-square)]()
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![License](https://img.shields.io/badge/License-Personal_Free-F59E0B?style=flat-square)](#-授权与商用)
 
-**RAI** 内置模型路由，能够根据问题复杂度自动选择最佳模型，0成本，低延时的极致体验:D
+**RAI v0.8** 内置模型路由，能够根据问题复杂度自动选择最佳模型，0成本，低延时的极致体验:D
 
 [English](#english) | [功能特性](#-功能特性) | [功能列表](#-功能列表) | [快速开始](#-快速开始) | [模型路由](#-智能模型路由) | [在线体验](#-在线体验)
 
@@ -47,6 +48,23 @@
 - Markdown + LaTeX 数学公式渲染
 - 精美动画效果
 
+### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 图文并茂 (v0.8 新增)
+- AI 回复支持图片内容展示
+- 图片流式加载，无缝体验
+- 图片懒加载，优化性能
+- <img width="1108" height="1703" alt="屏幕截图 2025-12-13 143709" src="https://github.com/user-attachments/assets/f8b414a7-2316-47fa-a5cb-72184beff4b1" />
+
+
+### <img src="https://api.iconify.design/material-symbols/format-quote.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 引用回复 (v0.8 新增)
+- 消息引用功能，回复特定内容
+- 引用预览，快速定位上下文
+- 支持删除和修改引用
+
+### <img src="https://api.iconify.design/material-symbols/edit-note.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 编辑消息 (v0.8 新增)
+- 已发送消息可编辑修改
+- 编辑后重新生成 AI 回复
+- 保留编辑历史记录
+
 ### <img src="https://api.iconify.design/material-symbols/lock-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 安全可靠
 - JWT 令牌认证
 - API 限流保护
@@ -64,6 +82,9 @@
 | | 代码高亮 | 自动识别编程语言，提供语法高亮 |
 | | 消息复制 | 一键复制 AI 回复内容 |
 | | 停止生成 | 随时中断 AI 的输出过程 |
+| | **图文并茂** | AI 回复支持丰富图片内容 (v0.8) |
+| | **引用回复** | 消息引用功能，精准回复 (v0.8) |
+| | **编辑消息** | 已发送消息可编辑修改 (v0.8) |
 | **模型能力** | 多模型切换 | 支持 Qwen (Flash/Plus/Max) 和 DeepSeek 系列 |
 | | **智能路由** | 自动分析问题复杂度，选择最优模型 (Auto模式) |
 | | 联网搜索 | 实时获取网络信息，支持 Tavily 和原生联网 |
@@ -248,6 +269,9 @@ A smart AI chat assistant with **Intelligent Model Routing** that automatically 
 - **<img src="https://api.iconify.design/material-symbols/thinking-problem-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Thinking Mode**: Chain-of-thought reasoning with visualization
 - **<img src="https://api.iconify.design/material-symbols/devices.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Modern UI**: Responsive design, dark/light themes, streaming output
 - **<img src="https://api.iconify.design/material-symbols/lock-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Secure**: JWT auth, rate limiting, encrypted passwords
+- **<img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Rich Media**: Image-rich AI responses with smooth loading (v0.8)
+- **<img src="https://api.iconify.design/material-symbols/format-quote.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Quote Reply**: Reply to specific messages with context (v0.8)
+- **<img src="https://api.iconify.design/material-symbols/edit-note.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Edit Messages**: Modify sent messages and regenerate (v0.8)
 
 ### <img src="https://api.iconify.design/material-symbols/hub.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Intelligent Model Routing System
 
