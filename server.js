@@ -334,6 +334,101 @@ const TAVILY_API_KEY = 'tvly-dev-';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 /**
+ * 使用AI生成智能搜索查询
+ * AI根据用户问题自主决定应该搜索什么内容
+ * @param {string} userMessage - 用户的原始问题
+ * @param {Array} conversationHistory - 对话历史（可选）
+ * @returns {Promise<string>} 优化后的搜索查询
+ */
+async function generateAISearchQuery(userMessage, conversationHistory = []) {
+    return new Promise((resolve) => {
+        try {
+            console.log(`🤖 AI正在分析搜索需求: "${userMessage.substring(0, 50)}..."`);
+
+            const systemPrompt = `You are a search query optimizer. Your task is to analyze the user's question and generate the BEST search query for a web search engine.
+
+Rules:
+1. Output ONLY the search query, nothing else
+2. Keep the query concise (max 10 words)
+3. Focus on key facts, terms, or entities that need to be searched
+4. Convert vague questions into specific searchable terms
+5. For time-sensitive questions (like "today", "latest", "current"), include relevant time context
+6. Use the same language as the user's question
+7. Remove conversational fluff and focus on searchable keywords
+
+Examples:
+- User: "帮我查一下今天北京的天气" → "北京天气 今日"
+- User: "What is the latest news about OpenAI?" → "OpenAI latest news 2024"
+- User: "为什么天空是蓝色的" → "天空蓝色原因 科学解释"
+- User: "Tell me about Elon Musk's companies" → "Elon Musk companies Tesla SpaceX"`;
+
+            // 构建请求体 - 使用qwen-flash快速生成
+            const requestBody = JSON.stringify({
+                model: 'qwen-flash',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userMessage }
+                ],
+                temperature: 0.3,
+                max_tokens: 50,
+                stream: false
+            });
+
+            const urlParts = new URL(API_PROVIDERS.aliyun.baseURL);
+            const options = {
+                hostname: urlParts.hostname,
+                port: 443,
+                path: urlParts.pathname,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${API_PROVIDERS.aliyun.apiKey}`,
+                    'Content-Length': Buffer.byteLength(requestBody)
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    try {
+                        const result = JSON.parse(data);
+                        if (result.choices && result.choices[0] && result.choices[0].message) {
+                            const aiQuery = result.choices[0].message.content.trim();
+                            console.log(`✅ AI生成搜索查询: "${aiQuery}"`);
+                            resolve(aiQuery || userMessage);
+                        } else {
+                            console.warn('⚠️ AI响应格式异常，使用原始查询');
+                            resolve(userMessage);
+                        }
+                    } catch (e) {
+                        console.error('❌ 解析AI响应失败:', e);
+                        resolve(userMessage);
+                    }
+                });
+            });
+
+            req.on('error', (err) => {
+                console.error('❌ AI搜索查询生成失败:', err);
+                resolve(userMessage);  // 失败时回退到原始查询
+            });
+
+            req.setTimeout(5000, () => {
+                console.warn('⚠️ AI查询生成超时，使用原始查询');
+                req.destroy();
+                resolve(userMessage);
+            });
+
+            req.write(requestBody);
+            req.end();
+        } catch (error) {
+            console.error('❌ AI搜索查询生成异常:', error);
+            resolve(userMessage);
+        }
+    });
+}
+
+/**
  * 执行网页搜索 (使用Tavily API)
  * Tavily是专为AI代理设计的搜索API，提供高质量、实时的搜索结果
  * @param {string} query - 搜索查询
@@ -353,7 +448,7 @@ async function performWebSearch(query, maxResults = 5) {
                 include_answer: true,          // 包含AI生成的摘要答案
                 include_raw_content: false,    // 不需要原始HTML内容
                 max_results: Math.min(maxResults, 20),  // 限制最大20条
-                include_images: false,         // 不需要图片
+                include_images: true,          // 开启图片搜索
                 include_favicon: true,         // 包含网站图标
                 topic: 'general'               // 通用搜索
             });
@@ -415,8 +510,11 @@ async function performWebSearch(query, maxResults = 5) {
                             });
                         }
 
-                        console.log(`✅ Tavily搜索完成，获得 ${searchResults.length} 条结果 (响应时间: ${result.responseTime || 'N/A'}s)`);
-                        resolve(searchResults);
+                        // 提取搜索图片
+                        const images = result.images || [];
+
+                        console.log(`✅ Tavily搜索完成，获得 ${searchResults.length} 条结果, ${images.length} 张图片 (响应时间: ${result.responseTime || 'N/A'}s)`);
+                        resolve({ results: searchResults, images: images });
                     } catch (parseError) {
                         console.error('❌ 解析Tavily搜索结果失败:', parseError);
                         console.error('原始响应:', data);
@@ -427,14 +525,14 @@ async function performWebSearch(query, maxResults = 5) {
 
             req.on('error', (err) => {
                 console.error('❌ Tavily网页搜索请求失败:', err);
-                resolve([]);
+                resolve({ results: [], images: [] });
             });
 
             // 设置超时
             req.setTimeout(15000, () => {
                 console.error('❌ Tavily搜索请求超时');
                 req.destroy();
-                resolve([]);
+                resolve({ results: [], images: [] });
             });
 
             // 发送请求
@@ -442,9 +540,97 @@ async function performWebSearch(query, maxResults = 5) {
             req.end();
         } catch (error) {
             console.error('❌ Tavily网页搜索异常:', error);
-            resolve([]);
+            resolve({ results: [], images: [] });
         }
     });
+}
+
+/**
+ * 验证单个图片URL是否可访问
+ * @param {string} imageUrl - 图片URL
+ * @param {number} timeout - 超时时间(ms)
+ * @returns {Promise<boolean>} 是否可访问
+ */
+function validateImageUrl(imageUrl, timeout = 2000) {
+    return new Promise((resolve) => {
+        if (!imageUrl || typeof imageUrl !== 'string') {
+            resolve(false);
+            return;
+        }
+
+        try {
+            const urlObj = new URL(imageUrl);
+            const protocol = urlObj.protocol === 'https:' ? https : require('http');
+
+            const req = protocol.request({
+                hostname: urlObj.hostname,
+                port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+                path: urlObj.pathname + urlObj.search,
+                method: 'HEAD',  // 只获取头部，不下载整个图片
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            }, (res) => {
+                // 2xx 或 3xx 状态码认为有效
+                const isValid = res.statusCode >= 200 && res.statusCode < 400;
+                resolve(isValid);
+            });
+
+            req.on('error', () => {
+                resolve(false);  // 请求失败，URL无效
+            });
+
+            req.setTimeout(timeout, () => {
+                req.destroy();
+                resolve(false);  // 超时，认为无效
+            });
+
+            req.end();
+        } catch (e) {
+            resolve(false);  // URL解析失败
+        }
+    });
+}
+
+/**
+ * 并行验证多个图片URL，过滤出有效的
+ * @param {Array<string>} imageUrls - 图片URL数组
+ * @param {number} maxConcurrent - 最大并发数
+ * @param {number} totalTimeout - 总超时时间(ms)
+ * @returns {Promise<Array<string>>} 有效的图片URL数组
+ */
+async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 3000) {
+    if (!imageUrls || imageUrls.length === 0) return [];
+
+    console.log(`🖼️ 验证 ${imageUrls.length} 张图片URL...`);
+
+    // 只验证前N张，避免太慢
+    const urlsToCheck = imageUrls.slice(0, maxConcurrent);
+
+    // 使用Promise.allSettled并行验证，带总超时
+    const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => resolve([]), totalTimeout);
+    });
+
+    const validationPromise = Promise.all(
+        urlsToCheck.map(async (url) => {
+            const isValid = await validateImageUrl(url);
+            return { url, isValid };
+        })
+    );
+
+    const results = await Promise.race([validationPromise, timeoutPromise]);
+
+    // 如果超时返回空数组
+    if (!Array.isArray(results) || results.length === 0) {
+        console.log(`⚠️ 图片验证超时，跳过图片`);
+        return [];
+    }
+
+    const validUrls = results.filter(r => r.isValid).map(r => r.url);
+    console.log(`✅ 图片验证完成: ${validUrls.length}/${urlsToCheck.length} 有效`);
+
+    return validUrls;
 }
 
 /**
@@ -453,7 +639,11 @@ async function performWebSearch(query, maxResults = 5) {
  * @param {string} query - 原始查询
  * @returns {string} 格式化的搜索结果文本
  */
-function formatSearchResults(results, query) {
+function formatSearchResults(searchData, query) {
+    // 兼容旧格式和新格式
+    const results = searchData.results || searchData;
+    const images = searchData.images || [];
+
     if (!results || results.length === 0) {
         return '';
     }
@@ -470,12 +660,22 @@ function formatSearchResults(results, query) {
         formatted += `   来源: ${result.url}\n\n`;
     });
 
+    // 如果有图片，添加图片信息
+    if (images.length > 0) {
+        formatted += `\n[搜索相关图片] 以下是与查询相关的图片URL，可在回复中使用 ![描述](url) 格式引用：\n`;
+        images.slice(0, 5).forEach((imgUrl, index) => {
+            formatted += `图片${index + 1}: ${imgUrl}\n`;
+        });
+        formatted += `\n`;
+    }
+
     // 指示模型使用角标引用
     formatted += `\n重要指示：
 1. 请基于以上搜索结果回答用户问题
 2. 在回答中使用角标标记信息来源，格式为 [1]、[2] 等
 3. 例如："根据最新数据，该产品售价为999元[1]。"
-4. 每个角标对应上方的搜索结果编号\n`;
+4. 每个角标对应上方的搜索结果编号
+5. 如果有相关图片且对回答有帮助，可以使用 ![描述](图片URL) 格式插入图片\n`;
 
     return formatted;
 }
@@ -758,7 +958,8 @@ const MODEL_ROUTING = {
     // Kimi K2 - 月之暗面高性能模型
     'kimi-k2': {
         provider: 'siliconflow',
-        model: 'Kimi-K2-Instruct',  // 修复：使用正确的模型名称格式
+        model: 'moonshotai/Kimi-K2-Instruct-0905',  // 默认使用 Instruct 模型
+        thinkingModel: 'moonshotai/Kimi-K2-Thinking',  // 思考模式使用 Thinking 模型
         supportsWebSearch: true  // 支持Tavily联网搜索
     },
     // 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
@@ -1384,7 +1585,122 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
     });
 });
 
+// ==================== 消息管理API ====================
+
+// 删除单条消息
+app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req, res) => {
+    const { sessionId, messageId } = req.params;
+
+    // 验证会话归属
+    db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
+        if (err) {
+            console.error('❌ 查询会话失败:', err);
+            return res.status(500).json({ error: '数据库错误' });
+        }
+
+        if (!session || session.user_id !== req.user.userId) {
+            return res.status(403).json({ error: '无权访问此会话' });
+        }
+
+        // 删除指定消息
+        db.run('DELETE FROM messages WHERE id = ? AND session_id = ?', [messageId, sessionId], function (err) {
+            if (err) {
+                console.error('❌ 删除消息失败:', err);
+                return res.status(500).json({ error: '删除失败' });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({ error: '消息不存在' });
+            }
+
+            console.log(`✅ 已删除消息 ID: ${messageId}`);
+            res.json({ success: true, deletedId: messageId });
+        });
+    });
+});
+
+// 编辑消息内容
+app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req, res) => {
+    const { sessionId, messageId } = req.params;
+    const { content } = req.body;
+
+    if (!content || typeof content !== 'string') {
+        return res.status(400).json({ error: '内容不能为空' });
+    }
+
+    // 验证会话归属
+    db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
+        if (err) {
+            console.error('❌ 查询会话失败:', err);
+            return res.status(500).json({ error: '数据库错误' });
+        }
+
+        if (!session || session.user_id !== req.user.userId) {
+            return res.status(403).json({ error: '无权访问此会话' });
+        }
+
+        // 更新消息内容
+        db.run('UPDATE messages SET content = ? WHERE id = ? AND session_id = ?',
+            [content, messageId, sessionId],
+            function (err) {
+                if (err) {
+                    console.error('❌ 更新消息失败:', err);
+                    return res.status(500).json({ error: '更新失败' });
+                }
+
+                if (this.changes === 0) {
+                    return res.status(404).json({ error: '消息不存在' });
+                }
+
+                console.log(`✅ 已更新消息 ID: ${messageId}`);
+                res.json({ success: true, updatedId: messageId, content });
+            }
+        );
+    });
+});
+
+// 获取指定消息之前的所有消息（用于重新生成）
+app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken, (req, res) => {
+    const { sessionId, messageId } = req.params;
+
+    // 验证会话归属
+    db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
+        if (err) {
+            console.error('❌ 查询会话失败:', err);
+            return res.status(500).json({ error: '数据库错误' });
+        }
+
+        if (!session || session.user_id !== req.user.userId) {
+            return res.status(403).json({ error: '无权访问此会话' });
+        }
+
+        // 获取目标消息的创建时间
+        db.get('SELECT created_at FROM messages WHERE id = ? AND session_id = ?',
+            [messageId, sessionId],
+            (err, targetMsg) => {
+                if (err || !targetMsg) {
+                    return res.status(404).json({ error: '消息不存在' });
+                }
+
+                // 获取该消息之前的所有消息
+                db.all(
+                    'SELECT * FROM messages WHERE session_id = ? AND created_at < ? ORDER BY created_at ASC',
+                    [sessionId, targetMsg.created_at],
+                    (err, messages) => {
+                        if (err) {
+                            console.error('❌ 获取消息失败:', err);
+                            return res.status(500).json({ error: '数据库错误' });
+                        }
+                        res.json(messages);
+                    }
+                );
+            }
+        );
+    });
+});
+
 // ==================== AI聊天路由 ====================
+
 app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
 
@@ -1467,6 +1783,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return;
         }
 
+        // ✅✅ 关键修复：在所有 res.write() 调用之前，先设置 SSE 响应头
+        // 这确保后续所有的 res.write() 都能正常工作
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('X-Request-ID', requestId);
+        // 注意：X-Model-Used 在后面确定最终模型后再设置
+        res.flushHeaders();  // 立即发送头部，开始SSE流
+
         // 🚀 预设答案快速通道：在所有路由逻辑之前检查，确保所有模式都能生效
         const lastUserMsg = messages[messages.length - 1];
         const userContent = typeof lastUserMsg.content === 'string'
@@ -1492,17 +1818,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (presetAnswer) {
             console.log(`\n⚡ 命中预设答案: "${userContent.trim()}" -> 直接返回，无需调用AI`);
 
-            // 设置SSE响应头
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
-            res.setHeader('X-Accel-Buffering', 'no');
-            res.setHeader('X-Request-ID', requestId);
-            res.setHeader('X-Model-Used', 'preset');
-            res.setHeader('X-Model-Reason', 'Preset answer (instant response)');
-            res.flushHeaders();
-
-            // 直接发送预设答案
+            // SSE头已在前面设置，直接发送预设答案
             res.write(`data: ${JSON.stringify({ type: 'content', content: presetAnswer })}\n\n`);
             res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
 
@@ -1659,6 +1975,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`🧠 DeepSeek-V3.2-Speciale: 强制使用思考模式 (${actualModel})`);
         }
 
+        // Kimi K2 思考模式自动切换
+        if (finalModel === 'kimi-k2' && thinkingMode && routing.thinkingModel) {
+            actualModel = routing.thinkingModel;
+            console.log(`🧠 Kimi K2 思考模式: 切换到 ${actualModel}`);
+        }
+
         // ✅ 关键修复：验证提供商配置存在（防止404错误）
         const providerConfig = API_PROVIDERS[routing.provider];
         if (!providerConfig) {
@@ -1672,26 +1994,70 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`✅ API端点: ${providerConfig.baseURL}`);
 
         // 🔍 网页搜索功能（针对非阿里云模型）
+        // 注意：SSE头已在函数开头（约第1565行）设置完毕
         let searchContext = '';
         let searchSources = [];  // 新增：存储搜索来源用于SSE传输
 
         if (internetMode && routing.provider !== 'aliyun' && finalModel !== 'deepseek-v3.2-speciale') {
-            console.log(`🌐 执行网页搜索（${routing.provider}不支持原生联网）`);
+            console.log(`🌐 执行智能网页搜索（${routing.provider}不支持原生联网）`);
 
-            // 提取用户最后一条消息作为搜索查询
+            // 提取用户最后一条消息
             const lastMessage = messages[messages.length - 1];
-            const searchQuery = typeof lastMessage.content === 'string'
+            const userMessage = typeof lastMessage.content === 'string'
                 ? lastMessage.content
                 : JSON.stringify(lastMessage.content);
 
+            // 📡 发送搜索状态：正在分析问题
+            res.write(`data: ${JSON.stringify({
+                type: 'search_status',
+                status: 'analyzing',
+                message: '正在分析问题...'
+            })}\n\n`);
+
+            // 🤖 使用AI生成智能搜索查询（AI自己决定搜索什么）
+            const searchQuery = await generateAISearchQuery(userMessage, messages);
+
+            // 📡 发送搜索状态：显示AI生成的搜索关键词
+            res.write(`data: ${JSON.stringify({
+                type: 'search_status',
+                status: 'searching',
+                query: searchQuery,
+                message: `正在搜索: "${searchQuery}"`
+            })}\n\n`);
+
             // 执行搜索
-            const searchResults = await performWebSearch(searchQuery, 5);
+            const searchData = await performWebSearch(searchQuery, 5);
+            const searchResults = searchData.results || searchData;  // 兼容新旧格式
+            let searchImages = searchData.images || [];
+
+            // 🔥 验证图片URL，过滤掉无效的
+            if (searchImages.length > 0) {
+                searchImages = await filterValidImages(searchImages, 5, 3000);
+            }
+
             if (searchResults && searchResults.length > 0) {
-                searchContext = formatSearchResults(searchResults, searchQuery);
+                // 使用验证后的图片
+                searchContext = formatSearchResults({ results: searchResults, images: searchImages }, searchQuery);
                 searchSources = extractSourcesForSSE(searchResults);  // 🔥 提取来源信息
-                console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源)`);
+                console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源, ${searchImages.length} 张有效图片)`);
+
+                // 📡 发送搜索状态：搜索完成
+                res.write(`data: ${JSON.stringify({
+                    type: 'search_status',
+                    status: 'complete',
+                    query: searchQuery,
+                    resultCount: searchResults.length,
+                    message: `找到 ${searchResults.length} 条结果`
+                })}\n\n`);
             } else {
                 console.log(`⚠️ 未获取到搜索结果`);
+                // 📡 发送搜索状态：未找到结果
+                res.write(`data: ${JSON.stringify({
+                    type: 'search_status',
+                    status: 'no_results',
+                    query: searchQuery,
+                    message: '未找到相关结果'
+                })}\n\n`);
             }
         } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
             console.log(`ℹ️ DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
@@ -1821,21 +2187,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return;
         }
 
-        // 设置SSE响应头
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('X-Request-ID', requestId);
-        res.setHeader('X-Model-Used', finalModel);  // 返回实际使用的模型
-
-        // 只在有效内容时才设置响应头，且避免纯空格
-        if (reasonForHeader && reasonForHeader.trim().length > 0) {
-            res.setHeader('X-Model-Reason', reasonForHeader);  // 返回选择原因
-        }
-
-        res.flushHeaders();
-
+        // 🔥 注意：SSE头已在搜索前提前设置（约第1770行）
         // 新增：如果有搜索来源，立即发送给前端
         if (searchSources && searchSources.length > 0) {
             res.write(`data: ${JSON.stringify({ type: 'sources', sources: searchSources })}\n\n`);
@@ -2191,7 +2543,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║            🚀 RAI v3.2 已启动                            ║
+║            🚀 RAI 0.6  已启动                            ║
 ║                                                          ║
 ║  📡 服务地址: http://0.0.0.0:${PORT}                     ║
 ║  📊 数据库: ${dbPath}                                    ║
