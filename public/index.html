@@ -54,7 +54,9 @@
     // 数学公式渲染 - 完整解决方案
 
     // 渲染带数学公式的Markdown文本
-    function renderMarkdownWithMath(text) {
+    // @param {string} text - 要渲染的文本
+    // @param {boolean} isStreaming - 是否流式模式（流式模式下用占位符替代图片）
+    function renderMarkdownWithMath(text, isStreaming = false) {
       if (!text) return '';
 
       // 临时存储公式的映射
@@ -111,6 +113,30 @@
         mathStore.forEach((data, id) => {
           const original = data.display ? `$$${data.formula}$$` : `$${data.formula}$`;
           html = html.replace(new RegExp(id, 'g'), `<code>${escapeHtml(original)}</code>`);
+        });
+      }
+
+      // 5. 🔥 图片处理：流式模式使用加载容器，非流式直接显示
+      if (isStreaming) {
+        // 流式模式：用容器包裹图片，显示加载骨架，图片在后台加载
+        html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)alt="([^"]*)"([^>]*)>/g, (match, before, src, mid, alt, after) => {
+          return `<div class="streaming-image-container">
+            <div class="streaming-image-skeleton"></div>
+            <img${before}src="${src}"${mid}alt="${alt}"${after} loading="eager" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('error'); this.parentElement.innerHTML='<span class=\\'image-error\\'>⚠️ 图片加载失败</span>'">
+          </div>`;
+        });
+        // 处理没有alt属性的图片
+        html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)(?!alt=)>/g, (match, before, src, after) => {
+          if (match.includes('streaming-image-container')) return match; // 已处理过的跳过
+          return `<div class="streaming-image-container">
+            <div class="streaming-image-skeleton"></div>
+            <img${before}src="${src}"${after} loading="eager" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('error'); this.parentElement.innerHTML='<span class=\\'image-error\\'>⚠️ 图片加载失败</span>'">
+          </div>`;
+        });
+      } else {
+        // 非流式模式：直接显示图片，添加错误处理
+        html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)>/g, (match, before, src, after) => {
+          return `<img${before}src="${src}"${after} loading="lazy" onerror="this.style.display='none'; this.insertAdjacentHTML('afterend', '<span class=\\'image-error\\'>⚠️ 图片加载失败</span>')">`;
         });
       }
 
@@ -613,8 +639,8 @@
     .sidebar-group-content {
       padding-left: var(--spacing-md);
       margin-top: var(--spacing-sm);
-      max-height: 1000px;
-      overflow: hidden;
+      max-height: 99999px;
+      overflow: visible;
       transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
       opacity: 1;
     }
@@ -1707,7 +1733,217 @@
       border-color: var(--accent-color);
     }
 
+    /* ==================== 消息操作按钮样式 ==================== */
+    .message-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 8px;
+    }
+
+    .action-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 6px;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+    }
+
+    .action-btn.delete-btn:hover {
+      border-color: #ef4444;
+      color: #ef4444;
+    }
+
+    .action-btn .material-symbols-outlined {
+      font-size: 16px;
+    }
+
+    /* 消息编辑区域 */
+    .message-edit-container {
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    .message-edit-textarea {
+      width: 100%;
+      min-height: 80px;
+      max-height: 300px;
+      padding: 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      line-height: 1.6;
+      resize: vertical;
+      outline: none;
+    }
+
+    .message-edit-textarea:focus {
+      border-color: var(--accent-color);
+    }
+
+    .message-edit-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .edit-cancel-btn,
+    .edit-save-btn {
+      padding: 6px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .edit-cancel-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+    }
+
+    .edit-cancel-btn:hover {
+      background: var(--bg-hover);
+    }
+
+    .edit-save-btn {
+      background: var(--accent-color);
+      border: none;
+      color: white;
+    }
+
+    .edit-save-btn:hover {
+      opacity: 0.9;
+    }
+
+    /* 重新生成弹窗 */
+    .regenerate-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: var(--z-modal);
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s;
+    }
+
+    .regenerate-modal.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .regenerate-modal-content {
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      width: 90%;
+      max-width: 400px;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .regenerate-modal h3 {
+      margin-bottom: 20px;
+      font-size: 18px;
+      color: var(--text-primary);
+    }
+
+    .regenerate-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .regenerate-option:last-child {
+      border-bottom: none;
+    }
+
+    .regenerate-option label {
+      color: var(--text-primary);
+      font-size: 14px;
+    }
+
+    .regenerate-option select {
+      padding: 8px 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 14px;
+      min-width: 150px;
+    }
+
+    .regenerate-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .regenerate-cancel-btn,
+    .regenerate-confirm-btn {
+      padding: 10px 24px;
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .regenerate-cancel-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+    }
+
+    .regenerate-cancel-btn:hover {
+      background: var(--bg-hover);
+    }
+
+    .regenerate-confirm-btn {
+      background: var(--accent-color);
+      border: none;
+      color: white;
+    }
+
+    .regenerate-confirm-btn:hover {
+      opacity: 0.9;
+    }
+
+    /* 用户消息底栏 */
+    .user-message-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-top: 8px;
+      gap: 4px;
+    }
+
     /* ==================== 引用来源样式 ==================== */
+
 
     /* 行内角标样式 [1] [2] 等 */
     .citation-badge {
@@ -1933,6 +2169,96 @@
       max-width: 100%;
       border-radius: var(--radius-md);
       margin: 0.8em 0;
+    }
+
+    /* ==================== 流式图片加载容器 ==================== */
+    .streaming-image-container {
+      position: relative;
+      min-height: 200px;
+      max-width: 100%;
+      border-radius: var(--radius-md);
+      margin: 0.8em 0;
+      overflow: hidden;
+      background: var(--bg-tertiary);
+    }
+
+    .streaming-image-skeleton {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(90deg,
+          var(--bg-tertiary) 0%,
+          var(--bg-hover) 50%,
+          var(--bg-tertiary) 100%);
+      background-size: 200% 100%;
+      animation: skeleton-shimmer 1.5s infinite;
+      border-radius: var(--radius-md);
+    }
+
+    .streaming-image-skeleton::after {
+      content: '🖼️';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 32px;
+      opacity: 0.5;
+    }
+
+    @keyframes skeleton-shimmer {
+      0% {
+        background-position: 200% 0;
+      }
+
+      100% {
+        background-position: -200% 0;
+      }
+    }
+
+    .streaming-image-container img {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: auto;
+      display: block;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      border-radius: var(--radius-md);
+      margin: 0;
+    }
+
+    .streaming-image-container.loaded img {
+      opacity: 1;
+    }
+
+    .streaming-image-container.loaded .streaming-image-skeleton {
+      display: none;
+    }
+
+    .streaming-image-container.loaded {
+      min-height: unset;
+      background: transparent;
+    }
+
+    .streaming-image-container.error {
+      min-height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .image-error {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 12px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius-sm);
+      color: var(--error-color);
+      font-size: 13px;
     }
 
     /* ==================== KaTeX 数学公式样式 ==================== */
@@ -2175,6 +2501,30 @@
       margin-bottom: var(--spacing-md);
     }
 
+    /* 🔥 图片加载中占位符（流式渲染时使用） */
+    .image-loading-placeholder {
+      display: inline-block;
+      padding: 8px 16px;
+      background: var(--bg-tertiary);
+      border: 1px dashed var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-size: 13px;
+      margin: 8px 0;
+    }
+
+    /* 🔥 图片加载失败提示 */
+    .image-error {
+      display: inline-block;
+      padding: 4px 8px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius-sm);
+      color: var(--error-color);
+      font-size: 12px;
+      margin: 4px 0;
+    }
+
     /* 思考内容滚动条 */
     .thinking-content::-webkit-scrollbar {
       width: 4px;
@@ -2279,6 +2629,108 @@
       }
     }
 
+    /* 🔍 搜索状态显示 - AI搜索过程可视化 */
+    .search-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      color: var(--text-secondary);
+      animation: searchStatusSlideIn 0.3s ease-out;
+    }
+
+    @keyframes searchStatusSlideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .search-status .search-icon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
+    .search-status .search-icon.spinning {
+      animation: spin 1s linear infinite;
+    }
+
+    .search-status .search-label {
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .search-status .search-query {
+      color: var(--text-primary);
+      font-weight: 600;
+      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+      background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: inline-block;
+    }
+
+    /* 打字动画效果 */
+    .search-status .search-query.typewriter {
+      animation: typewriterBlink 0.8s step-end infinite;
+      border-right: 2px solid var(--text-primary);
+    }
+
+    @keyframes typewriterBlink {
+
+      0%,
+      100% {
+        border-right-color: var(--text-primary);
+      }
+
+      50% {
+        border-right-color: transparent;
+      }
+    }
+
+    .search-status .search-result-count {
+      color: var(--text-tertiary);
+      font-size: 12px;
+      margin-left: 4px;
+    }
+
+    .search-status.complete {
+      border-color: var(--success-color);
+      background: rgba(42, 169, 127, 0.1);
+      transition: opacity 0.3s ease;
+    }
+
+    .search-status.complete .search-icon {
+      color: var(--success-color);
+    }
+
+    .search-status.complete .search-query {
+      border-color: var(--success-color);
+      animation: none;
+      border-right: none;
+    }
+
+    .search-status.complete .search-result-count {
+      color: var(--success-color);
+      font-weight: 500;
+    }
+
     /* 浅色主题适配 */
     [data-theme="light"] .thinking-toggle-text {
       color: #6B7280;
@@ -2365,6 +2817,83 @@
     .input-container:focus-within {
       border-color: var(--text-tertiary);
       box-shadow: 0 0 0 1px var(--text-tertiary), var(--shadow-lg);
+    }
+
+
+    /* ==================== 引用预览样式 ==================== */
+    .quote-preview {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: var(--bg-tertiary);
+      border-left: 3px solid var(--accent-color);
+      border-radius: var(--radius-md);
+      margin-bottom: var(--spacing-sm);
+      animation: slideIn 0.2s ease;
+    }
+
+    .quote-preview-content {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .quote-preview-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent-color);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .quote-preview-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      max-height: 60px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      line-clamp: 3;
+      word-break: break-word;
+    }
+
+    .quote-preview-remove {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 50%;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+      margin-left: var(--spacing-sm);
+    }
+
+    .quote-preview-remove:hover {
+      background: var(--error-color);
+      color: white;
+    }
+
+    .quote-preview-remove .remove-icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* 浅色主题引用预览 */
+    [data-theme="light"] .quote-preview {
+      background: #F3F4F6;
+      border-left-color: var(--accent-color);
     }
 
     /* ==================== 附件预览样式 (多模态) ==================== */
@@ -4425,6 +4954,21 @@
                         <div class="model-menu-title">Kimi K2</div>
                       </div>
                     </div>
+
+                    <div class="model-menu-divider"></div>
+
+                    <!-- Qwen3-Omni-Flash 多模态模型 -->
+                    <div class="model-menu-item" data-model="qwen3-omni-flash"
+                      onclick="selectModelFromMenu('qwen3-omni-flash', 'Qwen3 Omni Flash')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h480L570-480 450-320l-90-120-120 160Zm-40 80v-560 560Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Qwen3 Omni Flash</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4673,6 +5217,45 @@
     </div>
   </div>
 
+  <!-- 重新生成弹窗 -->
+  <div class="regenerate-modal" id="regenerateModal">
+    <div class="regenerate-modal-content">
+      <h3 id="regenerateModalTitle" data-i18n="regenerateTitle">重新生成回复</h3>
+
+      <div class="regenerate-option">
+        <label data-i18n="selectModel">选择模型</label>
+        <select id="regenerateModelSelect">
+          <option value="auto" data-i18n="smartMode">最佳</option>
+          <option value="qwen-flash" data-i18n="fastMode">极速</option>
+          <option value="deepseek-v3" data-i18n="expertMode">专家</option>
+          <option value="qwen-plus">Qwen Plus</option>
+          <option value="qwen-max">Qwen Max</option>
+        </select>
+      </div>
+
+      <div class="regenerate-option">
+        <label data-i18n="internetSearch">联网搜索</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="regenerateInternetToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="regenerate-option">
+        <label data-i18n="thinkingMode">思考模式</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="regenerateThinkingToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="regenerate-modal-actions">
+        <button class="regenerate-cancel-btn" onclick="closeRegenerateModal()" data-i18n="cancel">取消</button>
+        <button class="regenerate-confirm-btn" onclick="confirmRegenerate()" data-i18n="regenerate">重新生成</button>
+      </div>
+    </div>
+  </div>
+
   <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelected(event)">
 
   <!-- 粒子背景画布 -->
@@ -4752,6 +5335,16 @@
       // 删除/垃圾桶图标 - 用于删除对话、删除空间、删除文档等
       'delete': '<path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>',
 
+      // 编辑/铅笔图标 - 用于编辑消息内容
+      'edit': '<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>',
+
+      // 刷新/重新生成图标 - 用于重新生成AI回复
+      'refresh': '<path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>',
+
+      // 引用图标 - 用于引用消息内容
+      'format_quote': '<path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/>',
+
+
       // ✨ Sparkle/星星闪烁图标 - 用于思考(Chain of Thought)UI的图标
       'sparkles': { viewBox: '0 -960 960 960', content: '<path d="m354-247 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-80l65-281L80-550l288-25 112-265 112 265 288 25-218 189 65 281-247-149L233-80Z"/>' },
 
@@ -4830,7 +5423,9 @@
       currentThinkingMessageId: null,
       // 智能滚动控制
       userScrolledUp: false,  // 用户是否主动向上滚动
-      lastScrollTop: 0  // 上次滚动位置
+      lastScrollTop: 0,  // 上次滚动位置
+      // 引用功能状态
+      currentQuote: null  // 当前引用的消息 { role: 'user'|'assistant', content: string }
     };
 
     const MODELS = {
@@ -4874,6 +5469,13 @@
         provider: 'siliconflow',
         supportsThinking: true
       },
+      // Qwen3-Omni-Flash 多模态模型 (图片/音频/视频)
+      'qwen3-omni-flash': {
+        name: 'Qwen3 Omni Flash',
+        provider: 'aliyun_omni',
+        supportsThinking: false,
+        multimodal: true
+      },
       'lmstudio-local': {
         name: 'LMStudio Local',
         provider: 'lmstudio',
@@ -4881,19 +5483,70 @@
       }
     };
 
-    // 内置系统提示词 - 每次请求强制执行
-    const BUILT_IN_SYSTEM_PROMPT = `你是RAI助理，由Rick开发。你的任务是提供专业、有用且契合上下文的回应，帮助用户完成任务。
+    // 获取用户时间上下文（时区、日期时间、时段）
+    function getUserTimeContext() {
+      const now = new Date();
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const locale = navigator.language || 'zh-CN';
 
-准则：
-先理解用户需求，对简单问题给出简洁明晰的答案，对复杂问题提供全面深度详细的解答。
-Being helpful and useful!回答中使用友善的语气，根据目标受众调整表达方式。
-准确理解用户意图，提供可操作的建议，用结构化推理确保回应清晰易懂，在思考时使用**小标题**内容的结构分段思考。
-智能调用联网工具，
-每次完成用户请求后，分析当前任务的类型和完成状态，预判用户的下一个自然需求，并主动提供一个针对性建议。
-禁止输出任何违法侵权内容！即使无法完成请求也保持有帮助的态度，说明限制并提供替代方案。
-每次回复后根据上文你和用户对话内容，生成3-9字的标题。
-（TITLE必须为英文）JSON格式输出：
-[TITLE]你总结的对话标题[/TITLE]`;
+      // 格式化完整日期时间
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hour = now.getHours();
+      const minute = String(now.getMinutes()).padStart(2, '0');
+      const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const weekday = weekdays[now.getDay()];
+
+      // 获取时段描述
+      let timeOfDay;
+      if (hour >= 5 && hour < 9) timeOfDay = 'early_morning';
+      else if (hour >= 9 && hour < 12) timeOfDay = 'morning';
+      else if (hour >= 12 && hour < 14) timeOfDay = 'noon';
+      else if (hour >= 14 && hour < 18) timeOfDay = 'afternoon';
+      else if (hour >= 18 && hour < 21) timeOfDay = 'evening';
+      else if (hour >= 21 && hour < 24) timeOfDay = 'night';
+      else timeOfDay = 'late_night'; // 0-5点
+
+      return {
+        datetime: `${year}-${month}-${day} ${weekday} ${hour}:${minute}`,
+        timezone,
+        locale,
+        timeOfDay,
+        hour
+      };
+    }
+
+    // 动态生成系统提示词（包含时间上下文和诚实原则）
+    function buildSystemPrompt() {
+      const timeCtx = getUserTimeContext();
+
+      return `{
+  "identity": "RAI Assistant by Rick",
+  "current_context": {
+    "datetime": "${timeCtx.datetime}",
+    "timezone": "${timeCtx.timezone}",
+    "user_locale": "${timeCtx.locale}",
+    "time_period": "${timeCtx.timeOfDay}"
+  },
+  "principles": {
+    "honesty": "CRITICAL: Every statement must be truthful, accurate and verifiable. Never fabricate information. Always stay honest.",
+    "understand_first": "Analyze intent before responding. Simple queries get concise answers; complex ones get comprehensive explanations.",
+    "communication": "Professional yet warm tone. Use markdown formatting. Adapt style to audience.",
+    "problem_solving": "Provide actionable solutions. Use **bold headings** in reasoning. Proactively suggest next steps.",
+    "ethics": "Never produce harmful or illegal content. Explain limitations and offer alternatives when needed.",
+    "time_awareness": "Be aware of user's current time. Offer appropriate greetings based on time of day. If it's late night (after 11pm) or very early (before 5am), gently remind the user to take care of their rest in a warm, caring manner when appropriate.",
+    "image_usage": "When appropriate, enhance responses with images using Markdown syntax: ![description](image_url). For web searches, images may be provided in [搜索相关图片] section - use these image URLs in your response when they help illustrate the topic. Only use valid image URLs from search results, never fabricate image URLs."
+  },
+  "format": {
+    "structure": "Use headings, lists, and code blocks for clarity.",
+    "title": "After each response, generate a 3-9 word conversation title matching user's language. Output at the very end as: <<<your_title_here>>>"
+  }
+}`;
+    }
+
+    // 保留变量名以兼容（初始值，实际发送时动态生成）
+    const BUILT_IN_SYSTEM_PROMPT = buildSystemPrompt();
 
     // 国际化翻译
     const i18n = {
@@ -4959,7 +5612,11 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
         'model-fast': '极速模式',
         'model-expert': '专家模式',
         'model-all': '全部模型',
-        'select-model': '选择模型'
+        'select-model': '选择模型',
+        // 引用功能
+        'quote': '引用',
+        'quote-user': '引用用户',
+        'quote-ai': '引用AI'
       },
       'en': {
         'login-title': 'Welcome Back',
@@ -5023,7 +5680,11 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
         'model-fast': 'Fast Mode',
         'model-expert': 'Expert Mode',
         'model-all': 'All Models',
-        'select-model': 'Select Model'
+        'select-model': 'Select Model',
+        // Quote feature
+        'quote': 'Quote',
+        'quote-user': 'Quoting User',
+        'quote-ai': 'Quoting AI'
       }
     };
 
@@ -6356,8 +7017,10 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
 
       const textDiv = document.createElement('div');
       textDiv.className = 'message-text';
+      // 🔧 移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
+      const cleanContent = (message.content || '').replace(/<<<.{1,30}>>>\s*$/g, '').trim();
       // 使用renderMarkdownWithMath渲染Markdown和数学公式
-      let renderedContent = renderMarkdownWithMath(message.content || '');
+      let renderedContent = renderMarkdownWithMath(cleanContent);
 
       // 🔥 解析 sources：可能是 JSON 字符串（从数据库加载）或数组对象（流式响应）
       let sources = message.sources;
@@ -6485,8 +7148,74 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
         });
 
         metaDiv.appendChild(copyBtn);
+
+        // 添加编辑按钮
+        const editBtn = document.createElement('button');
+        editBtn.className = 'action-btn edit-btn';
+        editBtn.title = appState.language === 'zh-CN' ? '编辑' : 'Edit';
+        editBtn.innerHTML = getSvgIcon('edit', 'material-symbols-outlined', 16);
+        editBtn.addEventListener('click', () => startEditMessage(message, div));
+        metaDiv.appendChild(editBtn);
+
+        // 添加重新生成按钮
+        const regenerateBtn = document.createElement('button');
+        regenerateBtn.className = 'action-btn regenerate-btn';
+        regenerateBtn.title = appState.language === 'zh-CN' ? '重新生成' : 'Regenerate';
+        regenerateBtn.innerHTML = getSvgIcon('refresh', 'material-symbols-outlined', 16);
+        regenerateBtn.addEventListener('click', () => openRegenerateModal(message));
+        metaDiv.appendChild(regenerateBtn);
+
+        // 添加删除按钮
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'action-btn delete-btn';
+        deleteBtn.title = appState.language === 'zh-CN' ? '删除' : 'Delete';
+        deleteBtn.innerHTML = getSvgIcon('delete', 'material-symbols-outlined', 16);
+        deleteBtn.addEventListener('click', () => deleteMessage(message));
+        metaDiv.appendChild(deleteBtn);
+
+        // 添加引用按钮
+        const quoteBtn = document.createElement('button');
+        quoteBtn.className = 'action-btn quote-btn';
+        quoteBtn.title = appState.language === 'zh-CN' ? '引用' : 'Quote';
+        quoteBtn.innerHTML = getSvgIcon('format_quote', 'material-symbols-outlined', 16);
+        quoteBtn.addEventListener('click', () => quoteMessage(message));
+        metaDiv.appendChild(quoteBtn);
+
         content.appendChild(metaDiv);
       }
+
+      // 为用户消息添加操作按钮
+      if (message.role === 'user') {
+        const userMetaDiv = document.createElement('div');
+        userMetaDiv.className = 'user-message-meta';
+
+        // 编辑按钮
+        const editBtn = document.createElement('button');
+        editBtn.className = 'action-btn edit-btn';
+        editBtn.title = appState.language === 'zh-CN' ? '编辑' : 'Edit';
+        editBtn.innerHTML = getSvgIcon('edit', 'material-symbols-outlined', 16);
+        editBtn.addEventListener('click', () => startEditMessage(message, div));
+        userMetaDiv.appendChild(editBtn);
+
+        // 删除按钮
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'action-btn delete-btn';
+        deleteBtn.title = appState.language === 'zh-CN' ? '删除' : 'Delete';
+        deleteBtn.innerHTML = getSvgIcon('delete', 'material-symbols-outlined', 16);
+        deleteBtn.addEventListener('click', () => deleteMessage(message));
+        userMetaDiv.appendChild(deleteBtn);
+
+        // 引用按钮
+        const quoteBtn = document.createElement('button');
+        quoteBtn.className = 'action-btn quote-btn';
+        quoteBtn.title = appState.language === 'zh-CN' ? '引用' : 'Quote';
+        quoteBtn.innerHTML = getSvgIcon('format_quote', 'material-symbols-outlined', 16);
+        quoteBtn.addEventListener('click', () => quoteMessage(message));
+        userMetaDiv.appendChild(quoteBtn);
+
+        content.appendChild(userMetaDiv);
+      }
+
 
       div.appendChild(content);
 
@@ -6571,8 +7300,632 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
       }
     }
 
+    // ==================== 消息管理功能 ====================
+
+    // 当前正在重新生成的消息
+    let regenerateTargetMessage = null;
+
+    // 开始编辑消息
+    function startEditMessage(message, messageDiv) {
+      // 找到消息文本区域
+      const textDiv = messageDiv.querySelector('.message-text');
+      if (!textDiv) return;
+
+      // 获取原始内容（移除可能的标题标记）
+      const originalContent = (message.content || '').replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+
+      // 保存原始HTML以便取消时恢复
+      const originalHtml = textDiv.innerHTML;
+
+      // 创建编辑容器
+      const editContainer = document.createElement('div');
+      editContainer.className = 'message-edit-container';
+      editContainer.innerHTML = `
+        <textarea class="message-edit-textarea">${escapeHtml(originalContent)}</textarea>
+        <div class="message-edit-actions">
+          <button class="edit-cancel-btn" data-i18n="cancel">${appState.language === 'zh-CN' ? '取消' : 'Cancel'}</button>
+          <button class="edit-save-btn" data-i18n="save">${appState.language === 'zh-CN' ? '保存' : 'Save'}</button>
+        </div>
+      `;
+
+      // 隐藏原始文本，显示编辑区域
+      textDiv.style.display = 'none';
+      textDiv.parentNode.insertBefore(editContainer, textDiv.nextSibling);
+
+      // 自动聚焦并选中文本
+      const textarea = editContainer.querySelector('.message-edit-textarea');
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+      // 取消按钮事件
+      editContainer.querySelector('.edit-cancel-btn').addEventListener('click', () => {
+        editContainer.remove();
+        textDiv.style.display = '';
+      });
+
+      // 保存按钮事件
+      editContainer.querySelector('.edit-save-btn').addEventListener('click', async () => {
+        const newContent = textarea.value.trim();
+        if (!newContent) {
+          alert(appState.language === 'zh-CN' ? '内容不能为空' : 'Content cannot be empty');
+          return;
+        }
+
+        await saveEditMessage(message, newContent, messageDiv, editContainer, textDiv);
+      });
+    }
+
+    // 保存编辑的消息
+    async function saveEditMessage(message, newContent, messageDiv, editContainer, textDiv) {
+      if (!appState.currentSession) {
+        console.error('❌ 无法保存：缺少会话');
+        alert(appState.language === 'zh-CN' ? '请先刷新页面' : 'Please refresh the page first');
+        return;
+      }
+
+      // 如果消息没有ID，需要先从数据库重新加载消息获取ID
+      if (!message.id) {
+        console.log('⚠️ 消息没有ID，正在从数据库重新加载...');
+        try {
+          const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
+            headers: { 'Authorization': `Bearer ${appState.token}` }
+          });
+          if (response.ok) {
+            const dbMessages = await response.json();
+            appState.messages = dbMessages;
+            // 找到对应位置的消息并获取其ID
+            const msgIndex = appState.messages.findIndex(m =>
+              m.content === message.content && m.role === message.role
+            );
+            if (msgIndex !== -1 && appState.messages[msgIndex].id) {
+              message.id = appState.messages[msgIndex].id;
+              console.log(`✅ 已获取消息ID: ${message.id}`);
+            } else {
+              console.error('❌ 无法找到消息ID');
+              alert(appState.language === 'zh-CN' ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('❌ 重新加载消息失败:', error);
+          alert(appState.language === 'zh-CN' ? '加载失败，请重试' : 'Load failed, please retry');
+          return;
+        }
+      }
+
+
+      try {
+        const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages/${message.id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${appState.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ content: newContent })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log('✅ 消息已更新:', result);
+
+        // 更新本地状态
+        message.content = newContent;
+        const msgIndex = appState.messages.findIndex(m => m.id === message.id);
+        if (msgIndex !== -1) {
+          appState.messages[msgIndex].content = newContent;
+        }
+
+        // 移除编辑容器，更新显示
+        editContainer.remove();
+        textDiv.style.display = '';
+        textDiv.innerHTML = renderMarkdownWithMath(newContent);
+
+        // 如果是用户消息，自动触发AI重新回复
+        if (message.role === 'user') {
+          // 找到这条消息之后的AI回复并删除，然后重新生成
+          await regenerateAfterUserEdit(message);
+        }
+
+      } catch (error) {
+        console.error('❌ 更新消息失败:', error);
+        alert(appState.language === 'zh-CN' ? '更新失败' : 'Update failed');
+      }
+    }
+
+    // 用户消息编辑后自动重新生成AI回复
+    async function regenerateAfterUserEdit(userMessage) {
+      const msgIndex = appState.messages.findIndex(m => m.id === userMessage.id);
+      if (msgIndex === -1) return;
+
+      // 找到紧跟这条用户消息的AI回复
+      const nextMsg = appState.messages[msgIndex + 1];
+      if (nextMsg && nextMsg.role === 'assistant') {
+        // 删除这条AI回复
+        await deleteMessageFromDB(nextMsg);
+
+        // 从本地状态移除
+        appState.messages.splice(msgIndex + 1, 1);
+      }
+
+      // 重新渲染并触发AI回复
+      renderMessages();
+
+      // 构建消息并发送
+      const messagesToSend = appState.messages.slice(0, msgIndex + 1).map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      // 触发AI回复
+      await triggerAIResponse(messagesToSend);
+    }
+
+    // 确保消息有ID（如果没有则从数据库重新加载）
+    async function ensureMessageHasId(message) {
+      if (message.id) return message;
+
+      if (!appState.currentSession) {
+        console.error('❌ 无法获取消息ID：缺少会话');
+        return null;
+      }
+
+      console.log('⚠️ 消息没有ID，正在从数据库重新加载...');
+      try {
+        const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
+          headers: { 'Authorization': `Bearer ${appState.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const dbMessages = await response.json();
+
+        // 找到对应的消息（通过内容和角色匹配）
+        const foundMsg = dbMessages.find(m =>
+          m.content === message.content && m.role === message.role
+        );
+
+        if (foundMsg && foundMsg.id) {
+          // 更新本地消息数组
+          appState.messages = dbMessages;
+          console.log(`✅ 已获取消息ID: ${foundMsg.id}`);
+          return foundMsg;
+        } else {
+          console.error('❌ 无法在数据库中找到该消息');
+          return null;
+        }
+      } catch (error) {
+        console.error('❌ 重新加载消息失败:', error);
+        return null;
+      }
+    }
+
+
+    // 从数据库删除消息（不更新UI）
+    async function deleteMessageFromDB(message) {
+      if (!appState.currentSession) return false;
+
+      // 确保消息有ID
+      const msgWithId = await ensureMessageHasId(message);
+      if (!msgWithId || !msgWithId.id) {
+        console.error('❌ 无法删除：无法获取消息ID');
+        return false;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages/${msgWithId.id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${appState.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        console.log(`✅ 已从数据库删除消息 ID: ${msgWithId.id}`);
+        return true;
+      } catch (error) {
+        console.error('❌ 删除消息失败:', error);
+        return false;
+      }
+    }
+
+    // 删除消息
+    async function deleteMessage(message) {
+      const confirmMsg = appState.language === 'zh-CN' ? '确定要删除这条消息吗?' : 'Delete this message?';
+      if (!confirm(confirmMsg)) return;
+
+      // 确保消息有ID
+      const msgWithId = await ensureMessageHasId(message);
+      if (!msgWithId) {
+        alert(appState.language === 'zh-CN' ? '无法获取消息信息，请刷新页面后重试' : 'Cannot get message info, please refresh and retry');
+        return;
+      }
+
+      const deleted = await deleteMessageFromDB(msgWithId);
+      if (deleted) {
+        // 从本地状态移除（通过ID查找，因为已经reload了）
+        const msgIndex = appState.messages.findIndex(m => m.id === msgWithId.id);
+        if (msgIndex !== -1) {
+          appState.messages.splice(msgIndex, 1);
+        }
+
+        // 重新渲染
+        if (appState.messages.length === 0) {
+          showWelcome();
+        } else {
+          renderMessages();
+        }
+      } else {
+        alert(appState.language === 'zh-CN' ? '删除失败' : 'Delete failed');
+      }
+    }
+
+    // ==================== 引用功能 ====================
+
+    // 引用消息
+    function quoteMessage(message) {
+      appState.currentQuote = {
+        role: message.role,
+        content: message.content || ''
+      };
+      updateQuoteUI();
+
+      // 聚焦输入框
+      const input = document.getElementById('messageInput');
+      if (input) {
+        input.focus();
+      }
+
+      console.log('✅ 已引用消息:', message.role);
+    }
+
+    // 移除引用
+    function removeQuote() {
+      appState.currentQuote = null;
+      updateQuoteUI();
+    }
+
+    // 更新引用预览UI
+    function updateQuoteUI() {
+      let quotePreview = document.getElementById('quotePreview');
+
+      if (!appState.currentQuote) {
+        // 移除预览
+        if (quotePreview) {
+          quotePreview.remove();
+        }
+        return;
+      }
+
+      // 创建或更新预览元素
+      if (!quotePreview) {
+        quotePreview = document.createElement('div');
+        quotePreview.id = 'quotePreview';
+        quotePreview.className = 'quote-preview';
+
+        // 插入到input-row之前
+        const inputContainer = document.getElementById('inputContainer');
+        const inputRow = inputContainer?.querySelector('.input-row');
+        if (inputContainer && inputRow) {
+          inputContainer.insertBefore(quotePreview, inputRow);
+        }
+      }
+
+      // 获取引用标签文本
+      const quoteLabel = appState.currentQuote.role === 'user'
+        ? (i18n[appState.language]?.['quote-user'] || '引用用户')
+        : (i18n[appState.language]?.['quote-ai'] || '引用AI');
+
+      // 截取引用内容预览（最多100个字符）
+      const contentPreview = (appState.currentQuote.content || '')
+        .replace(/\n+/g, ' ')
+        .trim()
+        .slice(0, 100) + (appState.currentQuote.content.length > 100 ? '...' : '');
+
+      quotePreview.innerHTML = `
+        <div class="quote-preview-content">
+          <div class="quote-preview-label">
+            ${getSvgIcon('format_quote', 'material-symbols-outlined', 14)}
+            <span>${quoteLabel}</span>
+          </div>
+          <div class="quote-preview-text">${contentPreview}</div>
+        </div>
+        <button class="quote-preview-remove" onclick="removeQuote()" title="${appState.language === 'zh-CN' ? '取消引用' : 'Remove quote'}">
+          ${getSvgIcon('close', 'remove-icon', 16)}
+        </button>
+      `;
+    }
+
+    // 打开重新生成弹窗
+    function openRegenerateModal(message) {
+      regenerateTargetMessage = message;
+
+      const modal = document.getElementById('regenerateModal');
+      if (!modal) return;
+
+      // 设置默认值
+      document.getElementById('regenerateModelSelect').value = appState.selectedModel || 'auto';
+      document.getElementById('regenerateInternetToggle').checked = appState.internetMode || false;
+      document.getElementById('regenerateThinkingToggle').checked = appState.thinkingMode || false;
+
+      modal.classList.add('active');
+    }
+
+    // 关闭重新生成弹窗
+    function closeRegenerateModal() {
+      const modal = document.getElementById('regenerateModal');
+      if (modal) {
+        modal.classList.remove('active');
+      }
+      regenerateTargetMessage = null;
+    }
+
+    // 确认重新生成
+    async function confirmRegenerate() {
+      if (!regenerateTargetMessage) return;
+
+      // 保存目标消息引用（因为closeRegenerateModal会将其设为null）
+      const targetMessage = regenerateTargetMessage;
+
+      const selectedModel = document.getElementById('regenerateModelSelect').value;
+      const internetMode = document.getElementById('regenerateInternetToggle').checked;
+      const thinkingMode = document.getElementById('regenerateThinkingToggle').checked;
+
+      closeRegenerateModal();
+
+
+      // 使用本地变量targetMessage而不是regenerateTargetMessage
+      let currentTarget = targetMessage;
+
+      // 如果消息没有ID，需要先从数据库重新加载消息获取ID
+      if (!currentTarget.id && appState.currentSession) {
+        console.log('⚠️ 消息没有ID，正在从数据库重新加载...');
+        try {
+          const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
+            headers: { 'Authorization': `Bearer ${appState.token}` }
+          });
+          if (response.ok) {
+            const dbMessages = await response.json();
+            appState.messages = dbMessages;
+            // 找到对应内容的消息并更新目标
+            const foundMsg = appState.messages.find(m =>
+              m.content === currentTarget.content && m.role === 'assistant'
+            );
+            if (foundMsg && foundMsg.id) {
+              currentTarget = foundMsg;
+              console.log(`✅ 已获取消息ID: ${foundMsg.id}`);
+            } else {
+              console.error('❌ 无法找到消息ID');
+              alert(appState.language === 'zh-CN' ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('❌ 重新加载消息失败:', error);
+          alert(appState.language === 'zh-CN' ? '加载失败，请重试' : 'Load failed, please retry');
+          return;
+        }
+      }
+
+      // 找到这条AI消息（通过ID或内容匹配）
+      let msgIndex = appState.messages.findIndex(m => m.id === currentTarget.id);
+      if (msgIndex === -1) {
+        // 尝试通过内容匹配
+        msgIndex = appState.messages.findIndex(m =>
+          m.content === currentTarget.content && m.role === 'assistant'
+        );
+      }
+      if (msgIndex === -1) {
+        console.error('❌ 无法找到要重新生成的消息');
+        return;
+      }
+
+      // 删除这条AI消息
+      await deleteMessageFromDB(appState.messages[msgIndex]);
+      appState.messages.splice(msgIndex, 1);
+
+
+      // 重新渲染
+      renderMessages();
+
+      // 保存当前设置
+      const originalModel = appState.selectedModel;
+      const originalInternet = appState.internetMode;
+      const originalThinking = appState.thinkingMode;
+
+      // 临时应用新设置
+      appState.selectedModel = selectedModel;
+      appState.internetMode = internetMode;
+      appState.thinkingMode = thinkingMode;
+
+      // 更新UI显示
+      updateModelControls();
+
+      // 构建消息并发送
+      const messagesToSend = appState.messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      // 触发AI回复
+      await triggerAIResponse(messagesToSend);
+
+      // 恢复原设置（可选）
+      // appState.selectedModel = originalModel;
+      // appState.internetMode = originalInternet;
+      // appState.thinkingMode = originalThinking;
+    }
+
+    // 触发AI回复
+    async function triggerAIResponse(messages) {
+      if (appState.isStreaming) return;
+
+      // 创建AI消息占位符
+      const aiMsg = {
+        role: 'assistant',
+        content: '',
+        created_at: new Date().toISOString()
+      };
+      appState.messages.push(aiMsg);
+      renderMessages();
+
+      // 调用现有的流式聊天逻辑（通过sendMessage部分逻辑）
+      await streamAIResponse(messages, aiMsg);
+    }
+
+    // 流式AI回复（优化版：增量更新DOM，不重新渲染整个消息列表）
+    async function streamAIResponse(messages, aiMsg) {
+      appState.isStreaming = true;
+
+      const sessionId = appState.currentSession?.id;
+      const requestId = `req_${Date.now()}`;
+
+      // 找到AI消息在列表中的位置并获取对应的DOM元素
+      const msgIndex = appState.messages.indexOf(aiMsg);
+      const container = document.getElementById('messagesList');
+      const messageElements = container?.querySelectorAll('.message');
+      const aiMsgElement = messageElements ? messageElements[msgIndex] : null;
+      const textDiv = aiMsgElement?.querySelector('.message-text');
+
+      // 用于节流更新的变量
+      let pendingUpdate = false;
+      let lastUpdateTime = 0;
+      const UPDATE_INTERVAL = 50; // 50ms更新间隔
+
+      // 节流更新函数
+      function throttledUpdate(content) {
+        if (!textDiv) return;
+
+        const now = Date.now();
+        if (now - lastUpdateTime >= UPDATE_INTERVAL) {
+          textDiv.innerHTML = renderMarkdownWithMath(content);
+          lastUpdateTime = now;
+          scrollToBottom();
+        } else if (!pendingUpdate) {
+          pendingUpdate = true;
+          setTimeout(() => {
+            textDiv.innerHTML = renderMarkdownWithMath(aiMsg.content);
+            lastUpdateTime = Date.now();
+            pendingUpdate = false;
+            scrollToBottom();
+          }, UPDATE_INTERVAL);
+        }
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/chat/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${appState.token}`
+          },
+          body: JSON.stringify({
+            messages,
+            model: appState.selectedModel,
+            sessionId,
+            requestId,
+            internetMode: appState.internetMode,
+            thinkingMode: appState.thinkingMode,
+            temperature: appState.temperature,
+            topP: appState.topP,
+            maxTokens: appState.maxTokens,
+            frequencyPenalty: appState.frequencyPenalty,
+            presencePenalty: appState.presencePenalty,
+            systemPrompt: buildSystemPrompt() + (appState.systemPrompt ? '\n\nUser Custom Instructions:\n' + appState.systemPrompt : '')
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullContent = '';
+        let reasoningContent = '';
+        let sources = null;
+        let finalModel = appState.selectedModel;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(data);
+
+              if (parsed.sources) {
+                sources = parsed.sources;
+                aiMsg.sources = sources;
+              }
+
+              if (parsed.model) {
+                finalModel = parsed.model;
+                aiMsg.model = finalModel;
+              }
+
+              if (parsed.choices?.[0]?.delta) {
+                const delta = parsed.choices[0].delta;
+                if (delta.content) {
+                  fullContent += delta.content;
+                  aiMsg.content = fullContent;
+                  // 使用节流更新而不是每次都更新
+                  throttledUpdate(fullContent);
+                }
+                if (delta.reasoning_content) {
+                  reasoningContent += delta.reasoning_content;
+                  aiMsg.reasoning_content = reasoningContent;
+                }
+              }
+            } catch (e) {
+              // 忽略解析错误
+            }
+          }
+        }
+
+        // 流结束后最终渲染一次（确保完整内容显示）
+        console.log('✅ 流式响应完成');
+
+      } catch (error) {
+        console.error('❌ 流式请求失败:', error);
+        aiMsg.content = appState.language === 'zh-CN' ? '生成失败，请重试' : 'Generation failed, please retry';
+      } finally {
+        appState.isStreaming = false;
+        // 最终完整渲染一次，确保所有内容正确显示（包括来源、模型标签等）
+        renderMessages();
+        // 重新加载消息以获取数据库ID
+        if (sessionId) {
+          try {
+            const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
+              headers: { 'Authorization': `Bearer ${appState.token}` }
+            });
+            if (resp.ok) {
+              appState.messages = await resp.json();
+              renderMessages();
+            }
+          } catch (e) {
+            console.warn('⚠️ 重新加载消息失败:', e);
+          }
+        }
+      }
+    }
+
+
     // 修复：改进renderSessions，使用事件委托处理删除按钮
     // 🔥 新增：支持侧边栏附件预览
+
 
     // 解析会话的附件数据
     function parseSessionAttachments(session) {
@@ -6710,10 +8063,27 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
       input.value = '';
       autoResizeInput();
 
+      // 🗨️ 处理引用内容
+      let finalMessageContent = message || '请分析这个文件';
+      if (appState.currentQuote) {
+        const quoteLabel = appState.currentQuote.role === 'user'
+          ? (appState.language === 'zh-CN' ? '引用用户' : 'Quoting User')
+          : (appState.language === 'zh-CN' ? '引用AI' : 'Quoting AI');
+        // 截取引用内容（最多200字符）
+        const quotedContent = (appState.currentQuote.content || '').slice(0, 200) +
+          (appState.currentQuote.content.length > 200 ? '...' : '');
+        finalMessageContent = `${quoteLabel}：${quotedContent}\n---\n${message || ''}`.trim();
+
+        // 清除引用状态
+        appState.currentQuote = null;
+        updateQuoteUI();
+        console.log('✅ 引用内容已添加到消息');
+      }
+
       // 🔥 构建带附件的用户消息
       const userMsg = {
         role: 'user',
-        content: message || '请分析这个文件',  // 如果没有文字，使用默认提示
+        content: finalMessageContent,
         created_at: new Date().toISOString()
       };
 
@@ -6778,6 +8148,13 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
           </span>
         </div>
         <div class="message-content">
+          <!-- 🔍 搜索状态显示区域 -->
+          <div class="search-status" id="searchStatus" style="display: none;">
+            <svg class="search-icon spinning" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 4V2C6.48 2 2 6.48 2 12h2c0-4.41 3.59-8 8-8zm0 18v-2c4.41 0 8-3.59 8-8h2c0 5.52-4.48 10-10 10z"/>
+            </svg>
+            <span id="searchStatusText">正在分析问题...</span>
+          </div>
           <div class="thinking-indicator" id="thinkingIndicator" style="display: none;">
             <!-- 思考头部区域：预览 + 展开按钮 -->
             <div class="thinking-header">
@@ -7004,9 +8381,9 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
                 // 现在开始显示正文
                 fullContent += parsed.content;
                 if (streamingEl) {
-                  const contentToDisplay = fullContent.split('[TITLE]')[0].trim();
-                  // 使用renderMarkdownWithMath渲染Markdown和数学公式（一步完成）
-                  streamingEl.innerHTML = renderMarkdownWithMath(contentToDisplay);
+                  const contentToDisplay = fullContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+                  // 使用renderMarkdownWithMath渲染Markdown和数学公式（流式模式：用占位符替代图片）
+                  streamingEl.innerHTML = renderMarkdownWithMath(contentToDisplay, true);
                 }
                 scrollToBottom();
               }
@@ -7024,6 +8401,75 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
                   currentSources = parsed.sources;
                   console.log(`📥 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
                 }
+              }
+              // 🔍 新增：处理搜索状态
+              else if (parsed.type === 'search_status') {
+                const searchStatusEl = document.getElementById('searchStatus');
+                const searchStatusText = document.getElementById('searchStatusText');
+
+                if (searchStatusEl && searchStatusText) {
+                  // 显示搜索状态区域
+                  searchStatusEl.style.display = 'flex';
+
+                  // 根据状态更新显示
+                  if (parsed.status === 'analyzing') {
+                    searchStatusText.innerHTML = appState.language === 'zh-CN'
+                      ? '<span class="search-label">🤖 AI 正在分析问题，生成搜索关键词...</span>'
+                      : '<span class="search-label">🤖 AI analyzing question, generating search keywords...</span>';
+                  } else if (parsed.status === 'searching') {
+                    const query = parsed.query || '';
+                    // 🎯 显示AI输入的搜索关键词，带打字动画效果
+                    searchStatusText.innerHTML = appState.language === 'zh-CN'
+                      ? `<span class="search-label">🔍 AI 搜索工具输入:</span> <span class="search-query typewriter">${query}</span>`
+                      : `<span class="search-label">🔍 AI Search Tool Input:</span> <span class="search-query typewriter">${query}</span>`;
+
+                    // 打字动画效果
+                    const querySpan = searchStatusText.querySelector('.search-query');
+                    if (querySpan) {
+                      querySpan.style.setProperty('--query-length', query.length);
+                    }
+                  } else if (parsed.status === 'complete') {
+                    const resultCount = parsed.resultCount || 0;
+                    const query = parsed.query || '';
+                    searchStatusEl.classList.add('complete');
+                    searchStatusEl.querySelector('.search-icon').classList.remove('spinning');
+                    searchStatusText.innerHTML = appState.language === 'zh-CN'
+                      ? `<span class="search-label">✅ 搜索完成:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 找到 ${resultCount} 条结果</span>`
+                      : `<span class="search-label">✅ Search complete:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ Found ${resultCount} results</span>`;
+
+                    // 3秒后隐藏搜索状态
+                    setTimeout(() => {
+                      if (searchStatusEl) {
+                        searchStatusEl.style.opacity = '0';
+                        setTimeout(() => {
+                          searchStatusEl.style.display = 'none';
+                          searchStatusEl.style.opacity = '1';
+                          searchStatusEl.classList.remove('complete');
+                        }, 300);
+                      }
+                    }, 3000);
+                  } else if (parsed.status === 'no_results') {
+                    const query = parsed.query || '';
+                    searchStatusEl.querySelector('.search-icon').classList.remove('spinning');
+                    searchStatusText.innerHTML = appState.language === 'zh-CN'
+                      ? `<span class="search-label">⚠️ 搜索:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 未找到结果</span>`
+                      : `<span class="search-label">⚠️ Search:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ No results</span>`;
+
+                    // 3秒后隐藏搜索状态
+                    setTimeout(() => {
+                      if (searchStatusEl) {
+                        searchStatusEl.style.opacity = '0';
+                        setTimeout(() => {
+                          searchStatusEl.style.display = 'none';
+                          searchStatusEl.style.opacity = '1';
+                        }, 300);
+                      }
+                    }, 3000);
+                  }
+
+                  console.log(`🔍 搜索状态: ${parsed.status}`, parsed.query || '');
+                }
+                scrollToBottom();
               }
               else if (parsed.type === 'done') {
                 console.log('✅ 流式响应完成');
@@ -7055,7 +8501,7 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
         const finalReasoningContent = thinkingSentences.join('') + reasoningContent.trim();
 
         // 移除标题标记后再保存到appState
-        const cleanContent = fullContent.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
+        const cleanContent = fullContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
 
         const aiMsg = {
           role: 'assistant',
@@ -7091,8 +8537,8 @@ Being helpful and useful!回答中使用友善的语气，根据目标受众调�
         updateToolbarUI();
 
         // 修复：在流式传输结束后处理标题
-        // 提取标题 [TITLE]...[/TITLE]
-        const titleMatch = fullContent.match(/\[TITLE\](.*?)\[\/TITLE\]/);
+        // 提取标题 <<<标题>>> - 匹配回复末尾的三角括号内容
+        const titleMatch = fullContent.match(/<<<(.{1,30})>>>\s*$/);
         if (titleMatch && titleMatch[1]) {
           const newTitle = titleMatch[1].trim();
           console.log(`📝 检测到新标题: "${newTitle}"`);
