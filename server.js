@@ -106,6 +106,36 @@ const defaultKeywords = {
     ]
 };
 
+// ==================== Mermaid 图表生成指南 ====================
+// 这个指南会自动附加到 system prompt，教导 AI 如何生成图表
+const MERMAID_CHART_GUIDE = `
+
+## 图表生成能力
+
+你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
+
+### 支持的图表类型:
+
+1. **流程图**: \`flowchart TD/LR\` - 用于流程、逻辑、决策
+2. **时序图**: \`sequenceDiagram\` - 用于交互、API调用流程
+3. **类图**: \`classDiagram\` - 用于面向对象设计
+4. **状态图**: \`stateDiagram-v2\` - 用于状态转换
+5. **ER图**: \`erDiagram\` - 用于数据库设计
+6. **甘特图**: \`gantt\` - 用于项目计划
+7. **饼图**: \`pie\` - 用于占比展示
+8. **思维导图**: \`mindmap\` - 用于知识梳理
+9. **用户旅程图**: \`journey\` - 用于用户体验分析
+10. **象限图**: \`quadrantChart\` - 用于四象限分析
+
+### 使用原则:
+- 当用户询问流程、逻辑、结构、关系时，**主动使用图表**
+- 请求规划或分析时，用甘特图或象限图
+- 数据占比用饼图
+- 系统交互用时序图
+- 数据库设计用ER图
+- **图表应简洁清晰，配合文字说明**
+`;
+
 // 路由配置
 const config = {
     thresholds: { t1: 0.40, t2: 0.80 },
@@ -745,10 +775,21 @@ function detectMultimodalContent(message) {
         });
     }
 
-    // 检查message对象是否有attachments字段
-    if (message.attachments && Array.isArray(message.attachments)) {
-        console.log(`📎 发现附件:`, message.attachments.map(a => ({ type: a.type, fileName: a.fileName })));
-        message.attachments.forEach(att => {
+    // 🔧 增强防御性检查：处理 attachments 可能是字符串的情况
+    let attachments = message.attachments;
+    // 如果是字符串（从数据库加载的JSON），尝试解析
+    if (typeof attachments === 'string') {
+        try {
+            attachments = JSON.parse(attachments);
+        } catch (e) {
+            attachments = [];
+        }
+    }
+
+    // 检查message对象是否有attachments字段（增强防御性检查）
+    if (Array.isArray(attachments) && attachments.length > 0) {
+        console.log(`📎 发现附件:`, attachments.map(a => ({ type: a.type, fileName: a.fileName })));
+        attachments.forEach(att => {
             if (att.type === 'image') {
                 result.hasMultimodal = true;
                 result.types.push('image');
@@ -807,8 +848,23 @@ function detectMultimodalInMessages(messages) {
 function convertToOmniFormat(message) {
     if (!message || !message.content) return message;
 
+    // 🔧 增强防御性检查：确保 attachments 是数组
+    let attachments = message.attachments;
+    // 如果是字符串（从数据库加载的JSON），尝试解析
+    if (typeof attachments === 'string') {
+        try {
+            attachments = JSON.parse(attachments);
+        } catch (e) {
+            attachments = [];
+        }
+    }
+    // 确保是数组
+    if (!Array.isArray(attachments)) {
+        attachments = [];
+    }
+
     // 如果没有附件，检查content是否已经是数组格式
-    if (!message.attachments || message.attachments.length === 0) {
+    if (attachments.length === 0) {
         // 如果content已经是数组格式（包含多模态内容），直接返回
         if (Array.isArray(message.content)) {
             return message;
@@ -821,7 +877,7 @@ function convertToOmniFormat(message) {
     const contentArray = [];
 
     // 处理附件
-    message.attachments.forEach(attachment => {
+    attachments.forEach(attachment => {
         if (attachment.type === 'image') {
             // 图片使用image_url格式
             contentArray.push({
@@ -925,6 +981,14 @@ const API_PROVIDERS = {
         apiKey: 'sk-',
         baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
         models: ['moonshotai/Kimi-K2-Thinking', 'moonshotai/Kimi-K2-Instruct-0905']
+    },
+    // 硅基流动 SiliconFlow - Qwen3 VL 视觉模型 (图像理解)
+    siliconflow_vl: {
+        apiKey: 'sk-',
+        baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
+        models: ['Qwen/Qwen3-VL-235B-A22B-Instruct'],
+        multimodal: true,  // 标记支持多模态
+        visionModel: true  // 标记这是视觉模型
     }
 };
 
@@ -941,6 +1005,13 @@ const MODEL_ROUTING = {
         multimodal: true,   // 标记支持多模态
         audioOutput: true,  // 支持语音输出
         streamRequired: true // 必须开启流式
+    },
+    // Qwen3-VL 视觉语言模型 (硅基流动 - 图像理解)
+    'qwen3-vl': {
+        provider: 'siliconflow_vl',
+        model: 'Qwen/Qwen3-VL-235B-A22B-Instruct',
+        multimodal: true,      // 支持多模态
+        visionModel: true      // 这是视觉模型
     },
     'deepseek-v3': {
         provider: 'deepseek',
@@ -989,6 +1060,16 @@ const db = new sqlite3.Database(dbPath, (err) => {
         process.exit(1);
     } else {
         console.log('✅ 数据库已连接:', dbPath);
+
+        // ==================== SQLite 性能优化 ====================
+        db.run("PRAGMA journal_mode=WAL;", (err) => {
+            if (err) console.warn('⚠️ WAL模式设置失败:', err.message);
+            else console.log('✅ SQLite WAL模式已启用');
+        });
+        db.run("PRAGMA cache_size=10000;");  // 约40MB缓存
+        db.run("PRAGMA busy_timeout=5000;"); // 5秒锁等待超时
+        db.run("PRAGMA synchronous=NORMAL;"); // 平衡性能与安全
+        db.run("PRAGMA temp_store=MEMORY;");  // 临时表存内存
     }
 });
 
@@ -1135,6 +1216,24 @@ db.serialize(() => {
                 console.log('✅ 已添加sources列到messages表');
             }
         });
+
+        // 创建索引以加速查询
+        // 注意：索引方向要与查询一致（ASC）
+        db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at ASC, id ASC)`, (err) => {
+            if (err) {
+                console.warn(`⚠️ 创建messages索引失败:`, err.message);
+            } else {
+                console.log('✅ messages表索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, is_archived, updated_at DESC)`, (err) => {
+            if (err) {
+                console.warn(`⚠️ 创建sessions索引失败:`, err.message);
+            } else {
+                console.log('✅ sessions表索引就绪');
+            }
+        });
     });
 });
 
@@ -1142,9 +1241,16 @@ db.serialize(() => {
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/avatars', express.static(path.join(__dirname, 'avatars')));
-app.use(express.static(path.join(__dirname, 'public')));
+// 静态资源缓存配置（1天 = 86400秒）
+const staticCacheOptions = {
+    maxAge: '1d',
+    etag: true,
+    lastModified: true
+};
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), staticCacheOptions));
+app.use('/avatars', express.static(path.join(__dirname, 'avatars'), staticCacheOptions));
+app.use(express.static(path.join(__dirname, 'public'), staticCacheOptions));
 
 // 限流配置
 const authLimiter = rateLimit({
@@ -1492,25 +1598,32 @@ app.post('/api/user/avatar', authenticateToken, upload.single('avatar'), (req, r
 
 // ==================== 会话管理路由 ====================
 app.get('/api/sessions', authenticateToken, (req, res) => {
+    // 分页参数：offset（偏移量）和 limit（每页数量）
+    const offset = parseInt(req.query.offset) || 0;
+    const limit = parseInt(req.query.limit) || 20;
+
+    // 优化：简化查询，移除慢速子查询（message_count, recent_attachments）
+    // 只保留 last_message 用于侧边栏预览
     db.all(
-        `SELECT s.*,
-      (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
-      (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message,
-      (SELECT GROUP_CONCAT(attachments, '|||') FROM (
-        SELECT attachments FROM messages 
-        WHERE session_id = s.id AND attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
-        ORDER BY created_at DESC LIMIT 2
-      )) as recent_attachments
+        `SELECT s.id, s.title, s.model, s.updated_at, s.created_at,
+      (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message
     FROM sessions s
     WHERE s.user_id = ? AND s.is_archived = 0
-    ORDER BY s.updated_at DESC`,
-        [req.user.userId],
+    ORDER BY s.updated_at DESC
+    LIMIT ? OFFSET ?`,
+        [req.user.userId, limit, offset],
         (err, sessions) => {
             if (err) {
                 console.error('❌ 获取会话列表失败:', err);
                 return res.status(500).json({ error: '数据库错误' });
             }
-            res.json(sessions);
+            // 返回带有分页信息的响应
+            res.json({
+                sessions: sessions,
+                hasMore: sessions.length === limit,
+                offset: offset,
+                limit: limit
+            });
         }
     );
 });
@@ -1571,8 +1684,14 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
             return res.status(403).json({ error: '无权访问此会话' });
         }
 
+        // 优化：只查询必要字段，避免加载大的attachments Base64数据
+        // 附件数据可以按需加载（懒加载）
         db.all(
-            'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
+            `SELECT id, session_id, role, content, reasoning_content, model, 
+                    enable_search, thinking_mode, internet_mode, sources, created_at,
+                    CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]' 
+                         THEN 1 ELSE 0 END as has_attachments
+             FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
             [req.params.id],
             (err, messages) => {
                 if (err) {
@@ -1586,6 +1705,45 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
 });
 
 // ==================== 消息管理API ====================
+
+// 懒加载消息附件（避免初始加载时传输大量Base64数据）
+app.get('/api/messages/:messageId/attachments', authenticateToken, (req, res) => {
+    const { messageId } = req.params;
+
+    db.get(
+        `SELECT m.attachments, s.user_id 
+         FROM messages m 
+         JOIN sessions s ON m.session_id = s.id 
+         WHERE m.id = ?`,
+        [messageId],
+        (err, row) => {
+            if (err) {
+                console.error('❌ 获取附件失败:', err);
+                return res.status(500).json({ error: '数据库错误' });
+            }
+
+            if (!row) {
+                return res.status(404).json({ error: '消息不存在' });
+            }
+
+            if (row.user_id !== req.user.userId) {
+                return res.status(403).json({ error: '无权访问' });
+            }
+
+            // 解析并返回附件
+            let attachments = [];
+            if (row.attachments) {
+                try {
+                    attachments = JSON.parse(row.attachments);
+                } catch (e) {
+                    attachments = [];
+                }
+            }
+
+            res.json({ attachments });
+        }
+    );
+});
 
 // 删除单条消息
 app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req, res) => {
@@ -1684,7 +1842,7 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
 
                 // 获取该消息之前的所有消息
                 db.all(
-                    'SELECT * FROM messages WHERE session_id = ? AND created_at < ? ORDER BY created_at ASC',
+                    'SELECT * FROM messages WHERE session_id = ? AND created_at < ? ORDER BY created_at ASC, id ASC',
                     [sessionId, targetMsg.created_at],
                     (err, messages) => {
                         if (err) {
@@ -1744,8 +1902,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 🔍 调试：打印收到的消息结构
         console.log(`📨 收到 ${messages.length} 条消息:`);
         messages.forEach((m, i) => {
-            console.log(`   [${i}] role=${m.role}, hasAttachments=${!!m.attachments}, attachmentsCount=${m.attachments?.length || 0}`);
-            if (m.attachments && m.attachments.length > 0) {
+            const hasValidAttachments = m.attachments && Array.isArray(m.attachments);
+            console.log(`   [${i}] role=${m.role}, hasAttachments=${hasValidAttachments}, attachmentsCount=${hasValidAttachments ? m.attachments.length : 0}`);
+            if (hasValidAttachments && m.attachments.length > 0) {
                 console.log(`       附件详情:`, m.attachments.map(a => ({ type: a.type, fileName: a.fileName, hasData: !!a.data })));
             }
         });
@@ -1879,19 +2038,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         console.log(`\n🎯 模型选择开始: 用户指定 = ${model}`);
 
-        // 关键修复：多模态检测必须在auto路由之前执行！
-        const multimodalDetection = detectMultimodalInMessages(messages);
-        let isMultimodalRequest = multimodalDetection.hasMultimodal;
+        // 关键修复：只检测【当前用户消息】的多模态内容，而不是整个对话历史！
+        // 这样只有当前消息带图片才会用 VL 模型，之前对话中的图片不会影响后续消息
+        const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+        const currentMessageMultimodal = lastUserMessage ? detectMultimodalContent(lastUserMessage) : { hasMultimodal: false, types: [], count: 0 };
+        let isMultimodalRequest = currentMessageMultimodal.hasMultimodal;
 
         if (isMultimodalRequest) {
-            console.log(`\n🎨 🎨 🎨 检测到多模态内容!!!`);
-            console.log(`   类型: ${getMultimodalTypeDescription(multimodalDetection.types)}`);
-            console.log(`   数量: ${multimodalDetection.totalCount}`);
+            console.log(`\n🎨 🎨 🎨 当前消息检测到多模态内容!!!`);
+            console.log(`   类型: ${getMultimodalTypeDescription(currentMessageMultimodal.types)}`);
+            console.log(`   数量: ${currentMessageMultimodal.count}`);
 
-            // 强制切换到多模态模型，跳过所有其他路由逻辑
-            finalModel = 'qwen3-omni-flash';
-            autoRoutingReason = `检测到${getMultimodalTypeDescription(multimodalDetection.types)}，自动切换到Qwen3-Omni-Flash多模态模型`;
-            console.log(`   🔄 强制使用模型: qwen3-omni-flash`);
+            // 强制切换到视觉语言模型（使用硅基流动 Qwen3-VL-235B-A22B-Thinking）
+            finalModel = 'qwen3-vl';
+            autoRoutingReason = `当前消息包含${getMultimodalTypeDescription(currentMessageMultimodal.types)}，自动切换到Qwen3-VL视觉语言模型`;
+            console.log(`   🔄 强制使用模型: qwen3-vl (Qwen/Qwen3-VL-235B-A22B-Thinking)`);
         } else if (model === 'auto') {
             // 只有在没有多模态内容时才使用auto路由
             // 调用智能路由引擎
@@ -1940,7 +2101,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
-        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'kimi-k2'];
+        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2'];
 
         // 注意：多模态检测已在上面执行，这里不再重复
 
@@ -1993,6 +2154,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         console.log(`✅ API端点: ${providerConfig.baseURL}`);
 
+        // 关键修复：通过SSE发送实际使用的模型信息（因为响应头已经发送，无法再设置X-Model-Used）
+        res.write(`data: ${JSON.stringify({
+            type: 'model_info',
+            model: finalModel,
+            actualModel: actualModel,
+            reason: autoRoutingReason,
+            provider: routing.provider
+        })}\n\n`);
+        console.log(`📤 已发送模型信息: finalModel=${finalModel}, actualModel=${actualModel}`);
+
         // 🔍 网页搜索功能（针对非阿里云模型）
         // 注意：SSE头已在函数开头（约第1565行）设置完毕
         let searchContext = '';
@@ -2030,7 +2201,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const searchResults = searchData.results || searchData;  // 兼容新旧格式
             let searchImages = searchData.images || [];
 
-            // 🔥 验证图片URL，过滤掉无效的
+            // 验证图片URL，过滤掉无效的
             if (searchImages.length > 0) {
                 searchImages = await filterValidImages(searchImages, 5, 3000);
             }
@@ -2038,7 +2209,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (searchResults && searchResults.length > 0) {
                 // 使用验证后的图片
                 searchContext = formatSearchResults({ results: searchResults, images: searchImages }, searchQuery);
-                searchSources = extractSourcesForSSE(searchResults);  // 🔥 提取来源信息
+                searchSources = extractSourcesForSSE(searchResults);  // 提取来源信息
                 console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源, ${searchImages.length} 张有效图片)`);
 
                 // 📡 发送搜索状态：搜索完成
@@ -2072,10 +2243,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`🎨 消息已转换为多模态格式`);
         }
 
-        // 添加系统提示词（包含搜索结果）
-        const systemContent = searchContext
+        // 添加系统提示词（包含搜索结果 + 图表生成指南）
+        let systemContent = searchContext
             ? `${systemPrompt || ''}\n${searchContext}`.trim()
-            : systemPrompt;
+            : systemPrompt || '';
+
+        // 🎨 附加 Mermaid 图表生成指南
+        if (systemContent) {
+            systemContent = `${systemContent}\n${MERMAID_CHART_GUIDE}`;
+        } else {
+            systemContent = MERMAID_CHART_GUIDE.trim();
+        }
 
         if (systemContent) {
             finalMessages.unshift({
@@ -2105,6 +2283,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             // requestBody.audio = { voice: "Cherry", format: "wav" };
 
             console.log(`🎨 Qwen3-Omni-Flash 多模态配置已应用`);
+        }
+
+        // Qwen3-VL 视觉语言模型配置 (SiliconFlow)
+        if (finalModel === 'qwen3-vl') {
+            // Qwen3-VL-235B-A22B-Thinking 内置思考能力，需要更大的token限制
+            requestBody.max_tokens = Math.max(parseInt(max_tokens, 10) || 4096, 4096);
+            console.log(`🔍 Qwen3-VL 视觉语言模型配置已应用 (max_tokens: ${requestBody.max_tokens})`);
         }
 
         // ✅ 防御性检查：确保数值解析成功
@@ -2187,7 +2372,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return;
         }
 
-        // 🔥 注意：SSE头已在搜索前提前设置（约第1770行）
+        // 注意：SSE头已在搜索前提前设置（约第1770行）
         // 新增：如果有搜索来源，立即发送给前端
         if (searchSources && searchSources.length > 0) {
             res.write(`data: ${JSON.stringify({ type: 'sources', sources: searchSources })}\n\n`);
@@ -2352,7 +2537,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                 // 提取附件信息用于保存（仅保存预览所需的精简数据）
                 let attachmentsJson = null;
-                if (lastUserMsg.attachments && lastUserMsg.attachments.length > 0) {
+                // 防御性检查：确保 attachments 是数组
+                if (lastUserMsg.attachments && Array.isArray(lastUserMsg.attachments) && lastUserMsg.attachments.length > 0) {
                     const previewAttachments = lastUserMsg.attachments.map(att => {
                         // 对于图片，保存缩小的预览版本（减少数据库存储）
                         // 对于视频/音频，只保存类型和文件名
@@ -2374,10 +2560,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     console.log(`📎 保存 ${previewAttachments.length} 个附件信息`);
                 }
 
+                // 使用毫秒级时间戳确保用户消息严格早于AI消息
+                const userMsgTimestamp = new Date().toISOString();
                 await new Promise((resolve, reject) => {
                     db.run(
-                        'INSERT INTO messages (session_id, role, content, attachments) VALUES (?, ?, ?, ?)',
-                        [sessionId, 'user', userContent, attachmentsJson],
+                        'INSERT INTO messages (session_id, role, content, attachments, created_at) VALUES (?, ?, ?, ?, ?)',
+                        [sessionId, 'user', userContent, attachmentsJson, userMsgTimestamp],
                         (err) => {
                             if (err) {
                                 console.error('❌ 保存用户消息失败:', err);
@@ -2407,10 +2595,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             // 序列化 sources 为 JSON 字符串
             const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
 
+            // 使用毫秒级时间戳，确保AI消息严格晚于用户消息
+            const aiMsgTimestamp = new Date().toISOString();
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson],
+                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, aiMsgTimestamp],
                     (err) => {
                         if (err) {
                             console.error('❌ 保存AI消息失败:', err);
@@ -2543,7 +2733,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║            🚀 RAI 0.6  已启动                            ║
+║            🚀 RAI v0.8 已启动                            ║
 ║                                                          ║
 ║  📡 服务地址: http://0.0.0.0:${PORT}                     ║
 ║  📊 数据库: ${dbPath}                                    ║
