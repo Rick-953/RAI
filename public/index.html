@@ -24,6 +24,9 @@
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
     crossorigin="anonymous"></script>
 
+  <!-- Mermaid.js 图表渲染 -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+
   <script>
     // Robust loading with CDN fallback
     window.addEventListener('load', function () {
@@ -116,29 +119,48 @@
         });
       }
 
-      // 5. 🔥 图片处理：流式模式使用加载容器，非流式直接显示
+      // 5. 图片处理：流式模式使用加载容器，非流式直接显示
       if (isStreaming) {
-        // 流式模式：用容器包裹图片，显示加载骨架，图片在后台加载
-        html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)alt="([^"]*)"([^>]*)>/g, (match, before, src, mid, alt, after) => {
-          return `<div class="streaming-image-container">
+        // 流式模式：用容器包裹图片，显示加载骨架（事件由updateContent处理）
+        html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)>/g, (match, before, src, after) => {
+          // 跳过已处理的图片
+          if (match.includes('streaming-image-container')) return match;
+          return `<div class="streaming-image-container" data-src="${src}">
             <div class="streaming-image-skeleton"></div>
-            <img${before}src="${src}"${mid}alt="${alt}"${after} loading="eager" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('error'); this.parentElement.innerHTML='<span class=\\'image-error\\'>⚠️ 图片加载失败</span>'">
-          </div>`;
-        });
-        // 处理没有alt属性的图片
-        html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)(?!alt=)>/g, (match, before, src, after) => {
-          if (match.includes('streaming-image-container')) return match; // 已处理过的跳过
-          return `<div class="streaming-image-container">
-            <div class="streaming-image-skeleton"></div>
-            <img${before}src="${src}"${after} loading="eager" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('error'); this.parentElement.innerHTML='<span class=\\'image-error\\'>⚠️ 图片加载失败</span>'">
+            <img${before}src="${src}"${after} loading="eager">
           </div>`;
         });
       } else {
         // 非流式模式：直接显示图片，添加错误处理
         html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)>/g, (match, before, src, after) => {
-          return `<img${before}src="${src}"${after} loading="lazy" onerror="this.style.display='none'; this.insertAdjacentHTML('afterend', '<span class=\\'image-error\\'>⚠️ 图片加载失败</span>')">`;
+          return `<img${before}src="${src}"${after} loading="lazy" onerror="this.style.display='none'; this.insertAdjacentHTML('afterend', '<span class=\\'image-error\\'>图片有版权等原因不能加载，见谅 ＞﹏＜ </span>')">`;
         });
       }
+
+      // 6. 🎨 Mermaid 图表处理：检测并转换 mermaid 代码块为渲染容器
+      html = html.replace(
+        /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
+        (match, code) => {
+          const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+          // 解码 HTML 实体
+          const decodedCode = code
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .trim();
+          return `<div class="mermaid-container" id="${id}" data-mermaid-code="${encodeURIComponent(decodedCode)}">
+            <div class="mermaid-loading">
+              <svg class="mermaid-loading-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 3h18v18H3V3z" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3 9h18M9 21V9" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>图表加载中...</span>
+            </div>
+          </div>`;
+        }
+      );
 
       return html;
     }
@@ -158,7 +180,7 @@
       // 不再需要，因为renderMarkdownWithMath已经完成了所有工作
     }
 
-    // 🔥 新增：将文本中的 [1] [2] 等转换为可点击的角标
+    // 新增：将文本中的 [1] [2] 等转换为可点击的角标
     function renderCitations(html, sources) {
       if (!sources || sources.length === 0) return html;
 
@@ -173,7 +195,7 @@
       });
     }
 
-    // 🔥 新增：渲染来源列表
+    // 新增：渲染来源列表
     function renderSourcesList(sources, language) {
       if (!sources || sources.length === 0) return '';
 
@@ -193,7 +215,7 @@
         const domain = source.site_name || (source.url ? new URL(source.url).hostname.replace('www.', '') : '');
         const faviconHtml = source.favicon
           ? `<img class="source-favicon" src="${source.favicon}" alt="" onerror="this.style.display='none'">`
-          : `<div class="source-favicon-placeholder">🌐</div>`;
+          : `<div class="source-favicon-placeholder"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></div>`;
 
         html += `
           <a href="${source.url || '#'}" target="_blank" rel="noopener" class="source-card">
@@ -210,6 +232,144 @@
       html += '</div>';
       return html;
     }
+
+    // ==================== Mermaid 图表功能 ====================
+
+    // Mermaid 初始化配置
+    function initMermaid() {
+      if (typeof mermaid !== 'undefined') {
+        const isDark = document.documentElement.dataset.theme !== 'light';
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: isDark ? 'dark' : 'default',
+          securityLevel: 'strict',
+          fontFamily: 'inherit',
+          flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+          sequence: { useMaxWidth: true, mirrorActors: false },
+          gantt: { useMaxWidth: true },
+          pie: { useMaxWidth: true },
+          mindmap: { useMaxWidth: true },
+          c4: { useMaxWidth: true }
+        });
+        console.log('✅ Mermaid 初始化完成 (主题:', isDark ? 'dark' : 'default', ')');
+      } else {
+        console.warn('⚠️ Mermaid 库未加载');
+      }
+    }
+
+    // 渲染页面中的所有 Mermaid 图表
+    async function renderMermaidCharts() {
+      if (typeof mermaid === 'undefined') {
+        console.warn('⚠️ Mermaid 库未加载，跳过图表渲染');
+        return;
+      }
+
+      const containers = document.querySelectorAll('.mermaid-container:not(.rendered)');
+      if (containers.length === 0) return;
+
+      console.log(`🎨 开始渲染 ${containers.length} 个 Mermaid 图表`);
+
+      for (const container of containers) {
+        const code = decodeURIComponent(container.dataset.mermaidCode || '');
+        if (!code) continue;
+
+        try {
+          const { svg } = await mermaid.render(container.id + '-svg', code);
+          container.innerHTML = svg;
+          container.classList.add('rendered');
+
+          // 添加工具栏
+          const toolbar = document.createElement('div');
+          toolbar.className = 'mermaid-toolbar';
+          toolbar.innerHTML = `
+            <button onclick="copyMermaidCode('${container.id}')" title="复制代码">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button onclick="downloadMermaidSVG('${container.id}')" title="下载SVG">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+            <button onclick="toggleMermaidFullscreen('${container.id}')" title="全屏查看">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            </button>
+          `;
+          container.appendChild(toolbar);
+
+          console.log(`✅ 图表渲染成功: ${container.id}`);
+        } catch (err) {
+          console.error('❌ Mermaid 渲染失败:', err);
+          container.innerHTML = `<div class="mermaid-error">
+            <span class="mermaid-error-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+              图表渲染失败
+            </span>
+            <pre>${escapeHtml(err.message || '语法错误')}</pre>
+            <details><summary>查看原始代码</summary><pre>${escapeHtml(code)}</pre></details>
+          </div>`;
+          container.classList.add('render-error');
+        }
+      }
+    }
+
+    // 复制 Mermaid 代码
+    function copyMermaidCode(containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      const code = decodeURIComponent(container.dataset.mermaidCode || '');
+      navigator.clipboard.writeText('```mermaid\n' + code + '\n```').then(() => {
+        console.log('✅ Mermaid 代码已复制');
+      });
+    }
+
+    // 下载 SVG
+    function downloadMermaidSVG(containerId) {
+      const container = document.getElementById(containerId);
+      const svg = container?.querySelector('svg');
+      if (!svg) return;
+
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([svgData], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mermaid-chart.svg';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // 全屏查看
+    function toggleMermaidFullscreen(containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+
+      if (container.classList.contains('fullscreen')) {
+        container.classList.remove('fullscreen');
+        document.body.style.overflow = '';
+      } else {
+        container.classList.add('fullscreen');
+        document.body.style.overflow = 'hidden';
+      }
+    }
+
+    // 监听主题变化，重新初始化 Mermaid
+    const mermaidThemeObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === 'data-theme') {
+          initMermaid();
+          // 重新渲染所有图表（移除 rendered 标记）
+          document.querySelectorAll('.mermaid-container.rendered').forEach(el => {
+            el.classList.remove('rendered');
+          });
+          renderMermaidCharts();
+        }
+      });
+    });
+
+    // 页面加载完成后初始化 Mermaid
+    document.addEventListener('DOMContentLoaded', () => {
+      initMermaid();
+      mermaidThemeObserver.observe(document.documentElement, { attributes: true });
+    });
   </script>
 
   <style>
@@ -1014,6 +1174,28 @@
 
     .session-attachment-preview.audio-preview {
       color: var(--text-secondary);
+    }
+
+    /* 会话列表加载指示器 */
+    .sessions-loader {
+      display: flex;
+      justify-content: center;
+      padding: 12px;
+    }
+
+    .loader-spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border-color);
+      border-top-color: var(--accent-color);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     /* 固定底部区域 */
@@ -1833,6 +2015,44 @@
       opacity: 0.9;
     }
 
+    /* 懒加载附件样式 */
+    .lazy-attachments {
+      margin-bottom: 8px;
+    }
+
+    .lazy-attachment-placeholder {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border: 1px dashed var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .lazy-attachment-placeholder:hover {
+      background: var(--bg-hover);
+      border-color: var(--text-secondary);
+    }
+
+    .lazy-attachment-placeholder.loading {
+      cursor: wait;
+      opacity: 0.7;
+    }
+
+    .lazy-attachment-placeholder.error {
+      border-color: var(--error-color);
+      color: var(--error-color);
+    }
+
+    .lazy-attachment-placeholder .loading-spinner {
+      animation: spin 1s linear infinite;
+    }
+
     /* 重新生成弹窗 */
     .regenerate-modal {
       position: fixed;
@@ -2078,7 +2298,176 @@
       text-overflow: ellipsis;
     }
 
-    /* ====================Markdown渲染样式 ==================== */
+    /* ==================== Mermaid 图表样式 ==================== */
+
+    /* 图表容器 */
+    .mermaid-container {
+      margin: 16px 0;
+      padding: 20px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      overflow-x: auto;
+      position: relative;
+      min-height: 100px;
+    }
+
+    .mermaid-container svg {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+
+    /* 加载状态 */
+    .mermaid-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      padding: 40px;
+      font-size: 14px;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .mermaid-loading-icon {
+      animation: spin 1.5s linear infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    /* 错误状态 */
+    .mermaid-error {
+      color: var(--error-color);
+      padding: 16px;
+      background: rgba(239, 68, 68, 0.1);
+      border-radius: var(--radius-md);
+      font-size: 14px;
+    }
+
+    .mermaid-error span {
+      font-weight: 600;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .mermaid-error pre {
+      margin-top: 8px;
+      padding: 12px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text-secondary);
+    }
+
+    .mermaid-error details {
+      margin-top: 12px;
+    }
+
+    .mermaid-error summary {
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 12px;
+      user-select: none;
+    }
+
+    .mermaid-error summary:hover {
+      color: var(--text-primary);
+    }
+
+    /* 图表工具栏 */
+    .mermaid-toolbar {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 10;
+    }
+
+    .mermaid-container:hover .mermaid-toolbar {
+      opacity: 1;
+    }
+
+    .mermaid-toolbar button {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .mermaid-toolbar button:hover {
+      background: var(--bg-hover);
+      border-color: var(--text-tertiary);
+      transform: scale(1.05);
+    }
+
+    /* 全屏模式 */
+    .mermaid-container.fullscreen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      margin: 0;
+      border-radius: 0;
+      z-index: 9999;
+      background: var(--bg-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: auto;
+    }
+
+    .mermaid-container.fullscreen svg {
+      max-width: 95%;
+      max-height: 90vh;
+    }
+
+    .mermaid-container.fullscreen .mermaid-toolbar {
+      opacity: 1;
+      top: 20px;
+      right: 20px;
+    }
+
+    /* 浅色主题适配 */
+    [data-theme="light"] .mermaid-container {
+      background: #fafafa;
+    }
+
+    [data-theme="light"] .mermaid-error {
+      background: rgba(239, 68, 68, 0.08);
+    }
+
+    [data-theme="light"] .mermaid-container.fullscreen {
+      background: #ffffff;
+    }
+
+    /* ==================== Markdown渲染样式 ==================== */
     .message-text h1,
     .message-text h2,
     .message-text h3,
@@ -2198,12 +2587,16 @@
     }
 
     .streaming-image-skeleton::after {
-      content: '🖼️';
+      content: '';
       position: absolute;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 32px;
+      width: 32px;
+      height: 32px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpath d='M21 15l-5-5L5 21'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
       opacity: 0.5;
     }
 
@@ -2219,20 +2612,18 @@
 
     .streaming-image-container img {
       position: relative;
-      z-index: 1;
+      z-index: 2;
       width: 100%;
       height: auto;
       display: block;
-      opacity: 0;
-      transition: opacity 0.3s ease;
+      opacity: 1;
       border-radius: var(--radius-md);
       margin: 0;
+      /* 图片加载时直接显示，用户可以看到图片从上到下逐渐加载 */
+      background: transparent;
     }
 
-    .streaming-image-container.loaded img {
-      opacity: 1;
-    }
-
+    /* 图片加载完成后隐藏骨架屏 */
     .streaming-image-container.loaded .streaming-image-skeleton {
       display: none;
     }
@@ -2501,7 +2892,7 @@
       margin-bottom: var(--spacing-md);
     }
 
-    /* 🔥 图片加载中占位符（流式渲染时使用） */
+    /* 图片加载中占位符（流式渲染时使用） */
     .image-loading-placeholder {
       display: inline-block;
       padding: 8px 16px;
@@ -2513,7 +2904,7 @@
       margin: 8px 0;
     }
 
-    /* 🔥 图片加载失败提示 */
+    /* 图片加载失败提示 */
     .image-error {
       display: inline-block;
       padding: 4px 8px;
@@ -4812,7 +5203,7 @@
               <!-- 自定义模型选择器 -->
               <div class="model-selector">
                 <div class="model-select-custom" id="modelSelectCustom" onclick="openModelModal()">
-                  <span id="selectedModelText" data-i18n="model-smart">智能模式</span>
+                  <span id="selectedModelText">Kimi K2</span>
                   <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                     <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -4822,7 +5213,7 @@
                 <!-- Grok风格下拉菜单 -->
                 <div class="model-dropdown-menu" id="modelDropdownMenu">
                   <!-- 智能模式 -->
-                  <div class="model-menu-item selected" data-model="auto"
+                  <div class="model-menu-item" data-model="auto"
                     onclick="selectModelFromMenu('auto', '智能模式', 'model-smart')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
@@ -5386,8 +5777,8 @@
       messages: [],
       currentRequestId: null,
       isStreaming: false,
-      selectedModel: 'auto',  // 默认为auto模式
-      thinkingMode: false,
+      selectedModel: 'kimi-k2',  // 默认为Kimi K2模型
+      thinkingMode: false,  // 默认关闭推理模式
       internetMode: true,  // 默认开启联网
       inputExpanded: false,  // 输入框展开状态
       thinkingBudget: 1024,
@@ -5425,7 +5816,14 @@
       userScrolledUp: false,  // 用户是否主动向上滚动
       lastScrollTop: 0,  // 上次滚动位置
       // 引用功能状态
-      currentQuote: null  // 当前引用的消息 { role: 'user'|'assistant', content: string }
+      currentQuote: null,  // 当前引用的消息 { role: 'user'|'assistant', content: string }
+      // 会话列表分页状态
+      sessionsPagination: {
+        offset: 0,
+        limit: 5,//首次加载历史对话条数
+        hasMore: true,
+        isLoading: false
+      }
     };
 
     const MODELS = {
@@ -5517,30 +5915,31 @@
       };
     }
 
-    // 动态生成系统提示词（包含时间上下文和诚实原则）
+    // 动态生成系统提示词（包含时间上下文和核心原则 - 中文版）
     function buildSystemPrompt() {
       const timeCtx = getUserTimeContext();
 
       return `{
-  "identity": "RAI Assistant by Rick",
-  "current_context": {
-    "datetime": "${timeCtx.datetime}",
-    "timezone": "${timeCtx.timezone}",
-    "user_locale": "${timeCtx.locale}",
-    "time_period": "${timeCtx.timeOfDay}"
+  "身份": "RAI 专业助理 (由 Rick 开发)",
+  "当前上下文": {
+    "日期时间": "${timeCtx.datetime}",
+    "时区": "${timeCtx.timezone}",
+    "用户语言环境": "${timeCtx.locale}", 
+    "时间段": "${timeCtx.timeOfDay}"
   },
-  "principles": {
-    "honesty": "CRITICAL: Every statement must be truthful, accurate and verifiable. Never fabricate information. Always stay honest.",
-    "understand_first": "Analyze intent before responding. Simple queries get concise answers; complex ones get comprehensive explanations.",
-    "communication": "Professional yet warm tone. Use markdown formatting. Adapt style to audience.",
-    "problem_solving": "Provide actionable solutions. Use **bold headings** in reasoning. Proactively suggest next steps.",
-    "ethics": "Never produce harmful or illegal content. Explain limitations and offer alternatives when needed.",
-    "time_awareness": "Be aware of user's current time. Offer appropriate greetings based on time of day. If it's late night (after 11pm) or very early (before 5am), gently remind the user to take care of their rest in a warm, caring manner when appropriate.",
-    "image_usage": "When appropriate, enhance responses with images using Markdown syntax: ![description](image_url). For web searches, images may be provided in [搜索相关图片] section - use these image URLs in your response when they help illustrate the topic. Only use valid image URLs from search results, never fabricate image URLs."
+  "核心原则": {
+    "诚实守信": "每一条陈述都必须真实、准确、可验证。绝不编造信息，始终保持诚实。如有不确定，坦诚告知。",
+    "耐心守候": "无论用户问题多么基础、重复或复杂，始终保持耐心。用温和、友好的态度回应，绝不表现出不耐烦或敷衍。",
+    "先理解后回应": "回复前先深入分析用户真实意图。简单问题给简洁答案；复杂问题给全面解释，必要时分步骤阐述。",
+    "沟通风格": "专业且温暖的语气，像一位可靠的朋友。善用 Markdown 格式提升可读性。根据用户特点调整表达方式。",
+    "解决问题": "提供可执行的解决方案，注重实用性。推理时使用**加粗标题**突出要点。主动思考并建议下一步行动。",
+    "道德准则": "绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。",
+    "时间感知": "注意用户当前时间，提供恰当的问候。深夜(23点后)或凌晨(5点前)时，以温馨关怀的方式温柔提醒用户注意休息。",
+    "图片运用": "在合适的时候，使用 Markdown 语法 ![描述](图片链接) 增强回复。网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。"
   },
-  "format": {
-    "structure": "Use headings, lists, and code blocks for clarity.",
-    "title": "After each response, generate a 3-9 word conversation title matching user's language. Output at the very end as: <<<your_title_here>>>"
+  "格式要求": {
+    "结构规范": "善用标题、列表和代码块，让内容层次分明、一目了然。",
+    "对话标题": "每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出格式：<<<你的标题>>>"
   }
 }`;
     }
@@ -5984,7 +6383,7 @@
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
-      console.log('✅ RAI v0.5 初始化 (SSO 已启用)');
+      console.log('✅ RAI v0.8 初始化 (SSO 已启用)');
 
       // 绑定输入容器点击和触摸事件（移动端支持）
       const inputContainer = document.getElementById('inputContainer');
@@ -6839,6 +7238,9 @@
       // 完整渲染时强制滚动到底部并重置状态
       appState.userScrolledUp = false;
       scrollToBottom(true);
+
+      // 🎨 渲染 Mermaid 图表
+      setTimeout(() => renderMermaidCharts(), 100);
     }
 
     // 修复：改进createMessageElement，添加安全的事件处理
@@ -6939,8 +7341,9 @@
         }, 0);
       }
 
-      // 🔥 为用户消息添加附件预览（在文本之前显示）
-      if (message.role === 'user' && message.attachments) {
+      // 为用户消息添加附件预览（在文本之前显示）
+      // 支持懒加载：如果只有 has_attachments 标记但没有实际附件数据，显示占位符
+      if (message.role === 'user' && (message.attachments || message.has_attachments)) {
         let attachments = message.attachments;
         // 如果是字符串，尝试解析JSON
         if (typeof attachments === 'string') {
@@ -6951,7 +7354,26 @@
           }
         }
 
-        if (Array.isArray(attachments) && attachments.length > 0) {
+        // 懒加载模式：有标记但没有实际数据
+        const needsLazyLoad = message.has_attachments && (!attachments || attachments.length === 0);
+
+        if (needsLazyLoad) {
+          // 显示懒加载占位符
+          const lazyDiv = document.createElement('div');
+          lazyDiv.className = 'message-attachments lazy-attachments';
+          lazyDiv.dataset.messageId = message.id;
+          lazyDiv.innerHTML = `
+            <div class="lazy-attachment-placeholder" onclick="loadMessageAttachments(${message.id}, this.parentElement)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="M21 15l-5-5L5 21"/>
+              </svg>
+              <span>${appState.language === 'zh-CN' ? '点击加载附件' : 'Click to load attachments'}</span>
+            </div>
+          `;
+          content.appendChild(lazyDiv);
+        } else if (Array.isArray(attachments) && attachments.length > 0) {
           const attachmentsDiv = document.createElement('div');
           attachmentsDiv.className = 'message-attachments';
 
@@ -7022,7 +7444,7 @@
       // 使用renderMarkdownWithMath渲染Markdown和数学公式
       let renderedContent = renderMarkdownWithMath(cleanContent);
 
-      // 🔥 解析 sources：可能是 JSON 字符串（从数据库加载）或数组对象（流式响应）
+      // 解析 sources：可能是 JSON 字符串（从数据库加载）或数组对象（流式响应）
       let sources = message.sources;
       if (typeof sources === 'string' && sources.trim()) {
         try {
@@ -7033,7 +7455,7 @@
         }
       }
 
-      // 🔥 对AI消息的角标进行转换
+      // 对AI消息的角标进行转换
       if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
         renderedContent = renderCitations(renderedContent, sources);
       }
@@ -7042,7 +7464,7 @@
       content.appendChild(textDiv);
 
 
-      // 🔥 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
+      // 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
       if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
         const sourcesDiv = document.createElement('div');
         sourcesDiv.innerHTML = renderSourcesList(sources, appState.language);
@@ -7220,6 +7642,73 @@
       div.appendChild(content);
 
       return div;
+    }
+
+    // 懒加载消息附件
+    async function loadMessageAttachments(messageId, containerElement) {
+      if (!containerElement) return;
+
+      // 显示加载状态
+      containerElement.innerHTML = `
+        <div class="lazy-attachment-placeholder loading">
+          <svg class="loading-spinner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" opacity="0.3"/>
+            <path d="M12 2a10 10 0 0 1 10 10"/>
+          </svg>
+          <span>${appState.language === 'zh-CN' ? '加载中...' : 'Loading...'}</span>
+        </div>
+      `;
+
+      try {
+        const response = await fetch(`${API_BASE}/messages/${messageId}/attachments`, {
+          headers: { 'Authorization': `Bearer ${appState.token}` }
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const { attachments } = await response.json();
+
+        if (!attachments || attachments.length === 0) {
+          containerElement.innerHTML = `<div style="color: var(--text-secondary); font-size: 12px; padding: 8px;">无附件</div>`;
+          return;
+        }
+
+        // 渲染附件
+        containerElement.innerHTML = '';
+        containerElement.classList.remove('lazy-attachments');
+
+        attachments.forEach(att => {
+          if (!att || !att.type) return;
+
+          const itemDiv = document.createElement('div');
+
+          if (att.type === 'image' && att.data) {
+            itemDiv.className = 'message-attachment-item image-attachment';
+            const img = document.createElement('img');
+            img.src = att.data;
+            img.alt = att.fileName || '图片';
+            img.loading = 'lazy';
+            img.onclick = () => window.open(att.data, '_blank');
+            itemDiv.appendChild(img);
+          } else if (att.type === 'video') {
+            itemDiv.className = 'message-attachment-item media-attachment';
+            itemDiv.innerHTML = `<span class="media-icon">🎬</span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
+          } else if (att.type === 'audio') {
+            itemDiv.className = 'message-attachment-item media-attachment';
+            itemDiv.innerHTML = `<span class="media-icon">🎵</span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
+          }
+
+          if (itemDiv.innerHTML) containerElement.appendChild(itemDiv);
+        });
+
+      } catch (error) {
+        console.error('❌ 加载附件失败:', error);
+        containerElement.innerHTML = `
+          <div class="lazy-attachment-placeholder error" onclick="loadMessageAttachments(${messageId}, this.parentElement)">
+            <span>${appState.language === 'zh-CN' ? '加载失败，点击重试' : 'Failed, click to retry'}</span>
+          </div>
+        `;
+      }
     }
 
     // 修复：改进openSidebar函数
@@ -7797,24 +8286,66 @@
       let lastUpdateTime = 0;
       const UPDATE_INTERVAL = 50; // 50ms更新间隔
 
-      // 节流更新函数
+      // 跟踪已加载的图片：URL -> DOM容器映射
+      const loadedImageContainers = new Map();
+
+      // 节流更新函数（保留已加载图片状态）
       function throttledUpdate(content) {
         if (!textDiv) return;
 
         const now = Date.now();
         if (now - lastUpdateTime >= UPDATE_INTERVAL) {
-          textDiv.innerHTML = renderMarkdownWithMath(content);
+          updateContent(content);
           lastUpdateTime = now;
           scrollToBottom();
         } else if (!pendingUpdate) {
           pendingUpdate = true;
           setTimeout(() => {
-            textDiv.innerHTML = renderMarkdownWithMath(aiMsg.content);
+            updateContent(aiMsg.content);
             lastUpdateTime = Date.now();
             pendingUpdate = false;
             scrollToBottom();
           }, UPDATE_INTERVAL);
         }
+      }
+
+      // 实际更新内容的函数，保留已加载图片的DOM元素
+      function updateContent(content) {
+        // 1. 保存已加载图片的DOM容器
+        const existingContainers = textDiv.querySelectorAll('.streaming-image-container.loaded');
+        existingContainers.forEach(container => {
+          const src = container.getAttribute('data-src');
+          if (src) {
+            // 克隆容器以保留完整状态
+            loadedImageContainers.set(src, container.cloneNode(true));
+          }
+        });
+
+        // 2. 渲染新内容（流式模式）
+        textDiv.innerHTML = renderMarkdownWithMath(content, true);
+
+        // 3. 用保存的容器替换新创建的容器
+        const newContainers = textDiv.querySelectorAll('.streaming-image-container');
+        newContainers.forEach(container => {
+          const src = container.getAttribute('data-src');
+          if (src && loadedImageContainers.has(src)) {
+            // 直接用已加载的容器替换
+            container.replaceWith(loadedImageContainers.get(src).cloneNode(true));
+          } else {
+            // 新图片，添加加载监听
+            const img = container.querySelector('img');
+            if (img) {
+              img.onload = function () {
+                container.classList.add('loaded');
+                loadedImageContainers.set(src, container.cloneNode(true));
+              };
+              img.onerror = function () {
+                container.classList.add('error');
+                container.innerHTML = '<span class="image-error">图片有版权等原因不能加载，见谅 ＞﹏＜ </span>';
+              };
+            }
+          }
+        });
       }
 
       try {
@@ -7924,7 +8455,7 @@
 
 
     // 修复：改进renderSessions，使用事件委托处理删除按钮
-    // 🔥 新增：支持侧边栏附件预览
+    // 新增：支持侧边栏附件预览
 
 
     // 解析会话的附件数据
@@ -7989,6 +8520,11 @@
       container.innerHTML = '';
 
       if (!appState.sessions || appState.sessions.length === 0) {
+        // 如果正在加载，显示加载中
+        if (appState.sessionsPagination.isLoading) {
+          container.innerHTML = `<div class="sessions-loader"><div class="loader-spinner"></div></div>`;
+          return;
+        }
         const msg = appState.language === 'zh-CN'
           ? '暂无历史对话<br>点击"新对话"开始聊天'
           : 'No conversations<br>Click "New Chat" to start';
@@ -8001,7 +8537,7 @@
         div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}`;
         div.setAttribute('data-session-id', session.id);
 
-        // 🔥 解析附件并生成预览HTML
+        // 解析附件并生成预览HTML
         const attachments = parseSessionAttachments(session);
         let attachmentsHtml = '';
         if (attachments.length > 0) {
@@ -8038,10 +8574,55 @@
 
         container.appendChild(div);
       });
+
+      // 添加加载指示器（如果还有更多数据）
+      if (appState.sessionsPagination.hasMore) {
+        const loader = document.createElement('div');
+        loader.className = 'sessions-loader';
+        loader.id = 'sessionsLoader';
+        loader.innerHTML = `<div class="loader-spinner"></div>`;
+        container.appendChild(loader);
+
+        // 使用 Intersection Observer 检测加载指示器是否可见
+        setupSessionsLoaderObserver();
+      }
+    }
+
+    // 会话列表无限滚动的 Intersection Observer
+    let sessionsLoaderObserver = null;
+
+    function setupSessionsLoaderObserver() {
+      const loader = document.getElementById('sessionsLoader');
+      if (!loader) return;
+
+      // 清理旧的观察器
+      if (sessionsLoaderObserver) {
+        sessionsLoaderObserver.disconnect();
+      }
+
+      // 找到滚动容器
+      const scrollContainer = loader.closest('.sidebar-scrollable') || loader.closest('.sessions-container');
+
+      sessionsLoaderObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting &&
+            appState.sessionsPagination.hasMore &&
+            !appState.sessionsPagination.isLoading) {
+            console.log('📜 触发加载更多会话...');
+            loadSessions(false);  // false = 追加模式
+          }
+        });
+      }, {
+        root: scrollContainer,
+        rootMargin: '100px',  // 提前100px触发
+        threshold: 0.1
+      });
+
+      sessionsLoaderObserver.observe(loader);
     }
 
     // 修复：改进sendMessage，添加更多的错误处理
-    // 🔥 支持多模态：图片、音频、视频附件
+    // 支持多模态：图片、音频、视频附件
     async function sendMessage() {
       const input = document.getElementById('messageInput');
       if (!input) {
@@ -8080,7 +8661,7 @@
         console.log('✅ 引用内容已添加到消息');
       }
 
-      // 🔥 构建带附件的用户消息
+      // 构建带附件的用户消息
       const userMsg = {
         role: 'user',
         content: finalMessageContent,
@@ -8100,15 +8681,26 @@
       appState.messages.push(userMsg);
       renderMessages();
 
-      // 🔥 构建发送给服务器的消息数组（包含附件信息）
+      // 构建发送给服务器的消息数组（包含附件信息）
       const messages = appState.messages.map(m => {
         const msgObj = {
           role: m.role,
           content: m.content
         };
         // 如果有附件，也传递给服务器
-        if (m.attachments && m.attachments.length > 0) {
-          msgObj.attachments = m.attachments;
+        // 🔧 增强防御性检查：确保 attachments 是数组
+        let attachments = m.attachments;
+        // 如果是字符串（从数据库加载的JSON），尝试解析
+        if (typeof attachments === 'string') {
+          try {
+            attachments = JSON.parse(attachments);
+          } catch (e) {
+            attachments = [];
+          }
+        }
+        // 确保是数组且非空
+        if (Array.isArray(attachments) && attachments.length > 0) {
+          msgObj.attachments = attachments;
         }
         return msgObj;
       });
@@ -8194,7 +8786,7 @@
       let reasoningContent = '';
       let thinkingSentences = [];
       let isThinkingPhase = false;
-      let currentSources = [];  // 🔥 新增：存储联网搜索来源
+      let currentSources = [];  // 新增：存储联网搜索来源
 
       try {
         const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -8395,7 +8987,19 @@
                   loadSessions().catch(err => console.error('刷新会话列表失败:', err));
                 }
               }
-              // 🔥 新增：处理搜索来源
+              // 新增：处理模型信息（显示实际使用的模型）
+              else if (parsed.type === 'model_info') {
+                appState.lastModelUsed = parsed.model;
+                appState.lastRoutingReason = parsed.reason || '';
+                console.log(`📍 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
+                console.log(`   路由原因: ${parsed.reason || '用户选择'}`);
+
+                // 如果模型与用户选择的不同，显示通知
+                if (parsed.model !== appState.selectedModel && appState.selectedModel !== 'auto') {
+                  showModelRoutingInfo(parsed.model, parsed.reason);
+                }
+              }
+              // 新增：处理搜索来源
               else if (parsed.type === 'sources') {
                 if (parsed.sources && Array.isArray(parsed.sources)) {
                   currentSources = parsed.sources;
@@ -8510,7 +9114,7 @@
           model: appState.lastModelUsed || appState.selectedModel,
           enable_search: appState.internetMode,
           internet_mode: appState.internetMode,
-          sources: currentSources.length > 0 ? currentSources : null,  // 🔥 新增：存储来源
+          sources: currentSources.length > 0 ? currentSources : null,  // 新增：存储来源
           created_at: new Date().toISOString()
         };
         appState.messages.push(aiMsg);
@@ -8935,8 +9539,13 @@
             appState.systemPrompt = (profile.system_prompt || '');
             console.log(`✅ 加载系统提示词: ${appState.systemPrompt.length}字符`);
           }
-          if (profile.thinking_mode !== undefined) appState.thinkingMode = profile.thinking_mode === 1 || profile.thinking_mode === true;
-          if (profile.internet_mode !== undefined) appState.internetMode = profile.internet_mode === 1 || profile.internet_mode === true;
+          // ✅ 修复：只有用户明确开启了思考模式才覆盖默认值（默认关闭）
+          if (profile.thinking_mode === 1 || profile.thinking_mode === true) {
+            appState.thinkingMode = true;
+          }
+          // ✅ 修复：保持联网模式默认开启，除非用户明确关闭
+          // 数据库默认值0表示"未设置"，不覆盖前端默认值true
+          // 前端已默认开启联网，所以这里不再处理 internet_mode
 
           updateSettingsUI();
           updateToolbarUI();
@@ -9285,26 +9894,53 @@
 
     // ==================== 会话管理 ====================
 
-    async function loadSessions() {
+    // 支持分页加载的 loadSessions
+    // reset=true: 重新加载（初始化/刷新）
+    // reset=false: 追加加载（滚动加载更多）
+    async function loadSessions(reset = true) {
+      // 如果正在加载，跳过
+      if (appState.sessionsPagination.isLoading) return;
+      // 如果不是重置且没有更多数据，跳过
+      if (!reset && !appState.sessionsPagination.hasMore) return;
+
+      // 如果是重置，清空现有数据
+      if (reset) {
+        appState.sessions = [];
+        appState.sessionsPagination.offset = 0;
+        appState.sessionsPagination.hasMore = true;
+      }
+
+      appState.sessionsPagination.isLoading = true;
+
       try {
-        const response = await fetch(`${API_BASE}/sessions`, {
-          headers: { 'Authorization': `Bearer ${appState.token}` }
-        });
+        const { offset, limit } = appState.sessionsPagination;
+        const response = await fetch(
+          `${API_BASE}/sessions?offset=${offset}&limit=${limit}`,
+          { headers: { 'Authorization': `Bearer ${appState.token}` } }
+        );
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const sessions = await response.json();
-        appState.sessions = Array.isArray(sessions) ? sessions : [];
+        const data = await response.json();
 
-        console.log(`✅ 成功加载 ${appState.sessions.length} 个会话`);
+        // 追加新会话到现有列表（从最新到最旧）
+        appState.sessions = [...appState.sessions, ...data.sessions];
+        appState.sessionsPagination.hasMore = data.hasMore;
+        appState.sessionsPagination.offset += data.sessions.length;
+
+        console.log(`✅ 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
         renderSessions();
 
       } catch (error) {
         console.error('❌ 加载会话失败:', error);
-        appState.sessions = [];
+        if (reset) {
+          appState.sessions = [];
+        }
         renderSessions();
+      } finally {
+        appState.sessionsPagination.isLoading = false;
       }
     }
 
@@ -9808,7 +10444,7 @@
     function handleFileUpload() {
       const input = document.createElement('input');
       input.type = 'file';
-      // 🔥 支持更多多模态文件类型
+      // 支持更多多模态文件类型
       input.accept = 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.ogg,.pdf,.doc,.docx,.txt';
       input.onchange = async (e) => {
         const file = e.target.files[0];
@@ -9823,7 +10459,7 @@
         const fileType = file.type;
         let attachmentType = 'document';
 
-        // 🔥 更精确的类型检测
+        // 更精确的类型检测
         if (fileType.startsWith('image/')) {
           attachmentType = 'image';
         } else if (fileType.startsWith('video/')) {
@@ -9874,7 +10510,7 @@
       input.click();
     }
 
-    // 🔥 更新附件UI显示
+    // 更新附件UI显示
     function updateAttachmentUI() {
       let attachmentPreview = document.getElementById('attachmentPreview');
 
