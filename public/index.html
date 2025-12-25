@@ -1858,12 +1858,13 @@
     .message-meta {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: var(--spacing-sm);
-      margin-top: var(--spacing-sm);
+      margin-top: var(--spacing-md);
       font-size: 11px;
       color: var(--text-tertiary);
       padding-left: 18px;
-      /* 与头像中心/竖线对齐 */
+      /* 与消息文本左边距对齐 */
     }
 
     .meta-badge {
@@ -1917,10 +1918,11 @@
 
     /* ==================== 消息操作按钮样式 ==================== */
     .message-actions {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 4px;
-      margin-left: 8px;
+      gap: 6px;
+      margin-left: auto;
+      flex-shrink: 0;
     }
 
     .action-btn {
@@ -2201,6 +2203,8 @@
       margin-top: var(--spacing-md);
       padding-top: var(--spacing-md);
       border-top: 1px solid var(--border-color);
+      padding-left: 18px;
+      /* 与消息文本左边距对齐 */
     }
 
     .sources-header {
@@ -3020,17 +3024,20 @@
       }
     }
 
-    /* 🔍 搜索状态显示 - AI搜索过程可视化 */
+    /* 🔍 搜索状态显示 - 与meta-badge风格统一 */
     .search-status {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      gap: 6px;
+      padding: 4px 10px;
       margin-bottom: 12px;
+      margin-left: 18px;
+      /* 与消息文本左边距对齐 */
       background: var(--bg-tertiary);
       border: 1px solid var(--border-color);
-      border-radius: var(--radius-md);
-      font-size: 13px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 500;
       color: var(--text-secondary);
       animation: searchStatusSlideIn 0.3s ease-out;
     }
@@ -3047,34 +3054,48 @@
       }
     }
 
-    .search-status .search-icon {
-      width: 16px;
-      height: 16px;
-      flex-shrink: 0;
-    }
-
-    .search-status .search-icon.spinning {
-      animation: spin 1s linear infinite;
-    }
-
     .search-status .search-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       color: var(--text-secondary);
-      font-size: 12px;
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .search-status .search-label-icon {
+      flex-shrink: 0;
+      display: inline-block;
+      vertical-align: middle;
+      width: 14px;
+      height: 14px;
+    }
+
+    .search-status .search-label-icon.success {
+      color: var(--success-color);
+    }
+
+    .search-status .search-label-icon.warning {
+      color: var(--warning-color);
     }
 
     .search-status .search-query {
+      display: inline-flex;
+      align-items: center;
       color: var(--text-primary);
       font-weight: 600;
       font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-      background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-      padding: 4px 10px;
+      background: var(--bg-secondary);
+      padding: 2px 8px;
       border-radius: var(--radius-sm);
       border: 1px solid var(--border-color);
-      max-width: 400px;
+      max-width: 300px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      display: inline-block;
+      font-size: 11px;
+      line-height: 1.2;
+      vertical-align: middle;
     }
 
     /* 打字动画效果 */
@@ -3105,10 +3126,6 @@
       border-color: var(--success-color);
       background: rgba(42, 169, 127, 0.1);
       transition: opacity 0.3s ease;
-    }
-
-    .search-status.complete .search-icon {
-      color: var(--success-color);
     }
 
     .search-status.complete .search-query {
@@ -4780,7 +4797,354 @@
       /* 推理按钮 */
     }
 
+    /* ==================== 对话索引导航器 ==================== */
+    .chat-index-navigator {
+      position: fixed;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      padding: 8px 12px;
+    }
+
+    .chat-index-navigator.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .chat-index-navigator.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* 上下导航按钮 - 默认隐藏且透明 */
+    .chat-index-nav-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: transparent;
+      border: none;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      position: relative;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* 悬浮整个导航区域时显示箭头 */
+    .chat-index-navigator:hover .chat-index-nav-btn {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* 悬浮箭头按钮时显示圆形背景 */
+    .chat-index-nav-btn:hover {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+    }
+
+    .chat-index-nav-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .chat-index-nav-btn:disabled:hover {
+      background: transparent;
+      border: none;
+    }
+
+    .chat-index-nav-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    /* 时间轴容器 */
+    .chat-index-timeline {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      /* 横线右对齐 */
+      gap: 6px;
+      padding: 8px 0;
+      max-height: 60vh;
+      overflow-y: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    .chat-index-timeline::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* 时间轴横线 - 三档宽度 */
+    .chat-index-line {
+      width: 16px;
+      /* 默认中档（AI） */
+      height: 2px;
+      background: var(--text-tertiary);
+      border-radius: 1px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    /* 用户消息 - 短线 */
+    .chat-index-line.user-line {
+      width: 8px;
+    }
+
+    /* AI消息 - 中线 */
+    .chat-index-line.assistant-line {
+      width: 16px;
+    }
+
+    /* 增大热区：用伪元素扩展点击区域 */
+    .chat-index-line::before {
+      content: '';
+      position: absolute;
+      top: -10px;
+      left: -12px;
+      right: -12px;
+      bottom: -10px;
+      /* 透明扩展区域 */
+    }
+
+    /* 悬浮/选中/当前 - 长线（最长档） */
+    .chat-index-line:hover,
+    .chat-index-line.active,
+    .chat-index-line.touching {
+      width: 28px;
+      background: var(--text-primary);
+    }
+
+    /* 悬浮提示框 */
+    .chat-index-tooltip {
+      position: fixed;
+      padding: 10px 16px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--text-primary);
+      box-shadow: var(--shadow-lg);
+      z-index: 1001;
+      pointer-events: none;
+      max-width: 280px;
+      white-space: normal;
+      word-wrap: break-word;
+      line-height: 1.4;
+      opacity: 0;
+      transform: translateX(10px);
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+
+    .chat-index-tooltip.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    /* 按钮提示 */
+    .chat-index-nav-tooltip {
+      position: fixed;
+      padding: 8px 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      box-shadow: var(--shadow-lg);
+      z-index: 1001;
+      pointer-events: none;
+      white-space: nowrap;
+      opacity: 0;
+      transform: translateX(10px);
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+
+    .chat-index-nav-tooltip.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    /* 响应式 - 移动端优化 */
+    @media (max-width: 768px) {
+      .chat-index-navigator {
+        right: 4px;
+        padding: 4px 8px;
+        gap: 2px;
+      }
+
+      .chat-index-nav-btn {
+        width: 28px;
+        height: 28px;
+      }
+
+      .chat-index-nav-btn svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      .chat-index-timeline {
+        gap: 4px;
+        padding: 4px 0;
+      }
+
+      .chat-index-line {
+        height: 2px;
+      }
+
+      .chat-index-line.user-line {
+        width: 6px;
+      }
+
+      .chat-index-line.assistant-line {
+        width: 12px;
+      }
+
+      .chat-index-line:hover,
+      .chat-index-line.active,
+      .chat-index-line.touching {
+        width: 20px;
+      }
+    }
+
+    /* 浅色主题适配 */
+    [data-theme="light"] .chat-index-nav-btn:hover {
+      background: var(--bg-secondary);
+      border-color: var(--border-color);
+    }
+
+    [data-theme="light"] .chat-index-tooltip,
+    [data-theme="light"] .chat-index-nav-tooltip {
+      background: var(--bg-primary);
+      border-color: var(--border-color);
+    }
+
+    /* ==================== 更多菜单 ==================== */
+    .more-menu-container {
+      position: relative;
+    }
+
+    .more-menu {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      min-width: 200px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--radius-md);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      z-index: 1000;
+      overflow: hidden;
+      display: none;
+      padding: 6px;
+      animation: moreMenuSlideUp 0.2s ease-out;
+    }
+
+    .more-menu.active {
+      display: block;
+    }
+
+    @keyframes moreMenuSlideUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .more-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s;
+      color: var(--text-primary);
+      font-size: 14px;
+    }
+
+    .more-menu-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .more-menu-item-icon {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .more-menu-item-icon svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    .more-menu-item-text {
+      flex: 1;
+    }
+
+    .more-menu-item-toggle {
+      width: 36px;
+      height: 20px;
+      background: var(--border-color);
+      border-radius: 10px;
+      position: relative;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .more-menu-item-toggle.active {
+      background: var(--accent-color);
+    }
+
+    .more-menu-item-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+
+    .more-menu-item-toggle.active::after {
+      transform: translateX(16px);
+    }
+
+    .more-menu-divider {
+      height: 1px;
+      background: var(--border-dark);
+      margin: 4px 0;
+    }
+
     /* ==================== 工具栏按钮悬浮提示 ==================== */
+
     .tooltip-popup {
       position: fixed;
       padding: 6px 12px;
@@ -4989,8 +5353,8 @@
       <div class="sidebar-scrollable-wrapper">
         <div class="sidebar-edge-blur-top"></div>
         <div class="sidebar-scrollable">
-          <!-- 空间分组 -->
-          <div class="sidebar-group">
+          <!-- 空间分组 (暂时隐藏) -->
+          <div class="sidebar-group" style="display: none;">
             <div class="sidebar-group-header" onclick="toggleGroup('spaces')">
               <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
                 height="24" fill="currentColor">
@@ -5142,45 +5506,57 @@
 
             <!-- 底部工具栏 -->
             <div class="input-toolbar">
-              <!-- 附件按钮 -->
-              <button class="toolbar-btn" id="attachBtn" onclick="handleFileUpload()">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20"
-                  height="20" fill="currentColor">
-                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" stroke="currentColor" stroke-width="0.5" />
-                </svg>
-                <span data-i18n="attach" style="display: none;">附件</span>
-              </button>
-
-              <!-- 联网按钮 -->
-              <button class="toolbar-btn" id="internetBtn" onclick="toggleInternet()">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-                  height="24" fill="currentColor">
-                  <path
-                    d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.91-4.33-3.56zm2.95-8H5.08c.96-1.65 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z" />
-                </svg>
-                <span data-i18n="internet" style="display: none;">联网</span>
-              </button>
-
-              <!-- 推理按钮 -->
-              <div class="thinking-controls" id="thinkingControls" style="display: none;">
-                <button class="toolbar-btn" id="thinkingBtn" onclick="toggleThinking()">
-                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" height="24px"
-                    viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                    <path
-                      d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
-                  </svg>
-                  <span data-i18n="reasoning" style="display: none;">推理</span>
-                </button>
-                <button class="toolbar-btn" id="thinkingExpandBtn" style="display: none;"
-                  onclick="toggleThinkingBudget()">
+              <!-- 更多菜单 -->
+              <div class="more-menu-container">
+                <button class="toolbar-btn" id="moreBtn" onclick="toggleMoreMenu()">
                   <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-                    width="24" height="24" fill="currentColor">
-                    <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
+                    width="20" height="20" fill="currentColor">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" stroke="currentColor" stroke-width="0.5" />
                   </svg>
                 </button>
+
+                <!-- 更多菜单下拉 -->
+                <div class="more-menu" id="moreMenu">
+                  <!-- 联网搜索开关 -->
+                  <div class="more-menu-item" onclick="toggleInternetFromMenu(event)">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                          d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.91-4.33-3.56zm2.95-8H5.08c.96-1.65 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text" data-i18n="internet-search">联网搜索</span>
+                    <div class="more-menu-item-toggle" id="internetToggle"></div>
+                  </div>
+
+                  <!-- 推理模式开关 -->
+                  <div class="more-menu-item" onclick="toggleThinkingFromMenu(event)">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                        <path
+                          d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text" data-i18n="reasoning-mode">推理模式</span>
+                    <div class="more-menu-item-toggle" id="thinkingToggle"></div>
+                  </div>
+
+                  <div class="more-menu-divider"></div>
+
+                  <!-- 添加附件 -->
+                  <div class="more-menu-item" onclick="handleFileUploadFromMenu()">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                          d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text" data-i18n="add-attachment">添加附件</span>
+                  </div>
+                </div>
               </div>
 
-              <!-- 思考预算弹窗 -->
+              <!-- 思考预算弹窗 (保留，用于推理模式) -->
               <div class="thinking-budget-modal" id="thinkingBudgetModal" style="display: none;">
                 <div class="thinking-budget-content">
                   <div class="thinking-budget-header">
@@ -5198,6 +5574,7 @@
               </div>
 
               <!-- 右侧发送按钮 -->
+
               <div class="toolbar-spacer"></div>
 
               <!-- 自定义模型选择器 -->
@@ -5348,7 +5725,25 @@
 
                     <div class="model-menu-divider"></div>
 
+                    <!-- Gemini 3 Flash (暂时隐藏) -->
+                    <!--
+                    <div class="model-menu-item" data-model="gemini-3-flash"
+                      onclick="selectModelFromMenu('gemini-3-flash', 'Gemini 3 Flash')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm-40-82v-78q-33 0-56.5-23.5T360-320v-40L168-552q-3 18-5.5 36t-2.5 36q0 121 79.5 212T440-162Zm276-102q20-22 36-47.5t26.5-53q10.5-27.5 16-56.5t5.5-59q0-98-54.5-179T600-776v16q0 33-23.5 56.5T520-680h-80v80q0 17-11.5 28.5T400-560h-80v80h240q17 0 28.5 11.5T600-440v120h40q26 0 47 15.5t29 40.5Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Gemini 3 Flash</div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-divider"></div>
+                    -->
+
                     <!-- Qwen3-Omni-Flash 多模态模型 -->
+
                     <div class="model-menu-item" data-model="qwen3-omni-flash"
                       onclick="selectModelFromMenu('qwen3-omni-flash', 'Qwen3 Omni Flash')">
                       <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
@@ -5385,7 +5780,34 @@
   </div>
   </div>
 
+  <!-- 对话索引导航器 -->
+  <div class="chat-index-navigator" id="chatIndexNavigator">
+    <!-- 上一个响应按钮 -->
+    <button class="chat-index-nav-btn" id="chatIndexPrevBtn" onclick="navigateToResponse('prev')"
+      onmouseenter="showNavTooltip(event, 'prev')" onmouseleave="hideNavTooltip()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
+      </svg>
+    </button>
+
+    <!-- 时间轴 -->
+    <div class="chat-index-timeline" id="chatIndexTimeline"></div>
+
+    <!-- 下一个响应按钮 -->
+    <button class="chat-index-nav-btn" id="chatIndexNextBtn" onclick="navigateToResponse('next')"
+      onmouseenter="showNavTooltip(event, 'next')" onmouseleave="hideNavTooltip()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- 对话索引导航提示框 -->
+  <div class="chat-index-tooltip" id="chatIndexTooltip"></div>
+  <div class="chat-index-nav-tooltip" id="chatIndexNavTooltip"></div>
+
   <!-- 设置面板 -->
+
   <div class="settings-modal" id="settingsModal">
     <div class="settings-content">
       <div class="settings-header">
@@ -5874,6 +6296,12 @@
         supportsThinking: false,
         multimodal: true
       },
+      // Google Gemini 3 Flash - 最智能的速度优化模型
+      'gemini-3-flash': {
+        name: 'Gemini 3 Flash',
+        provider: 'google_gemini',
+        supportsThinking: true
+      },
       'lmstudio-local': {
         name: 'LMStudio Local',
         provider: 'lmstudio',
@@ -5919,35 +6347,56 @@
     function buildSystemPrompt() {
       const timeCtx = getUserTimeContext();
 
-      return `{
-  "身份": "RAI 专业助理 (由 Rick 开发)",
-  "当前上下文": {
-    "日期时间": "${timeCtx.datetime}",
-    "时区": "${timeCtx.timezone}",
-    "用户语言环境": "${timeCtx.locale}", 
-    "时间段": "${timeCtx.timeOfDay}"
-  },
-  "核心原则": {
-    "诚实守信": "每一条陈述都必须真实、准确、可验证。绝不编造信息，始终保持诚实。如有不确定，坦诚告知。",
-    "耐心守候": "无论用户问题多么基础、重复或复杂，始终保持耐心。用温和、友好的态度回应，绝不表现出不耐烦或敷衍。",
-    "先理解后回应": "回复前先深入分析用户真实意图。简单问题给简洁答案；复杂问题给全面解释，必要时分步骤阐述。",
-    "沟通风格": "专业且温暖的语气，像一位可靠的朋友。善用 Markdown 格式提升可读性。根据用户特点调整表达方式。",
-    "解决问题": "提供可执行的解决方案，注重实用性。推理时使用**加粗标题**突出要点。主动思考并建议下一步行动。",
-    "道德准则": "绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。",
-    "时间感知": "注意用户当前时间，提供恰当的问候。深夜(23点后)或凌晨(5点前)时，以温馨关怀的方式温柔提醒用户注意休息。",
-    "图片运用": "在合适的时候，使用 Markdown 语法 ![描述](图片链接) 增强回复。网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。"
-  },
-  "格式要求": {
-    "结构规范": "善用标题、列表和代码块，让内容层次分明、一目了然。",
-    "对话标题": "每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出格式：<<<你的标题>>>"
-  }
-}`;
+      return `# 角色：RAI 专业助理
+由 Rick 开发。
+---
+
+## 当前上下文
+- 时间：${timeCtx.datetime}
+- 时区：${timeCtx.timezone}
+- 时段：${timeCtx.timeOfDay}
+
+---
+
+## 核心原则
+
+### 诚实守信
+每一条陈述都必须真实、准确、可验证。绝不编造信息，始终保持诚实。如有不确定，坦诚告知。请勿就您目前不具备的能力做出承诺，确保所有承诺都在您实际可提供的范围内，以避免误导用户并损害信任。
+
+### 语言风格
+始终保持耐心。用温和、友好的态度回应，绝不表现出不耐烦或敷衍。除非用户要求，否则不要使用表情符号和破折号连字符等。
+
+### 先理解后回应
+回复前先深入分析用户真实意图。结合上下文：简单问题给简洁答案；复杂问题给全面解释，必要时分步骤阐述。做出契合上下文的有用回复。
+
+### 沟通风格
+专业且温和的语气。善用 Markdown 格式提升可读性。根据用户特点调整表达方式。
+
+### 解决问题
+根据上下文做出契合的回复。提供可执行的解决方案，注重实用性。推理时使用**加粗标题**突出要点。主动思考并建议下一步行动。
+
+### 道德准则
+绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。
+
+### 时间感知
+每次回复前注意用户当前时间，提供恰当的问候。深夜(23点后)或凌晨(5点前)时，以温馨关怀的方式温柔提醒用户注意休息。
+
+### 图表运用
+在合适的时候，使用 Markdown 语法 ![描述](图片链接) 使用图片增强回复。网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。还可以使用图表、Mermaid图表等增强说明效果。
+
+---
+
+## 格式要求
+
+1. **结构规范**：善用标题、列表和代码块，让内容层次分明、一目了然。
+2. **对话标题**：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出格式严格遵循：<<<标题>>>
+`;
     }
 
     // 保留变量名以兼容（初始值，实际发送时动态生成）
     const BUILT_IN_SYSTEM_PROMPT = buildSystemPrompt();
 
-    // 国际化翻译
+    // 多语言支持
     const i18n = {
       'zh-CN': {
         'login-title': '欢迎回来',
@@ -6015,7 +6464,11 @@
         // 引用功能
         'quote': '引用',
         'quote-user': '引用用户',
-        'quote-ai': '引用AI'
+        'quote-ai': '引用AI',
+        // 更多菜单
+        'internet-search': '联网搜索',
+        'reasoning-mode': '推理模式',
+        'add-attachment': '添加附件'
       },
       'en': {
         'login-title': 'Welcome Back',
@@ -6083,9 +6536,14 @@
         // Quote feature
         'quote': 'Quote',
         'quote-user': 'Quoting User',
-        'quote-ai': 'Quoting AI'
+        'quote-ai': 'Quoting AI',
+        // More menu
+        'internet-search': 'Web Search',
+        'reasoning-mode': 'Reasoning Mode',
+        'add-attachment': 'Add Attachment'
       }
     };
+
 
     // 主题切换
     function toggleTheme() {
@@ -6515,6 +6973,78 @@
     }
 
     // ==================== 工具栏功能 ====================
+
+    // 切换更多菜单显示/隐藏
+    function toggleMoreMenu() {
+      const menu = document.getElementById('moreMenu');
+      if (menu) {
+        const isOpening = !menu.classList.contains('active');
+        menu.classList.toggle('active');
+
+        // 当菜单打开时，同步toggle状态
+        if (isOpening) {
+          const internetToggle = document.getElementById('internetToggle');
+          const thinkingToggle = document.getElementById('thinkingToggle');
+
+          if (internetToggle) {
+            internetToggle.classList.toggle('active', appState.internetMode);
+          }
+          if (thinkingToggle) {
+            thinkingToggle.classList.toggle('active', appState.thinkingMode);
+          }
+        }
+      }
+    }
+
+
+    // 点击外部关闭更多菜单
+    document.addEventListener('click', function (e) {
+      const menu = document.getElementById('moreMenu');
+      const moreBtn = document.getElementById('moreBtn');
+      if (menu && menu.classList.contains('active')) {
+        if (!menu.contains(e.target) && !moreBtn.contains(e.target)) {
+          menu.classList.remove('active');
+        }
+      }
+    });
+
+    // 从菜单切换联网模式
+    function toggleInternetFromMenu(event) {
+      event.stopPropagation(); // 防止关闭菜单
+      appState.internetMode = !appState.internetMode;
+
+      // 直接更新toggle UI
+      const toggle = document.getElementById('internetToggle');
+      if (toggle) {
+        toggle.classList.toggle('active', appState.internetMode);
+      }
+
+      console.log(`🌐 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
+    }
+
+    // 从菜单切换推理模式
+    function toggleThinkingFromMenu(event) {
+      event.stopPropagation(); // 防止关闭菜单
+      appState.thinkingMode = !appState.thinkingMode;
+
+      // 直接更新toggle UI
+      const toggle = document.getElementById('thinkingToggle');
+      if (toggle) {
+        toggle.classList.toggle('active', appState.thinkingMode);
+      }
+
+      console.log(`🧠 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
+    }
+
+
+    // 从菜单触发文件上传
+    function handleFileUploadFromMenu() {
+      const menu = document.getElementById('moreMenu');
+      if (menu) menu.classList.remove('active');
+      handleFileUpload();
+    }
+
+    // 原有的切换函数（向后兼容）
     function toggleInternet() {
       appState.internetMode = !appState.internetMode;
       updateToolbarUI();
@@ -6541,6 +7071,27 @@
     }
 
     function updateToolbarUI() {
+      // 更新"更多"菜单中的开关状态
+      const internetToggle = document.getElementById('internetToggle');
+      const thinkingToggle = document.getElementById('thinkingToggle');
+
+      if (internetToggle) {
+        if (appState.internetMode) {
+          internetToggle.classList.add('active');
+        } else {
+          internetToggle.classList.remove('active');
+        }
+      }
+
+      if (thinkingToggle) {
+        if (appState.thinkingMode) {
+          thinkingToggle.classList.add('active');
+        } else {
+          thinkingToggle.classList.remove('active');
+        }
+      }
+
+      // 向后兼容：也更新旧的独立按钮（如果存在）
       const internetBtn = document.getElementById('internetBtn');
       const thinkingBtn = document.getElementById('thinkingBtn');
 
@@ -6560,6 +7111,7 @@
         }
       }
     }
+
 
     function updateModelControls() {
       // 根据选择的模型显示/隐藏推理控件
@@ -7241,6 +7793,9 @@
 
       // 🎨 渲染 Mermaid 图表
       setTimeout(() => renderMermaidCharts(), 100);
+
+      // 📍 更新对话索引导航器
+      setTimeout(() => renderChatIndexTimeline(), 150);
     }
 
     // 修复：改进createMessageElement，添加安全的事件处理
@@ -8740,11 +9295,8 @@
           </span>
         </div>
         <div class="message-content">
-          <!-- 🔍 搜索状态显示区域 -->
+          <!-- 搜索状态显示区域 -->
           <div class="search-status" id="searchStatus" style="display: none;">
-            <svg class="search-icon spinning" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 4V2C6.48 2 2 6.48 2 12h2c0-4.41 3.59-8 8-8zm0 18v-2c4.41 0 8-3.59 8-8h2c0 5.52-4.48 10-10 10z"/>
-            </svg>
             <span id="searchStatusText">正在分析问题...</span>
           </div>
           <div class="thinking-indicator" id="thinkingIndicator" style="display: none;">
@@ -9018,14 +9570,14 @@
                   // 根据状态更新显示
                   if (parsed.status === 'analyzing') {
                     searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? '<span class="search-label">🤖 AI 正在分析问题，生成搜索关键词...</span>'
-                      : '<span class="search-label">🤖 AI analyzing question, generating search keywords...</span>';
+                      ? '<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-4h2v2h-2zm1.61-9.96c-2.06-.3-3.88.97-4.43 2.79-.18.58.26 1.17.87 1.17h.2c.41 0 .74-.29.88-.67.32-.89 1.27-1.5 2.3-1.28.95.2 1.65 1.13 1.57 2.1-.1 1.34-1.62 1.63-2.45 2.88 0 .01-.01.01-.01.02-.01.02-.02.03-.03.05-.09.15-.18.32-.25.5-.01.03-.03.05-.04.08-.01.02-.01.04-.02.07-.12.34-.2.75-.2 1.25h2c0-.42.11-.77.28-1.07.02-.03.03-.06.05-.09.08-.14.18-.27.28-.39.01-.01.02-.03.03-.04.1-.12.21-.23.33-.34.96-.91 2.26-1.65 1.99-3.56-.24-1.74-1.61-3.21-3.35-3.47z"/></svg> AI 正在分析问题，生成搜索关键词...</span>'
+                      : '<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-4h2v2h-2zm1.61-9.96c-2.06-.3-3.88.97-4.43 2.79-.18.58.26 1.17.87 1.17h.2c.41 0 .74-.29.88-.67.32-.89 1.27-1.5 2.3-1.28.95.2 1.65 1.13 1.57 2.1-.1 1.34-1.62 1.63-2.45 2.88 0 .01-.01.01-.01.02-.01.02-.02.03-.03.05-.09.15-.18.32-.25.5-.01.03-.03.05-.04.08-.01.02-.01.04-.02.07-.12.34-.2.75-.2 1.25h2c0-.42.11-.77.28-1.07.02-.03.03-.06.05-.09.08-.14.18-.27.28-.39.01-.01.02-.03.03-.04.1-.12.21-.23.33-.34.96-.91 2.26-1.65 1.99-3.56-.24-1.74-1.61-3.21-3.35-3.47z"/></svg> AI analyzing question, generating search keywords...</span>';
                   } else if (parsed.status === 'searching') {
                     const query = parsed.query || '';
-                    // 🎯 显示AI输入的搜索关键词，带打字动画效果
+                    // 显示AI输入的搜索关键词，带打字动画效果
                     searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? `<span class="search-label">🔍 AI 搜索工具输入:</span> <span class="search-query typewriter">${query}</span>`
-                      : `<span class="search-label">🔍 AI Search Tool Input:</span> <span class="search-query typewriter">${query}</span>`;
+                      ? `<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> AI 搜索工具输入:</span> <span class="search-query typewriter">${query}</span>`
+                      : `<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> AI Search Tool Input:</span> <span class="search-query typewriter">${query}</span>`;
 
                     // 打字动画效果
                     const querySpan = searchStatusText.querySelector('.search-query');
@@ -9036,10 +9588,9 @@
                     const resultCount = parsed.resultCount || 0;
                     const query = parsed.query || '';
                     searchStatusEl.classList.add('complete');
-                    searchStatusEl.querySelector('.search-icon').classList.remove('spinning');
                     searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? `<span class="search-label">✅ 搜索完成:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 找到 ${resultCount} 条结果</span>`
-                      : `<span class="search-label">✅ Search complete:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ Found ${resultCount} results</span>`;
+                      ? `<span class="search-label"><svg class="search-label-icon success" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> 搜索完成:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 找到 ${resultCount} 条结果</span>`
+                      : `<span class="search-label"><svg class="search-label-icon success" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> Search complete:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ Found ${resultCount} results</span>`;
 
                     // 3秒后隐藏搜索状态
                     setTimeout(() => {
@@ -9054,10 +9605,9 @@
                     }, 3000);
                   } else if (parsed.status === 'no_results') {
                     const query = parsed.query || '';
-                    searchStatusEl.querySelector('.search-icon').classList.remove('spinning');
                     searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? `<span class="search-label">⚠️ 搜索:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 未找到结果</span>`
-                      : `<span class="search-label">⚠️ Search:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ No results</span>`;
+                      ? `<span class="search-label"><svg class="search-label-icon warning" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg> 搜索:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 未找到结果</span>`
+                      : `<span class="search-label"><svg class="search-label-icon warning" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg> Search:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ No results</span>`;
 
                     // 3秒后隐藏搜索状态
                     setTimeout(() => {
@@ -9490,6 +10040,7 @@
       // 延迟初始化滚动监听器，确保 chatContainer 已存在
       setTimeout(() => {
         initChatScrollListener();
+        initChatIndexListener(); // 初始化对话索引导航器监听
         updateToolbarUI();
       }, 100);
     }
@@ -9955,6 +10506,13 @@
 
       if (messagesList) {
         messagesList.style.display = 'none';
+      }
+
+      // 隐藏对话索引导航器
+      const navigator = document.getElementById('chatIndexNavigator');
+      if (navigator) {
+        navigator.classList.remove('visible');
+        navigator.classList.add('hidden');
       }
     }
 
@@ -10586,6 +11144,452 @@
     function removeAttachment() {
       currentAttachment = null;
       updateAttachmentUI();
+    }
+
+    // ==================== 对话索引导航器 ====================
+
+    // 获取所有消息（包括用户和AI）
+    function getChatIndexItems() {
+      const items = [];
+      const messages = appState.messages || [];
+
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        items.push({
+          index: i,
+          role: msg.role,
+          content: msg.content || '',
+          messageIndex: i
+        });
+      }
+      return items;
+    }
+
+    // 渲染时间轴
+    function renderChatIndexTimeline() {
+      const timeline = document.getElementById('chatIndexTimeline');
+      const navigator = document.getElementById('chatIndexNavigator');
+      if (!timeline || !navigator) return;
+
+      const items = getChatIndexItems();
+
+      // 没有消息时隐藏导航器
+      if (items.length === 0) {
+        navigator.classList.remove('visible');
+        navigator.classList.add('hidden');
+        return;
+      }
+
+      // 有消息时显示导航器
+      navigator.classList.add('visible');
+      navigator.classList.remove('hidden');
+
+      // 清空并重新渲染时间轴
+      timeline.innerHTML = '';
+
+      items.forEach((item, idx) => {
+        const line = document.createElement('div');
+        line.className = 'chat-index-line';
+        // 添加角色类：用户短线，AI中线
+        line.classList.add(item.role === 'user' ? 'user-line' : 'assistant-line');
+        line.dataset.index = idx;
+        line.dataset.messageIndex = item.messageIndex;
+        line.dataset.role = item.role;
+        line.dataset.content = item.content;
+
+        // 生成tooltip文本
+        let tooltipText;
+        if (item.role === 'user') {
+          // 用户消息：直接显示内容，最多50字
+          tooltipText = item.content.replace(/\n/g, ' ').trim();
+          if (tooltipText.length > 50) {
+            tooltipText = tooltipText.substring(0, 50) + '...';
+          }
+        } else {
+          // AI回复：格式为 "RAI回复：\n内容"，最多50字
+          const label = appState.language === 'zh-CN' ? 'RAI回复：' : 'RAI Response:';
+          let content = item.content.replace(/\n/g, ' ').trim();
+          if (content.length > 50) {
+            content = content.substring(0, 50) + '...';
+          }
+          tooltipText = label + '\n' + content;
+        }
+
+        // 事件监听
+        line.addEventListener('mouseenter', (e) => showChatIndexTooltip(e, tooltipText));
+        line.addEventListener('mouseleave', hideChatIndexTooltip);
+        line.addEventListener('click', () => {
+          // 立即更新高亮状态
+          setActiveIndexLine(idx);
+          // 滚动到消息
+          scrollToMessage(item.messageIndex);
+        });
+
+        timeline.appendChild(line);
+      });
+
+      // 更新当前高亮
+      updateChatIndexHighlight();
+    }
+
+    // 立即设置指定索引为active
+    function setActiveIndexLine(activeIdx) {
+      const timeline = document.getElementById('chatIndexTimeline');
+      if (!timeline) return;
+
+      const lines = timeline.querySelectorAll('.chat-index-line');
+      lines.forEach((line, idx) => {
+        if (idx === activeIdx) {
+          line.classList.add('active');
+        } else {
+          line.classList.remove('active');
+        }
+      });
+    }
+    // 显示横线悬浮提示
+    function showChatIndexTooltip(event, content) {
+      const tooltip = document.getElementById('chatIndexTooltip');
+      if (!tooltip) return;
+
+      // 截断过长的内容
+      const maxLength = 100;
+      let displayContent = content.replace(/\n/g, ' ').trim();
+      if (displayContent.length > maxLength) {
+        displayContent = displayContent.substring(0, maxLength) + '...';
+      }
+
+      tooltip.textContent = displayContent;
+
+      // 定位 - 在元素左侧显示
+      const rect = event.target.getBoundingClientRect();
+      tooltip.style.top = `${rect.top + rect.height / 2}px`;
+      tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
+      tooltip.style.left = 'auto';
+      tooltip.style.transform = 'translateY(-50%)';
+
+      tooltip.classList.add('visible');
+    }
+
+    // 隐藏横线悬浮提示
+    function hideChatIndexTooltip() {
+      const tooltip = document.getElementById('chatIndexTooltip');
+      if (tooltip) {
+        tooltip.classList.remove('visible');
+      }
+    }
+
+    // 显示导航按钮悬浮提示
+    function showNavTooltip(event, direction) {
+      const tooltip = document.getElementById('chatIndexNavTooltip');
+      if (!tooltip) return;
+
+      const text = direction === 'prev'
+        ? (appState.language === 'zh-CN' ? '上一个响应' : 'Previous response')
+        : (appState.language === 'zh-CN' ? '下一个响应' : 'Next response');
+
+      tooltip.textContent = text;
+
+      // 定位 - 在按钮左侧显示
+      const rect = event.target.getBoundingClientRect();
+      tooltip.style.top = `${rect.top + rect.height / 2}px`;
+      tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
+      tooltip.style.left = 'auto';
+      tooltip.style.transform = 'translateY(-50%)';
+
+      tooltip.classList.add('visible');
+    }
+
+    // 隐藏导航按钮悬浮提示
+    function hideNavTooltip() {
+      const tooltip = document.getElementById('chatIndexNavTooltip');
+      if (tooltip) {
+        tooltip.classList.remove('visible');
+      }
+    }
+
+    // 导航到上/下一个响应
+    function navigateToResponse(direction) {
+      const items = getChatIndexItems();
+      if (items.length === 0) return;
+
+      const currentIndex = getCurrentChatIndex();
+      let targetIndex;
+
+      if (direction === 'prev') {
+        // 已经是第一个了
+        if (currentIndex <= 0) {
+          showBoundaryTooltip('top');
+          return;
+        }
+        targetIndex = currentIndex - 1;
+      } else {
+        // 已经是最后一个了
+        if (currentIndex >= items.length - 1) {
+          showBoundaryTooltip('bottom');
+          return;
+        }
+        targetIndex = currentIndex + 1;
+      }
+
+      if (items[targetIndex]) {
+        scrollToMessage(items[targetIndex].messageIndex);
+      }
+    }
+
+    // 显示已到顶/底提示
+    function showBoundaryTooltip(position) {
+      const tooltip = document.getElementById('chatIndexNavTooltip');
+      if (!tooltip) return;
+
+      const text = position === 'top'
+        ? (appState.language === 'zh-CN' ? '已经到顶了' : 'Already at top')
+        : (appState.language === 'zh-CN' ? '已经到底了' : 'Already at bottom');
+
+      tooltip.textContent = text;
+
+      // 定位在导航器中间
+      const navigator = document.getElementById('chatIndexNavigator');
+      if (navigator) {
+        const rect = navigator.getBoundingClientRect();
+        tooltip.style.top = `${rect.top + rect.height / 2}px`;
+        tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
+        tooltip.style.left = 'auto';
+        tooltip.style.transform = 'translateY(-50%)';
+      }
+
+      tooltip.classList.add('visible');
+
+      // 1.5秒后自动隐藏
+      setTimeout(() => {
+        tooltip.classList.remove('visible');
+      }, 1500);
+    }
+    // 滚动到指定消息
+    function scrollToMessage(messageIndex) {
+      const container = document.getElementById('messagesList');
+      const chatContainer = document.getElementById('chatContainer');
+      if (!container || !chatContainer) return;
+
+      const messages = container.querySelectorAll('.message');
+      const targetMessage = messages[messageIndex];
+
+      if (targetMessage) {
+        // 滚动到消息位置
+        const containerRect = chatContainer.getBoundingClientRect();
+        const messageRect = targetMessage.getBoundingClientRect();
+        const scrollTop = chatContainer.scrollTop + messageRect.top - containerRect.top - 100;
+
+        chatContainer.scrollTo({
+          top: scrollTop,
+          behavior: 'smooth'
+        });
+
+        // 短暂高亮目标消息
+        targetMessage.style.transition = 'background 0.3s ease';
+        targetMessage.style.background = 'rgba(255, 255, 255, 0.05)';
+        setTimeout(() => {
+          targetMessage.style.background = '';
+        }, 1000);
+      }
+    }
+
+    // 获取当前滚动位置对应的索引
+    function getCurrentChatIndex() {
+      const items = getChatIndexItems();
+      if (items.length === 0) return 0;
+
+      const container = document.getElementById('messagesList');
+      const chatContainer = document.getElementById('chatContainer');
+      if (!container || !chatContainer) return 0;
+
+      const messages = container.querySelectorAll('.message');
+      const containerRect = chatContainer.getBoundingClientRect();
+      const scrollTop = chatContainer.scrollTop;
+
+      let closestIndex = 0;
+      let closestDistance = Infinity;
+
+      items.forEach((item, idx) => {
+        const message = messages[item.messageIndex];
+        if (message) {
+          const messageRect = message.getBoundingClientRect();
+          const messageTop = messageRect.top - containerRect.top + scrollTop;
+          const distance = Math.abs(scrollTop - messageTop + 100);
+
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestIndex = idx;
+          }
+        }
+      });
+
+      return closestIndex;
+    }
+
+    // 更新当前高亮
+    function updateChatIndexHighlight() {
+      const timeline = document.getElementById('chatIndexTimeline');
+      if (!timeline) return;
+
+      const currentIndex = getCurrentChatIndex();
+      const lines = timeline.querySelectorAll('.chat-index-line');
+
+      lines.forEach((line, idx) => {
+        if (idx === currentIndex) {
+          line.classList.add('active');
+        } else {
+          line.classList.remove('active');
+        }
+      });
+
+      // 更新按钮状态
+      updateChatIndexNavButtons();
+    }
+
+    // 更新导航按钮状态
+    function updateChatIndexNavButtons() {
+      const items = getChatIndexItems();
+      const currentIndex = getCurrentChatIndex();
+
+      const prevBtn = document.getElementById('chatIndexPrevBtn');
+      const nextBtn = document.getElementById('chatIndexNextBtn');
+
+      if (prevBtn) {
+        prevBtn.disabled = currentIndex <= 0;
+      }
+      if (nextBtn) {
+        nextBtn.disabled = currentIndex >= items.length - 1;
+      }
+    }
+
+    // 初始化对话索引导航器滚动监听
+    function initChatIndexListener() {
+      const chatContainer = document.getElementById('chatContainer');
+      if (!chatContainer) return;
+
+      let scrollTimeout;
+      chatContainer.addEventListener('scroll', () => {
+        // 节流处理
+        if (scrollTimeout) clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+          updateChatIndexHighlight();
+        }, 100);
+      }, { passive: true });
+
+      // 初始化移动端滑动操作
+      initMobileTouchNavigation();
+
+      console.log('✅ 对话索引导航器滚动监听器已初始化');
+    }
+
+    // 移动端触摸滑动导航
+    function initMobileTouchNavigation() {
+      const timeline = document.getElementById('chatIndexTimeline');
+      if (!timeline) return;
+
+      let isTouching = false;
+      let currentTouchLine = null;
+
+      // 根据触摸位置找到对应的横线
+      function getLineAtPosition(y) {
+        const lines = timeline.querySelectorAll('.chat-index-line');
+        for (const line of lines) {
+          const rect = line.getBoundingClientRect();
+          // 扩大判定区域
+          if (y >= rect.top - 10 && y <= rect.bottom + 10) {
+            return line;
+          }
+        }
+        return null;
+      }
+
+      // 显示触摸位置的预览
+      function showTouchPreview(line) {
+        if (!line) return;
+
+        const content = line.dataset.content || '';
+        const role = line.dataset.role || 'user';
+
+        let tooltipText;
+        if (role === 'user') {
+          tooltipText = content.replace(/\n/g, ' ').trim();
+          if (tooltipText.length > 50) {
+            tooltipText = tooltipText.substring(0, 50) + '...';
+          }
+        } else {
+          const label = appState.language === 'zh-CN' ? 'RAI回复：' : 'RAI Response:';
+          let displayContent = content.replace(/\n/g, ' ').trim();
+          if (displayContent.length > 50) {
+            displayContent = displayContent.substring(0, 50) + '...';
+          }
+          tooltipText = label + '\n' + displayContent;
+        }
+
+        const tooltip = document.getElementById('chatIndexTooltip');
+        if (tooltip) {
+          tooltip.textContent = tooltipText;
+          const rect = line.getBoundingClientRect();
+          tooltip.style.top = `${rect.top + rect.height / 2}px`;
+          tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
+          tooltip.style.left = 'auto';
+          tooltip.style.transform = 'translateY(-50%)';
+          tooltip.classList.add('visible');
+        }
+
+        // 高亮当前触摸的横线
+        timeline.querySelectorAll('.chat-index-line').forEach(l => l.classList.remove('touching'));
+        line.classList.add('touching');
+      }
+
+      // 触摸开始
+      timeline.addEventListener('touchstart', (e) => {
+        isTouching = true;
+        const touch = e.touches[0];
+        currentTouchLine = getLineAtPosition(touch.clientY);
+        if (currentTouchLine) {
+          showTouchPreview(currentTouchLine);
+        }
+      }, { passive: true });
+
+      // 触摸滑动
+      timeline.addEventListener('touchmove', (e) => {
+        if (!isTouching) return;
+        const touch = e.touches[0];
+        const line = getLineAtPosition(touch.clientY);
+        if (line && line !== currentTouchLine) {
+          currentTouchLine = line;
+          showTouchPreview(line);
+        }
+      }, { passive: true });
+
+      // 触摸结束
+      timeline.addEventListener('touchend', () => {
+        if (currentTouchLine) {
+          const messageIndex = parseInt(currentTouchLine.dataset.messageIndex);
+          const idx = parseInt(currentTouchLine.dataset.index);
+          if (!isNaN(messageIndex) && !isNaN(idx)) {
+            setActiveIndexLine(idx);
+            scrollToMessage(messageIndex);
+          }
+        }
+
+        // 隐藏预览和触摸高亮
+        setTimeout(() => {
+          hideChatIndexTooltip();
+          timeline.querySelectorAll('.chat-index-line').forEach(l => l.classList.remove('touching'));
+        }, 300);
+
+        isTouching = false;
+        currentTouchLine = null;
+      }, { passive: true });
+
+      // 触摸取消
+      timeline.addEventListener('touchcancel', () => {
+        hideChatIndexTooltip();
+        timeline.querySelectorAll('.chat-index-line').forEach(l => l.classList.remove('touching'));
+        isTouching = false;
+        currentTouchLine = null;
+      }, { passive: true });
     }
 
     // 初始化
