@@ -360,47 +360,58 @@ function analyzeMessage(message) {
 // ==================== 网页搜索功能 (Tavily API) ====================
 
 // Tavily API 配置
-const TAVILY_API_KEY = 'tvly-dev-';
+const TAVILY_API_KEY = 'tvly';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 /**
- * 使用AI生成智能搜索查询
- * AI根据用户问题自主决定应该搜索什么内容
+ * AI智能判断是否需要联网搜索，并生成搜索查询
+ * 这是核心的"工具调用"决策函数 - AI自主决定是否使用搜索工具
  * @param {string} userMessage - 用户的原始问题
  * @param {Array} conversationHistory - 对话历史（可选）
- * @returns {Promise<string>} 优化后的搜索查询
+ * @returns {Promise<{needsSearch: boolean, query: string, reason: string}>}
  */
-async function generateAISearchQuery(userMessage, conversationHistory = []) {
+async function aiDecideWebSearch(userMessage, conversationHistory = []) {
     return new Promise((resolve) => {
         try {
-            console.log(`🤖 AI正在分析搜索需求: "${userMessage.substring(0, 50)}..."`);
+            console.log(`🤖 AI正在判断是否需要搜索: "${userMessage.substring(0, 50)}..."`);
 
-            const systemPrompt = `You are a search query optimizer. Your task is to analyze the user's question and generate the BEST search query for a web search engine.
+            const systemPrompt = `You are a smart assistant that decides whether a web search is needed to answer the user's question.
 
-Rules:
-1. Output ONLY the search query, nothing else
-2. Keep the query concise (max 10 words)
-3. Focus on key facts, terms, or entities that need to be searched
-4. Convert vague questions into specific searchable terms
-5. For time-sensitive questions (like "today", "latest", "current"), include relevant time context
-6. Use the same language as the user's question
-7. Remove conversational fluff and focus on searchable keywords
+Your task:
+1. Analyze if the question requires REAL-TIME, CURRENT, or FACTUAL information that you might not have
+2. If search is needed, generate a concise search query (max 10 words)
+3. If search is NOT needed (general knowledge, creative tasks, coding, etc.), skip the search
 
-Examples:
-- User: "帮我查一下今天北京的天气" → "北京天气 今日"
-- User: "What is the latest news about OpenAI?" → "OpenAI latest news 2024"
-- User: "为什么天空是蓝色的" → "天空蓝色原因 科学解释"
-- User: "Tell me about Elon Musk's companies" → "Elon Musk companies Tesla SpaceX"`;
+Respond in JSON format ONLY:
+{"needs_search": true/false, "query": "search query if needed", "reason": "brief reason"}
 
-            // 构建请求体 - 使用qwen-flash快速生成
+Search IS NEEDED for:
+- Current events, news, weather, stock prices, sports scores
+- Recent updates (last 1-2 years)
+- Facts you're unsure about
+- "What's the latest...", "Current status of...", "Today's..."
+- Specific real-time data (prices, schedules, availability)
+
+Search is NOT NEEDED for:
+- General knowledge ("What is photosynthesis?", "Explain Python decorators")
+- Creative writing, brainstorming, stories
+- Code generation, debugging help
+- Math calculations, logic puzzles
+- Definitions of common concepts
+- Personal advice, opinions
+- Translations, formatting
+
+IMPORTANT: Be conservative - only search when truly necessary. Most questions don't need search.`;
+
+            // 构建请求体 - 使用qwen-flash快速判断
             const requestBody = JSON.stringify({
                 model: 'qwen-flash',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userMessage }
                 ],
-                temperature: 0.3,
-                max_tokens: 50,
+                temperature: 0.1,  // 低温度以获得更一致的判断
+                max_tokens: 150,
                 stream: false
             });
 
@@ -424,39 +435,81 @@ Examples:
                     try {
                         const result = JSON.parse(data);
                         if (result.choices && result.choices[0] && result.choices[0].message) {
-                            const aiQuery = result.choices[0].message.content.trim();
-                            console.log(`✅ AI生成搜索查询: "${aiQuery}"`);
-                            resolve(aiQuery || userMessage);
+                            const aiResponse = result.choices[0].message.content.trim();
+
+                            // 尝试解析JSON响应
+                            try {
+                                // 移除可能的markdown代码块标记
+                                const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
+                                const decision = JSON.parse(cleanJson);
+
+                                console.log(`✅ AI搜索决策: ${decision.needs_search ? '需要搜索' : '不需要搜索'}`);
+                                if (decision.needs_search) {
+                                    console.log(`   查询: "${decision.query}"`);
+                                }
+                                console.log(`   原因: ${decision.reason}`);
+
+                                resolve({
+                                    needsSearch: decision.needs_search === true,
+                                    query: decision.query || userMessage,
+                                    reason: decision.reason || ''
+                                });
+                            } catch (parseError) {
+                                // 如果JSON解析失败，检查是否包含关键词来推断
+                                console.warn('⚠️ AI响应JSON解析失败，进行回退判断');
+                                const needsSearch = aiResponse.toLowerCase().includes('"needs_search": true') ||
+                                    aiResponse.toLowerCase().includes('"needs_search":true');
+                                resolve({
+                                    needsSearch: needsSearch,
+                                    query: userMessage,
+                                    reason: 'JSON parse fallback'
+                                });
+                            }
                         } else {
-                            console.warn('⚠️ AI响应格式异常，使用原始查询');
-                            resolve(userMessage);
+                            console.warn('⚠️ AI响应格式异常，默认不搜索');
+                            resolve({ needsSearch: false, query: userMessage, reason: 'Response format error' });
                         }
                     } catch (e) {
                         console.error('❌ 解析AI响应失败:', e);
-                        resolve(userMessage);
+                        resolve({ needsSearch: false, query: userMessage, reason: 'Parse error' });
                     }
                 });
             });
 
             req.on('error', (err) => {
-                console.error('❌ AI搜索查询生成失败:', err);
-                resolve(userMessage);  // 失败时回退到原始查询
+                console.error('❌ AI搜索决策失败:', err);
+                resolve({ needsSearch: false, query: userMessage, reason: 'Request error' });
             });
 
             req.setTimeout(5000, () => {
-                console.warn('⚠️ AI查询生成超时，使用原始查询');
+                console.warn('⚠️ AI决策超时，默认不搜索');
                 req.destroy();
-                resolve(userMessage);
+                resolve({ needsSearch: false, query: userMessage, reason: 'Timeout' });
             });
 
             req.write(requestBody);
             req.end();
         } catch (error) {
-            console.error('❌ AI搜索查询生成异常:', error);
-            resolve(userMessage);
+            console.error('❌ AI搜索决策异常:', error);
+            resolve({ needsSearch: false, query: userMessage, reason: 'Exception' });
         }
     });
 }
+
+/**
+ * 使用AI生成智能搜索查询 (保留向后兼容)
+ * AI根据用户问题自主决定应该搜索什么内容
+ * @deprecated 推荐使用 aiDecideWebSearch 代替
+ * @param {string} userMessage - 用户的原始问题
+ * @param {Array} conversationHistory - 对话历史（可选）
+ * @returns {Promise<string>} 优化后的搜索查询
+ */
+async function generateAISearchQuery(userMessage, conversationHistory = []) {
+    // 直接使用新的决策函数
+    const decision = await aiDecideWebSearch(userMessage, conversationHistory);
+    return decision.query;
+}
+
 
 /**
  * 执行网页搜索 (使用Tavily API)
@@ -951,7 +1004,7 @@ function getMultimodalTypeDescription(types) {
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 'sk-',
+        apiKey: 's',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         models: ['qwen-flash', 'qwen-plus', 'qwen-max']
     },
@@ -989,6 +1042,13 @@ const API_PROVIDERS = {
         models: ['Qwen/Qwen3-VL-235B-A22B-Instruct'],
         multimodal: true,  // 标记支持多模态
         visionModel: true  // 标记这是视觉模型
+    },
+    // Google Gemini API - Gemini 3 Flash Preview
+    google_gemini: {
+        apiKey: 'AIzaSyC_',
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',  // 基础URL，实际使用时会拼接模型名
+        models: ['gemini-3-flash-preview'],
+        isGemini: true  // 标记这是Gemini API，需要特殊处理
     }
 };
 
@@ -1031,6 +1091,13 @@ const MODEL_ROUTING = {
         provider: 'siliconflow',
         model: 'moonshotai/Kimi-K2-Instruct-0905',  // 默认使用 Instruct 模型
         thinkingModel: 'moonshotai/Kimi-K2-Thinking',  // 思考模式使用 Thinking 模型
+        supportsWebSearch: true  // 支持Tavily联网搜索
+    },
+    // Google Gemini 3 Flash - 最智能的速度优化模型
+    'gemini-3-flash': {
+        provider: 'google_gemini',
+        model: 'gemini-3-flash-preview',
+        isGemini: true,  // 标记需要特殊处理
         supportsWebSearch: true  // 支持Tavily联网搜索
     },
     // 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
@@ -2101,7 +2168,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
-        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2'];
+        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2', 'gemini-3-flash'];
 
         // 注意：多模态检测已在上面执行，这里不再重复
 
@@ -2165,12 +2232,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`📤 已发送模型信息: finalModel=${finalModel}, actualModel=${actualModel}`);
 
         // 🔍 网页搜索功能（针对非阿里云模型）
-        // 注意：SSE头已在函数开头（约第1565行）设置完毕
+        // ✨ 改进：AI智能判断是否需要搜索，而不是无条件搜索
         let searchContext = '';
-        let searchSources = [];  // 新增：存储搜索来源用于SSE传输
+        let searchSources = [];  // 存储搜索来源用于SSE传输
 
         if (internetMode && routing.provider !== 'aliyun' && finalModel !== 'deepseek-v3.2-speciale') {
-            console.log(`🌐 执行智能网页搜索（${routing.provider}不支持原生联网）`);
+            console.log(`🌐 联网模式已开启，AI正在判断是否需要搜索...`);
 
             // 提取用户最后一条消息
             const lastMessage = messages[messages.length - 1];
@@ -2182,54 +2249,69 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             res.write(`data: ${JSON.stringify({
                 type: 'search_status',
                 status: 'analyzing',
-                message: '正在分析问题...'
+                message: 'AI正在分析是否需要搜索...'
             })}\n\n`);
 
-            // 🤖 使用AI生成智能搜索查询（AI自己决定搜索什么）
-            const searchQuery = await generateAISearchQuery(userMessage, messages);
+            // 🤖 使用AI智能判断是否需要搜索
+            const searchDecision = await aiDecideWebSearch(userMessage, messages);
 
-            // 📡 发送搜索状态：显示AI生成的搜索关键词
-            res.write(`data: ${JSON.stringify({
-                type: 'search_status',
-                status: 'searching',
-                query: searchQuery,
-                message: `正在搜索: "${searchQuery}"`
-            })}\n\n`);
+            if (searchDecision.needsSearch) {
+                console.log(`🔍 AI决定执行搜索: "${searchDecision.query}"`);
 
-            // 执行搜索
-            const searchData = await performWebSearch(searchQuery, 5);
-            const searchResults = searchData.results || searchData;  // 兼容新旧格式
-            let searchImages = searchData.images || [];
-
-            // 验证图片URL，过滤掉无效的
-            if (searchImages.length > 0) {
-                searchImages = await filterValidImages(searchImages, 5, 3000);
-            }
-
-            if (searchResults && searchResults.length > 0) {
-                // 使用验证后的图片
-                searchContext = formatSearchResults({ results: searchResults, images: searchImages }, searchQuery);
-                searchSources = extractSourcesForSSE(searchResults);  // 提取来源信息
-                console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源, ${searchImages.length} 张有效图片)`);
-
-                // 📡 发送搜索状态：搜索完成
+                // 📡 发送搜索状态：显示AI生成的搜索关键词
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
-                    status: 'complete',
-                    query: searchQuery,
-                    resultCount: searchResults.length,
-                    message: `找到 ${searchResults.length} 条结果`
+                    status: 'searching',
+                    query: searchDecision.query,
+                    message: `正在搜索: "${searchDecision.query}"`
                 })}\n\n`);
+
+                // 执行搜索
+                const searchData = await performWebSearch(searchDecision.query, 5);
+                const searchResults = searchData.results || searchData;  // 兼容新旧格式
+                let searchImages = searchData.images || [];
+
+                // 验证图片URL，过滤掉无效的
+                if (searchImages.length > 0) {
+                    searchImages = await filterValidImages(searchImages, 5, 3000);
+                }
+
+                if (searchResults && searchResults.length > 0) {
+                    // 使用验证后的图片
+                    searchContext = formatSearchResults({ results: searchResults, images: searchImages }, searchDecision.query);
+                    searchSources = extractSourcesForSSE(searchResults);  // 提取来源信息
+                    console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源, ${searchImages.length} 张有效图片)`);
+
+                    // 📡 发送搜索状态：搜索完成
+                    res.write(`data: ${JSON.stringify({
+                        type: 'search_status',
+                        status: 'complete',
+                        query: searchDecision.query,
+                        resultCount: searchResults.length,
+                        message: `找到 ${searchResults.length} 条结果`
+                    })}\n\n`);
+                } else {
+                    console.log(`⚠️ 未获取到搜索结果`);
+                    // 📡 发送搜索状态：未找到结果
+                    res.write(`data: ${JSON.stringify({
+                        type: 'search_status',
+                        status: 'no_results',
+                        query: searchDecision.query,
+                        message: '未找到相关结果'
+                    })}\n\n`);
+                }
             } else {
-                console.log(`⚠️ 未获取到搜索结果`);
-                // 📡 发送搜索状态：未找到结果
+                // AI判断不需要搜索
+                console.log(`ℹ️ AI判断不需要搜索: ${searchDecision.reason}`);
+                // 📡 发送搜索状态：跳过搜索
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
-                    status: 'no_results',
-                    query: searchQuery,
-                    message: '未找到相关结果'
+                    status: 'skipped',
+                    reason: searchDecision.reason,
+                    message: 'AI判断此问题不需要搜索'
                 })}\n\n`);
             }
+
         } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
             console.log(`ℹ️ DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
         }
@@ -2393,14 +2475,76 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let fullContent = '';
         let reasoningContent = '';
 
+        // 🔥 Gemini API 特殊处理
+        const isGeminiAPI = providerConfig.isGemini || routing.isGemini;
+
         try {
-            const apiResponse = await fetch(providerConfig.baseURL, {
-                method: 'POST',
-                headers: {
+            let apiUrl, fetchHeaders, fetchBody;
+
+            if (isGeminiAPI) {
+                // ============ Gemini API 格式 ============
+                // Gemini endpoint: {baseURL}/{modelName}:streamGenerateContent?alt=sse
+                apiUrl = `${providerConfig.baseURL}/${actualModel}:streamGenerateContent?alt=sse`;
+
+                // Gemini 使用 x-goog-api-key 头
+                fetchHeaders = {
+                    'x-goog-api-key': providerConfig.apiKey,
+                    'Content-Type': 'application/json'
+                };
+
+                // 将 OpenAI 格式的 messages 转换为 Gemini 格式的 contents
+                const geminiContents = [];
+                for (const msg of finalMessages) {
+                    if (msg.role === 'system') {
+                        // Gemini 将 system 作为 systemInstruction 处理
+                        continue; // 我们在下面单独处理
+                    }
+                    const geminiRole = msg.role === 'assistant' ? 'model' : 'user';
+                    geminiContents.push({
+                        role: geminiRole,
+                        parts: [{ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }]
+                    });
+                }
+
+                // 提取 system prompt
+                const systemMsg = finalMessages.find(m => m.role === 'system');
+
+                fetchBody = {
+                    contents: geminiContents,
+                    generationConfig: {
+                        temperature: parseFloat(temperature) || 0.7,
+                        topP: parseFloat(top_p) || 0.9,
+                        maxOutputTokens: parseInt(max_tokens, 10) || 2000
+                    }
+                };
+
+                // 如果有 system prompt，添加为 systemInstruction
+                if (systemMsg) {
+                    fetchBody.systemInstruction = {
+                        parts: [{ text: typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content) }]
+                    };
+                }
+
+                console.log(`🔷 Gemini API 请求: ${apiUrl}`);
+                console.log(`   模型: ${actualModel}`);
+                console.log(`   消息数: ${geminiContents.length}`);
+            } else {
+                // ============ OpenAI 兼容 API 格式 ============
+                apiUrl = providerConfig.baseURL;
+                fetchHeaders = {
                     'Authorization': `Bearer ${providerConfig.apiKey}`,
                     'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody),
+                };
+                fetchBody = requestBody;
+            }
+
+            console.log(`🌐 正在调用: ${apiUrl}`);
+            console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
+
+            const apiResponse = await fetch(apiUrl, {
+                method: 'POST',
+                headers: fetchHeaders,
+                body: JSON.stringify(fetchBody),
                 signal: controller.signal
             });
 
@@ -2466,39 +2610,56 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         const data = trimmed.slice(6);
                         try {
                             const parsed = JSON.parse(data);
-                            const choice = parsed.choices?.[0];
 
-                            // ✅ 修复：处理推理内容（支持 DeepSeek 和 Qwen）
-                            const delta = choice?.delta || {};
-                            const reasoning = delta.reasoning_content || delta.reasoning;
-                            const content = delta.content;
-
-                            if (reasoning) {
-                                reasoningContent += reasoning;
-                                res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
-                            }
-
-                            if (content) {
-                                fullContent += content;
-                                res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
-                            }
-
-                            // 处理阿里云原生联网的 search_info
-                            const searchInfo = parsed.search_info || parsed.output?.search_info;
-                            if (searchInfo && searchInfo.search_results && searchInfo.search_results.length > 0) {
-                                const qwenSources = searchInfo.search_results.map(r => ({
-                                    index: r.index || 0,
-                                    title: r.title || '未知来源',
-                                    url: r.url || '',
-                                    favicon: r.icon || '',
-                                    site_name: r.site_name || ''
-                                }));
-                                // 更新 searchSources 变量，确保保存消息时包含来源信息
-                                if (!searchSources || searchSources.length === 0) {
-                                    searchSources = qwenSources;
+                            if (isGeminiAPI) {
+                                // ============ Gemini 响应格式解析 ============
+                                // Gemini 响应结构: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
+                                const candidate = parsed.candidates?.[0];
+                                if (candidate) {
+                                    const parts = candidate.content?.parts || [];
+                                    for (const part of parts) {
+                                        if (part.text) {
+                                            fullContent += part.text;
+                                            res.write(`data: ${JSON.stringify({ type: 'content', content: part.text })}\n\n`);
+                                        }
+                                    }
                                 }
-                                res.write(`data: ${JSON.stringify({ type: 'sources', sources: qwenSources })}\n\n`);
-                                console.log(`📤 阿里云search_info: 已发送 ${qwenSources.length} 个来源`);
+                            } else {
+                                // ============ OpenAI 兼容格式解析 ============
+                                const choice = parsed.choices?.[0];
+
+                                // ✅ 修复：处理推理内容（支持 DeepSeek 和 Qwen）
+                                const delta = choice?.delta || {};
+                                const reasoning = delta.reasoning_content || delta.reasoning;
+                                const content = delta.content;
+
+                                if (reasoning) {
+                                    reasoningContent += reasoning;
+                                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
+                                }
+
+                                if (content) {
+                                    fullContent += content;
+                                    res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
+                                }
+
+                                // 处理阿里云原生联网的 search_info
+                                const searchInfo = parsed.search_info || parsed.output?.search_info;
+                                if (searchInfo && searchInfo.search_results && searchInfo.search_results.length > 0) {
+                                    const qwenSources = searchInfo.search_results.map(r => ({
+                                        index: r.index || 0,
+                                        title: r.title || '未知来源',
+                                        url: r.url || '',
+                                        favicon: r.icon || '',
+                                        site_name: r.site_name || ''
+                                    }));
+                                    // 更新 searchSources 变量，确保保存消息时包含来源信息
+                                    if (!searchSources || searchSources.length === 0) {
+                                        searchSources = qwenSources;
+                                    }
+                                    res.write(`data: ${JSON.stringify({ type: 'sources', sources: qwenSources })}\n\n`);
+                                    console.log(`📤 阿里云search_info: 已发送 ${qwenSources.length} 个来源`);
+                                }
                             }
                         } catch (e) {
                             console.error('⚠️ 解析响应行错误:', e.message);
@@ -2507,6 +2668,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             }
         } catch (fetchError) {
+
             clearTimeout(timeoutId);
             if (fetchError.name === 'AbortError') {
                 console.error('❌ API请求超时 (120s)');
