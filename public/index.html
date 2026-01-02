@@ -27,6 +27,11 @@
   <!-- Mermaid.js 图表渲染 -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 
+  <!-- Highlight.js 代码语法高亮 -->
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+
   <script>
     // Robust loading with CDN fallback
     window.addEventListener('load', function () {
@@ -138,29 +143,24 @@
       }
 
       // 6. 🎨 Mermaid 图表处理：检测并转换 mermaid 代码块为渲染容器
-      html = html.replace(
-        /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
-        (match, code) => {
-          const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-          // 解码 HTML 实体
-          const decodedCode = code
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .trim();
-          return `<div class="mermaid-container" id="${id}" data-mermaid-code="${encodeURIComponent(decodedCode)}">
-            <div class="mermaid-loading">
-              <svg class="mermaid-loading-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 3h18v18H3V3z" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M3 9h18M9 21V9" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span>图表加载中...</span>
-            </div>
-          </div>`;
-        }
-      );
+      // 🎨 流式模式下跳过转换（使用独立的 mermaidLivePreview 容器实时渲染）
+      if (!isStreaming) {
+        html = html.replace(
+          /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
+          (match, code) => {
+            const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+            // 解码 HTML 实体
+            const decodedCode = code
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&amp;/g, '&')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .trim();
+            return `<div class="mermaid-container" id="${id}" data-mermaid-code="${encodeURIComponent(decodedCode)}"></div>`;
+          }
+        );
+      }
 
       return html;
     }
@@ -233,6 +233,282 @@
       return html;
     }
 
+    // ==================== 代码块处理功能 ====================
+
+    // 语言名称映射（美化显示）
+    const languageNames = {
+      'js': 'JavaScript',
+      'javascript': 'JavaScript',
+      'ts': 'TypeScript',
+      'typescript': 'TypeScript',
+      'py': 'Python',
+      'python': 'Python',
+      'rb': 'Ruby',
+      'ruby': 'Ruby',
+      'java': 'Java',
+      'c': 'C',
+      'cpp': 'C++',
+      'c++': 'C++',
+      'cs': 'C#',
+      'csharp': 'C#',
+      'go': 'Go',
+      'golang': 'Go',
+      'rs': 'Rust',
+      'rust': 'Rust',
+      'swift': 'Swift',
+      'kotlin': 'Kotlin',
+      'kt': 'Kotlin',
+      'php': 'PHP',
+      'html': 'HTML',
+      'css': 'CSS',
+      'scss': 'SCSS',
+      'sass': 'Sass',
+      'less': 'Less',
+      'json': 'JSON',
+      'xml': 'XML',
+      'yaml': 'YAML',
+      'yml': 'YAML',
+      'md': 'Markdown',
+      'markdown': 'Markdown',
+      'sql': 'SQL',
+      'sh': 'Shell',
+      'bash': 'Bash',
+      'zsh': 'Zsh',
+      'powershell': 'PowerShell',
+      'ps1': 'PowerShell',
+      'dockerfile': 'Dockerfile',
+      'docker': 'Docker',
+      'nginx': 'Nginx',
+      'apache': 'Apache',
+      'vim': 'Vim',
+      'lua': 'Lua',
+      'r': 'R',
+      'scala': 'Scala',
+      'perl': 'Perl',
+      'jsx': 'JSX',
+      'tsx': 'TSX',
+      'vue': 'Vue',
+      'svelte': 'Svelte',
+      'graphql': 'GraphQL',
+      'gql': 'GraphQL',
+      'toml': 'TOML',
+      'ini': 'INI',
+      'makefile': 'Makefile',
+      'cmake': 'CMake',
+      'diff': 'Diff',
+      'plaintext': '纯文本',
+      'text': '纯文本',
+      '': '代码'
+    };
+
+    // 获取美化的语言名称
+    function getLanguageDisplayName(lang) {
+      if (!lang) return '代码';
+      const normalized = lang.toLowerCase().trim();
+      return languageNames[normalized] || lang.toUpperCase();
+    }
+
+    // 处理代码块：添加头部（语言标签+复制按钮）和语法高亮
+    function processCodeBlocks(container) {
+      if (!container) return;
+
+      const codeBlocks = container.querySelectorAll('pre > code:not(.processed)');
+
+      codeBlocks.forEach((codeElement, index) => {
+        const preElement = codeElement.parentElement;
+
+        // 跳过已处理的或mermaid代码块
+        if (preElement.closest('.code-block-wrapper') || preElement.closest('.mermaid-container')) {
+          return;
+        }
+
+        // 获取语言类型
+        let language = '';
+        const classList = codeElement.className.split(' ');
+        for (const cls of classList) {
+          if (cls.startsWith('language-')) {
+            language = cls.replace('language-', '');
+            break;
+          }
+        }
+
+        // 跳过mermaid
+        if (language === 'mermaid') return;
+
+        // 标记为已处理
+        codeElement.classList.add('processed');
+
+        // 创建包装容器
+        const wrapper = document.createElement('div');
+        wrapper.className = 'code-block-wrapper';
+
+        // 创建头部
+        const header = document.createElement('div');
+        header.className = 'code-block-header';
+
+        // 语言标签
+        const langLabel = document.createElement('span');
+        langLabel.className = 'code-block-lang';
+        langLabel.textContent = getLanguageDisplayName(language);
+
+        // 复制按钮
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'code-copy-btn';
+        copyBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          <span>复制</span>
+        `;
+        copyBtn.onclick = () => copyCodeBlock(copyBtn, codeElement);
+
+        header.appendChild(langLabel);
+        header.appendChild(copyBtn);
+
+        // 插入包装容器
+        preElement.parentNode.insertBefore(wrapper, preElement);
+        wrapper.appendChild(header);
+        wrapper.appendChild(preElement);
+
+        // 应用语法高亮
+        if (typeof hljs !== 'undefined' && language && language !== 'plaintext') {
+          try {
+            hljs.highlightElement(codeElement);
+          } catch (e) {
+            console.warn('Highlight.js error:', e);
+          }
+        }
+      });
+    }
+
+    // 复制代码到剪贴板
+    function copyCodeBlock(button, codeElement) {
+      const code = codeElement.textContent || codeElement.innerText;
+
+      navigator.clipboard.writeText(code).then(() => {
+        // 显示成功状态
+        const originalHTML = button.innerHTML;
+        button.classList.add('copied');
+        button.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          <span>已复制</span>
+        `;
+
+        // 2秒后恢复原状
+        setTimeout(() => {
+          button.classList.remove('copied');
+          button.innerHTML = originalHTML;
+        }, 2000);
+      }).catch(err => {
+        console.error('复制失败:', err);
+        // 回退方案
+        const textarea = document.createElement('textarea');
+        textarea.value = code;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          button.classList.add('copied');
+          const originalHTML = button.innerHTML;
+          button.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>已复制</span>
+          `;
+          setTimeout(() => {
+            button.classList.remove('copied');
+            button.innerHTML = originalHTML;
+          }, 2000);
+        } catch (e) {
+          console.error('回退复制也失败:', e);
+        }
+        document.body.removeChild(textarea);
+      });
+    }
+
+    // 流式处理代码块：实时显示语言标签、复制按钮、语法高亮
+    // 此函数针对流式输出优化，避免重复处理和DOM抖动
+    function processCodeBlocksStreaming(container) {
+      if (!container) return;
+
+      const codeBlocks = container.querySelectorAll('pre > code:not(.stream-processed)');
+
+      codeBlocks.forEach((codeElement) => {
+        const preElement = codeElement.parentElement;
+
+        // 跳过已处理的或mermaid代码块
+        if (preElement.closest('.code-block-wrapper') ||
+          preElement.closest('.mermaid-container') ||
+          preElement.closest('.mermaid-inline-wrapper')) {
+          return;
+        }
+
+        // 获取语言类型
+        let language = '';
+        const classList = codeElement.className.split(' ');
+        for (const cls of classList) {
+          if (cls.startsWith('language-')) {
+            language = cls.replace('language-', '');
+            break;
+          }
+        }
+
+        // 跳过mermaid
+        if (language === 'mermaid') return;
+
+        // 标记为流式处理中
+        codeElement.classList.add('stream-processed');
+
+        // 创建包装容器
+        const wrapper = document.createElement('div');
+        wrapper.className = 'code-block-wrapper';
+
+        // 创建头部
+        const header = document.createElement('div');
+        header.className = 'code-block-header';
+
+        // 语言标签
+        const langLabel = document.createElement('span');
+        langLabel.className = 'code-block-lang';
+        langLabel.textContent = getLanguageDisplayName(language);
+
+        // 复制按钮
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'code-copy-btn';
+        copyBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          <span>复制</span>
+        `;
+        copyBtn.onclick = () => copyCodeBlock(copyBtn, codeElement);
+
+        header.appendChild(langLabel);
+        header.appendChild(copyBtn);
+
+        // 插入包装容器
+        preElement.parentNode.insertBefore(wrapper, preElement);
+        wrapper.appendChild(header);
+        wrapper.appendChild(preElement);
+
+        // 尝试应用语法高亮（流式时可能代码不完整，但会在最终渲染时修正）
+        if (typeof hljs !== 'undefined' && language && language !== 'plaintext') {
+          try {
+            hljs.highlightElement(codeElement);
+          } catch (e) {
+            // 流式过程中语法高亮失败是正常的，最终渲染会修正
+          }
+        }
+      });
+    }
+
     // ==================== Mermaid 图表功能 ====================
 
     // Mermaid 初始化配置
@@ -282,6 +558,9 @@
           const toolbar = document.createElement('div');
           toolbar.className = 'mermaid-toolbar';
           toolbar.innerHTML = `
+            <button onclick="showMermaidCode('${container.id}')" title="查看代码">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+            </button>
             <button onclick="copyMermaidCode('${container.id}')" title="复制代码">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
@@ -320,6 +599,17 @@
       });
     }
 
+    // 查看 Mermaid 代码（打开全屏并切换到代码视图）
+    function showMermaidCode(containerId) {
+      toggleMermaidFullscreen(containerId);
+      // 延迟切换到代码视图，确保模态框已渲染
+      setTimeout(() => {
+        if (!mermaidFullscreenState.showCode) {
+          toggleMermaidCodeView();
+        }
+      }, 100);
+    }
+
     // 下载 SVG
     function downloadMermaidSVG(containerId) {
       const container = document.getElementById(containerId);
@@ -337,18 +627,426 @@
       URL.revokeObjectURL(url);
     }
 
-    // 全屏查看
+    // ==================== Mermaid 全屏模态框系统 ====================
+    let mermaidFullscreenState = {
+      isOpen: false,
+      scale: 1,
+      translateX: 0,
+      translateY: 0,
+      isDragging: false,
+      startX: 0,
+      startY: 0,
+      lastScale: 1,
+      lastTranslateX: 0,
+      lastTranslateY: 0,
+      showCode: false,
+      currentCode: '',
+      containerId: null
+    };
+
+    // 创建全屏模态框 DOM
+    function createMermaidFullscreenModal() {
+      if (document.getElementById('mermaidFullscreenModal')) return;
+
+      const modal = document.createElement('div');
+      modal.id = 'mermaidFullscreenModal';
+      modal.className = 'mermaid-fullscreen-modal';
+      modal.innerHTML = `
+        <div class="mermaid-fullscreen-toolbar">
+          <div class="mermaid-fullscreen-toolbar-left">
+            <button class="mermaid-fullscreen-btn" id="mermaidViewCodeBtn" title="查看代码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>
+              </svg>
+            </button>
+            <button class="mermaid-fullscreen-btn" id="mermaidCopyBtn" title="复制代码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+            </button>
+            <button class="mermaid-fullscreen-btn" id="mermaidDownloadBtn" title="下载SVG">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </button>
+          </div>
+          <div class="mermaid-fullscreen-toolbar-center">
+            <button class="mermaid-fullscreen-btn" id="mermaidZoomOutBtn" title="缩小">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+            <span class="mermaid-fullscreen-zoom-level" id="mermaidZoomLevel">100%</span>
+            <button class="mermaid-fullscreen-btn" id="mermaidZoomInBtn" title="放大">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+            <button class="mermaid-fullscreen-btn" id="mermaidResetBtn" title="重置视图">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </button>
+          </div>
+          <div class="mermaid-fullscreen-toolbar-right">
+            <button class="mermaid-fullscreen-btn" id="mermaidCloseBtn" title="关闭 (Esc)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="mermaid-fullscreen-content" id="mermaidFullscreenContent">
+          <div class="mermaid-fullscreen-wrapper" id="mermaidFullscreenWrapper"></div>
+          <div class="mermaid-fullscreen-code" id="mermaidFullscreenCode">
+            <pre id="mermaidCodeContent"></pre>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      // 绑定事件
+      bindMermaidFullscreenEvents();
+    }
+
+    // 绑定全屏模态框事件
+    function bindMermaidFullscreenEvents() {
+      const modal = document.getElementById('mermaidFullscreenModal');
+      const content = document.getElementById('mermaidFullscreenContent');
+      const wrapper = document.getElementById('mermaidFullscreenWrapper');
+
+      // 关闭按钮
+      document.getElementById('mermaidCloseBtn').onclick = closeMermaidFullscreen;
+
+      // 查看代码
+      document.getElementById('mermaidViewCodeBtn').onclick = toggleMermaidCodeView;
+
+      // 复制代码
+      document.getElementById('mermaidCopyBtn').onclick = () => {
+        navigator.clipboard.writeText('```mermaid\n' + mermaidFullscreenState.currentCode + '\n```');
+        console.log('✅ Mermaid 代码已复制');
+      };
+
+      // 下载
+      document.getElementById('mermaidDownloadBtn').onclick = () => {
+        const svg = wrapper.querySelector('svg');
+        if (!svg) return;
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const blob = new Blob([svgData], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mermaid-chart.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      // 缩放按钮
+      document.getElementById('mermaidZoomInBtn').onclick = () => zoomMermaid(0.2);
+      document.getElementById('mermaidZoomOutBtn').onclick = () => zoomMermaid(-0.2);
+      document.getElementById('mermaidResetBtn').onclick = resetMermaidView;
+
+      // 鼠标拖拽
+      wrapper.addEventListener('mousedown', startDrag);
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', endDrag);
+
+      // 鼠标滚轮缩放（全屏模式下直接滚轮缩放，无需Ctrl）
+      // 触摸板双指滑动拖拽（通过 wheel 事件的 deltaX/deltaY 实现）
+      content.addEventListener('wheel', (e) => {
+        e.preventDefault();
+
+        // 判断是否为缩放操作：Ctrl+滚轮 或 触摸板双指捶合（ctrlKey会自动为true）
+        if (e.ctrlKey || e.metaKey) {
+          // 缩放
+          const delta = e.deltaY > 0 ? -0.1 : 0.1;
+          zoomMermaid(delta, e.clientX, e.clientY);
+        } else {
+          // 触摸板双指滑动 或 鼠标滚轮滚动 -> 平移图表
+          mermaidFullscreenState.translateX -= e.deltaX;
+          mermaidFullscreenState.translateY -= e.deltaY;
+          updateMermaidTransform();
+        }
+      }, { passive: false });
+
+      // 触摸事件
+      let touchStartDistance = 0;
+      let touchStartScale = 1;
+      let touchStartX = 0;
+      let touchStartY = 0;
+
+      wrapper.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          // 双指缩放
+          touchStartDistance = getTouchDistance(e.touches);
+          touchStartScale = mermaidFullscreenState.scale;
+        } else if (e.touches.length === 1) {
+          // 单指拖拽
+          touchStartX = e.touches[0].clientX - mermaidFullscreenState.translateX;
+          touchStartY = e.touches[0].clientY - mermaidFullscreenState.translateY;
+          wrapper.classList.add('dragging');
+        }
+      }, { passive: true });
+
+      wrapper.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+          // 双指缩放
+          e.preventDefault();
+          const currentDistance = getTouchDistance(e.touches);
+          const scaleDelta = currentDistance / touchStartDistance;
+          mermaidFullscreenState.scale = Math.min(5, Math.max(0.2, touchStartScale * scaleDelta));
+          updateMermaidTransform();
+        } else if (e.touches.length === 1 && wrapper.classList.contains('dragging')) {
+          // 单指拖拽
+          e.preventDefault();
+          mermaidFullscreenState.translateX = e.touches[0].clientX - touchStartX;
+          mermaidFullscreenState.translateY = e.touches[0].clientY - touchStartY;
+          updateMermaidTransform();
+        }
+      }, { passive: false });
+
+      wrapper.addEventListener('touchend', () => {
+        wrapper.classList.remove('dragging');
+      });
+
+      // ESC 关闭
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && mermaidFullscreenState.isOpen) {
+          closeMermaidFullscreen();
+        }
+      });
+    }
+
+    // 开始拖拽 (鼠标)
+    function startDrag(e) {
+      if (e.button !== 0) return;
+      mermaidFullscreenState.isDragging = true;
+      mermaidFullscreenState.startX = e.clientX - mermaidFullscreenState.translateX;
+      mermaidFullscreenState.startY = e.clientY - mermaidFullscreenState.translateY;
+      document.getElementById('mermaidFullscreenWrapper').classList.add('dragging');
+    }
+
+    // 拖拽中
+    function onDrag(e) {
+      if (!mermaidFullscreenState.isDragging) return;
+      mermaidFullscreenState.translateX = e.clientX - mermaidFullscreenState.startX;
+      mermaidFullscreenState.translateY = e.clientY - mermaidFullscreenState.startY;
+      updateMermaidTransform();
+    }
+
+    // 结束拖拽
+    function endDrag() {
+      mermaidFullscreenState.isDragging = false;
+      const wrapper = document.getElementById('mermaidFullscreenWrapper');
+      if (wrapper) wrapper.classList.remove('dragging');
+    }
+
+    // 计算触摸距离
+    function getTouchDistance(touches) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // 缩放
+    function zoomMermaid(delta, centerX, centerY) {
+      const oldScale = mermaidFullscreenState.scale;
+      mermaidFullscreenState.scale = Math.min(5, Math.max(0.2, oldScale + delta));
+
+      // 如果提供了中心点，调整位移以围绕中心点缩放
+      if (centerX !== undefined && centerY !== undefined) {
+        const content = document.getElementById('mermaidFullscreenContent');
+        const rect = content.getBoundingClientRect();
+        const x = centerX - rect.left - rect.width / 2;
+        const y = centerY - rect.top - rect.height / 2;
+        const scaleDelta = mermaidFullscreenState.scale - oldScale;
+        mermaidFullscreenState.translateX -= x * scaleDelta / oldScale;
+        mermaidFullscreenState.translateY -= y * scaleDelta / oldScale;
+      }
+
+      updateMermaidTransform();
+    }
+
+    // 重置视图
+    function resetMermaidView() {
+      mermaidFullscreenState.scale = 1;
+      mermaidFullscreenState.translateX = 0;
+      mermaidFullscreenState.translateY = 0;
+      updateMermaidTransform();
+    }
+
+    // 更新变换
+    function updateMermaidTransform() {
+      const wrapper = document.getElementById('mermaidFullscreenWrapper');
+      if (!wrapper) return;
+      wrapper.style.transform = `translate(${mermaidFullscreenState.translateX}px, ${mermaidFullscreenState.translateY}px) scale(${mermaidFullscreenState.scale})`;
+      document.getElementById('mermaidZoomLevel').textContent = Math.round(mermaidFullscreenState.scale * 100) + '%';
+    }
+
+    // 切换代码视图
+    function toggleMermaidCodeView() {
+      mermaidFullscreenState.showCode = !mermaidFullscreenState.showCode;
+      const codePanel = document.getElementById('mermaidFullscreenCode');
+      const wrapper = document.getElementById('mermaidFullscreenWrapper');
+      const btn = document.getElementById('mermaidViewCodeBtn');
+
+      if (mermaidFullscreenState.showCode) {
+        codePanel.classList.add('active');
+        wrapper.style.display = 'none';
+        btn.style.background = 'rgba(255, 255, 255, 0.3)';
+      } else {
+        codePanel.classList.remove('active');
+        wrapper.style.display = '';
+        btn.style.background = '';
+      }
+    }
+
+    // 打开全屏模态框
     function toggleMermaidFullscreen(containerId) {
+      createMermaidFullscreenModal();
+
       const container = document.getElementById(containerId);
       if (!container) return;
 
-      if (container.classList.contains('fullscreen')) {
-        container.classList.remove('fullscreen');
+      const svg = container.querySelector('svg');
+      const code = decodeURIComponent(container.dataset.mermaidCode || '');
+
+      if (!svg) return;
+
+      // 重置状态
+      mermaidFullscreenState.scale = 1;
+      mermaidFullscreenState.translateX = 0;
+      mermaidFullscreenState.translateY = 0;
+      mermaidFullscreenState.showCode = false;
+      mermaidFullscreenState.currentCode = code;
+      mermaidFullscreenState.containerId = containerId;
+      mermaidFullscreenState.isOpen = true;
+
+      // 复制 SVG 到全屏模态框
+      const wrapper = document.getElementById('mermaidFullscreenWrapper');
+      wrapper.innerHTML = svg.outerHTML;
+      wrapper.style.display = '';
+      wrapper.style.transform = '';
+
+      // 设置代码
+      document.getElementById('mermaidCodeContent').textContent = code;
+      document.getElementById('mermaidFullscreenCode').classList.remove('active');
+      document.getElementById('mermaidViewCodeBtn').style.background = '';
+      document.getElementById('mermaidZoomLevel').textContent = '100%';
+
+      // 显示模态框
+      const modal = document.getElementById('mermaidFullscreenModal');
+      modal.classList.add('active');
+      document.body.style.overflow = 'hidden';
+    }
+
+    // 关闭全屏模态框
+    function closeMermaidFullscreen() {
+      const modal = document.getElementById('mermaidFullscreenModal');
+      if (modal) {
+        modal.classList.remove('active');
+        mermaidFullscreenState.isOpen = false;
         document.body.style.overflow = '';
-      } else {
-        container.classList.add('fullscreen');
-        document.body.style.overflow = 'hidden';
       }
+    }
+
+    // ==================== 流式 Mermaid 渲染 ====================
+
+    // 流式过程中渲染完整的 Mermaid 图表
+    async function renderStreamingMermaidCharts(textDiv, renderedCache) {
+      if (typeof mermaid === 'undefined') return;
+
+      const containers = textDiv.querySelectorAll('.mermaid-container:not(.rendered)');
+
+      for (const container of containers) {
+        const code = container.dataset.mermaidCode;
+        if (!code) continue;
+
+        // 检查缓存中是否已有渲染结果
+        if (renderedCache.has(code)) {
+          const cached = renderedCache.get(code);
+          container.replaceWith(cached.cloneNode(true));
+          continue;
+        }
+
+        // 检测代码是否完整（以有效的 Mermaid 关键字开头）
+        const decodedCode = decodeURIComponent(code).trim();
+        const validStarts = ['graph', 'flowchart', 'sequencediagram', 'classdiagram',
+          'statediagram', 'erdiagram', 'gantt', 'pie', 'mindmap',
+          'journey', 'gitgraph', 'c4', 'timeline', 'quadrantchart', 'xychart', 'block'];
+        const codeLower = decodedCode.toLowerCase();
+        const isValidStart = validStarts.some(k => codeLower.startsWith(k));
+
+        if (!isValidStart) continue; // 等待更多内容
+
+        // 异步渲染，不阻塞流式输出
+        renderSingleMermaidContainer(container, decodedCode, renderedCache);
+      }
+    }
+
+    // 渲染单个 Mermaid 容器
+    async function renderSingleMermaidContainer(container, code, cache) {
+      // 如果已经在渲染中或已渲染，跳过
+      if (container.classList.contains('rendering') || container.classList.contains('rendered')) {
+        return;
+      }
+
+      container.classList.add('rendering');
+
+      try {
+        const id = container.id + '-svg';
+        const { svg } = await mermaid.render(id, code);
+
+        container.innerHTML = svg;
+        container.classList.remove('rendering');
+        container.classList.add('rendered');
+
+        // 添加工具栏
+        addMermaidToolbar(container);
+
+        // 缓存渲染结果
+        cache.set(container.dataset.mermaidCode, container.cloneNode(true));
+
+        console.log(`✅ 流式渲染 Mermaid 图表: ${container.id}`);
+      } catch (err) {
+        container.classList.remove('rendering');
+        // 渲染失败则保持loading状态，等待更多内容（可能代码不完整）
+        console.debug('⏳ Mermaid 代码可能不完整，等待更多内容...', err.message);
+      }
+    }
+
+    // 抽取工具栏添加逻辑为独立函数
+    function addMermaidToolbar(container) {
+      if (container.querySelector('.mermaid-toolbar')) return;
+
+      const toolbar = document.createElement('div');
+      toolbar.className = 'mermaid-toolbar';
+      toolbar.innerHTML = `
+        <button onclick="copyMermaidCode('${container.id}')" title="复制代码">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
+        <button onclick="downloadMermaidSVG('${container.id}')" title="下载SVG">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+        <button onclick="toggleMermaidFullscreen('${container.id}')" title="全屏查看">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+        </button>
+      `;
+      container.appendChild(toolbar);
     }
 
     // 监听主题变化，重新初始化 Mermaid
@@ -380,6 +1078,21 @@
       box-sizing: border-box;
       /* 禁用Android蓝色点击热区提示，使用自定义样式 */
       -webkit-tap-highlight-color: transparent;
+    }
+
+    /* 全局文字选中样式 - RAI主题色 */
+    ::selection {
+      background: var(--color-saturn-yellow);
+      color: var(--bg-primary);
+      /* 圆角效果：通过box-decoration-break实现多行选中文字的圆角 */
+      -webkit-box-decoration-break: clone;
+      box-decoration-break: clone;
+      border-radius: 4px;
+    }
+
+    ::-moz-selection {
+      background: var(--color-saturn-yellow);
+      color: var(--bg-primary);
     }
 
     :root {
@@ -2304,7 +3017,11 @@
 
     /* ==================== Mermaid 图表样式 ==================== */
 
-    /* 图表容器 */
+    /* ========== [高度/宽度限制] Mermaid 图表容器 ==========
+       min-height: 400px 防止图表加载时的页面抖动
+       max-width: 在 svg 上设置为 100%
+       如需调整，修改下面的值
+    */
     .mermaid-container {
       margin: 16px 0;
       padding: 20px;
@@ -2314,10 +3031,19 @@
       overflow-x: auto;
       position: relative;
       min-height: 100px;
+      /* [高度限制] 未渲染时的最小高度，可调整 */
+      max-width: 800px;
+      /* [宽度限制] 可调整此值 */
+    }
+
+    /* 渲染完成后移除最小高度限制 */
+    .mermaid-container.rendered {
+      min-height: unset;
     }
 
     .mermaid-container svg {
       max-width: 100%;
+      /* [宽度限制] SVG 最大宽度，可调整 */
       height: auto;
       display: block;
       margin: 0 auto;
@@ -2471,6 +3197,43 @@
       background: #ffffff;
     }
 
+    /* 🎨 Mermaid 流式渲染过渡动画 */
+    .mermaid-container svg {
+      animation: mermaidFadeIn 0.3s ease-out;
+    }
+
+    @keyframes mermaidFadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.98);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    /* 隐藏 loading 当渲染完成时 */
+    .mermaid-container.rendered .mermaid-loading {
+      display: none;
+    }
+
+    /* 渲染中状态 */
+    .mermaid-container.rendering .mermaid-loading-icon {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     /* ==================== Markdown渲染样式 ==================== */
     .message-text h1,
     .message-text h2,
@@ -2513,13 +3276,23 @@
       margin: 0.3em 0;
     }
 
+    /* 列表项标记使用RAI主题色 */
+    .message-text ul li::marker {
+      color: var(--color-saturn-yellow);
+    }
+
+    .message-text ol li::marker {
+      color: var(--color-saturn-yellow);
+      font-weight: 600;
+    }
+
     .message-text a {
       color: var(--accent-color);
       text-decoration: underline;
     }
 
     .message-text blockquote {
-      border-left: 3px solid var(--border-dark);
+      border-left: 3px solid var(--color-saturn-yellow);
       padding-left: 1em;
       margin: 1em 0;
       color: var(--text-secondary);
@@ -2529,7 +3302,7 @@
       background: var(--bg-tertiary);
       padding: 2px 6px;
       border-radius: 3px;
-      font-family: 'Monaco', 'Courier New', monospace;
+      font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
       font-size: 0.9em;
       word-break: break-word;
       /* 允许长代码换行 */
@@ -2537,18 +3310,84 @@
       /* 保持格式但允许换行 */
     }
 
-    .message-text pre {
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
+    /* 代码块容器 */
+    .code-block-wrapper {
+      position: relative;
+      margin: 1em 0;
       border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      background: #1e1e1e;
+    }
+
+    /* 代码块头部 */
+    .code-block-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-color);
+      font-size: 12px;
+    }
+
+    /* 语言标签 */
+    .code-block-lang {
+      color: var(--color-saturn-yellow);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+
+    /* 复制按钮 */
+    .code-copy-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      background: transparent;
+      border: 1px solid var(--border-dark);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .code-copy-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--color-saturn-yellow);
+      color: var(--color-saturn-yellow);
+    }
+
+    .code-copy-btn.copied {
+      color: var(--success-color);
+      border-color: var(--success-color);
+    }
+
+    .code-copy-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* 代码块内容 */
+    .message-text pre {
+      background: #1e1e1e;
       padding: var(--spacing-md);
       overflow-x: auto;
-      margin: 0.8em 0;
+      margin: 0;
       max-width: 100%;
       /* 确保不溢出 */
-      white-space: pre-wrap;
-      /* 允许代码块内长行换行 */
-      word-wrap: break-word;
+      white-space: pre;
+      /* 保持代码格式 */
+    }
+
+    /* 无容器的pre（回退样式） */
+    .message-text>pre:not(.code-block-wrapper pre) {
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-color);
+      margin: 0.8em 0;
     }
 
     .message-text pre code {
@@ -2556,6 +3395,15 @@
       padding: 0;
       border-radius: 0;
       font-size: 0.85em;
+      font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+      white-space: pre;
+      display: block;
+    }
+
+    /* highlight.js 覆盖样式 */
+    .message-text pre code.hljs {
+      background: transparent;
+      padding: 0;
     }
 
     .message-text img {
@@ -2564,11 +3412,17 @@
       margin: 0.8em 0;
     }
 
-    /* ==================== 流式图片加载容器 ==================== */
+    /* ========== [高度/宽度限制] 流式图片加载容器 ==========
+       min-height: 400px 防止图片加载时的页面抖动
+       max-width: 100% 限制图片最大宽度
+       如需调整，修改下面的值
+    */
     .streaming-image-container {
       position: relative;
-      min-height: 200px;
-      max-width: 100%;
+      min-height: 400px;
+      /* [高度限制] 可调整此值 */
+      max-width: 800px;
+      /* [宽度限制] 可调整此值 */
       border-radius: var(--radius-md);
       margin: 0.8em 0;
       overflow: hidden;
@@ -2716,17 +3570,46 @@
     }
 
     .message-text table {
-      border-collapse: collapse;
+      border-collapse: separate;
+      border-spacing: 0;
       width: 100%;
       min-width: auto;
       margin: 1em 0;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      overflow: hidden;
     }
 
     .message-text table th,
     .message-text table td {
       border: 1px solid var(--border-color);
-      padding: 0.5em;
+      border-top: none;
+      border-left: none;
+      padding: 0.5em 0.75em;
       text-align: left;
+    }
+
+    /* 表格第一行单元格顶部边框 */
+    .message-text table tr:first-child th,
+    .message-text table tr:first-child td {
+      border-top: none;
+    }
+
+    /* 表格每行第一个单元格左边框 */
+    .message-text table th:first-child,
+    .message-text table td:first-child {
+      border-left: none;
+    }
+
+    /* 表格最后一列右边框 */
+    .message-text table th:last-child,
+    .message-text table td:last-child {
+      border-right: none;
+    }
+
+    /* 表格最后一行底边框 */
+    .message-text table tr:last-child td {
+      border-bottom: none;
     }
 
     .message-text table th {
@@ -2751,7 +3634,11 @@
     }
 
     [data-theme="light"] .message-text blockquote {
-      border-left-color: #D1D5DB;
+      border-left-color: var(--color-saturn-yellow);
+    }
+
+    [data-theme="light"] .message-text table {
+      border-color: #E5E7EB;
     }
 
     [data-theme="light"] .message-text table th {
@@ -2765,119 +3652,212 @@
 
 
 
-    /* ==================== Chain of Thought (Thinking) UI - 重构版 ==================== */
+    /* ==================== 时间轴思考UI (Timeline Thinking UI) ==================== */
 
-    /* 思考区域整体容器 - 与头像同行 */
-    .thinking-indicator {
+    /* 时间轴容器 */
+    .thinking-timeline {
       position: relative;
+      padding: var(--spacing-md) 0;
+      padding-left: 24px;
+      /* 为左侧时间轴线留出空间 */
       margin-bottom: var(--spacing-md);
-      padding-left: 0;
-      margin-top: -36px;
-      /* 将思考区域向上移动，与36px头像同行 */
     }
 
-    /* 思考头部区域 - 水平布局，在头像正右侧 */
-    .thinking-header {
+    /* 左侧垂直时间轴线 */
+    .thinking-timeline::before {
+      content: '';
+      position: absolute;
+      left: 8px;
+      top: 12px;
+      bottom: 12px;
+      width: 2px;
+      background: var(--border-color);
+      border-radius: 1px;
+    }
+
+    /* 步骤项 - 带渐入动画 */
+    .thinking-step {
+      position: relative;
       display: flex;
-      align-items: center;
-      gap: 8px;
-      padding-left: 44px;
-      /* 头像36px + 8px间距 = 44px */
-      height: 36px;
-      /* 与头像高度一致 */
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: var(--spacing-md);
+      min-height: 28px;
+      /* 渐入动画 */
+      opacity: 0;
+      transform: translateY(8px);
+      animation: step-fade-in 1s ease forwards;
     }
 
-    /* 预览文本容器 - 半透明灰色背景，两侧圆角 */
-    .thinking-preview {
-      display: inline-flex;
-      align-items: center;
-      padding: 4px 12px;
-      background: rgba(128, 128, 128, 0.25);
-      border-radius: 16px;
-      /* 两侧圆形的圆角矩形 */
-      max-width: 300px;
-      overflow: hidden;
+    /* 步骤渐入动画 - 依次延迟显示 */
+    .thinking-step:nth-child(1) {
+      animation-delay: 0s;
     }
 
-    .thinking-preview-text {
-      color: var(--text-secondary);
+    .thinking-step:nth-child(2) {
+      animation-delay: 1.5s;
+    }
+
+    .thinking-step:nth-child(3) {
+      animation-delay: 3s;
+    }
+
+    @keyframes step-fade-in {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* 历史消息不需要动画 */
+    .message .thinking-step {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+
+    .thinking-step:last-child {
+      margin-bottom: 0;
+    }
+
+    /* 步骤节点圆点 */
+    .thinking-step-node {
+      position: absolute;
+      left: -20px;
+      top: 4px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--border-color);
+      border: 2px solid var(--bg-primary);
+      z-index: 2;
+      transition: all 0.3s ease;
+    }
+
+    /* 节点状态：未开始 */
+    .thinking-step[data-status="pending"] .thinking-step-node {
+      background: var(--border-color);
+      opacity: 0.5;
+    }
+
+    /* 节点状态：进行中 - RAI主题色 + 呼吸灯 */
+    .thinking-step[data-status="active"] .thinking-step-node {
+      background: var(--color-saturn-yellow);
+      box-shadow: 0 0 8px var(--color-saturn-yellow);
+      animation: node-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes node-pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 4px var(--color-saturn-yellow);
+      }
+
+      50% {
+        box-shadow: 0 0 12px var(--color-saturn-yellow), 0 0 20px rgba(255, 193, 7, 0.4);
+      }
+    }
+
+    /* 节点状态：已完成 */
+    .thinking-step[data-status="done"] .thinking-step-node {
+      background: var(--text-tertiary);
+      opacity: 1;
+    }
+
+    /* 节点状态：深度思考（特殊紫色） */
+    .thinking-step[data-status="thinking"] .thinking-step-node {
+      background: #a855f7;
+      box-shadow: 0 0 8px #a855f7;
+      animation: node-pulse-purple 1.5s ease-in-out infinite;
+    }
+
+    @keyframes node-pulse-purple {
+
+      0%,
+      100% {
+        box-shadow: 0 0 4px #a855f7;
+      }
+
+      50% {
+        box-shadow: 0 0 12px #a855f7, 0 0 20px rgba(168, 85, 247, 0.4);
+      }
+    }
+
+    /* 步骤内容区域 */
+    .thinking-step-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* 步骤标题 */
+    .thinking-step-title {
       font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 1.4;
+      margin-bottom: 2px;
     }
 
-    /* 展开/收起按钮 - 圆形半透明灰色背景 */
-    .thinking-toggle-btn {
+    .thinking-step[data-status="pending"] .thinking-step-title {
+      color: var(--text-tertiary);
+    }
+
+    .thinking-step[data-status="active"] .thinking-step-title {
+      color: var(--text-primary);
+    }
+
+    /* 步骤详情 */
+    .thinking-step-detail {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .thinking-step[data-status="pending"] .thinking-step-detail {
+      color: var(--text-tertiary);
+      opacity: 0.6;
+    }
+
+    /* 深度思考折叠按钮 */
+    .deep-thinking-toggle {
       display: inline-flex;
       align-items: center;
-      justify-content: center;
-      gap: 4px;
-      padding: 4px 10px;
-      background: rgba(128, 128, 128, 0.25);
-      border: none;
-      border-radius: 16px;
+      gap: 6px;
+      padding: 6px 12px;
+      background: rgba(168, 85, 247, 0.15);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      border-radius: var(--radius-md);
+      color: #a855f7;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       transition: all 0.2s ease;
       user-select: none;
     }
 
-    .thinking-toggle-btn:hover {
-      background: rgba(128, 128, 128, 0.4);
+    .deep-thinking-toggle:hover {
+      background: rgba(168, 85, 247, 0.25);
+      border-color: rgba(168, 85, 247, 0.5);
     }
 
-    .thinking-toggle-btn .toggle-text {
-      color: var(--text-secondary);
-      font-size: 12px;
-      font-weight: 500;
-    }
-
-    .thinking-toggle-btn .toggle-icon {
-      width: 16px;
-      height: 16px;
-      color: var(--text-secondary);
+    .deep-thinking-toggle .toggle-icon {
       transition: transform 0.3s ease;
+      font-size: 14px;
     }
 
-    .thinking-toggle-btn.expanded .toggle-icon {
+    .deep-thinking-toggle.expanded .toggle-icon {
       transform: rotate(180deg);
     }
 
-    /* 仅箭头按钮模式 - 圆形 */
-    .thinking-toggle-btn.icon-only {
-      width: 28px;
-      height: 28px;
-      padding: 0;
-      border-radius: 50%;
-    }
-
-    /* 竖线样式 - 仅在展开模式显示，位于头像中心正下方 */
-    .thinking-line {
-      position: absolute;
-      left: 18px;
-      /* 头像36px的中心 = 18px */
-      top: 36px;
-      /* 从头像底部开始 */
-      width: 2px;
-      background: var(--text-tertiary);
-      opacity: 0;
-      height: 0;
-      transition: opacity 0.3s ease, height 0.3s ease;
-      pointer-events: none;
-    }
-
-    .thinking-line.visible {
-      opacity: 0.3;
-    }
-
-    /* 思考内容详情区域 - 展开模式 */
-    .thinking-content {
-      margin-top: var(--spacing-md);
-      padding: 0;
-      padding-left: 28px;
-      /* 在竖线右侧，18px + 10px间距 */
-      background: none;
-      border: none;
+    /* 深度思考内容区域 */
+    .deep-thinking-content {
+      margin-top: var(--spacing-sm);
+      padding: var(--spacing-md);
+      padding-left: var(--spacing-lg);
+      background: rgba(168, 85, 247, 0.05);
+      border-left: 2px solid rgba(168, 85, 247, 0.3);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
       color: var(--text-secondary);
       font-size: 13px;
       line-height: 1.75;
@@ -2889,12 +3869,123 @@
       transition: all 0.3s ease;
     }
 
-    .thinking-content.expanded {
+    .deep-thinking-content.expanded {
+      max-height: 50000px;
       opacity: 1;
-      max-height: none;
-      overflow: visible;
-      margin-bottom: var(--spacing-md);
+      overflow-y: auto;
     }
+
+    /* 深度思考内容滚动条 */
+    .deep-thinking-content::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .deep-thinking-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .deep-thinking-content::-webkit-scrollbar-thumb {
+      background: rgba(168, 85, 247, 0.3);
+      border-radius: 2px;
+    }
+
+    /* 思考句子 */
+    .thinking-sentence {
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .thinking-sentence strong {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    /* 正在输入指示器 */
+    .thinking-current-typing {
+      opacity: 0.85;
+    }
+
+    .thinking-current-typing::after {
+      content: '▊';
+      display: inline;
+      animation: cursor-blink 1s ease-in-out infinite;
+      color: #a855f7;
+      font-weight: normal;
+    }
+
+    @keyframes cursor-blink {
+
+      0%,
+      100% {
+        opacity: 0;
+      }
+
+      50% {
+        opacity: 1;
+      }
+    }
+
+    /* 隐藏旧样式 */
+    .thinking-indicator,
+    .thinking-header,
+    .thinking-preview,
+    .thinking-toggle-btn,
+    .thinking-line,
+    .thinking-content,
+    .sentence-display {
+      display: none !important;
+    }
+
+    /* 浅色主题适配 */
+    [data-theme="light"] .thinking-timeline::before {
+      background: var(--border-color);
+    }
+
+    [data-theme="light"] .deep-thinking-toggle {
+      background: rgba(168, 85, 247, 0.1);
+    }
+
+    [data-theme="light"] .deep-thinking-content {
+      background: rgba(168, 85, 247, 0.03);
+    }
+
+    /* 移动端适配 */
+    @media (max-width: 768px) {
+      .thinking-timeline {
+        padding-left: 20px;
+      }
+
+      .thinking-timeline::before {
+        left: 6px;
+      }
+
+      .thinking-step-node {
+        left: -17px;
+        width: 8px;
+        height: 8px;
+      }
+
+      .thinking-step-title {
+        font-size: 12px;
+      }
+
+      .thinking-step-detail {
+        font-size: 11px;
+      }
+
+      .deep-thinking-toggle {
+        padding: 4px 10px;
+        font-size: 11px;
+      }
+
+      .deep-thinking-content {
+        font-size: 12px;
+        padding: var(--spacing-sm);
+        padding-left: var(--spacing-md);
+      }
+    }
+
+    /* ==================== 旧样式保留（向后兼容历史消息） ==================== */
 
     /* 图片加载中占位符（流式渲染时使用） */
     .image-loading-placeholder {
@@ -2918,41 +4009,6 @@
       color: var(--error-color);
       font-size: 12px;
       margin: 4px 0;
-    }
-
-    /* 思考内容滚动条 */
-    .thinking-content::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    .thinking-content::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .thinking-content::-webkit-scrollbar-thumb {
-      background: var(--border-color);
-      border-radius: 2px;
-    }
-
-    .thinking-content::-webkit-scrollbar-thumb:hover {
-      background: var(--text-tertiary);
-    }
-
-    /* 思考内容中的句子 */
-    .thinking-sentence {
-      display: block;
-      margin-bottom: 8px;
-    }
-
-    /* **文本**格式加粗显示 */
-    .thinking-sentence strong {
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-
-    /* 隐藏旧的sentence-display，不再使用 */
-    .sentence-display {
-      display: none;
     }
 
     /* AI头像闪烁动画 - 思考时黄色光晕 */
@@ -2989,6 +4045,33 @@
       50% {
         transform: translateY(-4px);
       }
+    }
+
+    /* 围绕RAI logo的圆形加载圈动画 */
+    .ai-avatar.processing::after {
+      content: '';
+      position: absolute;
+      top: -4px;
+      left: -4px;
+      right: -4px;
+      bottom: -4px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      border-top-color: var(--color-saturn-yellow);
+      border-right-color: var(--color-saturn-yellow);
+      animation: loading-ring-spin 1s linear infinite;
+      pointer-events: none;
+    }
+
+    @keyframes loading-ring-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* 确保头像容器有相对定位 */
+    .message-avatar {
+      position: relative;
     }
 
     /* AI加载状态提示 */
@@ -4542,17 +5625,18 @@
       /* ==================== Chain of Thought UI 移动端优化 ==================== */
       .thinking-indicator {
         padding-left: 0;
-        margin-top: -32px;
-        /* 移动端头像稍小 */
+        /* ✅ 修复：移除负margin，避免遮挡用户消息 */
+        margin-top: 0;
       }
 
       .thinking-header {
-        padding-left: 40px;
-        /* 移动端头像32px + 8px间距 */
-        height: 32px;
+        padding-left: 14px;
+        /* 移动端与消息文本对齐 */
+        min-height: 28px;
       }
 
       .thinking-preview {
+        min-width: 100px;
         max-width: 200px;
         padding: 3px 10px;
       }
@@ -4575,14 +5659,14 @@
       }
 
       .thinking-line {
-        left: 16px;
+        left: 14px;
         /* 移动端头像中心 */
-        top: 32px;
+        top: 28px;
       }
 
       .thinking-content {
         padding: 0;
-        padding-left: 24px;
+        padding-left: 20px;
         /* 移动端在竖线右侧 */
         font-size: 12px;
         line-height: 1.6;
@@ -5176,9 +6260,308 @@
         transform: translateY(0);
       }
 
-      100% {
+    }
+
+    /* ==================== AI Smooth Fusion 流式动画 ==================== */
+
+    /* Fusion Reveal 动画：每个新字符的入场效果
+       0.8s持续时间 vs 12ms生成间隔 = 多个字符同时执行动画
+       创造"液体流动"般的视觉连续性
+    */
+    @keyframes fusionReveal {
+      0% {
         opacity: 0;
-        transform: translateY(-5px);
+        filter: blur(4px);
+        color: var(--fusion-highlight-color, #a5b4fc);
+      }
+
+      100% {
+        opacity: 1;
+        filter: blur(0);
+        color: inherit;
+      }
+    }
+
+    .streaming-char {
+      display: inline;
+      animation: fusionReveal 0.25s ease-out forwards;
+    }
+
+    /* 浅色主题适配 */
+    [data-theme="light"] .streaming-char {
+      --fusion-highlight-color: #6366f1;
+    }
+
+    /* Mermaid Inline Preview & Loading */
+    .mermaid-inline-wrapper {
+      margin: var(--spacing-md) 0;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+    }
+
+    .mermaid-inline-wrapper.rendered {
+      background: transparent;
+      border: none;
+    }
+
+    .mermaid-preview-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100px;
+      padding: var(--spacing-md);
+    }
+
+    .mermaid-preview-container svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .mermaid-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100px;
+      color: var(--text-tertiary);
+      font-size: 13px;
+    }
+
+    .mermaid-loading span {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 0.4;
+      }
+
+      50% {
+        opacity: 1;
+      }
+    }
+
+    /* ==================== Mermaid 内联工具栏 ==================== */
+    .mermaid-container {
+      position: relative;
+    }
+
+    .mermaid-toolbar {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 6px;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+      z-index: 10;
+    }
+
+    .mermaid-container:hover .mermaid-toolbar {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .mermaid-toolbar button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .mermaid-toolbar button:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .mermaid-toolbar button svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* ==================== Mermaid 全屏模态框 ==================== */
+    .mermaid-fullscreen-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.95);
+      z-index: 10000;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s ease, visibility 0.3s ease;
+    }
+
+    .mermaid-fullscreen-modal.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    /* 全屏顶部工具栏 */
+    .mermaid-fullscreen-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: rgba(30, 30, 30, 0.9);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      flex-shrink: 0;
+    }
+
+    .mermaid-fullscreen-toolbar-left,
+    .mermaid-fullscreen-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mermaid-fullscreen-toolbar-center {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mermaid-fullscreen-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mermaid-fullscreen-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: scale(1.05);
+    }
+
+    .mermaid-fullscreen-btn:active {
+      transform: scale(0.95);
+    }
+
+    .mermaid-fullscreen-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+      stroke: currentColor;
+    }
+
+    .mermaid-fullscreen-zoom-level {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 13px;
+      font-weight: 500;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    /* 全屏内容区域 */
+    .mermaid-fullscreen-content {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mermaid-fullscreen-wrapper {
+      position: absolute;
+      transform-origin: center center;
+      cursor: grab;
+      transition: transform 0.1s ease;
+      padding: 40px;
+    }
+
+    .mermaid-fullscreen-wrapper.dragging {
+      cursor: grabbing;
+      transition: none;
+    }
+
+    .mermaid-fullscreen-wrapper svg {
+      max-width: none;
+      max-height: none;
+    }
+
+    /* 全屏代码视图 */
+    .mermaid-fullscreen-code {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #1e1e1e;
+      padding: 20px;
+      overflow: auto;
+      display: none;
+    }
+
+    .mermaid-fullscreen-code.active {
+      display: block;
+    }
+
+    .mermaid-fullscreen-code pre {
+      margin: 0;
+      color: #9cdcfe;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* 响应式 - 移动端 */
+    @media (max-width: 768px) {
+      .mermaid-fullscreen-toolbar {
+        padding: 10px 12px;
+      }
+
+      .mermaid-fullscreen-btn {
+        width: 36px;
+        height: 36px;
+      }
+
+      .mermaid-fullscreen-btn svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .mermaid-fullscreen-zoom-level {
+        font-size: 12px;
+        min-width: 40px;
+      }
+
+      .mermaid-fullscreen-wrapper {
+        padding: 20px;
+      }
+
+      .mermaid-fullscreen-code {
+        padding: 12px;
+      }
+
+      .mermaid-fullscreen-code pre {
+        font-size: 12px;
       }
     }
   </style>
@@ -5313,7 +6696,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick</div>
+              <div class="logo-subtitle">by Rick · v0.85+</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -6361,10 +7744,13 @@
 ## 核心原则
 
 ### 诚实守信
-每一条陈述都必须真实、准确、可验证。绝不编造信息，始终保持诚实。如有不确定，坦诚告知。请勿就您目前不具备的能力做出承诺，确保所有承诺都在您实际可提供的范围内，以避免误导用户并损害信任。
+每一条陈述都必须真实、准确、可验证。
+每次回答前都要重新看一遍时间。
+绝不编造信息，始终保持诚实。如有不确定，坦诚告知。请勿就您目前不具备的能力做出承诺，确保所有承诺都在您实际可提供的范围内，以避免误导用户并损害信任。
 
 ### 语言风格
-始终保持耐心。用温和、友好的态度回应，绝不表现出不耐烦或敷衍。除非用户要求，否则不要使用表情符号和破折号连字符等。
+始终保持耐心。用温和、友好的态度回应，绝不表现出不耐烦或敷衍。
+除非用户要求，否则不要使用表情符号和破折号连字符等。
 
 ### 先理解后回应
 回复前先深入分析用户真实意图。结合上下文：简单问题给简洁答案；复杂问题给全面解释，必要时分步骤阐述。做出契合上下文的有用回复。
@@ -6373,7 +7759,9 @@
 专业且温和的语气。善用 Markdown 格式提升可读性。根据用户特点调整表达方式。
 
 ### 解决问题
-根据上下文做出契合的回复。提供可执行的解决方案，注重实用性。推理时使用**加粗标题**突出要点。主动思考并建议下一步行动。
+根据上下文做出契合的回复。
+提供可执行的解决方案，注重实用性。推理时使用**加粗标题**突出要点。
+主动思考并建议下一步行动。
 
 ### 道德准则
 绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。
@@ -6382,14 +7770,27 @@
 每次回复前注意用户当前时间，提供恰当的问候。深夜(23点后)或凌晨(5点前)时，以温馨关怀的方式温柔提醒用户注意休息。
 
 ### 图表运用
-在合适的时候，使用 Markdown 语法 ![描述](图片链接) 使用图片增强回复。网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。还可以使用图表、Mermaid图表等增强说明效果。
+在合适的时候，使用图片增强回复。需要使用 Markdown 语法 ![描述](图片链接) 网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。
+你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
+支持的图表类型:
+1. **流程图**: \`flowchart TD/LR\` - 用于流程、逻辑、决策
+2. **时序图**: \`sequenceDiagram\` - 用于交互、API调用流程
+3. **类图**: \`classDiagram\` - 用于面向对象设计
+4. **状态图**: \`stateDiagram-v2\` - 用于状态转换
+5. **ER图**: \`erDiagram\` - 用于数据库设计
+6. **甘特图**: \`gantt\` - 用于项目计划
+7. **饼图**: \`pie\` - 用于占比展示
+8. **思维导图**: \`mindmap\` - 用于知识梳理
+9. **用户旅程图**: \`journey\` - 用于用户体验分析
+10. **象限图**: \`quadrantChart\` - 用于四象限分析
+可以使用图片，Mermaid中适合类型的图表等增强说明效果。
 
 ---
 
 ## 格式要求
 
-1. **结构规范**：善用标题、列表和代码块，让内容层次分明、一目了然。
-2. **对话标题**：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出格式严格遵循：<<<标题>>>
+1. **结构规范**：善用Markdown、Mermaid，让内容层次分明、一目了然。
+2. **对话标题**：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出严格遵循格式：<<<标题>>>
 `;
     }
 
@@ -7319,7 +8720,14 @@
         }
       }
 
-      return '';
+      // ✅ 修复：如果没有"-"格式，尝试提取第一句有意义的文本
+      const firstMeaningful = rawContent.trim().split(/[\n.!?。！？]/)[0]?.trim();
+      if (firstMeaningful && firstMeaningful.length > 5) {
+        return firstMeaningful.length > 40 ? firstMeaningful.substring(0, 40) + '...' : firstMeaningful;
+      }
+
+      // ✅ 修复：返回默认文本而不是空字符串
+      return appState.language === 'zh-CN' ? 'AI 正在分析内容...' : 'AI is analyzing...';
     }
 
     // 更新预览文本
@@ -7330,6 +8738,9 @@
       if (previewEl && previewText) {
         previewEl.textContent = previewText;
         if (previewContainer) previewContainer.style.display = 'inline-flex';
+      } else if (previewContainer && !previewText) {
+        // ✅ 修复：如果没有预览文本，隐藏容器避免显示空条
+        previewContainer.style.display = 'none';
       }
     }
 
@@ -7794,6 +9205,9 @@
       // 🎨 渲染 Mermaid 图表
       setTimeout(() => renderMermaidCharts(), 100);
 
+      // 💻 处理代码块：添加语言标签、复制按钮、语法高亮
+      setTimeout(() => processCodeBlocks(container), 50);
+
       // 📍 更新对话索引导航器
       setTimeout(() => renderChatIndexTimeline(), 150);
     }
@@ -7822,78 +9236,96 @@
       const content = document.createElement('div');
       content.className = 'message-content';
 
-      if (message.reasoning_content && message.reasoning_content !== 'null' && message.reasoning_content.trim() !== '') {
-        const thinkingDiv = document.createElement('div');
-        thinkingDiv.className = 'thinking-indicator';
+      // 判断是否需要显示时间轴（有reasoning_content或internet_mode）
+      const hasReasoning = message.reasoning_content && message.reasoning_content !== 'null' && message.reasoning_content.trim() !== '';
+      const hasInternet = message.internet_mode || (message.sources && message.sources !== 'null');
 
+      if (message.role === 'assistant' && (hasReasoning || hasInternet)) {
+        const timelineDiv = document.createElement('div');
+        timelineDiv.className = 'thinking-timeline';
         const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-        // 获取预览文本（第一个 "- " 后的句子）
-        const previewText = parseThinkingPreview(message.reasoning_content);
-
-        // 创建思考头部区域
-        const thinkingHeader = document.createElement('div');
-        thinkingHeader.className = 'thinking-header';
-        thinkingHeader.innerHTML = `
-          <div class="thinking-preview" id="${thinkingId}-preview">
-            <span class="thinking-preview-text">${previewText || ''}</span>
-          </div>
-          <button class="thinking-toggle-btn icon-only" id="${thinkingId}-btn" data-thinking-id="${thinkingId}">
-            ${getSvgIcon('expand_more', 'toggle-icon', 16)}
-          </button>
-        `;
-
-        // 创建竖线
-        const thinkingLine = document.createElement('div');
-        thinkingLine.className = 'thinking-line';
-        thinkingLine.id = `${thinkingId}-line`;
-
-        // 创建思考内容
-        const thinkingContent = document.createElement('div');
-        thinkingContent.className = 'thinking-content';
-        thinkingContent.id = thinkingId;
-
-        // 将思考内容按句子分割显示（如果包含句号）
-        const sentences = message.reasoning_content.match(/[^.。!！?？]+[.。!！?？]+/g);
-        if (sentences && sentences.length > 0) {
-          sentences.forEach(sentence => {
-            const sentenceSpan = document.createElement('span');
-            sentenceSpan.className = 'thinking-sentence';
-            // 识别**文本**格式并转换为<strong>标签
-            const formattedText = sentence.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            sentenceSpan.innerHTML = formattedText;
-            thinkingContent.appendChild(sentenceSpan);
-          });
-
-          // 如果有剩余内容（没有句号结尾的部分），也添加进去
-          const remainingText = message.reasoning_content.slice(sentences.join('').length);
-          if (remainingText.trim()) {
-            const sentenceSpan = document.createElement('span');
-            sentenceSpan.className = 'thinking-sentence';
-            const formattedText = remainingText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            sentenceSpan.innerHTML = formattedText;
-            thinkingContent.appendChild(sentenceSpan);
-          }
-        } else {
-          // 如果没有句号分隔符，就直接显示全部内容
-          const formattedText = message.reasoning_content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-          thinkingContent.innerHTML = formattedText;
+        // 解析sources获取搜索信息
+        let sources = [];
+        if (message.sources && message.sources !== 'null') {
+          try {
+            sources = typeof message.sources === 'string' ? JSON.parse(message.sources) : message.sources;
+          } catch (e) { sources = []; }
         }
 
-        thinkingDiv.appendChild(thinkingHeader);
-        thinkingDiv.appendChild(thinkingLine);
-        thinkingDiv.appendChild(thinkingContent);
-        content.appendChild(thinkingDiv);
+        // 工具决策详情文本
+        const toolDetail = hasInternet && sources.length > 0
+          ? (appState.language === 'zh-CN' ? `联网搜索 → ${sources.length}条来源` : `Web search → ${sources.length} sources`)
+          : (appState.language === 'zh-CN' ? '已完成' : 'Completed');
 
-        // 为历史消息添加展开/收起事件监听
-        setTimeout(() => {
-          const toggleBtn = document.getElementById(`${thinkingId}-btn`);
-          if (toggleBtn) {
-            toggleBtn.addEventListener('click', function () {
-              toggleHistoryThinkingUI(thinkingId);
-            });
+        // 构建时间轴HTML
+        let timelineHtml = `
+          <!-- 步骤1: 分析问题 - 已完成 -->
+          <div class="thinking-step" data-status="done">
+            <div class="thinking-step-node"></div>
+            <div class="thinking-step-content">
+              <div class="thinking-step-title">${appState.language === 'zh-CN' ? 'RAI分析' : 'RAI Analysis'}</div>
+              <div class="thinking-step-detail">${toolDetail}</div>
+            </div>
+          </div>
+          
+          <!-- 步骤2: 生成回答 - 已完成 -->
+          <div class="thinking-step" data-status="done">
+            <div class="thinking-step-node"></div>
+            <div class="thinking-step-content">
+              <div class="thinking-step-title">${appState.language === 'zh-CN' ? '生成回答' : 'Generating Response'}</div>
+              <div class="thinking-step-detail">${appState.language === 'zh-CN' ? '已完成' : 'Completed'}</div>
+            </div>
+          </div>
+        `;
+
+        // 如果有深度思考内容，添加步骤3
+        if (hasReasoning) {
+          timelineHtml += `
+            <!-- 步骤3: 深度思考 - 已完成，可展开 -->
+            <div class="thinking-step" data-status="done">
+              <div class="thinking-step-node"></div>
+              <div class="thinking-step-content">
+                <button class="deep-thinking-toggle" id="${thinkingId}-toggle">
+                  <span>${appState.language === 'zh-CN' ? '深度思考' : 'Deep Thinking'}</span>
+                  <span class="toggle-icon">▼</span>
+                </button>
+                <div class="deep-thinking-content" id="${thinkingId}-content"></div>
+              </div>
+            </div>
+          `;
+        }
+
+        timelineDiv.innerHTML = timelineHtml;
+
+        // 填充深度思考内容
+        if (hasReasoning) {
+          const deepContent = timelineDiv.querySelector(`#${thinkingId}-content`);
+          const formattedText = message.reasoning_content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+          if (deepContent) {
+            deepContent.innerHTML = `<span class="thinking-sentence">${formattedText}</span>`;
           }
-        }, 0);
+
+          // 添加展开/收起事件监听
+          setTimeout(() => {
+            const toggleBtn = document.getElementById(`${thinkingId}-toggle`);
+            if (toggleBtn) {
+              toggleBtn.addEventListener('click', function () {
+                const contentEl = document.getElementById(`${thinkingId}-content`);
+                const isExpanded = contentEl.classList.contains('expanded');
+                if (isExpanded) {
+                  contentEl.classList.remove('expanded');
+                  this.classList.remove('expanded');
+                } else {
+                  contentEl.classList.add('expanded');
+                  this.classList.add('expanded');
+                }
+              });
+            }
+          }, 0);
+        }
+
+        content.appendChild(timelineDiv);
       }
 
       // 为用户消息添加附件预览（在文本之前显示）
@@ -8844,6 +10276,49 @@
       // 跟踪已加载的图片：URL -> DOM容器映射
       const loadedImageContainers = new Map();
 
+      // 🎨 Gemini 方式：使用骨架中预先创建的 Mermaid 预览容器
+      const mermaidPreviewContainer = aiMsgElement?.querySelector('#mermaidLivePreview');
+      let lastValidMermaidCode = ''; // 上次成功渲染的代码
+
+      // 🎨 从原始文本中提取 Mermaid 代码并尝试实时渲染（Gemini 方式）
+      async function tryRenderMermaidFromText(fullText) {
+        if (typeof mermaid === 'undefined' || !mermaidPreviewContainer) return;
+
+        // 提取 mermaid 代码块（支持未闭合的情况）
+        const mermaidRegex = /```mermaid\n([\s\S]*?)(```|$)/;
+        const match = fullText.match(mermaidRegex);
+
+        if (!match) {
+          // 没有 mermaid 代码块，隐藏预览
+          mermaidPreviewContainer.style.display = 'none';
+          return;
+        }
+
+        const code = match[1].trim();
+        if (!code || code === lastValidMermaidCode) return; // 代码没变化，跳过
+
+        // 显示容器
+        mermaidPreviewContainer.style.display = 'block';
+
+        try {
+          // 1. 先用 parse() 检查语法是否正确
+          await mermaid.parse(code);
+
+          // 2. 语法正确，渲染图表
+          const id = `mermaid-live-${Date.now()}`;
+          const { svg } = await mermaid.render(id, code);
+
+          mermaidPreviewContainer.innerHTML = svg;
+          mermaidPreviewContainer.classList.add('rendered');
+          lastValidMermaidCode = code;
+
+          console.log('✅ Mermaid 实时渲染成功');
+        } catch (err) {
+          // 语法错误，保持上一次的渲染结果
+          console.debug('⏳ Mermaid 语法不完整，保持上一帧');
+        }
+      }
+
       // 节流更新函数（保留已加载图片状态）
       function throttledUpdate(content) {
         if (!textDiv) return;
@@ -8879,7 +10354,7 @@
         // 2. 渲染新内容（流式模式）
         textDiv.innerHTML = renderMarkdownWithMath(content, true);
 
-        // 3. 用保存的容器替换新创建的容器
+        // 3. 用保存的容器替换新创建的容器（图片）
         const newContainers = textDiv.querySelectorAll('.streaming-image-container');
         newContainers.forEach(container => {
           const src = container.getAttribute('data-src');
@@ -8901,6 +10376,9 @@
             }
           }
         });
+
+        // 4. 🎨 Gemini 方式：从原始文本中提取 Mermaid 代码并实时渲染到持久容器
+        tryRenderMermaidFromText(content);
       }
 
       try {
@@ -8989,6 +10467,13 @@
         aiMsg.content = appState.language === 'zh-CN' ? '生成失败，请重试' : 'Generation failed, please retry';
       } finally {
         appState.isStreaming = false;
+
+        // 🎨 清理持久的 Mermaid 预览容器（最终渲染会创建正式的容器）
+        if (mermaidPreviewContainer) {
+          mermaidPreviewContainer.remove();
+          mermaidPreviewContainer = null;
+        }
+
         // 最终完整渲染一次，确保所有内容正确显示（包括来源、模型标签等）
         renderMessages();
         // 重新加载消息以获取数据库ID
@@ -9299,21 +10784,40 @@
           <div class="search-status" id="searchStatus" style="display: none;">
             <span id="searchStatusText">正在分析问题...</span>
           </div>
-          <div class="thinking-indicator" id="thinkingIndicator" style="display: none;">
-            <!-- 思考头部区域：预览 + 展开按钮 -->
-            <div class="thinking-header">
-              <div class="thinking-preview" id="thinkingPreview">
-                <span class="thinking-preview-text" id="thinkingPreviewText"></span>
+          
+          <!-- 新版时间轴思考UI -->
+          <div class="thinking-timeline" id="thinkingTimeline" style="display: none;">
+            <!-- 步骤1: 分析问题 -->
+            <div class="thinking-step" id="stepToolDecision" data-status="pending">
+              <div class="thinking-step-node"></div>
+              <div class="thinking-step-content">
+                <div class="thinking-step-title">${appState.language === 'zh-CN' ? 'RAI正在分析问题' : 'RAI Analyzing'}</div>
+                <div class="thinking-step-detail" id="toolDecisionDetail"></div>
               </div>
-              <button class="thinking-toggle-btn icon-only" id="thinkingToggleBtn" data-thinking-id="thinkingContent">
-                ${getSvgIcon('expand_more', 'toggle-icon', 16)}
-              </button>
             </div>
-            <!-- 竖线 -->
-            <div class="thinking-line" id="thinkingLine"></div>
-            <!-- 思考内容 -->
-            <div class="thinking-content" id="thinkingContent"></div>
+            
+            <!-- 步骤2: 生成回答 -->
+            <div class="thinking-step" id="stepGenerating" data-status="pending">
+              <div class="thinking-step-node"></div>
+              <div class="thinking-step-content">
+                <div class="thinking-step-title">${appState.language === 'zh-CN' ? '生成回答' : 'Generating Response'}</div>
+                <div class="thinking-step-detail" id="generatingDetail"></div>
+              </div>
+            </div>
+            
+            <!-- 步骤3: 深度思考 (仅在思考模式下显示) -->
+            <div class="thinking-step" id="stepDeepThinking" data-status="pending" style="${appState.thinkingMode ? '' : 'display: none;'}">
+              <div class="thinking-step-node"></div>
+              <div class="thinking-step-content">
+                <button class="deep-thinking-toggle" id="deepThinkingToggle">
+                  <span>${appState.language === 'zh-CN' ? '深度思考' : 'Deep Thinking'}</span>
+                  <span class="toggle-icon">▼</span>
+                </button>
+                <div class="deep-thinking-content" id="deepThinkingContent"></div>
+              </div>
+            </div>
           </div>
+          
           <div class="message-text" id="streamingContent"></div>
         </div>
       `;
@@ -9324,21 +10828,50 @@
       }
 
       // 添加思考折叠功能的事件监听器
-      const thinkingToggleBtn = aiMsgDiv.querySelector('.thinking-toggle-btn');
-      if (thinkingToggleBtn) {
-        thinkingToggleBtn.addEventListener('click', function () {
-          const id = this.getAttribute('data-thinking-id');
-          toggleThinkingUIMode(id);
+      // 添加深度思考折叠功能的事件监听器
+      const deepThinkingToggle = aiMsgDiv.querySelector('#deepThinkingToggle');
+      if (deepThinkingToggle) {
+        deepThinkingToggle.addEventListener('click', function () {
+          const content = aiMsgDiv.querySelector('#deepThinkingContent');
+          const isExpanded = content.classList.contains('expanded');
+
+          if (isExpanded) {
+            content.classList.remove('expanded');
+            this.classList.remove('expanded');
+          } else {
+            content.classList.add('expanded');
+            this.classList.add('expanded');
+          }
         });
       }
 
       scrollToBottom();
 
+      // 时间轴元素引用
+      const thinkingTimeline = aiMsgDiv.querySelector('#thinkingTimeline');
+      const stepToolDecision = aiMsgDiv.querySelector('#stepToolDecision');
+      const stepGenerating = aiMsgDiv.querySelector('#stepGenerating');
+      const stepDeepThinking = aiMsgDiv.querySelector('#stepDeepThinking');
+      const toolDecisionDetail = aiMsgDiv.querySelector('#toolDecisionDetail');
+      const generatingDetail = aiMsgDiv.querySelector('#generatingDetail');
+      const deepThinkingContent = aiMsgDiv.querySelector('#deepThinkingContent');
+
+      // 更新步骤状态的辅助函数
+      function updateStepStatus(element, status, detail = '') {
+        if (!element) return;
+        element.setAttribute('data-status', status);
+        const detailEl = element.querySelector('.thinking-step-detail');
+        if (detailEl && detail) {
+          detailEl.textContent = detail;
+        }
+      }
+
       let fullContent = '';
       let reasoningContent = '';
       let thinkingSentences = [];
       let isThinkingPhase = false;
-      let currentSources = [];  // 新增：存储联网搜索来源
+      let currentSources = [];  // 存储联网搜索来源
+      let currentSearchQuery = '';  // 存储搜索词供时间轴显示和保存
 
       try {
         const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -9393,12 +10926,245 @@
         const decoder = new TextDecoder();
         let buffer = '';
 
+        // 显示时间轴并初始化状态
+        if (thinkingTimeline) {
+          thinkingTimeline.style.display = 'block';
+          updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN' ? '正在判断...' : 'Deciding...');
+        }
+
+        // 隐藏加载状态
+        const loadingStatus = document.getElementById('loadingStatus');
+        if (loadingStatus) loadingStatus.style.display = 'none';
+
         const streamingEl = document.getElementById('streamingContent');
-        const thinkingEl = document.getElementById('thinkingContent');
-        const thinkingIndicator = document.getElementById('thinkingIndicator');
         const aiAvatar = aiMsgDiv.querySelector('.ai-avatar');
 
-        // 用于逐句显示思考内容 - 识别**文本**格式
+        // 🎨 多图防抖动缓存（状态外置 + 缓存注入）
+        const lastValidMermaids = {}; // 格式: { "0": "code...", "1": "code..." }
+        const renderedSvgs = {};      // 格式: { "0": "<svg>...</svg>", "1": "<svg>...</svg>" }
+
+        // ==================== AI Smooth Fusion 渲染队列 ====================
+        let charRenderQueue = [];  // 字符渲染队列
+        let charRenderTimer = null;  // 渲染定时器
+        let isCharRendering = false;  // 渲染状态
+        let displayedContent = '';  // 已显示的内容
+        let lastMarkdownRender = 0;  // 上次 Markdown 渲染时间
+        let lastMermaidRender = 0;  // 上次 Mermaid 渲染时间
+        const CHAR_RENDER_INTERVAL = 12;  // 字符渲染间隔 (ms)
+        const MARKDOWN_RENDER_INTERVAL = 700;  // Markdown 渲染间隔 (ms) - 足够让动画可见
+        const MERMAID_RENDER_INTERVAL = 500;  // 🎨 Mermaid 渲染间隔 (ms) - 更快以实现实时效果
+        const MAX_ANIMATED_CHARS = 5;  // 最多同时动画的字符数
+
+        // 对最后 N 个字符添加动画效果
+        function applyCharAnimations(container) {
+          if (!container) return;
+
+          // 获取所有文本节点
+          const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+          const textNodes = [];
+          let node;
+          while (node = walker.nextNode()) {
+            if (node.textContent.trim()) textNodes.push(node);
+          }
+
+          if (textNodes.length === 0) return;
+
+          // 获取最后一个有内容的文本节点
+          const lastTextNode = textNodes[textNodes.length - 1];
+          const text = lastTextNode.textContent;
+
+          if (text.length <= MAX_ANIMATED_CHARS) {
+            // 整个节点都需要动画
+            const wrapper = document.createElement('span');
+            wrapper.className = 'streaming-char';
+            wrapper.textContent = text;
+            lastTextNode.parentNode.replaceChild(wrapper, lastTextNode);
+          } else {
+            // 只对最后 N 个字符添加动画
+            const normalText = text.slice(0, -MAX_ANIMATED_CHARS);
+            const animatedText = text.slice(-MAX_ANIMATED_CHARS);
+
+            const fragment = document.createDocumentFragment();
+            fragment.appendChild(document.createTextNode(normalText));
+
+            const animSpan = document.createElement('span');
+            animSpan.className = 'streaming-char';
+            animSpan.textContent = animatedText;
+            fragment.appendChild(animSpan);
+
+            lastTextNode.parentNode.replaceChild(fragment, lastTextNode);
+          }
+        }
+
+        // 执行 Markdown 渲染 + 动画 + Citations + 🎨 内联 Mermaid 替换
+        function renderStreamingContent() {
+          if (!streamingEl || !displayedContent) return;
+
+          const contentToDisplay = displayedContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+          let html = renderMarkdownWithMath(contentToDisplay, true);
+
+          // 处理 citations（如果有 sources）
+          if (currentSources && currentSources.length > 0) {
+            html = renderCitations(html, currentSources);
+          }
+
+          // 🎨 核心逻辑：将 Mermaid 代码块就地替换为图表容器（缓存注入）
+          let diagramCount = 0;
+          html = html.replace(
+            /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
+            (match, codeContent) => {
+              const currentId = diagramCount++;
+
+              // 解码 HTML 实体
+              const decodedCode = codeContent
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .trim();
+
+              // 从缓存获取 SVG（如果没有，显示加载动画）
+              const cachedSVG = renderedSvgs[currentId] || `
+                <div class="mermaid-loading"><span>图表 ${currentId + 1} 渲染中...</span></div>
+              `;
+
+              // 返回内联图表容器（隐藏代码，只显示图表）
+              return `
+                <div class="mermaid-inline-wrapper" data-mermaid-index="${currentId}" data-mermaid-code="${encodeURIComponent(decodedCode)}">
+                  <div class="mermaid-preview-container">
+                    ${cachedSVG}
+                  </div>
+                </div>
+              `;
+            }
+          );
+
+          streamingEl.innerHTML = html;
+          applyCharAnimations(streamingEl);
+
+          // 🎨 异步渲染所有图表
+          const now = Date.now();
+          if (now - lastMermaidRender >= MERMAID_RENDER_INTERVAL) {
+            tryRenderMermaidLive();
+            lastMermaidRender = now;
+          }
+
+          // 💻 实时处理代码块：添加语言标签、复制按钮、语法高亮
+          processCodeBlocksStreaming(streamingEl);
+
+          scrollToBottom();
+        }
+
+        // 🎨 多图防抖动：查找内联 Mermaid 容器并异步渲染
+        async function tryRenderMermaidLive() {
+          if (typeof mermaid === 'undefined' || !streamingEl) return;
+
+          // 查找所有内联的 Mermaid 包装容器
+          const wrappers = streamingEl.querySelectorAll('.mermaid-inline-wrapper');
+          if (wrappers.length === 0) return;
+
+          // 遍历每个内联容器
+          wrappers.forEach((wrapper) => {
+            const index = parseInt(wrapper.getAttribute('data-mermaid-index'), 10);
+            const code = decodeURIComponent(wrapper.getAttribute('data-mermaid-code') || '');
+
+            if (!code || isNaN(index)) return;
+
+            // 跳过未变化的代码（防抖核心）
+            if (code === lastValidMermaids[index]) return;
+
+            // 异步渲染（不阻塞主流程）
+            (async () => {
+              try {
+                // 1. 预检查语法
+                await mermaid.parse(code);
+
+                // 2. 渲染 SVG
+                const svgId = `mermaid-inline-svg-${index}-${Date.now()}`;
+                const { svg } = await mermaid.render(svgId, code);
+
+                // 3. 缓存结果
+                renderedSvgs[index] = svg;
+                lastValidMermaids[index] = code;
+
+                // 4. 直接更新内联容器的 DOM（如果它还存在）
+                const currentWrapper = streamingEl.querySelector(`.mermaid-inline-wrapper[data-mermaid-index="${index}"]`);
+                if (currentWrapper) {
+                  const previewContainer = currentWrapper.querySelector('.mermaid-preview-container');
+                  if (previewContainer) {
+                    previewContainer.innerHTML = svg;
+                    currentWrapper.classList.add('rendered');
+                  }
+                }
+                // console.log(`✅ Mermaid 图表 #${index + 1} 实时渲染成功`);
+              } catch (err) {
+                // 渲染失败：保持上一帧（缓存中的 SVG 会在下次 renderStreamingContent 时自动注入）
+                // console.debug(`⏳ Mermaid 图表 #${index + 1} 语法不完整，保持上一帧`);
+              }
+            })();
+          });
+        }
+
+        // 字符级渲染消费者
+        function processCharQueue() {
+          if (charRenderQueue.length > 0) {
+            // 批量处理队列中的字符
+            const char = charRenderQueue.shift();
+            displayedContent += char;
+
+            // 节流 Markdown 渲染：每 100ms 渲染一次
+            const now = Date.now();
+            if (now - lastMarkdownRender >= MARKDOWN_RENDER_INTERVAL) {
+              renderStreamingContent();
+              lastMarkdownRender = now;
+            }
+
+            charRenderTimer = setTimeout(processCharQueue, CHAR_RENDER_INTERVAL);
+          } else {
+            // 队列空，执行最终渲染确保内容完整
+            if (displayedContent) {
+              renderStreamingContent();
+            }
+            charRenderTimer = setTimeout(processCharQueue, 20);
+          }
+        }
+
+        // 停止字符渲染
+        function stopCharRender() {
+          if (charRenderTimer) {
+            clearTimeout(charRenderTimer);
+            charRenderTimer = null;
+          }
+          isCharRendering = false;
+          // 最终渲染确保 Markdown 完整（包含 citations 和 Mermaid）
+          if (displayedContent && streamingEl) {
+            const contentToDisplay = displayedContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+            let html = renderMarkdownWithMath(contentToDisplay, true);
+
+            // 处理 citations
+            if (currentSources && currentSources.length > 0) {
+              html = renderCitations(html, currentSources);
+            }
+
+            streamingEl.innerHTML = html;
+
+            // 移除所有动画类（流结束）
+            streamingEl.querySelectorAll('.streaming-char').forEach(el => {
+              el.classList.remove('streaming-char');
+            });
+
+
+
+            // 渲染 Mermaid 图表
+            setTimeout(() => renderMermaidCharts(), 100);
+
+            // 💻 处理代码块：添加语言标签、复制按钮、语法高亮
+            setTimeout(() => processCodeBlocks(streamingEl?.closest('.message')), 50);
+          }
+        }
+        // ==================== 渲染队列结束 ====================
+
         function appendThinkingSentence(sentence) {
           if (!thinkingEl || !sentence.trim()) return;
 
@@ -9430,23 +11196,30 @@
               const parsed = JSON.parse(data);
 
               if (parsed.type === 'reasoning') {
-                // 进入思考阶段
+                // 进入深度思考阶段
                 if (!isThinkingPhase) {
                   isThinkingPhase = true;
 
-                  // 更新加载状态文本为推理中
+                  // 显示时间轴
+                  if (thinkingTimeline) thinkingTimeline.style.display = 'block';
+
+                  // 更新步骤状态：工具决策完成，深度思考进行中
+                  updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '已完成判断' : 'Completed');
+                  updateStepStatus(stepDeepThinking, 'thinking', '');
+
+                  // 显示深度思考步骤（如果之前隐藏了）
+                  if (stepDeepThinking) stepDeepThinking.style.display = '';
+
+                  // 更新加载状态文本
                   const loadingStatusText = document.getElementById('loadingStatusText');
                   if (loadingStatusText) {
-                    loadingStatusText.textContent = appState.language === 'zh-CN' ? '推理中...' : 'Reasoning...';
+                    loadingStatusText.textContent = appState.language === 'zh-CN' ? '深度思考中...' : 'Deep Thinking...';
                   }
-
-                  // 显示思考区域
-                  if (thinkingIndicator) thinkingIndicator.style.display = 'block';
 
                   // 添加AI头像闪烁效果
                   if (aiAvatar) {
                     aiAvatar.classList.add('thinking');
-                    aiAvatar.classList.remove('processing');  // 停止缓动
+                    aiAvatar.classList.remove('processing');
                   }
 
                   // 隐藏加载状态提示
@@ -9456,32 +11229,28 @@
 
                 reasoningContent += parsed.content;
 
-                // 如果是展开模式，持续更新竖线高度
-                if (appState.thinkingUIMode === 'expanded') {
-                  updateThinkingLine('thinkingContent');
+                // 实时更新深度思考内容
+                if (deepThinkingContent) {
+                  // 获取或创建正在输入的临时元素
+                  let currentTyping = deepThinkingContent.querySelector('.thinking-current-typing');
+                  if (!currentTyping) {
+                    currentTyping = document.createElement('span');
+                    currentTyping.className = 'thinking-sentence thinking-current-typing';
+                    deepThinkingContent.appendChild(currentTyping);
+                  }
+
+                  // 格式化并显示内容
+                  const formattedText = reasoningContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                  currentTyping.innerHTML = formattedText;
+
+                  // 如果深度思考区域已展开，滚动到底部
+                  if (deepThinkingContent.classList.contains('expanded')) {
+                    deepThinkingContent.scrollTop = deepThinkingContent.scrollHeight;
+                  }
                 }
 
-                // 解析预览文本并更新（取第一个 "- " 后的句子）
-                const previewText = parseThinkingPreview(reasoningContent);
-                if (previewText && appState.thinkingUIMode === 'collapsed') {
-                  updateThinkingPreview(previewText);
-                }
 
-                // 检测句号（中英文），逐句显示到展开内容区域
-                const sentenceRegex = /[^.。!！?？]+[.。!！?？]+/g;
-                const matches = reasoningContent.match(sentenceRegex);
-
-                if (matches) {
-                  const newSentences = matches.slice(thinkingSentences.length);
-                  newSentences.forEach(sentence => {
-                    appendThinkingSentence(sentence);
-                    thinkingSentences.push(sentence);
-                  });
-
-                  // 移除已显示的句子，保留未完成的部分
-                  const displayedText = thinkingSentences.join('');
-                  reasoningContent = reasoningContent.slice(displayedText.length);
-                }
+                scrollToBottom();
               }
               else if (parsed.type === 'content') {
                 // 隐藏加载状态提示（首次收到内容时）
@@ -9489,47 +11258,53 @@
                   const loadingStatus = document.getElementById('loadingStatus');
                   if (loadingStatus) loadingStatus.style.display = 'none';
                   if (aiAvatar) aiAvatar.classList.remove('processing');
+
+                  // 非思考模式：直接更新步骤状态
+                  if (stepToolDecision.getAttribute('data-status') !== 'done') {
+                    updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '已完成判断' : 'Completed');
+                    // 隐藏深度思考步骤（非思考模式）
+                    if (stepDeepThinking && !appState.thinkingMode) {
+                      stepDeepThinking.style.display = 'none';
+                    }
+                    updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在生成...' : 'Generating...');
+                  }
                 }
 
-                // 思考阶段结束
+                // 思考阶段结束，开始生成正文
                 if (isThinkingPhase) {
                   isThinkingPhase = false;
 
-                  // 显示剩余的思考内容
-                  if (reasoningContent.trim()) {
-                    appendThinkingSentence(reasoningContent);
-                  }
-
-                  // 停止AI头像闪烁
-                  if (aiAvatar) aiAvatar.classList.remove('thinking');
-
-                  // 思考完成后，确保预览仍然可见（如果是简洁模式）
-                  const previewContainer = document.getElementById('thinkingPreview');
-                  const toggleBtn = document.getElementById('thinkingToggleBtn');
-
-                  if (appState.thinkingUIMode === 'collapsed') {
-                    // 简洁模式：确保预览和展开按钮可见
-                    if (previewContainer) previewContainer.style.display = 'inline-flex';
-                    if (toggleBtn) {
-                      toggleBtn.classList.remove('expanded');
-                      toggleBtn.classList.add('icon-only');
+                  // 移除深度思考中的临时输入元素
+                  if (deepThinkingContent) {
+                    const currentTyping = deepThinkingContent.querySelector('.thinking-current-typing');
+                    if (currentTyping) {
+                      // 将临时内容转为正式内容
+                      currentTyping.classList.remove('thinking-current-typing');
                     }
                   }
 
-                  // 最后更新一次竖线高度
-                  if (appState.thinkingUIMode === 'expanded') {
-                    setTimeout(() => updateThinkingLine('thinkingContent'), 500);
-                  }
+                  // 更新步骤状态：深度思考完成，生成回答进行中
+                  updateStepStatus(stepDeepThinking, 'done', appState.language === 'zh-CN' ? '思考完成' : 'Completed');
+                  updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在组织语言...' : 'Organizing response...');
+
+                  // 停止AI头像闪烁
+                  if (aiAvatar) aiAvatar.classList.remove('thinking');
                 }
 
-                // 现在开始显示正文
+                // 现在开始显示正文 - 使用字符级渲染队列
                 fullContent += parsed.content;
-                if (streamingEl) {
-                  const contentToDisplay = fullContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
-                  // 使用renderMarkdownWithMath渲染Markdown和数学公式（流式模式：用占位符替代图片）
-                  streamingEl.innerHTML = renderMarkdownWithMath(contentToDisplay, true);
+
+                // 将新字符推入渲染队列（而非直接渲染整个内容）
+                const newChars = parsed.content;
+                for (const char of newChars) {
+                  charRenderQueue.push(char);
                 }
-                scrollToBottom();
+
+                // 启动渲染消费者（如果尚未启动）
+                if (!isCharRendering) {
+                  isCharRendering = true;
+                  processCharQueue();
+                }
               }
               else if (parsed.type === 'title') {
                 // 处理标题更新
@@ -9558,85 +11333,60 @@
                   console.log(`📥 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
                 }
               }
-              // 🔍 新增：处理搜索状态
+              // 🔍 处理搜索状态 - 更新到时间轴第一步
               else if (parsed.type === 'search_status') {
-                const searchStatusEl = document.getElementById('searchStatus');
-                const searchStatusText = document.getElementById('searchStatusText');
-
-                if (searchStatusEl && searchStatusText) {
-                  // 显示搜索状态区域
-                  searchStatusEl.style.display = 'flex';
-
-                  // 根据状态更新显示
-                  if (parsed.status === 'analyzing') {
-                    searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? '<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-4h2v2h-2zm1.61-9.96c-2.06-.3-3.88.97-4.43 2.79-.18.58.26 1.17.87 1.17h.2c.41 0 .74-.29.88-.67.32-.89 1.27-1.5 2.3-1.28.95.2 1.65 1.13 1.57 2.1-.1 1.34-1.62 1.63-2.45 2.88 0 .01-.01.01-.01.02-.01.02-.02.03-.03.05-.09.15-.18.32-.25.5-.01.03-.03.05-.04.08-.01.02-.01.04-.02.07-.12.34-.2.75-.2 1.25h2c0-.42.11-.77.28-1.07.02-.03.03-.06.05-.09.08-.14.18-.27.28-.39.01-.01.02-.03.03-.04.1-.12.21-.23.33-.34.96-.91 2.26-1.65 1.99-3.56-.24-1.74-1.61-3.21-3.35-3.47z"/></svg> AI 正在分析问题，生成搜索关键词...</span>'
-                      : '<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-4h2v2h-2zm1.61-9.96c-2.06-.3-3.88.97-4.43 2.79-.18.58.26 1.17.87 1.17h.2c.41 0 .74-.29.88-.67.32-.89 1.27-1.5 2.3-1.28.95.2 1.65 1.13 1.57 2.1-.1 1.34-1.62 1.63-2.45 2.88 0 .01-.01.01-.01.02-.01.02-.02.03-.03.05-.09.15-.18.32-.25.5-.01.03-.03.05-.04.08-.01.02-.01.04-.02.07-.12.34-.2.75-.2 1.25h2c0-.42.11-.77.28-1.07.02-.03.03-.06.05-.09.08-.14.18-.27.28-.39.01-.01.02-.03.03-.04.1-.12.21-.23.33-.34.96-.91 2.26-1.65 1.99-3.56-.24-1.74-1.61-3.21-3.35-3.47z"/></svg> AI analyzing question, generating search keywords...</span>';
-                  } else if (parsed.status === 'searching') {
-                    const query = parsed.query || '';
-                    // 显示AI输入的搜索关键词，带打字动画效果
-                    searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? `<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> AI 搜索工具输入:</span> <span class="search-query typewriter">${query}</span>`
-                      : `<span class="search-label"><svg class="search-label-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> AI Search Tool Input:</span> <span class="search-query typewriter">${query}</span>`;
-
-                    // 打字动画效果
-                    const querySpan = searchStatusText.querySelector('.search-query');
-                    if (querySpan) {
-                      querySpan.style.setProperty('--query-length', query.length);
-                    }
-                  } else if (parsed.status === 'complete') {
-                    const resultCount = parsed.resultCount || 0;
-                    const query = parsed.query || '';
-                    searchStatusEl.classList.add('complete');
-                    searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? `<span class="search-label"><svg class="search-label-icon success" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> 搜索完成:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 找到 ${resultCount} 条结果</span>`
-                      : `<span class="search-label"><svg class="search-label-icon success" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> Search complete:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ Found ${resultCount} results</span>`;
-
-                    // 3秒后隐藏搜索状态
-                    setTimeout(() => {
-                      if (searchStatusEl) {
-                        searchStatusEl.style.opacity = '0';
-                        setTimeout(() => {
-                          searchStatusEl.style.display = 'none';
-                          searchStatusEl.style.opacity = '1';
-                          searchStatusEl.classList.remove('complete');
-                        }, 300);
-                      }
-                    }, 3000);
-                  } else if (parsed.status === 'no_results') {
-                    const query = parsed.query || '';
-                    searchStatusText.innerHTML = appState.language === 'zh-CN'
-                      ? `<span class="search-label"><svg class="search-label-icon warning" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg> 搜索:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ 未找到结果</span>`
-                      : `<span class="search-label"><svg class="search-label-icon warning" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg> Search:</span> <span class="search-query">${query}</span> <span class="search-result-count">→ No results</span>`;
-
-                    // 3秒后隐藏搜索状态
-                    setTimeout(() => {
-                      if (searchStatusEl) {
-                        searchStatusEl.style.opacity = '0';
-                        setTimeout(() => {
-                          searchStatusEl.style.display = 'none';
-                          searchStatusEl.style.opacity = '1';
-                        }, 300);
-                      }
-                    }, 3000);
-                  }
-
-                  console.log(`🔍 搜索状态: ${parsed.status}`, parsed.query || '');
+                if (parsed.status === 'analyzing') {
+                  // 正在分析是否需要搜索
+                  updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN' ? '正在分析问题...' : 'Analyzing...');
+                } else if (parsed.status === 'searching') {
+                  // 保存搜索词供后续使用
+                  currentSearchQuery = parsed.query || '';
+                  // 决定使用搜索工具，显示搜索词
+                  updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN'
+                    ? `联网搜索: "${currentSearchQuery}"`
+                    : `Web search: "${currentSearchQuery}"`);
+                } else if (parsed.status === 'complete') {
+                  const resultCount = parsed.resultCount || 0;
+                  currentSearchQuery = parsed.query || currentSearchQuery || '';
+                  // 搜索完成
+                  updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN'
+                    ? `搜索完成 → ${resultCount}条结果`
+                    : `Search done → ${resultCount} results`);
+                  // 开始生成回答
+                  updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在生成...' : 'Generating...');
+                } else if (parsed.status === 'no_search') {
+                  // 不需要搜索
+                  updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '不需要联网' : 'No search needed');
+                } else if (parsed.status === 'no_results') {
+                  currentSearchQuery = parsed.query || currentSearchQuery || '';
+                  // 搜索无结果
+                  updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN'
+                    ? `搜索完成 → 无结果`
+                    : `Search done → No results`);
                 }
                 scrollToBottom();
               }
               else if (parsed.type === 'done') {
                 console.log('✅ 流式响应完成');
+
+                // 停止字符渲染队列
+                stopCharRender();
+
+                // 更新步骤状态：生成回答完成
+                updateStepStatus(stepGenerating, 'done', appState.language === 'zh-CN' ? '生成完成' : 'Completed');
+
                 // 停止AI头像闪烁
                 if (aiAvatar) aiAvatar.classList.remove('thinking');
               }
               else if (parsed.type === 'cancelled') {
                 console.log('⚠️ 响应已取消');
+                stopCharRender();  // 停止字符渲染
                 // 停止AI头像闪烁
                 if (aiAvatar) aiAvatar.classList.remove('thinking');
                 break;
               }
               else if (parsed.type === 'error') {
+                stopCharRender();  // 停止字符渲染
                 // 停止AI头像闪烁
                 if (aiAvatar) aiAvatar.classList.remove('thinking');
                 alert((appState.language === 'zh-CN' ? 'AI服务错误: ' : 'AI Service Error: ') + (parsed.error || '未知错误'));
