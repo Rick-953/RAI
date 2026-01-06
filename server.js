@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const https = require('https');  // 用于网页搜索
 
 const app = express();
+app.set('trust proxy', true);  // 信任nginx/反向代理的X-Forwarded-For头
 const PORT = process.env.PORT || 3009;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -105,36 +106,6 @@ const defaultKeywords = {
         'complex', 'imaginary', 'eigenspace', 'determinant', 'rank'
     ]
 };
-
-// ==================== Mermaid 图表生成指南 ====================
-// 这个指南会自动附加到 system prompt，教导 AI 如何生成图表
-const MERMAID_CHART_GUIDE = `
-
-## 图表生成能力
-
-你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
-
-### 支持的图表类型:
-
-1. **流程图**: \`flowchart TD/LR\` - 用于流程、逻辑、决策
-2. **时序图**: \`sequenceDiagram\` - 用于交互、API调用流程
-3. **类图**: \`classDiagram\` - 用于面向对象设计
-4. **状态图**: \`stateDiagram-v2\` - 用于状态转换
-5. **ER图**: \`erDiagram\` - 用于数据库设计
-6. **甘特图**: \`gantt\` - 用于项目计划
-7. **饼图**: \`pie\` - 用于占比展示
-8. **思维导图**: \`mindmap\` - 用于知识梳理
-9. **用户旅程图**: \`journey\` - 用于用户体验分析
-10. **象限图**: \`quadrantChart\` - 用于四象限分析
-
-### 使用原则:
-- 当用户询问流程、逻辑、结构、关系时，**主动使用图表**
-- 请求规划或分析时，用甘特图或象限图
-- 数据占比用饼图
-- 系统交互用时序图
-- 数据库设计用ER图
-- **图表应简洁清晰，配合文字说明**
-`;
 
 // 路由配置
 const config = {
@@ -360,7 +331,7 @@ function analyzeMessage(message) {
 // ==================== 网页搜索功能 (Tavily API) ====================
 
 // Tavily API 配置
-const TAVILY_API_KEY = 'tvly';
+const TAVILY_API_KEY = 'tvly-dev-';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 /**
@@ -403,9 +374,9 @@ Search is NOT NEEDED for:
 
 IMPORTANT: Be conservative - only search when truly necessary. Most questions don't need search.`;
 
-            // 构建请求体 - 使用qwen-flash快速判断
+            // 构建请求体 - 使用 Kimi K2 (SiliconFlow) 快速判断
             const requestBody = JSON.stringify({
-                model: 'qwen-flash',
+                model: 'moonshotai/Kimi-K2-Instruct-0905',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userMessage }
@@ -415,7 +386,8 @@ IMPORTANT: Be conservative - only search when truly necessary. Most questions do
                 stream: false
             });
 
-            const urlParts = new URL(API_PROVIDERS.aliyun.baseURL);
+            // 使用 SiliconFlow API (兼容 OpenAI 格式)
+            const urlParts = new URL(API_PROVIDERS.siliconflow.baseURL);
             const options = {
                 hostname: urlParts.hostname,
                 port: 443,
@@ -423,7 +395,7 @@ IMPORTANT: Be conservative - only search when truly necessary. Most questions do
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${API_PROVIDERS.aliyun.apiKey}`,
+                    'Authorization': `Bearer ${API_PROVIDERS.siliconflow.apiKey}`,
                     'Content-Length': Buffer.byteLength(requestBody)
                 }
             };
@@ -1004,7 +976,7 @@ function getMultimodalTypeDescription(types) {
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 's',
+        apiKey: 'sk-',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         models: ['qwen-flash', 'qwen-plus', 'qwen-max']
     },
@@ -1021,34 +993,28 @@ const API_PROVIDERS = {
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
         models: ['deepseek-chat', 'deepseek-reasoner']
     },
-    deepseek_v3_2_speciale: {
-        apiKey: 'sk-',
-        baseURL: 'https://api.deepseek.com/v3.2_speciale_expires_on_20251215/chat/completions',
-        models: ['deepseek-reasoner'],  // 特殊端点使用标准模型名
-        // 此模型只支持思考模式，支持时间截止至北京时间 2025-12-15 23:59
-        expiresAt: '2025-12-15T23:59:00+08:00',
-        thinkingOnly: true  // 标记只支持思考模式
-    },
-    // 硅基流动 SiliconFlow - Kimi K2 模型
+
+    // 硅基流动 SiliconFlow - Kimi K2 模型 + Qwen3-8B (免费)
     siliconflow: {
         apiKey: 'sk-',
         baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
-        models: ['moonshotai/Kimi-K2-Thinking', 'moonshotai/Kimi-K2-Instruct-0905']
+        models: ['moonshotai/Kimi-K2-Thinking', 'moonshotai/Kimi-K2-Instruct-0905', 'Qwen/Qwen3-8B']
     },
     // 硅基流动 SiliconFlow - Qwen3 VL 视觉模型 (图像理解)
     siliconflow_vl: {
         apiKey: 'sk-',
         baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
-        models: ['Qwen/Qwen3-VL-235B-A22B-Instruct'],
+        models: ['Qwen/Qwen3-Omni-30B-A3B-Instruct'],
         multimodal: true,  // 标记支持多模态
         visionModel: true  // 标记这是视觉模型
     },
-    // Google Gemini API - Gemini 3 Flash Preview
+    // Google Gemini API - Gemini 3 Flash Preview (多模态)
     google_gemini: {
         apiKey: 'AIzaSyC_',
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',  // 基础URL，实际使用时会拼接模型名
-        models: ['gemini-3-flash-preview'],
-        isGemini: true  // 标记这是Gemini API，需要特殊处理
+        models: ['Gemini 3 Flash Preview'],
+        isGemini: true,  // 标记这是Gemini API，需要特殊处理
+        multimodal: true  // 支持图片/视频等多模态输入
     }
 };
 
@@ -1069,7 +1035,7 @@ const MODEL_ROUTING = {
     // Qwen3-VL 视觉语言模型 (硅基流动 - 图像理解)
     'qwen3-vl': {
         provider: 'siliconflow_vl',
-        model: 'Qwen/Qwen3-VL-235B-A22B-Instruct',
+        model: 'Qwen/Qwen3-Omni-30B-A3B-Instruct',
         multimodal: true,      // 支持多模态
         visionModel: true      // 这是视觉模型
     },
@@ -1078,14 +1044,6 @@ const MODEL_ROUTING = {
         model: 'deepseek-chat',
         thinkingModel: 'deepseek-reasoner'
     },
-    // DeepSeek-V3.2-Speciale (只支持思考模式, 支持至 2025-12-15)
-    'deepseek-v3.2-speciale': {
-        provider: 'deepseek_v3_2_speciale',
-        model: 'deepseek-reasoner',  // 特殊端点使用标准的 reasoner 模型名
-        thinkingOnly: true,  // 强制开启思考模式
-        maxTokens: 128000,   // 默认和最大上下文长度都是 128K
-        expiresAt: '2025-12-15T23:59:00+08:00'
-    },
     // Kimi K2 - 月之暗面高性能模型
     'kimi-k2': {
         provider: 'siliconflow',
@@ -1093,11 +1051,20 @@ const MODEL_ROUTING = {
         thinkingModel: 'moonshotai/Kimi-K2-Thinking',  // 思考模式使用 Thinking 模型
         supportsWebSearch: true  // 支持Tavily联网搜索
     },
-    // Google Gemini 3 Flash - 最智能的速度优化模型
+    // Qwen3-8B - 硅基流动免费模型 (支持思考、工具调用、多模态)
+    'qwen3-8b': {
+        provider: 'siliconflow',
+        model: 'Qwen/Qwen3-8B',
+        supportsThinking: true,   // 支持思考模式
+        supportsWebSearch: true,  // 支持Tavily联网搜索
+        multimodal: false          // 支持图片输入
+    },
+    // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
     'gemini-3-flash': {
         provider: 'google_gemini',
         model: 'gemini-3-flash-preview',
         isGemini: true,  // 标记需要特殊处理
+        multimodal: true,  // 支持图片/视频等多模态输入
         supportsWebSearch: true  // 支持Tavily联网搜索
     },
     // 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
@@ -1217,6 +1184,18 @@ db.serialize(() => {
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
+    // Chat Flow 思维流表
+    db.run(`CREATE TABLE IF NOT EXISTS flows (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    title TEXT DEFAULT '新思维流',
+    chat_history TEXT DEFAULT '[]',
+    canvas_state TEXT DEFAULT '{"nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
     console.log('✅ 所有数据表就绪');
 
     // ✅ 数据库迁移：添加缺失的列（如果表已存在且列不存在）
@@ -1301,6 +1280,69 @@ db.serialize(() => {
                 console.log('✅ sessions表索引就绪');
             }
         });
+
+        // ==================== VIP会员系统字段 ====================
+        // 会员等级: free / Pro / MAX
+        db.run(`ALTER TABLE users ADD COLUMN membership TEXT DEFAULT 'free'`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加membership列失败:`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加membership列到users表');
+            }
+        });
+
+        // 会员开始时间
+        db.run(`ALTER TABLE users ADD COLUMN membership_start DATETIME`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加membership_start列失败:`, err.message);
+            }
+        });
+
+        // 会员结束时间
+        db.run(`ALTER TABLE users ADD COLUMN membership_end DATETIME`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加membership_end列失败:`, err.message);
+            }
+        });
+
+        // 当前点数（每日发放，用完即止）
+        db.run(`ALTER TABLE users ADD COLUMN points INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加points列失败:`, err.message);
+            } else if (!err) {
+                console.log('✅ 已添加points列到users表');
+            }
+        });
+
+        // 上次签到日期（free用户签到用）
+        db.run(`ALTER TABLE users ADD COLUMN last_checkin DATE`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加last_checkin列失败:`, err.message);
+            }
+        });
+
+        // 购买的点数（长期有效，2年过期）
+        db.run(`ALTER TABLE users ADD COLUMN purchased_points INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加purchased_points列失败:`, err.message);
+            }
+        });
+
+        // 购买点数过期时间
+        db.run(`ALTER TABLE users ADD COLUMN purchased_points_expire DATETIME`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加purchased_points_expire列失败:`, err.message);
+            }
+        });
+
+        // 上次每日点数发放日期（Pro/MAX自动发放用）
+        db.run(`ALTER TABLE users ADD COLUMN last_daily_grant DATE`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加last_daily_grant列失败:`, err.message);
+            }
+        });
+
+        console.log('✅ VIP会员系统字段就绪');
     });
 });
 
@@ -1364,12 +1406,17 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 50 * 1024 * 1024 }, // 增加到 50MB
     fileFilter: (req, file, cb) => {
-        const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt|mp4|avi|mov/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = allowedTypes.test(file.mimetype);
-        if (mimetype && extname) return cb(null, true);
+        // 扩展支持的文件类型
+        const allowedExtensions = /jpeg|jpg|png|gif|webp|svg|bmp|ico|tiff|heic|heif|pdf|doc|docx|txt|md|json|xml|csv|log|yaml|yml|ini|conf|js|ts|jsx|tsx|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte|swift|kt|go|rs|rb|php|sh|sql|mp4|webm|mkv|flv|wmv|avi|mov|m4v|mp3|wav|m4a|ogg|flac|aac|wma|opus/i;
+        const allowedMimeTypes = /image|video|audio|text|application\/(json|pdf|msword|vnd\.openxmlformats)/i;
+
+        const ext = path.extname(file.originalname).toLowerCase().slice(1);
+        const extValid = allowedExtensions.test(ext);
+        const mimeValid = allowedMimeTypes.test(file.mimetype);
+
+        if (extValid || mimeValid) return cb(null, true);
         cb(new Error('不支持的文件类型'));
     }
 });
@@ -1663,6 +1710,100 @@ app.post('/api/user/avatar', authenticateToken, upload.single('avatar'), (req, r
     });
 });
 
+// ==================== VIP会员系统路由 ====================
+// 获取用户会员状态
+app.get('/api/user/membership', authenticateToken, (req, res) => {
+    db.get(
+        `SELECT id, email, username, created_at, membership, membership_start, membership_end, 
+         points, last_checkin, purchased_points, purchased_points_expire, last_daily_grant
+         FROM users WHERE id = ?`,
+        [req.user.userId],
+        (err, user) => {
+            if (err) {
+                console.error('❌ 获取会员状态失败:', err);
+                return res.status(500).json({ error: '数据库错误' });
+            }
+            if (!user) {
+                return res.status(404).json({ error: '用户不存在' });
+            }
+
+            const today = new Date().toISOString().split('T')[0];
+            const canCheckin = user.membership === 'free' && user.last_checkin !== today;
+
+            // 计算总点数：当前点数 + 购买的点数（如果未过期）
+            let totalPoints = user.points || 0;
+            if (user.purchased_points && user.purchased_points_expire) {
+                const expireDate = new Date(user.purchased_points_expire);
+                if (expireDate > new Date()) {
+                    totalPoints += user.purchased_points;
+                }
+            }
+
+            res.json({
+                membership: user.membership || 'free',
+                membershipStart: user.membership_start,
+                membershipEnd: user.membership_end,
+                points: user.points || 0,
+                purchasedPoints: user.purchased_points || 0,
+                totalPoints: totalPoints,
+                canCheckin: canCheckin,
+                lastCheckin: user.last_checkin,
+                createdAt: user.created_at
+            });
+        }
+    );
+});
+
+// 用户签到（每日+20点数）
+app.post('/api/user/checkin', authenticateToken, (req, res) => {
+    const today = new Date().toISOString().split('T')[0];
+
+    db.get('SELECT id, membership, last_checkin, points FROM users WHERE id = ?',
+        [req.user.userId],
+        (err, user) => {
+            if (err) {
+                console.error('❌ 签到查询失败:', err);
+                return res.status(500).json({ error: '数据库错误' });
+            }
+            if (!user) {
+                return res.status(404).json({ error: '用户不存在' });
+            }
+
+            // 只有free用户需要签到
+            if (user.membership !== 'free') {
+                return res.status(400).json({ error: '会员用户无需签到，每日自动获得点数' });
+            }
+
+            // 检查今天是否已签到
+            if (user.last_checkin === today) {
+                return res.status(400).json({ error: '今日已签到' });
+            }
+
+            const pointsGained = 20;
+            const newPoints = (user.points || 0) + pointsGained;
+
+            db.run(
+                'UPDATE users SET points = ?, last_checkin = ? WHERE id = ?',
+                [newPoints, today, req.user.userId],
+                function (err) {
+                    if (err) {
+                        console.error('❌ 签到更新失败:', err);
+                        return res.status(500).json({ error: '签到失败' });
+                    }
+
+                    console.log(`✅ 用户 ${req.user.userId} 签到成功，获得 ${pointsGained} 点数，当前点数: ${newPoints}`);
+                    res.json({
+                        success: true,
+                        pointsGained: pointsGained,
+                        currentPoints: newPoints,
+                        message: `签到成功！获得 ${pointsGained} 点数`
+                    });
+                }
+            );
+        }
+    );
+});
+
 // ==================== 会话管理路由 ====================
 app.get('/api/sessions', authenticateToken, (req, res) => {
     // 分页参数：offset（偏移量）和 limit（每页数量）
@@ -1769,6 +1910,123 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
             }
         );
     });
+});
+
+// ==================== Chat Flow 思维流 API ====================
+
+// 获取用户的 Flow 列表
+app.get('/api/flows', authenticateToken, (req, res) => {
+    db.all(
+        `SELECT id, title, created_at, updated_at FROM flows WHERE user_id = ? ORDER BY updated_at DESC`,
+        [req.user.userId],
+        (err, rows) => {
+            if (err) {
+                console.error('❌ 获取Flow列表失败:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            res.json(rows);
+        }
+    );
+});
+
+// 创建新 Flow
+app.post('/api/flows', authenticateToken, (req, res) => {
+    const { title = '新思维流' } = req.body;
+    const id = `flow-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+    db.run(
+        `INSERT INTO flows (id, user_id, title) VALUES (?, ?, ?)`,
+        [id, req.user.userId, title],
+        function (err) {
+            if (err) {
+                console.error('❌ 创建Flow失败:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            console.log('✅ 创建思维流成功:', id);
+            res.json({ id, title, created_at: new Date().toISOString() });
+        }
+    );
+});
+
+// 获取单个 Flow 详情
+app.get('/api/flows/:id', authenticateToken, (req, res) => {
+    db.get(
+        `SELECT * FROM flows WHERE id = ? AND user_id = ?`,
+        [req.params.id, req.user.userId],
+        (err, row) => {
+            if (err) {
+                console.error('❌ 获取Flow详情失败:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            if (!row) {
+                return res.status(404).json({ error: 'Flow not found' });
+            }
+            // 解析JSON字段
+            res.json({
+                ...row,
+                chat_history: JSON.parse(row.chat_history || '[]'),
+                canvas_state: JSON.parse(row.canvas_state || '{"nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}')
+            });
+        }
+    );
+});
+
+// 更新 Flow
+app.put('/api/flows/:id', authenticateToken, (req, res) => {
+    const { title, chat_history, canvas_state } = req.body;
+    const updates = [];
+    const params = [];
+
+    if (title !== undefined) {
+        updates.push('title = ?');
+        params.push(title);
+    }
+    if (chat_history !== undefined) {
+        updates.push('chat_history = ?');
+        params.push(JSON.stringify(chat_history));
+    }
+    if (canvas_state !== undefined) {
+        updates.push('canvas_state = ?');
+        params.push(JSON.stringify(canvas_state));
+    }
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+
+    params.push(req.params.id, req.user.userId);
+
+    db.run(
+        `UPDATE flows SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
+        params,
+        function (err) {
+            if (err) {
+                console.error('❌ 更新Flow失败:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Flow not found' });
+            }
+            console.log('✅ 更新思维流成功:', req.params.id);
+            res.json({ success: true });
+        }
+    );
+});
+
+// 删除 Flow
+app.delete('/api/flows/:id', authenticateToken, (req, res) => {
+    db.run(
+        `DELETE FROM flows WHERE id = ? AND user_id = ?`,
+        [req.params.id, req.user.userId],
+        function (err) {
+            if (err) {
+                console.error('❌ 删除Flow失败:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Flow not found' });
+            }
+            console.log('✅ 删除思维流成功:', req.params.id);
+            res.json({ success: true });
+        }
+    );
 });
 
 // ==================== 消息管理API ====================
@@ -2116,10 +2374,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`   类型: ${getMultimodalTypeDescription(currentMessageMultimodal.types)}`);
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
-            // 强制切换到视觉语言模型（使用硅基流动 Qwen3-VL-235B-A22B-Thinking）
-            finalModel = 'qwen3-vl';
-            autoRoutingReason = `当前消息包含${getMultimodalTypeDescription(currentMessageMultimodal.types)}，自动切换到Qwen3-VL视觉语言模型`;
-            console.log(`   🔄 强制使用模型: qwen3-vl (Qwen/Qwen3-VL-235B-A22B-Thinking)`);
+            // 定义原生支持多模态的模型列表（Gemini和Qwen3-Omni）
+            const NATIVE_MULTIMODAL_MODELS = ['gemini-3-flash', 'qwen3-omni-flash', 'qwen3-vl'];
+
+            // 检查用户选择的模型是否原生支持多模态
+            if (NATIVE_MULTIMODAL_MODELS.includes(model)) {
+                // Gemini 3 Flash / Qwen3-Omni 等原生支持多模态，直接使用
+                finalModel = model;
+                autoRoutingReason = `${model} 原生支持多模态，直接处理${getMultimodalTypeDescription(currentMessageMultimodal.types)}`;
+                console.log(`   ✅ 模型 ${model} 原生支持多模态，无需切换`);
+            } else {
+                // 纯文本模型（Kimi K2、DeepSeek、Qwen3-8B等）需要切换到 Qwen3-Omni 处理图片
+                finalModel = 'qwen3-vl';
+                autoRoutingReason = `${model || 'auto'} 不支持多模态，自动切换到Qwen3-Omni视觉语言模型处理${getMultimodalTypeDescription(currentMessageMultimodal.types)}`;
+                console.log(`   🔄 ${model || 'auto'} 不支持多模态，切换到 qwen3-vl (Qwen/Qwen3-Omni-30B-A3B-Instruct)`);
+            }
         } else if (model === 'auto') {
             // 只有在没有多模态内容时才使用auto路由
             // 调用智能路由引擎
@@ -2168,7 +2437,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
-        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2', 'gemini-3-flash'];
+        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2', 'qwen3-8b', 'gemini-3-flash'];
 
         // 注意：多模态检测已在上面执行，这里不再重复
 
@@ -2236,7 +2505,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let searchContext = '';
         let searchSources = [];  // 存储搜索来源用于SSE传输
 
-        if (internetMode && routing.provider !== 'aliyun' && finalModel !== 'deepseek-v3.2-speciale') {
+        if (internetMode && routing.provider !== 'aliyun') {
             console.log(`🌐 联网模式已开启，AI正在判断是否需要搜索...`);
 
             // 提取用户最后一条消息
@@ -2325,17 +2594,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`🎨 消息已转换为多模态格式`);
         }
 
-        // 添加系统提示词（包含搜索结果 + 图表生成指南）
+        // 添加系统提示词（包含搜索结果）
+        // 注意: Mermaid 图表生成指南已内置在前端的 buildSystemPrompt() 中
         let systemContent = searchContext
             ? `${systemPrompt || ''}\n${searchContext}`.trim()
             : systemPrompt || '';
-
-        // 🎨 附加 Mermaid 图表生成指南
-        if (systemContent) {
-            systemContent = `${systemContent}\n${MERMAID_CHART_GUIDE}`;
-        } else {
-            systemContent = MERMAID_CHART_GUIDE.trim();
-        }
 
         if (systemContent) {
             finalMessages.unshift({
@@ -2483,12 +2746,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             if (isGeminiAPI) {
                 // ============ Gemini API 格式 ============
-                // Gemini endpoint: {baseURL}/{modelName}:streamGenerateContent?alt=sse
-                apiUrl = `${providerConfig.baseURL}/${actualModel}:streamGenerateContent?alt=sse`;
+                // Gemini endpoint: {baseURL}/{modelName}:streamGenerateContent?key=API_KEY&alt=sse
+                apiUrl = `${providerConfig.baseURL}/${actualModel}:streamGenerateContent?key=${providerConfig.apiKey}&alt=sse`;
 
-                // Gemini 使用 x-goog-api-key 头
+                // Gemini 请求头
                 fetchHeaders = {
-                    'x-goog-api-key': providerConfig.apiKey,
                     'Content-Type': 'application/json'
                 };
 
@@ -2500,10 +2762,60 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         continue; // 我们在下面单独处理
                     }
                     const geminiRole = msg.role === 'assistant' ? 'model' : 'user';
-                    geminiContents.push({
-                        role: geminiRole,
-                        parts: [{ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }]
-                    });
+
+                    // 处理多模态内容（图片）
+                    const parts = [];
+                    if (Array.isArray(msg.content)) {
+                        // OpenAI多模态格式: [{type: 'text', text: '...'}, {type: 'image_url', image_url: {url: '...'}}]
+                        for (const item of msg.content) {
+                            if (item.type === 'text') {
+                                parts.push({ text: item.text });
+                            } else if (item.type === 'image_url' && item.image_url?.url) {
+                                // 处理base64图片 (data:image/...;base64,...)
+                                const imageUrl = item.image_url.url;
+                                if (imageUrl.startsWith('data:')) {
+                                    const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+                                    if (matches) {
+                                        parts.push({
+                                            inlineData: {
+                                                mimeType: matches[1],
+                                                data: matches[2]
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    // 外部URL图片
+                                    parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/jpeg' } });
+                                }
+                            }
+                        }
+                    } else {
+                        // 纯文本消息
+                        parts.push({ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) });
+                    }
+
+                    // 处理附件（如果有）
+                    if (msg.attachments && Array.isArray(msg.attachments)) {
+                        for (const att of msg.attachments) {
+                            if (att.type === 'image' && att.data) {
+                                // Base64图片附件
+                                const imageData = att.data;
+                                if (imageData.startsWith('data:')) {
+                                    const matches = imageData.match(/^data:([^;]+);base64,(.+)$/);
+                                    if (matches) {
+                                        parts.push({
+                                            inlineData: {
+                                                mimeType: matches[1],
+                                                data: matches[2]
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    geminiContents.push({ role: geminiRole, parts });
                 }
 
                 // 提取 system prompt
@@ -2872,6 +3184,619 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
     );
 });
 
+// ==================== VIP 会员系统 ====================
+
+// 会员配置
+const MEMBERSHIP_CONFIG = {
+    free: { dailyPoints: 20, needsCheckin: true },
+    Pro: { dailyPoints: 90, needsCheckin: false },
+    MAX: { dailyPoints: 10000, needsCheckin: false }
+};
+
+// 获取会员状态和点数
+app.get('/api/user/membership', authenticateToken, async (req, res) => {
+    try {
+        const user = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT id, email, username, created_at,
+                       COALESCE(membership, 'free') as membership,
+                       membership_start, membership_end,
+                       COALESCE(points, 0) as points,
+                       COALESCE(purchased_points, 0) as purchased_points,
+                       purchased_points_expire,
+                       last_checkin, last_daily_grant
+                FROM users WHERE id = ?
+            `, [req.user.userId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        // 检查会员是否过期
+        let membership = user.membership || 'free';
+        if (membership !== 'free' && user.membership_end) {
+            const endDate = new Date(user.membership_end);
+            if (endDate < new Date()) {
+                // 会员已过期，降级为 free
+                membership = 'free';
+                db.run('UPDATE users SET membership = ? WHERE id = ?', ['free', user.id]);
+            }
+        }
+
+        // 检查购买点数是否过期
+        let purchasedPoints = user.purchased_points || 0;
+        if (purchasedPoints > 0 && user.purchased_points_expire) {
+            const expireDate = new Date(user.purchased_points_expire);
+            if (expireDate < new Date()) {
+                purchasedPoints = 0;
+                db.run('UPDATE users SET purchased_points = 0 WHERE id = ?', [user.id]);
+            }
+        }
+
+        // 检查今日是否需要自动发放点数（Pro/MAX）
+        const today = new Date().toISOString().split('T')[0];
+        let points = user.points || 0;
+
+        if (membership !== 'free' && user.last_daily_grant !== today) {
+            // 自动发放每日点数
+            const config = MEMBERSHIP_CONFIG[membership];
+            if (config) {
+                points = config.dailyPoints;
+                db.run('UPDATE users SET points = ?, last_daily_grant = ? WHERE id = ?',
+                    [points, today, user.id]);
+                console.log(`✨ 用户 ${user.id} (${membership}) 自动发放 ${points} 点数`);
+            }
+        }
+
+        // 检查今日是否可以签到（free用户）
+        const canCheckin = membership === 'free' && user.last_checkin !== today;
+
+        res.json({
+            membership,
+            membershipStart: user.membership_start,
+            membershipEnd: user.membership_end,
+            points,
+            purchasedPoints,
+            purchasedPointsExpire: user.purchased_points_expire,
+            totalPoints: points + purchasedPoints,
+            canCheckin,
+            lastCheckin: user.last_checkin,
+            createdAt: user.created_at
+        });
+
+    } catch (error) {
+        console.error('❌ 获取会员状态失败:', error);
+        res.status(500).json({ error: '获取会员状态失败' });
+    }
+});
+
+// 每日签到（free用户）
+app.post('/api/user/checkin', authenticateToken, async (req, res) => {
+    try {
+        const user = await new Promise((resolve, reject) => {
+            db.get('SELECT id, membership, points, last_checkin FROM users WHERE id = ?',
+                [req.user.userId], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        const membership = user.membership || 'free';
+        if (membership !== 'free') {
+            return res.status(400).json({ error: 'Pro/MAX 用户无需签到，每日自动发放点数' });
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        if (user.last_checkin === today) {
+            return res.status(400).json({ error: '今日已签到' });
+        }
+
+        // 签到获得20点
+        const newPoints = (user.points || 0) + MEMBERSHIP_CONFIG.free.dailyPoints;
+
+        await new Promise((resolve, reject) => {
+            db.run('UPDATE users SET points = ?, last_checkin = ? WHERE id = ?',
+                [newPoints, today, user.id], (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+        });
+
+        console.log(`✅ 用户 ${user.id} 签到成功，获得 ${MEMBERSHIP_CONFIG.free.dailyPoints} 点数`);
+        res.json({
+            success: true,
+            pointsGained: MEMBERSHIP_CONFIG.free.dailyPoints,
+            newPoints
+        });
+
+    } catch (error) {
+        console.error('❌ 签到失败:', error);
+        res.status(500).json({ error: '签到失败' });
+    }
+});
+
+// 辅助函数：检查并扣减点数
+async function checkAndDeductPoints(userId, modelUsed) {
+    return new Promise((resolve, reject) => {
+        db.get(`
+            SELECT id, membership, points, purchased_points, purchased_points_expire
+            FROM users WHERE id = ?
+        `, [userId], (err, user) => {
+            if (err) return reject(err);
+            if (!user) return reject(new Error('用户不存在'));
+
+            let points = user.points || 0;
+            let purchasedPoints = user.purchased_points || 0;
+
+            // 检查购买点数是否过期
+            if (purchasedPoints > 0 && user.purchased_points_expire) {
+                const expireDate = new Date(user.purchased_points_expire);
+                if (expireDate < new Date()) {
+                    purchasedPoints = 0;
+                    db.run('UPDATE users SET purchased_points = 0 WHERE id = ?', [userId]);
+                }
+            }
+
+            const totalPoints = points + purchasedPoints;
+
+            // 如果使用的是 qwen3-8b（免费模型），不扣点
+            if (modelUsed && modelUsed.includes('qwen3') && modelUsed.includes('8b')) {
+                return resolve({
+                    allowed: true,
+                    pointsDeducted: 0,
+                    remainingPoints: totalPoints,
+                    useFreeModel: false
+                });
+            }
+
+            // 点数不足，需要切换到免费模型
+            if (totalPoints <= 0) {
+                return resolve({
+                    allowed: true,
+                    pointsDeducted: 0,
+                    remainingPoints: 0,
+                    useFreeModel: true,
+                    message: '点数不足，自动切换到免费模型'
+                });
+            }
+
+            // 扣减1点
+            let newPoints = points;
+            let newPurchasedPoints = purchasedPoints;
+
+            // 优先使用每日点数
+            if (points > 0) {
+                newPoints = points - 1;
+            } else {
+                newPurchasedPoints = purchasedPoints - 1;
+            }
+
+            db.run('UPDATE users SET points = ?, purchased_points = ? WHERE id = ?',
+                [newPoints, newPurchasedPoints, userId], (err) => {
+                    if (err) return reject(err);
+                    resolve({
+                        allowed: true,
+                        pointsDeducted: 1,
+                        remainingPoints: newPoints + newPurchasedPoints,
+                        useFreeModel: false
+                    });
+                });
+        });
+    });
+}
+
+// ==================== 管理员后台系统 ====================
+
+// 管理员配置（独立于用户系统）
+const ADMIN_CONFIG = {
+    username: 'admin',
+    password: 'RAI@Admin2025',
+    secret: 'admin-jwt-secret-rai-2025'
+};
+
+// 管理员认证中间件
+const authenticateAdmin = (req, res, next) => {
+    const token = req.headers['x-admin-token'];
+    if (!token) {
+        return res.status(401).json({ error: '需要管理员令牌' });
+    }
+    try {
+        const decoded = jwt.verify(token, ADMIN_CONFIG.secret);
+        if (decoded.isAdmin) {
+            req.isAdmin = true;
+            next();
+        } else {
+            res.status(403).json({ error: '无效的管理员令牌' });
+        }
+    } catch (e) {
+        res.status(403).json({ error: '管理员令牌已过期或无效' });
+    }
+};
+
+// 管理员登录
+app.post('/api/admin/login', (req, res) => {
+    const { username, password } = req.body;
+
+    if (username === ADMIN_CONFIG.username && password === ADMIN_CONFIG.password) {
+        const token = jwt.sign({ isAdmin: true, loginTime: Date.now() }, ADMIN_CONFIG.secret, { expiresIn: '8h' });
+        console.log('🔐 管理员登录成功');
+        res.json({ success: true, token });
+    } else {
+        console.log('⚠️ 管理员登录失败尝试');
+        res.status(401).json({ error: '管理员凭据无效' });
+    }
+});
+
+// 验证管理员Token
+app.get('/api/admin/verify', authenticateAdmin, (req, res) => {
+    res.json({ success: true, isAdmin: true });
+});
+
+// 获取数据统计
+app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
+    try {
+        // 基础统计
+        const totalUsers = await new Promise((resolve, reject) => {
+            db.get('SELECT COUNT(*) as count FROM users', (err, row) => {
+                if (err) reject(err);
+                else resolve(row.count);
+            });
+        });
+
+        const totalSessions = await new Promise((resolve, reject) => {
+            db.get('SELECT COUNT(*) as count FROM sessions', (err, row) => {
+                if (err) reject(err);
+                else resolve(row.count);
+            });
+        });
+
+        const totalMessages = await new Promise((resolve, reject) => {
+            db.get('SELECT COUNT(*) as count FROM messages', (err, row) => {
+                if (err) reject(err);
+                else resolve(row.count);
+            });
+        });
+
+        // 今日统计
+        const todayMessages = await new Promise((resolve, reject) => {
+            db.get("SELECT COUNT(*) as count FROM messages WHERE DATE(created_at) = DATE('now')", (err, row) => {
+                if (err) reject(err);
+                else resolve(row.count);
+            });
+        });
+
+        // 最近30天每日消息数
+        const dailyStats = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT DATE(created_at) as date, COUNT(*) as messages
+                FROM messages
+                WHERE created_at >= DATE('now', '-30 days')
+                GROUP BY DATE(created_at)
+                ORDER BY date ASC
+            `, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        // 模型使用统计
+        const modelUsage = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT model, COUNT(*) as count
+                FROM messages
+                WHERE model IS NOT NULL AND model != ''
+                GROUP BY model
+                ORDER BY count DESC
+            `, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        // 活跃用户排行（前10）
+        const topUsers = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT u.id, u.username, u.email, COUNT(m.id) as messageCount
+                FROM users u
+                LEFT JOIN sessions s ON u.id = s.user_id
+                LEFT JOIN messages m ON s.id = m.session_id
+                GROUP BY u.id
+                ORDER BY messageCount DESC
+                LIMIT 10
+            `, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        res.json({
+            totalUsers,
+            totalSessions,
+            totalMessages,
+            todayMessages,
+            dailyStats,
+            modelUsage,
+            topUsers
+        });
+
+    } catch (error) {
+        console.error('❌ 获取统计数据失败:', error);
+        res.status(500).json({ error: '获取统计数据失败' });
+    }
+});
+
+// 获取所有用户列表
+app.get('/api/admin/users', authenticateAdmin, (req, res) => {
+    const offset = parseInt(req.query.offset) || 0;
+    const limit = parseInt(req.query.limit) || 50;
+
+    db.all(`
+        SELECT u.id, u.email, u.username, u.avatar_url, u.created_at, u.last_login,
+               COALESCE(u.membership, 'free') as membership,
+               u.membership_start, u.membership_end,
+               COALESCE(u.points, 0) as points,
+               COALESCE(u.purchased_points, 0) as purchased_points,
+               (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as sessionCount,
+               (SELECT COUNT(*) FROM messages m 
+                JOIN sessions s ON m.session_id = s.id 
+                WHERE s.user_id = u.id) as messageCount
+        FROM users u
+        ORDER BY u.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [limit, offset], (err, users) => {
+        if (err) {
+            console.error('❌ 获取用户列表失败:', err);
+            return res.status(500).json({ error: '获取用户列表失败' });
+        }
+        res.json({ users, offset, limit });
+    });
+});
+
+// 获取指定用户的详细信息和消息
+app.get('/api/admin/users/:userId/messages', authenticateAdmin, (req, res) => {
+    const { userId } = req.params;
+    const offset = parseInt(req.query.offset) || 0;
+    const limit = parseInt(req.query.limit) || 50;
+
+    db.all(`
+        SELECT m.id, m.session_id, m.role, m.content, m.model, m.created_at,
+               s.title as session_title
+        FROM messages m
+        JOIN sessions s ON m.session_id = s.id
+        WHERE s.user_id = ?
+        ORDER BY m.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [userId, limit, offset], (err, messages) => {
+        if (err) {
+            console.error('❌ 获取用户消息失败:', err);
+            return res.status(500).json({ error: '获取用户消息失败' });
+        }
+        res.json({ messages, offset, limit });
+    });
+});
+
+// 删除用户（及其所有数据）
+app.delete('/api/admin/users/:userId', authenticateAdmin, (req, res) => {
+    const { userId } = req.params;
+
+    // 先删除用户的所有消息和会话，再删除用户
+    db.serialize(() => {
+        db.run('DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)', [userId]);
+        db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
+        db.run('DELETE FROM user_configs WHERE user_id = ?', [userId]);
+        db.run('DELETE FROM device_fingerprints WHERE user_id = ?', [userId]);
+        db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
+            if (err) {
+                console.error('❌ 删除用户失败:', err);
+                return res.status(500).json({ error: '删除用户失败' });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: '用户不存在' });
+            }
+            console.log(`🗑️ 管理员删除用户 ID: ${userId}`);
+            res.json({ success: true, deletedUserId: userId });
+        });
+    });
+});
+
+// 管理员设置用户会员等级
+app.put('/api/admin/users/:userId/membership', authenticateAdmin, (req, res) => {
+    const { userId } = req.params;
+    const { membership, months } = req.body;
+
+    // 验证会员等级
+    if (!['free', 'Pro', 'MAX'].includes(membership)) {
+        return res.status(400).json({ error: '无效的会员等级，必须是 free/Pro/MAX' });
+    }
+
+    let membershipStart = null;
+    let membershipEnd = null;
+
+    if (membership !== 'free' && months > 0) {
+        membershipStart = new Date().toISOString();
+        const endDate = new Date();
+        endDate.setMonth(endDate.getMonth() + parseInt(months));
+        membershipEnd = endDate.toISOString();
+    }
+
+    db.run(`
+        UPDATE users SET 
+            membership = ?,
+            membership_start = ?,
+            membership_end = ?
+        WHERE id = ?
+    `, [membership, membershipStart, membershipEnd, userId], function (err) {
+        if (err) {
+            console.error('❌ 设置会员失败:', err);
+            return res.status(500).json({ error: '设置会员失败' });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+        console.log(`👑 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`);
+        res.json({ success: true, membership, membershipStart, membershipEnd });
+    });
+});
+
+// 管理员添加/扣减点数
+app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
+    const { userId } = req.params;
+    const { points, type, expireYears } = req.body;
+    // type: 'daily' 或 'purchased'
+
+    if (typeof points !== 'number') {
+        return res.status(400).json({ error: '点数必须是数字' });
+    }
+
+    if (type === 'purchased') {
+        // 购买的点数
+        let expireDate = null;
+        if (expireYears && expireYears > 0) {
+            const date = new Date();
+            date.setFullYear(date.getFullYear() + expireYears);
+            expireDate = date.toISOString();
+        }
+
+        db.run(`
+            UPDATE users SET 
+                purchased_points = COALESCE(purchased_points, 0) + ?,
+                purchased_points_expire = COALESCE(?, purchased_points_expire)
+            WHERE id = ?
+        `, [points, expireDate, userId], function (err) {
+            if (err) {
+                console.error('❌ 添加购买点数失败:', err);
+                return res.status(500).json({ error: '添加点数失败' });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: '用户不存在' });
+            }
+            console.log(`💰 管理员给用户 ${userId} 添加 ${points} 购买点数`);
+            res.json({ success: true, pointsAdded: points, type: 'purchased' });
+        });
+    } else {
+        // 每日点数
+        db.run(`
+            UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?
+        `, [points, userId], function (err) {
+            if (err) {
+                console.error('❌ 添加每日点数失败:', err);
+                return res.status(500).json({ error: '添加点数失败' });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: '用户不存在' });
+            }
+            console.log(`⚡ 管理员给用户 ${userId} 添加 ${points} 每日点数`);
+            res.json({ success: true, pointsAdded: points, type: 'daily' });
+        });
+    }
+});
+
+// 获取所有消息（带分页和筛选）
+app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
+    const offset = parseInt(req.query.offset) || 0;
+    const limit = parseInt(req.query.limit) || 50;
+    const search = req.query.search || '';
+    const userId = req.query.userId || '';
+
+    let query = `
+        SELECT m.id, m.session_id, m.role, m.content, m.model, m.created_at,
+               s.title as session_title, u.username, u.email
+        FROM messages m
+        JOIN sessions s ON m.session_id = s.id
+        JOIN users u ON s.user_id = u.id
+        WHERE 1=1
+    `;
+    const params = [];
+
+    if (search) {
+        query += ' AND m.content LIKE ?';
+        params.push(`%${search}%`);
+    }
+
+    if (userId) {
+        query += ' AND u.id = ?';
+        params.push(userId);
+    }
+
+    query += ' ORDER BY m.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    db.all(query, params, (err, messages) => {
+        if (err) {
+            console.error('❌ 获取消息列表失败:', err);
+            return res.status(500).json({ error: '获取消息列表失败' });
+        }
+        res.json({ messages, offset, limit });
+    });
+});
+
+// 删除消息
+app.delete('/api/admin/messages/:messageId', authenticateAdmin, (req, res) => {
+    const { messageId } = req.params;
+
+    db.run('DELETE FROM messages WHERE id = ?', [messageId], function (err) {
+        if (err) {
+            console.error('❌ 删除消息失败:', err);
+            return res.status(500).json({ error: '删除消息失败' });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: '消息不存在' });
+        }
+        console.log(`🗑️ 管理员删除消息 ID: ${messageId}`);
+        res.json({ success: true, deletedMessageId: messageId });
+    });
+});
+
+// 获取所有会话
+app.get('/api/admin/sessions', authenticateAdmin, (req, res) => {
+    const offset = parseInt(req.query.offset) || 0;
+    const limit = parseInt(req.query.limit) || 50;
+
+    db.all(`
+        SELECT s.id, s.title, s.model, s.created_at, s.updated_at,
+               u.username, u.email,
+               (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as messageCount
+        FROM sessions s
+        JOIN users u ON s.user_id = u.id
+        ORDER BY s.updated_at DESC
+        LIMIT ? OFFSET ?
+    `, [limit, offset], (err, sessions) => {
+        if (err) {
+            console.error('❌ 获取会话列表失败:', err);
+            return res.status(500).json({ error: '获取会话列表失败' });
+        }
+        res.json({ sessions, offset, limit });
+    });
+});
+
+// 删除会话
+app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, (req, res) => {
+    const { sessionId } = req.params;
+
+    db.serialize(() => {
+        db.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
+        db.run('DELETE FROM sessions WHERE id = ?', [sessionId], function (err) {
+            if (err) {
+                console.error('❌ 删除会话失败:', err);
+                return res.status(500).json({ error: '删除会话失败' });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: '会话不存在' });
+            }
+            console.log(`🗑️ 管理员删除会话 ID: ${sessionId}`);
+            res.json({ success: true, deletedSessionId: sessionId });
+        });
+    });
+});
+
 // ==================== 404处理 ====================
 app.use((req, res) => {
     res.status(404).json({
@@ -2900,9 +3825,10 @@ app.listen(PORT, '0.0.0.0', () => {
 ║  📡 服务地址: http://0.0.0.0:${PORT}                     ║
 ║  📊 数据库: ${dbPath}                                    ║
 ║  🔐 JWT认证: ✅                                         ║
-║  🤖 AI提供商: 阿里云百炼 + DeepSeek                       ║
-║  🧠 思考模式: ✅ (DeepSeek-Reasoner)                     ║
-║  🛑 停止输出: ✅                                         ║
+║  🤖 AI提供商: 阿里云百炼 + DeepSeek + 流动硅基             ║
+║  🧠 思考模式: ✅                                         ║
+║  🛑 停止输出: ✅ 
+║  🤗 Rick+AI制作 ✅
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
   `);
