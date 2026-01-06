@@ -19,8 +19,7 @@
 ---
 
 # 最新更新内容  
-支持Chat Flow  
-<img width="2790" height="1716" alt="2a34d7f57edae57ed934c61c386aed49" src="https://github.com/user-attachments/assets/96b0a2c4-b42a-4644-817f-b3d1c94a76ff" /> <img width="682" height="832" alt="2e5cb220ac1be47b1d25dbb55e4d2f29" src="https://github.com/user-attachments/assets/7270482c-9b3d-4be4-84a9-d20b3726d411" />
+支持Chat Flow  β 超多bug警告！这是Chat Flow专属界面，正经界面接着往下翻。   <img width="2790" height="1716" alt="2a34d7f57edae57ed934c61c386aed49" src="https://github.com/user-attachments/assets/96b0a2c4-b42a-4644-817f-b3d1c94a76ff" /> <img width="682" height="832" alt="2e5cb220ac1be47b1d25dbb55e4d2f29" src="https://github.com/user-attachments/assets/7270482c-9b3d-4be4-84a9-d20b3726d411" />
 
 
 ## <img src="https://api.iconify.design/material-symbols/star-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 功能特性
