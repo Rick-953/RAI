@@ -1551,7 +1551,857 @@
       font-size: 16px;
     }
 
-    /* 旧的标签样式隐藏 */
+    /* ==================== Chat Flow 思维流样式 ==================== */
+
+    /* 新建思维流按钮 - 与新建空间按钮保持一致 */
+    .new-flow-btn-inline {
+      width: 100%;
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: transparent;
+      border: 1px dashed var(--border-dark);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacing-xs);
+      margin-bottom: var(--spacing-sm);
+    }
+
+    .new-flow-btn-inline:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--color-saturn-yellow);
+      color: var(--text-primary);
+    }
+
+    .new-flow-btn-inline .material-symbols-outlined {
+      font-size: 16px;
+    }
+
+    /* 思维流列表 */
+    .flows-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacing-xs);
+    }
+
+    .flow-item {
+      padding: var(--spacing-sm) var(--spacing-md);
+      background: transparent;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
+    .flow-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .flow-item.active {
+      background: var(--bg-hover);
+      color: var(--color-saturn-yellow);
+    }
+
+    .flow-item-icon {
+      width: 16px;
+      height: 16px;
+      opacity: 0.7;
+    }
+
+    .flow-item-title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .flow-item-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      padding: 2px;
+      cursor: pointer;
+      color: var(--text-tertiary);
+      transition: opacity 0.2s, color 0.2s;
+    }
+
+    .flow-item:hover .flow-item-delete {
+      opacity: 1;
+    }
+
+    .flow-item-delete:hover {
+      color: var(--color-error);
+    }
+
+    /* Chat Flow 工作区布局 */
+    .chatflow-workspace {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      background: var(--bg-primary);
+      z-index: 1000;
+    }
+
+    .chatflow-back-btn {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .chatflow-back-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border-color: var(--color-saturn-yellow);
+    }
+
+    .chatflow-back-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* 左侧 LLM 面板 */
+    .chatflow-llm-panel {
+      width: 30%;
+      min-width: 320px;
+      max-width: 50%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-color);
+    }
+
+    .chatflow-header {
+      padding: 60px 20px 16px 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .chatflow-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .chatflow-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .chatflow-empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-tertiary);
+      text-align: center;
+      gap: 12px;
+    }
+
+    .chatflow-empty-state svg {
+      opacity: 0.3;
+    }
+
+    .chatflow-empty-state p {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .chatflow-input-area {
+      padding: 16px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .chatflow-input-container {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 8px 12px;
+    }
+
+    .chatflow-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-primary);
+      font-size: 14px;
+      line-height: 1.5;
+      resize: none;
+      max-height: 120px;
+    }
+
+    .chatflow-input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .chatflow-send-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--color-saturn-yellow);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s, opacity 0.2s;
+      flex-shrink: 0;
+    }
+
+    .chatflow-send-btn:hover {
+      transform: scale(1.1);
+    }
+
+    .chatflow-send-btn svg {
+      color: #000;
+    }
+
+    /* 可拖拽分隔栏 */
+    .chatflow-divider {
+      width: 6px;
+      cursor: col-resize;
+      background: transparent;
+      transition: background 0.2s;
+      position: relative;
+    }
+
+    .chatflow-divider::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 2px;
+      height: 40px;
+      background: var(--border-color);
+      border-radius: 1px;
+      transition: background 0.2s, height 0.2s;
+    }
+
+    .chatflow-divider:hover::after {
+      background: var(--color-saturn-yellow);
+      height: 60px;
+    }
+
+    /* 无限画布区域 */
+    .chatflow-canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-primary);
+    }
+
+    .infinite-canvas {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .infinite-canvas:active {
+      cursor: grabbing;
+    }
+
+    .canvas-bg {
+      pointer-events: all;
+    }
+
+    /* 画布提示 */
+    .canvas-hint {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-tertiary);
+      pointer-events: none;
+      opacity: 0.5;
+    }
+
+    .canvas-hint svg {
+      opacity: 0.3;
+    }
+
+    .canvas-hint span {
+      font-size: 14px;
+    }
+
+    /* 缩放控制 */
+    .canvas-zoom-controls {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .canvas-zoom-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .canvas-zoom-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .canvas-zoom-level {
+      font-size: 12px;
+      color: var(--text-secondary);
+      min-width: 40px;
+      text-align: center;
+      user-select: none;
+    }
+
+    /* ==================== Chat Flow 增强输入框样式 ==================== */
+
+    .chatflow-input-wrapper {
+      width: 100%;
+    }
+
+    .chatflow-input-container {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 12px 16px;
+      transition: border-color 0.2s;
+    }
+
+    .chatflow-input-container:focus-within {
+      border-color: var(--color-saturn-yellow);
+    }
+
+    .chatflow-input-row {
+      width: 100%;
+    }
+
+    .chatflow-message-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-primary);
+      font-size: 14px;
+      line-height: 1.5;
+      resize: none;
+      max-height: 150px;
+      min-height: 24px;
+    }
+
+    .chatflow-message-input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .chatflow-input-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .chatflow-toolbar-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .chatflow-toolbar-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .chatflow-toolbar-spacer {
+      flex: 1;
+    }
+
+    .chatflow-more-menu-container {
+      position: relative;
+    }
+
+    .chatflow-more-menu {
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      margin-bottom: 8px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 8px 0;
+      min-width: 180px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      z-index: 100;
+    }
+
+    .chatflow-more-menu.active {
+      display: block;
+    }
+
+    .chatflow-model-selector {
+      position: relative;
+    }
+
+    .chatflow-model-select {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 12px;
+      background: var(--bg-hover);
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-secondary);
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .chatflow-model-select:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .chatflow-model-menu {
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      right: 0;
+      margin-bottom: 8px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 8px 0;
+      min-width: 160px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      z-index: 100;
+    }
+
+    .chatflow-model-menu.active {
+      display: block;
+    }
+
+    .chatflow-model-menu .model-menu-item {
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: background 0.2s;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .chatflow-model-menu .model-menu-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .chatflow-stop-btn {
+      display: none;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--color-error);
+      border: none;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      transition: transform 0.2s;
+    }
+
+    .chatflow-stop-btn:hover {
+      transform: scale(1.1);
+    }
+
+    /* ==================== Chat Flow 消息样式 ==================== */
+
+    .chatflow-message {
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      border-radius: 12px;
+      position: relative;
+      cursor: grab;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .chatflow-message:active {
+      cursor: grabbing;
+    }
+
+    .chatflow-message.user {
+      background: var(--bg-tertiary);
+      margin-left: 40px;
+    }
+
+    .chatflow-message.assistant {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+    }
+
+    .chatflow-message:hover {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .chatflow-message.dragging {
+      opacity: 0.5;
+      transform: scale(0.95);
+    }
+
+    .chatflow-message-drag-handle {
+      position: absolute;
+      left: -28px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      cursor: grab;
+      opacity: 0;
+      transition: opacity 0.2s;
+      color: var(--text-tertiary);
+    }
+
+    .chatflow-message:hover .chatflow-message-drag-handle {
+      opacity: 1;
+    }
+
+    .chatflow-message-content {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-primary);
+    }
+
+    /* ==================== 画布节点样式 ==================== */
+
+    .canvas-node {
+      cursor: move;
+    }
+
+    .canvas-node-bg {
+      fill: var(--bg-secondary);
+      stroke: var(--border-color);
+      stroke-width: 1;
+      rx: 8;
+      ry: 8;
+      transition: stroke 0.2s, stroke-width 0.2s;
+    }
+
+    .canvas-node:hover .canvas-node-bg {
+      stroke: var(--color-saturn-yellow);
+      stroke-width: 2;
+    }
+
+    .canvas-node.selected .canvas-node-bg {
+      stroke: var(--color-saturn-yellow);
+      stroke-width: 2;
+    }
+
+    .canvas-node-text {
+      fill: var(--text-primary);
+      font-size: 12px;
+      font-family: inherit;
+    }
+
+    .canvas-node-role {
+      fill: var(--text-tertiary);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .canvas-node-resize {
+      fill: transparent;
+      cursor: nwse-resize;
+    }
+
+    .canvas-node-resize:hover {
+      fill: var(--color-saturn-yellow);
+      opacity: 0.5;
+    }
+
+    /* ==================== 画布连线样式 ==================== */
+
+    .canvas-edge {
+      stroke: var(--border-color);
+      stroke-width: 2;
+      fill: none;
+      cursor: pointer;
+      transition: stroke 0.2s;
+    }
+
+    .canvas-edge:hover {
+      stroke: var(--color-saturn-yellow);
+    }
+
+    .canvas-edge-label {
+      fill: var(--text-secondary);
+      font-size: 11px;
+      text-anchor: middle;
+    }
+
+    .canvas-edge-arrowhead {
+      fill: var(--border-color);
+    }
+
+    /* ==================== 拖拽放置提示 ==================== */
+
+    .canvas-drop-zone {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(245, 213, 71, 0.1);
+      border: 2px dashed var(--color-saturn-yellow);
+      border-radius: 8px;
+      pointer-events: none;
+      z-index: 50;
+    }
+
+    .canvas-drop-zone.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .canvas-drop-zone-text {
+      font-size: 16px;
+      color: var(--color-saturn-yellow);
+      font-weight: 500;
+    }
+
+    /* ==================== 浮动工具栏样式 ==================== */
+
+    .canvas-floating-toolbar {
+      position: absolute;
+      right: 20px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      z-index: 100;
+    }
+
+    .canvas-tool-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: all 0.2s;
+      position: relative;
+    }
+
+    .canvas-tool-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .canvas-tool-btn.active {
+      background: var(--color-saturn-yellow);
+      color: #000;
+    }
+
+    .canvas-tool-btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .canvas-tool-divider {
+      width: 24px;
+      height: 1px;
+      background: var(--border-color);
+      margin: 4px auto;
+    }
+
+    .canvas-export-menu {
+      display: none;
+      position: absolute;
+      right: 100%;
+      top: 0;
+      margin-right: 8px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px 0;
+      min-width: 120px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    .canvas-export-menu.active {
+      display: block;
+    }
+
+    .export-menu-item {
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-secondary);
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .export-menu-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    /* 连线预览层 */
+    .edge-preview-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 60;
+    }
+
+    /* 节点连接端口 */
+    .canvas-node-port {
+      fill: var(--bg-secondary);
+      stroke: var(--border-color);
+      stroke-width: 2;
+      cursor: crosshair;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .canvas-node:hover .canvas-node-port {
+      opacity: 1;
+    }
+
+    .canvas-node-port:hover {
+      fill: var(--color-saturn-yellow);
+      stroke: var(--color-saturn-yellow);
+    }
+
+    /* 连线样式增强 */
+    .canvas-edge path {
+      stroke: var(--text-tertiary);
+      stroke-width: 2;
+      fill: none;
+      transition: stroke 0.2s;
+    }
+
+    .canvas-edge:hover path {
+      stroke: var(--color-saturn-yellow);
+    }
+
+    .canvas-edge-label-bg {
+      fill: var(--bg-secondary);
+      rx: 4;
+      ry: 4;
+    }
+
+    /* 双向高亮样式 */
+    .chatflow-message.highlighted {
+      outline: 2px solid var(--color-saturn-yellow);
+      outline-offset: 2px;
+    }
+
+    .canvas-node.highlighted .canvas-node-bg {
+      stroke: var(--color-saturn-yellow);
+      stroke-width: 3;
+      filter: drop-shadow(0 0 8px rgba(245, 213, 71, 0.5));
+    }
+
+    /* 移动端适配 */
+    @media (max-width: 768px) {
+      .chatflow-llm-panel {
+        width: 100%;
+        max-width: 100%;
+        min-width: auto;
+      }
+
+      .chatflow-divider {
+        display: none;
+      }
+
+      .chatflow-canvas-container {
+        display: none;
+      }
+
+      .chatflow-back-btn {
+        top: 8px;
+        left: 8px;
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+
+      .canvas-floating-toolbar {
+        right: 8px;
+        padding: 4px;
+      }
+
+      .canvas-tool-btn {
+        width: 32px;
+        height: 32px;
+      }
+    }
+
     .sidebar-tabs {
       display: none;
     }
@@ -4775,6 +5625,22 @@
       color: var(--text-secondary);
     }
 
+    /* 模型标签徽章样式 */
+    .model-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .model-badge.free {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+      color: #fff;
+    }
+
     .model-menu-divider {
       height: 1px;
       background: var(--border-color);
@@ -5219,6 +6085,87 @@
       }
     }
 
+    /* ==================== 拖拽上传覆盖层 ==================== */
+    .drop-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+      pointer-events: none;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+
+    .drop-overlay.active {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+
+    .drop-overlay-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 48px 64px;
+      background: var(--bg-secondary);
+      border: 3px dashed var(--color-saturn-yellow);
+      border-radius: 24px;
+      color: var(--text-primary);
+      font-size: 18px;
+      font-weight: 500;
+      text-align: center;
+    }
+
+    .drop-overlay-content svg {
+      color: var(--color-saturn-yellow);
+      animation: drop-icon-bounce 1s ease-in-out infinite;
+    }
+
+    @keyframes drop-icon-bounce {
+
+      0%,
+      100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-8px);
+      }
+    }
+
+    /* Toast 通知样式 */
+    .toast-notification {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      padding: 12px 24px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-color);
+      box-shadow: var(--shadow-lg);
+      font-size: 14px;
+      z-index: 10001;
+      opacity: 0;
+      transition: all 0.3s ease;
+    }
+
+    .toast-notification.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
     /* ==================== 登录/注册界面 ==================== */
     .auth-container {
       position: fixed;
@@ -5421,6 +6368,75 @@
 
     .error-message.show {
       display: block;
+    }
+
+    /* ==================== Apple风格渐进式登录 ==================== */
+    /* 隐藏状态 - 初始隐藏的元素 */
+    .auth-step-hidden {
+      opacity: 0;
+      max-height: 0;
+      overflow: hidden;
+      pointer-events: none;
+      transition: opacity 0.4s ease, max-height 0.4s ease, margin 0.4s ease;
+      margin-top: 0;
+      margin-bottom: 0;
+    }
+
+    /* 显示状态 - 渐入动画 */
+    .auth-step-visible {
+      opacity: 1;
+      max-height: 200px;
+      pointer-events: auto;
+      margin-top: var(--spacing-lg);
+      margin-bottom: 0;
+    }
+
+    /* 登录界面底部区域 */
+    .auth-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: var(--spacing-xl);
+      padding-top: var(--spacing-lg);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .auth-footer .auth-switch {
+      margin: 0;
+      text-align: left;
+    }
+
+    /* 行内语言切换按钮 */
+    .auth-lang-btn-inline {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--border-color);
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .auth-lang-btn-inline:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--border-dark);
+    }
+
+    /* 邮箱输入时的焦点提示 */
+    #authEmail:focus+.email-hint,
+    #authEmail:not(:placeholder-shown)+.email-hint {
+      display: none;
+    }
+
+    /* 提交按钮特定样式 */
+    #submitStep.auth-step-visible .auth-btn {
+      width: 100%;
     }
 
     /* ==================== 移动端适配与侧边栏滑动 ==================== */
@@ -6569,75 +7585,57 @@
 
 <body>
 
-  <!-- 登录/注册界面 -->
+  <!-- 登录/注册界面 - Apple风格渐进式输入 -->
   <div class="auth-container active" id="authContainer">
     <div class="auth-box">
-      <!-- 语言切换按钮 -->
-      <button class="auth-lang-btn" onclick="toggleLanguage()" title="Switch Language / 切换语言">
-        <span id="authLangText">EN</span>
-      </button>
-
       <div class="auth-logo">
         <div class="auth-logo-text">RAI</div>
       </div>
 
-      <div id="loginForm">
-        <h2 class="auth-title" data-i18n="login-title">欢迎回来</h2>
-        <p class="auth-subtitle" data-i18n="login-subtitle">登录继续使用 RAI</p>
+      <!-- 统一的邮箱输入步骤 -->
+      <div id="emailStep">
+        <h2 class="auth-title" id="authTitle" data-i18n="login-title">欢迎回来</h2>
+        <p class="auth-subtitle" id="authSubtitle" data-i18n="login-subtitle">登录继续使用 RAI</p>
 
-        <div class="error-message" id="loginError"></div>
+        <div class="error-message" id="authError"></div>
 
-        <form class="auth-form" onsubmit="handleLogin(event)">
+        <div class="auth-form">
           <div class="form-group">
             <label class="form-label" data-i18n="email-label">邮箱</label>
-            <input type="email" class="form-input" id="loginEmail" placeholder="your@email.com" required>
+            <input type="email" class="form-input" id="authEmail" placeholder="your@email.com"
+              oninput="handleEmailInput(this)" onkeydown="handleEmailKeydown(event)" required autocomplete="email">
           </div>
 
-          <div class="form-group">
+          <!-- 密码区域 - 初始隐藏 -->
+          <div class="form-group auth-step-hidden" id="passwordStep">
             <label class="form-label" data-i18n="password-label">密码</label>
-            <input type="password" class="form-input" id="loginPassword" data-i18n-placeholder="password-placeholder"
-              placeholder="至少6位字符" required>
+            <input type="password" class="form-input" id="authPassword" data-i18n-placeholder="password-placeholder"
+              placeholder="至少6位字符" onkeydown="handlePasswordKeydown(event)" autocomplete="current-password">
           </div>
 
-          <button type="submit" class="auth-btn" id="loginBtn" data-i18n="login-btn">登录</button>
-        </form>
-
-        <div class="auth-switch">
-          <span data-i18n="no-account">还没有账号?</span> <a class="auth-link" onclick="switchToRegister()"
-            data-i18n="register-link">立即注册</a>
-        </div>
-      </div>
-
-      <div id="registerForm" style="display: none;">
-        <h2 class="auth-title" data-i18n="register-title">创建账号</h2>
-        <p class="auth-subtitle" data-i18n="register-subtitle">加入 RAI 开始对话</p>
-
-        <div class="error-message" id="registerError"></div>
-
-        <form class="auth-form" onsubmit="handleRegister(event)">
-          <div class="form-group">
-            <label class="form-label" data-i18n="email-label">邮箱</label>
-            <input type="email" class="form-input" id="registerEmail" placeholder="your@email.com" required>
-          </div>
-
-          <div class="form-group">
+          <!-- 用户名区域 - 仅注册时显示 -->
+          <div class="form-group auth-step-hidden" id="usernameStep">
             <label class="form-label" data-i18n="username-label">用户名 (可选)</label>
-            <input type="text" class="form-input" id="registerUsername" data-i18n-placeholder="username-placeholder"
-              placeholder="您的昵称">
+            <input type="text" class="form-input" id="authUsername" data-i18n-placeholder="username-placeholder"
+              placeholder="您的昵称" autocomplete="username">
           </div>
 
-          <div class="form-group">
-            <label class="form-label" data-i18n="password-label">密码</label>
-            <input type="password" class="form-input" id="registerPassword" data-i18n-placeholder="password-placeholder"
-              placeholder="至少6位字符" required minlength="6">
+          <!-- 提交按钮 - 初始隐藏 -->
+          <div class="auth-step-hidden" id="submitStep">
+            <button type="button" class="auth-btn" id="authSubmitBtn" onclick="handleAuthSubmit()"
+              data-i18n="login-btn">登录</button>
           </div>
+        </div>
 
-          <button type="submit" class="auth-btn" id="registerBtn" data-i18n="register-btn">注册</button>
-        </form>
-
-        <div class="auth-switch">
-          <span data-i18n="has-account">已有账号?</span> <a class="auth-link" onclick="switchToLogin()"
-            data-i18n="login-link">立即登录</a>
+        <!-- 登录/注册切换 和 语言切换 - 放到表单下方 -->
+        <div class="auth-footer">
+          <div class="auth-switch" id="authSwitch">
+            <span data-i18n="no-account">还没有账号?</span>
+            <a class="auth-link" onclick="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
+          </div>
+          <button class="auth-lang-btn-inline" onclick="toggleLanguage()" title="Switch Language / 切换语言">
+            <span id="authLangText">EN</span>
+          </button>
         </div>
       </div>
     </div>
@@ -6761,6 +7759,32 @@
             </div>
           </div>
 
+          <!-- Chat Flow 思维流分组 -->
+          <div class="sidebar-group">
+            <div class="sidebar-group-header" onclick="toggleGroup('flows')">
+              <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                width="24" height="24" fill="currentColor">
+                <path
+                  d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h200v-80H240v80Zm280 0h160v-80H520v80ZM240-440h160v-80H240v80Zm200 0h280v-80H440v80ZM240-600h280v-80H240v80Zm320 0h160v-80H560v80Z" />
+              </svg>
+              <span class="sidebar-group-title" data-i18n="sidebar-flows">思维流</span>
+              <svg class="material-symbols-outlined group-toggle-icon" id="flowsToggle"
+                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
+              </svg>
+            </div>
+            <div class="sidebar-group-content" id="flowsGroup">
+              <button class="new-flow-btn-inline" onclick="createNewFlow()">
+                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
+                  height="24" fill="currentColor">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                </svg>
+                <span data-i18n="new-flow">新建思维流</span>
+              </button>
+              <div class="flows-list" id="flowsList"></div>
+            </div>
+          </div>
+
           <!-- 对话分组 -->
           <div class="sidebar-group">
             <div class="sidebar-group-header" onclick="toggleGroup('sessions')">
@@ -6798,7 +7822,8 @@
                 </svg>
               </button>
             </div>
-            <div class="user-email" id="userEmail"></div>
+            <!-- 签到按钮容器 - 只在可签到时显示 -->
+            <div id="sidebarCheckinContainer" style="display:none;"></div>
           </div>
         </div>
       </div>
@@ -7108,9 +8133,23 @@
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Gemini 3 Flash (暂时隐藏) -->
-                    <!--
-                    <div class="model-menu-item" data-model="gemini-3-flash"
+                    <!-- Qwen3-8B 免费模型 -->
+                    <div class="model-menu-item" data-model="qwen3-8b"
+                      onclick="selectModelFromMenu('qwen3-8b', 'Qwen3 8B')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm-40-200v-100h-100v-80h100v-100h80v100h100v80h-100v100h-80Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Qwen3 8B <span class="model-badge free">免费</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-divider"></div>
+
+                    <!-- Gemini 3 Flash -->
+                    <!--<div class="model-menu-item" data-model="gemini-3-flash"
                       onclick="selectModelFromMenu('gemini-3-flash', 'Gemini 3 Flash')">
                       <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
                         fill="currentColor">
@@ -7122,8 +8161,7 @@
                       </div>
                     </div>
 
-                    <div class="model-menu-divider"></div>
-                    -->
+                    <div class="model-menu-divider"></div>-->
 
                     <!-- Qwen3-Omni-Flash 多模态模型 -->
 
@@ -7161,6 +8199,274 @@
       </div>
     </div>
   </div>
+  </div>
+
+  <!-- Chat Flow 思维流工作区 -->
+  <div class="chatflow-workspace" id="chatFlowWorkspace" style="display: none;">
+    <!-- 返回按钮 -->
+    <button class="chatflow-back-btn" onclick="closeChatFlow()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+      </svg>
+      <span data-i18n="back-to-chat">返回对话</span>
+    </button>
+
+    <!-- 左侧 LLM 面板 -->
+    <div class="chatflow-llm-panel" id="chatflowLLMPanel">
+      <div class="chatflow-header">
+        <h3 class="chatflow-title" id="chatflowTitle">新思维流</h3>
+      </div>
+      <div class="chatflow-messages" id="chatflowMessages">
+        <div class="chatflow-empty-state">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="48" height="48" fill="currentColor">
+            <path
+              d="M480-80q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80ZM320-200v-80h320v80H320Zm10-120q-69-41-109.5-110T180-580q0-125 87.5-212.5T480-880q125 0 212.5 87.5T780-580q0 81-40.5 150T630-320H330Zm24-80h252q45-32 69.5-79T700-580q0-92-64-156t-156-64q-92 0-156 64t-64 156q0 54 24.5 101t69.5 79Z" />
+          </svg>
+          <p>开始对话，然后拖拽消息到画布</p>
+        </div>
+      </div>
+      <div class="chatflow-input-area">
+        <div class="chatflow-input-wrapper">
+          <div class="chatflow-input-container" id="chatflowInputContainer">
+            <!-- 顶部输入行 -->
+            <div class="chatflow-input-row">
+              <textarea class="chatflow-message-input" id="chatflowMessageInput" placeholder="输入消息..." rows="1"
+                onkeydown="handleChatFlowInputKeydown(event)" oninput="autoResizeChatFlowInput()"></textarea>
+            </div>
+
+            <!-- 底部工具栏 -->
+            <div class="chatflow-input-toolbar">
+              <!-- 更多菜单 -->
+              <div class="chatflow-more-menu-container">
+                <button class="chatflow-toolbar-btn" id="chatflowMoreBtn" onclick="toggleChatFlowMoreMenu()">
+                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                    width="20" height="20" fill="currentColor">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" stroke="currentColor" stroke-width="0.5" />
+                  </svg>
+                </button>
+
+                <!-- 更多菜单下拉 -->
+                <div class="chatflow-more-menu" id="chatflowMoreMenu">
+                  <!-- 联网搜索开关 -->
+                  <div class="more-menu-item" onclick="toggleChatFlowInternet(event)">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                          d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text">联网搜索</span>
+                    <div class="more-menu-item-toggle" id="chatflowInternetToggle"></div>
+                  </div>
+
+                  <!-- 推理模式开关 -->
+                  <div class="more-menu-item" onclick="toggleChatFlowThinking(event)">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                        <path
+                          d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text">推理模式</span>
+                    <div class="more-menu-item-toggle" id="chatflowThinkingToggle"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chatflow-toolbar-spacer"></div>
+
+              <!-- 模型选择器 -->
+              <div class="chatflow-model-selector">
+                <div class="chatflow-model-select" id="chatflowModelSelect" onclick="toggleChatFlowModelMenu()">
+                  <span id="chatflowSelectedModel">Kimi K2</span>
+                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                    width="16" height="16" fill="currentColor">
+                    <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
+                  </svg>
+                </div>
+
+                <!-- 模型下拉菜单 -->
+                <div class="chatflow-model-menu" id="chatflowModelMenu">
+                  <div class="model-menu-item" onclick="selectChatFlowModel('kimi-k2', 'Kimi K2')">
+                    <span>Kimi K2</span>
+                  </div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('deepseek-v3', 'DeepSeek V3')">
+                    <span>DeepSeek V3</span>
+                  </div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen-max', 'Qwen Max')">
+                    <span>Qwen Max</span>
+                  </div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen-plus', 'Qwen Plus')">
+                    <span>Qwen Plus</span>
+                  </div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen-flash', 'Qwen Flash')">
+                    <span>Qwen Flash</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 发送/停止按钮 -->
+              <button class="chatflow-send-btn" id="chatflowSendBtn" onclick="sendChatFlowMessage()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                  <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" />
+                </svg>
+              </button>
+              <button class="chatflow-stop-btn" id="chatflowStopBtn" style="display: none;"
+                onclick="stopChatFlowGeneration()">
+                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20"
+                  height="20" fill="currentColor">
+                  <path d="M6 6h12v12H6z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 可拖拽分隔栏 -->
+    <div class="chatflow-divider" id="chatflowDivider"></div>
+
+    <!-- 无限画布区域 -->
+    <div class="chatflow-canvas-container" id="chatflowCanvasContainer">
+      <svg class="infinite-canvas" id="infiniteCanvas">
+        <defs>
+          <!-- 点阵背景 pattern -->
+          <pattern id="canvasGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <circle cx="20" cy="20" r="1.5" fill="rgba(255,255,255,0.06)" />
+          </pattern>
+        </defs>
+
+        <!-- 背景层 -->
+        <rect class="canvas-bg" width="20000" height="20000" x="-10000" y="-10000" fill="url(#canvasGrid)" />
+
+        <!-- 可变换内容层 -->
+        <g class="canvas-content" id="canvasContent">
+          <!-- 连线层 (在节点下方) -->
+          <g class="edges-layer" id="edgesLayer"></g>
+          <!-- 节点层 -->
+          <g class="nodes-layer" id="nodesLayer"></g>
+        </g>
+      </svg>
+
+      <!-- 画布提示 -->
+      <div class="canvas-hint" id="canvasHint">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="32" height="32" fill="currentColor">
+          <path
+            d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm280-80q-82 0-155-31.5T201-401q-51-58-82-131.5T80-688l80-32q31 113 127 186.5T520-460q137 0 233-73.5T880-720l80 32q-38 82-105.5 145.5T716-441q-71 41-154 61t-82 0Z" />
+        </svg>
+        <span>从左侧拖拽消息到画布，开始构建思维图谱</span>
+      </div>
+
+      <!-- 缩放控制 -->
+      <div class="canvas-zoom-controls">
+        <button class="canvas-zoom-btn" onclick="canvasZoomIn()" title="放大">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+          </svg>
+        </button>
+        <span class="canvas-zoom-level" id="canvasZoomLevel">100%</span>
+        <button class="canvas-zoom-btn" onclick="canvasZoomOut()" title="缩小">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M19 13H5v-2h14v2z" />
+          </svg>
+        </button>
+        <button class="canvas-zoom-btn" onclick="canvasResetView()" title="重置视图">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="18" height="18" fill="currentColor">
+            <path
+              d="M480-80q-75 0-140.5-28.5t-114-77q-48.5-48.5-77-114T120-440h80q0 117 81.5 198.5T480-160q117 0 198.5-81.5T760-440q0-117-81.5-198.5T480-720h-6l62 62-56 58-160-160 160-160 56 58-62 62h6q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-440q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-80Z" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- 浮动工具栏 -->
+      <div class="canvas-floating-toolbar" id="canvasFloatingToolbar">
+        <!-- 选择工具 -->
+        <button class="canvas-tool-btn active" data-tool="select" onclick="setCanvasTool('select')" title="选择">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2 1-3.2-7.4L7 18.5V2z" />
+          </svg>
+        </button>
+
+        <!-- 连线工具 -->
+        <button class="canvas-tool-btn" data-tool="connect" onclick="setCanvasTool('connect')" title="连线">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+            <path
+              d="M440-80v-120H280q-33 0-56.5-23.5T200-280v-160h80v160h160v-120l160 160-160 160Zm200-400v-160H480v120L320-680l160-160v120h160q33 0 56.5 23.5T720-640v160h-80Z" />
+          </svg>
+        </button>
+
+        <!-- 便签工具 -->
+        <button class="canvas-tool-btn" data-tool="sticky" onclick="addStickyNote()" title="添加便签">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+            <path
+              d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h360l280 280v360q0 33-23.5 56.5T760-120H200Zm360-520v-200H200v560h560v-360H560Z" />
+          </svg>
+        </button>
+
+        <div class="canvas-tool-divider"></div>
+
+        <!-- AI 拆解 -->
+        <button class="canvas-tool-btn" data-tool="ai-decompose" onclick="aiDecomposeSelected()" title="AI 拆解">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+            <path
+              d="m354-247 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-80l65-281L80-550l288-25 112-265 112 265 288 25-218 189 65 281-247-149L233-80Z" />
+          </svg>
+        </button>
+
+        <!-- 删除 -->
+        <button class="canvas-tool-btn" data-tool="delete" onclick="deleteSelectedNodes()" title="删除选中">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+          </svg>
+        </button>
+
+        <div class="canvas-tool-divider"></div>
+
+        <!-- 自动布局 -->
+        <button class="canvas-tool-btn" data-tool="auto-layout" onclick="autoLayoutNodes()" title="自动布局">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+            <path
+              d="M120-520v-320h320v320H120Zm0 400v-320h320v320H120Zm400-400v-320h320v320H520Zm0 400v-320h320v320H520ZM200-600h160v-160H200v160Zm400 0h160v-160H600v160Zm0 400h160v-160H600v160Zm-400 0h160v-160H200v160Z" />
+          </svg>
+        </button>
+
+        <!-- 导出 -->
+        <button class="canvas-tool-btn" data-tool="export" onclick="toggleExportMenu()" title="导出">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+            <path
+              d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z" />
+          </svg>
+        </button>
+
+        <!-- 导出菜单 -->
+        <div class="canvas-export-menu" id="canvasExportMenu">
+          <div class="export-menu-item" onclick="exportCanvas('png')">
+            <span>导出 PNG</span>
+          </div>
+          <div class="export-menu-item" onclick="exportCanvas('svg')">
+            <span>导出 SVG</span>
+          </div>
+          <div class="export-menu-item" onclick="exportCanvas('mermaid')">
+            <span>导出 Mermaid</span>
+          </div>
+          <div class="export-menu-item" onclick="exportCanvas('json')">
+            <span>导出 JSON</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 拖放提示区域 -->
+      <div class="canvas-drop-zone" id="canvasDropZone">
+        <span class="canvas-drop-zone-text">释放以创建节点</span>
+      </div>
+
+      <!-- 连线预览 -->
+      <svg class="edge-preview-layer" id="edgePreviewLayer">
+        <line class="edge-preview-line" id="edgePreviewLine" x1="0" y1="0" x2="0" y2="0"
+          stroke="var(--color-saturn-yellow)" stroke-width="2" stroke-dasharray="5,5" style="display: none;" />
+      </svg>
+    </div>
   </div>
 
   <!-- 对话索引导航器 -->
@@ -7205,6 +8511,26 @@
       </div>
 
       <div class="settings-body">
+        <!-- 🎫 会员状态区域 -->
+        <div class="settings-group" id="settingsMembershipSection">
+          <h3 class="settings-group-title">🎫 会员状态</h3>
+          <div class="settings-membership-section">
+            <div class="settings-membership-header">
+              <span class="settings-membership-badge free" id="settingsMembershipBadge">free</span>
+              <span onclick="openMembershipPlans()" class="settings-upgrade-link">体验更多使用点数？</span>
+            </div>
+            <div class="settings-points-display">
+              <span class="points-icon">⚡</span>
+              <span>剩余点数: <strong id="settingsPointsDisplay">0</strong></span>
+            </div>
+            <button id="settingsCheckinBtn" onclick="userCheckin(); updateSettingsMembership();"
+              class="settings-checkin-btn">
+              签到 +20 ⚡
+            </button>
+            <div class="settings-created-at" id="settingsCreatedAt">创建于: -</div>
+          </div>
+        </div>
+
         <div class="settings-group">
           <h3 class="settings-group-title" data-i18n="appearance">外观</h3>
 
@@ -7240,7 +8566,7 @@
           <div class="setting-item">
             <p class="setting-description" data-i18n="preferences-desc">设置AI的角色和行为</p>
             <textarea class="system-prompt-input" id="systemPrompt" rows="4"
-              data-i18n-placeholder="preferences-placeholder" placeholder="例如: 你是一个专业的编程助手,擅长解释代码和解决技术问题..."></textarea>
+              data-i18n-placeholder="preferences-placeholder" placeholder="例如: 我希望获得简短回复..."></textarea>
           </div>
         </div>
 
@@ -7672,6 +8998,13 @@
         provider: 'siliconflow',
         supportsThinking: true
       },
+      // Qwen3-8B - 硅基流动免费模型 (支持思考、工具调用)
+      'qwen3-8b': {
+        name: 'Qwen3 8B',
+        provider: 'siliconflow',
+        supportsThinking: true,
+        isFree: true  // 标记为免费模型
+      },
       // Qwen3-Omni-Flash 多模态模型 (图片/音频/视频)
       'qwen3-omni-flash': {
         name: 'Qwen3 Omni Flash',
@@ -7679,11 +9012,12 @@
         supportsThinking: false,
         multimodal: true
       },
-      // Google Gemini 3 Flash - 最智能的速度优化模型
+      // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
       'gemini-3-flash': {
         name: 'Gemini 3 Flash',
         provider: 'google_gemini',
-        supportsThinking: true
+        supportsThinking: true,
+        multimodal: true  // 支持图片/视频等多模态输入
       },
       'lmstudio-local': {
         name: 'LMStudio Local',
@@ -8309,6 +9643,9 @@
 
       // 初始化工具栏按钮状态（确保联网按钮默认激活）
       updateToolbarUI();
+
+      // 初始化拖拽上传功能
+      initDragAndDrop();
 
       // 修复：改进model dropdown的点击外关闭逻辑
       document.addEventListener('click', (e) => {
@@ -10276,11 +11613,11 @@
       // 跟踪已加载的图片：URL -> DOM容器映射
       const loadedImageContainers = new Map();
 
-      // 🎨 Gemini 方式：使用骨架中预先创建的 Mermaid 预览容器
+      // 使用骨架中预先创建的 Mermaid 预览容器
       const mermaidPreviewContainer = aiMsgElement?.querySelector('#mermaidLivePreview');
       let lastValidMermaidCode = ''; // 上次成功渲染的代码
 
-      // 🎨 从原始文本中提取 Mermaid 代码并尝试实时渲染（Gemini 方式）
+      // 从原始文本中提取 Mermaid 代码并尝试实时渲染
       async function tryRenderMermaidFromText(fullText) {
         if (typeof mermaid === 'undefined' || !mermaidPreviewContainer) return;
 
@@ -10377,7 +11714,7 @@
           }
         });
 
-        // 4. 🎨 Gemini 方式：从原始文本中提取 Mermaid 代码并实时渲染到持久容器
+        // 4.从原始文本中提取 Mermaid 代码并实时渲染到持久容器
         tryRenderMermaidFromText(content);
       }
 
@@ -10667,6 +12004,12 @@
       const input = document.getElementById('messageInput');
       if (!input) {
         console.error('❌ 消息输入框未找到');
+        return;
+      }
+
+      // 检测超长输入并自动转换为文件附件
+      if (checkAndConvertLongInput()) {
+        // 输入已被转换为附件，等待下次发送
         return;
       }
 
@@ -11651,44 +12994,12 @@
     }
 
     // ==================== 认证相关 ====================
+    // 兼容旧代码的handleLogin函数 - 实际调用新的handleAuthSubmit
     async function handleLogin(event) {
-      event.preventDefault();
-
-      const email = document.getElementById('loginEmail').value;
-      const password = document.getElementById('loginPassword').value;
-      const loginBtn = document.getElementById('loginBtn');
-      const errorEl = document.getElementById('loginError');
-
-      loginBtn.disabled = true;
-      loginBtn.innerHTML = '<span class="loading"></span> ' + (appState.language === 'zh-CN' ? '登录中...' : 'Logging in...');
-      errorEl.classList.remove('show');
-
-      try {
-        const response = await fetch(`${API_BASE}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-          appState.token = data.token;
-          appState.user = data.user;
-          localStorage.setItem('rai_token', data.token);
-
-          showApp();
-          await loadUserData();
-        } else {
-          showError(errorEl, data.error || (appState.language === 'zh-CN' ? '登录失败' : 'Login failed'));
-        }
-      } catch (error) {
-        showError(errorEl, appState.language === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error');
-        console.error('❌ 登录错误:', error);
-      } finally {
-        loginBtn.disabled = false;
-        loginBtn.textContent = appState.language === 'zh-CN' ? '登录' : 'Login';
-      }
+      if (event) event.preventDefault();
+      // 设置为登录模式
+      appState.authMode = 'login';
+      await handleAuthSubmit();
     }
 
     async function handleRegister(event) {
@@ -11772,15 +13083,254 @@
     }
 
     function switchToRegister() {
-      document.getElementById('loginForm').style.display = 'none';
-      document.getElementById('registerForm').style.display = 'block';
-      document.getElementById('loginError').classList.remove('show');
+      // 兼容旧代码，调用新的切换函数
+      switchAuthMode();
     }
 
     function switchToLogin() {
-      document.getElementById('registerForm').style.display = 'none';
-      document.getElementById('loginForm').style.display = 'block';
-      document.getElementById('registerError').classList.remove('show');
+      // 兼容旧代码，调用新的切换函数
+      if (appState.authMode === 'register') {
+        switchAuthMode();
+      }
+    }
+
+    // ==================== Apple风格渐进式登录系统 ====================
+    // 当前认证模式: 'login' | 'register'
+    appState.authMode = 'login';
+    // 邮箱是否已验证（显示了密码框）
+    appState.authEmailValidated = false;
+
+    // 邮箱输入处理 - 检测有效邮箱后显示密码框
+    function handleEmailInput(input) {
+      const email = input.value.trim();
+      const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+      if (isValidEmail && !appState.authEmailValidated) {
+        // 显示密码框和提交按钮
+        showAuthStep('passwordStep');
+        showAuthStep('submitStep');
+        appState.authEmailValidated = true;
+
+        // 如果是注册模式，也显示用户名输入框
+        if (appState.authMode === 'register') {
+          showAuthStep('usernameStep');
+        }
+
+        // 自动聚焦到密码框
+        setTimeout(() => {
+          document.getElementById('authPassword')?.focus();
+        }, 300);
+      } else if (!isValidEmail && appState.authEmailValidated) {
+        // 邮箱变为无效，隐藏后续步骤
+        hideAuthStep('passwordStep');
+        hideAuthStep('usernameStep');
+        hideAuthStep('submitStep');
+        appState.authEmailValidated = false;
+      }
+    }
+
+    // 邮箱输入框按键处理 - Enter键触发验证
+    function handleEmailKeydown(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const input = document.getElementById('authEmail');
+        const email = input.value.trim();
+        const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+        if (isValidEmail) {
+          if (!appState.authEmailValidated) {
+            handleEmailInput(input);
+          } else {
+            // 已经显示了密码框，聚焦到密码框
+            document.getElementById('authPassword')?.focus();
+          }
+        } else {
+          // 显示邮箱格式错误
+          showAuthError(appState.language === 'zh-CN' ? '请输入有效的邮箱地址' : 'Please enter a valid email');
+        }
+      }
+    }
+
+    // 密码输入框按键处理 - Enter键提交表单
+    function handlePasswordKeydown(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        handleAuthSubmit();
+      }
+    }
+
+    // 显示认证步骤
+    function showAuthStep(stepId) {
+      const step = document.getElementById(stepId);
+      if (step) {
+        step.classList.remove('auth-step-hidden');
+        step.classList.add('auth-step-visible');
+      }
+    }
+
+    // 隐藏认证步骤
+    function hideAuthStep(stepId) {
+      const step = document.getElementById(stepId);
+      if (step) {
+        step.classList.remove('auth-step-visible');
+        step.classList.add('auth-step-hidden');
+      }
+    }
+
+    // 显示认证错误
+    function showAuthError(message) {
+      const errorEl = document.getElementById('authError');
+      if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.classList.add('show');
+      }
+    }
+
+    // 隐藏认证错误
+    function hideAuthError() {
+      const errorEl = document.getElementById('authError');
+      if (errorEl) {
+        errorEl.classList.remove('show');
+      }
+    }
+
+    // 切换登录/注册模式
+    function switchAuthMode() {
+      const isLogin = appState.authMode === 'login';
+      appState.authMode = isLogin ? 'register' : 'login';
+
+      // 更新标题和副标题
+      const title = document.getElementById('authTitle');
+      const subtitle = document.getElementById('authSubtitle');
+      const switchText = document.getElementById('authSwitch').querySelector('[data-i18n]');
+      const switchLink = document.getElementById('authSwitchLink');
+      const submitBtn = document.getElementById('authSubmitBtn');
+
+      if (appState.authMode === 'register') {
+        // 切换到注册模式
+        if (title) {
+          title.textContent = i18n[appState.language]?.['register-title'] || '创建账号';
+          title.setAttribute('data-i18n', 'register-title');
+        }
+        if (subtitle) {
+          subtitle.textContent = i18n[appState.language]?.['register-subtitle'] || '加入 RAI 开始对话';
+          subtitle.setAttribute('data-i18n', 'register-subtitle');
+        }
+        if (switchText) {
+          switchText.textContent = i18n[appState.language]?.['has-account'] || '已有账号?';
+          switchText.setAttribute('data-i18n', 'has-account');
+        }
+        if (switchLink) {
+          switchLink.textContent = i18n[appState.language]?.['login-link'] || '立即登录';
+          switchLink.setAttribute('data-i18n', 'login-link');
+        }
+        if (submitBtn) {
+          submitBtn.textContent = i18n[appState.language]?.['register-btn'] || '注册';
+          submitBtn.setAttribute('data-i18n', 'register-btn');
+        }
+
+        // 如果邮箱已验证，显示用户名输入框
+        if (appState.authEmailValidated) {
+          showAuthStep('usernameStep');
+        }
+      } else {
+        // 切换到登录模式
+        if (title) {
+          title.textContent = i18n[appState.language]?.['login-title'] || '欢迎回来';
+          title.setAttribute('data-i18n', 'login-title');
+        }
+        if (subtitle) {
+          subtitle.textContent = i18n[appState.language]?.['login-subtitle'] || '登录继续使用 RAI';
+          subtitle.setAttribute('data-i18n', 'login-subtitle');
+        }
+        if (switchText) {
+          switchText.textContent = i18n[appState.language]?.['no-account'] || '还没有账号?';
+          switchText.setAttribute('data-i18n', 'no-account');
+        }
+        if (switchLink) {
+          switchLink.textContent = i18n[appState.language]?.['register-link'] || '立即注册';
+          switchLink.setAttribute('data-i18n', 'register-link');
+        }
+        if (submitBtn) {
+          submitBtn.textContent = i18n[appState.language]?.['login-btn'] || '登录';
+          submitBtn.setAttribute('data-i18n', 'login-btn');
+        }
+
+        // 隐藏用户名输入框
+        hideAuthStep('usernameStep');
+      }
+
+      // 清除错误信息
+      hideAuthError();
+    }
+
+    // 统一的表单提交处理
+    async function handleAuthSubmit() {
+      const email = document.getElementById('authEmail')?.value.trim();
+      const password = document.getElementById('authPassword')?.value;
+      const username = document.getElementById('authUsername')?.value.trim();
+      const submitBtn = document.getElementById('authSubmitBtn');
+      const errorEl = document.getElementById('authError');
+
+      // 基本验证
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showAuthError(appState.language === 'zh-CN' ? '请输入有效的邮箱地址' : 'Please enter a valid email');
+        return;
+      }
+
+      if (!password || password.length < 6) {
+        showAuthError(appState.language === 'zh-CN' ? '密码至少6位字符' : 'Password must be at least 6 characters');
+        return;
+      }
+
+      hideAuthError();
+
+      // 禁用按钮并显示加载状态
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        const loadingText = appState.authMode === 'login'
+          ? (appState.language === 'zh-CN' ? '登录中...' : 'Logging in...')
+          : (appState.language === 'zh-CN' ? '注册中...' : 'Registering...');
+        submitBtn.innerHTML = '<span class="loading"></span> ' + loadingText;
+      }
+
+      try {
+        const endpoint = appState.authMode === 'login' ? 'login' : 'register';
+        const body = appState.authMode === 'login'
+          ? { email, password }
+          : { email, password, username };
+
+        const response = await fetch(`${API_BASE}/auth/${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          appState.token = data.token;
+          appState.user = data.user;
+          localStorage.setItem('rai_token', data.token);
+
+          showApp();
+          await loadUserData();
+        } else {
+          showAuthError(data.error || (appState.language === 'zh-CN' ? '操作失败' : 'Operation failed'));
+        }
+      } catch (error) {
+        showAuthError(appState.language === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error');
+        console.error('❌ 认证错误:', error);
+      } finally {
+        // 恢复按钮状态
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          const btnText = appState.authMode === 'login'
+            ? (appState.language === 'zh-CN' ? '登录' : 'Login')
+            : (appState.language === 'zh-CN' ? '注册' : 'Register');
+          submitBtn.textContent = btnText;
+        }
+      }
     }
 
     function showApp() {
@@ -11820,7 +13370,7 @@
         console.log('📧 显示邮箱:', realEmail);
 
         document.getElementById('userName').textContent = displayName;
-        document.getElementById('userEmail').textContent = realEmail;
+        // userEmail 元素已移除，不再显示邮箱在侧边栏
         document.getElementById('userAvatar').textContent = realEmail ? realEmail[0].toUpperCase() : 'U';
 
         appState.user = {
@@ -11867,6 +13417,10 @@
         }
 
         console.log('✅ 用户数据加载完成');
+
+        // 🎫 获取并显示会员状态
+        await fetchUserMembership();
+        updateUserAreaWithMembership();
       } catch (error) {
         console.error('❌ 加载用户数据失败:', error);
         if (error.message.includes('500')) {
@@ -12192,6 +13746,1530 @@
       const i = Math.floor(Math.log(bytes) / Math.log(k));
       return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
     }
+
+    // ==================== Chat Flow 思维流核心逻辑 ====================
+
+    // Chat Flow 状态
+    const chatFlowState = {
+      currentFlowId: null,
+      flows: [],
+      messages: [],
+      canvas: {
+        scale: 1,
+        translateX: 0,
+        translateY: 0,
+        isPanning: false,
+        startX: 0,
+        startY: 0
+      },
+      nodes: [],
+      edges: [],
+      isInitialized: false,
+      // Phase 2 新增
+      selectedModel: 'kimi-k2',
+      thinkingMode: false,
+      internetMode: false,
+      isStreaming: false
+    };
+
+    // 加载 Flow 列表
+    async function loadFlowsList() {
+      try {
+        const response = await fetch('/api/flows', {
+          headers: { 'Authorization': `Bearer ${appState.token}` }
+        });
+        if (!response.ok) throw new Error('加载失败');
+
+        const flows = await response.json();
+        chatFlowState.flows = flows;
+        renderFlowsList(flows);
+      } catch (error) {
+        console.error('❌ 加载思维流列表失败:', error);
+      }
+    }
+
+    // 渲染 Flow 列表
+    function renderFlowsList(flows) {
+      const container = document.getElementById('flowsList');
+      if (!container) return;
+
+      if (flows.length === 0) {
+        container.innerHTML = '<div class="flow-empty-hint">暂无思维流</div>';
+        return;
+      }
+
+      container.innerHTML = flows.map(flow => `
+        <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}" 
+             onclick="openFlow('${flow.id}')" data-flow-id="${flow.id}">
+          <svg class="flow-item-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+            <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Z"/>
+          </svg>
+          <span class="flow-item-title">${escapeHtml(flow.title)}</span>
+          <button class="flow-item-delete" onclick="event.stopPropagation(); deleteFlow('${flow.id}')" title="删除">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+          </button>
+        </div>
+      `).join('');
+    }
+
+    // 创建新 Flow
+    async function createNewFlow() {
+      try {
+        const response = await fetch('/api/flows', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${appState.token}`
+          },
+          body: JSON.stringify({ title: '新思维流' })
+        });
+
+        if (!response.ok) throw new Error('创建失败');
+
+        const flow = await response.json();
+        console.log('✅ 创建思维流成功:', flow.id);
+
+        await loadFlowsList();
+        openFlow(flow.id);
+      } catch (error) {
+        console.error('❌ 创建思维流失败:', error);
+        alert('创建思维流失败，请重试');
+      }
+    }
+
+    // 打开 Flow
+    async function openFlow(flowId) {
+      try {
+        const response = await fetch(`/api/flows/${flowId}`, {
+          headers: { 'Authorization': `Bearer ${appState.token}` }
+        });
+
+        if (!response.ok) throw new Error('加载失败');
+
+        const flow = await response.json();
+
+        chatFlowState.currentFlowId = flowId;
+        chatFlowState.messages = flow.chat_history || [];
+        chatFlowState.nodes = flow.canvas_state?.nodes || [];
+        chatFlowState.edges = flow.canvas_state?.edges || [];
+        chatFlowState.canvas = {
+          ...chatFlowState.canvas,
+          ...flow.canvas_state?.viewport
+        };
+
+        // 更新 UI
+        document.getElementById('chatflowTitle').textContent = flow.title;
+        document.getElementById('chatFlowWorkspace').style.display = 'flex';
+
+        // 初始化画布
+        if (!chatFlowState.isInitialized) {
+          initChatFlowCanvas();
+          initChatFlowDivider();
+          chatFlowState.isInitialized = true;
+        }
+
+        // 渲染消息和节点
+        renderChatFlowMessages();
+        renderCanvasNodes();
+        updateCanvasTransform();
+
+        // 更新列表选中状态
+        renderFlowsList(chatFlowState.flows);
+
+        console.log('✅ 打开思维流:', flowId);
+      } catch (error) {
+        console.error('❌ 打开思维流失败:', error);
+        alert('打开思维流失败，请重试');
+      }
+    }
+
+    // 关闭 Chat Flow
+    function closeChatFlow() {
+      document.getElementById('chatFlowWorkspace').style.display = 'none';
+      chatFlowState.currentFlowId = null;
+      renderFlowsList(chatFlowState.flows);
+    }
+
+    // 删除 Flow
+    async function deleteFlow(flowId) {
+      if (!confirm('确定要删除这个思维流吗？')) return;
+
+      try {
+        const response = await fetch(`/api/flows/${flowId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${appState.token}` }
+        });
+
+        if (!response.ok) throw new Error('删除失败');
+
+        if (chatFlowState.currentFlowId === flowId) {
+          closeChatFlow();
+        }
+
+        await loadFlowsList();
+        console.log('✅ 删除思维流成功:', flowId);
+      } catch (error) {
+        console.error('❌ 删除思维流失败:', error);
+        alert('删除思维流失败，请重试');
+      }
+    }
+
+    // 保存 Flow 状态
+    async function saveFlowState() {
+      if (!chatFlowState.currentFlowId) return;
+
+      try {
+        await fetch(`/api/flows/${chatFlowState.currentFlowId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${appState.token}`
+          },
+          body: JSON.stringify({
+            chat_history: chatFlowState.messages,
+            canvas_state: {
+              nodes: chatFlowState.nodes,
+              edges: chatFlowState.edges,
+              viewport: {
+                x: chatFlowState.canvas.translateX,
+                y: chatFlowState.canvas.translateY,
+                zoom: chatFlowState.canvas.scale
+              }
+            }
+          })
+        });
+      } catch (error) {
+        console.error('❌ 保存思维流状态失败:', error);
+      }
+    }
+
+    // 渲染 Chat Flow 消息
+    function renderChatFlowMessages() {
+      const container = document.getElementById('chatflowMessages');
+      if (!container) return;
+
+      if (chatFlowState.messages.length === 0) {
+        container.innerHTML = `
+          <div class="chatflow-empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="48" height="48" fill="currentColor">
+              <path d="M480-80q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80ZM320-200v-80h320v80H320Zm10-120q-69-41-109.5-110T180-580q0-125 87.5-212.5T480-880q125 0 212.5 87.5T780-580q0 81-40.5 150T630-320H330Z"/>
+            </svg>
+            <p>开始对话，然后拖拽消息到画布</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = chatFlowState.messages.map((msg, i) => `
+        <div class="chatflow-message ${msg.role}" draggable="true" data-msg-index="${i}">
+          <div class="chatflow-message-drag-handle" title="拖拽到画布">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="16" height="16" fill="currentColor">
+              <path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z"/>
+            </svg>
+          </div>
+          <div class="chatflow-message-content">${renderMarkdownWithMath(msg.content)}</div>
+        </div>
+      `).join('');
+
+      // 添加 hover 事件实现双向高亮
+      container.querySelectorAll('.chatflow-message').forEach(msgEl => {
+        msgEl.addEventListener('mouseenter', () => {
+          const msgIndex = parseInt(msgEl.dataset.msgIndex);
+          // 找到画布上对应的节点并高亮
+          chatFlowState.nodes.forEach(node => {
+            if (node.sourceIndex === msgIndex) {
+              highlightNode(node.id);
+            }
+          });
+        });
+
+        msgEl.addEventListener('mouseleave', () => {
+          // 清除高亮
+          document.querySelectorAll('.canvas-node.highlighted').forEach(el => {
+            el.classList.remove('highlighted');
+          });
+        });
+      });
+    }
+
+    // 渲染画布节点
+    function renderCanvasNodes() {
+      const nodesLayer = document.getElementById('nodesLayer');
+      if (!nodesLayer) return;
+
+      // 清空现有节点
+      nodesLayer.innerHTML = '';
+
+      // 如果没有节点，显示提示
+      const hint = document.getElementById('canvasHint');
+      if (hint) {
+        hint.style.display = chatFlowState.nodes.length === 0 ? 'flex' : 'none';
+      }
+
+      // TODO: 渲染节点 (Phase 2)
+    }
+
+    // 初始化 Chat Flow 画布
+    function initChatFlowCanvas() {
+      const svg = document.getElementById('infiniteCanvas');
+      if (!svg) return;
+
+      // 鼠标平移
+      svg.addEventListener('mousedown', (e) => {
+        if (e.target === svg || e.target.classList.contains('canvas-bg')) {
+          chatFlowState.canvas.isPanning = true;
+          chatFlowState.canvas.startX = e.clientX - chatFlowState.canvas.translateX;
+          chatFlowState.canvas.startY = e.clientY - chatFlowState.canvas.translateY;
+          svg.style.cursor = 'grabbing';
+        }
+      });
+
+      svg.addEventListener('mousemove', (e) => {
+        if (!chatFlowState.canvas.isPanning) return;
+        chatFlowState.canvas.translateX = e.clientX - chatFlowState.canvas.startX;
+        chatFlowState.canvas.translateY = e.clientY - chatFlowState.canvas.startY;
+        updateCanvasTransform();
+      });
+
+      svg.addEventListener('mouseup', () => {
+        chatFlowState.canvas.isPanning = false;
+        svg.style.cursor = 'grab';
+      });
+
+      svg.addEventListener('mouseleave', () => {
+        chatFlowState.canvas.isPanning = false;
+        svg.style.cursor = 'grab';
+      });
+
+      // 滚轮缩放
+      svg.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        const newScale = Math.min(Math.max(chatFlowState.canvas.scale * delta, 0.1), 5);
+        chatFlowState.canvas.scale = newScale;
+        updateCanvasTransform();
+        updateZoomDisplay();
+      }, { passive: false });
+    }
+
+    // 初始化分隔栏拖拽
+    function initChatFlowDivider() {
+      const divider = document.getElementById('chatflowDivider');
+      const llmPanel = document.getElementById('chatflowLLMPanel');
+      if (!divider || !llmPanel) return;
+
+      let isDragging = false;
+
+      divider.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const containerRect = document.getElementById('chatFlowWorkspace').getBoundingClientRect();
+        const newWidth = e.clientX - containerRect.left;
+        const minWidth = 320;
+        const maxWidth = containerRect.width * 0.5;
+
+        llmPanel.style.width = Math.max(minWidth, Math.min(maxWidth, newWidth)) + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        }
+      });
+
+      // 双击折叠
+      divider.addEventListener('dblclick', () => {
+        if (llmPanel.style.width === '0px') {
+          llmPanel.style.width = '30%';
+        } else {
+          llmPanel.style.width = '0px';
+        }
+      });
+    }
+
+    // 更新画布变换
+    function updateCanvasTransform() {
+      const content = document.getElementById('canvasContent');
+      if (!content) return;
+      content.setAttribute('transform',
+        `translate(${chatFlowState.canvas.translateX}, ${chatFlowState.canvas.translateY}) scale(${chatFlowState.canvas.scale})`
+      );
+    }
+
+    // 更新缩放显示
+    function updateZoomDisplay() {
+      const display = document.getElementById('canvasZoomLevel');
+      if (display) {
+        display.textContent = Math.round(chatFlowState.canvas.scale * 100) + '%';
+      }
+    }
+
+    // 缩放控制
+    function canvasZoomIn() {
+      chatFlowState.canvas.scale = Math.min(chatFlowState.canvas.scale * 1.2, 5);
+      updateCanvasTransform();
+      updateZoomDisplay();
+    }
+
+    function canvasZoomOut() {
+      chatFlowState.canvas.scale = Math.max(chatFlowState.canvas.scale * 0.8, 0.1);
+      updateCanvasTransform();
+      updateZoomDisplay();
+    }
+
+    function canvasResetView() {
+      chatFlowState.canvas.scale = 1;
+      chatFlowState.canvas.translateX = 0;
+      chatFlowState.canvas.translateY = 0;
+      updateCanvasTransform();
+      updateZoomDisplay();
+    }
+
+    // ==================== Chat Flow UI 控制函数 ====================
+
+    // 更多菜单切换
+    function toggleChatFlowMoreMenu() {
+      const menu = document.getElementById('chatflowMoreMenu');
+      if (menu) {
+        menu.classList.toggle('active');
+      }
+    }
+
+    // 模型菜单切换
+    function toggleChatFlowModelMenu() {
+      const menu = document.getElementById('chatflowModelMenu');
+      if (menu) {
+        menu.classList.toggle('active');
+      }
+    }
+
+    // 选择模型
+    function selectChatFlowModel(modelId, modelName) {
+      chatFlowState.selectedModel = modelId;
+      const display = document.getElementById('chatflowSelectedModel');
+      if (display) {
+        display.textContent = modelName;
+      }
+      toggleChatFlowModelMenu();
+    }
+
+    // 联网搜索切换
+    function toggleChatFlowInternet(event) {
+      event.stopPropagation();
+      chatFlowState.internetMode = !chatFlowState.internetMode;
+      const toggle = document.getElementById('chatflowInternetToggle');
+      if (toggle) {
+        toggle.classList.toggle('active', chatFlowState.internetMode);
+      }
+    }
+
+    // 推理模式切换
+    function toggleChatFlowThinking(event) {
+      event.stopPropagation();
+      chatFlowState.thinkingMode = !chatFlowState.thinkingMode;
+      const toggle = document.getElementById('chatflowThinkingToggle');
+      if (toggle) {
+        toggle.classList.toggle('active', chatFlowState.thinkingMode);
+      }
+    }
+
+    // 关闭所有菜单
+    function closeChatFlowMenus() {
+      document.getElementById('chatflowMoreMenu')?.classList.remove('active');
+      document.getElementById('chatflowModelMenu')?.classList.remove('active');
+    }
+
+    // 点击外部关闭菜单
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.chatflow-more-menu-container') &&
+        !e.target.closest('.chatflow-model-selector')) {
+        closeChatFlowMenus();
+      }
+    });
+
+    // Chat Flow 输入处理
+    function handleChatFlowInputKeydown(event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendChatFlowMessage();
+      }
+    }
+
+    function autoResizeChatFlowInput() {
+      const input = document.getElementById('chatflowMessageInput');
+      if (!input) return;
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+    }
+
+    // ==================== Chat Flow LLM 调用 ====================
+
+    // 发送 Chat Flow 消息
+    async function sendChatFlowMessage() {
+      const input = document.getElementById('chatflowMessageInput');
+      if (!input) return;
+
+      const content = input.value.trim();
+      if (!content) return;
+
+      // 添加用户消息
+      const userMessage = { role: 'user', content, timestamp: Date.now() };
+      chatFlowState.messages.push(userMessage);
+      input.value = '';
+      autoResizeChatFlowInput();
+      renderChatFlowMessages();
+
+      // 显示停止按钮
+      document.getElementById('chatflowSendBtn').style.display = 'none';
+      document.getElementById('chatflowStopBtn').style.display = 'flex';
+      chatFlowState.isStreaming = true;
+
+      try {
+        // 构建消息历史
+        const messages = chatFlowState.messages.map(m => ({
+          role: m.role,
+          content: m.content
+        }));
+
+        // 调用 LLM API（复用主流程的 API）
+        const response = await fetch('/api/chat/stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${appState.token}`
+          },
+          body: JSON.stringify({
+            messages: messages,
+            model: chatFlowState.selectedModel || 'kimi-k2',
+            thinkingMode: chatFlowState.thinkingMode || false,
+            internetMode: chatFlowState.internetMode || false,
+            stream: true
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('API 请求失败');
+        }
+
+        // 添加占位 AI 消息
+        const aiMessage = { role: 'assistant', content: '', timestamp: Date.now() };
+        chatFlowState.messages.push(aiMessage);
+        renderChatFlowMessages();
+
+        // 流式读取
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.content) {
+                  aiMessage.content += parsed.content;
+                  // 更新最后一个消息
+                  const msgContainer = document.getElementById('chatflowMessages');
+                  const lastMsg = msgContainer?.querySelector('.chatflow-message:last-child .chatflow-message-content');
+                  if (lastMsg) {
+                    lastMsg.innerHTML = renderMarkdownWithMath(aiMessage.content);
+                  }
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
+            }
+          }
+        }
+
+        // 完成后渲染最终内容
+        renderChatFlowMessages();
+      } catch (error) {
+        console.error('❌ Chat Flow LLM 调用失败:', error);
+        // 添加错误消息
+        chatFlowState.messages.push({
+          role: 'assistant',
+          content: `抱歉，发生了错误: ${error.message}`,
+          timestamp: Date.now()
+        });
+        renderChatFlowMessages();
+      } finally {
+        // 恢复按钮状态
+        document.getElementById('chatflowSendBtn').style.display = 'flex';
+        document.getElementById('chatflowStopBtn').style.display = 'none';
+        chatFlowState.isStreaming = false;
+
+        // 保存状态
+        saveFlowState();
+      }
+    }
+
+    // 停止生成
+    function stopChatFlowGeneration() {
+      // TODO: 实现取消请求
+      chatFlowState.isStreaming = false;
+      document.getElementById('chatflowSendBtn').style.display = 'flex';
+      document.getElementById('chatflowStopBtn').style.display = 'none';
+    }
+
+    // ==================== Phase 2: 拖拽节点生成 ====================
+
+    // 初始化拖拽
+    function initChatFlowDragDrop() {
+      const messagesContainer = document.getElementById('chatflowMessages');
+      const canvasContainer = document.getElementById('chatflowCanvasContainer');
+
+      if (!messagesContainer || !canvasContainer) return;
+
+      // 拖拽开始
+      messagesContainer.addEventListener('dragstart', (e) => {
+        const msgElement = e.target.closest('.chatflow-message');
+        if (!msgElement) return;
+
+        const msgIndex = parseInt(msgElement.dataset.msgIndex);
+        e.dataTransfer.setData('text/plain', JSON.stringify({
+          type: 'message',
+          index: msgIndex
+        }));
+        e.dataTransfer.effectAllowed = 'copy';
+        msgElement.classList.add('dragging');
+      });
+
+      messagesContainer.addEventListener('dragend', (e) => {
+        const msgElement = e.target.closest('.chatflow-message');
+        if (msgElement) {
+          msgElement.classList.remove('dragging');
+        }
+      });
+
+      // 画布接收拖拽
+      canvasContainer.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        canvasContainer.classList.add('drag-over');
+      });
+
+      canvasContainer.addEventListener('dragleave', () => {
+        canvasContainer.classList.remove('drag-over');
+      });
+
+      canvasContainer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        canvasContainer.classList.remove('drag-over');
+
+        try {
+          const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+          if (data.type === 'message') {
+            const msg = chatFlowState.messages[data.index];
+            if (msg) {
+              // 计算放置位置（相对于画布）
+              const rect = canvasContainer.getBoundingClientRect();
+              const x = (e.clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
+              const y = (e.clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
+
+              // 创建节点
+              createCanvasNode(msg, x, y, data.index);
+            }
+          }
+        } catch (err) {
+          console.error('拖放处理失败:', err);
+        }
+      });
+    }
+
+    // 创建画布节点
+    function createCanvasNode(message, x, y, sourceIndex) {
+      const nodeId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // 清理 Markdown 标记
+      const cleanContent = message.content
+        .replace(/```[\s\S]*?```/g, '[代码块]')
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/#{1,6}\s/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .slice(0, 200);
+
+      const node = {
+        id: nodeId,
+        type: message.role === 'user' ? 'user' : 'assistant',
+        content: cleanContent,
+        fullContent: message.content,
+        sourceIndex: sourceIndex,
+        x: x,
+        y: y,
+        width: 200,
+        height: 100
+      };
+
+      chatFlowState.nodes.push(node);
+      renderCanvasNodes();
+      saveFlowState();
+
+      console.log('✅ 创建节点:', nodeId);
+    }
+
+    // 渲染画布节点
+    function renderCanvasNodes() {
+      const nodesLayer = document.getElementById('nodesLayer');
+      if (!nodesLayer) return;
+
+      nodesLayer.innerHTML = '';
+
+      // 隐藏/显示提示
+      const hint = document.getElementById('canvasHint');
+      if (hint) {
+        hint.style.display = chatFlowState.nodes.length === 0 ? 'flex' : 'none';
+      }
+
+      chatFlowState.nodes.forEach(node => {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'canvas-node');
+        g.setAttribute('data-node-id', node.id);
+        g.setAttribute('data-source-index', node.sourceIndex || '');
+        g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+
+        // 背景矩形
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('class', 'canvas-node-bg');
+        rect.setAttribute('width', node.width);
+        rect.setAttribute('height', node.height);
+
+        // 便签用黄色背景
+        if (node.type === 'sticky') {
+          rect.setAttribute('fill', node.color || '#f5d547');
+          rect.setAttribute('stroke', '#e6c42e');
+        } else {
+          rect.setAttribute('fill', node.type === 'user' ? 'var(--bg-tertiary)' : 'var(--bg-secondary)');
+        }
+        g.appendChild(rect);
+
+        // 角色标签 (便签不显示)
+        if (node.type !== 'sticky') {
+          const roleText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          roleText.setAttribute('class', 'canvas-node-role');
+          roleText.setAttribute('x', '8');
+          roleText.setAttribute('y', '16');
+          roleText.textContent = node.type === 'user' ? 'USER' : 'AI';
+          g.appendChild(roleText);
+        }
+
+        // 内容文本（使用 foreignObject 支持换行）
+        const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+        fo.setAttribute('x', '8');
+        fo.setAttribute('y', node.type === 'sticky' ? '8' : '24');
+        fo.setAttribute('width', node.width - 16);
+        fo.setAttribute('height', node.height - (node.type === 'sticky' ? 16 : 32));
+
+        const div = document.createElement('div');
+        div.style.cssText = `font-size: 11px; color: ${node.type === 'sticky' ? '#333' : 'var(--text-primary)'}; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;`;
+        div.textContent = node.content;
+        fo.appendChild(div);
+        g.appendChild(fo);
+
+        // ==================== 连接端口 (4个圆点) ====================
+        const portPositions = [
+          { cx: node.width / 2, cy: 0, id: 'top' },      // 上
+          { cx: node.width / 2, cy: node.height, id: 'bottom' }, // 下
+          { cx: 0, cy: node.height / 2, id: 'left' },    // 左
+          { cx: node.width, cy: node.height / 2, id: 'right' }   // 右
+        ];
+
+        portPositions.forEach(pos => {
+          const port = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          port.setAttribute('class', 'canvas-node-port');
+          port.setAttribute('cx', pos.cx);
+          port.setAttribute('cy', pos.cy);
+          port.setAttribute('r', '6');
+          port.setAttribute('data-port', pos.id);
+          g.appendChild(port);
+        });
+
+        // 添加拖拽功能
+        let isDragging = false;
+        let startX, startY, startNodeX, startNodeY;
+
+        g.addEventListener('mousedown', (e) => {
+          // 如果点击的是端口并且是连线模式，不触发拖拽
+          if (e.target.classList.contains('canvas-node-port') && chatFlowState.currentTool === 'connect') {
+            return;
+          }
+          if (e.target.classList.contains('canvas-node-resize')) return;
+
+          // 选择模式下选中节点
+          document.querySelectorAll('.canvas-node.selected').forEach(el => el.classList.remove('selected'));
+          g.classList.add('selected');
+
+          if (chatFlowState.currentTool === 'select') {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startNodeX = node.x;
+            startNodeY = node.y;
+          }
+          e.stopPropagation();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+          if (!isDragging) return;
+          const dx = (e.clientX - startX) / chatFlowState.canvas.scale;
+          const dy = (e.clientY - startY) / chatFlowState.canvas.scale;
+          node.x = startNodeX + dx;
+          node.y = startNodeY + dy;
+          g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+          // 更新连线
+          renderEdges();
+        });
+
+        document.addEventListener('mouseup', () => {
+          if (isDragging) {
+            isDragging = false;
+            saveFlowState();
+          }
+        });
+
+        // 单击高亮对应消息
+        g.addEventListener('click', (e) => {
+          if (e.target.classList.contains('canvas-node-port')) return;
+          if (node.sourceIndex !== undefined) {
+            highlightMessage(node.sourceIndex);
+          }
+        });
+
+        // 双击编辑
+        g.addEventListener('dblclick', () => {
+          editNodeContent(node.id);
+        });
+
+        // 右键菜单
+        g.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          showNodeContextMenu(e, node.id);
+        });
+
+        nodesLayer.appendChild(g);
+      });
+    }
+
+    // 在登录后加载思维流列表
+    const originalLoadUserData = window.loadUserData;
+    window.loadUserData = async function () {
+      if (originalLoadUserData) await originalLoadUserData();
+      await loadFlowsList();
+    };
+
+    // 扩展初始化函数
+    const originalInitChatFlowCanvas = initChatFlowCanvas;
+    initChatFlowCanvas = function () {
+      originalInitChatFlowCanvas();
+      initChatFlowDragDrop();
+      initEdgeConnection();
+      initAutoSave();
+    };
+
+    // ==================== Phase 3+4: 完整功能实现 ====================
+
+    // 当前工具模式
+    chatFlowState.currentTool = 'select';
+    chatFlowState.selectedNodes = [];
+    chatFlowState.connectingFrom = null;
+
+    // 设置画布工具
+    function setCanvasTool(tool) {
+      chatFlowState.currentTool = tool;
+
+      // 更新工具按钮状态
+      document.querySelectorAll('.canvas-tool-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tool === tool);
+      });
+
+      // 更新光标
+      const canvas = document.getElementById('infiniteCanvas');
+      if (canvas) {
+        canvas.style.cursor = tool === 'connect' ? 'crosshair' : 'grab';
+      }
+    }
+
+    // ==================== 连线功能 ====================
+
+    // 初始化连线功能
+    function initEdgeConnection() {
+      const canvasContainer = document.getElementById('chatflowCanvasContainer');
+      if (!canvasContainer) return;
+
+      canvasContainer.addEventListener('mousedown', (e) => {
+        if (chatFlowState.currentTool !== 'connect') return;
+
+        const nodeEl = e.target.closest('.canvas-node');
+        if (nodeEl) {
+          chatFlowState.connectingFrom = nodeEl.dataset.nodeId;
+          const previewLine = document.getElementById('edgePreviewLine');
+          if (previewLine) {
+            const node = chatFlowState.nodes.find(n => n.id === chatFlowState.connectingFrom);
+            if (node) {
+              const startX = node.x + node.width / 2;
+              const startY = node.y + node.height / 2;
+              previewLine.setAttribute('x1', startX);
+              previewLine.setAttribute('y1', startY);
+              previewLine.setAttribute('x2', startX);
+              previewLine.setAttribute('y2', startY);
+              previewLine.style.display = 'block';
+            }
+          }
+        }
+      });
+
+      canvasContainer.addEventListener('mousemove', (e) => {
+        if (chatFlowState.currentTool !== 'connect' || !chatFlowState.connectingFrom) return;
+
+        const previewLine = document.getElementById('edgePreviewLine');
+        if (previewLine) {
+          const rect = canvasContainer.getBoundingClientRect();
+          const x = (e.clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
+          const y = (e.clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
+          previewLine.setAttribute('x2', x);
+          previewLine.setAttribute('y2', y);
+        }
+      });
+
+      canvasContainer.addEventListener('mouseup', (e) => {
+        if (chatFlowState.currentTool !== 'connect' || !chatFlowState.connectingFrom) return;
+
+        const previewLine = document.getElementById('edgePreviewLine');
+        if (previewLine) {
+          previewLine.style.display = 'none';
+        }
+
+        const nodeEl = e.target.closest('.canvas-node');
+        if (nodeEl && nodeEl.dataset.nodeId !== chatFlowState.connectingFrom) {
+          createEdge(chatFlowState.connectingFrom, nodeEl.dataset.nodeId);
+        }
+
+        chatFlowState.connectingFrom = null;
+      });
+    }
+
+    // 创建边
+    function createEdge(fromId, toId, label = '') {
+      const edgeId = `edge-${Date.now()}`;
+      const edge = {
+        id: edgeId,
+        from: fromId,
+        to: toId,
+        label: label
+      };
+
+      chatFlowState.edges.push(edge);
+      renderEdges();
+      saveFlowState();
+      console.log('✅ 创建连线:', edgeId);
+    }
+
+    // 渲染所有边
+    function renderEdges() {
+      const edgesLayer = document.getElementById('edgesLayer');
+      if (!edgesLayer) return;
+
+      edgesLayer.innerHTML = '';
+
+      chatFlowState.edges.forEach(edge => {
+        const fromNode = chatFlowState.nodes.find(n => n.id === edge.from);
+        const toNode = chatFlowState.nodes.find(n => n.id === edge.to);
+
+        if (!fromNode || !toNode) return;
+
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'canvas-edge');
+        g.setAttribute('data-edge-id', edge.id);
+
+        // 计算起点和终点
+        const x1 = fromNode.x + fromNode.width / 2;
+        const y1 = fromNode.y + fromNode.height;
+        const x2 = toNode.x + toNode.width / 2;
+        const y2 = toNode.y;
+
+        // 贝塞尔曲线
+        const midY = (y1 + y2) / 2;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
+        path.setAttribute('stroke', 'var(--text-tertiary)');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('marker-end', 'url(#arrowhead)');
+        g.appendChild(path);
+
+        // 标签
+        if (edge.label) {
+          const labelX = (x1 + x2) / 2;
+          const labelY = midY;
+
+          const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          labelBg.setAttribute('class', 'canvas-edge-label-bg');
+          labelBg.setAttribute('x', labelX - 30);
+          labelBg.setAttribute('y', labelY - 10);
+          labelBg.setAttribute('width', '60');
+          labelBg.setAttribute('height', '20');
+          g.appendChild(labelBg);
+
+          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('class', 'canvas-edge-label');
+          text.setAttribute('x', labelX);
+          text.setAttribute('y', labelY + 4);
+          text.textContent = edge.label;
+          g.appendChild(text);
+        }
+
+        // 点击删除
+        g.addEventListener('dblclick', () => {
+          if (confirm('删除这条连线？')) {
+            chatFlowState.edges = chatFlowState.edges.filter(e => e.id !== edge.id);
+            renderEdges();
+            saveFlowState();
+          }
+        });
+
+        edgesLayer.appendChild(g);
+      });
+    }
+
+    // ==================== 便签功能 ====================
+
+    function addStickyNote() {
+      const nodeId = `sticky-${Date.now()}`;
+      const node = {
+        id: nodeId,
+        type: 'sticky',
+        content: '双击编辑便签...',
+        fullContent: '',
+        x: 100 - chatFlowState.canvas.translateX / chatFlowState.canvas.scale,
+        y: 100 - chatFlowState.canvas.translateY / chatFlowState.canvas.scale,
+        width: 150,
+        height: 100,
+        color: '#f5d547'
+      };
+
+      chatFlowState.nodes.push(node);
+      renderCanvasNodes();
+      saveFlowState();
+    }
+
+    // ==================== 删除节点 ====================
+
+    function deleteSelectedNodes() {
+      const selected = chatFlowState.nodes.filter(n =>
+        document.querySelector(`.canvas-node[data-node-id="${n.id}"].selected`)
+      );
+
+      if (selected.length === 0) {
+        alert('请先选择要删除的节点');
+        return;
+      }
+
+      if (!confirm(`确定删除 ${selected.length} 个节点？`)) return;
+
+      selected.forEach(node => {
+        chatFlowState.nodes = chatFlowState.nodes.filter(n => n.id !== node.id);
+        chatFlowState.edges = chatFlowState.edges.filter(e => e.from !== node.id && e.to !== node.id);
+      });
+
+      renderCanvasNodes();
+      renderEdges();
+      saveFlowState();
+    }
+
+    // ==================== AI 拆解 ====================
+
+    async function aiDecomposeSelected() {
+      const selected = document.querySelector('.canvas-node.selected');
+      if (!selected) {
+        alert('请先选择一个节点进行拆解');
+        return;
+      }
+
+      const nodeId = selected.dataset.nodeId;
+      const node = chatFlowState.nodes.find(n => n.id === nodeId);
+      if (!node) return;
+
+      try {
+        const response = await fetch('/api/chat/stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${appState.token}`
+          },
+          body: JSON.stringify({
+            messages: [{
+              role: 'user',
+              content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
+            }],
+            model: 'kimi-k2',
+            stream: false
+          })
+        });
+
+        if (!response.ok) throw new Error('API 请求失败');
+
+        const result = await response.json();
+        const points = result.content.split('\n').filter(l => l.trim());
+
+        // 为每个要点创建子节点
+        points.forEach((point, i) => {
+          const childNode = {
+            id: `node-${Date.now()}-${i}`,
+            type: 'assistant',
+            content: point.slice(0, 100),
+            fullContent: point,
+            x: node.x + (i - points.length / 2) * 220,
+            y: node.y + 150,
+            width: 180,
+            height: 80
+          };
+          chatFlowState.nodes.push(childNode);
+          createEdge(nodeId, childNode.id, '拆解');
+        });
+
+        renderCanvasNodes();
+        renderEdges();
+        saveFlowState();
+
+      } catch (error) {
+        console.error('AI 拆解失败:', error);
+        alert('AI 拆解失败，请重试');
+      }
+    }
+
+    // ==================== 自动布局 ====================
+
+    function autoLayoutNodes() {
+      if (chatFlowState.nodes.length === 0) return;
+
+      // 简单的网格布局
+      const cols = Math.ceil(Math.sqrt(chatFlowState.nodes.length));
+      const gapX = 250;
+      const gapY = 150;
+      const startX = 100;
+      const startY = 100;
+
+      chatFlowState.nodes.forEach((node, i) => {
+        node.x = startX + (i % cols) * gapX;
+        node.y = startY + Math.floor(i / cols) * gapY;
+      });
+
+      renderCanvasNodes();
+      renderEdges();
+      saveFlowState();
+      canvasResetView();
+    }
+
+    // ==================== 双向高亮 ====================
+
+    function highlightMessage(sourceIndex) {
+      // 清除所有高亮
+      document.querySelectorAll('.chatflow-message.highlighted').forEach(el => {
+        el.classList.remove('highlighted');
+      });
+
+      // 高亮对应消息
+      const msgEl = document.querySelector(`.chatflow-message[data-msg-index="${sourceIndex}"]`);
+      if (msgEl) {
+        msgEl.classList.add('highlighted');
+        msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    function highlightNode(nodeId) {
+      // 清除所有高亮
+      document.querySelectorAll('.canvas-node.highlighted').forEach(el => {
+        el.classList.remove('highlighted');
+      });
+
+      // 高亮对应节点
+      const nodeEl = document.querySelector(`.canvas-node[data-node-id="${nodeId}"]`);
+      if (nodeEl) {
+        nodeEl.classList.add('highlighted');
+      }
+    }
+
+    // ==================== 导出功能 ====================
+
+    function toggleExportMenu() {
+      const menu = document.getElementById('canvasExportMenu');
+      if (menu) {
+        menu.classList.toggle('active');
+      }
+    }
+
+    async function exportCanvas(format) {
+      toggleExportMenu();
+
+      switch (format) {
+        case 'json':
+          exportAsJSON();
+          break;
+        case 'mermaid':
+          exportAsMermaid();
+          break;
+        case 'png':
+        case 'svg':
+          await exportAsImage(format);
+          break;
+      }
+    }
+
+    function exportAsJSON() {
+      const data = {
+        nodes: chatFlowState.nodes,
+        edges: chatFlowState.edges,
+        messages: chatFlowState.messages,
+        exportedAt: new Date().toISOString()
+      };
+
+      downloadFile(
+        JSON.stringify(data, null, 2),
+        `chatflow-${Date.now()}.json`,
+        'application/json'
+      );
+    }
+
+    function exportAsMermaid() {
+      let mermaid = 'graph TD\n';
+
+      // 添加节点
+      chatFlowState.nodes.forEach(node => {
+        const label = node.content.replace(/"/g, "'").slice(0, 50);
+        const shape = node.type === 'user' ? `[${label}]` : `(${label})`;
+        mermaid += `  ${node.id}${shape}\n`;
+      });
+
+      // 添加连线
+      chatFlowState.edges.forEach(edge => {
+        const arrow = edge.label ? `-->|${edge.label}|` : '-->';
+        mermaid += `  ${edge.from} ${arrow} ${edge.to}\n`;
+      });
+
+      downloadFile(mermaid, `chatflow-${Date.now()}.mmd`, 'text/plain');
+
+      // 也复制到剪贴板
+      navigator.clipboard.writeText(mermaid).then(() => {
+        showToast('Mermaid 代码已复制到剪贴板');
+      });
+    }
+
+    async function exportAsImage(format) {
+      const svg = document.getElementById('infiniteCanvas');
+      if (!svg) return;
+
+      // 克隆 SVG
+      const clone = svg.cloneNode(true);
+      clone.setAttribute('width', '2000');
+      clone.setAttribute('height', '1500');
+
+      if (format === 'svg') {
+        const svgData = new XMLSerializer().serializeToString(clone);
+        downloadFile(svgData, `chatflow-${Date.now()}.svg`, 'image/svg+xml');
+      } else {
+        // PNG 导出需要 canvas
+        const svgData = new XMLSerializer().serializeToString(clone);
+        const canvas = document.createElement('canvas');
+        canvas.width = 2000;
+        canvas.height = 1500;
+        const ctx = canvas.getContext('2d');
+
+        const img = new Image();
+        img.onload = () => {
+          ctx.fillStyle = '#1a1a1a';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chatflow-${Date.now()}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+          });
+        };
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+      }
+    }
+
+    function downloadFile(content, filename, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ==================== 节点编辑 ====================
+
+    function editNodeContent(nodeId) {
+      const node = chatFlowState.nodes.find(n => n.id === nodeId);
+      if (!node) return;
+
+      const newContent = prompt('编辑节点内容:', node.content);
+      if (newContent !== null && newContent.trim()) {
+        node.content = newContent.trim();
+        node.fullContent = newContent.trim();
+        renderCanvasNodes();
+        renderEdges();
+        saveFlowState();
+      }
+    }
+
+    // ==================== 右键上下文菜单 ====================
+
+    function showNodeContextMenu(e, nodeId) {
+      // 移除已有菜单
+      document.querySelectorAll('.node-context-menu').forEach(el => el.remove());
+
+      const menu = document.createElement('div');
+      menu.className = 'node-context-menu';
+      menu.style.cssText = `
+        position: fixed;
+        left: ${e.clientX}px;
+        top: ${e.clientY}px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 4px 0;
+        min-width: 140px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        z-index: 1000;
+      `;
+
+      const menuItems = [
+        { text: '编辑内容', action: () => editNodeContent(nodeId) },
+        { text: '添加注释', action: () => addAnnotationToNode(nodeId) },
+        { text: '删除节点', action: () => deleteNode(nodeId) }
+      ];
+
+      menuItems.forEach(item => {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'context-menu-item';
+        menuItem.style.cssText = 'padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--text-secondary);';
+        menuItem.textContent = item.text;
+        menuItem.addEventListener('mouseenter', () => {
+          menuItem.style.background = 'var(--bg-hover)';
+          menuItem.style.color = 'var(--text-primary)';
+        });
+        menuItem.addEventListener('mouseleave', () => {
+          menuItem.style.background = 'transparent';
+          menuItem.style.color = 'var(--text-secondary)';
+        });
+        menuItem.addEventListener('click', () => {
+          item.action();
+          menu.remove();
+        });
+        menu.appendChild(menuItem);
+      });
+
+      document.body.appendChild(menu);
+
+      // 点击其他地方关闭菜单
+      setTimeout(() => {
+        document.addEventListener('click', function closeMenu() {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+        }, { once: true });
+      }, 100);
+    }
+
+    // 添加注释到节点旁边
+    function addAnnotationToNode(targetNodeId) {
+      const targetNode = chatFlowState.nodes.find(n => n.id === targetNodeId);
+      if (!targetNode) return;
+
+      const annotationText = prompt('输入注释内容:');
+      if (!annotationText || !annotationText.trim()) return;
+
+      const stickyId = `sticky-${Date.now()}`;
+      const sticky = {
+        id: stickyId,
+        type: 'sticky',
+        content: annotationText.trim(),
+        fullContent: annotationText.trim(),
+        x: targetNode.x + targetNode.width + 20,
+        y: targetNode.y,
+        width: 120,
+        height: 80,
+        color: '#f5d547',
+        attachedTo: targetNodeId // 吸附关系
+      };
+
+      chatFlowState.nodes.push(sticky);
+      // 创建连线表示关联
+      createEdge(targetNodeId, stickyId, '注释');
+      renderCanvasNodes();
+      saveFlowState();
+    }
+
+    // 删除单个节点
+    function deleteNode(nodeId) {
+      if (!confirm('确定删除此节点？')) return;
+      chatFlowState.nodes = chatFlowState.nodes.filter(n => n.id !== nodeId);
+      chatFlowState.edges = chatFlowState.edges.filter(e => e.from !== nodeId && e.to !== nodeId);
+      renderCanvasNodes();
+      renderEdges();
+      saveFlowState();
+    }
+
+    // ==================== 连线标签预设菜单 ====================
+
+    function showEdgeLabelMenu(edgeId, x, y) {
+      // 移除已有菜单
+      document.querySelectorAll('.edge-label-menu').forEach(el => el.remove());
+
+      const menu = document.createElement('div');
+      menu.className = 'edge-label-menu';
+      menu.style.cssText = `
+        position: fixed;
+        left: ${x}px;
+        top: ${y}px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 4px 0;
+        min-width: 100px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        z-index: 1000;
+      `;
+
+      const presetLabels = ['导致', '包含', '反驳', '举例', '下一步', '自定义...'];
+
+      presetLabels.forEach(label => {
+        const item = document.createElement('div');
+        item.style.cssText = 'padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--text-secondary);';
+        item.textContent = label;
+        item.addEventListener('mouseenter', () => {
+          item.style.background = 'var(--bg-hover)';
+          item.style.color = 'var(--text-primary)';
+        });
+        item.addEventListener('mouseleave', () => {
+          item.style.background = 'transparent';
+          item.style.color = 'var(--text-secondary)';
+        });
+        item.addEventListener('click', () => {
+          let finalLabel = label;
+          if (label === '自定义...') {
+            finalLabel = prompt('输入连线标签:') || '';
+          }
+
+          const edge = chatFlowState.edges.find(e => e.id === edgeId);
+          if (edge) {
+            edge.label = finalLabel;
+            renderEdges();
+            saveFlowState();
+          }
+          menu.remove();
+        });
+        menu.appendChild(item);
+      });
+
+      document.body.appendChild(menu);
+
+      setTimeout(() => {
+        document.addEventListener('click', function closeMenu() {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+        }, { once: true });
+      }, 100);
+    }
+
+    // 修改 createEdge 以显示标签菜单
+    const originalCreateEdge = createEdge;
+    createEdge = function (fromId, toId, label = '') {
+      originalCreateEdge(fromId, toId, label);
+
+      // 如果没有传入标签，显示预设菜单
+      if (!label) {
+        const toNode = chatFlowState.nodes.find(n => n.id === toId);
+        if (toNode) {
+          const canvasRect = document.getElementById('chatflowCanvasContainer')?.getBoundingClientRect();
+          if (canvasRect) {
+            const x = canvasRect.left + (toNode.x + toNode.width / 2) * chatFlowState.canvas.scale + chatFlowState.canvas.translateX;
+            const y = canvasRect.top + toNode.y * chatFlowState.canvas.scale + chatFlowState.canvas.translateY;
+            const lastEdge = chatFlowState.edges[chatFlowState.edges.length - 1];
+            if (lastEdge) {
+              showEdgeLabelMenu(lastEdge.id, x, y);
+            }
+          }
+        }
+      }
+    };
+
+    // ==================== 自动保存 ====================
+
+    let autoSaveInterval = null;
+
+    function initAutoSave() {
+      // 每 30 秒自动保存
+      autoSaveInterval = setInterval(() => {
+        if (chatFlowState.currentFlowId) {
+          saveFlowState();
+          console.log('⏱️ 自动保存完成');
+        }
+      }, 30000);
+    }
+
+    // ==================== 结构回传 (序列化到 Prompt) ====================
+
+    function serializeCanvasToPrompt() {
+      if (chatFlowState.nodes.length === 0) return '';
+
+      let context = '\n\n---\n**当前思维图谱状态:**\n```mermaid\ngraph TD\n';
+
+      chatFlowState.nodes.forEach(node => {
+        const label = node.content.replace(/"/g, "'").slice(0, 40);
+        const shape = node.type === 'user' ? `["${label}"]` : `("${label}")`;
+        context += `  ${node.id}${shape}\n`;
+      });
+
+      chatFlowState.edges.forEach(edge => {
+        const arrow = edge.label ? `-->|${edge.label}|` : '-->';
+        context += `  ${edge.from} ${arrow} ${edge.to}\n`;
+      });
+
+      context += '```\n---\n';
+      return context;
+    }
+
+    // 修改 sendChatFlowMessage 以注入画布上下文
+    const originalSendChatFlowMessage = sendChatFlowMessage;
+    sendChatFlowMessage = async function () {
+      // 如果画布有内容，注入上下文
+      if (chatFlowState.nodes.length > 0) {
+        const input = document.getElementById('chatflowMessageInput');
+        if (input && input.value.trim()) {
+          const canvasContext = serializeCanvasToPrompt();
+          // 将画布上下文作为系统上下文（在发送时处理）
+          chatFlowState.canvasContext = canvasContext;
+        }
+      }
+      return originalSendChatFlowMessage();
+    };
+
 
     // ==================== 会话管理 ====================
 
@@ -12562,7 +15640,7 @@
       document.addEventListener('DOMContentLoaded', updateModelControls);
     }
 
-    // ==================== 移动端键盘处理器 (iOS VisualViewport 修复版) ====================
+    // ==================== 移动端键盘处理器 (iOS VisualViewport 修复版 v2) ====================
     class MobileKeyboardHandler {
       constructor(options = {}) {
         this.options = {
@@ -12581,6 +15659,12 @@
         this.keyboardOpen = false;
         this.visualViewport = window.visualViewport;
         this.inputContainer = document.getElementById('inputContainer');
+
+        // iOS 专用状态
+        this.lastViewportHeight = window.innerHeight;
+        this.keyboardAnimating = false;
+        this.rafId = null;
+        this.checkInterval = null;
 
         // 绑定方法
         this.handleViewportChange = this.handleViewportChange.bind(this);
@@ -12616,41 +15700,54 @@
         // 3. 平台特定修复
         if (this.isAndroid) this.applyAndroidFixes();
         if (this.isIOS) this.applyIOSFixes();
+
+        this.log('MobileKeyboardHandler 初始化完成', { isIOS: this.isIOS, isAndroid: this.isAndroid });
       }
 
       handleViewportChange() {
-        if (!this.activeInput && !this.keyboardOpen) return;
+        if (!this.visualViewport) return;
 
-        // iOS 专用定位逻辑
+        // iOS 专用定位逻辑 - 增强版
         if (this.isIOS && this.inputContainer) {
-          requestAnimationFrame(() => {
+          // 取消之前的 RAF 防止抖动
+          if (this.rafId) {
+            cancelAnimationFrame(this.rafId);
+          }
+
+          this.rafId = requestAnimationFrame(() => {
             const viewport = this.visualViewport;
             const layoutHeight = window.innerHeight;
             const visualHeight = viewport.height;
             const visualTop = viewport.offsetTop;
+            const scale = viewport.scale || 1;
 
-            // 计算偏移量：布局高度 - (视觉视口高度 + 视觉视口顶部偏移)
-            // 这代表了键盘（或视口底部被遮挡区域）的高度
-            // 注意：Math.max(0, ...) 防止负值
-            const offset = Math.max(0, layoutHeight - visualHeight - visualTop);
+            // 计算真实的偏移量（考虑缩放）
+            const offset = Math.max(0, (layoutHeight - visualHeight) / scale - visualTop);
 
-            // 应用位移，将输入框抬起
-            // 只有当偏移量显著（>10px）时才应用，避免微小抖动
+            // 检测键盘是否在动画中
+            const heightDiff = Math.abs(this.lastViewportHeight - visualHeight);
+            this.keyboardAnimating = heightDiff > 5 && heightDiff < 200;
+            this.lastViewportHeight = visualHeight;
+
+            // 只有当偏移量显著（>10px）时才应用
             if (offset > 10) {
-              this.inputContainer.style.transform = `translateY(-${offset}px)`;
-              this.inputContainer.style.transition = 'none'; // 禁用过渡以实现实时跟随
+              // 使用 bottom 定位而非 transform，更稳定
+              this.inputContainer.style.position = 'fixed';
+              this.inputContainer.style.bottom = `${offset}px`;
+              this.inputContainer.style.left = '0';
+              this.inputContainer.style.right = '0';
+              this.inputContainer.style.transform = 'none';
               this.keyboardOpen = true;
-            } else {
+            } else if (!this.keyboardAnimating) {
               this.resetPosition();
             }
 
-            this.log('iOS Adjust:', { layoutHeight, visualHeight, visualTop, offset });
+            this.log('iOS Adjust:', { layoutHeight, visualHeight, visualTop, offset, animating: this.keyboardAnimating });
           });
         }
 
         // Android 逻辑 (保持不变)
         if (this.isAndroid) {
-          // ... Android existing logic if needed, mostly handled by resize ...
           const currentHeight = this.visualViewport.height;
           const keyboardHeight = window.innerHeight - currentHeight;
           this.keyboardOpen = keyboardHeight > 150;
@@ -12662,8 +15759,11 @@
 
       resetPosition() {
         if (this.inputContainer) {
+          this.inputContainer.style.position = '';
+          this.inputContainer.style.bottom = '';
+          this.inputContainer.style.left = '';
+          this.inputContainer.style.right = '';
           this.inputContainer.style.transform = '';
-          this.inputContainer.style.transition = ''; // 恢复 CSS 定义的过渡
         }
         this.keyboardOpen = false;
       }
@@ -12700,9 +15800,26 @@
           window.expandInput();
         }
 
-        // iOS: 立即触发一次位置更新
+        // iOS: 延迟触发位置更新，等待键盘完全弹出
         if (this.isIOS) {
+          // 清除之前的检查间隔
+          if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+          }
+
+          // 立即触发一次
           setTimeout(() => this.handleViewportChange(), 100);
+
+          // 持续监听直到键盘稳定（最多1秒）
+          let checkCount = 0;
+          this.checkInterval = setInterval(() => {
+            this.handleViewportChange();
+            checkCount++;
+            if (checkCount > 10 || !this.keyboardAnimating) {
+              clearInterval(this.checkInterval);
+              this.checkInterval = null;
+            }
+          }, 100);
         }
 
         // Android: 滚动
@@ -12716,10 +15833,19 @@
       handleFocusOut(event) {
         if (event.target === this.activeInput) {
           this.activeInput = null;
-          // 延迟重置，防止焦点切换时的闪烁
+
+          // 清除检查间隔
+          if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+            this.checkInterval = null;
+          }
+
+          // 延迟重置，避免键盘收起时的闪烁
           setTimeout(() => {
-            if (!this.activeInput) this.resetPosition();
-          }, 100);
+            if (!this.activeInput) {
+              this.resetPosition();
+            }
+          }, 300);
         }
       }
 
@@ -12736,9 +15862,26 @@
       }
 
       applyIOSFixes() {
+        // 禁用双击缩放
         document.addEventListener('touchstart', (e) => {
           if (e.touches.length > 1) e.preventDefault();
         }, { passive: false });
+
+        // 修复 iOS Safari 输入框聚焦时的跳动
+        const messageInput = document.getElementById('messageInput');
+        if (messageInput) {
+          // 禁止输入区域的弹性滚动
+          messageInput.addEventListener('touchmove', (e) => {
+            e.stopPropagation();
+          }, { passive: false });
+        }
+
+        // 禁止 iOS 弹性滚动影响输入区域
+        if (this.inputContainer) {
+          this.inputContainer.addEventListener('touchmove', (e) => {
+            e.stopPropagation();
+          }, { passive: false });
+        }
       }
 
       isInputElement(element) {
@@ -12748,74 +15891,148 @@
 
     // ==================== 文件上传处理 (多模态支持) ====================
     let currentAttachment = null;
+    const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
+
+    // Toast 通知函数
+    function showToast(message, duration = 3000) {
+      let toast = document.getElementById('toastNotification');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toastNotification';
+        toast.className = 'toast-notification';
+        document.body.appendChild(toast);
+      }
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, duration);
+    }
+
+    // 检测输入长度，超长自动转换为 txt 附件
+    function checkAndConvertLongInput() {
+      const input = document.getElementById('messageInput');
+      const content = input?.value || '';
+
+      if (content.length > MAX_INPUT_CHARS) {
+        // 创建 txt 文件附件
+        const blob = new Blob([content], { type: 'text/plain' });
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          currentAttachment = {
+            type: 'text',
+            data: e.target.result,
+            fileName: `long_input_${Date.now()}.txt`
+          };
+          updateAttachmentUI();
+
+          // 清空输入框，显示提示
+          input.value = appState.language === 'zh-CN'
+            ? '请分析这个文档'
+            : 'Please analyze this document';
+          autoResizeInput();
+
+          // 显示提示
+          showToast(appState.language === 'zh-CN'
+            ? '输入内容过长，已自动转换为文本文件附件'
+            : 'Input too long, converted to text file attachment');
+        };
+        reader.readAsDataURL(blob);
+        return true;
+      }
+      return false;
+    }
 
     function handleFileUpload() {
       const input = document.createElement('input');
       input.type = 'file';
-      // 支持更多多模态文件类型
-      input.accept = 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.ogg,.pdf,.doc,.docx,.txt';
+      // 扩展支持的文件类型
+      input.accept = [
+        // 图片格式
+        'image/*', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.heic', '.heif',
+        // 视频格式  
+        'video/*', '.webm', '.mkv', '.flv', '.wmv', '.avi', '.mov', '.m4v',
+        // 音频格式
+        'audio/*', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus',
+        // 文本文档格式
+        '.txt', '.md', '.json', '.xml', '.csv', '.log', '.yaml', '.yml', '.ini', '.conf',
+        // 代码文件
+        '.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.c', '.cpp', '.h', '.hpp',
+        '.css', '.scss', '.less', '.html', '.vue', '.svelte', '.swift', '.kt', '.go', '.rs', '.rb', '.php',
+        // 办公文档
+        '.pdf', '.doc', '.docx'
+      ].join(',');
+
       input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
-        const maxSize = 50 * 1024 * 1024;
-        if (file.size > maxSize) {
-          alert(appState.language === 'zh-CN' ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
-          return;
-        }
-
-        const fileType = file.type;
-        let attachmentType = 'document';
-
-        // 更精确的类型检测
-        if (fileType.startsWith('image/')) {
-          attachmentType = 'image';
-        } else if (fileType.startsWith('video/')) {
-          attachmentType = 'video';
-        } else if (fileType.startsWith('audio/') ||
-          file.name.match(/\.(mp3|wav|m4a|ogg|flac|aac|wma)$/i)) {
-          attachmentType = 'audio';
-        }
-
-        // 图片、视频、音频使用Base64编码直接发送给多模态模型
-        if (attachmentType === 'image' || attachmentType === 'video' || attachmentType === 'audio') {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            currentAttachment = {
-              type: attachmentType,
-              data: event.target.result,  // Base64 data URL
-              fileName: file.name
-            };
-            console.log(`✅ ${attachmentType}文件已选择: ${file.name}`);
-            updateAttachmentUI();  // 更新UI显示
-          };
-          reader.readAsDataURL(file);
-        } else {
-          // 文档类型走原有上传流程
-          try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const response = await fetch(`${API_BASE}/upload/document`, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${appState.token}` },
-              body: formData
-            });
-            if (!response.ok) throw new Error('文档上传失败');
-            const data = await response.json();
-            currentAttachment = {
-              type: 'document',
-              fileId: data.file_id,
-              fileName: file.name
-            };
-            console.log('✅ 文档上传成功');
-            updateAttachmentUI();
-          } catch (error) {
-            console.error('❌ 文档上传失败:', error);
-            alert(appState.language === 'zh-CN' ? '文档上传失败' : 'Document upload failed');
-          }
-        }
+        processUploadedFile(file);
       };
       input.click();
+    }
+
+    // 独立的文件处理函数（供拖拽上传复用）
+    async function processUploadedFile(file) {
+      const maxSize = 50 * 1024 * 1024; // 50MB
+      if (file.size > maxSize) {
+        alert(appState.language === 'zh-CN' ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
+        return;
+      }
+
+      const fileType = file.type;
+      const fileName = file.name.toLowerCase();
+      let attachmentType = 'document';
+
+      // 更精确的类型检测
+      if (fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|tiff|heic|heif)$/i.test(fileName)) {
+        attachmentType = 'image';
+      } else if (fileType.startsWith('video/') || /\.(mp4|webm|mkv|flv|wmv|avi|mov|m4v)$/i.test(fileName)) {
+        attachmentType = 'video';
+      } else if (fileType.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|flac|aac|wma|opus)$/i.test(fileName)) {
+        attachmentType = 'audio';
+      } else if (/\.(txt|md|json|xml|csv|log|yaml|yml|ini|conf)$/i.test(fileName) || fileType === 'text/plain' || fileType === 'application/json') {
+        attachmentType = 'text';
+      } else if (/\.(js|ts|jsx|tsx|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte|swift|kt|go|rs|rb|php|sh|bash|zsh|sql)$/i.test(fileName)) {
+        attachmentType = 'code';
+      }
+
+      // 图片、视频、音频、文本、代码使用Base64编码直接发送给多模态模型
+      if (['image', 'video', 'audio', 'text', 'code'].includes(attachmentType)) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          currentAttachment = {
+            type: attachmentType,
+            data: event.target.result,  // Base64 data URL
+            fileName: file.name
+          };
+          console.log(`✅ ${attachmentType}文件已选择: ${file.name}`);
+          updateAttachmentUI();
+        };
+        reader.readAsDataURL(file);
+      } else {
+        // PDF/Office文档类型走原有上传流程
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const response = await fetch(`${API_BASE}/upload/document`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${appState.token}` },
+            body: formData
+          });
+          if (!response.ok) throw new Error('文档上传失败');
+          const data = await response.json();
+          currentAttachment = {
+            type: 'document',
+            fileId: data.file_id,
+            fileName: file.name
+          };
+          console.log('✅ 文档上传成功');
+          updateAttachmentUI();
+        } catch (error) {
+          console.error('❌ 文档上传失败:', error);
+          alert(appState.language === 'zh-CN' ? '文档上传失败' : 'Document upload failed');
+        }
+      }
     }
 
     // 更新附件UI显示
@@ -12866,6 +16083,14 @@
           iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
           typeLabel = appState.language === 'zh-CN' ? '视频' : 'Video';
           break;
+        case 'text':
+          iconSvg = getSvgIcon('article', 'attachment-icon', 20);
+          typeLabel = appState.language === 'zh-CN' ? '文本' : 'Text';
+          break;
+        case 'code':
+          iconSvg = getSvgIcon('code', 'attachment-icon', 20);
+          typeLabel = appState.language === 'zh-CN' ? '代码' : 'Code';
+          break;
         default:
           iconSvg = getSvgIcon('description', 'attachment-icon', 20);
           typeLabel = appState.language === 'zh-CN' ? '文档' : 'Document';
@@ -12894,6 +16119,66 @@
     function removeAttachment() {
       currentAttachment = null;
       updateAttachmentUI();
+    }
+
+    // ==================== 拖拽上传功能 ====================
+    function initDragAndDrop() {
+      // 创建拖拽覆盖层
+      let dropOverlay = document.getElementById('dropOverlay');
+      if (!dropOverlay) {
+        dropOverlay = document.createElement('div');
+        dropOverlay.id = 'dropOverlay';
+        dropOverlay.className = 'drop-overlay';
+        dropOverlay.innerHTML = `
+          <div class="drop-overlay-content">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+            </svg>
+            <span>${appState.language === 'zh-CN' ? '释放以上传文件' : 'Drop to upload file'}</span>
+          </div>
+        `;
+        document.body.appendChild(dropOverlay);
+      }
+
+      let dragCounter = 0;
+
+      // 阻止默认拖拽行为
+      ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        document.body.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }, false);
+      });
+
+      // 拖拽进入
+      document.body.addEventListener('dragenter', (e) => {
+        dragCounter++;
+        if (e.dataTransfer?.types?.includes('Files')) {
+          dropOverlay.classList.add('active');
+        }
+      });
+
+      // 拖拽离开
+      document.body.addEventListener('dragleave', (e) => {
+        dragCounter--;
+        if (dragCounter === 0) {
+          dropOverlay.classList.remove('active');
+        }
+      });
+
+      // 放置文件
+      document.body.addEventListener('drop', (e) => {
+        dragCounter = 0;
+        dropOverlay.classList.remove('active');
+
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          processUploadedFile(files[0]);
+          console.log('📁 拖拽上传文件:', files[0].name);
+        }
+      });
+
+      console.log('✅ 拖拽上传功能已初始化');
     }
 
     // ==================== 对话索引导航器 ====================
@@ -13362,7 +16647,1856 @@
       });
 
     });
+
+    // ==================== 用户会员系统 ====================
+
+    // 用户会员状态
+    let userMembershipState = {
+      membership: 'free',
+      points: 0,
+      purchasedPoints: 0,
+      totalPoints: 0,
+      canCheckin: true,
+      createdAt: null
+    };
+
+    // 获取用户会员状态
+    async function fetchUserMembership() {
+      try {
+        const token = appState.token;
+        if (!token) return;
+
+        const res = await fetch('/api/user/membership', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          userMembershipState = {
+            membership: data.membership || 'free',
+            membershipEnd: data.membershipEnd,
+            points: data.points || 0,
+            purchasedPoints: data.purchasedPoints || 0,
+            totalPoints: data.totalPoints || 0,
+            canCheckin: data.canCheckin,
+            createdAt: data.createdAt
+          };
+          console.log('✅ 会员状态更新:', userMembershipState);
+        }
+      } catch (e) {
+        console.log('获取会员状态失败');
+      }
+    }
+
+    // 用户签到 (设置面板用)
+    async function userCheckin() {
+      console.log('🔄 userCheckin() 被调用');
+      try {
+        const token = appState.token;
+        console.log('🔑 Token:', token ? '存在' : '不存在');
+        if (!token) {
+          console.error('❌ 无token，取消签到');
+          return;
+        }
+
+        console.log('📤 发送签到请求...');
+        const res = await fetch('/api/user/checkin', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        console.log('📥 响应状态:', res.status);
+        const data = await res.json();
+        console.log('📦 响应数据:', data);
+
+        if (res.ok) {
+          alert(`签到成功！获得 ${data.pointsGained} 点数 ⚡`);
+          await fetchUserMembership();
+          updateSettingsMembership();
+          updateUserAreaWithMembership();
+        } else {
+          alert(data.error || '签到失败');
+        }
+      } catch (e) {
+        console.error('❌ 签到错误:', e);
+        alert('网络错误: ' + e.message);
+      }
+    }
+
+    // 打开会员计划弹窗
+    function openMembershipPlans() {
+      createMembershipPlansModal();
+      document.getElementById('membershipPlansModal').classList.add('active');
+    }
+
+    // 关闭会员计划弹窗
+    function closeMembershipPlans() {
+      const modal = document.getElementById('membershipPlansModal');
+      if (modal) modal.classList.remove('active');
+    }
+
+    // 创建会员计划弹窗
+    function createMembershipPlansModal() {
+      if (document.getElementById('membershipPlansModal')) return;
+
+      const modal = document.createElement('div');
+      modal.id = 'membershipPlansModal';
+      modal.className = 'membership-plans-overlay';
+      modal.innerHTML = `
+        <div class="membership-plans-box">
+          <div class="membership-plans-header">
+            <h2>🎫 会员计划</h2>
+            <button class="admin-close-btn" onclick="closeMembershipPlans()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="membership-plans-content">
+            <div class="membership-plans-grid">
+              <div class="membership-plan-card free ${userMembershipState.membership === 'free' ? 'current' : ''}">
+                <div class="membership-plan-name">free</div>
+                <div class="membership-plan-price">免费</div>
+                <div class="membership-plan-points">每日签到获得 20 点数</div>
+                <div class="membership-plan-features">
+                  默认用户套餐<br>
+                  点数长期有效
+                </div>
+              </div>
+              <div class="membership-plan-card pro ${userMembershipState.membership === 'Pro' ? 'current' : ''}">
+                <div class="membership-plan-name">Pro</div>
+                <div class="membership-plan-price">¥15 <small>/月</small></div>
+                <div class="membership-plan-points">每日自动获得 90 点数</div>
+                <div class="membership-plan-features">
+                  基础套餐<br>
+                  无需签到
+                </div>
+              </div>
+              <div class="membership-plan-card max ${userMembershipState.membership === 'MAX' ? 'current' : ''}">
+                <div class="membership-plan-name">MAX</div>
+                <div class="membership-plan-price">¥199 <small>/月</small></div>
+                <div class="membership-plan-points">每日自动获得 10000 点数</div>
+                <div class="membership-plan-features">
+                  顶级套餐<br>
+                  无限推理使用限额<br>
+                  无限文件上传<br>
+                  最高使用额度
+                </div>
+              </div>
+            </div>
+
+            <div class="membership-divider"></div>
+
+            <div class="membership-extra-section">
+              <h3>💎 按需享用</h3>
+              <p>单独捐赠获取点数，购买的点数 2 年有效。</p>
+            </div>
+
+            <div class="membership-contact">
+              <p>📧 购买请联系: <a href="mailto:rick080402@gmail.com">rick080402@gmail.com</a></p>
+              <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 8px;">目前购买需要通过邮箱联系</p>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      // 点击背景关闭
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeMembershipPlans();
+      });
+    }
+
+    // 更新侧边栏用户区域 - 简化版，只显示签到按钮
+    function updateUserAreaWithMembership() {
+      const checkinContainer = document.getElementById('sidebarCheckinContainer');
+      if (!checkinContainer) return;
+
+      const m = userMembershipState;
+
+      // 只有free用户且可以签到时才显示签到按钮
+      if (m.membership === 'free' && m.canCheckin) {
+        checkinContainer.style.display = 'block';
+        checkinContainer.innerHTML = `
+          <button onclick="sidebarCheckin()" style="
+            background: linear-gradient(135deg, #f5d547 0%, #e6a824 100%);
+            color: #1a1a1a;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 6px;
+            box-shadow: 0 2px 8px rgba(245, 213, 71, 0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+          " onmouseover="this.style.transform='scale(1.02)';this.style.boxShadow='0 4px 12px rgba(245, 213, 71, 0.4)';"
+             onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 8px rgba(245, 213, 71, 0.3)';">
+            签到 +20 ⚡
+          </button>
+        `;
+      } else {
+        // 隐藏签到容器（已签到或非free用户）
+        checkinContainer.style.display = 'none';
+        checkinContainer.innerHTML = '';
+      }
+    }
+
+    // 侧边栏签到函数 - 签到成功后隐藏按钮
+    async function sidebarCheckin() {
+      console.log('🔄 sidebarCheckin() 被调用');
+      try {
+        const token = appState.token;
+        console.log('🔑 Token:', token ? '存在' : '不存在');
+        if (!token) {
+          console.error('❌ 无token，取消签到');
+          return;
+        }
+
+        console.log('📤 发送签到请求...');
+        const res = await fetch('/api/user/checkin', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        console.log('📥 响应状态:', res.status);
+        const data = await res.json();
+        console.log('📦 响应数据:', data);
+
+        if (res.ok) {
+          // 更新状态
+          userMembershipState.canCheckin = false;
+          userMembershipState.totalPoints = data.currentPoints;
+
+          // 隐藏签到按钮
+          const checkinContainer = document.getElementById('sidebarCheckinContainer');
+          if (checkinContainer) {
+            checkinContainer.style.display = 'none';
+          }
+
+          // 也更新设置面板中的状态
+          updateSettingsMembership();
+
+          // 显示成功提示
+          showToast(`签到成功！+${data.pointsGained} ⚡`);
+        } else {
+          showToast(data.error || '签到失败', 'error');
+        }
+      } catch (e) {
+        showToast('网络错误', 'error');
+      }
+    }
+
+    // 更新设置面板中的会员信息
+    function updateSettingsMembership() {
+      const m = userMembershipState;
+
+      // 更新会员徽章
+      const badge = document.getElementById('settingsMembershipBadge');
+      if (badge) {
+        badge.textContent = m.membership;
+        badge.className = `settings-membership-badge ${m.membership === 'MAX' ? 'max' : (m.membership === 'Pro' ? 'pro' : 'free')}`;
+      }
+
+      // 更新点数显示
+      const points = document.getElementById('settingsPointsDisplay');
+      if (points) points.textContent = m.totalPoints;
+
+      // 更新签到按钮
+      const checkinBtn = document.getElementById('settingsCheckinBtn');
+      if (checkinBtn) {
+        if (m.membership !== 'free') {
+          checkinBtn.style.display = 'none';
+        } else if (!m.canCheckin) {
+          checkinBtn.disabled = true;
+          checkinBtn.textContent = '今日已签到 ✓';
+        } else {
+          checkinBtn.disabled = false;
+          checkinBtn.style.display = 'inline-block';
+          checkinBtn.textContent = '签到 +20 ⚡';
+        }
+      }
+
+      // 更新创建时间
+      const created = document.getElementById('settingsCreatedAt');
+      if (created && m.createdAt) {
+        const date = new Date(m.createdAt);
+        created.textContent = `创建于: ${date.toLocaleDateString('zh-CN')}`;
+      }
+
+      // 隐藏升级链接（非free用户）
+      const upgradeLink = document.querySelector('#settingsMembershipSection .settings-upgrade-link');
+      if (upgradeLink) {
+        upgradeLink.style.display = m.membership === 'free' ? 'inline' : 'none';
+      }
+    }
+
+    // 每60秒刷新一次会员状态
+    setInterval(() => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        fetchUserMembership().then(() => {
+          updateUserAreaWithMembership();
+          updateSettingsMembership();
+        });
+      }
+    }, 60000);
+
+    // 页面加载后获取会员状态
+    setTimeout(() => {
+      fetchUserMembership().then(() => {
+        updateUserAreaWithMembership();
+        updateSettingsMembership();
+      });
+    }, 1000);
+
+    // ==================== 管理员后台系统 ====================
+
+    // 管理员状态
+    const adminState = {
+      isLoggedIn: false,
+      token: null,
+      currentTab: 'stats'
+    };
+
+    // 检查管理员登录状态
+    function checkAdminLogin() {
+      const token = localStorage.getItem('adminToken');
+      if (token) {
+        adminState.token = token;
+        verifyAdminToken();
+      }
+    }
+
+    // 验证管理员 Token
+    async function verifyAdminToken() {
+      try {
+        const res = await fetch('/api/admin/verify', {
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        if (res.ok) {
+          adminState.isLoggedIn = true;
+        } else {
+          localStorage.removeItem('adminToken');
+          adminState.token = null;
+          adminState.isLoggedIn = false;
+        }
+      } catch (e) {
+        console.log('Admin token verification failed');
+      }
+    }
+
+    // 打开管理员登录
+    function openAdminLogin() {
+      createAdminLoginModal();
+      document.getElementById('adminLoginModal').classList.add('active');
+    }
+
+    // 创建管理员登录模态框
+    function createAdminLoginModal() {
+      if (document.getElementById('adminLoginModal')) return;
+
+      const modal = document.createElement('div');
+      modal.id = 'adminLoginModal';
+      modal.className = 'admin-modal-overlay';
+      modal.innerHTML = `
+        <div class="admin-login-box">
+          <div class="admin-login-header">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="var(--color-saturn-yellow)">
+              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+            </svg>
+            <h2>管理员登录</h2>
+          </div>
+          <form id="adminLoginForm" onsubmit="handleAdminLogin(event)">
+            <div class="admin-input-group">
+              <label>用户名</label>
+              <input type="text" id="adminUsername" placeholder="admin" autocomplete="username" required>
+            </div>
+            <div class="admin-input-group">
+              <label>密码</label>
+              <input type="password" id="adminPassword" placeholder="••••••••" autocomplete="current-password" required>
+            </div>
+            <div id="adminLoginError" class="admin-login-error"></div>
+            <button type="submit" class="admin-login-btn">登录管理后台</button>
+          </form>
+          <button class="admin-close-btn" onclick="closeAdminLogin()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+
+    // 关闭管理员登录
+    function closeAdminLogin() {
+      const modal = document.getElementById('adminLoginModal');
+      if (modal) modal.classList.remove('active');
+    }
+
+    // 处理管理员登录
+    async function handleAdminLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('adminUsername').value;
+      const password = document.getElementById('adminPassword').value;
+      const errorEl = document.getElementById('adminLoginError');
+
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          adminState.token = data.token;
+          adminState.isLoggedIn = true;
+          localStorage.setItem('adminToken', data.token);
+          closeAdminLogin();
+          openAdminPanel();
+        } else {
+          errorEl.textContent = data.error || '登录失败';
+        }
+      } catch (err) {
+        errorEl.textContent = '网络错误，请重试';
+      }
+    }
+
+    // 打开管理面板
+    function openAdminPanel() {
+      if (!adminState.isLoggedIn) {
+        openAdminLogin();
+        return;
+      }
+      createAdminPanel();
+      document.getElementById('adminPanel').classList.add('active');
+      loadAdminStats();
+    }
+
+    // 创建管理面板
+    function createAdminPanel() {
+      if (document.getElementById('adminPanel')) return;
+
+      const panel = document.createElement('div');
+      panel.id = 'adminPanel';
+      panel.className = 'admin-panel-overlay';
+      panel.innerHTML = `
+        <div class="admin-panel">
+          <div class="admin-panel-header">
+            <h1>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--color-saturn-yellow)">
+                <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+              </svg>
+              RAI 管理后台
+            </h1>
+            <button class="admin-close-btn" onclick="closeAdminPanel()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="admin-panel-tabs">
+            <button class="admin-tab active" data-tab="stats" onclick="switchAdminTab('stats')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+              <span>数据统计</span>
+            </button>
+            <button class="admin-tab" data-tab="users" onclick="switchAdminTab('users')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+              <span>用户管理</span>
+            </button>
+            <button class="admin-tab" data-tab="messages" onclick="switchAdminTab('messages')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
+              <span>消息浏览</span>
+            </button>
+            <button class="admin-tab" data-tab="sessions" onclick="switchAdminTab('sessions')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+              <span>会话管理</span>
+            </button>
+          </div>
+
+          <div class="admin-panel-content">
+            <div id="adminStatsTab" class="admin-tab-content active">
+              <div class="admin-stats-grid" id="adminStatsGrid">
+                <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
+                <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
+                <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
+                <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
+              </div>
+              <div class="admin-charts-row">
+                <div class="admin-chart-card">
+                  <h3>每日消息趋势 (最近30天)</h3>
+                  <div id="adminDailyChart" class="admin-chart"></div>
+                </div>
+                <div class="admin-chart-card">
+                  <h3>模型使用分布</h3>
+                  <div id="adminModelChart" class="admin-chart"></div>
+                </div>
+              </div>
+              <div class="admin-chart-card">
+                <h3>活跃用户排行</h3>
+                <div id="adminTopUsersChart" class="admin-chart"></div>
+              </div>
+            </div>
+
+            <div id="adminUsersTab" class="admin-tab-content">
+              <div id="adminUsersTable" class="admin-table-container"></div>
+            </div>
+
+            <div id="adminMessagesTab" class="admin-tab-content">
+              <div class="admin-search-bar">
+                <input type="text" id="adminMessageSearch" placeholder="搜索消息内容..." onkeyup="if(event.key==='Enter')loadAdminMessages()">
+                <button onclick="loadAdminMessages()">搜索</button>
+              </div>
+              <div id="adminMessagesTable" class="admin-table-container"></div>
+            </div>
+
+            <div id="adminSessionsTab" class="admin-tab-content">
+              <div id="adminSessionsTable" class="admin-table-container"></div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(panel);
+    }
+
+    // 关闭管理面板
+    function closeAdminPanel() {
+      const panel = document.getElementById('adminPanel');
+      if (panel) panel.classList.remove('active');
+    }
+
+    // 切换标签页
+    function switchAdminTab(tab) {
+      adminState.currentTab = tab;
+      document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
+      document.querySelector(`.admin-tab[data-tab="${tab}"]`).classList.add('active');
+      document.getElementById(`admin${tab.charAt(0).toUpperCase() + tab.slice(1)}Tab`).classList.add('active');
+
+      // 加载对应数据
+      if (tab === 'stats') loadAdminStats();
+      else if (tab === 'users') loadAdminUsers();
+      else if (tab === 'messages') loadAdminMessages();
+      else if (tab === 'sessions') loadAdminSessions();
+    }
+
+    // 加载统计数据
+    async function loadAdminStats() {
+      try {
+        const res = await fetch('/api/admin/stats', {
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        const data = await res.json();
+
+        // 更新统计卡片
+        document.getElementById('adminStatsGrid').innerHTML = `
+          <div class="admin-stat-card">
+            <div class="admin-stat-icon users">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+            </div>
+            <div class="admin-stat-info">
+              <div class="admin-stat-value">${data.totalUsers || 0}</div>
+              <div class="admin-stat-label">总用户数</div>
+            </div>
+          </div>
+          <div class="admin-stat-card">
+            <div class="admin-stat-icon sessions">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+            </div>
+            <div class="admin-stat-info">
+              <div class="admin-stat-value">${data.totalSessions || 0}</div>
+              <div class="admin-stat-label">总会话数</div>
+            </div>
+          </div>
+          <div class="admin-stat-card">
+            <div class="admin-stat-icon messages">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
+            </div>
+            <div class="admin-stat-info">
+              <div class="admin-stat-value">${data.totalMessages || 0}</div>
+              <div class="admin-stat-label">总消息数</div>
+            </div>
+          </div>
+          <div class="admin-stat-card">
+            <div class="admin-stat-icon today">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+            </div>
+            <div class="admin-stat-info">
+              <div class="admin-stat-value">${data.todayMessages || 0}</div>
+              <div class="admin-stat-label">今日消息</div>
+            </div>
+          </div>
+        `;
+
+        // 绘制每日趋势图
+        renderDailyChart(data.dailyStats || []);
+
+        // 绘制模型使用分布
+        renderModelChart(data.modelUsage || []);
+
+        // 绘制活跃用户排行
+        renderTopUsersChart(data.topUsers || []);
+
+      } catch (err) {
+        console.error('加载统计数据失败:', err);
+      }
+    }
+
+    // 绘制每日趋势图（简单条形图）
+    function renderDailyChart(dailyStats) {
+      const container = document.getElementById('adminDailyChart');
+      if (!dailyStats.length) {
+        container.innerHTML = '<div class="admin-no-data">暂无数据</div>';
+        return;
+      }
+
+      const maxMessages = Math.max(...dailyStats.map(d => d.messages), 1);
+      let html = '<div class="admin-bar-chart">';
+      dailyStats.slice(-14).forEach(day => {
+        const height = (day.messages / maxMessages) * 100;
+        const date = day.date.slice(5); // MM-DD
+        html += `
+          <div class="admin-bar-item">
+            <div class="admin-bar" style="height: ${height}%" title="${day.date}: ${day.messages}条"></div>
+            <span class="admin-bar-label">${date}</span>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // 绘制模型使用分布
+    function renderModelChart(modelUsage) {
+      const container = document.getElementById('adminModelChart');
+      if (!modelUsage.length) {
+        container.innerHTML = '<div class="admin-no-data">暂无数据</div>';
+        return;
+      }
+
+      const total = modelUsage.reduce((sum, m) => sum + m.count, 0);
+      const colors = ['#f5d547', '#4CAF50', '#2196F3', '#9C27B0', '#FF5722', '#00BCD4', '#FF9800'];
+
+      let html = '<div class="admin-model-list">';
+      modelUsage.slice(0, 7).forEach((model, i) => {
+        const percent = ((model.count / total) * 100).toFixed(1);
+        const color = colors[i % colors.length];
+        html += `
+          <div class="admin-model-item">
+            <div class="admin-model-bar-bg">
+              <div class="admin-model-bar" style="width: ${percent}%; background: ${color}"></div>
+            </div>
+            <span class="admin-model-name">${model.model || '未知'}</span>
+            <span class="admin-model-count">${model.count} (${percent}%)</span>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // 绘制活跃用户排行
+    function renderTopUsersChart(topUsers) {
+      const container = document.getElementById('adminTopUsersChart');
+      if (!topUsers.length) {
+        container.innerHTML = '<div class="admin-no-data">暂无数据</div>';
+        return;
+      }
+
+      const maxCount = Math.max(...topUsers.map(u => u.messageCount), 1);
+      let html = '<div class="admin-top-users-list">';
+      topUsers.forEach((user, i) => {
+        const width = (user.messageCount / maxCount) * 100;
+        html += `
+          <div class="admin-top-user-item">
+            <span class="admin-top-user-rank">#${i + 1}</span>
+            <span class="admin-top-user-name">${user.username || user.email || 'User ' + user.id}</span>
+            <div class="admin-top-user-bar-bg">
+              <div class="admin-top-user-bar" style="width: ${width}%"></div>
+            </div>
+            <span class="admin-top-user-count">${user.messageCount}</span>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // 加载用户列表
+    async function loadAdminUsers() {
+      try {
+        const res = await fetch('/api/admin/users', {
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        const data = await res.json();
+
+        let html = `
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>邮箱</th>
+                <th>用户名</th>
+                <th>会员</th>
+                <th>点数</th>
+                <th>消息数</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        (data.users || []).forEach(user => {
+          const membershipBadge = getMembershipBadge(user.membership);
+          const totalPoints = (user.points || 0) + (user.purchased_points || 0);
+          html += `
+            <tr>
+              <td>${user.id}</td>
+              <td>${user.email}</td>
+              <td>${user.username || '-'}</td>
+              <td>${membershipBadge}</td>
+              <td>${totalPoints} ⚡</td>
+              <td>${user.messageCount || 0}</td>
+              <td>
+                <button class="admin-action-btn view" onclick="openMembershipEditor(${user.id}, '${user.membership || 'free'}')">会员</button>
+                <button class="admin-action-btn view" onclick="openPointsEditor(${user.id})">点数</button>
+                <button class="admin-action-btn delete" onclick="deleteUser(${user.id})">删除</button>
+              </td>
+            </tr>
+          `;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById('adminUsersTable').innerHTML = html;
+
+      } catch (err) {
+        console.error('加载用户列表失败:', err);
+      }
+    }
+
+    // 获取会员等级徽章
+    function getMembershipBadge(membership) {
+      switch (membership) {
+        case 'Pro': return '<span class="membership-badge pro">Pro</span>';
+        case 'MAX': return '<span class="membership-badge max">MAX</span>';
+        default: return '<span class="membership-badge free">free</span>';
+      }
+    }
+
+    // 打开会员编辑器
+    function openMembershipEditor(userId, currentMembership) {
+      const level = prompt(`设置用户 #${userId} 的会员等级:\n\n输入: free / Pro / MAX`, currentMembership);
+      if (!level || !['free', 'Pro', 'MAX'].includes(level)) return;
+
+      let months = 0;
+      if (level !== 'free') {
+        months = parseInt(prompt('设置会员时长（月数）:', '1')) || 1;
+      }
+
+      setUserMembership(userId, level, months);
+    }
+
+    // 设置用户会员
+    async function setUserMembership(userId, membership, months) {
+      try {
+        const res = await fetch(`/api/admin/users/${userId}/membership`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': adminState.token
+          },
+          body: JSON.stringify({ membership, months })
+        });
+        if (res.ok) {
+          alert(`成功设置用户 #${userId} 为 ${membership}，时长 ${months} 个月`);
+          loadAdminUsers();
+        } else {
+          const err = await res.json();
+          alert('设置失败: ' + (err.error || '未知错误'));
+        }
+      } catch (e) {
+        alert('网络错误');
+      }
+    }
+
+    // 打开点数编辑器
+    function openPointsEditor(userId) {
+      const points = parseInt(prompt(`给用户 #${userId} 添加点数:\n\n输入正数添加，负数扣减`, '100'));
+      if (isNaN(points)) return;
+
+      const type = confirm('是购买点数(2年有效)？\n\n确定 = 购买点数\n取消 = 每日点数') ? 'purchased' : 'daily';
+
+      addUserPoints(userId, points, type);
+    }
+
+    // 添加用户点数
+    async function addUserPoints(userId, points, type) {
+      try {
+        const res = await fetch(`/api/admin/users/${userId}/points`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': adminState.token
+          },
+          body: JSON.stringify({ points, type, expireYears: type === 'purchased' ? 2 : 0 })
+        });
+        if (res.ok) {
+          alert(`成功给用户 #${userId} 添加 ${points} ${type === 'purchased' ? '购买' : '每日'}点数`);
+          loadAdminUsers();
+        } else {
+          const err = await res.json();
+          alert('添加失败: ' + (err.error || '未知错误'));
+        }
+      } catch (e) {
+        alert('网络错误');
+      }
+    }
+
+    // 查看用户消息
+    async function viewUserMessages(userId) {
+      try {
+        const res = await fetch(`/api/admin/users/${userId}/messages`, {
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        const data = await res.json();
+
+        let html = `<h3>用户 #${userId} 的消息</h3><button onclick="loadAdminUsers()" class="admin-back-btn">← 返回用户列表</button>`;
+        html += `<table class="admin-table"><thead><tr><th>ID</th><th>角色</th><th>内容</th><th>模型</th><th>时间</th></tr></thead><tbody>`;
+
+        (data.messages || []).forEach(msg => {
+          const content = (msg.content || '').substring(0, 100) + (msg.content?.length > 100 ? '...' : '');
+          html += `
+            <tr>
+              <td>${msg.id}</td>
+              <td>${msg.role === 'user' ? '👤 用户' : '🤖 AI'}</td>
+              <td class="admin-msg-content">${escapeHtml(content)}</td>
+              <td>${msg.model || '-'}</td>
+              <td>${formatDate(msg.created_at)}</td>
+            </tr>
+          `;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById('adminUsersTable').innerHTML = html;
+
+      } catch (err) {
+        console.error('加载用户消息失败:', err);
+      }
+    }
+
+    // 删除用户
+    async function deleteUser(userId) {
+      if (!confirm(`确定要删除用户 #${userId} 及其所有数据吗？此操作不可撤销！`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/users/${userId}`, {
+          method: 'DELETE',
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        if (res.ok) {
+          loadAdminUsers();
+        } else {
+          alert('删除失败');
+        }
+      } catch (err) {
+        alert('网络错误');
+      }
+    }
+
+    // 加载消息列表
+    async function loadAdminMessages() {
+      const search = document.getElementById('adminMessageSearch')?.value || '';
+      try {
+        const res = await fetch(`/api/admin/messages?search=${encodeURIComponent(search)}`, {
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        const data = await res.json();
+
+        let html = `
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>用户</th>
+                <th>角色</th>
+                <th>内容</th>
+                <th>模型</th>
+                <th>时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        (data.messages || []).forEach(msg => {
+          const content = (msg.content || '').substring(0, 80) + (msg.content?.length > 80 ? '...' : '');
+          html += `
+            <tr>
+              <td>${msg.id}</td>
+              <td>${msg.username || msg.email || '-'}</td>
+              <td>${msg.role === 'user' ? '👤' : '🤖'}</td>
+              <td class="admin-msg-content">${escapeHtml(content)}</td>
+              <td>${msg.model || '-'}</td>
+              <td>${formatDate(msg.created_at)}</td>
+              <td><button class="admin-action-btn delete" onclick="deleteMessage(${msg.id})">删除</button></td>
+            </tr>
+          `;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById('adminMessagesTable').innerHTML = html;
+
+      } catch (err) {
+        console.error('加载消息列表失败:', err);
+      }
+    }
+
+    // 删除消息
+    async function deleteMessage(messageId) {
+      if (!confirm('确定要删除这条消息吗？')) return;
+
+      try {
+        const res = await fetch(`/api/admin/messages/${messageId}`, {
+          method: 'DELETE',
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        if (res.ok) {
+          loadAdminMessages();
+        }
+      } catch (err) {
+        console.error('删除消息失败:', err);
+      }
+    }
+
+    // 加载会话列表
+    async function loadAdminSessions() {
+      try {
+        const res = await fetch('/api/admin/sessions', {
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        const data = await res.json();
+
+        let html = `
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>用户</th>
+                <th>标题</th>
+                <th>模型</th>
+                <th>消息数</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        (data.sessions || []).forEach(session => {
+          html += `
+            <tr>
+              <td class="admin-session-id">${session.id.substring(0, 15)}...</td>
+              <td>${session.username || session.email || '-'}</td>
+              <td>${escapeHtml(session.title || '新对话')}</td>
+              <td>${session.model || '-'}</td>
+              <td>${session.messageCount || 0}</td>
+              <td>${formatDate(session.updated_at)}</td>
+              <td><button class="admin-action-btn delete" onclick="deleteSession('${session.id}')">删除</button></td>
+            </tr>
+          `;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById('adminSessionsTable').innerHTML = html;
+
+      } catch (err) {
+        console.error('加载会话列表失败:', err);
+      }
+    }
+
+    // 删除会话
+    async function deleteSession(sessionId) {
+      if (!confirm('确定要删除这个会话及其所有消息吗？')) return;
+
+      try {
+        const res = await fetch(`/api/admin/sessions/${sessionId}`, {
+          method: 'DELETE',
+          headers: { 'X-Admin-Token': adminState.token }
+        });
+        if (res.ok) {
+          loadAdminSessions();
+        }
+      } catch (err) {
+        console.error('删除会话失败:', err);
+      }
+    }
+
+    // 格式化日期
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // 键盘快捷键: Ctrl+Shift+A 打开管理员入口
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+        e.preventDefault();
+        console.log('🔐 管理员快捷键触发');
+        if (adminState.isLoggedIn) {
+          openAdminPanel();
+        } else {
+          openAdminLogin();
+        }
+      }
+    });
+
+    // 初始化时检查管理员状态
+    checkAdminLogin();
   </script>
+
+  <!-- 管理员面板样式 -->
+  <style>
+    /* ==================== 管理员模态框通用样式 ==================== */
+    .admin-modal-overlay,
+    .admin-panel-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .admin-modal-overlay.active,
+    .admin-panel-overlay.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    /* ==================== 管理员登录框 ==================== */
+    .admin-login-box {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 32px;
+      width: 90%;
+      max-width: 400px;
+      position: relative;
+    }
+
+    .admin-login-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .admin-login-header h2 {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .admin-input-group {
+      margin-bottom: 16px;
+    }
+
+    .admin-input-group label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    .admin-input-group input {
+      width: 100%;
+      padding: 12px 14px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 14px;
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .admin-input-group input:focus {
+      border-color: var(--color-saturn-yellow);
+    }
+
+    .admin-login-error {
+      color: #ff5252;
+      font-size: 13px;
+      min-height: 20px;
+      margin-bottom: 8px;
+    }
+
+    .admin-login-btn {
+      width: 100%;
+      padding: 12px;
+      background: var(--color-saturn-yellow);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .admin-login-btn:hover {
+      opacity: 0.9;
+    }
+
+    .admin-close-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      padding: 4px;
+      display: flex;
+      transition: color 0.2s;
+    }
+
+    .admin-close-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .admin-close-btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    /* ==================== 管理面板 ==================== */
+    .admin-panel {
+      background: var(--bg-primary);
+      width: 95%;
+      max-width: 1200px;
+      height: 90vh;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+
+    .admin-panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .admin-panel-header h1 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .admin-panel-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 12px 24px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .admin-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .admin-tab:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .admin-tab.active {
+      background: var(--color-saturn-yellow);
+      color: #000;
+    }
+
+    .admin-tab svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .admin-panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .admin-tab-content {
+      display: none;
+    }
+
+    .admin-tab-content.active {
+      display: block;
+    }
+
+    /* ==================== 统计卡片 ==================== */
+    .admin-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .admin-stat-card {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+    }
+
+    .admin-stat-card.loading {
+      min-height: 80px;
+    }
+
+    .admin-stat-skeleton {
+      width: 100%;
+      height: 40px;
+      background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 8px;
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: 200% 0;
+      }
+
+      100% {
+        background-position: -200% 0;
+      }
+    }
+
+    .admin-stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .admin-stat-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .admin-stat-icon.users {
+      background: rgba(33, 150, 243, 0.15);
+      color: #2196F3;
+    }
+
+    .admin-stat-icon.sessions {
+      background: rgba(76, 175, 80, 0.15);
+      color: #4CAF50;
+    }
+
+    .admin-stat-icon.messages {
+      background: rgba(156, 39, 176, 0.15);
+      color: #9C27B0;
+    }
+
+    .admin-stat-icon.today {
+      background: rgba(245, 213, 71, 0.15);
+      color: var(--color-saturn-yellow);
+    }
+
+    .admin-stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .admin-stat-label {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    /* ==================== 图表区域 ==================== */
+    .admin-charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 768px) {
+      .admin-charts-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .admin-chart-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .admin-chart-card h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0 0 16px 0;
+    }
+
+    .admin-chart {
+      min-height: 150px;
+    }
+
+    .admin-no-data {
+      color: var(--text-tertiary);
+      text-align: center;
+      padding: 40px;
+    }
+
+    /* 条形图 */
+    .admin-bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 120px;
+    }
+
+    .admin-bar-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+    }
+
+    .admin-bar {
+      width: 100%;
+      background: var(--color-saturn-yellow);
+      border-radius: 4px 4px 0 0;
+      min-height: 2px;
+      transition: height 0.3s;
+    }
+
+    .admin-bar-label {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      margin-top: 4px;
+      transform: rotate(-45deg);
+      white-space: nowrap;
+    }
+
+    /* 模型使用列表 */
+    .admin-model-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .admin-model-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .admin-model-bar-bg {
+      flex: 1;
+      height: 8px;
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .admin-model-bar {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+
+    .admin-model-name {
+      font-size: 12px;
+      color: var(--text-secondary);
+      min-width: 100px;
+    }
+
+    .admin-model-count {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      min-width: 80px;
+      text-align: right;
+    }
+
+    /* 活跃用户排行 */
+    .admin-top-users-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .admin-top-user-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .admin-top-user-rank {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--color-saturn-yellow);
+      min-width: 30px;
+    }
+
+    .admin-top-user-name {
+      font-size: 13px;
+      color: var(--text-primary);
+      min-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .admin-top-user-bar-bg {
+      flex: 1;
+      height: 6px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .admin-top-user-bar {
+      height: 100%;
+      background: var(--color-saturn-yellow);
+      border-radius: 3px;
+    }
+
+    .admin-top-user-count {
+      font-size: 12px;
+      color: var(--text-secondary);
+      min-width: 40px;
+      text-align: right;
+    }
+
+    /* ==================== 表格 ==================== */
+    .admin-table-container {
+      overflow-x: auto;
+    }
+
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .admin-table th,
+    .admin-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .admin-table th {
+      background: var(--bg-secondary);
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .admin-table td {
+      color: var(--text-primary);
+    }
+
+    .admin-table tr:hover {
+      background: var(--bg-secondary);
+    }
+
+    .admin-msg-content {
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .admin-session-id {
+      font-family: monospace;
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .admin-action-btn {
+      padding: 4px 10px;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-right: 4px;
+    }
+
+    .admin-action-btn.view {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .admin-action-btn.delete {
+      background: rgba(255, 82, 82, 0.15);
+      color: #ff5252;
+    }
+
+    .admin-action-btn:hover {
+      opacity: 0.8;
+    }
+
+    .admin-back-btn {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+
+    /* ==================== 搜索栏 ==================== */
+    .admin-search-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .admin-search-bar input {
+      flex: 1;
+      padding: 10px 14px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 13px;
+      outline: none;
+    }
+
+    .admin-search-bar input:focus {
+      border-color: var(--color-saturn-yellow);
+    }
+
+    .admin-search-bar button {
+      padding: 10px 20px;
+      background: var(--color-saturn-yellow);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* ==================== 会员徽章 ==================== */
+    .membership-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .membership-badge.free {
+      background: rgba(150, 150, 150, 0.2);
+      color: #aaa;
+    }
+
+    .membership-badge.pro {
+      background: rgba(33, 150, 243, 0.2);
+      color: #2196F3;
+    }
+
+    .membership-badge.max {
+      background: rgba(245, 213, 71, 0.2);
+      color: var(--color-saturn-yellow);
+    }
+
+    /* ==================== 会员计划弹窗 ==================== */
+    .membership-plans-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      z-index: 10001;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .membership-plans-overlay.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .membership-plans-box {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      width: 90%;
+      max-width: 700px;
+      max-height: 90vh;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .membership-plans-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .membership-plans-header h2 {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .membership-plans-content {
+      padding: 24px;
+    }
+
+    .membership-plans-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 600px) {
+      .membership-plans-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .membership-plan-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+
+    .membership-plan-card:hover {
+      border-color: var(--color-saturn-yellow);
+    }
+
+    .membership-plan-card.current {
+      border-color: var(--color-saturn-yellow);
+      box-shadow: 0 0 0 1px var(--color-saturn-yellow);
+    }
+
+    .membership-plan-name {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .membership-plan-card.free .membership-plan-name {
+      color: #aaa;
+    }
+
+    .membership-plan-card.pro .membership-plan-name {
+      color: #2196F3;
+    }
+
+    .membership-plan-card.max .membership-plan-name {
+      color: var(--color-saturn-yellow);
+    }
+
+    .membership-plan-price {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .membership-plan-price small {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .membership-plan-points {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+
+    .membership-plan-features {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.6;
+    }
+
+    .membership-divider {
+      height: 1px;
+      background: var(--border-color);
+      margin: 20px 0;
+    }
+
+    .membership-extra-section {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .membership-extra-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0 0 8px 0;
+    }
+
+    .membership-extra-section p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+
+    .membership-contact {
+      text-align: center;
+      padding: 16px;
+      background: var(--bg-secondary);
+      border-radius: 12px;
+    }
+
+    .membership-contact a {
+      color: var(--color-saturn-yellow);
+      text-decoration: none;
+    }
+
+    /* ==================== 用户设置面板会员状态 ==================== */
+    .settings-membership-section {
+      background: var(--bg-tertiary);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .settings-membership-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .settings-membership-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .settings-membership-badge.free {
+      background: rgba(150, 150, 150, 0.15);
+      color: #aaa;
+    }
+
+    .settings-membership-badge.pro {
+      background: rgba(33, 150, 243, 0.15);
+      color: #2196F3;
+    }
+
+    .settings-membership-badge.max {
+      background: rgba(245, 213, 71, 0.15);
+      color: var(--color-saturn-yellow);
+    }
+
+    .settings-upgrade-link {
+      font-size: 12px;
+      color: var(--color-saturn-yellow);
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .settings-upgrade-link:hover {
+      text-decoration: underline;
+    }
+
+    .settings-points-display {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    .settings-points-display .points-icon {
+      color: var(--color-saturn-yellow);
+    }
+
+    .settings-checkin-btn {
+      padding: 8px 16px;
+      background: var(--color-saturn-yellow);
+      color: #000;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+
+    .settings-checkin-btn:disabled {
+      background: var(--bg-tertiary);
+      color: var(--text-tertiary);
+      cursor: not-allowed;
+    }
+
+    .settings-created-at {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 8px;
+    }
+  </style>
 </body>
 
 </html>
