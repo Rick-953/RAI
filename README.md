@@ -97,6 +97,13 @@
 - API 限流保护
 - 密码加密存储
 
+### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 图文并茂 (v0.8 新增)
+- 支持ai回复过程中插入多张图片到回答里。  
+- <img width="1108" height="1703" alt="屏幕截图 2025-12-13 143709" src="https://github.com/user-attachments/assets/f8b414a7-2316-47fa-a5cb-72184beff4b1" />
+- 支持画流程图，统计图，思维导图等各种类型的图表！  
+- <img width="2744" height="1684" alt="image" src="https://github.com/user-attachments/assets/9a0d3c91-c4c1-4261-ac67-64d90f90c85b" />
+- 一次回答图文表并茂！  
+
 ---
 
 ## <img src="https://api.iconify.design/material-symbols/list-alt-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 功能列表
@@ -382,6 +389,13 @@ Seamlessly combine AI conversations with visual canvas to create your own mind m
 - JWT token authentication
 - API rate limiting
 - Encrypted password storage
+
+#### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Rich Media (v0.8)
+- AI can insert multiple images in responses
+- <img width="1108" height="1703" alt="Screenshot 2025-12-13" src="https://github.com/user-attachments/assets/f8b414a7-2316-47fa-a5cb-72184beff4b1" />
+- Support flowcharts, statistical charts, mind maps and various diagrams!
+- <img width="2744" height="1684" alt="image" src="https://github.com/user-attachments/assets/9a0d3c91-c4c1-4261-ac67-64d90f90c85b" />
+- Rich text, images and charts in one response!
 
 ---
 
