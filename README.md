@@ -131,7 +131,7 @@ cd RAI/ai
 npm install
 
 # 启动服务
-node server.js
+pm2 
 ```
 
 ### 访问应用
