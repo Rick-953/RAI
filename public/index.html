@@ -13873,10 +13873,12 @@
         // 渲染消息和节点
         renderChatFlowMessages();
         renderCanvasNodes();
+        renderEdges(); // 修复: 确保重新打开时渲染连线
         updateCanvasTransform();
 
         // 更新列表选中状态
         renderFlowsList(chatFlowState.flows);
+
 
         console.log('✅ 打开思维流:', flowId);
       } catch (error) {
@@ -14614,18 +14616,49 @@
     // 初始化连线功能
     function initEdgeConnection() {
       const canvasContainer = document.getElementById('chatflowCanvasContainer');
-      if (!canvasContainer) return;
+      const svg = document.getElementById('infiniteCanvas');
+      if (!canvasContainer || !svg) return;
 
+      // 获取画布坐标转换函数
+      function getCanvasPoint(clientX, clientY) {
+        const rect = canvasContainer.getBoundingClientRect();
+        const x = (clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
+        const y = (clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
+        return { x, y };
+      }
+
+      // 修复: 支持选择模式和连线模式都能通过端口连线
       canvasContainer.addEventListener('mousedown', (e) => {
-        if (chatFlowState.currentTool !== 'connect') return;
-
+        // 检查是否点击了节点端口
+        const port = e.target.closest('.canvas-node-port');
         const nodeEl = e.target.closest('.canvas-node');
-        if (nodeEl) {
-          chatFlowState.connectingFrom = nodeEl.dataset.nodeId;
-          const previewLine = document.getElementById('edgePreviewLine');
-          if (previewLine) {
+
+        if (port && nodeEl) {
+          // 从端口开始连线（选择模式和连线模式都支持）
+          if (chatFlowState.currentTool === 'connect' || chatFlowState.currentTool === 'select') {
+            chatFlowState.connectingFrom = nodeEl.dataset.nodeId;
             const node = chatFlowState.nodes.find(n => n.id === chatFlowState.connectingFrom);
             if (node) {
+              const previewLine = document.getElementById('edgePreviewLine');
+              if (previewLine) {
+                const startX = node.x + node.width / 2;
+                const startY = node.y + node.height / 2;
+                previewLine.setAttribute('x1', startX);
+                previewLine.setAttribute('y1', startY);
+                previewLine.setAttribute('x2', startX);
+                previewLine.setAttribute('y2', startY);
+                previewLine.style.display = 'block';
+              }
+            }
+            e.stopPropagation();
+          }
+        } else if (chatFlowState.currentTool === 'connect' && nodeEl) {
+          // 连线模式下点击节点任意位置也能开始连线
+          chatFlowState.connectingFrom = nodeEl.dataset.nodeId;
+          const node = chatFlowState.nodes.find(n => n.id === chatFlowState.connectingFrom);
+          if (node) {
+            const previewLine = document.getElementById('edgePreviewLine');
+            if (previewLine) {
               const startX = node.x + node.width / 2;
               const startY = node.y + node.height / 2;
               previewLine.setAttribute('x1', startX);
@@ -14638,21 +14671,20 @@
         }
       });
 
+      // 修复: 预览线跟随鼠标（改进坐标计算）
       canvasContainer.addEventListener('mousemove', (e) => {
-        if (chatFlowState.currentTool !== 'connect' || !chatFlowState.connectingFrom) return;
+        if (!chatFlowState.connectingFrom) return;
 
         const previewLine = document.getElementById('edgePreviewLine');
         if (previewLine) {
-          const rect = canvasContainer.getBoundingClientRect();
-          const x = (e.clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
-          const y = (e.clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
-          previewLine.setAttribute('x2', x);
-          previewLine.setAttribute('y2', y);
+          const point = getCanvasPoint(e.clientX, e.clientY);
+          previewLine.setAttribute('x2', point.x);
+          previewLine.setAttribute('y2', point.y);
         }
       });
 
       canvasContainer.addEventListener('mouseup', (e) => {
-        if (chatFlowState.currentTool !== 'connect' || !chatFlowState.connectingFrom) return;
+        if (!chatFlowState.connectingFrom) return;
 
         const previewLine = document.getElementById('edgePreviewLine');
         if (previewLine) {
@@ -14666,7 +14698,59 @@
 
         chatFlowState.connectingFrom = null;
       });
+
+      // 修复#6: 支持触控板手势
+      let lastTouchDistance = 0;
+      let lastTouchCenter = { x: 0, y: 0 };
+
+      canvasContainer.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          // 双指捏合缩放
+          const touch1 = e.touches[0];
+          const touch2 = e.touches[1];
+          lastTouchDistance = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+          lastTouchCenter = {
+            x: (touch1.clientX + touch2.clientX) / 2,
+            y: (touch1.clientY + touch2.clientY) / 2
+          };
+        }
+      }, { passive: true });
+
+      canvasContainer.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+          e.preventDefault();
+          const touch1 = e.touches[0];
+          const touch2 = e.touches[1];
+          const currentDistance = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+          const currentCenter = {
+            x: (touch1.clientX + touch2.clientX) / 2,
+            y: (touch1.clientY + touch2.clientY) / 2
+          };
+
+          // 缩放
+          if (lastTouchDistance > 0) {
+            const scale = currentDistance / lastTouchDistance;
+            const newScale = Math.min(Math.max(chatFlowState.canvas.scale * scale, 0.1), 5);
+            chatFlowState.canvas.scale = newScale;
+            updateCanvasTransform();
+            updateZoomDisplay();
+          }
+
+          // 平移
+          chatFlowState.canvas.translateX += currentCenter.x - lastTouchCenter.x;
+          chatFlowState.canvas.translateY += currentCenter.y - lastTouchCenter.y;
+          updateCanvasTransform();
+
+          lastTouchDistance = currentDistance;
+          lastTouchCenter = currentCenter;
+        }
+      }, { passive: false });
+
+      canvasContainer.addEventListener('touchend', () => {
+        lastTouchDistance = 0;
+      }, { passive: true });
     }
+
 
     // 创建边
     function createEdge(fromId, toId, label = '') {
@@ -14717,7 +14801,7 @@
         path.setAttribute('marker-end', 'url(#arrowhead)');
         g.appendChild(path);
 
-        // 标签
+        // 标签 - 修复字体太粗问题
         if (edge.label) {
           const labelX = (x1 + x2) / 2;
           const labelY = midY;
@@ -14728,19 +14812,33 @@
           labelBg.setAttribute('y', labelY - 10);
           labelBg.setAttribute('width', '60');
           labelBg.setAttribute('height', '20');
+          labelBg.setAttribute('rx', '4');
+          labelBg.setAttribute('fill', 'var(--bg-secondary)');
+          labelBg.setAttribute('stroke', 'var(--border-color)');
+          labelBg.setAttribute('stroke-width', '1');
           g.appendChild(labelBg);
 
           const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           text.setAttribute('class', 'canvas-edge-label');
           text.setAttribute('x', labelX);
           text.setAttribute('y', labelY + 4);
+          text.setAttribute('text-anchor', 'middle');
+          text.setAttribute('font-size', '11');
+          text.setAttribute('font-weight', '400'); // 修复: 使用正常字重
+          text.setAttribute('fill', 'var(--text-secondary)');
           text.textContent = edge.label;
           g.appendChild(text);
         }
 
-        // 点击删除
-        g.addEventListener('dblclick', () => {
-          if (confirm('删除这条连线？')) {
+        // 修复: 右键菜单删除（替代双击删除）
+        g.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          showEdgeContextMenu(e, edge.id);
+        });
+
+        // 删除模式点击删除
+        g.addEventListener('click', () => {
+          if (chatFlowState.currentTool === 'delete') {
             chatFlowState.edges = chatFlowState.edges.filter(e => e.id !== edge.id);
             renderEdges();
             saveFlowState();
@@ -14750,6 +14848,57 @@
         edgesLayer.appendChild(g);
       });
     }
+
+    // 新增: 边的右键菜单
+    function showEdgeContextMenu(e, edgeId) {
+      // 移除已有菜单
+      document.querySelectorAll('.edge-context-menu').forEach(el => el.remove());
+
+      const menu = document.createElement('div');
+      menu.className = 'edge-context-menu';
+      menu.style.cssText = `
+        position: fixed;
+        left: ${e.clientX}px;
+        top: ${e.clientY}px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 4px 0;
+        min-width: 100px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        z-index: 1000;
+      `;
+
+      const deleteItem = document.createElement('div');
+      deleteItem.style.cssText = 'padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--text-secondary);';
+      deleteItem.textContent = '删除连线';
+      deleteItem.addEventListener('mouseenter', () => {
+        deleteItem.style.background = 'var(--bg-hover)';
+        deleteItem.style.color = 'var(--text-primary)';
+      });
+      deleteItem.addEventListener('mouseleave', () => {
+        deleteItem.style.background = 'transparent';
+        deleteItem.style.color = 'var(--text-secondary)';
+      });
+      deleteItem.addEventListener('click', () => {
+        chatFlowState.edges = chatFlowState.edges.filter(e => e.id !== edgeId);
+        renderEdges();
+        saveFlowState();
+        menu.remove();
+      });
+      menu.appendChild(deleteItem);
+
+      document.body.appendChild(menu);
+
+      // 点击其他地方关闭菜单
+      setTimeout(() => {
+        document.addEventListener('click', function closeMenu() {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+        }, { once: true });
+      }, 100);
+    }
+
 
     // ==================== 便签功能 ====================
 
