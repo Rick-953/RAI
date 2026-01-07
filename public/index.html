@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -10,7 +10,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
 
-  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>' type="image/svg+xml">
+  <link rel="icon"
+    href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
+    type="image/svg+xml">
 
   <!-- Marked.js for Markdown Rendering -->
   <script src="lib/marked.min.js"></script>
@@ -18,18 +20,21 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" crossorigin="anonymous"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+    crossorigin="anonymous"></script>
 
   <!-- Mermaid.js 图表渲染 -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 
   <!-- 外部样式表 -->
   <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
 
   <!-- 登录/注册界面 - Apple风格渐进式输入 -->
@@ -658,117 +663,14 @@
       <span data-i18n="back-to-chat">返回对话</span>
     </button>
 
-    <!-- 左侧 LLM 面板 -->
+    <!-- 左侧 LLM 面板 - 嵌入 RAI 主界面 iframe -->
     <div class="chatflow-llm-panel" id="chatflowLLMPanel">
       <div class="chatflow-header">
         <h3 class="chatflow-title" id="chatflowTitle">新思维流</h3>
       </div>
-      <div class="chatflow-messages" id="chatflowMessages">
-        <div class="chatflow-empty-state">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="48" height="48" fill="currentColor">
-            <path
-              d="M480-80q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80ZM320-200v-80h320v80H320Zm10-120q-69-41-109.5-110T180-580q0-125 87.5-212.5T480-880q125 0 212.5 87.5T780-580q0 81-40.5 150T630-320H330Zm24-80h252q45-32 69.5-79T700-580q0-92-64-156t-156-64q-92 0-156 64t-64 156q0 54 24.5 101t69.5 79Z" />
-          </svg>
-          <p>开始对话，然后拖拽消息到画布</p>
-        </div>
-      </div>
-      <div class="chatflow-input-area">
-        <div class="chatflow-input-wrapper">
-          <div class="chatflow-input-container" id="chatflowInputContainer">
-            <!-- 顶部输入行 -->
-            <div class="chatflow-input-row">
-              <textarea class="chatflow-message-input" id="chatflowMessageInput" placeholder="输入消息..." rows="1"
-                onkeydown="handleChatFlowInputKeydown(event)" oninput="autoResizeChatFlowInput()"></textarea>
-            </div>
-
-            <!-- 底部工具栏 -->
-            <div class="chatflow-input-toolbar">
-              <!-- 更多菜单 -->
-              <div class="chatflow-more-menu-container">
-                <button class="chatflow-toolbar-btn" id="chatflowMoreBtn" onclick="toggleChatFlowMoreMenu()">
-                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-                    width="20" height="20" fill="currentColor">
-                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" stroke="currentColor" stroke-width="0.5" />
-                  </svg>
-                </button>
-
-                <!-- 更多菜单下拉 -->
-                <div class="chatflow-more-menu" id="chatflowMoreMenu">
-                  <!-- 联网搜索开关 -->
-                  <div class="more-menu-item" onclick="toggleChatFlowInternet(event)">
-                    <div class="more-menu-item-icon">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                          d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2z" />
-                      </svg>
-                    </div>
-                    <span class="more-menu-item-text">联网搜索</span>
-                    <div class="more-menu-item-toggle" id="chatflowInternetToggle"></div>
-                  </div>
-
-                  <!-- 推理模式开关 -->
-                  <div class="more-menu-item" onclick="toggleChatFlowThinking(event)">
-                    <div class="more-menu-item-icon">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-                        <path
-                          d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Z" />
-                      </svg>
-                    </div>
-                    <span class="more-menu-item-text">推理模式</span>
-                    <div class="more-menu-item-toggle" id="chatflowThinkingToggle"></div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="chatflow-toolbar-spacer"></div>
-
-              <!-- 模型选择器 -->
-              <div class="chatflow-model-selector">
-                <div class="chatflow-model-select" id="chatflowModelSelect" onclick="toggleChatFlowModelMenu()">
-                  <span id="chatflowSelectedModel">Kimi K2</span>
-                  <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-                    width="16" height="16" fill="currentColor">
-                    <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
-                  </svg>
-                </div>
-
-                <!-- 模型下拉菜单 -->
-                <div class="chatflow-model-menu" id="chatflowModelMenu">
-                  <div class="model-menu-item" onclick="selectChatFlowModel('kimi-k2', 'Kimi K2')">
-                    <span>Kimi K2</span>
-                  </div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('deepseek-v3', 'DeepSeek V3')">
-                    <span>DeepSeek V3</span>
-                  </div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen-max', 'Qwen Max')">
-                    <span>Qwen Max</span>
-                  </div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen-plus', 'Qwen Plus')">
-                    <span>Qwen Plus</span>
-                  </div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen-flash', 'Qwen Flash')">
-                    <span>Qwen Flash</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 发送/停止按钮 -->
-              <button class="chatflow-send-btn" id="chatflowSendBtn" onclick="sendChatFlowMessage()">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                  <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" />
-                </svg>
-              </button>
-              <button class="chatflow-stop-btn" id="chatflowStopBtn" style="display: none;"
-                onclick="stopChatFlowGeneration()">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20"
-                  height="20" fill="currentColor">
-                  <path d="M6 6h12v12H6z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- 嵌入 RAI 主界面，带 mode=chatflow 参数 -->
+      <iframe id="chatflowIframe" class="chatflow-iframe" src="/?mode=chatflow" title="RAI Chat"
+        allowfullscreen></iframe>
     </div>
 
     <!-- 可拖拽分隔栏 -->
