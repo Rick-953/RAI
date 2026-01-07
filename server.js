@@ -331,7 +331,7 @@ function analyzeMessage(message) {
 // ==================== 网页搜索功能 (Tavily API) ====================
 
 // Tavily API 配置
-const TAVILY_API_KEY = 'tvly-dev-';
+const TAVILY_API_KEY = 'tvly-';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 /**
@@ -1010,7 +1010,7 @@ const API_PROVIDERS = {
     },
     // Google Gemini API - Gemini 3 Flash Preview (多模态)
     google_gemini: {
-        apiKey: 'AIzaSyC_',
+        apiKey: 'AIzaSyC',
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',  // 基础URL，实际使用时会拼接模型名
         models: ['Gemini 3 Flash Preview'],
         isGemini: true,  // 标记这是Gemini API，需要特殊处理
@@ -3827,8 +3827,7 @@ app.listen(PORT, '0.0.0.0', () => {
 ║  🔐 JWT认证: ✅                                         ║
 ║  🤖 AI提供商: 阿里云百炼 + DeepSeek + 流动硅基             ║
 ║  🧠 思考模式: ✅                                         ║
-║  🛑 停止输出: ✅ 
-║  🤗 Rick+AI制作 ✅
+║  🛑 停止输出: ✅                                         ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
   `);
