@@ -4436,7 +4436,7 @@ body {
   transform: rotate(180deg);
 }
 
-/* ==================== 模型选择下拉菜单 (Grok风格) ==================== */
+/* ==================== 模型选择下拉菜单==================== */
 .model-modal {
   display: none;
 }
@@ -4446,7 +4446,7 @@ body {
   bottom: calc(100% + 8px);
   right: 0;
   /* Positioned on right to align with send button */
-  min-width: 280px;
+  min-width: 200px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-dark);
   border-radius: 12px;
@@ -6159,13 +6159,23 @@ body {
   left: 2px;
   width: 16px;
   height: 16px;
-  background: white;
+  background: var(--text-primary);
   border-radius: 50%;
-  transition: transform 0.2s;
+  transition: transform 0.2s, background 0.2s;
 }
 
 .more-menu-item-toggle.active::after {
   transform: translateX(16px);
+  background: var(--bg-primary);
+}
+
+/* 浅色主题下开关圆点颜色适配 */
+[data-theme="light"] .more-menu-item-toggle::after {
+  background: var(--text-primary);
+}
+
+[data-theme="light"] .more-menu-item-toggle.active::after {
+  background: var(--bg-primary);
 }
 
 .more-menu-divider {
@@ -7098,6 +7108,366 @@ body {
 .membership-badge.max {
   background: rgba(245, 213, 71, 0.2);
   color: var(--color-saturn-yellow);
+}
+
+/* ==================== 用户详情弹窗 ==================== */
+.user-detail-modal {
+  z-index: 10002;
+}
+
+.user-detail-container {
+  background: var(--bg-primary);
+  width: 95%;
+  max-width: 1100px;
+  height: 85vh;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.user-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.user-detail-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.user-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.user-detail-loading,
+.user-detail-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.user-detail-error {
+  color: var(--error-color);
+}
+
+.user-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 用户信息卡片 */
+.user-info-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.user-info-card h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px 0;
+}
+
+.user-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.user-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+}
+
+.user-info-item .label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.user-info-item .value {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* 会话列表和消息区域布局 */
+.user-sessions-area {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 400px;
+}
+
+.user-sessions-list {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.user-sessions-list h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 14px 16px;
+  margin: 0;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.sessions-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.no-sessions {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.ud-session-item {
+  padding: 12px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 4px;
+}
+
+.ud-session-item:hover {
+  background: var(--bg-hover);
+}
+
+.ud-session-item.active {
+  background: var(--color-saturn-yellow);
+  color: #000;
+}
+
+.ud-session-item.active .ud-session-meta {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.ud-session-title {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ud-session-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  display: flex;
+  gap: 10px;
+}
+
+/* 消息查看区域 - 限定在用户详情弹窗内 */
+.user-detail-modal .user-messages-area {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.user-detail-modal .ud-messages-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-tertiary);
+  gap: 12px;
+}
+
+.user-detail-modal .ud-messages-placeholder svg {
+  opacity: 0.3;
+}
+
+.user-detail-modal .ud-messages-placeholder p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.user-detail-modal .ud-messages-loading,
+.user-detail-modal .ud-messages-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.user-detail-modal .ud-messages-error {
+  color: var(--error-color);
+}
+
+.user-detail-modal .ud-messages-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.user-detail-modal .ud-messages-header h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.user-detail-modal .ud-messages-count {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.user-detail-modal .ud-messages-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.user-detail-modal .ud-message-item {
+  margin-bottom: 16px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.user-detail-modal .ud-message-item.user-msg {
+  background: var(--bg-tertiary);
+}
+
+.user-detail-modal .ud-message-item.ai-msg {
+  background: var(--bg-primary);
+}
+
+.user-detail-modal .ud-message-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+}
+
+.user-detail-modal .ud-message-role {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.user-detail-modal .ud-message-time {
+  color: var(--text-tertiary);
+}
+
+.user-detail-modal .ud-message-model {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+
+.user-detail-modal .ud-message-content {
+  padding: 12px 14px;
+  cursor: pointer;
+  max-height: 200px;
+  overflow-y: auto;
+  transition: max-height 0.3s ease;
+}
+
+.user-detail-modal .ud-message-content.expanded {
+  max-height: none;
+}
+
+.user-detail-modal .ud-message-content pre {
+  margin: 0;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.user-detail-modal .ud-message-reasoning {
+  padding: 8px 14px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.user-detail-modal .ud-message-reasoning summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+}
+
+.user-detail-modal .ud-message-reasoning pre {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* 用户详情弹窗响应式布局 */
+@media (max-width: 768px) {
+  .user-detail-modal .user-detail-container {
+    width: 100%;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .user-detail-modal .user-sessions-area {
+    flex-direction: column;
+  }
+
+  .user-detail-modal .user-sessions-list {
+    width: 100%;
+    max-height: 200px;
+  }
+
+  .user-detail-modal .user-info-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 /* ==================== 会员计划弹窗 ==================== */
