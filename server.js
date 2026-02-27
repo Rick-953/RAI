@@ -11,7 +11,21 @@ const crypto = require('crypto');
 const https = require('https');  // 用于网页搜索
 
 const app = express();
-app.set('trust proxy', true);  // 信任nginx/反向代理的X-Forwarded-For头
+// 安全默认：本地直连时不信任代理头。反向代理部署时可通过 TRUST_PROXY 显式开启。
+const trustProxyEnv = process.env.TRUST_PROXY;
+let trustProxySetting = false;
+if (trustProxyEnv) {
+    if (trustProxyEnv === 'true') {
+        trustProxySetting = 1;
+    } else if (trustProxyEnv === 'false') {
+        trustProxySetting = false;
+    } else if (/^\d+$/.test(trustProxyEnv)) {
+        trustProxySetting = parseInt(trustProxyEnv, 10);
+    } else {
+        trustProxySetting = trustProxyEnv;
+    }
+}
+app.set('trust proxy', trustProxySetting);
 const PORT = process.env.PORT || 3009;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -334,139 +348,40 @@ function analyzeMessage(message) {
 const TAVILY_API_KEY = 'tvly-';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
-/**
- * AI智能判断是否需要联网搜索，并生成搜索查询
- * 这是核心的"工具调用"决策函数 - AI自主决定是否使用搜索工具
- * @param {string} userMessage - 用户的原始问题
- * @param {Array} conversationHistory - 对话历史（可选）
- * @returns {Promise<{needsSearch: boolean, query: string, reason: string}>}
- */
-async function aiDecideWebSearch(userMessage, conversationHistory = []) {
-    return new Promise((resolve) => {
-        try {
-            console.log(`🤖 AI正在判断是否需要搜索: "${userMessage.substring(0, 50)}..."`);
+// ==================== 原生工具调用 (Function Calling) ====================
 
-            const systemPrompt = `You are a smart assistant that decides whether a web search is needed to answer the user's question.
-
-Your task:
-1. Analyze if the question requires REAL-TIME, CURRENT, or FACTUAL information that you might not have
-2. If search is needed, generate a concise search query (max 10 words)
-3. If search is NOT needed (general knowledge, creative tasks, coding, etc.), skip the search
-
-Respond in JSON format ONLY:
-{"needs_search": true/false, "query": "search query if needed", "reason": "brief reason"}
-
-Search IS NEEDED for:
-- Current events, news, weather, stock prices, sports scores
-- Recent updates (last 1-2 years)
-- Facts you're unsure about
-- "What's the latest...", "Current status of...", "Today's..."
-- Specific real-time data (prices, schedules, availability)
-
-Search is NOT NEEDED for:
-- General knowledge ("What is photosynthesis?", "Explain Python decorators")
-- Creative writing, brainstorming, stories
-- Code generation, debugging help
-- Math calculations, logic puzzles
-- Definitions of common concepts
-- Personal advice, opinions
-- Translations, formatting
-
-IMPORTANT: Be conservative - only search when truly necessary. Most questions don't need search.`;
-
-            // 构建请求体 - 使用 Kimi K2 (SiliconFlow) 快速判断
-            const requestBody = JSON.stringify({
-                model: 'moonshotai/Kimi-K2-Instruct-0905',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userMessage }
-                ],
-                temperature: 0.1,  // 低温度以获得更一致的判断
-                max_tokens: 150,
-                stream: false
-            });
-
-            // 使用 SiliconFlow API (兼容 OpenAI 格式)
-            const urlParts = new URL(API_PROVIDERS.siliconflow.baseURL);
-            const options = {
-                hostname: urlParts.hostname,
-                port: 443,
-                path: urlParts.pathname,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${API_PROVIDERS.siliconflow.apiKey}`,
-                    'Content-Length': Buffer.byteLength(requestBody)
+// 工具定义 - Kimi K2 原生支持
+const TOOL_DEFINITIONS = [{
+    type: "function",
+    function: {
+        name: "web_search",
+        description: "搜索互联网获取实时信息。当问题涉及新闻、天气、股价、最新事件、实时数据、需要验证的事实时调用此工具。",
+        parameters: {
+            type: "object",
+            required: ["query"],
+            properties: {
+                query: {
+                    type: "string",
+                    description: "优化后的搜索关键词，英文优先以获得更好结果"
                 }
-            };
-
-            const req = https.request(options, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    try {
-                        const result = JSON.parse(data);
-                        if (result.choices && result.choices[0] && result.choices[0].message) {
-                            const aiResponse = result.choices[0].message.content.trim();
-
-                            // 尝试解析JSON响应
-                            try {
-                                // 移除可能的markdown代码块标记
-                                const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
-                                const decision = JSON.parse(cleanJson);
-
-                                console.log(`✅ AI搜索决策: ${decision.needs_search ? '需要搜索' : '不需要搜索'}`);
-                                if (decision.needs_search) {
-                                    console.log(`   查询: "${decision.query}"`);
-                                }
-                                console.log(`   原因: ${decision.reason}`);
-
-                                resolve({
-                                    needsSearch: decision.needs_search === true,
-                                    query: decision.query || userMessage,
-                                    reason: decision.reason || ''
-                                });
-                            } catch (parseError) {
-                                // 如果JSON解析失败，检查是否包含关键词来推断
-                                console.warn('⚠️ AI响应JSON解析失败，进行回退判断');
-                                const needsSearch = aiResponse.toLowerCase().includes('"needs_search": true') ||
-                                    aiResponse.toLowerCase().includes('"needs_search":true');
-                                resolve({
-                                    needsSearch: needsSearch,
-                                    query: userMessage,
-                                    reason: 'JSON parse fallback'
-                                });
-                            }
-                        } else {
-                            console.warn('⚠️ AI响应格式异常，默认不搜索');
-                            resolve({ needsSearch: false, query: userMessage, reason: 'Response format error' });
-                        }
-                    } catch (e) {
-                        console.error('❌ 解析AI响应失败:', e);
-                        resolve({ needsSearch: false, query: userMessage, reason: 'Parse error' });
-                    }
-                });
-            });
-
-            req.on('error', (err) => {
-                console.error('❌ AI搜索决策失败:', err);
-                resolve({ needsSearch: false, query: userMessage, reason: 'Request error' });
-            });
-
-            req.setTimeout(5000, () => {
-                console.warn('⚠️ AI决策超时，默认不搜索');
-                req.destroy();
-                resolve({ needsSearch: false, query: userMessage, reason: 'Timeout' });
-            });
-
-            req.write(requestBody);
-            req.end();
-        } catch (error) {
-            console.error('❌ AI搜索决策异常:', error);
-            resolve({ needsSearch: false, query: userMessage, reason: 'Exception' });
+            }
         }
-    });
-}
+    }
+}];
+
+// 工具执行器映射
+const TOOL_EXECUTORS = {
+    web_search: async (args, searchDepth = 'basic') => {
+        const maxResults = searchDepth === 'advanced' ? 20 : 5;
+        console.log(`🔧 执行工具 web_search: query="${args.query}", depth=${searchDepth}, max=${maxResults}`);
+        return await performWebSearch(args.query, maxResults, searchDepth);
+    }
+};
+
+
+// [已删除] aiDecideWebSearch - 已被原生Function Calling替代
+// 现在使用 callAPIWithTools + TOOL_DEFINITIONS 实现工具调用
+
 
 /**
  * 使用AI生成智能搜索查询 (保留向后兼容)
@@ -484,22 +399,42 @@ async function generateAISearchQuery(userMessage, conversationHistory = []) {
 
 
 /**
+ * 根据模型类型决定Tavily搜索深度
+ * @param {string} modelName - 实际使用的模型名称
+ * @param {boolean} isThinkingMode - 是否开启思考模式
+ * @returns {string} 'fast' | 'basic' | 'advanced'
+ */
+function getTavilySearchDepth(modelName, isThinkingMode = false) {
+    // 思考模型使用高级搜索 (2 credits)
+    if (isThinkingMode || modelName.includes('Thinking')) {
+        return 'advanced';
+    }
+    // 快速/轻量模型使用快速搜索 (1 credit)
+    if (modelName.includes('flash') || modelName.includes('8B') || modelName.includes('Instruct')) {
+        return 'fast';
+    }
+    // 默认使用基础搜索 (1 credit)
+    return 'basic';
+}
+
+/**
  * 执行网页搜索 (使用Tavily API)
  * Tavily是专为AI代理设计的搜索API，提供高质量、实时的搜索结果
  * @param {string} query - 搜索查询
  * @param {number} maxResults - 最大结果数量 (默认5，最大20)
+ * @param {string} searchDepth - 搜索深度 'fast'|'basic'|'advanced'
  * @returns {Promise<Array>} 搜索结果数组
  */
-async function performWebSearch(query, maxResults = 5) {
+async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
     return new Promise((resolve) => {
         try {
-            console.log(`🔍 执行Tavily网页搜索: "${query}"`);
+            console.log(`🔍 执行Tavily网页搜索: "${query}" (深度: ${searchDepth})`);
 
             // 构建请求体
             const requestBody = JSON.stringify({
                 api_key: TAVILY_API_KEY,
                 query: query,
-                search_depth: 'basic',        // 'basic' 或 'advanced' (advanced更深入但更慢)
+                search_depth: searchDepth,
                 include_answer: true,          // 包含AI生成的摘要答案
                 include_raw_content: false,    // 不需要原始HTML内容
                 max_results: Math.min(maxResults, 20),  // 限制最大20条
@@ -753,6 +688,87 @@ function extractSourcesForSSE(results) {
             favicon: r.favicon || '',
             site_name: r.url ? new URL(r.url).hostname.replace('www.', '') : ''
         }));
+}
+
+/**
+ * 带工具定义的API调用 (非流式)
+ * 用于工具调用决策阶段
+ * @param {Array} messages - 消息数组
+ * @param {string} model - 模型名称
+ * @param {object} providerConfig - API提供商配置
+ * @param {Array} tools - 工具定义数组
+ * @returns {Promise<object>} { finish_reason, tool_calls, content }
+ */
+async function callAPIWithTools(messages, model, providerConfig, tools) {
+    console.log(`🔧 调用API (带工具): model=${model}, tools=${tools.length}个`);
+
+    const requestBody = {
+        model: model,
+        messages: messages,
+        tools: tools,
+        tool_choice: "auto",
+        stream: false,
+        max_tokens: 1000
+    };
+
+    return new Promise((resolve, reject) => {
+        const urlParts = new URL(providerConfig.baseURL);
+
+        const options = {
+            hostname: urlParts.hostname,
+            port: 443,
+            path: urlParts.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${providerConfig.apiKey}`
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(data);
+
+                    if (result.error) {
+                        console.error('❌ 工具调用API错误:', result.error);
+                        resolve({ finish_reason: 'error', tool_calls: null, content: null });
+                        return;
+                    }
+
+                    const choice = result.choices?.[0];
+                    const response = {
+                        finish_reason: choice?.finish_reason,
+                        tool_calls: choice?.message?.tool_calls,
+                        content: choice?.message?.content,
+                        message: choice?.message
+                    };
+
+                    console.log(`✅ 工具调用API响应: finish_reason=${response.finish_reason}, has_tool_calls=${!!response.tool_calls}`);
+                    resolve(response);
+                } catch (e) {
+                    console.error('❌ 解析工具调用响应失败:', e);
+                    resolve({ finish_reason: 'error', tool_calls: null, content: null });
+                }
+            });
+        });
+
+        req.on('error', (err) => {
+            console.error('❌ 工具调用请求失败:', err);
+            resolve({ finish_reason: 'error', tool_calls: null, content: null });
+        });
+
+        req.setTimeout(15000, () => {
+            console.warn('⚠️ 工具调用请求超时');
+            req.destroy();
+            resolve({ finish_reason: 'timeout', tool_calls: null, content: null });
+        });
+
+        req.write(JSON.stringify(requestBody));
+        req.end();
+    });
 }
 
 // ==================== 多模态内容处理 (Qwen3-Omni-Flash) ====================
@@ -1010,7 +1026,7 @@ const API_PROVIDERS = {
     },
     // Google Gemini API - Gemini 3 Flash Preview (多模态)
     google_gemini: {
-        apiKey: 'AIzaSyC',
+        apiKey: '',
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',  // 基础URL，实际使用时会拼接模型名
         models: ['Gemini 3 Flash Preview'],
         isGemini: true,  // 标记这是Gemini API，需要特殊处理
@@ -2500,87 +2516,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         })}\n\n`);
         console.log(`📤 已发送模型信息: finalModel=${finalModel}, actualModel=${actualModel}`);
 
-        // 🔍 网页搜索功能（针对非阿里云模型）
-        // ✨ 改进：AI智能判断是否需要搜索，而不是无条件搜索
+        // 🔍 流式工具调用模式 (Streaming Function Calling)
+        // 不再预先判断，而是在流式响应中检测 tool_calls
         let searchContext = '';
-        let searchSources = [];  // 存储搜索来源用于SSE传输
+        let searchSources = [];
+        let useStreamingTools = false;  // 标记是否启用流式工具调用
 
         if (internetMode && routing.provider !== 'aliyun') {
-            console.log(`🌐 联网模式已开启，AI正在判断是否需要搜索...`);
-
-            // 提取用户最后一条消息
-            const lastMessage = messages[messages.length - 1];
-            const userMessage = typeof lastMessage.content === 'string'
-                ? lastMessage.content
-                : JSON.stringify(lastMessage.content);
-
-            // 📡 发送搜索状态：正在分析问题
-            res.write(`data: ${JSON.stringify({
-                type: 'search_status',
-                status: 'analyzing',
-                message: 'AI正在分析是否需要搜索...'
-            })}\n\n`);
-
-            // 🤖 使用AI智能判断是否需要搜索
-            const searchDecision = await aiDecideWebSearch(userMessage, messages);
-
-            if (searchDecision.needsSearch) {
-                console.log(`🔍 AI决定执行搜索: "${searchDecision.query}"`);
-
-                // 📡 发送搜索状态：显示AI生成的搜索关键词
-                res.write(`data: ${JSON.stringify({
-                    type: 'search_status',
-                    status: 'searching',
-                    query: searchDecision.query,
-                    message: `正在搜索: "${searchDecision.query}"`
-                })}\n\n`);
-
-                // 执行搜索
-                const searchData = await performWebSearch(searchDecision.query, 5);
-                const searchResults = searchData.results || searchData;  // 兼容新旧格式
-                let searchImages = searchData.images || [];
-
-                // 验证图片URL，过滤掉无效的
-                if (searchImages.length > 0) {
-                    searchImages = await filterValidImages(searchImages, 5, 3000);
-                }
-
-                if (searchResults && searchResults.length > 0) {
-                    // 使用验证后的图片
-                    searchContext = formatSearchResults({ results: searchResults, images: searchImages }, searchDecision.query);
-                    searchSources = extractSourcesForSSE(searchResults);  // 提取来源信息
-                    console.log(`✅ 搜索结果已添加到上下文 (${searchResults.length} 条结果, ${searchSources.length} 个来源, ${searchImages.length} 张有效图片)`);
-
-                    // 📡 发送搜索状态：搜索完成
-                    res.write(`data: ${JSON.stringify({
-                        type: 'search_status',
-                        status: 'complete',
-                        query: searchDecision.query,
-                        resultCount: searchResults.length,
-                        message: `找到 ${searchResults.length} 条结果`
-                    })}\n\n`);
-                } else {
-                    console.log(`⚠️ 未获取到搜索结果`);
-                    // 📡 发送搜索状态：未找到结果
-                    res.write(`data: ${JSON.stringify({
-                        type: 'search_status',
-                        status: 'no_results',
-                        query: searchDecision.query,
-                        message: '未找到相关结果'
-                    })}\n\n`);
-                }
-            } else {
-                // AI判断不需要搜索
-                console.log(`ℹ️ AI判断不需要搜索: ${searchDecision.reason}`);
-                // 📡 发送搜索状态：跳过搜索
-                res.write(`data: ${JSON.stringify({
-                    type: 'search_status',
-                    status: 'skipped',
-                    reason: searchDecision.reason,
-                    message: 'AI判断此问题不需要搜索'
-                })}\n\n`);
-            }
-
+            console.log(`🌐 联网模式: 启用流式工具调用 (Streaming Function Calling)`);
+            useStreamingTools = true;
+            // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
         } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
             console.log(`ℹ️ DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
         }
@@ -2600,6 +2545,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             ? `${systemPrompt || ''}\n${searchContext}`.trim()
             : systemPrompt || '';
 
+        // 🔧 流式工具调用：在系统提示词中告知 AI 它有搜索能力
+        if (useStreamingTools) {
+            const toolHint = `\n\n[系统提示] 当前处于联网模式。涉及实时信息（天气、新闻、股价、时效数据）时，请在回答过程中按需调用 web_search，并可在必要时再次调用。`;
+            systemContent = systemContent ? `${systemContent}${toolHint}` : toolHint.trim();
+            console.log(`🔧 已添加工具提示到系统提示词`);
+        }
+
         if (systemContent) {
             finalMessages.unshift({
                 role: 'system',
@@ -2616,6 +2568,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             max_tokens: parseInt(max_tokens, 10) || 2000,
             stream: true  // Qwen3-Omni-Flash要求必须开启流式
         };
+
+        // 🔧 流式工具调用：为请求添加 tools 参数
+        if (useStreamingTools) {
+            requestBody.tools = TOOL_DEFINITIONS;
+            // 支持“先说一部分，再按需调用工具，再继续说”
+            requestBody.tool_choice = "auto";
+            console.log(`🔧 已为流式调用添加工具定义: ${TOOL_DEFINITIONS.length}个工具`);
+        }
 
         // Qwen3-Omni-Flash 多模态特殊配置
         if (finalModel === 'qwen3-omni-flash') {
@@ -2737,6 +2697,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // ✅ 关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
         let reasoningContent = '';
+        let rawToolContent = '';
 
         // 🔥 Gemini API 特殊处理
         const isGeminiAPI = providerConfig.isGemini || routing.isGemini;
@@ -2885,6 +2846,62 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
 
+            // 🔧 流式工具调用：累积 tool_calls 数据
+            let accumulatedToolCalls = [];  // 累积的工具调用
+            let pendingToolCall = null;     // 当前正在累积的工具调用
+            let streamFinishReason = null;  // 流结束原因
+            let toolMarkerCarry = '';
+            let inToolCallSection = false;
+            const TOOL_CALL_SECTION_START = '<|tool_calls_section_begin|>';
+            const TOOL_CALL_SECTION_END = '<|tool_calls_section_end|>';
+
+            const sanitizeStreamingContent = (chunk = '') => {
+                if (!useStreamingTools || !chunk) return chunk;
+
+                let text = toolMarkerCarry + chunk;
+                toolMarkerCarry = '';
+                let visible = '';
+
+                while (text.length > 0) {
+                    if (inToolCallSection) {
+                        const endIdx = text.indexOf(TOOL_CALL_SECTION_END);
+                        if (endIdx === -1) {
+                            const carryLen = Math.min(text.length, TOOL_CALL_SECTION_END.length - 1);
+                            toolMarkerCarry = text.slice(-carryLen);
+                            return visible;
+                        }
+                        text = text.slice(endIdx + TOOL_CALL_SECTION_END.length);
+                        inToolCallSection = false;
+                        continue;
+                    }
+
+                    const startIdx = text.indexOf(TOOL_CALL_SECTION_START);
+                    if (startIdx === -1) {
+                        visible += text;
+                        text = '';
+                    } else {
+                        visible += text.slice(0, startIdx);
+                        text = text.slice(startIdx + TOOL_CALL_SECTION_START.length);
+                        inToolCallSection = true;
+                    }
+                }
+
+                const incompleteMarkerIdx = visible.lastIndexOf('<|');
+                if (incompleteMarkerIdx !== -1 && visible.indexOf('|>', incompleteMarkerIdx) === -1) {
+                    toolMarkerCarry = visible.slice(incompleteMarkerIdx);
+                    visible = visible.slice(0, incompleteMarkerIdx);
+                }
+
+                visible = visible.replace(/<\|[^|]+\|>/g, '');
+                visible = visible.replace(/functions\.web_search:\d+/g, '');
+
+                if (/^\s*\{[\s\S]*"query"[\s\S]*\}\s*$/.test(visible)) {
+                    return '';
+                }
+
+                return visible;
+            };
+
             // 轮询检查取消状态
             const checkCancellation = async () => {
                 return new Promise((resolve) => {
@@ -2906,14 +2923,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                 const { done, value } = await reader.read();
                 if (done) {
-                    console.log('✅ 流式响应结束');
-                    break;
+                    const flushed = buffer + decoder.decode();
+                    buffer = flushed ? (flushed + '\n') : '';
+                } else {
+                    buffer += decoder.decode(value, { stream: true });
                 }
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-
+                const lines = buffer.split(/\r?\n/);
+                buffer = done ? '' : (lines.pop() || '');
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (!trimmed || trimmed === 'data: [DONE]') continue;
@@ -2951,8 +2968,47 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 }
 
                                 if (content) {
-                                    fullContent += content;
-                                    res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
+                                    rawToolContent += content;
+                                    const filteredContent = sanitizeStreamingContent(content);
+
+                                    if (filteredContent.length > 0) {
+                                        fullContent += filteredContent;
+                                        res.write(`data: ${JSON.stringify({ type: 'content', content: filteredContent })}\n\n`);
+                                    }
+                                }
+
+                                // 🔧 流式工具调用：检测 tool_calls
+                                if (delta.tool_calls && useStreamingTools) {
+                                    for (const tc of delta.tool_calls) {
+                                        const idx = tc.index || 0;
+
+                                        // 初始化或更新工具调用
+                                        if (!accumulatedToolCalls[idx]) {
+                                            accumulatedToolCalls[idx] = {
+                                                id: tc.id || `call_${Date.now()}_${idx}`,
+                                                type: 'function',
+                                                function: {
+                                                    name: tc.function?.name || '',
+                                                    arguments: ''
+                                                }
+                                            };
+                                        }
+
+                                        // 累积函数名（可能分片传输）
+                                        if (tc.function?.name) {
+                                            accumulatedToolCalls[idx].function.name = tc.function.name;
+                                        }
+
+                                        // 累积参数（JSON字符串分片传输）
+                                        if (tc.function?.arguments) {
+                                            accumulatedToolCalls[idx].function.arguments += tc.function.arguments;
+                                        }
+                                    }
+                                }
+
+                                // 记录 finish_reason
+                                if (choice?.finish_reason) {
+                                    streamFinishReason = choice.finish_reason;
                                 }
 
                                 // 处理阿里云原生联网的 search_info
@@ -2976,6 +3032,368 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         } catch (e) {
                             console.error('⚠️ 解析响应行错误:', e.message);
                         }
+                    }
+                }
+
+                if (done) {
+                    console.log('✅ 流式响应结束');
+                    break;
+                }
+            }
+
+            const extractFallbackToolCalls = (rawText = '') => {
+                const trimmedText = String(rawText || '').trim();
+                const fallbackCalls = [];
+
+                if (!trimmedText) return fallbackCalls;
+
+                // 1) JSON 数组格式
+                if (trimmedText.startsWith('[') && trimmedText.includes('web_search')) {
+                    try {
+                        const parsedCalls = JSON.parse(trimmedText);
+                        if (Array.isArray(parsedCalls)) {
+                            for (const call of parsedCalls) {
+                                if (call?.name === 'web_search' && call.arguments) {
+                                    fallbackCalls.push({
+                                        name: call.name,
+                                        arguments: call.arguments
+                                    });
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+
+                // 2) Kimi 标记格式
+                if (fallbackCalls.length === 0 && trimmedText.includes('<|tool_call_begin|>')) {
+                    const markerRegex = /<\|tool_call_begin\|>\s*functions\.(\w+)(?::\d+)?\s*<\|tool_call_argument_begin\|>\s*({[\s\S]*?})\s*(?:<\|tool_call_end\|>|<\|tool_calls_section_end\|>|$)/g;
+                    let markerMatch;
+                    while ((markerMatch = markerRegex.exec(trimmedText)) !== null) {
+                        const functionName = markerMatch[1];
+                        const argumentText = markerMatch[2];
+                        if (functionName !== 'web_search') continue;
+
+                        try {
+                            fallbackCalls.push({
+                                name: functionName,
+                                arguments: JSON.parse(argumentText)
+                            });
+                        } catch (e) {
+                            console.warn('⚠️ 无法解析工具参数(JSON):', argumentText);
+                        }
+                    }
+                }
+
+                // 3) 松散文本格式
+                if (fallbackCalls.length === 0 && trimmedText.includes('functions.web_search')) {
+                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,120}?(\{[\s\S]*?"query"[\s\S]*?\})/g;
+                    let looseMatch;
+                    while ((looseMatch = looseRegex.exec(trimmedText)) !== null) {
+                        const functionName = looseMatch[1];
+                        const argumentText = looseMatch[2];
+                        if (functionName !== 'web_search') continue;
+
+                        try {
+                            fallbackCalls.push({
+                                name: functionName,
+                                arguments: JSON.parse(argumentText)
+                            });
+                        } catch (e) {
+                            // ignore broken fragments
+                        }
+                    }
+                }
+
+                return fallbackCalls;
+            };
+
+            const normalizeToolCalls = (toolCalls = []) => {
+                const normalized = [];
+                for (const toolCall of toolCalls) {
+                    if (!toolCall || !toolCall.function?.name) continue;
+
+                    let args;
+                    try {
+                        args = JSON.parse(toolCall.function.arguments || '{}');
+                    } catch (e) {
+                        continue;
+                    }
+
+                    if (!args || typeof args !== 'object' || typeof args.query !== 'string' || !args.query.trim()) {
+                        continue;
+                    }
+
+                    normalized.push({
+                        ...toolCall,
+                        function: {
+                            ...toolCall.function,
+                            arguments: JSON.stringify(args)
+                        },
+                        _args: args
+                    });
+                }
+                return normalized;
+            };
+
+            // 初始流 fallback：模型可能把 tool_calls 作为文本输出
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && rawToolContent) {
+                const fallbackCalls = extractFallbackToolCalls(rawToolContent);
+                if (fallbackCalls.length > 0) {
+                    console.log(`⚠️ 检测到 AI 以文本形式输出工具调用，已转换为标准 tool_calls: ${fallbackCalls.length} 个`);
+                    for (let i = 0; i < fallbackCalls.length; i++) {
+                        const call = fallbackCalls[i];
+                        accumulatedToolCalls.push({
+                            id: `fallback_call_${Date.now()}_${i}`,
+                            type: 'function',
+                            function: {
+                                name: call.name,
+                                arguments: JSON.stringify(call.arguments)
+                            }
+                        });
+                    }
+                }
+            }
+
+            if (useStreamingTools && streamFinishReason !== 'tool_calls' && accumulatedToolCalls.length === 0) {
+                console.warn(`⚠️ 联网模式已开启，但模型未触发工具调用: model=${actualModel}`);
+            }
+
+            // 流式 + 多轮工具调用
+            if (useStreamingTools && accumulatedToolCalls.length > 0) {
+                let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls);
+                if (pendingToolCalls.length === 0) {
+                    console.warn(`⚠️ 收到 tool_calls 但均无效，已跳过`);
+                } else {
+                    let toolRound = 0;
+                    const maxToolRounds = 5;
+                    let conversationMessages = [...finalMessages];
+
+                    while (pendingToolCalls.length > 0 && toolRound < maxToolRounds) {
+                        toolRound += 1;
+                        console.log(`🔁 工具调用轮次: ${toolRound}, calls=${pendingToolCalls.length}`);
+
+                        const executedToolResults = [];
+                        for (const toolCall of pendingToolCalls) {
+                            const toolName = toolCall.function.name;
+                            const args = toolCall._args;
+
+                            console.log(`🔧 执行工具: ${toolName}, args=${JSON.stringify(args)}`);
+                            res.write(`data: ${JSON.stringify({
+                                type: 'search_status',
+                                status: 'searching',
+                                query: args.query,
+                                message: `正在搜索: "${args.query}"`
+                            })}\n\n`);
+
+                            const executor = TOOL_EXECUTORS[toolName];
+                            if (!executor) {
+                                console.warn(`⚠️ 未找到工具执行器: ${toolName}`);
+                                continue;
+                            }
+
+                            const searchDepth = getTavilySearchDepth(actualModel, thinkingMode);
+                            const result = await executor(args, searchDepth);
+                            executedToolResults.push({ toolCall, result });
+
+                            const searchResults = result.results || result;
+                            let searchImages = result.images || [];
+                            if (searchImages.length > 0) {
+                                searchImages = await filterValidImages(searchImages, 5, 3000);
+                            }
+
+                            if (searchResults && searchResults.length > 0) {
+                                const currentSources = extractSourcesForSSE(searchResults);
+                                if (currentSources.length > 0) {
+                                    const sourceMap = new Map((searchSources || []).map(s => [`${s.url}|${s.title}`, s]));
+                                    for (const s of currentSources) {
+                                        sourceMap.set(`${s.url}|${s.title}`, s);
+                                    }
+                                    searchSources = Array.from(sourceMap.values());
+                                }
+
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'search_status',
+                                    status: 'complete',
+                                    query: args.query,
+                                    resultCount: searchResults.length,
+                                    message: `找到 ${searchResults.length} 条结果`
+                                })}\n\n`);
+
+                                if (currentSources.length > 0) {
+                                    res.write(`data: ${JSON.stringify({ type: 'sources', sources: currentSources })}\n\n`);
+                                }
+                                console.log(`✅ 工具执行完成: ${searchResults.length} 条结果`);
+                            } else {
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'search_status',
+                                    status: 'no_results',
+                                    query: args.query,
+                                    message: '未找到相关结果'
+                                })}\n\n`);
+                            }
+                        }
+
+                        if (executedToolResults.length === 0) {
+                            console.warn(`⚠️ 本轮没有可执行的工具结果，结束工具循环`);
+                            break;
+                        }
+
+                        // 将本轮工具调用 + 工具结果加入上下文，发起下一轮流式生成
+                        const assistantToolCallMessage = {
+                            role: 'assistant',
+                            content: null,
+                            tool_calls: executedToolResults.map(({ toolCall }) => ({
+                                id: toolCall.id,
+                                type: 'function',
+                                function: {
+                                    name: toolCall.function.name,
+                                    arguments: toolCall.function.arguments
+                                }
+                            }))
+                        };
+                        const toolResultMessages = executedToolResults.map(({ toolCall, result }) => ({
+                            role: 'tool',
+                            tool_call_id: toolCall.id,
+                            content: JSON.stringify(result)
+                        }));
+                        conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
+
+                        const continueRequestBody = {
+                            model: actualModel,
+                            messages: conversationMessages,
+                            temperature: parseFloat(temperature) || 0.7,
+                            top_p: parseFloat(top_p) || 0.9,
+                            max_tokens: parseInt(max_tokens, 10) || 2000,
+                            stream: true,
+                            tools: TOOL_DEFINITIONS,
+                            tool_choice: "auto"
+                        };
+
+                        console.log(`🔄 发起续传流式调用 (round=${toolRound})...`);
+                        // 重置工具标记清洗器状态，避免跨轮污染
+                        toolMarkerCarry = '';
+                        inToolCallSection = false;
+
+                        const continueResponse = await fetch(providerConfig.baseURL, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${providerConfig.apiKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(continueRequestBody)
+                        });
+
+                        if (!continueResponse.ok) {
+                            const continueErr = await continueResponse.text();
+                            console.error(`❌ 续传请求失败: ${continueResponse.status} ${continueErr.substring(0, 300)}`);
+                            break;
+                        }
+
+                        const continueReader = continueResponse.body.getReader();
+                        const continueDecoder = new TextDecoder('utf-8');
+                        let continueBuffer = '';
+                        let continueRawToolContent = '';
+                        let continueStreamFinishReason = null;
+                        const continueAccumulatedToolCalls = [];
+
+                        while (true) {
+                            const { done: continueDone, value: continueValue } = await continueReader.read();
+                            if (continueDone) {
+                                const continueFlushed = continueBuffer + continueDecoder.decode();
+                                continueBuffer = continueFlushed ? (continueFlushed + '\n') : '';
+                            } else {
+                                continueBuffer += continueDecoder.decode(continueValue, { stream: true });
+                            }
+
+                            const continueLines = continueBuffer.split(/\r?\n/);
+                            continueBuffer = continueDone ? '' : (continueLines.pop() || '');
+                            for (const continueLine of continueLines) {
+                                const continueTrimmed = continueLine.trim();
+                                if (!continueTrimmed || continueTrimmed === 'data: [DONE]') continue;
+                                if (!continueTrimmed.startsWith('data: ')) continue;
+
+                                try {
+                                    const continueParsed = JSON.parse(continueTrimmed.slice(6));
+                                    const continueChoice = continueParsed.choices?.[0];
+                                    const continueDelta = continueChoice?.delta || {};
+
+                                    if (continueChoice?.finish_reason) {
+                                        continueStreamFinishReason = continueChoice.finish_reason;
+                                    }
+
+                                    if (continueDelta.reasoning_content || continueDelta.reasoning) {
+                                        const reasoning = continueDelta.reasoning_content || continueDelta.reasoning;
+                                        reasoningContent += reasoning;
+                                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
+                                    }
+
+                                    if (continueDelta.content) {
+                                        continueRawToolContent += continueDelta.content;
+                                        rawToolContent += continueDelta.content;
+                                        const filteredContinueContent = sanitizeStreamingContent(continueDelta.content);
+                                        if (filteredContinueContent.length > 0) {
+                                            fullContent += filteredContinueContent;
+                                            res.write(`data: ${JSON.stringify({ type: 'content', content: filteredContinueContent })}\n\n`);
+                                        }
+                                    }
+
+                                    if (continueDelta.tool_calls && useStreamingTools) {
+                                        for (const tc of continueDelta.tool_calls) {
+                                            const idx = tc.index || 0;
+                                            if (!continueAccumulatedToolCalls[idx]) {
+                                                continueAccumulatedToolCalls[idx] = {
+                                                    id: tc.id || `continue_call_${Date.now()}_${idx}`,
+                                                    type: 'function',
+                                                    function: {
+                                                        name: tc.function?.name || '',
+                                                        arguments: ''
+                                                    }
+                                                };
+                                            }
+                                            if (tc.function?.name) {
+                                                continueAccumulatedToolCalls[idx].function.name = tc.function.name;
+                                            }
+                                            if (tc.function?.arguments) {
+                                                continueAccumulatedToolCalls[idx].function.arguments += tc.function.arguments;
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    // ignore
+                                }
+                            }
+
+                            if (continueDone) {
+                                break;
+                            }
+                        }
+
+                        // 续传流 fallback：处理文本型工具调用标记
+                        if (continueAccumulatedToolCalls.length === 0 && continueRawToolContent) {
+                            const fallbackCalls = extractFallbackToolCalls(continueRawToolContent);
+                            if (fallbackCalls.length > 0) {
+                                for (let i = 0; i < fallbackCalls.length; i++) {
+                                    const call = fallbackCalls[i];
+                                    continueAccumulatedToolCalls.push({
+                                        id: `continue_fallback_call_${Date.now()}_${i}`,
+                                        type: 'function',
+                                        function: {
+                                            name: call.name,
+                                            arguments: JSON.stringify(call.arguments)
+                                        }
+                                    });
+                                }
+                            }
+                        }
+
+                        pendingToolCalls = normalizeToolCalls(continueAccumulatedToolCalls);
+                        console.log(`✅ 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${continueStreamFinishReason || 'unknown'}`);
+                    }
+
+                    if (toolRound >= maxToolRounds && pendingToolCalls.length > 0) {
+                        console.warn(`⚠️ 工具调用轮次达到上限(${maxToolRounds})，强制结束以避免死循环`);
                     }
                 }
             }
@@ -3055,6 +3473,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             // 2. 提取并处理标题 (如果存在)
             let contentToSave = fullContent || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
+            // 兜底清洗：避免工具调用标记残留到数据库
+            contentToSave = contentToSave
+                .replace(/<\|[^|]+\|>/g, '')
+                .replace(/functions\.web_search:\d+/g, '')
+                .trim();
             let extractedTitle = null;
 
             const titleMatch = contentToSave.match(/\[TITLE\](.*?)\[\/TITLE\]/);
@@ -3558,6 +3981,112 @@ app.get('/api/admin/users', authenticateAdmin, (req, res) => {
         }
         res.json({ users, offset, limit });
     });
+});
+
+// 获取用户完整详情（包括会话列表）
+app.get('/api/admin/users/:userId/detail', authenticateAdmin, async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        // 获取用户基本信息
+        const user = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT u.id, u.email, u.username, u.avatar_url, u.created_at, u.last_login,
+                       COALESCE(u.membership, 'free') as membership,
+                       u.membership_start, u.membership_end,
+                       COALESCE(u.points, 0) as points,
+                       COALESCE(u.purchased_points, 0) as purchased_points,
+                       u.last_checkin, u.last_daily_grant,
+                       (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as sessionCount,
+                       (SELECT COUNT(*) FROM messages m 
+                        JOIN sessions s ON m.session_id = s.id 
+                        WHERE s.user_id = u.id) as messageCount
+                FROM users u
+                WHERE u.id = ?
+            `, [userId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        // 获取用户所有会话列表
+        const sessions = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT s.id, s.title, s.model, s.created_at, s.updated_at,
+                       (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as messageCount
+                FROM sessions s
+                WHERE s.user_id = ?
+                ORDER BY s.updated_at DESC
+            `, [userId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        res.json({ user, sessions });
+    } catch (error) {
+        console.error('❌ 获取用户详情失败:', error);
+        res.status(500).json({ error: '获取用户详情失败' });
+    }
+});
+
+// 获取指定会话的所有消息（完整内容）
+app.get('/api/admin/sessions/:sessionId/messages', authenticateAdmin, async (req, res) => {
+    const { sessionId } = req.params;
+    const offset = parseInt(req.query.offset) || 0;
+    const limit = parseInt(req.query.limit) || 100;
+
+    try {
+        // 获取会话信息
+        const session = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT s.id, s.title, s.model, s.created_at, s.updated_at, s.user_id,
+                       u.email, u.username
+                FROM sessions s
+                JOIN users u ON s.user_id = u.id
+                WHERE s.id = ?
+            `, [sessionId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!session) {
+            return res.status(404).json({ error: '会话不存在' });
+        }
+
+        // 获取消息总数
+        const totalCount = await new Promise((resolve, reject) => {
+            db.get('SELECT COUNT(*) as count FROM messages WHERE session_id = ?', [sessionId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row?.count || 0);
+            });
+        });
+
+        // 获取消息列表（完整内容，按时间正序排列便于阅读）
+        const messages = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT id, role, content, reasoning_content, model, enable_search, 
+                       thinking_mode, internet_mode, sources, created_at
+                FROM messages
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ? OFFSET ?
+            `, [sessionId, limit, offset], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        res.json({ session, messages, totalCount, offset, limit });
+    } catch (error) {
+        console.error('❌ 获取会话消息失败:', error);
+        res.status(500).json({ error: '获取会话消息失败' });
+    }
 });
 
 // 获取指定用户的详细信息和消息
