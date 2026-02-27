@@ -1387,15 +1387,16 @@ function getUserTimeContext() {
   };
 }
 
-// 动态生成系统提示词（包含时间上下文和核心原则 - 中文版）
+// 动态生成系统提示词（包含时间上下文和核心原则）
 function buildSystemPrompt() {
   const timeCtx = getUserTimeContext();
 
-  return `# 角色：RAI 专业助理
-由 Rick 开发。
+  return `# 角色：
+你是RAI 专业助理拥有人类千年来的丰富阅历
+由 Rick 开发，维护 Rick studio 正当权益。
 ---
 
-## 当前上下文
+## 用户信息
 - 时间：${timeCtx.datetime}
 - 时区：${timeCtx.timezone}
 - 时段：${timeCtx.timeOfDay}
@@ -1406,31 +1407,26 @@ function buildSystemPrompt() {
 
 ### 诚实守信
 每一条陈述都必须真实、准确、可验证。
-每次回答前都要重新看一遍时间。
-绝不编造信息，始终保持诚实。如有不确定，坦诚告知。请勿就您目前不具备的能力做出承诺，确保所有承诺都在您实际可提供的范围内，以避免误导用户并损害信任。
+绝不编造信息，始终保持诚实。如有不确定，坦诚告知并详细询问用户。请勿就您目前不具备的能力做出承诺，确保所有承诺都在您实际可提供的范围内，以避免误导用户并损害信任。
 
 ### 语言风格
-始终保持耐心。用温和、友好的态度回应，绝不表现出不耐烦或敷衍。
+始终保持温和、友好的态度回应，绝不表现出不耐烦或敷衍。
 除非用户要求，否则不要使用表情符号和破折号连字符等。
 
 ### 先理解后回应
-回复前先深入分析用户真实意图。结合上下文：简单问题给简洁答案；复杂问题给全面解释，必要时分步骤阐述。做出契合上下文的有用回复。
-
-### 沟通风格
-专业且温和的语气。善用 Markdown 格式提升可读性。根据用户特点调整表达方式。
-
-### 解决问题
-根据上下文做出契合的回复。
-提供可执行的解决方案，注重实用性。推理时使用**加粗标题**突出要点。
+回复前先深入分析用户真实意图。简单问题简洁明了；复杂问题全面深入研究。做出契合上下文的有用回复。
+提供可执行的解决方案，注重实用性。思考时使用**加粗标题**进行多层级的全面详细具象真实思考。
+回答前想下用户会有哪些不满意的地方 对此进行改进 用户可能喜欢的点进行加深。
 主动思考并建议下一步行动。
 
 ### 道德准则
 绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。
 
 ### 时间感知
-每次回复前注意用户当前时间，提供恰当的问候。深夜(23点后)或凌晨(5点前)时，以温馨关怀的方式温柔提醒用户注意休息。
+每次回复前注意用户当前时间，针对时间恰当问候用户。
 
-### 图表运用
+### 工具列表
+你有网络搜索能力。当用户询问需要实时信息的问题时，请主动调用 web_search 工具获取最新数据，然后基于搜索结果回答用户。
 在合适的时候，使用图片增强回复。需要使用 Markdown 语法 ![描述](图片链接) 网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。
 你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
 支持的图表类型:
@@ -1450,8 +1446,12 @@ function buildSystemPrompt() {
 
 ## 格式要求
 
-1. **结构规范**：善用Markdown、Mermaid，让内容层次分明、一目了然。
-2. **对话标题**：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出严格遵循格式：<<<标题>>>
+1. 结构规范善用Markdown、Mermaid，让内容层次分明、一目了然。
+2. 回答按照顺序回答除非用户要求，否则不要插叙或者乱序回答。
+
+---
+
+# 对话标题：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出严格遵循格式：<<<标题>>>
 `;
 }
 
@@ -1514,7 +1514,7 @@ const i18n = {
     'system-prompt-title': '系统提示词',
     'custom-system-prompt': '自定义系统提示词',
     'system-prompt-desc': '设置AI的角色和行为',
-    'system-prompt-placeholder': '例如: 你是一个专业的编程助手,擅长解释代码和解决技术问题...',
+    'system-prompt-placeholder': '例如: 我希望获得简洁明了的答案...',
     'cancel': '取消',
     'save-settings': '保存设置',
     // 模型选择相关
@@ -4561,6 +4561,57 @@ async function sendMessage(message = null) {
   let isThinkingPhase = false;
   let currentSources = [];  // 存储联网搜索来源
   let currentSearchQuery = '';  // 存储搜索词供时间轴显示和保存
+  let toolMarkerCarry = '';
+  let inToolCallSection = false;
+  const TOOL_CALL_SECTION_START = '<|tool_calls_section_begin|>';
+  const TOOL_CALL_SECTION_END = '<|tool_calls_section_end|>';
+
+  function sanitizeToolCallArtifacts(chunk = '') {
+    if (!chunk) return '';
+
+    let text = toolMarkerCarry + chunk;
+    toolMarkerCarry = '';
+    let visible = '';
+
+    while (text.length > 0) {
+      if (inToolCallSection) {
+        const endIdx = text.indexOf(TOOL_CALL_SECTION_END);
+        if (endIdx === -1) {
+          const carryLen = Math.min(text.length, TOOL_CALL_SECTION_END.length - 1);
+          toolMarkerCarry = text.slice(-carryLen);
+          return visible;
+        }
+        text = text.slice(endIdx + TOOL_CALL_SECTION_END.length);
+        inToolCallSection = false;
+        continue;
+      }
+
+      const startIdx = text.indexOf(TOOL_CALL_SECTION_START);
+      if (startIdx === -1) {
+        visible += text;
+        text = '';
+      } else {
+        visible += text.slice(0, startIdx);
+        text = text.slice(startIdx + TOOL_CALL_SECTION_START.length);
+        inToolCallSection = true;
+      }
+    }
+
+    const incompleteMarkerIdx = visible.lastIndexOf('<|');
+    if (incompleteMarkerIdx !== -1 && visible.indexOf('|>', incompleteMarkerIdx) === -1) {
+      toolMarkerCarry = visible.slice(incompleteMarkerIdx);
+      visible = visible.slice(0, incompleteMarkerIdx);
+    }
+
+    visible = visible.replace(/<\|[^|]+\|>/g, '');
+    visible = visible.replace(/functions\.web_search:\d+/g, '');
+
+    if (/^\s*\{[\s\S]*"query"[\s\S]*\}\s*$/.test(visible)) {
+      return '';
+    }
+
+    return visible;
+  }
 
   try {
     const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -4828,25 +4879,19 @@ async function sendMessage(message = null) {
       isCharRendering = false;
       // 最终渲染确保 Markdown 完整（包含 citations 和 Mermaid）
       if (displayedContent && streamingEl) {
-        const contentToDisplay = displayedContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
-        let html = renderMarkdownWithMath(contentToDisplay, true);
-
-        // 处理 citations
-        if (currentSources && currentSources.length > 0) {
-          html = renderCitations(html, currentSources);
-        }
-
-        streamingEl.innerHTML = html;
+        // 🔧 修复：使用 renderStreamingContent 保持 Mermaid 内联渲染逻辑一致
+        renderStreamingContent();
 
         // 移除所有动画类（流结束）
         streamingEl.querySelectorAll('.streaming-char').forEach(el => {
           el.classList.remove('streaming-char');
         });
 
-
-
-        // 渲染 Mermaid 图表
-        setTimeout(() => renderMermaidCharts(), 100);
+        // 🔧 修复：最终 Mermaid 渲染（同时支持两种容器格式）
+        setTimeout(() => {
+          tryRenderMermaidLive();  // 处理 .mermaid-inline-wrapper
+          renderMermaidCharts();   // 处理 .mermaid-container (兼容历史消息)
+        }, 100);
 
         // 💻 处理代码块：添加语言标签、复制按钮、语法高亮
         setTimeout(() => processCodeBlocks(streamingEl?.closest('.message')), 50);
@@ -4981,10 +5026,14 @@ async function sendMessage(message = null) {
             }
 
             // 现在开始显示正文 - 使用字符级渲染队列
-            fullContent += parsed.content;
+            const cleanChunk = sanitizeToolCallArtifacts(parsed.content || '');
+            if (!cleanChunk) {
+              continue;
+            }
+            fullContent += cleanChunk;
 
             // 将新字符推入渲染队列（而非直接渲染整个内容）
-            const newChars = parsed.content;
+            const newChars = cleanChunk;
             for (const char of newChars) {
               charRenderQueue.push(char);
             }
@@ -5103,7 +5152,11 @@ async function sendMessage(message = null) {
     const finalReasoningContent = thinkingSentences.join('') + reasoningContent.trim();
 
     // 移除标题标记后再保存到appState
-    const cleanContent = fullContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+    const cleanContent = fullContent
+      .replace(/<<<.{1,30}>>>\s*$/g, '')
+      .replace(/<\|[^|]+\|>/g, '')
+      .replace(/functions\.web_search:\d+/g, '')
+      .trim();
 
     const aiMsg = {
       role: 'assistant',
@@ -10587,7 +10640,7 @@ async function loadAdminUsers() {
       const membershipBadge = getMembershipBadge(user.membership);
       const totalPoints = (user.points || 0) + (user.purchased_points || 0);
       html += `
-            <tr>
+            <tr onclick="openUserDetailModal(${user.id})" style="cursor:pointer" title="点击查看用户详情">
               <td>${user.id}</td>
               <td>${user.email}</td>
               <td>${user.username || '-'}</td>
@@ -10595,9 +10648,10 @@ async function loadAdminUsers() {
               <td>${totalPoints} ⚡</td>
               <td>${user.messageCount || 0}</td>
               <td>
-                <button class="admin-action-btn view" onclick="openMembershipEditor(${user.id}, '${user.membership || 'free'}')">会员</button>
-                <button class="admin-action-btn view" onclick="openPointsEditor(${user.id})">点数</button>
-                <button class="admin-action-btn delete" onclick="deleteUser(${user.id})">删除</button>
+                <button class="admin-action-btn view" onclick="event.stopPropagation();openUserDetailModal(${user.id})">查看</button>
+                <button class="admin-action-btn view" onclick="event.stopPropagation();openMembershipEditor(${user.id}, '${user.membership || 'free'}')">会员</button>
+                <button class="admin-action-btn view" onclick="event.stopPropagation();openPointsEditor(${user.id})">点数</button>
+                <button class="admin-action-btn delete" onclick="event.stopPropagation();deleteUser(${user.id})">删除</button>
               </td>
             </tr>
           `;
@@ -10887,6 +10941,241 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// ==================== 用户详情弹窗 ====================
+
+// 用户详情状态
+const userDetailState = {
+  userId: null,
+  currentSessionId: null
+};
+
+// 打开用户详情弹窗
+async function openUserDetailModal(userId) {
+  userDetailState.userId = userId;
+  userDetailState.currentSessionId = null;
+
+  // 创建弹窗结构
+  let modal = document.getElementById('userDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'userDetailModal';
+    modal.className = 'admin-modal-overlay user-detail-modal';
+    document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div class="user-detail-container">
+      <div class="user-detail-header">
+        <h2>👤 用户详情</h2>
+        <button class="admin-close-btn" onclick="closeUserDetailModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="user-detail-body">
+        <div class="user-detail-loading">加载中...</div>
+      </div>
+    </div>
+  `;
+  modal.classList.add('active');
+
+  try {
+    const res = await fetch(`/api/admin/users/${userId}/detail`, {
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || '获取用户详情失败');
+    }
+
+    renderUserDetail(data.user, data.sessions);
+  } catch (err) {
+    console.error('❌ 获取用户详情失败:', err);
+    modal.querySelector('.user-detail-body').innerHTML = `
+      <div class="user-detail-error">❌ ${err.message}</div>
+    `;
+  }
+}
+
+// 渲染用户详情
+function renderUserDetail(user, sessions) {
+  const modal = document.getElementById('userDetailModal');
+  const body = modal.querySelector('.user-detail-body');
+
+  const membershipBadge = getMembershipBadge(user.membership);
+  const totalPoints = (user.points || 0) + (user.purchased_points || 0);
+
+  body.innerHTML = `
+    <div class="user-detail-content">
+      <!-- 用户信息卡片 -->
+      <div class="user-info-card">
+        <h3>📋 基本信息</h3>
+        <div class="user-info-grid">
+          <div class="user-info-item">
+            <span class="label">用户ID</span>
+            <span class="value">${user.id}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">邮箱</span>
+            <span class="value">${user.email}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">用户名</span>
+            <span class="value">${user.username || '未设置'}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">会员等级</span>
+            <span class="value">${membershipBadge}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">当前点数</span>
+            <span class="value">${totalPoints} ⚡</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">会话数</span>
+            <span class="value">${user.sessionCount || 0}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">消息总数</span>
+            <span class="value">${user.messageCount || 0}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">注册时间</span>
+            <span class="value">${formatDate(user.created_at)}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">最后登录</span>
+            <span class="value">${formatDate(user.last_login)}</span>
+          </div>
+          <div class="user-info-item">
+            <span class="label">最后签到</span>
+            <span class="value">${user.last_checkin || '从未'}</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 会话列表和消息查看区域 -->
+      <div class="user-sessions-area">
+        <div class="user-sessions-list">
+          <h3>💬 对话列表 (${sessions.length})</h3>
+          <div class="sessions-scroll">
+            ${sessions.length === 0 ? '<div class="no-sessions">该用户暂无对话</div>' : sessions.map(s => `
+              <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}" 
+                   data-session-id="${s.id}"
+                   onclick="loadSessionMessages('${s.id}')">
+                <div class="ud-session-title">${escapeHtml(s.title || '新对话')}</div>
+                <div class="ud-session-meta">
+                  <span>${s.messageCount || 0} 条消息</span>
+                  <span>${formatDate(s.updated_at)}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        
+        <div class="user-messages-area" id="userMessagesArea">
+          <div class="ud-messages-placeholder">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
+              <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
+            </svg>
+            <p>点击左侧对话查看完整消息</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 加载会话消息
+async function loadSessionMessages(sessionId) {
+  userDetailState.currentSessionId = sessionId;
+
+  // 更新选中状态
+  document.querySelectorAll('.ud-session-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.sessionId === sessionId);
+  });
+
+  const messagesArea = document.getElementById('userMessagesArea');
+  messagesArea.innerHTML = '<div class="ud-messages-loading">加载消息中...</div>';
+
+  try {
+    const res = await fetch(`/api/admin/sessions/${sessionId}/messages?limit=200`, {
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || '获取消息失败');
+    }
+
+    renderSessionMessages(data.session, data.messages, data.totalCount);
+  } catch (err) {
+    console.error('❌ 获取会话消息失败:', err);
+    messagesArea.innerHTML = `<div class="ud-messages-error">❌ ${err.message}</div>`;
+  }
+}
+
+// 渲染会话消息
+function renderSessionMessages(session, messages, totalCount) {
+  const messagesArea = document.getElementById('userMessagesArea');
+
+  if (messages.length === 0) {
+    messagesArea.innerHTML = '<div class="ud-messages-placeholder"><p>该对话暂无消息</p></div>';
+    return;
+  }
+
+  let html = `
+    <div class="ud-messages-header">
+      <h4>${escapeHtml(session.title || '对话详情')}</h4>
+      <span class="ud-messages-count">共 ${totalCount} 条消息</span>
+    </div>
+    <div class="ud-messages-list">
+  `;
+
+  messages.forEach(msg => {
+    const isUser = msg.role === 'user';
+    const roleLabel = isUser ? '👤 用户' : '🤖 AI';
+    const roleClass = isUser ? 'user-msg' : 'ai-msg';
+
+    // 完整显示消息内容，不截断
+    const content = msg.content || '(空消息)';
+
+    html += `
+      <div class="ud-message-item ${roleClass}">
+        <div class="ud-message-header">
+          <span class="ud-message-role">${roleLabel}</span>
+          <span class="ud-message-time">${formatDate(msg.created_at)}</span>
+          ${msg.model ? `<span class="ud-message-model">${msg.model}</span>` : ''}
+        </div>
+        <div class="ud-message-content" onclick="this.classList.toggle('expanded')">
+          <pre>${escapeHtml(content)}</pre>
+        </div>
+        ${msg.reasoning_content ? `
+          <details class="ud-message-reasoning">
+            <summary>🧠 思考过程 (点击展开)</summary>
+            <pre>${escapeHtml(msg.reasoning_content)}</pre>
+          </details>
+        ` : ''}
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  messagesArea.innerHTML = html;
+}
+
+// 关闭用户详情弹窗  
+function closeUserDetailModal() {
+  const modal = document.getElementById('userDetailModal');
+  if (modal) {
+    modal.classList.remove('active');
+  }
+  userDetailState.userId = null;
+  userDetailState.currentSessionId = null;
+}
 
 // 初始化时检查管理员状态
 checkAdminLogin();
