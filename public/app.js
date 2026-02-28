@@ -540,14 +540,8 @@ function processCodeBlocksStreaming(container) {
     wrapper.appendChild(header);
     wrapper.appendChild(preElement);
 
-    // 尝试应用语法高亮（流式时可能代码不完整，但会在最终渲染时修正）
-    if (typeof hljs !== 'undefined' && language && language !== 'plaintext') {
-      try {
-        hljs.highlightElement(codeElement);
-      } catch (e) {
-        // 流式过程中语法高亮失败是正常的，最终渲染会修正
-      }
-    }
+    // 流式阶段不执行 hljs，避免不完整代码导致大量告警与抖动。
+    // 最终响应完成后会走 processCodeBlocks() 进行一次完整高亮。
   });
 }
 
@@ -1235,9 +1229,12 @@ const appState = {
   messages: [],
   currentRequestId: null,
   isStreaming: false,
-  selectedModel: 'kimi-k2',  // 默认为Kimi K2模型
+  selectedModel: 'kimi-k2.5',  // 默认为Kimi K2.5模型
   thinkingMode: false,  // 默认关闭推理模式
   internetMode: true,  // 默认开启联网
+  agentMode: false,  // 默认关闭多Agent协作
+  agentPolicy: 'dynamic-1-4',
+  qualityProfile: 'high',
   inputExpanded: false,  // 输入框展开状态
   thinkingBudget: 1024,
   thinkingBudgetOpen: false,
@@ -1319,9 +1316,19 @@ const MODELS = {
     maxTokens: 128000,   // 128K 上下文
     expiresAt: '2025-12-15T23:59:00+08:00'  // 截止时间
   },
-  // Kimi K2 - 月之暗面高性能模型
+  // Kimi K2.5 - 月之暗面高性能模型
+  'kimi-k2.5': {
+    name: 'Kimi K2.5',
+    provider: 'siliconflow',
+    supportsThinking: true,
+    supportsVision: true,
+    supportsTools: true,
+    supportsPrefix: true,
+    contextWindow: 256000
+  },
+  // 兼容旧配置：kimi-k2 自动视作 kimi-k2.5
   'kimi-k2': {
-    name: 'Kimi K2',
+    name: 'Kimi K2.5',
     provider: 'siliconflow',
     supportsThinking: true
   },
@@ -1530,6 +1537,7 @@ const i18n = {
     // 更多菜单
     'internet-search': '联网搜索',
     'reasoning-mode': '推理模式',
+    'agent-mode': 'Agent协作',
     'add-attachment': '添加附件'
   },
   'en': {
@@ -1602,6 +1610,7 @@ const i18n = {
     // More menu
     'internet-search': 'Web Search',
     'reasoning-mode': 'Reasoning Mode',
+    'agent-mode': 'Agent Mode',
     'add-attachment': 'Add Attachment'
   }
 };
@@ -2050,12 +2059,16 @@ function toggleMoreMenu() {
     if (isOpening) {
       const internetToggle = document.getElementById('internetToggle');
       const thinkingToggle = document.getElementById('thinkingToggle');
+      const agentToggle = document.getElementById('agentToggle');
 
       if (internetToggle) {
         internetToggle.classList.toggle('active', appState.internetMode);
       }
       if (thinkingToggle) {
         thinkingToggle.classList.toggle('active', appState.thinkingMode);
+      }
+      if (agentToggle) {
+        agentToggle.classList.toggle('active', appState.agentMode);
       }
     }
   }
@@ -2101,6 +2114,19 @@ function toggleThinkingFromMenu(event) {
   console.log(`🧠 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
 }
 
+// 从菜单切换Agent模式
+function toggleAgentFromMenu(event) {
+  event.stopPropagation(); // 防止关闭菜单
+  appState.agentMode = !appState.agentMode;
+
+  const toggle = document.getElementById('agentToggle');
+  if (toggle) {
+    toggle.classList.toggle('active', appState.agentMode);
+  }
+
+  console.log(`🤖 Agent模式: ${appState.agentMode ? '开启' : '关闭'}`);
+}
+
 
 // 从菜单触发文件上传
 function handleFileUploadFromMenu() {
@@ -2135,58 +2161,15 @@ function handleFileSelected(event) {
   }
 }
 
-function updateToolbarUI() {
-  // 更新"更多"菜单中的开关状态
-  const internetToggle = document.getElementById('internetToggle');
-  const thinkingToggle = document.getElementById('thinkingToggle');
-
-  if (internetToggle) {
-    if (appState.internetMode) {
-      internetToggle.classList.add('active');
-    } else {
-      internetToggle.classList.remove('active');
-    }
-  }
-
-  if (thinkingToggle) {
-    if (appState.thinkingMode) {
-      thinkingToggle.classList.add('active');
-    } else {
-      thinkingToggle.classList.remove('active');
-    }
-  }
-
-  // 向后兼容：也更新旧的独立按钮（如果存在）
-  const internetBtn = document.getElementById('internetBtn');
-  const thinkingBtn = document.getElementById('thinkingBtn');
-
-  if (internetBtn) {
-    if (appState.internetMode) {
-      internetBtn.classList.add('active');
-    } else {
-      internetBtn.classList.remove('active');
-    }
-  }
-
-  if (thinkingBtn) {
-    if (appState.thinkingMode) {
-      thinkingBtn.classList.add('active');
-    } else {
-      thinkingBtn.classList.remove('active');
-    }
-  }
-}
-
-
 function updateModelControls() {
   // 根据选择的模型显示/隐藏推理控件
   const thinkingControls = document.getElementById('thinkingControls');
   const selectedModel = appState.selectedModel;
 
   if (thinkingControls) {
-    // DeepSeek模型和Kimi K2模型支持推理模式
+    // DeepSeek模型和Kimi K2.5模型支持推理模式
     if (selectedModel === 'deepseek-v3' || selectedModel === 'deepseek-v3.2-speciale' ||
-      selectedModel === 'kimi-k2') {
+      selectedModel === 'kimi-k2.5' || selectedModel === 'kimi-k2') {
       thinkingControls.style.display = 'flex';
 
       // DeepSeek-V3.2-Speciale 强制开启思考模式(只支持思考模式)
@@ -2240,8 +2223,23 @@ function updateThinkingBudget(value) {
 
 // 修复：改进updateToolbarUI函数
 function updateToolbarUI() {
+  const internetToggle = document.getElementById('internetToggle');
+  const thinkingToggle = document.getElementById('thinkingToggle');
+  const agentToggle = document.getElementById('agentToggle');
   const thinkingBtn = document.getElementById('thinkingBtn');
   const internetBtn = document.getElementById('internetBtn');
+
+  if (internetToggle) {
+    internetToggle.classList.toggle('active', appState.internetMode);
+  }
+
+  if (thinkingToggle) {
+    thinkingToggle.classList.toggle('active', appState.thinkingMode);
+  }
+
+  if (agentToggle) {
+    agentToggle.classList.toggle('active', appState.agentMode);
+  }
 
   if (thinkingBtn) {
     if (appState.thinkingMode) {
@@ -2900,11 +2898,22 @@ function createMessageElement(message) {
   const content = document.createElement('div');
   content.className = 'message-content';
 
-  // 判断是否需要显示时间轴（有reasoning_content或internet_mode）
+  // 判断是否需要显示时间轴（有 reasoning_content / internet_mode / process_trace）
   const hasReasoning = message.reasoning_content && message.reasoning_content !== 'null' && message.reasoning_content.trim() !== '';
   const hasInternet = message.internet_mode || (message.sources && message.sources !== 'null');
+  let processTrace = null;
+  if (message.process_trace && message.process_trace !== 'null') {
+    try {
+      processTrace = typeof message.process_trace === 'string'
+        ? JSON.parse(message.process_trace)
+        : message.process_trace;
+    } catch (e) {
+      processTrace = null;
+    }
+  }
+  const hasProcessTrace = !!(processTrace && typeof processTrace === 'object');
 
-  if (message.role === 'assistant' && (hasReasoning || hasInternet)) {
+  if (message.role === 'assistant' && (hasReasoning || hasInternet || hasProcessTrace)) {
     const timelineDiv = document.createElement('div');
     timelineDiv.className = 'thinking-timeline';
     const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -2960,6 +2969,89 @@ function createMessageElement(message) {
           `;
     }
 
+    if (hasProcessTrace) {
+      const normalizeStatusClass = (status) => {
+        const s = String(status || '').toLowerCase();
+        if (s === 'start' || s === 'active' || s === 'running') return 'running';
+        if (s === 'done' || s === 'completed') return 'done';
+        if (s === 'failed' || s === 'error') return 'failed';
+        return 'pending';
+      };
+
+      const taskRows = Array.isArray(processTrace.tasks) ? processTrace.tasks : [];
+      const sortedTaskRows = taskRows.slice().sort((a, b) => Number(a.taskId || 0) - Number(b.taskId || 0));
+      const taskHtml = sortedTaskRows.map((task) => {
+        const st = normalizeStatusClass(task.status);
+        const role = escapeHtml(String(task.role || 'agent'));
+        const step = escapeHtml(String(task.stepId || `task-${task.taskId || ''}`));
+        const detail = escapeHtml(String(task.detail || ''));
+        return `
+          <div class="agent-task-item">
+            <span class="agent-task-dot" data-status="${st}"></span>
+            <div class="agent-task-text">
+              <div class="agent-task-title">${role} · ${step}</div>
+              <div class="agent-task-detail">${detail}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const traceEvents = Array.isArray(processTrace.trace) ? processTrace.trace : [];
+      const statusEvents = Array.isArray(processTrace.statuses) ? processTrace.statuses : [];
+      const logRows = (traceEvents.length > 0 ? traceEvents : statusEvents).slice(-200);
+      const logHtml = logRows.map((row) => {
+        const kind = escapeHtml(String(row.kind || 'agent'));
+        const text = escapeHtml(String(row.text || row.detail || ''));
+        const time = row.ts ? new Date(row.ts).toLocaleTimeString() : '';
+        const meta = escapeHtml(`[${time}] ${kind}`);
+        return `
+          <div class="process-dot-item ${kind}">
+            <span class="process-dot-meta">${meta}</span>
+            <span class="process-dot-text">${text}</span>
+          </div>
+        `;
+      }).join('');
+
+      const drafts = Array.isArray(processTrace.drafts) ? processTrace.drafts.slice(0, 8) : [];
+      const draftHtml = drafts.map((draft, idx) => {
+        const draftId = `${thinkingId}-draft-${idx}`;
+        const role = escapeHtml(String(draft.role || 'agent'));
+        const taskId = Number(draft.taskId || idx + 1);
+        const summary = escapeHtml(String(draft.summary || ''));
+        const body = escapeHtml(String(draft.content || ''));
+        return `
+          <div class="agent-draft-item">
+            <button class="agent-draft-header" type="button" data-target="${draftId}">
+              <span class="agent-draft-title">${role} · task-${taskId}</span>
+              <span class="agent-draft-toggle">▶</span>
+            </button>
+            <div class="agent-draft-summary">${summary}</div>
+            <pre class="agent-draft-content" id="${draftId}">${body}</pre>
+          </div>
+        `;
+      }).join('');
+
+      const traceToggleId = `${thinkingId}-trace-toggle`;
+      const traceListId = `${thinkingId}-trace-list`;
+      timelineHtml += `
+        <div class="thinking-step" data-status="done">
+          <div class="thinking-step-node"></div>
+          <div class="thinking-step-content">
+            <div class="thinking-step-title">${appState.language === 'zh-CN' ? 'Agent协作过程' : 'Agent Process'}</div>
+            <div class="agent-task-list">${taskHtml}</div>
+            ${logRows.length > 0 ? `
+              <button class="process-trace-toggle" id="${traceToggleId}">
+                <span>${appState.language === 'zh-CN' ? '过程轨迹' : 'Process Trace'}</span>
+                <span class="toggle-icon">▼</span>
+              </button>
+              <div class="process-trace-list" id="${traceListId}">${logHtml}</div>
+            ` : ''}
+            ${drafts.length > 0 ? `<div class="agent-draft-list">${draftHtml}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
     timelineDiv.innerHTML = timelineHtml;
 
     // 填充深度思考内容
@@ -2986,6 +3078,44 @@ function createMessageElement(message) {
             }
           });
         }
+      }, 0);
+    }
+
+    if (hasProcessTrace) {
+      setTimeout(() => {
+        const traceToggleBtn = timelineDiv.querySelector(`#${thinkingId}-trace-toggle`);
+        const traceListEl = timelineDiv.querySelector(`#${thinkingId}-trace-list`);
+        if (traceToggleBtn && traceListEl) {
+          traceToggleBtn.addEventListener('click', () => {
+            const expanded = traceListEl.classList.contains('expanded');
+            if (expanded) {
+              traceListEl.classList.remove('expanded');
+              traceToggleBtn.classList.remove('expanded');
+            } else {
+              traceListEl.classList.add('expanded');
+              traceToggleBtn.classList.add('expanded');
+            }
+          });
+        }
+
+        timelineDiv.querySelectorAll('.agent-draft-header[data-target]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const targetId = btn.getAttribute('data-target');
+            const target = timelineDiv.querySelector(`#${targetId}`);
+            if (!target) return;
+            const expanded = target.classList.contains('expanded');
+            const icon = btn.querySelector('.agent-draft-toggle');
+            if (expanded) {
+              target.classList.remove('expanded');
+              btn.classList.remove('expanded');
+              if (icon) icon.textContent = '▶';
+            } else {
+              target.classList.add('expanded');
+              btn.classList.add('expanded');
+              if (icon) icon.textContent = '▼';
+            }
+          });
+        });
       }, 0);
     }
 
@@ -4059,6 +4189,9 @@ async function streamAIResponse(messages, aiMsg) {
         requestId,
         internetMode: appState.internetMode,
         thinkingMode: appState.thinkingMode,
+        agentMode: appState.agentMode ? 'on' : 'off',
+        agentPolicy: appState.agentPolicy,
+        qualityProfile: appState.qualityProfile,
         temperature: appState.temperature,
         topP: appState.topP,
         maxTokens: appState.maxTokens,
@@ -4493,8 +4626,28 @@ async function sendMessage(message = null) {
                 <div class="thinking-step-detail" id="generatingDetail"></div>
               </div>
             </div>
+
+            <!-- 步骤3: 过程轨迹 -->
+            <div class="thinking-step" id="stepProcessTrace" data-status="running">
+              <div class="thinking-step-node"></div>
+              <div class="thinking-step-content">
+                <button class="process-trace-toggle" id="processTraceToggle">
+                  <span>${appState.language === 'zh-CN' ? '过程轨迹' : 'Process Trace'}</span>
+                  <span class="toggle-icon">▼</span>
+                </button>
+                <div class="thinking-step-detail" id="processTraceDetail">${appState.language === 'zh-CN' ? '实时记录中（默认折叠）' : 'Tracing (collapsed by default)'}</div>
+                <div class="agent-trace-toolbar" id="agentTraceToolbar" style="display: none;">
+                  <button class="agent-trace-btn" id="agentExpandAllBtn">${appState.language === 'zh-CN' ? '展开全部' : 'Expand All'}</button>
+                  <button class="agent-trace-btn" id="agentCollapseAllBtn">${appState.language === 'zh-CN' ? '折叠全部' : 'Collapse All'}</button>
+                </div>
+                <div class="agent-task-list" id="agentTaskList"></div>
+                <div class="agent-draft-list" id="agentDraftList"></div>
+                <div class="agent-metrics" id="agentMetrics" style="display: none;"></div>
+                <div class="process-trace-list" id="processTraceList"></div>
+              </div>
+            </div>
             
-            <!-- 步骤3: 深度思考 (仅在思考模式下显示) -->
+            <!-- 步骤4: 深度思考 (仅在思考模式下显示) -->
             <div class="thinking-step" id="stepDeepThinking" data-status="pending" style="${appState.thinkingMode ? '' : 'display: none;'}">
               <div class="thinking-step-node"></div>
               <div class="thinking-step-content">
@@ -4540,20 +4693,310 @@ async function sendMessage(message = null) {
   const thinkingTimeline = aiMsgDiv.querySelector('#thinkingTimeline');
   const stepToolDecision = aiMsgDiv.querySelector('#stepToolDecision');
   const stepGenerating = aiMsgDiv.querySelector('#stepGenerating');
+  const stepProcessTrace = aiMsgDiv.querySelector('#stepProcessTrace');
   const stepDeepThinking = aiMsgDiv.querySelector('#stepDeepThinking');
   const toolDecisionDetail = aiMsgDiv.querySelector('#toolDecisionDetail');
   const generatingDetail = aiMsgDiv.querySelector('#generatingDetail');
+  const processTraceDetail = aiMsgDiv.querySelector('#processTraceDetail');
+  const processTraceList = aiMsgDiv.querySelector('#processTraceList');
+  const processTraceToggle = aiMsgDiv.querySelector('#processTraceToggle');
+  const agentTraceToolbar = aiMsgDiv.querySelector('#agentTraceToolbar');
+  const agentExpandAllBtn = aiMsgDiv.querySelector('#agentExpandAllBtn');
+  const agentCollapseAllBtn = aiMsgDiv.querySelector('#agentCollapseAllBtn');
+  const agentTaskList = aiMsgDiv.querySelector('#agentTaskList');
+  const agentDraftList = aiMsgDiv.querySelector('#agentDraftList');
+  const agentMetrics = aiMsgDiv.querySelector('#agentMetrics');
   const deepThinkingContent = aiMsgDiv.querySelector('#deepThinkingContent');
+
+  const agentRunState = {
+    tasks: new Map(),
+    drafts: new Map(),
+    metrics: null
+  };
+
+  function mapNodeStatus(status = '') {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'thinking') return 'thinking';
+    if (normalized === 'running' || normalized === 'start' || normalized === 'active') return 'running';
+    if (normalized === 'done' || normalized === 'completed') return 'done';
+    if (normalized === 'failed' || normalized === 'error') return 'failed';
+    return 'pending';
+  }
+
+  function formatDuration(durationMs) {
+    const ms = Number(durationMs || 0);
+    if (!ms || ms < 1) return '';
+    return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+  }
+
+  function ensureAgentPanelVisible() {
+    if (agentTraceToolbar) {
+      agentTraceToolbar.style.display = 'flex';
+    }
+  }
+
+  function renderAgentTaskList() {
+    if (!agentTaskList) return;
+    const ordered = Array.from(agentRunState.tasks.values()).sort((a, b) => {
+      const aId = Number(a.taskId || 0);
+      const bId = Number(b.taskId || 0);
+      if (aId && bId) return aId - bId;
+      return String(a.stepId || '').localeCompare(String(b.stepId || ''));
+    });
+
+    if (ordered.length === 0) {
+      agentTaskList.innerHTML = '';
+      return;
+    }
+
+    agentTaskList.innerHTML = '';
+    for (const task of ordered) {
+      const item = document.createElement('div');
+      item.className = 'agent-task-item';
+      item.dataset.stepId = task.stepId;
+
+      const dot = document.createElement('span');
+      dot.className = 'agent-task-dot';
+      dot.setAttribute('data-status', task.status || 'pending');
+
+      const textWrap = document.createElement('div');
+      textWrap.className = 'agent-task-text';
+
+      const title = document.createElement('div');
+      title.className = 'agent-task-title';
+      title.textContent = `${task.roleLabel || task.role || 'agent'} · ${task.stepId}`;
+
+      const detail = document.createElement('div');
+      detail.className = 'agent-task-detail';
+      detail.textContent = `${task.detail || ''}${task.durationLabel ? ` · ${task.durationLabel}` : ''}`;
+
+      textWrap.appendChild(title);
+      textWrap.appendChild(detail);
+      item.appendChild(dot);
+      item.appendChild(textWrap);
+      agentTaskList.appendChild(item);
+    }
+  }
+
+  function setTaskState(payload = {}) {
+    const stepId = payload.stepId || `task-${payload.taskId || 0}`;
+    if (!stepId) return;
+    const prev = agentRunState.tasks.get(stepId) || {};
+    const roleName = payload.role || prev.role || 'custom';
+    const roleLabel = formatAgentRole(roleName);
+    const status = mapNodeStatus(payload.status || prev.status);
+    const detail = payload.detail || prev.detail || '';
+    const durationLabel = payload.durationMs != null ? formatDuration(payload.durationMs) : (prev.durationLabel || '');
+    agentRunState.tasks.set(stepId, {
+      ...prev,
+      stepId,
+      taskId: payload.taskId || prev.taskId || null,
+      role: roleName,
+      roleLabel,
+      status,
+      detail,
+      durationLabel
+    });
+    ensureAgentPanelVisible();
+    renderAgentTaskList();
+  }
+
+  function renderAgentDrafts() {
+    if (!agentDraftList) return;
+    const ordered = Array.from(agentRunState.drafts.values()).sort((a, b) => Number(a.taskId || 0) - Number(b.taskId || 0));
+    if (ordered.length === 0) {
+      agentDraftList.innerHTML = '';
+      return;
+    }
+
+    agentDraftList.innerHTML = '';
+    for (const draft of ordered) {
+      const item = document.createElement('div');
+      item.className = 'agent-draft-item';
+      item.dataset.taskId = String(draft.taskId || '');
+
+      const header = document.createElement('button');
+      header.className = `agent-draft-header ${draft.expanded ? 'expanded' : ''}`;
+      header.type = 'button';
+
+      const left = document.createElement('span');
+      left.className = 'agent-draft-title';
+      left.textContent = `${formatAgentRole(draft.role)} · task-${draft.taskId}`;
+
+      const right = document.createElement('span');
+      right.className = 'agent-draft-meta';
+      const totalTokens = Number(draft.usage?.total_tokens || 0);
+      right.textContent = `${appState.language === 'zh-CN' ? 'tokens' : 'tokens'} ${totalTokens} · search ${draft.searchCount || 0}`;
+
+      const icon = document.createElement('span');
+      icon.className = 'agent-draft-toggle';
+      icon.textContent = draft.expanded ? '▼' : '▶';
+
+      header.appendChild(left);
+      header.appendChild(right);
+      header.appendChild(icon);
+
+      const summary = document.createElement('div');
+      summary.className = 'agent-draft-summary';
+      summary.textContent = draft.summary || '';
+
+      const body = document.createElement('pre');
+      body.className = `agent-draft-content ${draft.expanded ? 'expanded' : ''}`;
+      body.textContent = draft.content || '';
+
+      header.addEventListener('click', () => {
+        const prev = agentRunState.drafts.get(draft.taskId);
+        if (!prev) return;
+        prev.expanded = !prev.expanded;
+        agentRunState.drafts.set(draft.taskId, prev);
+        renderAgentDrafts();
+      });
+
+      item.appendChild(header);
+      item.appendChild(summary);
+      item.appendChild(body);
+      agentDraftList.appendChild(item);
+    }
+  }
+
+  function updateAgentMetrics(metricsPayload = {}) {
+    if (!agentMetrics) return;
+    const stageDurations = metricsPayload.stageDurations || {};
+    const tokenUsageTotal = metricsPayload.tokenUsageTotal || {};
+    const plannerMs = Number(stageDurations.planner || 0);
+    const subMs = Number(stageDurations.sub_agents || 0);
+    const synthMs = Number(stageDurations.synthesis || 0);
+    const qualityMs = Number(stageDurations.quality || 0);
+    const total = plannerMs + subMs + synthMs + qualityMs;
+
+    const parts = [
+      `planner ${formatDuration(plannerMs)}`,
+      `parallel ${formatDuration(subMs)}`,
+      `synthesis ${formatDuration(synthMs)}`,
+      `quality ${formatDuration(qualityMs)}`,
+      `total ${formatDuration(total)}`,
+      `tokens ${Number(tokenUsageTotal.total_tokens || 0)}`
+    ];
+    agentMetrics.textContent = parts.join(' · ');
+    agentMetrics.style.display = 'block';
+    ensureAgentPanelVisible();
+  }
 
   // 更新步骤状态的辅助函数
   function updateStepStatus(element, status, detail = '') {
     if (!element) return;
-    element.setAttribute('data-status', status);
+    const mappedStatus = status === 'active' ? 'running' : mapNodeStatus(status);
+    element.setAttribute('data-status', mappedStatus);
     const detailEl = element.querySelector('.thinking-step-detail');
     if (detailEl && detail) {
       detailEl.textContent = detail;
     }
   }
+
+  if (processTraceToggle) {
+    processTraceToggle.addEventListener('click', function () {
+      const expanded = processTraceList?.classList.contains('expanded');
+      if (expanded) {
+        processTraceList?.classList.remove('expanded');
+        processTraceToggle.classList.remove('expanded');
+      } else {
+        processTraceList?.classList.add('expanded');
+        processTraceToggle.classList.add('expanded');
+      }
+    });
+  }
+
+  if (agentExpandAllBtn) {
+    agentExpandAllBtn.addEventListener('click', () => {
+      for (const [taskId, draft] of agentRunState.drafts.entries()) {
+        draft.expanded = true;
+        agentRunState.drafts.set(taskId, draft);
+      }
+      renderAgentDrafts();
+    });
+  }
+
+  if (agentCollapseAllBtn) {
+    agentCollapseAllBtn.addEventListener('click', () => {
+      for (const [taskId, draft] of agentRunState.drafts.entries()) {
+        draft.expanded = false;
+        agentRunState.drafts.set(taskId, draft);
+      }
+      renderAgentDrafts();
+    });
+  }
+
+  let traceReasoningChars = 0;
+  let traceItems = 0;
+  const processTraceEvents = [];
+
+  function addProcessTraceItem(kind, text) {
+    if (!processTraceList || !text) return;
+    processTraceEvents.push({
+      ts: Date.now(),
+      kind,
+      text: String(text)
+    });
+    if (processTraceEvents.length > 500) {
+      processTraceEvents.splice(0, processTraceEvents.length - 500);
+    }
+
+    const item = document.createElement('div');
+    item.className = `process-dot-item ${kind}`;
+
+    const meta = document.createElement('span');
+    meta.className = 'process-dot-meta';
+    const labelMap = appState.language === 'zh-CN'
+      ? {
+        framework: '框架',
+        agent: 'Agent',
+        search: '搜索',
+        token: 'Token',
+        reasoning: '推理',
+        info: '信息'
+      }
+      : {
+        framework: 'Framework',
+        agent: 'Agent',
+        search: 'Search',
+        token: 'Token',
+        reasoning: 'Reasoning',
+        info: 'Info'
+      };
+    meta.textContent = `[${new Date().toLocaleTimeString()}] ${labelMap[kind] || 'Info'}`;
+
+    const body = document.createElement('span');
+    body.className = 'process-dot-text';
+    body.textContent = text;
+
+    item.appendChild(meta);
+    item.appendChild(body);
+    processTraceList.appendChild(item);
+    traceItems += 1;
+    processTraceList.scrollTop = processTraceList.scrollHeight;
+  }
+
+  function appendFrameworkRequirements(promptText) {
+    const text = String(promptText || '').trim();
+    if (!text) return;
+    const lines = text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    addProcessTraceItem('framework', appState.language === 'zh-CN' ? '开始展示框架要求' : 'Framework requirements begin');
+    lines.forEach(line => addProcessTraceItem('framework', line));
+    addProcessTraceItem('framework', appState.language === 'zh-CN' ? '框架要求展示完成' : 'Framework requirements end');
+  }
+
+  let agentSelectedRoles = [];
+  let agentRetryCount = 0;
+  const formatAgentRole = (role) => {
+    const roleMap = appState.language === 'zh-CN'
+      ? { master: '主控', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '校验' }
+      : { master: 'Master', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Verifier' };
+    return roleMap[role] || role;
+  };
 
   let fullContent = '';
   let reasoningContent = '';
@@ -4613,6 +5056,10 @@ async function sendMessage(message = null) {
     return visible;
   }
 
+  const effectiveSystemPrompt = appState.systemPrompt.trim()
+    ? `${BUILT_IN_SYSTEM_PROMPT}\n\n以下是用户个人偏好，请参考：\n${appState.systemPrompt}`
+    : BUILT_IN_SYSTEM_PROMPT;
+
   try {
     const response = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
@@ -4627,14 +5074,15 @@ async function sendMessage(message = null) {
         thinkingMode: appState.thinkingMode,
         thinkingBudget: appState.thinkingBudget,
         internetMode: appState.internetMode,
+        agentMode: appState.agentMode ? 'on' : 'off',
+        agentPolicy: appState.agentPolicy,
+        qualityProfile: appState.qualityProfile,
         temperature: appState.temperature,
         top_p: appState.topP,
         max_tokens: appState.maxTokens,
         frequency_penalty: appState.frequencyPenalty,
         presence_penalty: appState.presencePenalty,
-        systemPrompt: appState.systemPrompt.trim()
-          ? `${BUILT_IN_SYSTEM_PROMPT}\n\n以下是用户个人偏好，请参考：\n${appState.systemPrompt}`
-          : BUILT_IN_SYSTEM_PROMPT,
+        systemPrompt: effectiveSystemPrompt,
         // RAG参数
         spaceId: appState.currentSpaceId,
         useRag: appState.useRag,
@@ -4670,7 +5118,14 @@ async function sendMessage(message = null) {
     if (thinkingTimeline) {
       thinkingTimeline.style.display = 'block';
       updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN' ? '正在判断...' : 'Deciding...');
+      updateStepStatus(stepProcessTrace, 'active', appState.language === 'zh-CN' ? '实时记录中...' : 'Tracing...');
     }
+
+    addProcessTraceItem('info', appState.language === 'zh-CN' ? '开始流式请求' : 'Streaming request started');
+    appendFrameworkRequirements(effectiveSystemPrompt);
+    addProcessTraceItem('info', appState.language === 'zh-CN'
+      ? `模型: ${modelUsed || appState.selectedModel}`
+      : `Model: ${modelUsed || appState.selectedModel}`);
 
     // 隐藏加载状态
     const loadingStatus = document.getElementById('loadingStatus');
@@ -4699,12 +5154,26 @@ async function sendMessage(message = null) {
     function applyCharAnimations(container) {
       if (!container) return;
 
+      const isInCodeLikeContext = (node) => {
+        let current = node?.parentElement || null;
+        while (current) {
+          const tag = current.tagName;
+          if (tag === 'CODE' || tag === 'PRE' || tag === 'KBD' || tag === 'SAMP') {
+            return true;
+          }
+          current = current.parentElement;
+        }
+        return false;
+      };
+
       // 获取所有文本节点
       const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
       const textNodes = [];
       let node;
       while (node = walker.nextNode()) {
-        if (node.textContent.trim()) textNodes.push(node);
+        if (node.textContent.trim() && !isInCodeLikeContext(node)) {
+          textNodes.push(node);
+        }
       }
 
       if (textNodes.length === 0) return;
@@ -4962,6 +5431,13 @@ async function sendMessage(message = null) {
             }
 
             reasoningContent += parsed.content;
+            traceReasoningChars += (parsed.content || '').length;
+            addProcessTraceItem('reasoning', parsed.content || '');
+            if (processTraceDetail) {
+              processTraceDetail.textContent = appState.language === 'zh-CN'
+                ? `已记录 ${traceItems} 条 · 推理 ${traceReasoningChars} 字符`
+                : `${traceItems} trace items · reasoning ${traceReasoningChars} chars`;
+            }
 
             // 实时更新深度思考内容
             if (deepThinkingContent) {
@@ -5026,7 +5502,8 @@ async function sendMessage(message = null) {
             }
 
             // 现在开始显示正文 - 使用字符级渲染队列
-            const cleanChunk = sanitizeToolCallArtifacts(parsed.content || '');
+            const rawChunk = parsed.content || '';
+            const cleanChunk = sanitizeToolCallArtifacts(rawChunk);
             if (!cleanChunk) {
               continue;
             }
@@ -5067,6 +5544,9 @@ async function sendMessage(message = null) {
             appState.lastRoutingReason = parsed.reason || '';
             console.log(`📍 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
             console.log(`   路由原因: ${parsed.reason || '用户选择'}`);
+            addProcessTraceItem('info', appState.language === 'zh-CN'
+              ? `模型路由: ${parsed.model} (${parsed.actualModel})`
+              : `Model route: ${parsed.model} (${parsed.actualModel})`);
 
             // 如果模型与用户选择的不同，显示通知
             if (parsed.model !== appState.selectedModel && appState.selectedModel !== 'auto') {
@@ -5078,7 +5558,119 @@ async function sendMessage(message = null) {
             if (parsed.sources && Array.isArray(parsed.sources)) {
               currentSources = parsed.sources;
               console.log(`📥 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
+              addProcessTraceItem('search', appState.language === 'zh-CN'
+                ? `来源更新: ${currentSources.length} 条`
+                : `Sources updated: ${currentSources.length}`);
             }
+          }
+          else if (parsed.type === 'agent_plan') {
+            agentSelectedRoles = Array.isArray(parsed.selectedAgents) ? parsed.selectedAgents : [];
+            if (thinkingTimeline) thinkingTimeline.style.display = 'block';
+            ensureAgentPanelVisible();
+            const rolesText = agentSelectedRoles.map(formatAgentRole).join('、');
+            updateStepStatus(stepToolDecision, 'running', appState.language === 'zh-CN'
+              ? `多Agent编排: ${rolesText || '已启用'}`
+              : `Agent plan: ${rolesText || 'enabled'}`);
+            addProcessTraceItem('agent', appState.language === 'zh-CN'
+              ? `编排完成: ${rolesText || '已启用'}`
+              : `Plan ready: ${rolesText || 'enabled'}`);
+
+            if (Array.isArray(parsed.tasks)) {
+              parsed.tasks.forEach((task, idx) => {
+                const taskId = Number(task.agent_id || idx + 1);
+                const stepId = `task-${taskId}`;
+                setTaskState({
+                  taskId,
+                  stepId,
+                  role: task.role || 'custom',
+                  status: 'pending',
+                  detail: task.task || ''
+                });
+              });
+            }
+          }
+          else if (parsed.type === 'agent_status') {
+            if (thinkingTimeline) thinkingTimeline.style.display = 'block';
+            const roleName = formatAgentRole(parsed.role);
+            const detail = parsed.detail || '';
+            addProcessTraceItem('agent', `${roleName} -> ${parsed.status}${detail ? ` (${detail})` : ''}`);
+
+            const mappedStatus = mapNodeStatus(parsed.status);
+            const isTaskScope = parsed.scope === 'task' || parsed.taskId != null || String(parsed.stepId || '').startsWith('task-');
+
+            if (isTaskScope) {
+              ensureAgentPanelVisible();
+              setTaskState({
+                taskId: parsed.taskId,
+                stepId: parsed.stepId || `task-${parsed.taskId || 0}`,
+                role: parsed.role || 'custom',
+                status: mappedStatus,
+                detail,
+                durationMs: parsed.durationMs
+              });
+              if (mappedStatus === 'running') {
+                updateStepStatus(stepToolDecision, 'running', appState.language === 'zh-CN' ? '子AI并行执行中...' : 'Sub-agents running...');
+              }
+            } else {
+              const stageStepId = String(parsed.stepId || '');
+              const targetStep = (stageStepId === 'synthesis' || stageStepId === 'quality')
+                ? stepGenerating
+                : (stageStepId === 'master' ? stepProcessTrace : stepToolDecision);
+              const fallbackText = detail || (appState.language === 'zh-CN' ? `${roleName}处理中` : `${roleName} running`);
+              updateStepStatus(targetStep, mappedStatus, fallbackText);
+            }
+          }
+          else if (parsed.type === 'agent_draft') {
+            const taskId = Number(parsed.taskId || 0) || (agentRunState.drafts.size + 1);
+            const draft = {
+              taskId,
+              role: parsed.role || 'custom',
+              task: parsed.task || '',
+              summary: parsed.summary || '',
+              content: parsed.content || '',
+              usage: parsed.usage || {},
+              searchCount: Number(parsed.searchCount || 0),
+              expanded: false
+            };
+            agentRunState.drafts.set(taskId, draft);
+            ensureAgentPanelVisible();
+            renderAgentDrafts();
+            setTaskState({
+              taskId,
+              stepId: parsed.stepId || `task-${taskId}`,
+              role: draft.role,
+              status: 'done',
+              detail: draft.summary || draft.task
+            });
+            addProcessTraceItem('agent', appState.language === 'zh-CN'
+              ? `收到草稿 task-${taskId} (${formatAgentRole(draft.role)})`
+              : `Draft received task-${taskId} (${formatAgentRole(draft.role)})`);
+          }
+          else if (parsed.type === 'agent_metrics') {
+            agentRunState.metrics = parsed;
+            updateAgentMetrics(parsed);
+            addProcessTraceItem('agent', appState.language === 'zh-CN'
+              ? `阶段耗时已汇总，tokens=${Number(parsed?.tokenUsageTotal?.total_tokens || 0)}`
+              : `Metrics ready, tokens=${Number(parsed?.tokenUsageTotal?.total_tokens || 0)}`);
+          }
+          else if (parsed.type === 'agent_quality') {
+            const coverage = parsed.metrics?.claimCoverage ?? '-';
+            const contradictions = parsed.metrics?.contradictionCount ?? '-';
+            updateStepStatus(stepGenerating, parsed.pass ? 'done' : 'running', appState.language === 'zh-CN'
+              ? `质量${parsed.pass ? '通过' : '待改进'} · 覆盖率 ${coverage} · 冲突 ${contradictions}`
+              : `Quality ${parsed.pass ? 'pass' : 'pending'} · coverage ${coverage} · contradictions ${contradictions}`);
+            addProcessTraceItem('agent', appState.language === 'zh-CN'
+              ? `质量门控: ${parsed.pass ? '通过' : '待改进'} (coverage=${coverage}, contradictions=${contradictions})`
+              : `Quality gate: ${parsed.pass ? 'pass' : 'pending'} (coverage=${coverage}, contradictions=${contradictions})`);
+          }
+          else if (parsed.type === 'agent_retry') {
+            agentRetryCount = parsed.round || (agentRetryCount + 1);
+            updateStepStatus(stepGenerating, 'running', appState.language === 'zh-CN'
+              ? `返工第${agentRetryCount}轮: ${parsed.reason || '继续优化'}`
+              : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
+            addProcessTraceItem('agent', appState.language === 'zh-CN'
+              ? `返工#${agentRetryCount}: ${parsed.reason || '继续优化'}`
+              : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
           // 🔍 处理搜索状态 - 更新到时间轴第一步
           else if (parsed.type === 'search_status') {
@@ -5092,6 +5684,9 @@ async function sendMessage(message = null) {
               updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN'
                 ? `联网搜索: "${currentSearchQuery}"`
                 : `Web search: "${currentSearchQuery}"`);
+              addProcessTraceItem('search', appState.language === 'zh-CN'
+                ? `开始搜索: ${currentSearchQuery}`
+                : `Search start: ${currentSearchQuery}`);
             } else if (parsed.status === 'complete') {
               const resultCount = parsed.resultCount || 0;
               currentSearchQuery = parsed.query || currentSearchQuery || '';
@@ -5101,15 +5696,20 @@ async function sendMessage(message = null) {
                 : `Search done → ${resultCount} results`);
               // 开始生成回答
               updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在生成...' : 'Generating...');
+              addProcessTraceItem('search', appState.language === 'zh-CN'
+                ? `搜索完成: ${resultCount} 条`
+                : `Search complete: ${resultCount}`);
             } else if (parsed.status === 'no_search') {
               // 不需要搜索
               updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '不需要联网' : 'No search needed');
+              addProcessTraceItem('search', appState.language === 'zh-CN' ? '无需联网搜索' : 'No web search needed');
             } else if (parsed.status === 'no_results') {
               currentSearchQuery = parsed.query || currentSearchQuery || '';
               // 搜索无结果
               updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN'
                 ? `搜索完成 → 无结果`
                 : `Search done → No results`);
+              addProcessTraceItem('search', appState.language === 'zh-CN' ? '搜索无结果' : 'No search results');
             }
             scrollToBottom();
           }
@@ -5121,6 +5721,10 @@ async function sendMessage(message = null) {
 
             // 更新步骤状态：生成回答完成
             updateStepStatus(stepGenerating, 'done', appState.language === 'zh-CN' ? '生成完成' : 'Completed');
+            updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN'
+              ? `过程完成 · ${traceItems}条记录`
+              : `Done · ${traceItems} trace items`);
+            addProcessTraceItem('info', appState.language === 'zh-CN' ? '流式响应完成' : 'Streaming completed');
 
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
@@ -5128,12 +5732,16 @@ async function sendMessage(message = null) {
           else if (parsed.type === 'cancelled') {
             console.log('⚠️ 响应已取消');
             stopCharRender();  // 停止字符渲染
+            updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN' ? '过程已取消' : 'Trace cancelled');
+            addProcessTraceItem('info', appState.language === 'zh-CN' ? '请求已取消' : 'Request cancelled');
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
             break;
           }
           else if (parsed.type === 'error') {
             stopCharRender();  // 停止字符渲染
+            updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN' ? '过程异常中断' : 'Trace interrupted by error');
+            addProcessTraceItem('info', `${appState.language === 'zh-CN' ? '错误' : 'Error'}: ${parsed.error || ''}`);
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
             alert((appState.language === 'zh-CN' ? 'AI服务错误: ' : 'AI Service Error: ') + (parsed.error || '未知错误'));
@@ -5158,6 +5766,32 @@ async function sendMessage(message = null) {
       .replace(/functions\.web_search:\d+/g, '')
       .trim();
 
+    const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
+      stepId: t.stepId,
+      taskId: t.taskId,
+      role: t.role,
+      status: t.status,
+      detail: t.detail || '',
+      durationLabel: t.durationLabel || ''
+    }));
+    const draftSnapshot = Array.from(agentRunState.drafts.values()).map(d => ({
+      taskId: d.taskId,
+      role: d.role,
+      task: d.task || '',
+      summary: d.summary || '',
+      content: d.content || '',
+      usage: d.usage || {},
+      searchCount: Number(d.searchCount || 0)
+    }));
+    const processTraceSnapshot = {
+      version: 1,
+      mode: appState.agentMode ? 'agent' : 'single',
+      tasks: taskSnapshot,
+      drafts: draftSnapshot,
+      metrics: agentRunState.metrics || null,
+      trace: processTraceEvents
+    };
+
     const aiMsg = {
       role: 'assistant',
       content: cleanContent,
@@ -5165,6 +5799,7 @@ async function sendMessage(message = null) {
       model: appState.lastModelUsed || appState.selectedModel,
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
+      process_trace: JSON.stringify(processTraceSnapshot),
       sources: currentSources.length > 0 ? currentSources : null,  // 新增：存储来源
       created_at: new Date().toISOString()
     };
@@ -6174,7 +6809,7 @@ const chatFlowState = {
   edges: [],
   isInitialized: false,
   // Phase 2 新增
-  selectedModel: 'kimi-k2',
+  selectedModel: 'kimi-k2.5',
   thinkingMode: false,
   internetMode: false,
   isStreaming: false
@@ -6956,7 +7591,7 @@ async function sendChatFlowMessage() {
       },
       body: JSON.stringify({
         messages: messages,
-        model: chatFlowState.selectedModel || 'kimi-k2',
+        model: chatFlowState.selectedModel || 'kimi-k2.5',
         thinkingMode: chatFlowState.thinkingMode || false,
         internetMode: chatFlowState.internetMode || false,
         stream: true,
@@ -7914,7 +8549,7 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-        model: 'kimi-k2',
+        model: 'kimi-k2.5',
         stream: false
       })
     });
