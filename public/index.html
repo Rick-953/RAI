@@ -146,7 +146,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick · v0.85+</div>
+              <div class="logo-subtitle">by Rick · v0.9</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -401,6 +401,18 @@
                     <div class="more-menu-item-toggle" id="thinkingToggle"></div>
                   </div>
 
+                  <!-- Agent 模式开关 -->
+                  <div class="more-menu-item" onclick="toggleAgentFromMenu(event)">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                        <path
+                          d="M240-160q-50 0-85-35t-35-85v-80h80v80h80v80h-40Zm440 0v-80h80v-80h80v80q0 50-35 85t-85 35h-40Zm80-440v-80h-80v-80h40q50 0 85 35t35 85v40h-80Zm-640 0H40v-40q0-50 35-85t85-35h40v80h-80v80Zm120 360v-480h480v480H240Zm80-80h320v-320H320v320Zm160-80q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0-120Z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text" data-i18n="agent-mode">Agent协作</span>
+                    <div class="more-menu-item-toggle" id="agentToggle"></div>
+                  </div>
+
                   <div class="more-menu-divider"></div>
 
                   <!-- 添加附件 -->
@@ -440,7 +452,7 @@
               <!-- 自定义模型选择器 -->
               <div class="model-selector">
                 <div class="model-select-custom" id="modelSelectCustom" onclick="openModelModal()">
-                  <span id="selectedModelText">Kimi K2</span>
+                  <span id="selectedModelText">Kimi K2.5</span>
                   <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                     <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -570,16 +582,17 @@
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Kimi K2 -->
-                    <div class="model-menu-item" data-model="kimi-k2"
-                      onclick="selectModelFromMenu('kimi-k2', 'Kimi K2')">
+                    <!-- Kimi K2.5 -->
+                    <div class="model-menu-item" data-model="kimi-k2.5"
+                      onclick="selectModelFromMenu('kimi-k2.5', 'Kimi K2.5')">
                       <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
                         fill="currentColor">
                         <path
                           d="m226-559 78 33q14-28 29-54t33-52l-56-11-84 84Zm142 83 114 113q42-16 90-49t90-75q70-70 109.5-155.5T806-800q-72-5-158 34.5T492-656q-42 42-75 90t-49 90Zm178-65q-23-23-23-56.5t23-56.5q23-23 57-23t57 23q23 23 23 56.5T660-541q-23 23-57 23t-57-23Zm19 321 84-84-11-56q-26 18-52 32.5T532-299l33 79Zm313-653q19 121-23.5 235.5T708-419l20 99q4 20-2 39t-20 33L538-80l-84-197-171-171-197-84 167-168q14-14 33.5-20t39.5-2l99 20q104-104 218-147t235-24ZM157-321q35-35 85.5-35.5T328-322q35 35 34.5 85.5T327-151q-25 25-83.5 43T82-76q14-103 32-161.5t43-83.5Zm57 56q-10 10-20 36.5T180-175q27-4 53.5-13.5T270-208q12-12 13-29t-11-29q-12-12-29-11.5T214-265Z" />
                       </svg>
                       <div class="model-menu-content">
-                        <div class="model-menu-title">Kimi K2</div>
+                        <div class="model-menu-title">Kimi K2.5</div>
+                        <div class="model-menu-description">Pro / 256K / Vision / Tools / Prefix</div>
                       </div>
                     </div>
 
