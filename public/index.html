@@ -401,6 +401,24 @@
                     <div class="more-menu-item-toggle" id="thinkingToggle"></div>
                   </div>
 
+                  <!-- 推理强度 -->
+                  <div class="more-menu-item more-menu-item-static" onclick="event.stopPropagation()">
+                    <div class="more-menu-item-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                        <path
+                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q33 0 62.5-12.5T594-206l-56-56q-12 9-26.5 13.5T480-244q-39 0-66.5-27.5T386-338q0-17 4.5-31.5T404-396l-56-56q-19 22-29.5 49.5T308-338q0 72 50 122t122 50Zm200-200q0-72-50-122T508-604q-17 0-31.5 4.5T448-586l56 56q12-9 26.5-13.5T562-548q39 0 66.5 27.5T656-454q0 17-4.5 31.5T638-396l56 56q19-22 29.5-49.5T734-454Z" />
+                      </svg>
+                    </div>
+                    <span class="more-menu-item-text" data-i18n="reasoning-profile">推理强度</span>
+                    <select id="reasoningProfileSelect" class="reasoning-profile-select"
+                      onchange="setReasoningProfile(this.value); event.stopPropagation();">
+                      <option value="low" data-i18n="reasoning-low">低</option>
+                      <option value="medium" data-i18n="reasoning-medium">中</option>
+                      <option value="high" data-i18n="reasoning-high">高</option>
+                      <option value="mixed" data-i18n="reasoning-mixed">混合</option>
+                    </select>
+                  </div>
+
                   <!-- Agent 模式开关 -->
                   <div class="more-menu-item" onclick="toggleAgentFromMenu(event)">
                     <div class="more-menu-item-icon">
@@ -409,9 +427,11 @@
                           d="M240-160q-50 0-85-35t-35-85v-80h80v80h80v80h-40Zm440 0v-80h80v-80h80v80q0 50-35 85t-85 35h-40Zm80-440v-80h-80v-80h40q50 0 85 35t35 85v40h-80Zm-640 0H40v-40q0-50 35-85t85-35h40v80h-80v80Zm120 360v-480h480v480H240Zm80-80h320v-320H320v320Zm160-80q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0-120Z" />
                       </svg>
                     </div>
-                    <span class="more-menu-item-text" data-i18n="agent-mode">Agent协作</span>
+                    <span class="more-menu-item-text" data-i18n="agent-mode">4倍速深度研究</span>
                     <div class="more-menu-item-toggle" id="agentToggle"></div>
                   </div>
+
+                  <div class="more-menu-hint" id="poeQuotaHint" style="display: none;"></div>
 
                   <div class="more-menu-divider"></div>
 
@@ -452,7 +472,7 @@
               <!-- 自定义模型选择器 -->
               <div class="model-selector">
                 <div class="model-select-custom" id="modelSelectCustom" onclick="openModelModal()">
-                  <span id="selectedModelText">Kimi K2.5</span>
+                  <span id="selectedModelText" data-i18n="model-smart">智能模型</span>
                   <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                     <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -461,24 +481,24 @@
 
                 <!-- Grok风格下拉菜单 -->
                 <div class="model-dropdown-menu" id="modelDropdownMenu">
-                  <!-- 智能模式 -->
+                  <!-- 智能模型 -->
                   <div class="model-menu-item" data-model="auto"
-                    onclick="selectModelFromMenu('auto', '智能模式', 'model-smart')">
+                    onclick="selectModelFromMenu('auto', '智能模型', 'model-smart')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
                         d="M80-140v-320h320v320H80Zm80-80h160v-160H160v160Zm60-340 220-360 220 360H220Zm142-80h156l-78-126-78 126ZM863-42 757-148q-21 14-45.5 21t-51.5 7q-75 0-127.5-52.5T480-300q0-75 52.5-127.5T660-480q75 0 127.5 52.5T840-300q0 26-7 50.5T813-204L919-98l-56 56ZM660-200q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29ZM320-380Zm120-260Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-smart">智能模式</div>
+                      <div class="model-menu-title" data-i18n="model-smart">智能模型</div>
                     </div>
                   </div>
 
                   <div class="model-menu-divider"></div>
 
                   <!-- 极速模式 -->
-                  <div class="model-menu-item" data-model="qwen-flash"
-                    onclick="selectModelFromMenu('qwen-flash', '极速模式', 'model-fast')">
+                  <div class="model-menu-item" data-model="qwen2.5-7b"
+                    onclick="selectModelFromMenu('qwen2.5-7b', '极速模式', 'model-fast')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
@@ -492,8 +512,8 @@
                   <div class="model-menu-divider"></div>
 
                   <!-- 专家模式 -->
-                  <div class="model-menu-item" data-model="qwen-max"
-                    onclick="selectModelFromMenu('qwen-max', '专家模式', 'model-expert')">
+                  <div class="model-menu-item" data-model="kimi-k2.5"
+                    onclick="selectModelFromMenu('kimi-k2.5', '专家模式', 'model-expert')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
@@ -524,46 +544,6 @@
 
                   <!-- 全部模型展开内容 -->
                   <div class="all-models-section" id="allModelsSection" style="display: none;">
-                    <div class="model-menu-divider"></div>
-
-                    <div class="model-menu-item" data-model="qwen-flash"
-                      onclick="selectModelFromMenu('qwen-flash', 'Qwen Flash')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path d="m280-80 160-300-320-40 480-460h80L520-580l320 40L360-80h-80Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Qwen Flash</div>
-                      </div>
-                    </div>
-
-                    <div class="model-menu-divider"></div>
-
-                    <div class="model-menu-item" data-model="qwen-plus"
-                      onclick="selectModelFromMenu('qwen-plus', 'Qwen Plus')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path d="M479-160 280-360l51-52 148 148 318-318 51 52-369 370Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Qwen Plus</div>
-                      </div>
-                    </div>
-
-                    <div class="model-menu-divider"></div>
-
-                    <div class="model-menu-item" data-model="qwen-max"
-                      onclick="selectModelFromMenu('qwen-max', 'Qwen Max')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Qwen Max</div>
-                      </div>
-                    </div>
-
                     <div class="model-menu-divider"></div>
 
                     <div class="model-menu-item" data-model="deepseek-v3"
@@ -598,16 +578,67 @@
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Qwen3-8B 免费模型 -->
-                    <div class="model-menu-item" data-model="qwen3-8b"
-                      onclick="selectModelFromMenu('qwen3-8b', 'Qwen3 8B')">
+                    <!-- Qwen2.5-7B 免费模型 -->
+                    <div class="model-menu-item" data-model="qwen2.5-7b"
+                      onclick="selectModelFromMenu('qwen2.5-7b', 'Qwen2.5 7B')">
                       <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
                         fill="currentColor">
                         <path
                           d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm-40-200v-100h-100v-80h100v-100h80v100h100v80h-100v100h-80Z" />
                       </svg>
                       <div class="model-menu-content">
-                        <div class="model-menu-title">Qwen3 8B <span class="model-badge free">免费</span></div>
+                        <div class="model-menu-title">Qwen2.5 7B <span class="model-badge free">免费</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-divider"></div>
+
+                    <!-- Poe 模型 -->
+                    <div class="model-menu-item" data-model="poe-claude"
+                      onclick="selectModelFromMenu('poe-claude', 'Claude · Poe')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="M160-120v-80h640v80H160Zm80-160q-33 0-56.5-23.5T160-360v-360q0-33 23.5-56.5T240-800h480q33 0 56.5 23.5T800-720v360q0 33-23.5 56.5T720-280H240Zm0-80h480v-360H240v360Zm80-80h320v-80H320v80Zm0-140h320v-80H320v80Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Claude Haiku 4.5 <span class="model-badge">Poe</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-item" data-model="poe-gpt"
+                      onclick="selectModelFromMenu('poe-gpt', 'ChatGPT · Poe')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm-40-200v-100h-100v-80h100v-100h80v100h100v80h-100v100h-80Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">GPT-5 Nano <span class="model-badge">Poe</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-item" data-model="poe-grok"
+                      onclick="selectModelFromMenu('poe-grok', 'Grok · Poe')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="m280-80 48-248-192-168 252-24 92-232 92 232 252 24-192 168 48 248-200-128L280-80Zm200-227 92 58-24-110 85-74-112-10-41-104-41 104-112 10 85 74-24 110 92-58Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Grok 4.1 Fast Reasoning <span class="model-badge">Poe</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-item" data-model="poe-gemini"
+                      onclick="selectModelFromMenu('poe-gemini', 'Gemini · Poe')">
+                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                        fill="currentColor">
+                        <path
+                          d="M480-80 320-240l56-56 64 64v-224h80v224l64-64 56 56L480-80Zm-200-520v-80h400v80H280Zm0 160v-80h400v80H280Zm0 160v-80h400v80H280Z" />
+                      </svg>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Gemini 3 Flash <span class="model-badge">Poe</span></div>
                       </div>
                     </div>
 
@@ -628,19 +659,6 @@
 
                     <div class="model-menu-divider"></div>-->
 
-                    <!-- Qwen3-Omni-Flash 多模态模型 -->
-
-                    <div class="model-menu-item" data-model="qwen3-omni-flash"
-                      onclick="selectModelFromMenu('qwen3-omni-flash', 'Qwen3 Omni Flash')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h480L570-480 450-320l-90-120-120 160Zm-40 80v-560 560Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Qwen3 Omni Flash</div>
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1015,42 +1033,67 @@
         </button>
       </div>
       <div class="model-modal-body">
-        <!-- 自动选择 -->
-        <div class="model-card selected" data-model="auto" onclick="selectModelFromModal('auto', '自动选择')">
+        <!-- 智能模型 -->
+        <div class="model-card selected" data-model="auto" onclick="selectModelFromModal('auto', '智能模型')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
             <path
               d="m280-40 123-622q6-29 27-43.5t44-14.5q23 0 42.5 10t31.5 30l40 64q18 29 46.5 44.5T700-556q54 5 108.5 14t106.5 25l-124 557q-4 17-17.5 28.5T744-920h-14q-18 0-31.5-11.5T681-961l-89-280q-2-8-9-13.5t-15-5.5q-8 0-14.5 5t-8.5 13l-89 280q-4 17-17 28.5T408-920h-14q-17 0-30-11.5T347-961L280-40Z" />
           </svg>
-          <div class="model-label">自动选择</div>
+          <div class="model-label">智能模型</div>
           <div class="model-description">智能路由</div>
         </div>
 
         <!-- 极速模式 -->
-        <div class="model-card" data-model="qwen-flash" onclick="selectModelFromModal('qwen-flash', '极速模式')">
+        <div class="model-card" data-model="qwen2.5-7b" onclick="selectModelFromModal('qwen2.5-7b', '极速模式')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
             <path d="m280-80 160-300-320-40 480-460h80L520-580l320 40L360-80h-80Z" />
           </svg>
           <div class="model-label">极速模式</div>
-          <div class="model-description">Qwen Flash</div>
-        </div>
-
-        <!-- Plus模式 -->
-        <div class="model-card" data-model="qwen-plus" onclick="selectModelFromModal('qwen-plus', 'Plus')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path d="M479-160 280-360l51-52 148 148 318-318 51 52-369 370Z" />
-          </svg>
-          <div class="model-label">Plus</div>
-          <div class="model-description">Qwen Plus</div>
+          <div class="model-description">Qwen2.5 7B（免费）</div>
         </div>
 
         <!-- 专家模式 -->
-        <div class="model-card" data-model="qwen-max" onclick="selectModelFromModal('qwen-max', '专家模式')">
+        <div class="model-card" data-model="kimi-k2.5" onclick="selectModelFromModal('kimi-k2.5', '专家模式')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
             <path
               d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
           </svg>
           <div class="model-label">专家模式</div>
-          <div class="model-description">Qwen Max</div>
+          <div class="model-description">Kimi K2.5</div>
+        </div>
+
+        <div class="model-card" data-model="poe-claude" onclick="selectModelFromModal('poe-claude', 'Claude · Poe')">
+          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+            <path
+              d="M160-120v-80h640v80H160Zm80-160q-33 0-56.5-23.5T160-360v-360q0-33 23.5-56.5T240-800h480q33 0 56.5 23.5T800-720v360q0 33-23.5 56.5T720-280H240Zm0-80h480v-360H240v360Zm80-80h320v-80H320v80Zm0-140h320v-80H320v80Z" />
+          </svg>
+          <div class="model-label">Claude</div>
+          <div class="model-description">Poe · Haiku 4.5</div>
+        </div>
+
+        <div class="model-card" data-model="poe-gpt" onclick="selectModelFromModal('poe-gpt', 'ChatGPT · Poe')">
+          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+            <path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm-40-200v-140H300v-80h140v-140h80v140h140v80H520v140h-80Z" />
+          </svg>
+          <div class="model-label">ChatGPT</div>
+          <div class="model-description">Poe · GPT-5 Nano</div>
+        </div>
+
+        <div class="model-card" data-model="poe-grok" onclick="selectModelFromModal('poe-grok', 'Grok · Poe')">
+          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+            <path
+              d="m280-80 48-248-192-168 252-24 92-232 92 232 252 24-192 168 48 248-200-128L280-80Zm200-227 92 58-24-110 85-74-112-10-41-104-41 104-112 10 85 74-24 110 92-58Z" />
+          </svg>
+          <div class="model-label">Grok</div>
+          <div class="model-description">Poe · 4.1 Fast</div>
+        </div>
+
+        <div class="model-card" data-model="poe-gemini" onclick="selectModelFromModal('poe-gemini', 'Gemini · Poe')">
+          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+            <path d="M440-80v-280H160v-80h280v-280h80v280h280v80H520v280h-80Z" />
+          </svg>
+          <div class="model-label">Gemini</div>
+          <div class="model-description">Poe · 3 Flash</div>
         </div>
 
         <!-- DeepSeek V3 -->
@@ -1064,27 +1107,6 @@
         </div>
 
         <!-- DeepSeek Speciale 已隐藏 (临时模型已过期) -->
-
-        <!-- 文档理解 -->
-        <div class="model-card" data-model="qwen-long" onclick="selectModelFromModal('qwen-long', '文档理解')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path
-              d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-560v-200H240v640h480v-440H520ZM240-840v200-200 640-640Z" />
-          </svg>
-          <div class="model-label">文档理解</div>
-          <div class="model-description">Qwen Long</div>
-        </div>
-
-        <!-- 视频理解 -->
-        <div class="model-card" data-model="qwen-vl-max-latest"
-          onclick="selectModelFromModal('qwen-vl-max-latest', '视频理解')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path
-              d="m380-300 280-180-280-180v360ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h480q33 0 56.5 23.5T720-720v180l160-160v440L720-420v180q0 33-23.5 56.5T640-160H160Zm0-80h480v-480H160v480Zm0 0v-480 480Z" />
-          </svg>
-          <div class="model-label">视频理解</div>
-          <div class="model-description">Qwen VL Max</div>
-        </div>
 
         <!-- LMStudio Local -->
         <div class="model-card" data-model="lmstudio-local" onclick="selectModelFromModal('lmstudio-local', '本地模型')">
@@ -1108,10 +1130,13 @@
         <label data-i18n="selectModel">选择模型</label>
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
-          <option value="qwen-flash" data-i18n="fastMode">极速</option>
+          <option value="qwen2.5-7b" data-i18n="fastMode">极速</option>
           <option value="deepseek-v3" data-i18n="expertMode">专家</option>
-          <option value="qwen-plus">Qwen Plus</option>
-          <option value="qwen-max">Qwen Max</option>
+          <option value="kimi-k2.5">Kimi K2.5</option>
+          <option value="poe-claude">Claude · Poe</option>
+          <option value="poe-gpt">ChatGPT · Poe</option>
+          <option value="poe-grok">Grok · Poe</option>
+          <option value="poe-gemini">Gemini · Poe</option>
         </select>
       </div>
 
