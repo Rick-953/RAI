@@ -242,15 +242,31 @@ function renderSourcesList(sources, language) {
   if (!sources || sources.length === 0) return '';
 
   const headerText = language === 'zh-CN' ? '来源' : 'Sources';
+  const expandText = language === 'zh-CN' ? '展开来源' : 'Show Sources';
+  const collapseText = language === 'zh-CN' ? '收起来源' : 'Hide Sources';
+  const sourceCount = sources.length;
 
   let html = `
-        <div class="sources-list">
+        <div class="sources-list is-collapsed">
           <div class="sources-header">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
             </svg>
             <span>${headerText}</span>
+            <button
+              type="button"
+              class="sources-toggle-btn"
+              data-count="${sourceCount}"
+              data-label-expand="${expandText}"
+              data-label-collapse="${collapseText}"
+              data-expanded="false"
+              onclick="toggleSourcesList(this)"
+            >
+              <span class="sources-toggle-text">${expandText} (${sourceCount})</span>
+              <span class="sources-toggle-icon">▶</span>
+            </button>
           </div>
+          <div class="sources-body">
       `;
 
   sources.forEach(source => {
@@ -271,8 +287,60 @@ function renderSourcesList(sources, language) {
         `;
   });
 
-  html += '</div>';
+  html += `
+          </div>
+        </div>
+      `;
   return html;
+}
+
+function toggleSourcesList(button) {
+  if (!button) return;
+  const wrapper = button.closest('.sources-list');
+  if (!wrapper) return;
+
+  const expanded = wrapper.classList.contains('is-expanded');
+  const nextExpanded = !expanded;
+  wrapper.classList.toggle('is-expanded', nextExpanded);
+  wrapper.classList.toggle('is-collapsed', !nextExpanded);
+
+  const expandText = button.getAttribute('data-label-expand') || 'Show Sources';
+  const collapseText = button.getAttribute('data-label-collapse') || 'Hide Sources';
+  const count = button.getAttribute('data-count') || '0';
+  const textEl = button.querySelector('.sources-toggle-text');
+  const iconEl = button.querySelector('.sources-toggle-icon');
+
+  if (textEl) {
+    textEl.textContent = `${nextExpanded ? collapseText : expandText} (${count})`;
+  }
+  if (iconEl) {
+    iconEl.textContent = nextExpanded ? '▼' : '▶';
+  }
+  button.setAttribute('data-expanded', nextExpanded ? 'true' : 'false');
+}
+
+function mergeAndReindexSources(existingSources = [], incomingSources = []) {
+  const merged = [];
+  const seen = new Set();
+
+  const append = (source) => {
+    if (!source || typeof source !== 'object') return;
+    const key = `${String(source.url || '')}|${String(source.title || '')}`;
+    if (!source.url || seen.has(key)) return;
+    seen.add(key);
+    merged.push({
+      ...source,
+      title: source.title || '未知标题'
+    });
+  };
+
+  (Array.isArray(existingSources) ? existingSources : []).forEach(append);
+  (Array.isArray(incomingSources) ? incomingSources : []).forEach(append);
+
+  return merged.map((source, idx) => ({
+    ...source,
+    index: idx + 1
+  }));
 }
 
 // ==================== 代码块处理功能 ====================
@@ -1229,8 +1297,10 @@ const appState = {
   messages: [],
   currentRequestId: null,
   isStreaming: false,
-  selectedModel: 'kimi-k2.5',  // 默认为Kimi K2.5模型
+  selectedModel: 'auto',  // 默认智能模型
+  profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
   thinkingMode: false,  // 默认关闭推理模式
+  reasoningProfile: 'low',
   internetMode: true,  // 默认开启联网
   agentMode: false,  // 默认关闭多Agent协作
   agentPolicy: 'dynamic-1-4',
@@ -1244,6 +1314,7 @@ const appState = {
   frequencyPenalty: 0,
   presencePenalty: 0,
   systemPrompt: '',  // 用户的个人偏好，将附加到内置提示词后
+  pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
   sidebarOpen: false,
   settingsOpen: false,
   touchStartX: 0,
@@ -1288,21 +1359,6 @@ const MODELS = {
     provider: "auto",
     supportsThinking: true
   },
-  'qwen-flash': {
-    name: 'Qwen3Flash',
-    provider: 'aliyun',
-    supportsThinking: true
-  },
-  'qwen-plus': {
-    name: 'Qwen3-Plus',
-    provider: 'aliyun',
-    supportsThinking: true
-  },
-  'qwen-max': {
-    name: 'Qwen3-Max',
-    provider: 'aliyun',
-    supportsThinking: true
-  },
   'deepseek-v3': {
     name: 'DeepSeekV3.2',
     provider: 'deepseek',
@@ -1332,19 +1388,39 @@ const MODELS = {
     provider: 'siliconflow',
     supportsThinking: true
   },
-  // Qwen3-8B - 硅基流动免费模型 (支持思考、工具调用)
-  'qwen3-8b': {
-    name: 'Qwen3 8B',
+  // Qwen2.5-7B 免费模型
+  'qwen2.5-7b': {
+    name: 'Qwen2.5 7B',
     provider: 'siliconflow',
-    supportsThinking: true,
+    supportsThinking: false,
     isFree: true  // 标记为免费模型
   },
-  // Qwen3-Omni-Flash 多模态模型 (图片/音频/视频)
-  'qwen3-omni-flash': {
-    name: 'Qwen3 Omni Flash',
-    provider: 'aliyun_omni',
+  // 兼容旧ID
+  'qwen3-8b': {
+    name: 'Qwen2.5 7B',
+    provider: 'siliconflow',
     supportsThinking: false,
-    multimodal: true
+    isFree: true
+  },
+  'poe-claude': {
+    name: 'Claude (Poe)',
+    provider: 'poe',
+    supportsThinking: true
+  },
+  'poe-gpt': {
+    name: 'ChatGPT (Poe)',
+    provider: 'poe',
+    supportsThinking: true
+  },
+  'poe-grok': {
+    name: 'Grok (Poe)',
+    provider: 'poe',
+    supportsThinking: true
+  },
+  'poe-gemini': {
+    name: 'Gemini (Poe)',
+    provider: 'poe',
+    supportsThinking: true
   },
   // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
   'gemini-3-flash': {
@@ -1359,6 +1435,106 @@ const MODELS = {
     supportsThinking: false
   }
 };
+
+const LEGACY_MODEL_ALIASES = {
+  'qwen3-8b': 'qwen2.5-7b',
+  'qwen-flash': 'qwen2.5-7b',
+  'qwen-plus': 'qwen2.5-7b',
+  'qwen-max': 'qwen2.5-7b'
+};
+
+function normalizeSelectedModelId(modelId) {
+  const raw = String(modelId || '').trim();
+  return LEGACY_MODEL_ALIASES[raw] || raw;
+}
+
+function isPoeModelSelected(modelId = appState.selectedModel) {
+  const normalized = normalizeSelectedModelId(modelId);
+  return normalized.startsWith('poe-');
+}
+
+function isFreeMembershipUser() {
+  return String(userMembershipState?.membership || 'free').toLowerCase() === 'free';
+}
+
+function isFreePoeMode(modelId = appState.selectedModel) {
+  return isPoeModelSelected(modelId) && isFreeMembershipUser();
+}
+
+function normalizeReasoningProfile(value) {
+  const v = String(value || '').toLowerCase();
+  if (v === 'medium' || v === 'high' || v === 'mixed') return v;
+  return 'low';
+}
+
+function setReasoningProfile(profile) {
+  appState.reasoningProfile = normalizeReasoningProfile(profile);
+  updateReasoningProfileControl();
+}
+
+function updateReasoningProfileControl() {
+  const select = document.getElementById('reasoningProfileSelect');
+  if (!select) return;
+  const normalized = normalizeReasoningProfile(appState.reasoningProfile);
+  if (select.value !== normalized) {
+    select.value = normalized;
+  }
+}
+
+function updatePoeQuotaHint() {
+  const hintEl = document.getElementById('poeQuotaHint');
+  if (!hintEl) return;
+
+  const isPoe = isPoeModelSelected();
+  if (!isPoe) {
+    hintEl.style.display = 'none';
+    hintEl.textContent = '';
+    return;
+  }
+
+  const isFree = isFreeMembershipUser();
+  const lang = appState.language;
+
+  if (isFree) {
+    const remaining = Number.isFinite(Number(userMembershipState.poeRemaining))
+      ? Number(userMembershipState.poeRemaining)
+      : 0;
+    const limit = Number.isFinite(Number(userMembershipState.poeDailyLimit))
+      ? Number(userMembershipState.poeDailyLimit)
+      : 3;
+    hintEl.textContent = lang === 'zh-CN'
+      ? `Poe 今日剩余 ${remaining}/${limit} 次（free 强制关闭推理）`
+      : `Poe remaining today: ${remaining}/${limit} (thinking is disabled for free)`;
+    hintEl.style.display = 'block';
+    return;
+  }
+
+  hintEl.textContent = lang === 'zh-CN'
+    ? 'Poe 模型已启用，可调推理强度'
+    : 'Poe enabled, reasoning profile is available';
+  hintEl.style.display = 'block';
+}
+
+function applyFreePoeThinkingPolicy() {
+  if (isFreePoeMode()) {
+    appState.thinkingMode = false;
+  }
+}
+
+function applyQuotaInfoEvent(payload = {}) {
+  if (payload.provider !== 'poe') return;
+
+  const limit = Number(payload.poeLimit ?? userMembershipState.poeDailyLimit ?? 3);
+  const used = Number(payload.poeUsed ?? userMembershipState.poeUsedToday ?? 0);
+  const remaining = Number(payload.poeRemaining ?? Math.max(0, limit - used));
+
+  userMembershipState.poeDailyLimit = Number.isFinite(limit) ? limit : 3;
+  userMembershipState.poeUsedToday = Number.isFinite(used) ? used : 0;
+  userMembershipState.poeRemaining = Number.isFinite(remaining) ? remaining : 0;
+  userMembershipState.poeResetAt = payload.resetAt || userMembershipState.poeResetAt || null;
+
+  updatePoeQuotaHint();
+}
 
 // 获取用户时间上下文（时区、日期时间、时段）
 function getUserTimeContext() {
@@ -1525,7 +1701,7 @@ const i18n = {
     'cancel': '取消',
     'save-settings': '保存设置',
     // 模型选择相关
-    'model-smart': '智能模式',
+    'model-smart': '智能模型',
     'model-fast': '极速模式',
     'model-expert': '专家模式',
     'model-all': '全部模型',
@@ -1537,7 +1713,12 @@ const i18n = {
     // 更多菜单
     'internet-search': '联网搜索',
     'reasoning-mode': '推理模式',
-    'agent-mode': 'Agent协作',
+    'reasoning-profile': '推理强度',
+    'reasoning-low': '低',
+    'reasoning-medium': '中',
+    'reasoning-high': '高',
+    'reasoning-mixed': '混合',
+    'agent-mode': '4倍速深度研究',
     'add-attachment': '添加附件'
   },
   'en': {
@@ -1598,7 +1779,7 @@ const i18n = {
     'cancel': 'Cancel',
     'save-settings': 'Save Settings',
     // Model selection
-    'model-smart': 'Smart Mode',
+    'model-smart': 'Smart Model',
     'model-fast': 'Fast Mode',
     'model-expert': 'Expert Mode',
     'model-all': 'All Models',
@@ -1610,7 +1791,12 @@ const i18n = {
     // More menu
     'internet-search': 'Web Search',
     'reasoning-mode': 'Reasoning Mode',
-    'agent-mode': 'Agent Mode',
+    'reasoning-profile': 'Reasoning Profile',
+    'reasoning-low': 'Low',
+    'reasoning-medium': 'Medium',
+    'reasoning-high': 'High',
+    'reasoning-mixed': 'Mixed',
+    'agent-mode': 'Research Turbo (4x)',
     'add-attachment': 'Add Attachment'
   }
 };
@@ -1694,6 +1880,9 @@ function setLanguage(lang) {
   if (authLangText) {
     authLangText.textContent = lang === 'zh-CN' ? 'EN' : '中';
   }
+
+  updateReasoningProfileControl();
+  updatePoeQuotaHint();
 }
 
 // 初始化主题和语言
@@ -1795,6 +1984,14 @@ function handleInputContainerClick(event) {
 function handleActionCard(action) {
   const input = document.getElementById('messageInput');
   if (!input) return;
+
+  const domainModeMap = {
+    write: 'writing',
+    search: 'research',
+    code: 'coding',
+    translate: 'translation'
+  };
+  appState.pendingDomainMode = domainModeMap[action] || null;
 
   let text = '';
   switch (action) {
@@ -2070,6 +2267,10 @@ function toggleMoreMenu() {
       if (agentToggle) {
         agentToggle.classList.toggle('active', appState.agentMode);
       }
+
+      updateToolbarUI();
+      updateReasoningProfileControl();
+      updatePoeQuotaHint();
     }
   }
 }
@@ -2103,6 +2304,17 @@ function toggleInternetFromMenu(event) {
 // 从菜单切换推理模式
 function toggleThinkingFromMenu(event) {
   event.stopPropagation(); // 防止关闭菜单
+  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
+  if (!currentModel?.supportsThinking) {
+    appState.thinkingMode = false;
+    updateToolbarUI();
+    return;
+  }
+  if (isFreePoeMode()) {
+    appState.thinkingMode = false;
+    updateToolbarUI();
+    return;
+  }
   appState.thinkingMode = !appState.thinkingMode;
 
   // 直接更新toggle UI
@@ -2142,6 +2354,11 @@ function toggleInternet() {
 }
 
 function toggleThinking() {
+  if (isFreePoeMode()) {
+    appState.thinkingMode = false;
+    updateToolbarUI();
+    return;
+  }
   appState.thinkingMode = !appState.thinkingMode;
   updateToolbarUI();
 }
@@ -2226,15 +2443,30 @@ function updateToolbarUI() {
   const internetToggle = document.getElementById('internetToggle');
   const thinkingToggle = document.getElementById('thinkingToggle');
   const agentToggle = document.getElementById('agentToggle');
+  const thinkingMenuItem = thinkingToggle?.closest('.more-menu-item');
   const thinkingBtn = document.getElementById('thinkingBtn');
   const internetBtn = document.getElementById('internetBtn');
+  const reasoningSelect = document.getElementById('reasoningProfileSelect');
+  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
+  const supportsThinking = !!currentModel?.supportsThinking;
+  const forceDisableThinking = isFreePoeMode();
+
+  if (forceDisableThinking) {
+    appState.thinkingMode = false;
+  }
 
   if (internetToggle) {
     internetToggle.classList.toggle('active', appState.internetMode);
   }
 
   if (thinkingToggle) {
+    thinkingToggle.style.display = supportsThinking ? 'inline-flex' : 'none';
     thinkingToggle.classList.toggle('active', appState.thinkingMode);
+    thinkingToggle.classList.toggle('disabled', forceDisableThinking || !supportsThinking);
+  }
+
+  if (thinkingMenuItem) {
+    thinkingMenuItem.classList.toggle('is-disabled', forceDisableThinking);
   }
 
   if (agentToggle) {
@@ -2242,6 +2474,8 @@ function updateToolbarUI() {
   }
 
   if (thinkingBtn) {
+    thinkingBtn.style.display = supportsThinking ? 'inline-flex' : 'none';
+    thinkingBtn.classList.toggle('disabled', forceDisableThinking);
     if (appState.thinkingMode) {
       thinkingBtn.classList.add('active');
     } else {
@@ -2256,6 +2490,11 @@ function updateToolbarUI() {
       internetBtn.classList.remove('active');
     }
   }
+
+  if (reasoningSelect) {
+    updateReasoningProfileControl();
+  }
+  updatePoeQuotaHint();
 }
 
 // 修复：改进updateSliderValue函数
@@ -2305,6 +2544,8 @@ function updateSettingsUI() {
 
 // 修复：改进updateModelControls函数，添加null检查
 function updateModelControls() {
+  appState.selectedModel = normalizeSelectedModelId(appState.selectedModel);
+  applyFreePoeThinkingPolicy();
   const model = MODELS[appState.selectedModel];
 
   if (!model) {
@@ -2326,7 +2567,7 @@ function updateModelControls() {
   }
 
   if (thinkingExpandBtn) {
-    if (appState.thinkingMode) {
+    if (appState.thinkingMode && !isFreePoeMode()) {
       thinkingExpandBtn.style.display = 'flex';
     } else {
       thinkingExpandBtn.style.display = 'none';
@@ -2343,10 +2584,17 @@ function updateModelControls() {
 
 // 修复：改进toggleThinking函数
 function toggleThinking() {
+  appState.selectedModel = normalizeSelectedModelId(appState.selectedModel);
   const model = MODELS[appState.selectedModel];
 
   if (!model || !model.supportsThinking) {
     console.warn('⚠️ 当前模型不支持思考模式');
+    return;
+  }
+  if (isFreePoeMode()) {
+    appState.thinkingMode = false;
+    updateModelControls();
+    updateToolbarUI();
     return;
   }
 
@@ -2661,24 +2909,87 @@ function updateMenuSelection() {
   });
 }
 
-function selectModelFromMenu(model, displayName, i18nKey) {
-  appState.selectedModel = model;
-  const selectedText = document.getElementById('selectedModelText');
-  if (selectedText) {
-    // 如果有i18n键，使用当前语言的翻译；否则使用传入的displayName
-    if (i18nKey && i18n[appState.language] && i18n[appState.language][i18nKey]) {
-      selectedText.textContent = i18n[appState.language][i18nKey];
-      selectedText.setAttribute('data-i18n', i18nKey);
-    } else {
-      selectedText.textContent = displayName;
-      selectedText.removeAttribute('data-i18n');
-    }
+function getModelDisplayMeta(modelId) {
+  const normalized = normalizeSelectedModelId(modelId);
+  if (normalized === 'auto') {
+    return { i18nKey: 'model-smart', fallback: 'Smart Model' };
   }
+  if (normalized === 'qwen2.5-7b' || normalized === 'qwen3-8b') {
+    return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
+  }
+  if (normalized === 'kimi-k2.5' || normalized === 'kimi-k2') {
+    return { i18nKey: 'model-expert', fallback: 'Expert Mode' };
+  }
+  return { i18nKey: null, fallback: MODELS[normalized]?.name || normalized };
+}
+
+function updateSelectedModelText(modelId = appState.selectedModel) {
+  const selectedText = document.getElementById('selectedModelText');
+  if (!selectedText) return;
+
+  const meta = getModelDisplayMeta(modelId);
+  if (meta.i18nKey && i18n?.[appState.language]?.[meta.i18nKey]) {
+    selectedText.textContent = i18n[appState.language][meta.i18nKey];
+    selectedText.setAttribute('data-i18n', meta.i18nKey);
+  } else {
+    selectedText.textContent = meta.fallback;
+    selectedText.removeAttribute('data-i18n');
+  }
+}
+
+function persistDefaultModelPreference(modelId = appState.selectedModel) {
+  const membership = String(userMembershipState?.membership || 'free');
+  if (!appState.token || membership === 'free') return;
+
+  fetch(`${API_BASE}/user/config`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      theme: appState.theme,
+      default_model: normalizeSelectedModelId(modelId),
+      temperature: appState.temperature,
+      top_p: appState.topP,
+      max_tokens: appState.maxTokens,
+      frequency_penalty: appState.frequencyPenalty,
+      presence_penalty: appState.presencePenalty,
+      system_prompt: appState.systemPrompt || '',
+      thinking_mode: appState.thinkingMode ? 1 : 0,
+      internet_mode: appState.internetMode ? 1 : 0
+    })
+  }).then((res) => res.json())
+    .then((data) => {
+      if (data?.success) {
+        appState.profileDefaultModel = normalizeSelectedModelId(modelId);
+      } else if (data?.error) {
+        console.warn('⚠️ 保存默认模型失败:', data.error);
+      }
+    })
+    .catch((err) => console.error('❌ 保存默认模型网络错误:', err));
+}
+
+function selectModelFromMenu(model, displayName, i18nKey) {
+  appState.selectedModel = normalizeSelectedModelId(model);
+  applyFreePoeThinkingPolicy();
+  updateSelectedModelText(appState.selectedModel);
 
   updateModelControls();
+  updateMenuSelection();
+  updatePoeQuotaHint();
   closeModelModal();
+  persistDefaultModelPreference(appState.selectedModel);
 
-  console.log(`✅ 已切换模型: ${model} (${displayName})`);
+  console.log(`✅ 已切换模型: ${appState.selectedModel} (${displayName})`);
+}
+
+function selectModelFromModal(model, displayName) {
+  selectModelFromMenu(model, displayName || model, null);
+  const modelModal = document.getElementById('modelModal');
+  if (modelModal) {
+    modelModal.classList.remove('active');
+  }
 }
 
 // 点击页面其他地方关闭下拉菜单
@@ -3037,7 +3348,7 @@ function createMessageElement(message) {
         <div class="thinking-step" data-status="done">
           <div class="thinking-step-node"></div>
           <div class="thinking-step-content">
-            <div class="thinking-step-title">${appState.language === 'zh-CN' ? 'Agent协作过程' : 'Agent Process'}</div>
+            <div class="thinking-step-title">${appState.language === 'zh-CN' ? '4倍速深度研究' : 'Research Turbo (4x)'}</div>
             <div class="agent-task-list">${taskHtml}</div>
             ${logRows.length > 0 ? `
               <button class="process-trace-toggle" id="${traceToggleId}">
@@ -4009,11 +4320,13 @@ async function confirmRegenerate() {
   const originalThinking = appState.thinkingMode;
 
   // 临时应用新设置
-  appState.selectedModel = selectedModel;
+  appState.selectedModel = normalizeSelectedModelId(selectedModel);
   appState.internetMode = internetMode;
   appState.thinkingMode = thinkingMode;
+  applyFreePoeThinkingPolicy();
 
   // 更新UI显示
+  updateSelectedModelText(appState.selectedModel);
   updateModelControls();
 
   // 构建消息并发送
@@ -4184,11 +4497,12 @@ async function streamAIResponse(messages, aiMsg) {
       },
       body: JSON.stringify({
         messages,
-        model: appState.selectedModel,
+        model: normalizeSelectedModelId(appState.selectedModel),
         sessionId,
         requestId,
         internetMode: appState.internetMode,
         thinkingMode: appState.thinkingMode,
+        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
         agentMode: appState.agentMode ? 'on' : 'off',
         agentPolicy: appState.agentPolicy,
         qualityProfile: appState.qualityProfile,
@@ -4226,6 +4540,38 @@ async function streamAIResponse(messages, aiMsg) {
 
         try {
           const parsed = JSON.parse(data);
+
+          if (parsed.type === 'quota_info') {
+            applyQuotaInfoEvent(parsed);
+            continue;
+          }
+
+          if (parsed.type === 'model_info') {
+            if (parsed.model) {
+              finalModel = parsed.model;
+              aiMsg.model = finalModel;
+            }
+            continue;
+          }
+
+          if (parsed.type === 'sources' && Array.isArray(parsed.sources)) {
+            sources = parsed.sources;
+            aiMsg.sources = sources;
+            continue;
+          }
+
+          if (parsed.type === 'reasoning' && parsed.content) {
+            reasoningContent += parsed.content;
+            aiMsg.reasoning_content = reasoningContent;
+            continue;
+          }
+
+          if (parsed.type === 'content' && parsed.content) {
+            fullContent += parsed.content;
+            aiMsg.content = fullContent;
+            throttledUpdate(fullContent);
+            continue;
+          }
 
           if (parsed.sources) {
             sources = parsed.sources;
@@ -4842,7 +5188,7 @@ async function sendMessage(message = null) {
 
       const body = document.createElement('pre');
       body.className = `agent-draft-content ${draft.expanded ? 'expanded' : ''}`;
-      body.textContent = draft.content || '';
+      body.textContent = draft.content || (appState.language === 'zh-CN' ? '（草稿生成中或暂无正文）' : '(Draft is streaming or empty)');
 
       header.addEventListener('click', () => {
         const prev = agentRunState.drafts.get(draft.taskId);
@@ -4857,6 +5203,39 @@ async function sendMessage(message = null) {
       item.appendChild(body);
       agentDraftList.appendChild(item);
     }
+  }
+
+  function appendDraftDelta(parsed = {}) {
+    const taskId = Number(parsed.taskId || 0);
+    const keyTaskId = Number.isFinite(taskId) ? taskId : 0;
+    const prev = agentRunState.drafts.get(keyTaskId) || {
+      taskId: keyTaskId,
+      role: parsed.role || 'custom',
+      task: parsed.task || '',
+      summary: '',
+      content: '',
+      usage: {},
+      searchCount: 0,
+      expanded: true
+    };
+
+    if (parsed.reset) {
+      prev.content = '';
+    }
+    const delta = String(parsed.delta || '');
+    if (delta) {
+      prev.content = `${prev.content || ''}${delta}`;
+      const compact = prev.content.replace(/\s+/g, ' ').trim();
+      prev.summary = compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
+    }
+    prev.role = parsed.role || prev.role;
+    prev.task = parsed.task || prev.task;
+    if (prev.expanded !== false) {
+      prev.expanded = true;
+    }
+    agentRunState.drafts.set(keyTaskId, prev);
+    ensureAgentPanelVisible();
+    renderAgentDrafts();
   }
 
   function updateAgentMetrics(metricsPayload = {}) {
@@ -5059,6 +5438,8 @@ async function sendMessage(message = null) {
   const effectiveSystemPrompt = appState.systemPrompt.trim()
     ? `${BUILT_IN_SYSTEM_PROMPT}\n\n以下是用户个人偏好，请参考：\n${appState.systemPrompt}`
     : BUILT_IN_SYSTEM_PROMPT;
+  const selectedDomainMode = appState.pendingDomainMode || null;
+  appState.pendingDomainMode = null;
 
   try {
     const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -5070,9 +5451,10 @@ async function sendMessage(message = null) {
       body: JSON.stringify({
         sessionId: appState.currentSession.id,
         messages: messages,
-        model: appState.selectedModel,
+        model: normalizeSelectedModelId(appState.selectedModel),
         thinkingMode: appState.thinkingMode,
         thinkingBudget: appState.thinkingBudget,
+        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
         internetMode: appState.internetMode,
         agentMode: appState.agentMode ? 'on' : 'off',
         agentPolicy: appState.agentPolicy,
@@ -5082,6 +5464,8 @@ async function sendMessage(message = null) {
         max_tokens: appState.maxTokens,
         frequency_penalty: appState.frequencyPenalty,
         presence_penalty: appState.presencePenalty,
+        domainMode: selectedDomainMode,
+        uiLanguage: appState.language,
         systemPrompt: effectiveSystemPrompt,
         // RAG参数
         spaceId: appState.currentSpaceId,
@@ -5553,10 +5937,17 @@ async function sendMessage(message = null) {
               showModelRoutingInfo(parsed.model, parsed.reason);
             }
           }
+          else if (parsed.type === 'quota_info') {
+            applyQuotaInfoEvent(parsed);
+            addProcessTraceItem('info', appState.language === 'zh-CN'
+              ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
+              : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`);
+          }
           // 新增：处理搜索来源
           else if (parsed.type === 'sources') {
             if (parsed.sources && Array.isArray(parsed.sources)) {
-              currentSources = parsed.sources;
+              currentSources = mergeAndReindexSources(currentSources, parsed.sources);
+              aiMsg.sources = currentSources;
               console.log(`📥 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
               addProcessTraceItem('search', appState.language === 'zh-CN'
                 ? `来源更新: ${currentSources.length} 条`
@@ -5569,8 +5960,8 @@ async function sendMessage(message = null) {
             ensureAgentPanelVisible();
             const rolesText = agentSelectedRoles.map(formatAgentRole).join('、');
             updateStepStatus(stepToolDecision, 'running', appState.language === 'zh-CN'
-              ? `多Agent编排: ${rolesText || '已启用'}`
-              : `Agent plan: ${rolesText || 'enabled'}`);
+              ? `Research Turbo 编排: ${rolesText || '已启用'}`
+              : `Research Turbo plan: ${rolesText || 'enabled'}`);
             addProcessTraceItem('agent', appState.language === 'zh-CN'
               ? `编排完成: ${rolesText || '已启用'}`
               : `Plan ready: ${rolesText || 'enabled'}`);
@@ -5621,16 +6012,20 @@ async function sendMessage(message = null) {
             }
           }
           else if (parsed.type === 'agent_draft') {
-            const taskId = Number(parsed.taskId || 0) || (agentRunState.drafts.size + 1);
+            const parsedTaskId = Number(parsed.taskId);
+            const taskId = Number.isFinite(parsedTaskId)
+              ? parsedTaskId
+              : (agentRunState.drafts.size + 1);
+            const prevDraft = agentRunState.drafts.get(taskId) || null;
             const draft = {
               taskId,
-              role: parsed.role || 'custom',
-              task: parsed.task || '',
-              summary: parsed.summary || '',
-              content: parsed.content || '',
-              usage: parsed.usage || {},
-              searchCount: Number(parsed.searchCount || 0),
-              expanded: false
+              role: parsed.role || prevDraft?.role || 'custom',
+              task: parsed.task || prevDraft?.task || '',
+              summary: parsed.summary || prevDraft?.summary || '',
+              content: parsed.content || prevDraft?.content || '',
+              usage: parsed.usage || prevDraft?.usage || {},
+              searchCount: Number(parsed.searchCount || prevDraft?.searchCount || 0),
+              expanded: prevDraft?.expanded ?? true
             };
             agentRunState.drafts.set(taskId, draft);
             ensureAgentPanelVisible();
@@ -5645,6 +6040,19 @@ async function sendMessage(message = null) {
             addProcessTraceItem('agent', appState.language === 'zh-CN'
               ? `收到草稿 task-${taskId} (${formatAgentRole(draft.role)})`
               : `Draft received task-${taskId} (${formatAgentRole(draft.role)})`);
+          }
+          else if (parsed.type === 'agent_draft_delta') {
+            appendDraftDelta(parsed);
+            if (parsed.taskId != null) {
+              const taskId = Number(parsed.taskId || 0);
+              setTaskState({
+                taskId,
+                stepId: parsed.stepId || `task-${taskId}`,
+                role: parsed.role || 'custom',
+                status: 'running',
+                detail: parsed.task || (appState.language === 'zh-CN' ? '草稿实时生成中...' : 'Draft streaming...')
+              });
+            }
           }
           else if (parsed.type === 'agent_metrics') {
             agentRunState.metrics = parsed;
@@ -5791,6 +6199,9 @@ async function sendMessage(message = null) {
       metrics: agentRunState.metrics || null,
       trace: processTraceEvents
     };
+    if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
+      processTraceSnapshot.forceSubAgents = 4;
+    }
 
     const aiMsg = {
       role: 'assistant',
@@ -6423,6 +6834,11 @@ async function loadUserData() {
 
     // ✅ 修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
+      if (profile.default_model !== undefined) {
+        const rememberedModel = normalizeSelectedModelId(profile.default_model || 'auto');
+        appState.profileDefaultModel = MODELS[rememberedModel] ? rememberedModel : 'auto';
+        appState.selectedModel = appState.profileDefaultModel;
+      }
       if (profile.temperature !== undefined) appState.temperature = parseFloat(profile.temperature) || 0.7;
       if (profile.top_p !== undefined) appState.topP = parseFloat(profile.top_p) || 0.9;
       if (profile.max_tokens !== undefined) appState.maxTokens = parseInt(profile.max_tokens, 10) || 2000;
@@ -6433,15 +6849,18 @@ async function loadUserData() {
         appState.systemPrompt = (profile.system_prompt || '');
         console.log(`✅ 加载系统提示词: ${appState.systemPrompt.length}字符`);
       }
-      // ✅ 修复：只有用户明确开启了思考模式才覆盖默认值（默认关闭）
-      if (profile.thinking_mode === 1 || profile.thinking_mode === true) {
-        appState.thinkingMode = true;
+      // 读取用户偏好；若模型不支持会在 updateModelControls 里自动关闭
+      if (profile.thinking_mode !== undefined) {
+        appState.thinkingMode = (profile.thinking_mode === 1 || profile.thinking_mode === true);
       }
       // ✅ 修复：保持联网模式默认开启，除非用户明确关闭
       // 数据库默认值0表示"未设置"，不覆盖前端默认值true
       // 前端已默认开启联网，所以这里不再处理 internet_mode
 
       updateSettingsUI();
+      updateSelectedModelText(appState.selectedModel);
+      updateModelControls();
+      updateMenuSelection();
       updateToolbarUI();
       console.log('✅ 用户配置已加载到UI');
     } else {
@@ -6461,8 +6880,8 @@ async function loadUserData() {
 
     console.log('✅ 用户数据加载完成');
 
-    // 🎫 获取并显示会员状态
-    await fetchUserMembership();
+    // 🎫 获取并显示会员状态 + 应用模型策略
+    await fetchUserMembership({ applyPolicy: true, initial: true });
     updateUserAreaWithMembership();
   } catch (error) {
     console.error('❌ 加载用户数据失败:', error);
@@ -6809,9 +7228,9 @@ const chatFlowState = {
   edges: [],
   isInitialized: false,
   // Phase 2 新增
-  selectedModel: 'kimi-k2.5',
+  selectedModel: 'auto',
   thinkingMode: false,
-  internetMode: false,
+  internetMode: true,
   isStreaming: false
 };
 
@@ -7591,8 +8010,9 @@ async function sendChatFlowMessage() {
       },
       body: JSON.stringify({
         messages: messages,
-        model: chatFlowState.selectedModel || 'kimi-k2.5',
+        model: normalizeSelectedModelId(chatFlowState.selectedModel || 'auto'),
         thinkingMode: chatFlowState.thinkingMode || false,
+        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
         internetMode: chatFlowState.internetMode || false,
         stream: true,
         systemPrompt: chatFlowSystemPrompt
@@ -7628,8 +8048,14 @@ async function sendChatFlowMessage() {
 
           try {
             const parsed = JSON.parse(data);
-            if (parsed.content) {
-              aiMessage.content += parsed.content;
+            if (parsed.type === 'quota_info') {
+              applyQuotaInfoEvent(parsed);
+              continue;
+            }
+
+            const chunkText = parsed.type === 'content' ? parsed.content : parsed.content;
+            if (chunkText) {
+              aiMessage.content += chunkText;
               // 更新最后一个消息
               const msgContainer = document.getElementById('chatflowMessages');
               const lastMsg = msgContainer?.querySelector('.chatflow-message:last-child .chatflow-message-content');
@@ -8550,6 +8976,7 @@ async function aiDecomposeSelected() {
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
         model: 'kimi-k2.5',
+        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
         stream: false
       })
     });
@@ -9473,9 +9900,8 @@ function initSwipeGestures() {
 }
 
 function selectModel(value, displayName) {
-  appState.selectedModel = value;
-
-  document.getElementById('selectedModelText').textContent = displayName;
+  appState.selectedModel = normalizeSelectedModelId(value);
+  updateSelectedModelText(appState.selectedModel);
 
   document.querySelectorAll('.model-option').forEach(option => {
     option.classList.remove('selected');
@@ -9489,6 +9915,7 @@ function selectModel(value, displayName) {
 
   closeModelDropdown();
   updateModelControls();
+  persistDefaultModelPreference(appState.selectedModel);
 }
 
 // 修复：添加null检查和安全的DOM操作
@@ -10580,14 +11007,50 @@ let userMembershipState = {
   purchasedPoints: 0,
   totalPoints: 0,
   canCheckin: true,
-  createdAt: null
+  createdAt: null,
+  poeDailyLimit: 3,
+  poeUsedToday: 0,
+  poeRemaining: 3,
+  poeResetAt: null
 };
 
+let membershipModelPolicyInitialized = false;
+
+function applyMembershipModelPolicy({ initial = false, previousMembership = null } = {}) {
+  const currentMembership = String(userMembershipState?.membership || 'free');
+  const prev = previousMembership ? String(previousMembership) : null;
+
+  // free 用户：默认智能模型（仅首次或从付费降级时强制）
+  if (currentMembership === 'free') {
+    if (initial || (prev && prev !== 'free') || !membershipModelPolicyInitialized) {
+      appState.selectedModel = 'auto';
+      updateSelectedModelText('auto');
+      updateModelControls();
+      updateMenuSelection();
+    }
+    membershipModelPolicyInitialized = true;
+    return;
+  }
+
+  // Pro/MAX：记住上次模型（首次加载或刚从free升级时应用）
+  if (initial || prev === 'free' || !membershipModelPolicyInitialized) {
+    const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'kimi-k2.5');
+    const targetModel = MODELS[remembered] ? remembered : 'kimi-k2.5';
+    appState.selectedModel = targetModel;
+    updateSelectedModelText(targetModel);
+    updateModelControls();
+    updateMenuSelection();
+  }
+  membershipModelPolicyInitialized = true;
+}
+
 // 获取用户会员状态
-async function fetchUserMembership() {
+async function fetchUserMembership({ applyPolicy = false, initial = false } = {}) {
   try {
     const token = appState.token;
     if (!token) return;
+
+    const previousMembership = userMembershipState?.membership || 'free';
 
     const res = await fetch('/api/user/membership', {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -10601,9 +11064,18 @@ async function fetchUserMembership() {
         purchasedPoints: data.purchasedPoints || 0,
         totalPoints: data.totalPoints || 0,
         canCheckin: data.canCheckin,
-        createdAt: data.createdAt
+        createdAt: data.createdAt,
+        poeDailyLimit: Number(data.poeDailyLimit || 3),
+        poeUsedToday: Number(data.poeUsedToday || 0),
+        poeRemaining: Number(data.poeRemaining || 0),
+        poeResetAt: data.poeResetAt || null
       };
       console.log('✅ 会员状态更新:', userMembershipState);
+      if (applyPolicy) {
+        applyMembershipModelPolicy({ initial, previousMembership });
+      }
+      updatePoeQuotaHint();
+      updateToolbarUI();
     }
   } catch (e) {
     console.log('获取会员状态失败');
@@ -10857,7 +11329,7 @@ function updateSettingsMembership() {
 setInterval(() => {
   const token = localStorage.getItem('token');
   if (token) {
-    fetchUserMembership().then(() => {
+    fetchUserMembership({ applyPolicy: true }).then(() => {
       updateUserAreaWithMembership();
       updateSettingsMembership();
     });
@@ -10866,7 +11338,7 @@ setInterval(() => {
 
 // 页面加载后获取会员状态
 setTimeout(() => {
-  fetchUserMembership().then(() => {
+  fetchUserMembership({ applyPolicy: true }).then(() => {
     updateUserAreaWithMembership();
     updateSettingsMembership();
   });
@@ -11527,7 +11999,7 @@ async function loadAdminSessions() {
               <td>${session.model || '-'}</td>
               <td>${session.messageCount || 0}</td>
               <td>${formatDate(session.updated_at)}</td>
-              <td><button class="admin-action-btn delete" onclick="deleteSession('${session.id}')">删除</button></td>
+              <td><button class="admin-action-btn delete" onclick="deleteAdminSession('${session.id}')">删除</button></td>
             </tr>
           `;
     });
@@ -11541,7 +12013,7 @@ async function loadAdminSessions() {
 }
 
 // 删除会话
-async function deleteSession(sessionId) {
+async function deleteAdminSession(sessionId) {
   if (!confirm('确定要删除这个会话及其所有消息吗？')) return;
 
   try {
