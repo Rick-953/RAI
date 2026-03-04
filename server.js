@@ -29,6 +29,44 @@ if (trustProxyEnv) {
 app.set('trust proxy', trustProxySetting);
 const PORT = process.env.PORT || 3009;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const ENV_API_KEYS = {
+    TAVILY_API_KEY: (process.env.TAVILY_API_KEY || '').trim(),
+    ALIYUN_API_KEY: (process.env.ALIYUN_API_KEY || '').trim(),
+    DEEPSEEK_API_KEY: (process.env.DEEPSEEK_API_KEY || '').trim(),
+    SILICONFLOW_API_KEY: (process.env.SILICONFLOW_API_KEY || '').trim(),
+    GOOGLE_GEMINI_API_KEY: (process.env.GOOGLE_GEMINI_API_KEY || '').trim(),
+    POE_API_KEY: (process.env.POE_API_KEY || '').trim()
+};
+
+const POE_STATIC_MODEL_MAP = {
+    'poe-claude': 'claude-haiku-4.5',
+    'poe-gpt': 'gpt-5-nano',
+    'poe-grok': 'grok-4.1-fast-reasoning',
+    'poe-gemini': 'gemini-3-flash'
+};
+
+const POE_ALIAS_HINTS = {
+    'poe-claude': ['claude', 'haiku'],
+    'poe-gpt': ['gpt', 'nano'],
+    'poe-grok': ['grok'],
+    'poe-gemini': ['gemini', 'flash']
+};
+
+const POE_MODEL_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const POE_DAILY_LIMIT_FREE = 3;
+
+const poeModelRegistry = {
+    hasSuccessfulSync: false,
+    syncing: false,
+    lastSyncAt: null,
+    lastError: '',
+    modelIds: [],
+    aliasResolvedModels: { ...POE_STATIC_MODEL_MAP },
+    aliasAvailability: Object.keys(POE_STATIC_MODEL_MAP).reduce((acc, alias) => {
+        acc[alias] = true;
+        return acc;
+    }, {})
+};
 
 // ==================== 智能路由引擎核心 v4 ====================
 
@@ -256,39 +294,39 @@ function routeModel(evaluation) {
     const keywords = evaluation.keywords;
     let model, cost, reason, isForceMax = false;
 
-    // 强制Max判断 (最高优先级)
+    // 强制高质量场景优先 Kimi；余额不足时会自动回退到免费 Qwen2.5-7B
     if (keywords.forceMax.length > 0) {
-        model = 'qwen-max';
+        model = 'kimi-k2.5';
         cost = 0.01;
-        reason = `强制Max: "${keywords.forceMax[0]}"等关键词`;
+        reason = `强制高质量: "${keywords.forceMax[0]}"等关键词`;
         isForceMax = true;
     }
-    // 专业词汇阈值判断
+    // 专业词汇高密度：优先 Kimi
     else if (keywords.professional.count >= config.professional.maxThreshold) {
-        model = 'qwen-max';
+        model = 'kimi-k2.5';
         cost = 0.01;
-        reason = `专业词汇(${keywords.professional.count}个) → Max`;
+        reason = `专业词汇(${keywords.professional.count}个) → Kimi K2.5`;
     }
+    // 中高复杂：DeepSeek
     else if (keywords.professional.count >= config.professional.threshold) {
-        model = 'qwen-plus';
+        model = 'deepseek-v3';
         cost = 0.001;
-        reason = `专业词汇(${keywords.professional.count}个) → Plus`;
+        reason = `专业词汇(${keywords.professional.count}个) → DeepSeek`;
     }
-    // 分数阈值判断
     else if (score < config.thresholds.t1) {
-        model = 'qwen-flash';
-        cost = 0.0001;
-        reason = `分数${score.toFixed(2)} < ${config.thresholds.t1} → Flash`;
+        model = 'qwen2.5-7b';
+        cost = 0;
+        reason = `分数${score.toFixed(2)} < ${config.thresholds.t1} → Qwen2.5-7B(免费)`;
     }
     else if (score < config.thresholds.t2) {
-        model = 'qwen-plus';
+        model = 'deepseek-v3';
         cost = 0.001;
-        reason = `分数${score.toFixed(2)}在中等范围 → Plus`;
+        reason = `分数${score.toFixed(2)}在中等范围 → DeepSeek`;
     }
     else {
-        model = 'qwen-max';
+        model = 'kimi-k2.5';
         cost = 0.01;
-        reason = `分数${score.toFixed(2)} ≥ ${config.thresholds.t2} → Max`;
+        reason = `分数${score.toFixed(2)} ≥ ${config.thresholds.t2} → Kimi K2.5`;
     }
 
     return { model, cost, reason, isForceMax };
@@ -306,7 +344,7 @@ function analyzeMessage(message) {
     if (presetAnswers[message.trim()]) {
         // ✅ 修复：返回完整的分析对象，包含所有必需字段
         return {
-            model: 'qwen-flash',
+            model: 'qwen2.5-7b',
             cost: 0,
             reason: '预设答案(极速响应)',
             isForceMax: false,
@@ -346,7 +384,7 @@ function analyzeMessage(message) {
 // ==================== 网页搜索功能 (Tavily API) ====================
 
 // Tavily API 配置
-const TAVILY_API_KEY = 'tvly-';
+const TAVILY_API_KEY = ENV_API_KEYS.TAVILY_API_KEY;
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 // ==================== 原生工具调用 (Function Calling) ====================
@@ -373,7 +411,8 @@ const TOOL_DEFINITIONS = [{
 // 工具执行器映射
 const TOOL_EXECUTORS = {
     web_search: async (args, searchDepth = 'basic') => {
-        const maxResults = searchDepth === 'advanced' ? 20 : 5;
+        // 成本控制：无论是否思考，每次搜索都只取5条
+        const maxResults = 5;
         console.log(`🔧 执行工具 web_search: query="${args.query}", depth=${searchDepth}, max=${maxResults}`);
         return await performWebSearch(args.query, maxResults, searchDepth);
     }
@@ -403,6 +442,661 @@ const HIGH_ACCURACY_KEYWORDS = [
     '高准确', '高精度', '严谨', '严格', '请务必准确',
     'high accuracy', 'strictly accurate', 'double check'
 ];
+
+// ==================== 关键词规则注入引擎（首版硬编码） ====================
+const PROMPT_INJECTION_RULES = [
+    {
+        id: 'logic_carwash_distance',
+        enabled: true,
+        priority: 100,
+        match: {
+            keywords: ['洗车', '50', '开车', '走路'],
+            minMatchCount: 3,
+            scope: 'current_message',
+            caseInsensitive: true
+        },
+        mustIncludeAny: ['洗车'],
+        excludeIfAny: [],
+        instruction: [
+            '这是常识逻辑题时，优先指出“洗的是车不是人”。',
+            '核心结论：默认应“开车去洗车”，并说明走路无法把车带去洗。',
+            '若用户补充“车不在身边/车已在店里”等前提，再按新前提重判。'
+        ].join('\n'),
+        notes: '洗车场景逻辑强化'
+    },
+    {
+        id: 'logic_parents_marriage_not_invited',
+        enabled: true,
+        priority: 90,
+        match: {
+            keywords: ['爸妈', '父母', '结婚', '没叫我', '不叫我', '没邀请我', '难过', '伤心'],
+            minMatchCount: 3,
+            scope: 'current_message',
+            caseInsensitive: true
+        },
+        mustIncludeAny: ['结婚'],
+        excludeIfAny: [],
+        instruction: [
+            '回答需明确提醒：“你爸妈结婚时你还没出生，所以‘没叫你’不是针对你。”',
+            '表达顺序：先简短共情，再给逻辑澄清，再给安抚建议（1-2条）。'
+        ].join('\n'),
+        notes: '情绪+逻辑澄清场景'
+    }
+];
+
+function normalizeForRuleMatch(text = '', caseInsensitive = true) {
+    let normalized = String(text || '');
+    if (caseInsensitive) normalized = normalized.toLowerCase();
+    return normalized
+        .replace(/[\r\n\t\s]+/g, '')
+        .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
+}
+
+function matchRule(rule, userMessage) {
+    if (!rule || !rule.enabled) {
+        return { matched: false, matchedKeywords: [], score: 0 };
+    }
+
+    const matchConfig = rule.match || {};
+    const caseInsensitive = matchConfig.caseInsensitive !== false;
+    const sourceText = normalizeForRuleMatch(userMessage, caseInsensitive);
+    if (!sourceText) {
+        return { matched: false, matchedKeywords: [], score: 0 };
+    }
+
+    const keywords = Array.isArray(matchConfig.keywords) ? matchConfig.keywords : [];
+    const matchedKeywords = [];
+    for (const kw of keywords) {
+        const token = normalizeForRuleMatch(kw, caseInsensitive);
+        if (!token) continue;
+        if (sourceText.includes(token)) matchedKeywords.push(String(kw));
+    }
+
+    const minMatchCount = Number(matchConfig.minMatchCount || 1);
+    if (matchedKeywords.length < minMatchCount) {
+        return {
+            matched: false,
+            matchedKeywords,
+            score: keywords.length > 0 ? matchedKeywords.length / keywords.length : 0
+        };
+    }
+
+    if (Array.isArray(rule.mustIncludeAny) && rule.mustIncludeAny.length > 0) {
+        const mustPass = rule.mustIncludeAny.some((kw) => {
+            const token = normalizeForRuleMatch(kw, caseInsensitive);
+            return token ? sourceText.includes(token) : false;
+        });
+        if (!mustPass) {
+            return {
+                matched: false,
+                matchedKeywords,
+                score: keywords.length > 0 ? matchedKeywords.length / keywords.length : 0
+            };
+        }
+    }
+
+    if (Array.isArray(rule.excludeIfAny) && rule.excludeIfAny.length > 0) {
+        const blocked = rule.excludeIfAny.some((kw) => {
+            const token = normalizeForRuleMatch(kw, caseInsensitive);
+            return token ? sourceText.includes(token) : false;
+        });
+        if (blocked) {
+            return {
+                matched: false,
+                matchedKeywords,
+                score: keywords.length > 0 ? matchedKeywords.length / keywords.length : 0
+            };
+        }
+    }
+
+    return {
+        matched: true,
+        matchedKeywords,
+        score: keywords.length > 0 ? matchedKeywords.length / keywords.length : 1
+    };
+}
+
+function resolvePromptInjection(userMessage) {
+    const candidates = [];
+    for (const rule of PROMPT_INJECTION_RULES) {
+        if (!rule?.enabled) continue;
+        if (rule?.match?.scope && rule.match.scope !== 'current_message') continue;
+        const result = matchRule(rule, userMessage);
+        if (!result.matched) continue;
+        candidates.push({
+            rule,
+            matchedKeywords: result.matchedKeywords,
+            score: result.score
+        });
+    }
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => {
+        const pa = Number(a.rule.priority || 0);
+        const pb = Number(b.rule.priority || 0);
+        if (pb !== pa) return pb - pa;
+        return (b.score || 0) - (a.score || 0);
+    });
+
+    const selected = candidates[0];
+    return {
+        ruleId: selected.rule.id,
+        instruction: String(selected.rule.instruction || '').trim(),
+        matchedKeywords: selected.matchedKeywords
+    };
+}
+
+function buildRuleInjectionInstruction(resolvedRule) {
+    if (!resolvedRule?.instruction) return '';
+    const matched = Array.isArray(resolvedRule.matchedKeywords)
+        ? resolvedRule.matchedKeywords.join('、')
+        : '';
+    return [
+        '[规则注入-高优先级]',
+        '你必须严格遵守以下逻辑约束（优先级高于一般风格要求）：',
+        `规则ID: ${resolvedRule.ruleId || 'unknown'}`,
+        matched ? `命中关键词: ${matched}` : '',
+        String(resolvedRule.instruction || '').trim()
+    ].filter(Boolean).join('\n').trim();
+}
+
+const DOMAIN_MODE_ALIASES = {
+    write: 'writing',
+    writing: 'writing',
+    writer: 'writing',
+    '写作': 'writing',
+    code: 'coding',
+    coding: 'coding',
+    programmer: 'coding',
+    programming: 'coding',
+    '代码': 'coding',
+    search: 'research',
+    research: 'research',
+    '搜索': 'research',
+    '研究': 'research',
+    translate: 'translation',
+    translation: 'translation',
+    translator: 'translation',
+    '翻译': 'translation'
+};
+
+const DOMAIN_LABELS = {
+    writing: { zh: '写作', en: 'Writing' },
+    coding: { zh: '代码', en: 'Coding' },
+    research: { zh: '搜索/研究', en: 'Search/Research' },
+    translation: { zh: '翻译', en: 'Translation' }
+};
+
+const DOMAIN_SYSTEM_PROMPTS = {
+    writing: {
+        en: `You are an elite writing consultant with expertise across literary fiction, copywriting, journalism, and content strategy.
+
+CORE DIRECTIVES:
+- Analyze the user's intent, audience, tone, and purpose BEFORE writing
+- Match voice and register precisely: formal/casual/poetic/persuasive
+- Structure with narrative tension: hook -> development -> resolution
+- Prioritize specificity over generality; concrete details over abstractions
+- Every sentence must earn its place — cut filler, amplify signal
+
+OUTPUT PROTOCOL:
+1. Clarify ambiguities with ONE targeted question if needed
+2. Produce the primary draft
+3. Offer 1-2 variant approaches (different tone/angle/structure)
+4. End with brief craft notes explaining key decisions
+
+QUALITY MARKERS: vivid imagery, rhythmic sentence variation, emotional resonance, clear throughline, memorable opening/closing.`,
+        zh: `你是一位顶级写作顾问，精通文学创作、文案策划、新闻写作与内容策略。
+
+【核心指令】
+- 动笔前先分析用户意图、目标受众、语气基调与写作目的
+- 精准匹配文风与语域：正式 / 轻松 / 诗意 / 说服性
+- 以叙事张力构建结构：钩子开篇 -> 层层推进 -> 有力收尾
+- 用具体细节代替空泛表述，用鲜活意象代替抽象概念
+- 每一句话都必须有存在价值，删除冗余，强化信号
+
+【输出规范】
+1. 若信息不足，只提一个最关键的问题进行确认
+2. 输出主要正文内容
+3. 提供 1-2 个备选方向（不同语气 / 角度 / 结构）
+4. 附上简短的「创作说明」，解释关键写作决策
+
+【质量标准】
+意象鲜明，句式富有节奏，情感共鸣，主线清晰，开头结尾令人印象深刻。`
+    },
+    coding: {
+        en: `You are a senior software engineer with 15+ years across full-stack, systems, and architecture. You write production-grade code.
+
+CORE DIRECTIVES:
+- Understand requirements fully before coding; identify edge cases first
+- Write clean, readable, maintainable code, not just functional code
+- Follow language-specific best practices and idiomatic patterns
+- Consider: performance, security, error handling, scalability
+- Never assume; ask about constraints (language version, framework, env)
+
+OUTPUT PROTOCOL:
+1. Restate the problem in your own words to confirm understanding
+2. Outline your approach BEFORE writing code
+3. Provide complete, runnable code with inline comments for non-obvious logic
+4. Include: error handling, input validation, edge case notes
+5. Add a "Potential Improvements" section for production considerations
+
+QUALITY MARKERS: O(n) complexity awareness, DRY principles, SOLID design, security-conscious patterns, test coverage suggestions.`,
+        zh: `你是一位拥有 15 年以上经验的资深软件工程师，精通全栈开发、系统设计与架构规划，只写生产级代码。
+
+【核心指令】
+- 完整理解需求后再动手，优先识别边界条件与异常情况
+- 代码要干净、可读、易维护，不只是能跑起来
+- 遵循对应语言的最佳实践与惯用模式
+- 全面考量：性能、安全性、错误处理、可扩展性
+- 遇到不确定的约束（语言版本、框架、环境）主动询问
+
+【输出规范】
+1. 用自己的话复述问题，确认理解无误
+2. 写代码前先阐述实现思路
+3. 提供完整可运行的代码，对非显而易见的逻辑加注释
+4. 包含：错误处理、输入校验、边界情况说明
+5. 末尾附「可优化方向」供生产环境参考
+
+【质量标准】
+时间复杂度意识，DRY 原则，SOLID 设计，安全编码习惯，测试覆盖建议。`
+    },
+    research: {
+        en: `You are a research analyst and information strategist trained in academic research, fact-checking, and knowledge synthesis.
+
+CORE DIRECTIVES:
+- Decompose complex queries into precise sub-questions
+- Distinguish between: verified facts / expert consensus / contested claims / speculation
+- Cite source types (peer-reviewed / official / journalistic / anecdotal)
+- Flag information currency, and note if data may be outdated
+- Identify knowledge gaps and conflicting evidence explicitly
+
+OUTPUT PROTOCOL:
+1. Reframe the query for maximum precision
+2. Deliver findings in layers: Summary -> Details -> Evidence -> Caveats
+3. Use confidence levels: [High / Medium / Low / Unverified]
+4. Highlight what is NOT known or disputed
+5. Suggest follow-up searches or primary sources
+
+QUALITY MARKERS: epistemic honesty, source triangulation, bias awareness, clear separation of fact vs. interpretation.`,
+        zh: `你是一位研究分析师与信息策略专家，擅长学术研究、事实核查与知识综合归纳。
+
+【核心指令】
+- 将复杂问题拆解为精确的子问题
+- 严格区分：已验证事实 / 专家共识 / 争议观点 / 推测性内容
+- 标注信息来源类型（学术论文 / 官方数据 / 新闻报道 / 坊间说法）
+- 注明信息时效性，若数据可能过时需显式提示
+- 明确指出知识盲区与相互矛盾的证据
+
+【输出规范】
+1. 重新精确表述问题
+2. 分层输出结论：摘要 -> 详情 -> 证据 -> 注意事项
+3. 标注可信度等级：【高】【中】【低】【待核实】
+4. 突出显示「尚未明确」或「存在争议」的部分
+5. 建议延伸搜索方向或一手信息来源
+
+【质量标准】
+认知诚实，多源交叉验证，偏见意识，事实与解读清晰分离。`
+    },
+    translation: {
+        en: `You are a professional translator and computational linguist with deep expertise in cross-cultural communication, localization, and linguistics.
+
+CORE DIRECTIVES:
+- Prioritize meaning fidelity over word-for-word literalism
+- Preserve: tone, register, cultural nuance, rhetorical effect, humor
+- Identify untranslatable concepts and handle them explicitly
+- Adapt idioms, metaphors, and cultural references for target audience
+- Maintain stylistic fingerprint of the original author
+
+OUTPUT PROTOCOL:
+1. Identify source language, target language, domain, and register
+2. Deliver primary translation
+3. Annotate culturally significant choices with [TN: translator's note]
+4. For ambiguous source text, provide 2 interpretations with reasoning
+5. Flag any terms with intentional localization decisions
+
+QUALITY MARKERS: natural target-language flow, cultural equivalence, preserved subtext, consistent terminology, register alignment.
+
+SPECIAL MODES (invoke as needed):
+- [LITERAL] for academic/legal precision
+- [LOCALIZE] for marketing/consumer content
+- [PRESERVE STYLE] for literary/creative work`,
+        zh: `你是一位职业译者与计算语言学家，深度精通跨文化传播、本地化策略与语言学理论。
+
+【核心指令】
+- 以意义忠实为首要原则，而非逐字对译
+- 完整保留：语气、语域、文化内涵、修辞效果、幽默感
+- 识别不可直译的概念，并给出显式处理方案
+- 对习语、隐喻、文化典故进行目标语读者适配
+- 保留原作者的文体风格与个人语言特征
+
+【输出规范】
+1. 识别源语言、目标语言、专业领域与语域风格
+2. 输出主要译文
+3. 对有文化负载的翻译决策加注【译注】说明
+4. 源文本存在歧义时，提供两种理解方向并附理由
+5. 标记所有经过有意本地化处理的术语
+
+【质量标准】
+目标语行文自然，文化等效，潜台词保留，术语一致，语域对齐。
+
+【特殊模式（按需启用）】
+[直译模式] 适用于学术/法律类精确场景
+[本地化模式] 适用于营销/消费者内容
+[保留文风模式] 适用于文学/创意写作`
+    }
+};
+
+function normalizeDomainMode(value = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const lower = raw.toLowerCase();
+    return DOMAIN_MODE_ALIASES[lower] || DOMAIN_MODE_ALIASES[raw] || '';
+}
+
+function resolvePromptLanguage(uiLanguage = '', userMessage = '') {
+    const lang = String(uiLanguage || '').toLowerCase();
+    if (lang.startsWith('zh')) return 'zh';
+    if (lang.startsWith('en')) return 'en';
+
+    const text = String(userMessage || '');
+    const zhCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const enCount = (text.match(/[a-zA-Z]/g) || []).length;
+    return zhCount >= enCount ? 'zh' : 'en';
+}
+
+function resolveDomainSystemPrompt({ domainMode = '', uiLanguage = '', userMessage = '' }) {
+    const normalizedDomainMode = normalizeDomainMode(domainMode);
+    if (!normalizedDomainMode) return null;
+
+    const promptLanguage = resolvePromptLanguage(uiLanguage, userMessage);
+    const promptPack = DOMAIN_SYSTEM_PROMPTS[normalizedDomainMode];
+    const promptText = String(promptPack?.[promptLanguage] || promptPack?.en || '').trim();
+    if (!promptText) return null;
+
+    return {
+        domainMode: normalizedDomainMode,
+        promptLanguage,
+        promptText
+    };
+}
+
+function buildDomainInjectionInstruction(resolvedDomainPrompt) {
+    if (!resolvedDomainPrompt?.promptText) return '';
+    const mode = resolvedDomainPrompt.domainMode;
+    const lang = resolvedDomainPrompt.promptLanguage === 'zh' ? 'zh' : 'en';
+    const modeLabel = DOMAIN_LABELS[mode]?.[lang] || mode;
+    const langLabel = lang === 'zh' ? '中文' : 'English';
+    return [
+        '[领域系统提示词]',
+        `当前功能模式: ${modeLabel}`,
+        `输出语言优先: ${langLabel}`,
+        '在不违反安全、合规和真实性原则前提下，优先遵循以下专业规范：',
+        resolvedDomainPrompt.promptText
+    ].join('\n').trim();
+}
+
+function isInsufficientBalanceError(status, errorText = '') {
+    const text = String(errorText || '').toLowerCase();
+    if (![402, 403].includes(Number(status))) return false;
+    return (
+        text.includes('"code":30001') ||
+        text.includes('code\\":30001') ||
+        text.includes('insufficient') ||
+        text.includes('account balance') ||
+        text.includes('余额不足')
+    );
+}
+
+function normalizeReasoningProfile(value = 'low') {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (['low', 'medium', 'high', 'mixed'].includes(normalized)) return normalized;
+    return 'low';
+}
+
+function isPoeModelAlias(modelName = '') {
+    return Object.prototype.hasOwnProperty.call(POE_STATIC_MODEL_MAP, String(modelName || '').trim());
+}
+
+function pickPoeModelByHints(modelIds = [], hints = []) {
+    if (!Array.isArray(modelIds) || modelIds.length === 0) return '';
+    if (!Array.isArray(hints) || hints.length === 0) return '';
+
+    const loweredHints = hints.map((h) => String(h || '').toLowerCase()).filter(Boolean);
+    if (loweredHints.length === 0) return '';
+
+    const fullMatch = modelIds.find((id) => {
+        const text = String(id || '').toLowerCase();
+        return loweredHints.every((hint) => text.includes(hint));
+    });
+    if (fullMatch) return fullMatch;
+
+    return modelIds.find((id) => String(id || '').toLowerCase().includes(loweredHints[0])) || '';
+}
+
+function resolvePoeModelAlias(alias = '') {
+    const key = String(alias || '').trim();
+    const staticModel = POE_STATIC_MODEL_MAP[key];
+    if (!staticModel) {
+        return {
+            alias: key,
+            available: false,
+            model: '',
+            source: 'unknown'
+        };
+    }
+
+    if (!poeModelRegistry.hasSuccessfulSync) {
+        return {
+            alias: key,
+            available: true,
+            model: staticModel,
+            source: 'static'
+        };
+    }
+
+    const available = !!poeModelRegistry.aliasAvailability[key];
+    const resolvedModel = poeModelRegistry.aliasResolvedModels[key] || staticModel;
+    return {
+        alias: key,
+        available,
+        model: resolvedModel,
+        source: available ? 'dynamic' : 'dynamic_unavailable'
+    };
+}
+
+function buildPoeExtraBody(modelAlias, reasoningProfile = 'low') {
+    const alias = String(modelAlias || '').trim();
+    const profile = normalizeReasoningProfile(reasoningProfile);
+
+    if (alias === 'poe-gpt') {
+        return {
+            reasoning_effort: profile === 'mixed' ? 'medium' : profile
+        };
+    }
+
+    if (alias === 'poe-gemini') {
+        if (profile === 'mixed') return null;
+        const geminiThinkingMap = {
+            low: 'minimal',
+            medium: 'low',
+            high: 'high'
+        };
+        return {
+            thinking_level: geminiThinkingMap[profile] || 'minimal'
+        };
+    }
+
+    if (alias === 'poe-claude') {
+        const claudeBudgetMap = {
+            low: 1024,
+            medium: 4096,
+            high: 8192,
+            mixed: 4096
+        };
+        return {
+            thinking_budget: claudeBudgetMap[profile] || 1024
+        };
+    }
+
+    // grok 首版不传 reasoning 参数，兼容优先
+    return null;
+}
+
+async function syncPoeModels() {
+    if (poeModelRegistry.syncing) return;
+    if (!ENV_API_KEYS.POE_API_KEY) return;
+
+    poeModelRegistry.syncing = true;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+        const response = await fetch('https://api.poe.com/v1/models', {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${ENV_API_KEYS.POE_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errText.substring(0, 160)}`);
+        }
+
+        const payload = await response.json();
+        const data = Array.isArray(payload?.data) ? payload.data : [];
+        const modelIds = data
+            .map((item) => String(item?.id || item?.name || '').trim())
+            .filter(Boolean);
+
+        const nextResolvedModels = { ...POE_STATIC_MODEL_MAP };
+        const nextAvailability = {};
+
+        for (const alias of Object.keys(POE_STATIC_MODEL_MAP)) {
+            const staticModel = POE_STATIC_MODEL_MAP[alias];
+            const exactMatch = modelIds.find((id) => id.toLowerCase() === staticModel.toLowerCase());
+            const hintedMatch = pickPoeModelByHints(modelIds, POE_ALIAS_HINTS[alias] || []);
+            const resolvedModel = exactMatch || hintedMatch || staticModel;
+            const available = !!(exactMatch || hintedMatch);
+            nextResolvedModels[alias] = resolvedModel;
+            nextAvailability[alias] = available;
+        }
+
+        poeModelRegistry.modelIds = modelIds;
+        poeModelRegistry.aliasResolvedModels = nextResolvedModels;
+        poeModelRegistry.aliasAvailability = nextAvailability;
+        poeModelRegistry.lastSyncAt = new Date().toISOString();
+        poeModelRegistry.lastError = '';
+        poeModelRegistry.hasSuccessfulSync = true;
+
+        const availableCount = Object.values(nextAvailability).filter(Boolean).length;
+        console.log(`✅ poe_model_sync success models=${modelIds.length} alias_available=${availableCount}/4 elapsed=${Date.now() - startedAt}ms`);
+    } catch (error) {
+        poeModelRegistry.lastSyncAt = new Date().toISOString();
+        poeModelRegistry.lastError = String(error?.message || error);
+        console.warn(`⚠️ poe_model_sync failed: ${poeModelRegistry.lastError}`);
+    } finally {
+        clearTimeout(timeoutId);
+        poeModelRegistry.syncing = false;
+    }
+}
+
+function startPoeModelSyncJob() {
+    if (!ENV_API_KEYS.POE_API_KEY) return;
+    syncPoeModels().catch((err) => {
+        console.warn(`⚠️ poe_model_sync startup failed: ${err?.message || err}`);
+    });
+    setInterval(() => {
+        syncPoeModels().catch((err) => {
+            console.warn(`⚠️ poe_model_sync interval failed: ${err?.message || err}`);
+        });
+    }, POE_MODEL_SYNC_INTERVAL_MS);
+}
+
+const THINKING_BUDGET_MODELS = new Set([
+    'THUDM/GLM-Z1-9B-0414',
+    'THUDM/GLM-4.1V-9B-Thinking'
+]);
+
+function isKimiK25ActualModel(modelName = '') {
+    return /Kimi-K2\.5/i.test(String(modelName || ''));
+}
+
+function supportsThinkingBudgetModel(modelName = '') {
+    return THINKING_BUDGET_MODELS.has(String(modelName || '').trim());
+}
+
+function resolveThinkingBudgetForModel(modelName = '', thinkingMode = false, thinkingBudget = 1024) {
+    if (!supportsThinkingBudgetModel(modelName)) return null;
+
+    // 对于默认思考模型，用极低budget模拟“快速模式”
+    if (!thinkingMode) return 8;
+
+    const parsed = parseInt(thinkingBudget, 10);
+    if (isNaN(parsed) || parsed <= 0) return 1024;
+    return Math.max(1, Math.min(parsed, 32768));
+}
+
+function buildSiliconflowFreeFallbackRequestBody({
+    actualModel,
+    messages,
+    internetMode,
+    thinkingMode,
+    thinkingBudget,
+    temperature,
+    top_p,
+    max_tokens
+}) {
+    const body = {
+        model: actualModel,
+        messages,
+        max_tokens: parseInt(max_tokens, 10) || 2000,
+        stream: true,
+        temperature: parseFloat(temperature) || 0.7,
+        top_p: parseFloat(top_p) || 0.9
+    };
+
+    const budget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
+    if (budget !== null) {
+        body.thinking_budget = budget;
+    }
+
+    // 硅基免费模型使用工具调用来联网，不走阿里云 enable_search
+    if (internetMode) {
+        body.tools = TOOL_DEFINITIONS;
+        body.tool_choice = 'auto';
+    }
+
+    return body;
+}
+
+function buildOpenAIFallbackRequestBody({
+    actualModel,
+    messages,
+    internetMode,
+    temperature,
+    top_p,
+    max_tokens
+}) {
+    const body = {
+        model: actualModel,
+        messages,
+        max_tokens: parseInt(max_tokens, 10) || 2000,
+        stream: true,
+        temperature: parseFloat(temperature) || 0.7,
+        top_p: parseFloat(top_p) || 0.9
+    };
+
+    if (internetMode) {
+        body.tools = TOOL_DEFINITIONS;
+        body.tool_choice = 'auto';
+    }
+
+    return body;
+}
 
 function normalizeAgentMode(value) {
     if (value === 'on' || value === true || value === 'true' || value === 1 || value === '1') {
@@ -625,10 +1319,7 @@ function applyQualityGate({ qualityProfile, content, sources, fingerprint }) {
 }
 
 function buildConservativeFallbackNote(fingerprint) {
-    if (fingerprint?.freshnessNeed) {
-        return '\n\n[校验提示] 当前结果已尽力核验，但部分实时信息来源覆盖不足，请以官方最新发布为准。';
-    }
-    return '\n\n[校验提示] 当前回答存在不确定点，已采用保守表述；如需更高精度，请提供更多上下文。';
+    return '';
 }
 
 function runAgentOrchestrator({ res, userMessage, internetMode, agentMode, agentPolicy, qualityProfile }) {
@@ -737,18 +1428,18 @@ async function generateAISearchQuery(userMessage, conversationHistory = []) {
  * 根据模型类型决定Tavily搜索深度
  * @param {string} modelName - 实际使用的模型名称
  * @param {boolean} isThinkingMode - 是否开启思考模式
- * @returns {string} 'fast' | 'basic' | 'advanced'
+ * @returns {string} 'ultra-fast' | 'fast' | 'basic'
  */
 function getTavilySearchDepth(modelName, isThinkingMode = false) {
-    // 思考模型使用高级搜索 (2 credits)
+    // 思考模式固定使用 basic
     if (isThinkingMode || modelName.includes('Thinking')) {
-        return 'advanced';
+        return 'basic';
     }
-    // 快速/轻量模型使用快速搜索 (1 credit)
+    // 快速/轻量模型优先 ultra-fast
     if (modelName.includes('flash') || modelName.includes('8B') || modelName.includes('Instruct')) {
-        return 'fast';
+        return 'ultra-fast';
     }
-    // 默认使用基础搜索 (1 credit)
+    // 默认使用基础搜索
     return 'basic';
 }
 
@@ -756,13 +1447,18 @@ function getTavilySearchDepth(modelName, isThinkingMode = false) {
  * 执行网页搜索 (使用Tavily API)
  * Tavily是专为AI代理设计的搜索API，提供高质量、实时的搜索结果
  * @param {string} query - 搜索查询
- * @param {number} maxResults - 最大结果数量 (默认5，最大20)
- * @param {string} searchDepth - 搜索深度 'fast'|'basic'|'advanced'
+ * @param {number} maxResults - 最大结果数量
+ * @param {string} searchDepth - 搜索深度 'ultra-fast'|'fast'|'basic'
  * @returns {Promise<Array>} 搜索结果数组
  */
 async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
     return new Promise((resolve) => {
         try {
+            if (!TAVILY_API_KEY) {
+                console.error('❌ 缺少 TAVILY_API_KEY，跳过联网搜索');
+                resolve({ results: [], images: [] });
+                return;
+            }
             console.log(`🔍 执行Tavily网页搜索: "${query}" (深度: ${searchDepth})`);
 
             // 构建请求体
@@ -772,7 +1468,7 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
                 search_depth: searchDepth,
                 include_answer: true,          // 包含AI生成的摘要答案
                 include_raw_content: false,    // 不需要原始HTML内容
-                max_results: Math.min(maxResults, 20),  // 限制最大20条
+                max_results: Math.max(1, parseInt(maxResults, 10) || 5),
                 include_images: true,          // 开启图片搜索
                 include_favicon: true,         // 包含网站图标
                 topic: 'general'               // 通用搜索
@@ -1260,6 +1956,7 @@ async function callK2p5NonStream({
     actualModel,
     messages,
     thinkingMode,
+    thinkingBudget = 1024,
     internetMode,
     maxTokens,
     maxToolRounds = 2,
@@ -1280,9 +1977,16 @@ async function callK2p5NonStream({
             model: actualModel,
             messages: conversationMessages,
             max_tokens: Math.max(256, parseInt(maxTokens, 10) || 2000),
-            stream: false,
-            enable_thinking: !!thinkingMode
+            stream: false
         };
+        if (isKimiK25ActualModel(actualModel)) {
+            requestBody.enable_thinking = !!thinkingMode;
+        } else {
+            const budget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
+            if (budget !== null) {
+                requestBody.thinking_budget = budget;
+            }
+        }
 
         if (internetMode) {
             requestBody.tools = TOOL_DEFINITIONS;
@@ -1320,6 +2024,13 @@ async function callK2p5NonStream({
         const choice = result.choices?.[0] || {};
         const message = choice.message || {};
         const finishReason = choice.finish_reason || 'stop';
+        const roundReasoningContent = (
+            (typeof message.reasoning_content === 'string' && message.reasoning_content) ||
+            (typeof message.reasoning === 'string' && message.reasoning) ||
+            (typeof choice.reasoning_content === 'string' && choice.reasoning_content) ||
+            (typeof choice.reasoning === 'string' && choice.reasoning) ||
+            ''
+        );
 
         const currentUsage = normalizeUsage(result.usage);
         totalUsage.prompt_tokens += currentUsage.prompt_tokens;
@@ -1329,8 +2040,8 @@ async function callK2p5NonStream({
         if (typeof message.content === 'string') {
             responseContent = message.content;
         }
-        if (typeof message.reasoning_content === 'string') {
-            reasoningContent = message.reasoning_content;
+        if (roundReasoningContent) {
+            reasoningContent = roundReasoningContent;
         }
 
         if (!internetMode || finishReason !== 'tool_calls' || !Array.isArray(message.tool_calls) || round >= maxToolRounds) {
@@ -1380,20 +2091,25 @@ async function callK2p5NonStream({
             });
         }
 
+        const assistantToolCallMessage = {
+            role: 'assistant',
+            content: message.content || null,
+            tool_calls: normalizedCalls.map((call) => ({
+                id: call.id,
+                type: 'function',
+                function: {
+                    name: call.function.name,
+                    arguments: call.function.arguments
+                }
+            }))
+        };
+        if (thinkingMode) {
+            assistantToolCallMessage.reasoning_content = roundReasoningContent || 'Tool call continuation reasoning.';
+        }
+
         conversationMessages = [
             ...conversationMessages,
-            {
-                role: 'assistant',
-                content: message.content || null,
-                tool_calls: normalizedCalls.map((call) => ({
-                    id: call.id,
-                    type: 'function',
-                    function: {
-                        name: call.function.name,
-                        arguments: call.function.arguments
-                    }
-                }))
-            },
+            assistantToolCallMessage,
             ...executedToolMessages
         ];
     }
@@ -1412,6 +2128,7 @@ async function callK2p5Stream({
     actualModel,
     messages,
     thinkingMode,
+    thinkingBudget = 1024,
     internetMode,
     maxTokens,
     maxToolRounds = 2,
@@ -1434,9 +2151,16 @@ async function callK2p5Stream({
             model: actualModel,
             messages: conversationMessages,
             max_tokens: Math.max(256, parseInt(maxTokens, 10) || 2000),
-            stream: true,
-            enable_thinking: !!thinkingMode
+            stream: true
         };
+        if (isKimiK25ActualModel(actualModel)) {
+            requestBody.enable_thinking = !!thinkingMode;
+        } else {
+            const budget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
+            if (budget !== null) {
+                requestBody.thinking_budget = budget;
+            }
+        }
 
         if (internetMode) {
             requestBody.tools = TOOL_DEFINITIONS;
@@ -1475,6 +2199,7 @@ async function callK2p5Stream({
         let buffer = '';
         let finishReason = null;
         const toolCalls = [];
+        let roundReasoningContent = '';
 
         while (true) {
             const { done, value } = await reader.read();
@@ -1510,6 +2235,7 @@ async function callK2p5Stream({
                 if (delta.reasoning_content || delta.reasoning) {
                     const reasoningChunk = delta.reasoning_content || delta.reasoning;
                     reasoningContent += reasoningChunk;
+                    roundReasoningContent += reasoningChunk;
                     if (onReasoning) onReasoning(reasoningChunk);
                 }
 
@@ -1574,20 +2300,25 @@ async function callK2p5Stream({
             });
         }
 
+        const assistantToolCallMessage = {
+            role: 'assistant',
+            content: null,
+            tool_calls: normalizedCalls.map((call) => ({
+                id: call.id,
+                type: 'function',
+                function: {
+                    name: call.function.name,
+                    arguments: call.function.arguments
+                }
+            }))
+        };
+        if (thinkingMode) {
+            assistantToolCallMessage.reasoning_content = roundReasoningContent || 'Tool call continuation reasoning.';
+        }
+
         conversationMessages = [
             ...conversationMessages,
-            {
-                role: 'assistant',
-                content: null,
-                tool_calls: normalizedCalls.map((call) => ({
-                    id: call.id,
-                    type: 'function',
-                    function: {
-                        name: call.function.name,
-                        arguments: call.function.arguments
-                    }
-                }))
-            },
+            assistantToolCallMessage,
             ...executedToolMessages
         ];
     }
@@ -1606,7 +2337,11 @@ async function runTrueParallelAgentMode({
     messages,
     userMessage,
     systemPrompt,
+    domainInstruction = '',
+    ruleInstruction = '',
+    ruleMeta = null,
     thinkingMode,
+    thinkingBudget = 1024,
     internetMode,
     qualityProfile,
     maxTokens,
@@ -1617,10 +2352,22 @@ async function runTrueParallelAgentMode({
     if (!routing) throw new Error('K2.5 路由缺失');
     const providerConfig = API_PROVIDERS[routing.provider];
     if (!providerConfig) throw new Error('K2.5 提供商配置缺失');
+    if (!providerConfig.apiKey) {
+        throw new Error(`缺少环境变量: ${providerConfig.envKey || 'SILICONFLOW_API_KEY'}`);
+    }
 
     const actualModel = routing.model;
     const searchBudget = createSearchBudget(8, 2);
     const historyContext = buildHistoryContext(messages, 6);
+    const activeDomainInstruction = String(domainInstruction || '').trim();
+    const activeRuleInstruction = String(ruleInstruction || '').trim();
+    const mergePromptSections = (...sections) => sections
+        .map((section) => String(section || '').trim())
+        .filter(Boolean)
+        .join('\n\n');
+    if (ruleMeta?.ruleId) {
+        console.log(`🔧 Agent规则注入: ${ruleMeta.ruleId}`);
+    }
 
     res.write(`data: ${JSON.stringify({
         type: 'model_info',
@@ -1657,59 +2404,165 @@ async function runTrueParallelAgentMode({
         thinkingMode,
         qualityProfile,
         maxSubAgents: 4,
+        forceSubAgentCount: 4,
         maxRetries: AGENT_MAX_RETRIES,
         traceLevel: agentTraceLevel,
         emitEvent: emitAgentEventWithHook,
         onContent: emitContentChunk,
         onReasoning: emitReasoningChunk,
         callPlanner: async ({ plannerPrompt, userMessage: inputMessage }) => {
+            const plannerSystemPrompt = mergePromptSections(
+                plannerPrompt,
+                activeDomainInstruction,
+                activeRuleInstruction
+            );
+            const plannerStepId = 'task-0';
+            let plannerDraft = '';
+            emitAgentEventWithHook({
+                type: 'agent_status',
+                role: 'planner',
+                scope: 'task',
+                stepId: plannerStepId,
+                taskId: 0,
+                status: 'start',
+                detail: 'Planning task decomposition'
+            });
+            emitAgentEventWithHook({
+                type: 'agent_draft_delta',
+                taskId: 0,
+                stepId: plannerStepId,
+                role: 'planner',
+                task: 'Planning task decomposition',
+                reset: true,
+                delta: ''
+            });
             const plannerMessages = [
-                { role: 'system', content: plannerPrompt },
+                { role: 'system', content: plannerSystemPrompt },
                 {
                     role: 'user',
                     content: `用户问题:\n${inputMessage}\n\n最近对话:\n${historyContext || '(无)'}\n\n请严格输出JSON，不要附带任何解释。`
                 }
             ];
-            return await callK2p5NonStream({
+            const plannerResult = await callK2p5Stream({
                 providerConfig,
                 actualModel,
                 messages: plannerMessages,
                 thinkingMode,
+                thinkingBudget,
                 internetMode: false,
                 maxTokens: 1200,
                 maxToolRounds: 0,
                 searchBudget,
                 taskKey: 'planner',
                 res,
-                requestTimeoutMs: 15000
+                onContent: (chunk) => {
+                    if (!chunk) return;
+                    plannerDraft += chunk;
+                    emitAgentEventWithHook({
+                        type: 'agent_draft_delta',
+                        taskId: 0,
+                        stepId: plannerStepId,
+                        role: 'planner',
+                        task: 'Planning task decomposition',
+                        delta: chunk
+                    });
+                },
+                onReasoning: () => { },
+                requestTimeoutMs: 20000
             });
+            if ((!plannerResult.content || !String(plannerResult.content).trim()) && plannerDraft.trim()) {
+                plannerResult.content = plannerDraft;
+            }
+            const compactPlannerText = String(plannerResult.content || '').replace(/\s+/g, ' ').trim();
+            emitAgentEventWithHook({
+                type: 'agent_draft',
+                stepId: plannerStepId,
+                taskId: 0,
+                role: 'planner',
+                task: 'Planning task decomposition',
+                summary: compactPlannerText.length > 80 ? `${compactPlannerText.slice(0, 80)}...` : compactPlannerText,
+                content: plannerResult.content || '',
+                usage: normalizeUsage(plannerResult.usage),
+                searchCount: Number(plannerResult.searchCount || 0)
+            });
+            emitAgentEventWithHook({
+                type: 'agent_status',
+                role: 'planner',
+                scope: 'task',
+                stepId: plannerStepId,
+                taskId: 0,
+                status: 'done',
+                detail: 'Planning task decomposition completed'
+            });
+            return plannerResult;
         },
         callSubAgent: async ({ task, subPrompt }) => {
+            const taskId = Number(task.agent_id || 0) || 0;
+            let streamedDraft = '';
+            const subAgentSystemPrompt = mergePromptSections(
+                subPrompt,
+                activeDomainInstruction,
+                activeRuleInstruction
+            );
             const subMessages = [
-                { role: 'system', content: subPrompt },
+                { role: 'system', content: subAgentSystemPrompt },
                 { role: 'user', content: '请完成任务并直接输出结果。' }
             ];
-            return await callK2p5NonStream({
+            emitAgentEventWithHook({
+                type: 'agent_draft_delta',
+                taskId,
+                stepId: `task-${taskId}`,
+                role: task.role || 'custom',
+                task: task.task || '',
+                reset: true,
+                delta: ''
+            });
+
+            const subResult = await callK2p5Stream({
                 providerConfig,
                 actualModel,
                 messages: subMessages,
                 thinkingMode,
+                thinkingBudget,
                 internetMode,
                 maxTokens: Math.min(Math.max(parseInt(maxTokens, 10) || 2000, 800), 6000),
                 maxToolRounds: 2,
                 searchBudget,
                 taskKey: `task-${task.agent_id || 0}`,
                 res,
-                requestTimeoutMs: 35000
+                onContent: (chunk) => {
+                    if (!chunk) return;
+                    streamedDraft += chunk;
+                    emitAgentEventWithHook({
+                        type: 'agent_draft_delta',
+                        taskId,
+                        stepId: `task-${taskId}`,
+                        role: task.role || 'custom',
+                        task: task.task || '',
+                        delta: chunk
+                    });
+                },
+                onReasoning: () => { },
+                requestTimeoutMs: internetMode ? 60000 : 40000
             });
+            if ((!subResult.content || !String(subResult.content).trim()) && streamedDraft.trim()) {
+                subResult.content = streamedDraft;
+            }
+            return subResult;
         },
         streamSynthesis: async ({ synthPrompt, userMessage: inputMessage, drafts }) => {
             const draftSummary = drafts.map((d) => `[task-${d.taskId}] ${d.summary}`).join('\n');
             const synthMessages = [];
-            if (systemPrompt && String(systemPrompt).trim()) {
+            let masterDraftDeltaStarted = false;
+            const mergedSystemPrompt = mergePromptSections(
+                systemPrompt,
+                activeDomainInstruction,
+                activeRuleInstruction
+            );
+            if (mergedSystemPrompt) {
                 synthMessages.push({
                     role: 'system',
-                    content: String(systemPrompt).trim()
+                    content: mergedSystemPrompt
                 });
             }
             synthMessages.push({ role: 'system', content: synthPrompt });
@@ -1723,15 +2576,39 @@ async function runTrueParallelAgentMode({
                 actualModel,
                 messages: synthMessages,
                 thinkingMode,
+                thinkingBudget,
                 internetMode,
                 maxTokens: Math.max(parseInt(maxTokens, 10) || 2000, 1200),
                 maxToolRounds: 2,
                 searchBudget,
                 taskKey: 'synthesis',
                 res,
-                onContent: emitContentChunk,
+                onContent: (chunk) => {
+                    emitContentChunk(chunk);
+                    if (!chunk) return;
+                    if (!masterDraftDeltaStarted) {
+                        masterDraftDeltaStarted = true;
+                        emitAgentEventWithHook({
+                            type: 'agent_draft_delta',
+                            taskId: 999,
+                            stepId: 'master-synthesis',
+                            role: 'master',
+                            task: '主控综合草稿',
+                            reset: true,
+                            delta: ''
+                        });
+                    }
+                    emitAgentEventWithHook({
+                        type: 'agent_draft_delta',
+                        taskId: 999,
+                        stepId: 'master-synthesis',
+                        role: 'master',
+                        task: '主控综合草稿',
+                        delta: chunk
+                    });
+                },
                 onReasoning: emitReasoningChunk,
-                requestTimeoutMs: 45000
+                requestTimeoutMs: internetMode ? 75000 : 55000
             });
         },
         runVerifier: ({ qualityProfile, content, sources, fingerprint }) => applyQualityGate({
@@ -1970,33 +2847,38 @@ function getMultimodalTypeDescription(types) {
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
     aliyun: {
-        apiKey: 'sk-',
+        apiKey: ENV_API_KEYS.ALIYUN_API_KEY,
+        envKey: 'ALIYUN_API_KEY',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        models: ['qwen-flash', 'qwen-plus', 'qwen-max']
+        models: [] // 官方Qwen文本模型已下线
     },
     // Qwen3-Omni-Flash 多模态模型 (支持图片、音频、视频输入和语音输出)
     aliyun_omni: {
-        apiKey: 'sk-',
+        apiKey: ENV_API_KEYS.ALIYUN_API_KEY,
+        envKey: 'ALIYUN_API_KEY',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        models: ['qwen3-omni-flash'],
+        models: [], // 官方Qwen多模态模型已下线
         multimodal: true,  // 标记支持多模态
         audioOutput: true  // 支持语音输出
     },
     deepseek: {
-        apiKey: 'sk-',
+        apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
+        envKey: 'DEEPSEEK_API_KEY',
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
         models: ['deepseek-chat', 'deepseek-reasoner']
     },
 
-    // 硅基流动 SiliconFlow - Kimi K2.5 模型 + Qwen3-8B (免费)
+    // 硅基流动 SiliconFlow - Kimi K2.5 模型 + Qwen2.5-7B (免费)
     siliconflow: {
-        apiKey: 'sk',
+        apiKey: ENV_API_KEYS.SILICONFLOW_API_KEY,
+        envKey: 'SILICONFLOW_API_KEY',
         baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
-        models: ['Pro/moonshotai/Kimi-K2.5', 'moonshotai/Kimi-K2-Instruct-0905', 'Qwen/Qwen3-8B']
+        models: ['Pro/moonshotai/Kimi-K2.5', 'moonshotai/Kimi-K2-Instruct-0905', 'Qwen/Qwen2.5-7B-Instruct']
     },
     // 硅基流动 SiliconFlow - Qwen3 VL 视觉模型 (图像理解)
     siliconflow_vl: {
-        apiKey: 'sk-',
+        apiKey: ENV_API_KEYS.SILICONFLOW_API_KEY,
+        envKey: 'SILICONFLOW_API_KEY',
         baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
         models: ['Qwen/Qwen3-Omni-30B-A3B-Instruct'],
         multimodal: true,  // 标记支持多模态
@@ -2004,28 +2886,49 @@ const API_PROVIDERS = {
     },
     // Google Gemini API - Gemini 3 Flash Preview (多模态)
     google_gemini: {
-        apiKey: 'AI',
+        apiKey: ENV_API_KEYS.GOOGLE_GEMINI_API_KEY,
+        envKey: 'GOOGLE_GEMINI_API_KEY',
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',  // 基础URL，实际使用时会拼接模型名
         models: ['Gemini 3 Flash Preview'],
         isGemini: true,  // 标记这是Gemini API，需要特殊处理
         multimodal: true  // 支持图片/视频等多模态输入
+    },
+    // Poe OpenAI-compatible API
+    poe: {
+        apiKey: ENV_API_KEYS.POE_API_KEY,
+        envKey: 'POE_API_KEY',
+        baseURL: 'https://api.poe.com/v1/chat/completions',
+        models: Object.values(POE_STATIC_MODEL_MAP)
     }
 };
+
+function logApiKeyReadiness() {
+    const missing = [];
+    const seen = new Set();
+    Object.values(API_PROVIDERS).forEach((provider) => {
+        if (!provider?.envKey || seen.has(provider.envKey)) return;
+        seen.add(provider.envKey);
+        if (!provider.apiKey) missing.push(provider.envKey);
+    });
+    if (!TAVILY_API_KEY) missing.push('TAVILY_API_KEY');
+
+    if (missing.length > 0) {
+        console.warn(`⚠️ 缺少API环境变量: ${missing.join(', ')}`);
+    } else {
+        console.log('✅ API环境变量已就绪');
+    }
+}
+
+logApiKeyReadiness();
+startPoeModelSyncJob();
 
 // 模型路由映射 (支持auto模式)
 const MODEL_ROUTING = {
     // 具体模型配置
-    'qwen-flash': { provider: 'aliyun', model: 'qwen-flash' },
-    'qwen-plus': { provider: 'aliyun', model: 'qwen-plus' },
-    'qwen-max': { provider: 'aliyun', model: 'qwen-max' },
-    // Qwen3-Omni-Flash 多模态模型 (图片/音频/视频输入 + 语音输出)
-    'qwen3-omni-flash': {
-        provider: 'aliyun_omni',
-        model: 'qwen3-omni-flash',
-        multimodal: true,   // 标记支持多模态
-        audioOutput: true,  // 支持语音输出
-        streamRequired: true // 必须开启流式
-    },
+    // 兼容旧配置：统一映射到免费 7B 文本模型
+    'qwen-flash': { provider: 'siliconflow', model: 'Qwen/Qwen2.5-7B-Instruct' },
+    'qwen-plus': { provider: 'siliconflow', model: 'Qwen/Qwen2.5-7B-Instruct' },
+    'qwen-max': { provider: 'siliconflow', model: 'Qwen/Qwen2.5-7B-Instruct' },
     // Qwen3-VL 视觉语言模型 (硅基流动 - 图像理解)
     'qwen3-vl': {
         provider: 'siliconflow_vl',
@@ -2052,13 +2955,21 @@ const MODEL_ROUTING = {
         thinkingModel: 'Pro/moonshotai/Kimi-K2.5',
         supportsWebSearch: true  // 支持Tavily联网搜索
     },
-    // Qwen3-8B - 硅基流动免费模型 (支持思考、工具调用、多模态)
+    // Qwen2.5-7B 免费模型
+    'qwen2.5-7b': {
+        provider: 'siliconflow',
+        model: 'Qwen/Qwen2.5-7B-Instruct',
+        supportsThinking: false,  // 7B Instruct 不走推理链输出
+        supportsWebSearch: true,  // 支持Tavily联网搜索
+        multimodal: false         // 文本模型
+    },
+    // 兼容旧ID：qwen3-8b -> qwen2.5-7b
     'qwen3-8b': {
         provider: 'siliconflow',
-        model: 'Qwen/Qwen3-8B',
-        supportsThinking: true,   // 支持思考模式
-        supportsWebSearch: true,  // 支持Tavily联网搜索
-        multimodal: false          // 支持图片输入
+        model: 'Qwen/Qwen2.5-7B-Instruct',
+        supportsThinking: false,
+        supportsWebSearch: true,
+        multimodal: false
     },
     // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
     'gemini-3-flash': {
@@ -2067,6 +2978,31 @@ const MODEL_ROUTING = {
         isGemini: true,  // 标记需要特殊处理
         multimodal: true,  // 支持图片/视频等多模态输入
         supportsWebSearch: true  // 支持Tavily联网搜索
+    },
+    // Poe 模型族（静态默认 + 动态同步兜底）
+    'poe-claude': {
+        provider: 'poe',
+        model: POE_STATIC_MODEL_MAP['poe-claude'],
+        supportsThinking: true,
+        supportsWebSearch: true
+    },
+    'poe-gpt': {
+        provider: 'poe',
+        model: POE_STATIC_MODEL_MAP['poe-gpt'],
+        supportsThinking: true,
+        supportsWebSearch: true
+    },
+    'poe-grok': {
+        provider: 'poe',
+        model: POE_STATIC_MODEL_MAP['poe-grok'],
+        supportsThinking: true,
+        supportsWebSearch: true
+    },
+    'poe-gemini': {
+        provider: 'poe',
+        model: POE_STATIC_MODEL_MAP['poe-gemini'],
+        supportsThinking: true,
+        supportsWebSearch: true
     },
     // 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
     'auto': {
@@ -2154,7 +3090,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS user_configs (
     user_id INTEGER PRIMARY KEY,
     theme TEXT DEFAULT 'light',
-    default_model TEXT DEFAULT 'deepseek-v3',
+    default_model TEXT DEFAULT 'auto',
     temperature REAL DEFAULT 0.7,
     top_p REAL DEFAULT 0.9,
     max_tokens INTEGER DEFAULT 2000,
@@ -2350,6 +3286,20 @@ db.serialize(() => {
         db.run(`ALTER TABLE users ADD COLUMN last_daily_grant DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
                 console.warn(`⚠️ 添加last_daily_grant列失败:`, err.message);
+            }
+        });
+
+        // Poe 使用日期（用于 free 每日3次限制）
+        db.run(`ALTER TABLE users ADD COLUMN poe_usage_date DATE`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加poe_usage_date列失败:`, err.message);
+            }
+        });
+
+        // Poe 使用次数（用于 free 每日3次限制）
+        db.run(`ALTER TABLE users ADD COLUMN poe_usage_count INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(`⚠️ 添加poe_usage_count列失败:`, err.message);
             }
         });
 
@@ -2578,7 +3528,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
     db.get(
         `SELECT u.id, u.email, u.username, u.avatar_url, u.created_at, u.last_login,
       COALESCE(c.theme, 'dark') as theme,
-      COALESCE(c.default_model, 'deepseek-v3') as default_model,
+      COALESCE(c.default_model, 'auto') as default_model,
       COALESCE(c.temperature, 0.7) as temperature,
       COALESCE(c.top_p, 0.9) as top_p,
       COALESCE(c.max_tokens, 2000) as max_tokens,
@@ -2603,7 +3553,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                     created_at: new Date().toISOString(),
                     last_login: new Date().toISOString(),
                     theme: 'dark',
-                    default_model: 'deepseek-v3',
+                    default_model: 'auto',
                     temperature: 0.7,
                     top_p: 0.9,
                     max_tokens: 2000,
@@ -2626,7 +3576,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                     created_at: new Date().toISOString(),
                     last_login: new Date().toISOString(),
                     theme: 'dark',
-                    default_model: 'deepseek-v3',
+                    default_model: 'auto',
                     temperature: 0.7,
                     top_p: 0.9,
                     max_tokens: 2000,
@@ -2647,7 +3597,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 created_at: user.created_at,
                 last_login: user.last_login,
                 theme: user.theme || 'dark',
-                default_model: user.default_model || 'deepseek-v3',
+                default_model: user.default_model || 'auto',
                 temperature: parseFloat(user.temperature) || 0.7,
                 top_p: parseFloat(user.top_p) || 0.9,
                 max_tokens: parseInt(user.max_tokens, 10) || 2000,
@@ -2692,7 +3642,7 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
       thinking_mode = excluded.thinking_mode,
       internet_mode = excluded.internet_mode`,
         [
-            req.user.userId, theme || 'dark', default_model || 'deepseek-v3',
+            req.user.userId, theme || 'dark', default_model || 'auto',
             temperature || 0.7, top_p || 0.9, max_tokens || 2000,
             frequency_penalty || 0, presence_penalty || 0, finalSystemPrompt,
             thinking_mode ? 1 : 0, internet_mode ? 1 : 0
@@ -2726,7 +3676,8 @@ app.post('/api/user/avatar', authenticateToken, upload.single('avatar'), (req, r
 app.get('/api/user/membership', authenticateToken, (req, res) => {
     db.get(
         `SELECT id, email, username, created_at, membership, membership_start, membership_end, 
-         points, last_checkin, purchased_points, purchased_points_expire, last_daily_grant
+         points, last_checkin, purchased_points, purchased_points_expire, last_daily_grant,
+         poe_usage_date, poe_usage_count
          FROM users WHERE id = ?`,
         [req.user.userId],
         (err, user) => {
@@ -2740,6 +3691,8 @@ app.get('/api/user/membership', authenticateToken, (req, res) => {
 
             const today = new Date().toISOString().split('T')[0];
             const canCheckin = user.membership === 'free' && user.last_checkin !== today;
+            const poeUsedToday = user.poe_usage_date === today ? Number(user.poe_usage_count || 0) : 0;
+            const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
 
             // 计算总点数：当前点数 + 购买的点数（如果未过期）
             let totalPoints = user.points || 0;
@@ -2759,7 +3712,11 @@ app.get('/api/user/membership', authenticateToken, (req, res) => {
                 totalPoints: totalPoints,
                 canCheckin: canCheckin,
                 lastCheckin: user.last_checkin,
-                createdAt: user.created_at
+                createdAt: user.created_at,
+                poeDailyLimit: POE_DAILY_LIMIT_FREE,
+                poeUsedToday,
+                poeRemaining,
+                poeResetAt: buildPoeResetAtISO()
             });
         }
     );
@@ -3222,22 +4179,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             sessionId,
             messages,
             model = 'auto',  // 默认为auto模式
-            thinkingMode = false,
+            thinkingMode: thinkingModeInput = false,
             thinkingBudget = 1024,
             internetMode = false,
             agentMode = 'off',
             agentPolicy = AGENT_DEFAULT_POLICY,
             qualityProfile = AGENT_DEFAULT_QUALITY,
             agentTraceLevel = 'full',
+            reasoningProfile = 'low',
             temperature = 0.7,
             top_p = 0.9,
             max_tokens = 2000,
             frequency_penalty = 0,
             presence_penalty = 0,
-            systemPrompt
+            systemPrompt,
+            domainMode = '',
+            uiLanguage = ''
         } = req.body;
+        let thinkingMode = !!thinkingModeInput;
+        const normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
 
-        console.log(`🔍 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}`);
+        console.log(`🔍 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
 
         // 🔍 调试：打印收到的消息结构
         console.log(`📨 收到 ${messages.length} 条消息:`);
@@ -3381,9 +4343,78 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return;
         }
 
+        const resolvedPromptRule = resolvePromptInjection(userContent);
+        const activeRuleInstruction = buildRuleInjectionInstruction(resolvedPromptRule);
+        if (resolvedPromptRule) {
+            const matched = (resolvedPromptRule.matchedKeywords || []).join(', ');
+            console.log(`🎯 RULE_HIT id=${resolvedPromptRule.ruleId} matched=[${matched}]`);
+            res.write(`data: ${JSON.stringify({
+                type: 'rule_injection',
+                ruleId: resolvedPromptRule.ruleId,
+                matchedKeywords: resolvedPromptRule.matchedKeywords || [],
+                appliedStages: normalizeAgentMode(agentMode) === 'on'
+                    ? ['planner', 'sub', 'synthesis']
+                    : ['single']
+            })}\n\n`);
+        }
+
+        const resolvedDomainPrompt = resolveDomainSystemPrompt({
+            domainMode,
+            uiLanguage,
+            userMessage: userContent
+        });
+        const activeDomainInstruction = buildDomainInjectionInstruction(resolvedDomainPrompt);
+        if (resolvedDomainPrompt) {
+            console.log(`🎯 DOMAIN_PROMPT mode=${resolvedDomainPrompt.domainMode} lang=${resolvedDomainPrompt.promptLanguage}`);
+            res.write(`data: ${JSON.stringify({
+                type: 'domain_injection',
+                domainMode: resolvedDomainPrompt.domainMode,
+                language: resolvedDomainPrompt.promptLanguage
+            })}\n\n`);
+        }
+
         const normalizedAgentMode = normalizeAgentMode(agentMode);
         let effectiveAgentMode = normalizedAgentMode;
         const agentHardDisabled = process.env.AGENT_HARD_DISABLE === '1';
+        let pointsAlreadyDeducted = false;
+        let forceFreeModelByQuota = false;
+
+        // Agent模式默认走高质量模型，先做点数检查，避免后续失败后再回退
+        if (normalizedAgentMode === 'on' && !agentHardDisabled) {
+            try {
+                const agentPoints = await checkAndDeductPoints(req.user.userId, 'kimi-k2.5');
+                if (agentPoints?.useFreeModel) {
+                    forceFreeModelByQuota = true;
+                    effectiveAgentMode = 'off';
+                    emitAgentEvent(res, {
+                        type: 'agent_status',
+                        role: 'master',
+                        scope: 'stage',
+                        stepId: 'master',
+                        status: 'failed',
+                        detail: '点数不足，已自动回退到免费模型路径'
+                    });
+                    console.warn(`⚠️ 用户 ${req.user.userId} 点数不足，跳过Agent模式`);
+                } else {
+                    pointsAlreadyDeducted = Number(agentPoints?.pointsDeducted || 0) > 0;
+                    if (pointsAlreadyDeducted) {
+                        console.log(`💳 Agent请求已扣点: user=${req.user.userId}, remaining=${agentPoints.remainingPoints}`);
+                    }
+                }
+            } catch (pointsErr) {
+                forceFreeModelByQuota = true;
+                effectiveAgentMode = 'off';
+                emitAgentEvent(res, {
+                    type: 'agent_status',
+                    role: 'master',
+                    scope: 'stage',
+                    stepId: 'master',
+                    status: 'failed',
+                    detail: '点数检查失败，已回退免费模型路径'
+                });
+                console.error(`⚠️ Agent点数检查失败，回退免费模型: ${pointsErr.message}`);
+            }
+        }
 
         if (normalizedAgentMode === 'on') {
             if (agentHardDisabled) {
@@ -3397,6 +4428,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     detail: '服务端已禁用Agent模式，自动回退单模型'
                 });
                 effectiveAgentMode = 'off';
+            } else if (effectiveAgentMode !== 'on') {
+                // 前置点数检查已判定回退，不再进入并行Agent调用
+                console.warn('⚠️ Agent模式已因点数/策略回退到单模型路径');
             } else {
                 try {
                     const agentTraceState = {
@@ -3480,6 +4514,25 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             return;
                         }
 
+                        if (event.type === 'agent_draft_delta') {
+                            if (!Array.isArray(agentTraceState.draftDeltas)) {
+                                agentTraceState.draftDeltas = [];
+                            }
+                            agentTraceState.draftDeltas.push({
+                                taskId: event.taskId || null,
+                                stepId: event.stepId || '',
+                                role: event.role || '',
+                                task: event.task || '',
+                                reset: !!event.reset,
+                                delta: String(event.delta || ''),
+                                ts: Date.now()
+                            });
+                            if (agentTraceState.draftDeltas.length > 800) {
+                                agentTraceState.draftDeltas = agentTraceState.draftDeltas.slice(-800);
+                            }
+                            return;
+                        }
+
                         if (event.type === 'agent_quality') {
                             agentTraceState.quality.push(event);
                             if (agentTraceState.quality.length > 20) {
@@ -3507,7 +4560,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         messages,
                         userMessage: userContent,
                         systemPrompt,
+                        domainInstruction: activeDomainInstruction,
+                        ruleInstruction: activeRuleInstruction,
+                        ruleMeta: resolvedPromptRule
+                            ? {
+                                ruleId: resolvedPromptRule.ruleId,
+                                matchedKeywords: resolvedPromptRule.matchedKeywords || []
+                            }
+                            : null,
                         thinkingMode,
+                        thinkingBudget,
                         internetMode,
                         qualityProfile,
                         maxTokens: max_tokens,
@@ -3536,6 +4598,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         quality: agentTraceState.quality,
                         retry: agentTraceState.retry,
                         metrics: agentTraceState.metrics,
+                        draftDeltas: agentTraceState.draftDeltas || [],
                         savedAt: agentTraceState.savedAt
                     });
 
@@ -3671,8 +4734,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             };
         }
 
+        let userMembershipTier = 'free';
+        try {
+            const userTierRow = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT COALESCE(membership, ?) AS membership FROM users WHERE id = ?',
+                    ['free', req.user.userId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row || null);
+                    }
+                );
+            });
+            userMembershipTier = String(userTierRow?.membership || 'free').toUpperCase();
+        } catch (tierErr) {
+            console.warn(`⚠️ 读取会员等级失败，按free处理: ${tierErr.message}`);
+            userMembershipTier = 'FREE';
+        }
+        const normalizedMembershipTier = String(userMembershipTier || 'FREE').toLowerCase();
+
         // 智能路由：根据最后一条用户消息自动选择模型
-        let finalModel = model;  // 最终选中的模型类型（qwen-flash/plus/max或deepseek-v3）
+        let finalModel = model;  // 最终选中的模型类型
         let routing = null;      // 对应的路由配置
         let autoRoutingReason = '';
 
@@ -3690,7 +4772,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
             // 定义原生支持多模态的模型列表（Gemini / Qwen / Kimi K2.5）
-            const NATIVE_MULTIMODAL_MODELS = ['gemini-3-flash', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2.5', 'kimi-k2'];
+            const NATIVE_MULTIMODAL_MODELS = ['gemini-3-flash', 'qwen3-vl', 'kimi-k2.5', 'kimi-k2'];
 
             // 检查用户选择的模型是否原生支持多模态
             if (NATIVE_MULTIMODAL_MODELS.includes(model)) {
@@ -3705,61 +4787,109 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 console.log(`   🔄 ${model || 'auto'} 不支持多模态，切换到 qwen3-vl (Qwen/Qwen3-Omni-30B-A3B-Instruct)`);
             }
         } else if (model === 'auto') {
-            // 只有在没有多模态内容时才使用auto路由
-            // 调用智能路由引擎
-            const analysis = analyzeMessage(userContent);
-
-            // ✅ 防御性检查：确保 analysis 和 score 有效
-            if (!analysis || typeof analysis.score !== 'number') {
-                console.error('⚠️ 分析结果异常:', analysis);
-                finalModel = 'qwen-flash';
-                autoRoutingReason = 'Analysis failed, fallback to Flash';
-            } else {
-                finalModel = analysis.model;
-                autoRoutingReason = analysis.reason;
-
-                console.log(`\n🤖 Auto路由分析结果:`);
-                console.log(`   ✅ 分数: ${analysis.score.toFixed(3)}`);
-                console.log(`   ✅ 选择模型: ${finalModel}`);
-                console.log(`   ✅ 选择原因: ${autoRoutingReason}`);
-                console.log(`   ✅ 维度详情:`, JSON.stringify(analysis.dimensions, null, 2));
-            }
+            // 智能模型策略：free/pro/max 全部默认 K2.5
+            finalModel = 'kimi-k2.5';
+            autoRoutingReason = `${userMembershipTier} 用户智能模型默认使用 Kimi K2.5`;
+            console.log(`🤖 auto_route_decision: ${autoRoutingReason}`);
         }
 
 
-        // ✅ 修复：Auto模式下联网不强制使用max，而是根据智能路由结果选择合适的阿里云模型
-        // 所有阿里云模型（flash/plus/max）都支持联网功能
+        // Auto + 联网：优先保证可用性，DeepSeek 下回退到硅基免费 Qwen2.5-7B
         if (model === 'auto' && internetMode) {
-            // 如果智能路由选择了DeepSeek，需要切换到阿里云模型（DeepSeek不支持联网）
-            if (finalModel === 'deepseek-v3') {
-                // 根据分析分数选择合适的阿里云模型，而不是一律使用max
-                const analysis = analyzeMessage(messages[messages.length - 1].content);
-                if (analysis.score < config.thresholds.t1) {
-                    finalModel = 'qwen-flash';
-                    autoRoutingReason = '联网模式，切换到Qwen-Flash（仍保持智能路由）';
-                } else if (analysis.score < config.thresholds.t2) {
-                    finalModel = 'qwen-plus';
-                    autoRoutingReason = '联网模式，切换到Qwen-Plus（仍保持智能路由）';
-                } else {
-                    finalModel = 'qwen-max';
-                    autoRoutingReason = '联网模式，切换到Qwen-Max（复杂查询）';
-                }
-                console.log(`🌐 Auto+联网模式: DeepSeek不支持联网，智能切换到${finalModel}`);
-            } else {
-                // 如果已经是阿里云模型，保持智能路由的选择
-                console.log(`🌐 Auto+联网模式: 使用智能路由选择的${finalModel}（支持联网）`);
-            }
+            console.log(`🌐 Auto+联网模式: 使用 ${finalModel}（支持联网）`);
         }
 
         // ✅ 关键修复：添加白名单验证（防御性编程）
-        const VALID_MODELS = ['qwen-flash', 'qwen-plus', 'qwen-max', 'deepseek-v3', 'deepseek-v3.2-speciale', 'qwen3-omni-flash', 'qwen3-vl', 'kimi-k2.5', 'kimi-k2', 'qwen3-8b', 'gemini-3-flash'];
+        const VALID_MODELS = [
+            'deepseek-v3',
+            'deepseek-v3.2-speciale',
+            'qwen3-vl',
+            'kimi-k2.5',
+            'kimi-k2',
+            'qwen2.5-7b',
+            'qwen3-8b',
+            'gemini-3-flash',
+            'poe-claude',
+            'poe-gpt',
+            'poe-grok',
+            'poe-gemini'
+        ];
 
         // 注意：多模态检测已在上面执行，这里不再重复
 
         if (!VALID_MODELS.includes(finalModel)) {
-            console.warn(`⚠️ 无效模型 ${finalModel},回退到 qwen-flash`);
-            finalModel = 'qwen-flash';
-            autoRoutingReason = '无效模型,自动回退到Flash';
+            console.warn(`⚠️ 无效模型 ${finalModel},回退到 qwen2.5-7b`);
+            finalModel = 'qwen2.5-7b';
+            autoRoutingReason = '无效模型,自动回退到Qwen2.5-7B(免费)';
+        }
+
+        // Poe 路由策略：先做 free 配额与 thinking 强制，再做模型可用性校验
+        if (isPoeModelAlias(finalModel)) {
+            if (normalizedMembershipTier === 'free') {
+                try {
+                    const poeQuotaResult = await checkAndConsumePoeQuota(req.user.userId, 'free');
+                    res.write(`data: ${JSON.stringify({
+                        type: 'quota_info',
+                        provider: 'poe',
+                        poeRemaining: poeQuotaResult.remaining,
+                        poeUsed: poeQuotaResult.used,
+                        poeLimit: poeQuotaResult.limit,
+                        resetAt: poeQuotaResult.resetAt
+                    })}\n\n`);
+
+                    if (!poeQuotaResult.allowed) {
+                        finalModel = 'qwen2.5-7b';
+                        autoRoutingReason = 'Poe free 配额已用尽，自动切换到 Qwen2.5-7B(免费)';
+                        console.warn(`⚠️ poe_fallback quota_exceeded -> ${finalModel}`);
+                    } else if (thinkingMode) {
+                        thinkingMode = false;
+                        console.log('ℹ️ free + Poe 已强制关闭 thinkingMode');
+                    }
+                } catch (poeQuotaError) {
+                    console.warn(`⚠️ Poe配额检查失败，回退免费模型: ${poeQuotaError.message}`);
+                    finalModel = 'qwen2.5-7b';
+                    autoRoutingReason = 'Poe配额检查失败，自动回退到Qwen2.5-7B(免费)';
+                }
+            }
+
+            if (isPoeModelAlias(finalModel)) {
+                const poeResolution = resolvePoeModelAlias(finalModel);
+                if (!poeResolution.available) {
+                    console.warn(`⚠️ poe_fallback unavailable alias=${finalModel} -> kimi-k2.5`);
+                    finalModel = 'kimi-k2.5';
+                    autoRoutingReason = `Poe模型暂不可用，已回退到 Kimi K2.5 (${poeResolution.alias})`;
+                } else {
+                    console.log(`✅ poe_model_sync route alias=${finalModel} model=${poeResolution.model} source=${poeResolution.source}`);
+                }
+            }
+        }
+
+        if (forceFreeModelByQuota && finalModel !== 'qwen2.5-7b') {
+            finalModel = 'qwen2.5-7b';
+            autoRoutingReason = autoRoutingReason
+                ? `${autoRoutingReason}; 点数不足自动切换到Qwen2.5-7B(免费)`
+                : '点数不足自动切换到Qwen2.5-7B(免费)';
+            console.log(`💳 点数不足强制免费模型: user=${req.user.userId}`);
+        } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted) {
+            try {
+                const pointsResult = await checkAndDeductPoints(req.user.userId, finalModel);
+                if (pointsResult?.useFreeModel && finalModel !== 'qwen2.5-7b') {
+                    finalModel = 'qwen2.5-7b';
+                    autoRoutingReason = autoRoutingReason
+                        ? `${autoRoutingReason}; 点数不足自动切换到Qwen2.5-7B(免费)`
+                        : '点数不足自动切换到Qwen2.5-7B(免费)';
+                    console.log(`💳 点数不足自动切换免费模型: user=${req.user.userId}`);
+                } else if (Number(pointsResult?.pointsDeducted || 0) > 0) {
+                    pointsAlreadyDeducted = true;
+                    console.log(`💳 已扣点: user=${req.user.userId}, remaining=${pointsResult.remainingPoints}`);
+                }
+            } catch (pointsErr) {
+                finalModel = 'qwen2.5-7b';
+                autoRoutingReason = autoRoutingReason
+                    ? `${autoRoutingReason}; 点数检查失败，回退到Qwen2.5-7B(免费)`
+                    : '点数检查失败，回退到Qwen2.5-7B(免费)';
+                console.error(`⚠️ 点数检查失败，回退免费模型: ${pointsErr.message}`);
+            }
         }
 
         // 关键修复：现在finalModel已经是具体的模型名，再获取routing
@@ -3775,6 +4905,19 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`\n🔌 路由配置: provider=${routing.provider}, model=${routing.model}`);
 
         let actualModel = routing.model;
+        if (routing.provider === 'poe') {
+            const poeResolution = resolvePoeModelAlias(finalModel);
+            if (poeResolution.available && poeResolution.model) {
+                actualModel = poeResolution.model;
+            } else {
+                console.warn(`⚠️ poe_fallback runtime_unavailable alias=${finalModel} -> kimi-k2.5`);
+                finalModel = 'kimi-k2.5';
+                routing = MODEL_ROUTING[finalModel];
+                actualModel = routing.model;
+                autoRoutingReason = 'Poe模型运行期不可用，自动回退到 Kimi K2.5';
+            }
+        }
+
         // DeepSeek思考模式自动切换
         if (finalModel === 'deepseek-v3' && thinkingMode) {
             actualModel = routing.thinkingModel || 'deepseek-reasoner';
@@ -3794,10 +4937,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         // ✅ 关键修复：验证提供商配置存在（防止404错误）
-        const providerConfig = API_PROVIDERS[routing.provider];
+        let providerConfig = API_PROVIDERS[routing.provider];
         if (!providerConfig) {
             console.error(`❌ API提供商配置未找到: ${routing.provider}`);
             res.write(`data: ${JSON.stringify({ type: 'error', error: `不支持的提供商: ${routing.provider}` })}\n\n`);
+            res.end();
+            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+            return;
+        }
+        if (!providerConfig.apiKey) {
+            const missingEnvKey = providerConfig.envKey || 'API_KEY';
+            console.error(`❌ 缺少API环境变量: ${missingEnvKey}`);
+            res.write(`data: ${JSON.stringify({ type: 'error', error: `服务器未配置${missingEnvKey}` })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
@@ -3851,6 +5002,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`🔧 已添加工具提示到系统提示词`);
         }
 
+        if (activeDomainInstruction) {
+            systemContent = systemContent
+                ? `${systemContent}\n\n${activeDomainInstruction}`
+                : activeDomainInstruction;
+            console.log(`🔧 已注入领域系统提示词: ${resolvedDomainPrompt?.domainMode || 'unknown'}`);
+        }
+
+        if (activeRuleInstruction) {
+            systemContent = systemContent
+                ? `${systemContent}\n\n${activeRuleInstruction}`
+                : activeRuleInstruction;
+            console.log(`🔧 已注入规则提示到系统提示词: ${resolvedPromptRule?.ruleId || 'unknown'}`);
+        }
+
         if (systemContent) {
             finalMessages.unshift({
                 role: 'system',
@@ -3858,10 +5023,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             });
         }
 
-        const isKimiK25Model = (finalModel === 'kimi-k2.5' || finalModel === 'kimi-k2' || /Kimi-K2\.5/i.test(actualModel));
+        const isKimiK25Model = (finalModel === 'kimi-k2.5' || finalModel === 'kimi-k2' || isKimiK25ActualModel(actualModel));
 
         // 构建API请求体
-        const requestBody = {
+        let requestBody = {
             model: actualModel,
             messages: finalMessages,
             max_tokens: parseInt(max_tokens, 10) || 2000,
@@ -3884,6 +5049,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         } else {
             requestBody.temperature = parseFloat(temperature) || 0.7;
             requestBody.top_p = parseFloat(top_p) || 0.9;
+
+            const modelThinkingBudget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
+            if (modelThinkingBudget !== null) {
+                requestBody.thinking_budget = modelThinkingBudget;
+                console.log(`🧠 ${actualModel} thinking_budget=${modelThinkingBudget} (${thinkingMode ? '思考模式' : '快速模式'})`);
+            }
+        }
+
+        if (routing.provider === 'poe') {
+            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile);
+            if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
+                requestBody.extra_body = poeExtraBody;
+                console.log(`🧩 Poe extra_body 已注入: ${JSON.stringify(poeExtraBody)}`);
+            }
         }
 
         // 🔧 流式工具调用：为请求添加 tools 参数
@@ -3892,19 +5071,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             // 支持“先说一部分，再按需调用工具，再继续说”
             requestBody.tool_choice = "auto";
             console.log(`🔧 已为流式调用添加工具定义: ${TOOL_DEFINITIONS.length}个工具`);
-        }
-
-        // Qwen3-Omni-Flash 多模态特殊配置
-        if (finalModel === 'qwen3-omni-flash') {
-            // 设置输出模态：文本+音频 或 仅文本
-            // 目前仅输出文本，后续可根据需求添加音频输出
-            requestBody.modalities = ["text"];
-
-            // 如果需要音频输出，启用以下配置：
-            // requestBody.modalities = ["text", "audio"];
-            // requestBody.audio = { voice: "Cherry", format: "wav" };
-
-            console.log(`🎨 Qwen3-Omni-Flash 多模态配置已应用`);
         }
 
         // Qwen3-VL 视觉语言模型配置 (SiliconFlow)
@@ -4135,7 +5301,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`🌐 正在调用: ${apiUrl}`);
             console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
 
-            const apiResponse = await fetch(apiUrl, {
+            let apiResponse = await fetch(apiUrl, {
                 method: 'POST',
                 headers: fetchHeaders,
                 body: JSON.stringify(fetchBody),
@@ -4148,17 +5314,197 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             // ✅ 修复错误处理
             if (!apiResponse.ok) {
-                const errorText = await apiResponse.text();
+                let errorText = await apiResponse.text();
                 console.error(`❌ API返回错误:`);
                 console.error(`   状态码: ${apiResponse.status}`);
                 console.error(`   响应体: ${errorText.substring(0, 500)}`);
 
-                const errorMsg = `AI服务调用失败: ${apiResponse.status} ${errorText.substring(0, 100)}`;
-                res.write(`data: ${JSON.stringify({ type: 'error', error: errorMsg })}\n\n`);
-                res.end();
+                // Poe 4xx 参数错误：去掉 extra_body 重试一次
+                if (
+                    routing.provider === 'poe' &&
+                    fetchBody?.extra_body &&
+                    apiResponse.status >= 400 &&
+                    apiResponse.status < 500
+                ) {
+                    console.warn(`⚠️ poe_fallback retry_without_extra_body model=${finalModel} status=${apiResponse.status}`);
+                    const retryBody = { ...requestBody };
+                    delete retryBody.extra_body;
 
-                db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
-                return;
+                    try {
+                        apiResponse = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: fetchHeaders,
+                            body: JSON.stringify(retryBody)
+                        });
+                        requestBody = retryBody;
+                        fetchBody = retryBody;
+                    } catch (retryErr) {
+                        const retryErrorMsg = `Poe请求失败(重试无extra_body失败): ${retryErr.message}`;
+                        res.write(`data: ${JSON.stringify({ type: 'error', error: retryErrorMsg })}\n\n`);
+                        res.end();
+                        db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                        return;
+                    }
+
+                    if (!apiResponse.ok) {
+                        errorText = await apiResponse.text();
+                        console.warn(`⚠️ poe_fallback retry_failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
+                    } else {
+                        console.log('✅ Poe 参数回退重试成功（已移除 extra_body）');
+                    }
+                }
+
+                // Poe 模型调用失败：回退到 Kimi K2.5（再由通用余额逻辑兜底到Qwen2.5-7B）
+                if (
+                    !apiResponse.ok &&
+                    routing.provider === 'poe' &&
+                    apiResponse.status >= 400 &&
+                    apiResponse.status < 500
+                ) {
+                    const fallbackModel = 'kimi-k2.5';
+                    const fallbackRouting = MODEL_ROUTING[fallbackModel];
+                    const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
+
+                    if (fallbackRouting && fallbackProviderConfig?.apiKey) {
+                        console.warn(`⚠️ poe_fallback to=${fallbackModel} status=${apiResponse.status}`);
+                        routing = fallbackRouting;
+                        providerConfig = fallbackProviderConfig;
+                        finalModel = fallbackModel;
+                        actualModel = fallbackRouting.model;
+                        useStreamingTools = !!internetMode;
+
+                        requestBody = {
+                            model: actualModel,
+                            messages: finalMessages,
+                            max_tokens: parseInt(max_tokens, 10) || 2000,
+                            stream: true,
+                            enable_thinking: !!thinkingMode
+                        };
+                        if (useStreamingTools) {
+                            requestBody.tools = TOOL_DEFINITIONS;
+                            requestBody.tool_choice = 'auto';
+                        }
+
+                        res.write(`data: ${JSON.stringify({
+                            type: 'model_info',
+                            model: finalModel,
+                            actualModel,
+                            reason: 'poe_fallback_to_kimi',
+                            provider: routing.provider
+                        })}\n\n`);
+
+                        try {
+                            apiResponse = await fetch(providerConfig.baseURL, {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${providerConfig.apiKey}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify(requestBody)
+                            });
+                        } catch (fallbackErr) {
+                            const fallbackErrorMsg = `AI服务调用失败: Poe回退Kimi请求失败: ${fallbackErr.message}`;
+                            res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackErrorMsg })}\n\n`);
+                            res.end();
+                            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                            return;
+                        }
+
+                        if (!apiResponse.ok) {
+                            errorText = await apiResponse.text();
+                            console.warn(`⚠️ poe_fallback_to_kimi failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
+                        } else {
+                            console.log(`✅ poe_fallback_to_kimi 成功: ${actualModel}`);
+                        }
+                    }
+                }
+
+                if (!apiResponse.ok) {
+                    // SiliconFlow/Kimi 余额不足时，自动回退到免费模型，避免全站不可用
+                    const canFallbackToAliyun =
+                        isInsufficientBalanceError(apiResponse.status, errorText) &&
+                        routing.provider === 'siliconflow';
+
+                    if (canFallbackToAliyun) {
+                        const fallbackModel = 'qwen2.5-7b';
+                        const fallbackRouting = MODEL_ROUTING[fallbackModel];
+                        const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
+
+                        if (fallbackRouting && fallbackProviderConfig?.apiKey) {
+                            console.warn(`⚠️ 检测到硅基余额不足，自动回退到免费模型 ${fallbackModel}`);
+                            routing = fallbackRouting;
+                            providerConfig = fallbackProviderConfig;
+                            finalModel = fallbackModel;
+                            actualModel = fallbackRouting.model;
+                            useStreamingTools = !!internetMode;
+
+                            requestBody = buildSiliconflowFreeFallbackRequestBody({
+                                actualModel,
+                                messages: finalMessages,
+                                internetMode,
+                                thinkingMode,
+                                thinkingBudget,
+                                temperature,
+                                top_p,
+                                max_tokens
+                            });
+
+                            res.write(`data: ${JSON.stringify({
+                                type: 'model_info',
+                                model: finalModel,
+                                actualModel,
+                                reason: 'fallback_insufficient_balance',
+                                provider: routing.provider
+                            })}\n\n`);
+
+                            const fallbackController = new AbortController();
+                            const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 120000);
+                            try {
+                                apiResponse = await fetch(providerConfig.baseURL, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Authorization': `Bearer ${providerConfig.apiKey}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify(requestBody),
+                                    signal: fallbackController.signal
+                                });
+                            } catch (fallbackErr) {
+                                clearTimeout(fallbackTimeoutId);
+                                const fallbackMsg = `AI服务调用失败: 余额不足且备用模型请求失败: ${fallbackErr.message}`;
+                                res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackMsg })}\n\n`);
+                                res.end();
+                                db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                                return;
+                            }
+                            clearTimeout(fallbackTimeoutId);
+
+                            if (!apiResponse.ok) {
+                                const fallbackErrorText = await apiResponse.text();
+                                console.error(`❌ 备用模型也失败: ${apiResponse.status} ${fallbackErrorText.substring(0, 300)}`);
+                                const fallbackMsg = `AI服务调用失败: 主模型余额不足，备用模型失败 ${apiResponse.status} ${fallbackErrorText.substring(0, 100)}`;
+                                res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackMsg })}\n\n`);
+                                res.end();
+                                db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                                return;
+                            }
+
+                            console.log(`✅ 备用模型连接成功，继续流式输出: ${fallbackModel}`);
+                        } else {
+                            const errorMsg = `AI服务调用失败: ${apiResponse.status} ${errorText.substring(0, 100)}`;
+                            res.write(`data: ${JSON.stringify({ type: 'error', error: errorMsg })}\n\n`);
+                            res.end();
+                            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                            return;
+                        }
+                    } else {
+                        const errorMsg = `AI服务调用失败: ${apiResponse.status} ${errorText.substring(0, 100)}`;
+                        res.write(`data: ${JSON.stringify({ type: 'error', error: errorMsg })}\n\n`);
+                        res.end();
+                        db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                        return;
+                    }
+                }
             }
 
             console.log('✅ API连接成功，开始接收流式响应\n');
@@ -4223,6 +5569,26 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 return visible;
             };
 
+            // 某些模型会把“累计文本”重复放在后续delta中，这里统一做去重增量提取
+            const extractIncrementalChunk = (accumulated = '', incoming = '') => {
+                const acc = typeof accumulated === 'string' ? accumulated : String(accumulated || '');
+                const inc = typeof incoming === 'string' ? incoming : String(incoming || '');
+                if (!inc) return '';
+                if (!acc) return inc;
+                if (inc === acc) return '';
+                if (inc.startsWith(acc)) return inc.slice(acc.length);
+                if (acc.endsWith(inc)) return '';
+
+                const maxOverlap = Math.min(acc.length, inc.length);
+                for (let i = maxOverlap; i > 0; i -= 1) {
+                    if (acc.slice(-i) === inc.slice(0, i)) {
+                        return inc.slice(i);
+                    }
+                }
+
+                return inc;
+            };
+
             // 轮询检查取消状态
             const checkCancellation = async () => {
                 return new Promise((resolve) => {
@@ -4283,16 +5649,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 const reasoning = delta.reasoning_content || delta.reasoning;
                                 const content = delta.content;
 
-                                if (reasoning) {
-                                    reasoningContent += reasoning;
-                                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
+                                if (reasoning && thinkingMode) {
+                                    const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
+                                    if (reasoningDelta) {
+                                        reasoningContent += reasoningDelta;
+                                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                    }
                                 }
 
                                 if (content) {
                                     rawToolContent += content;
                                     const filteredContent = sanitizeStreamingContent(content);
+                                    const incrementalContent = extractIncrementalChunk(fullContent, filteredContent);
 
-                                    if (filteredContent.length > 0) {
+                                    if (incrementalContent.length > 0) {
                                         if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('synthesizer') && !agentSynthesizerRunning) {
                                             emitAgentEvent(res, {
                                                 type: 'agent_status',
@@ -4302,8 +5672,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                             });
                                             agentSynthesizerRunning = true;
                                         }
-                                        fullContent += filteredContent;
-                                        res.write(`data: ${JSON.stringify({ type: 'content', content: filteredContent })}\n\n`);
+                                        fullContent += incrementalContent;
+                                        res.write(`data: ${JSON.stringify({ type: 'content', content: incrementalContent })}\n\n`);
                                     }
                                 }
 
@@ -4643,6 +6013,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         } else {
                             continueRequestBody.temperature = parseFloat(temperature) || 0.7;
                             continueRequestBody.top_p = parseFloat(top_p) || 0.9;
+                            const continueThinkingBudget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
+                            if (continueThinkingBudget !== null) {
+                                continueRequestBody.thinking_budget = continueThinkingBudget;
+                            }
+                        }
+                        if (routing.provider === 'poe') {
+                            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile);
+                            if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
+                                continueRequestBody.extra_body = poeExtraBody;
+                            }
                         }
 
                         console.log(`🔄 发起续传流式调用 (round=${toolRound})...`);
@@ -4697,17 +6077,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         continueStreamFinishReason = continueChoice.finish_reason;
                                     }
 
-                                    if (continueDelta.reasoning_content || continueDelta.reasoning) {
+                                    if ((continueDelta.reasoning_content || continueDelta.reasoning) && thinkingMode) {
                                         const reasoning = continueDelta.reasoning_content || continueDelta.reasoning;
-                                        reasoningContent += reasoning;
-                                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoning })}\n\n`);
+                                        const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
+                                        if (reasoningDelta) {
+                                            reasoningContent += reasoningDelta;
+                                            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                        }
                                     }
 
                                     if (continueDelta.content) {
                                         continueRawToolContent += continueDelta.content;
                                         rawToolContent += continueDelta.content;
                                         const filteredContinueContent = sanitizeStreamingContent(continueDelta.content);
-                                        if (filteredContinueContent.length > 0) {
+                                        const incrementalContinueContent = extractIncrementalChunk(fullContent, filteredContinueContent);
+                                        if (incrementalContinueContent.length > 0) {
                                             if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('synthesizer') && !agentSynthesizerRunning) {
                                                 emitAgentEvent(res, {
                                                     type: 'agent_status',
@@ -4717,8 +6101,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                                 });
                                                 agentSynthesizerRunning = true;
                                             }
-                                            fullContent += filteredContinueContent;
-                                            res.write(`data: ${JSON.stringify({ type: 'content', content: filteredContinueContent })}\n\n`);
+                                            fullContent += incrementalContinueContent;
+                                            res.write(`data: ${JSON.stringify({ type: 'content', content: incrementalContinueContent })}\n\n`);
                                         }
                                     }
 
@@ -5116,7 +6500,8 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
                        COALESCE(points, 0) as points,
                        COALESCE(purchased_points, 0) as purchased_points,
                        purchased_points_expire,
-                       last_checkin, last_daily_grant
+                       last_checkin, last_daily_grant,
+                       poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count
                 FROM users WHERE id = ?
             `, [req.user.userId], (err, row) => {
                 if (err) reject(err);
@@ -5166,6 +6551,8 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
 
         // 检查今日是否可以签到（free用户）
         const canCheckin = membership === 'free' && user.last_checkin !== today;
+        const poeUsedToday = user.poe_usage_date === today ? Number(user.poe_usage_count || 0) : 0;
+        const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
 
         res.json({
             membership,
@@ -5177,7 +6564,11 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
             totalPoints: points + purchasedPoints,
             canCheckin,
             lastCheckin: user.last_checkin,
-            createdAt: user.created_at
+            createdAt: user.created_at,
+            poeDailyLimit: POE_DAILY_LIMIT_FREE,
+            poeUsedToday,
+            poeRemaining,
+            poeResetAt: buildPoeResetAtISO()
         });
 
     } catch (error) {
@@ -5235,6 +6626,87 @@ app.post('/api/user/checkin', authenticateToken, async (req, res) => {
     }
 });
 
+function isFreeModelIdentifier(modelUsed = '') {
+    const modelText = String(modelUsed || '').trim().toLowerCase();
+    if (!modelText) return false;
+
+    return modelText === 'qwen2.5-7b' ||
+        modelText === 'qwen3-8b' ||
+        modelText === 'qwen-flash' ||
+        modelText === 'qwen-plus' ||
+        modelText === 'qwen-max' ||
+        modelText.includes('qwen2.5-7b-instruct') ||
+        modelText.includes('qwen/qwen2.5-7b-instruct');
+}
+
+function buildPoeResetAtISO() {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(24, 0, 0, 0);
+    return next.toISOString();
+}
+
+// free 用户 Poe 每24小时最多3次
+async function checkAndConsumePoeQuota(userId, membership) {
+    const tier = String(membership || 'free').toLowerCase();
+    const limit = POE_DAILY_LIMIT_FREE;
+    const resetAt = buildPoeResetAtISO();
+
+    if (tier !== 'free') {
+        return {
+            allowed: true,
+            limit: null,
+            used: 0,
+            remaining: null,
+            resetAt
+        };
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    return await new Promise((resolve, reject) => {
+        db.get(
+            'SELECT poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count FROM users WHERE id = ?',
+            [userId],
+            (err, row) => {
+                if (err) return reject(err);
+                if (!row) return reject(new Error('用户不存在'));
+
+                const sameDay = row.poe_usage_date === today;
+                const currentUsed = sameDay ? Number(row.poe_usage_count || 0) : 0;
+
+                if (currentUsed >= limit) {
+                    console.warn(`⚠️ poe_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
+                    return resolve({
+                        allowed: false,
+                        limit,
+                        used: currentUsed,
+                        remaining: 0,
+                        resetAt
+                    });
+                }
+
+                const nextUsed = currentUsed + 1;
+                db.run(
+                    'UPDATE users SET poe_usage_date = ?, poe_usage_count = ? WHERE id = ?',
+                    [today, nextUsed, userId],
+                    (updateErr) => {
+                        if (updateErr) return reject(updateErr);
+                        const remaining = Math.max(0, limit - nextUsed);
+                        console.log(`✅ poe_quota_consume user=${userId} used=${nextUsed}/${limit} remaining=${remaining}`);
+                        resolve({
+                            allowed: true,
+                            limit,
+                            used: nextUsed,
+                            remaining,
+                            resetAt
+                        });
+                    }
+                );
+            }
+        );
+    });
+}
+
 // 辅助函数：检查并扣减点数
 async function checkAndDeductPoints(userId, modelUsed) {
     return new Promise((resolve, reject) => {
@@ -5259,8 +6731,8 @@ async function checkAndDeductPoints(userId, modelUsed) {
 
             const totalPoints = points + purchasedPoints;
 
-            // 如果使用的是 qwen3-8b（免费模型），不扣点
-            if (modelUsed && modelUsed.includes('qwen3') && modelUsed.includes('8b')) {
+            // 免费模型不扣点
+            if (isFreeModelIdentifier(modelUsed)) {
                 return resolve({
                     allowed: true,
                     pointsDeducted: 0,
