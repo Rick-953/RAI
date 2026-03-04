@@ -2691,9 +2691,6 @@ body {
 
 /* 来源列表容器 */
 .sources-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-sm);
   margin-top: var(--spacing-md);
   padding-top: var(--spacing-md);
   border-top: 1px solid var(--border-color);
@@ -2706,10 +2703,41 @@ body {
   align-items: center;
   gap: var(--spacing-xs);
   width: 100%;
-  margin-bottom: var(--spacing-xs);
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+.sources-toggle-btn {
+  margin-left: auto;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sources-toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sources-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+  width: 100%;
+}
+
+.sources-list.is-collapsed .sources-body {
+  display: none;
 }
 
 .sources-header .material-symbols-outlined {
@@ -4629,6 +4657,12 @@ body {
   color: var(--accent-color);
 }
 
+.toolbar-btn.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* MD涟漪效果 */
 .ripple-effect {
   position: absolute;
@@ -4887,6 +4921,8 @@ body {
   border-radius: 4px;
   margin-left: 6px;
   vertical-align: middle;
+  background: rgba(245, 213, 71, 0.2);
+  color: #f5d547;
 }
 
 .model-badge.free {
@@ -6441,6 +6477,10 @@ body {
   background: var(--bg-hover);
 }
 
+.more-menu-item-static {
+  cursor: default;
+}
+
 .more-menu-item-icon {
   width: 20px;
   height: 20px;
@@ -6458,6 +6498,22 @@ body {
 
 .more-menu-item-text {
   flex: 1;
+}
+
+.reasoning-profile-select {
+  width: 102px;
+  height: 30px;
+  border: 1px solid var(--border-dark);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.reasoning-profile-select:focus {
+  outline: none;
+  border-color: var(--accent-color);
 }
 
 .more-menu-item-toggle {
@@ -6491,6 +6547,15 @@ body {
   background: var(--bg-primary);
 }
 
+.more-menu-item-toggle.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.more-menu-item.is-disabled {
+  opacity: 0.75;
+}
+
 /* 浅色主题下开关圆点颜色适配 */
 [data-theme="light"] .more-menu-item-toggle::after {
   background: var(--text-primary);
@@ -6504,6 +6569,17 @@ body {
   height: 1px;
   background: var(--border-dark);
   margin: 4px 0;
+}
+
+.more-menu-hint {
+  margin: 2px 6px 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(245, 213, 71, 0.1);
+  border: 1px solid rgba(245, 213, 71, 0.35);
+  color: #f5d547;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* ==================== 工具栏按钮悬浮提示 ==================== */
