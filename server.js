@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
@@ -342,21 +342,21 @@ function analyzeMessage(message) {
     };
 
     if (presetAnswers[message.trim()]) {
-        // ✅ 修复：返回完整的分析对象，包含所有必需字段
+        //  修复：返回完整的分析对象，包含所有必需字段
         return {
             model: 'qwen2.5-7b',
             cost: 0,
             reason: '预设答案(极速响应)',
             isForceMax: false,
-            score: 0.05,  // ✅ 添加 score 字段
-            dimensions: {  // ✅ 添加完整的维度对象
+            score: 0.05,  //  添加 score 字段
+            dimensions: {  //  添加完整的维度对象
                 inputLength: 0.05,
                 codeDetection: 0,
                 mathFormula: 0,
                 reasoning: 0,
                 languageMix: 0
             },
-            keywords: {  // ✅ 添加完整的关键词对象
+            keywords: {  //  添加完整的关键词对象
                 forceMax: [],
                 complexity: { count: 0, keywords: [] },
                 professional: { count: 0, keywords: [] },
@@ -413,7 +413,7 @@ const TOOL_EXECUTORS = {
     web_search: async (args, searchDepth = 'basic') => {
         // 成本控制：无论是否思考，每次搜索都只取5条
         const maxResults = 5;
-        console.log(`🔧 执行工具 web_search: query="${args.query}", depth=${searchDepth}, max=${maxResults}`);
+        console.log(` 执行工具 web_search: query="${args.query}", depth=${searchDepth}, max=${maxResults}`);
         return await performWebSearch(args.query, maxResults, searchDepth);
     }
 };
@@ -993,11 +993,11 @@ async function syncPoeModels() {
         poeModelRegistry.hasSuccessfulSync = true;
 
         const availableCount = Object.values(nextAvailability).filter(Boolean).length;
-        console.log(`✅ poe_model_sync success models=${modelIds.length} alias_available=${availableCount}/4 elapsed=${Date.now() - startedAt}ms`);
+        console.log(` poe_model_sync success models=${modelIds.length} alias_available=${availableCount}/4 elapsed=${Date.now() - startedAt}ms`);
     } catch (error) {
         poeModelRegistry.lastSyncAt = new Date().toISOString();
         poeModelRegistry.lastError = String(error?.message || error);
-        console.warn(`⚠️ poe_model_sync failed: ${poeModelRegistry.lastError}`);
+        console.warn(` poe_model_sync failed: ${poeModelRegistry.lastError}`);
     } finally {
         clearTimeout(timeoutId);
         poeModelRegistry.syncing = false;
@@ -1007,11 +1007,11 @@ async function syncPoeModels() {
 function startPoeModelSyncJob() {
     if (!ENV_API_KEYS.POE_API_KEY) return;
     syncPoeModels().catch((err) => {
-        console.warn(`⚠️ poe_model_sync startup failed: ${err?.message || err}`);
+        console.warn(` poe_model_sync startup failed: ${err?.message || err}`);
     });
     setInterval(() => {
         syncPoeModels().catch((err) => {
-            console.warn(`⚠️ poe_model_sync interval failed: ${err?.message || err}`);
+            console.warn(` poe_model_sync interval failed: ${err?.message || err}`);
         });
     }, POE_MODEL_SYNC_INTERVAL_MS);
 }
@@ -1187,7 +1187,7 @@ function emitAgentEvent(res, payload) {
     if (process.env.AGENT_DEBUG === '1') {
         const role = payload.role ? ` role=${payload.role}` : '';
         const status = payload.status ? ` status=${payload.status}` : '';
-        console.log(`🤖 agent_event type=${payload.type}${role}${status}`);
+        console.log(` agent_event type=${payload.type}${role}${status}`);
     }
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
@@ -1455,11 +1455,11 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
     return new Promise((resolve) => {
         try {
             if (!TAVILY_API_KEY) {
-                console.error('❌ 缺少 TAVILY_API_KEY，跳过联网搜索');
+                console.error(' 缺少 TAVILY_API_KEY，跳过联网搜索');
                 resolve({ results: [], images: [] });
                 return;
             }
-            console.log(`🔍 执行Tavily网页搜索: "${query}" (深度: ${searchDepth})`);
+            console.log(` 执行Tavily网页搜索: "${query}" (深度: ${searchDepth})`);
 
             // 构建请求体
             const requestBody = JSON.stringify({
@@ -1502,7 +1502,7 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
 
                         // 检查API错误
                         if (result.error) {
-                            console.error('❌ Tavily API错误:', result.error);
+                            console.error(' Tavily API错误:', result.error);
                             resolve([]);
                             return;
                         }
@@ -1534,10 +1534,10 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
                         // 提取搜索图片
                         const images = result.images || [];
 
-                        console.log(`✅ Tavily搜索完成，获得 ${searchResults.length} 条结果, ${images.length} 张图片 (响应时间: ${result.responseTime || 'N/A'}s)`);
+                        console.log(` Tavily搜索完成，获得 ${searchResults.length} 条结果, ${images.length} 张图片 (响应时间: ${result.responseTime || 'N/A'}s)`);
                         resolve({ results: searchResults, images: images });
                     } catch (parseError) {
-                        console.error('❌ 解析Tavily搜索结果失败:', parseError);
+                        console.error(' 解析Tavily搜索结果失败:', parseError);
                         console.error('原始响应:', data);
                         resolve([]);
                     }
@@ -1545,13 +1545,13 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
             });
 
             req.on('error', (err) => {
-                console.error('❌ Tavily网页搜索请求失败:', err);
+                console.error(' Tavily网页搜索请求失败:', err);
                 resolve({ results: [], images: [] });
             });
 
             // 设置超时
             req.setTimeout(15000, () => {
-                console.error('❌ Tavily搜索请求超时');
+                console.error(' Tavily搜索请求超时');
                 req.destroy();
                 resolve({ results: [], images: [] });
             });
@@ -1560,7 +1560,7 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
             req.write(requestBody);
             req.end();
         } catch (error) {
-            console.error('❌ Tavily网页搜索异常:', error);
+            console.error(' Tavily网页搜索异常:', error);
             resolve({ results: [], images: [] });
         }
     });
@@ -1623,7 +1623,7 @@ function validateImageUrl(imageUrl, timeout = 2000) {
 async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 3000) {
     if (!imageUrls || imageUrls.length === 0) return [];
 
-    console.log(`🖼️ 验证 ${imageUrls.length} 张图片URL...`);
+    console.log(` 验证 ${imageUrls.length} 张图片URL...`);
 
     // 只验证前N张，避免太慢
     const urlsToCheck = imageUrls.slice(0, maxConcurrent);
@@ -1644,12 +1644,12 @@ async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 30
 
     // 如果超时返回空数组
     if (!Array.isArray(results) || results.length === 0) {
-        console.log(`⚠️ 图片验证超时，跳过图片`);
+        console.log(` 图片验证超时，跳过图片`);
         return [];
     }
 
     const validUrls = results.filter(r => r.isValid).map(r => r.url);
-    console.log(`✅ 图片验证完成: ${validUrls.length}/${urlsToCheck.length} 有效`);
+    console.log(` 图片验证完成: ${validUrls.length}/${urlsToCheck.length} 有效`);
 
     return validUrls;
 }
@@ -1731,7 +1731,7 @@ function extractSourcesForSSE(results) {
  * @returns {Promise<object>} { finish_reason, tool_calls, content }
  */
 async function callAPIWithTools(messages, model, providerConfig, tools) {
-    console.log(`🔧 调用API (带工具): model=${model}, tools=${tools.length}个`);
+    console.log(` 调用API (带工具): model=${model}, tools=${tools.length}个`);
 
     const requestBody = {
         model: model,
@@ -1764,7 +1764,7 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
                     const result = JSON.parse(data);
 
                     if (result.error) {
-                        console.error('❌ 工具调用API错误:', result.error);
+                        console.error(' 工具调用API错误:', result.error);
                         resolve({ finish_reason: 'error', tool_calls: null, content: null });
                         return;
                     }
@@ -1777,22 +1777,22 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
                         message: choice?.message
                     };
 
-                    console.log(`✅ 工具调用API响应: finish_reason=${response.finish_reason}, has_tool_calls=${!!response.tool_calls}`);
+                    console.log(` 工具调用API响应: finish_reason=${response.finish_reason}, has_tool_calls=${!!response.tool_calls}`);
                     resolve(response);
                 } catch (e) {
-                    console.error('❌ 解析工具调用响应失败:', e);
+                    console.error(' 解析工具调用响应失败:', e);
                     resolve({ finish_reason: 'error', tool_calls: null, content: null });
                 }
             });
         });
 
         req.on('error', (err) => {
-            console.error('❌ 工具调用请求失败:', err);
+            console.error(' 工具调用请求失败:', err);
             resolve({ finish_reason: 'error', tool_calls: null, content: null });
         });
 
         req.setTimeout(15000, () => {
-            console.warn('⚠️ 工具调用请求超时');
+            console.warn(' 工具调用请求超时');
             req.destroy();
             resolve({ finish_reason: 'timeout', tool_calls: null, content: null });
         });
@@ -2366,7 +2366,7 @@ async function runTrueParallelAgentMode({
         .filter(Boolean)
         .join('\n\n');
     if (ruleMeta?.ruleId) {
-        console.log(`🔧 Agent规则注入: ${ruleMeta.ruleId}`);
+        console.log(` Agent规则注入: ${ruleMeta.ruleId}`);
     }
 
     res.write(`data: ${JSON.stringify({
@@ -2392,7 +2392,7 @@ async function runTrueParallelAgentMode({
             try {
                 onAgentEvent(payload);
             } catch (hookError) {
-                console.warn('⚠️ 记录Agent过程事件失败:', hookError.message);
+                console.warn(' 记录Agent过程事件失败:', hookError.message);
             }
         }
     };
@@ -2642,8 +2642,8 @@ function detectMultimodalContent(message) {
 
     if (!message || !message.content) return result;
 
-    // 🔍 调试：打印消息结构
-    console.log(`🔍 检测消息多模态内容:`, {
+    //  调试：打印消息结构
+    console.log(` 检测消息多模态内容:`, {
         role: message.role,
         contentType: typeof message.content,
         hasAttachments: !!message.attachments,
@@ -2671,7 +2671,7 @@ function detectMultimodalContent(message) {
         });
     }
 
-    // 🔧 增强防御性检查：处理 attachments 可能是字符串的情况
+    //  增强防御性检查：处理 attachments 可能是字符串的情况
     let attachments = message.attachments;
     // 如果是字符串（从数据库加载的JSON），尝试解析
     if (typeof attachments === 'string') {
@@ -2684,7 +2684,7 @@ function detectMultimodalContent(message) {
 
     // 检查message对象是否有attachments字段（增强防御性检查）
     if (Array.isArray(attachments) && attachments.length > 0) {
-        console.log(`📎 发现附件:`, attachments.map(a => ({ type: a.type, fileName: a.fileName })));
+        console.log(` 发现附件:`, attachments.map(a => ({ type: a.type, fileName: a.fileName })));
         attachments.forEach(att => {
             if (att.type === 'image') {
                 result.hasMultimodal = true;
@@ -2704,7 +2704,7 @@ function detectMultimodalContent(message) {
         });
     }
 
-    console.log(`🔍 检测结果:`, result);
+    console.log(` 检测结果:`, result);
     return result;
 }
 
@@ -2744,7 +2744,7 @@ function detectMultimodalInMessages(messages) {
 function convertToOmniFormat(message) {
     if (!message || !message.content) return message;
 
-    // 🔧 增强防御性检查：确保 attachments 是数组
+    //  增强防御性检查：确保 attachments 是数组
     let attachments = message.attachments;
     // 如果是字符串（从数据库加载的JSON），尝试解析
     if (typeof attachments === 'string') {
@@ -2913,9 +2913,9 @@ function logApiKeyReadiness() {
     if (!TAVILY_API_KEY) missing.push('TAVILY_API_KEY');
 
     if (missing.length > 0) {
-        console.warn(`⚠️ 缺少API环境变量: ${missing.join(', ')}`);
+        console.warn(` 缺少API环境变量: ${missing.join(', ')}`);
     } else {
-        console.log('✅ API环境变量已就绪');
+        console.log(' API环境变量已就绪');
     }
 }
 
@@ -3019,7 +3019,7 @@ dirs.forEach(dir => {
     const dirPath = path.join(__dirname, dir);
     if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, { recursive: true });
-        console.log(`✅ 已创建目录: ${dir}`);
+        console.log(` 已创建目录: ${dir}`);
     }
 });
 
@@ -3027,15 +3027,15 @@ dirs.forEach(dir => {
 const dbPath = path.join(__dirname, 'ai_data.db');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
-        console.error('❌ 数据库连接失败:', err);
+        console.error(' 数据库连接失败:', err);
         process.exit(1);
     } else {
-        console.log('✅ 数据库已连接:', dbPath);
+        console.log(' 数据库已连接:', dbPath);
 
         // ==================== SQLite 性能优化 ====================
         db.run("PRAGMA journal_mode=WAL;", (err) => {
-            if (err) console.warn('⚠️ WAL模式设置失败:', err.message);
-            else console.log('✅ SQLite WAL模式已启用');
+            if (err) console.warn(' WAL模式设置失败:', err.message);
+            else console.log(' SQLite WAL模式已启用');
         });
         db.run("PRAGMA cache_size=10000;");  // 约40MB缓存
         db.run("PRAGMA busy_timeout=5000;"); // 5秒锁等待超时
@@ -3134,79 +3134,79 @@ db.serialize(() => {
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
-    console.log('✅ 所有数据表就绪');
+    console.log(' 所有数据表就绪');
 
-    // ✅ 数据库迁移：添加缺失的列（如果表已存在且列不存在）
+    //  数据库迁移：添加缺失的列（如果表已存在且列不存在）
     db.serialize(() => {
         // 添加thinking_mode列（如果不存在）
         db.run(`ALTER TABLE user_configs ADD COLUMN thinking_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加thinking_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加thinking_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加thinking_mode列到user_configs表');
+                console.log(' 已添加thinking_mode列到user_configs表');
             }
         });
 
         // 添加internet_mode列（如果不存在）
         db.run(`ALTER TABLE user_configs ADD COLUMN internet_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加internet_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加internet_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加internet_mode列到user_configs表');
+                console.log(' 已添加internet_mode列到user_configs表');
             }
         });
 
         // 添加model列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN model TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加model列失败(可能已存在):`, err.message);
+                console.warn(` 添加model列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加model列到messages表');
+                console.log(' 已添加model列到messages表');
             }
         });
 
         // 添加enable_search列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN enable_search INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加enable_search列失败(可能已存在):`, err.message);
+                console.warn(` 添加enable_search列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加enable_search列到messages表');
+                console.log(' 已添加enable_search列到messages表');
             }
         });
 
         // 添加thinking_mode列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN thinking_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加thinking_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加thinking_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加thinking_mode列到messages表');
+                console.log(' 已添加thinking_mode列到messages表');
             }
         });
 
         // 添加internet_mode列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN internet_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加internet_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加internet_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加internet_mode列到messages表');
+                console.log(' 已添加internet_mode列到messages表');
             }
         });
 
         // 添加sources列到messages表（如果不存在）- 存储联网搜索来源信息（JSON格式）
         db.run(`ALTER TABLE messages ADD COLUMN sources TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加sources列失败(可能已存在):`, err.message);
+                console.warn(` 添加sources列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加sources列到messages表');
+                console.log(' 已添加sources列到messages表');
             }
         });
 
         // 添加process_trace列到messages表（如果不存在）- 存储Agent过程轨迹（JSON格式）
         db.run(`ALTER TABLE messages ADD COLUMN process_trace TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加process_trace列失败(可能已存在):`, err.message);
+                console.warn(` 添加process_trace列失败(可能已存在):`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加process_trace列到messages表');
+                console.log(' 已添加process_trace列到messages表');
             }
         });
 
@@ -3214,17 +3214,17 @@ db.serialize(() => {
         // 注意：索引方向要与查询一致（ASC）
         db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at ASC, id ASC)`, (err) => {
             if (err) {
-                console.warn(`⚠️ 创建messages索引失败:`, err.message);
+                console.warn(` 创建messages索引失败:`, err.message);
             } else {
-                console.log('✅ messages表索引就绪');
+                console.log(' messages表索引就绪');
             }
         });
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, is_archived, updated_at DESC)`, (err) => {
             if (err) {
-                console.warn(`⚠️ 创建sessions索引失败:`, err.message);
+                console.warn(` 创建sessions索引失败:`, err.message);
             } else {
-                console.log('✅ sessions表索引就绪');
+                console.log(' sessions表索引就绪');
             }
         });
 
@@ -3232,78 +3232,78 @@ db.serialize(() => {
         // 会员等级: free / Pro / MAX
         db.run(`ALTER TABLE users ADD COLUMN membership TEXT DEFAULT 'free'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加membership列失败:`, err.message);
+                console.warn(` 添加membership列失败:`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加membership列到users表');
+                console.log(' 已添加membership列到users表');
             }
         });
 
         // 会员开始时间
         db.run(`ALTER TABLE users ADD COLUMN membership_start DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加membership_start列失败:`, err.message);
+                console.warn(` 添加membership_start列失败:`, err.message);
             }
         });
 
         // 会员结束时间
         db.run(`ALTER TABLE users ADD COLUMN membership_end DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加membership_end列失败:`, err.message);
+                console.warn(` 添加membership_end列失败:`, err.message);
             }
         });
 
         // 当前点数（每日发放，用完即止）
         db.run(`ALTER TABLE users ADD COLUMN points INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加points列失败:`, err.message);
+                console.warn(` 添加points列失败:`, err.message);
             } else if (!err) {
-                console.log('✅ 已添加points列到users表');
+                console.log(' 已添加points列到users表');
             }
         });
 
         // 上次签到日期（free用户签到用）
         db.run(`ALTER TABLE users ADD COLUMN last_checkin DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加last_checkin列失败:`, err.message);
+                console.warn(` 添加last_checkin列失败:`, err.message);
             }
         });
 
         // 购买的点数（长期有效，2年过期）
         db.run(`ALTER TABLE users ADD COLUMN purchased_points INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加purchased_points列失败:`, err.message);
+                console.warn(` 添加purchased_points列失败:`, err.message);
             }
         });
 
         // 购买点数过期时间
         db.run(`ALTER TABLE users ADD COLUMN purchased_points_expire DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加purchased_points_expire列失败:`, err.message);
+                console.warn(` 添加purchased_points_expire列失败:`, err.message);
             }
         });
 
         // 上次每日点数发放日期（Pro/MAX自动发放用）
         db.run(`ALTER TABLE users ADD COLUMN last_daily_grant DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加last_daily_grant列失败:`, err.message);
+                console.warn(` 添加last_daily_grant列失败:`, err.message);
             }
         });
 
         // Poe 使用日期（用于 free 每日3次限制）
         db.run(`ALTER TABLE users ADD COLUMN poe_usage_date DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加poe_usage_date列失败:`, err.message);
+                console.warn(` 添加poe_usage_date列失败:`, err.message);
             }
         });
 
         // Poe 使用次数（用于 free 每日3次限制）
         db.run(`ALTER TABLE users ADD COLUMN poe_usage_count INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(`⚠️ 添加poe_usage_count列失败:`, err.message);
+                console.warn(` 添加poe_usage_count列失败:`, err.message);
             }
         });
 
-        console.log('✅ VIP会员系统字段就绪');
+        console.log(' VIP会员系统字段就绪');
     });
 });
 
@@ -3432,7 +3432,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
                         }
 
                         const userId = this.lastID;
-                        console.log('✅ 用户注册成功, ID:', userId);
+                        console.log(' 用户注册成功, ID:', userId);
 
                         db.run('INSERT INTO user_configs (user_id) VALUES (?)', [userId]);
 
@@ -3450,7 +3450,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('❌ 注册错误:', error);
+        console.error(' 注册错误:', error);
         res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
@@ -3489,7 +3489,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
                 const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
 
-                console.log('✅ 登录成功, 用户ID:', user.id);
+                console.log(' 登录成功, 用户ID:', user.id);
                 res.json({
                     success: true,
                     token,
@@ -3505,7 +3505,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('❌ 登录错误:', error);
+        console.error(' 登录错误:', error);
         res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
@@ -3543,7 +3543,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
         [req.user.userId],
         (err, user) => {
             if (err) {
-                console.error('❌ 获取用户信息失败:', err);
+                console.error(' 获取用户信息失败:', err);
                 // 返回默认配置,而不是抛出500错误
                 return res.json({
                     id: req.user.userId,
@@ -3566,7 +3566,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
             }
 
             if (!user) {
-                console.error('❌ 用户不存在, ID:', req.user.userId);
+                console.error(' 用户不存在, ID:', req.user.userId);
                 // 同样返回默认配置
                 return res.json({
                     id: req.user.userId,
@@ -3588,7 +3588,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 });
             }
 
-            // ✅ 修复：确保所有字段都有值，特别是system_prompt
+            //  修复：确保所有字段都有值，特别是system_prompt
             const profile = {
                 id: user.id,
                 email: user.email || '',
@@ -3603,12 +3603,12 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 max_tokens: parseInt(user.max_tokens, 10) || 2000,
                 frequency_penalty: parseFloat(user.frequency_penalty) || 0,
                 presence_penalty: parseFloat(user.presence_penalty) || 0,
-                system_prompt: user.system_prompt || '',  // ✅ 关键修复：确保始终返回字符串
+                system_prompt: user.system_prompt || '',  //  关键修复：确保始终返回字符串
                 thinking_mode: user.thinking_mode || 0,
                 internet_mode: user.internet_mode || 0
             };
 
-            console.log('✅ 返回用户信息, ID:', user.id, 'Username:', profile.username, 'SystemPromptLen:', profile.system_prompt.length);
+            console.log(' 返回用户信息, ID:', user.id, 'Username:', profile.username, 'SystemPromptLen:', profile.system_prompt.length);
             res.json(profile);
         }
     );
@@ -3621,7 +3621,7 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
         thinking_mode, internet_mode
     } = req.body;
 
-    // ✅ 防御性检查：确保system_prompt被正确处理
+    //  防御性检查：确保system_prompt被正确处理
     const finalSystemPrompt = system_prompt === null ? '' : (system_prompt || '');
 
     db.run(
@@ -3649,10 +3649,10 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
         ],
         (err) => {
             if (err) {
-                console.error('❌ 保存配置失败:', err);
+                console.error(' 保存配置失败:', err);
                 return res.status(500).json({ error: '保存失败', details: err.message });
             }
-            console.log(`✅ 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${finalSystemPrompt.length}`);
+            console.log(` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${finalSystemPrompt.length}`);
             res.json({ success: true });
         }
     );
@@ -3664,7 +3664,7 @@ app.post('/api/user/avatar', authenticateToken, upload.single('avatar'), (req, r
     const avatarUrl = `/avatars/${req.file.filename}`;
     db.run('UPDATE users SET avatar_url = ? WHERE id = ?', [avatarUrl, req.user.userId], (err) => {
         if (err) {
-            console.error('❌ 更新头像失败:', err);
+            console.error(' 更新头像失败:', err);
             return res.status(500).json({ error: '更新失败' });
         }
         res.json({ success: true, avatar_url: avatarUrl });
@@ -3682,7 +3682,7 @@ app.get('/api/user/membership', authenticateToken, (req, res) => {
         [req.user.userId],
         (err, user) => {
             if (err) {
-                console.error('❌ 获取会员状态失败:', err);
+                console.error(' 获取会员状态失败:', err);
                 return res.status(500).json({ error: '数据库错误' });
             }
             if (!user) {
@@ -3730,7 +3730,7 @@ app.post('/api/user/checkin', authenticateToken, (req, res) => {
         [req.user.userId],
         (err, user) => {
             if (err) {
-                console.error('❌ 签到查询失败:', err);
+                console.error(' 签到查询失败:', err);
                 return res.status(500).json({ error: '数据库错误' });
             }
             if (!user) {
@@ -3755,11 +3755,11 @@ app.post('/api/user/checkin', authenticateToken, (req, res) => {
                 [newPoints, today, req.user.userId],
                 function (err) {
                     if (err) {
-                        console.error('❌ 签到更新失败:', err);
+                        console.error(' 签到更新失败:', err);
                         return res.status(500).json({ error: '签到失败' });
                     }
 
-                    console.log(`✅ 用户 ${req.user.userId} 签到成功，获得 ${pointsGained} 点数，当前点数: ${newPoints}`);
+                    console.log(` 用户 ${req.user.userId} 签到成功，获得 ${pointsGained} 点数，当前点数: ${newPoints}`);
                     res.json({
                         success: true,
                         pointsGained: pointsGained,
@@ -3790,7 +3790,7 @@ app.get('/api/sessions', authenticateToken, (req, res) => {
         [req.user.userId, limit, offset],
         (err, sessions) => {
             if (err) {
-                console.error('❌ 获取会话列表失败:', err);
+                console.error(' 获取会话列表失败:', err);
                 return res.status(500).json({ error: '数据库错误' });
             }
             // 返回带有分页信息的响应
@@ -3813,10 +3813,10 @@ app.post('/api/sessions', authenticateToken, (req, res) => {
         [sessionId, req.user.userId, title || '新对话', model || 'deepseek-v3'],
         (err) => {
             if (err) {
-                console.error('❌ 创建会话失败:', err);
+                console.error(' 创建会话失败:', err);
                 return res.status(500).json({ error: '创建失败' });
             }
-            console.log('✅ 创建会话成功:', sessionId);
+            console.log(' 创建会话成功:', sessionId);
             res.json({ success: true, sessionId });
         }
     );
@@ -3830,7 +3830,7 @@ app.put('/api/sessions/:id', authenticateToken, (req, res) => {
         [title, model, is_archived, req.params.id, req.user.userId],
         (err) => {
             if (err) {
-                console.error('❌ 更新会话失败:', err);
+                console.error(' 更新会话失败:', err);
                 return res.status(500).json({ error: '更新失败' });
             }
             res.json({ success: true });
@@ -3841,10 +3841,10 @@ app.put('/api/sessions/:id', authenticateToken, (req, res) => {
 app.delete('/api/sessions/:id', authenticateToken, (req, res) => {
     db.run('DELETE FROM sessions WHERE id = ? AND user_id = ?', [req.params.id, req.user.userId], (err) => {
         if (err) {
-            console.error('❌ 删除会话失败:', err);
+            console.error(' 删除会话失败:', err);
             return res.status(500).json({ error: '删除失败' });
         }
-        console.log('✅ 删除会话成功:', req.params.id);
+        console.log(' 删除会话成功:', req.params.id);
         res.json({ success: true });
     });
 });
@@ -3852,7 +3852,7 @@ app.delete('/api/sessions/:id', authenticateToken, (req, res) => {
 app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
     db.get('SELECT user_id FROM sessions WHERE id = ?', [req.params.id], (err, session) => {
         if (err) {
-            console.error('❌ 查询会话失败:', err);
+            console.error(' 查询会话失败:', err);
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -3871,7 +3871,7 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
             [req.params.id],
             (err, messages) => {
                 if (err) {
-                    console.error('❌ 获取消息失败:', err);
+                    console.error(' 获取消息失败:', err);
                     return res.status(500).json({ error: '数据库错误' });
                 }
                 res.json(messages);
@@ -3889,7 +3889,7 @@ app.get('/api/flows', authenticateToken, (req, res) => {
         [req.user.userId],
         (err, rows) => {
             if (err) {
-                console.error('❌ 获取Flow列表失败:', err);
+                console.error(' 获取Flow列表失败:', err);
                 return res.status(500).json({ error: err.message });
             }
             res.json(rows);
@@ -3907,10 +3907,10 @@ app.post('/api/flows', authenticateToken, (req, res) => {
         [id, req.user.userId, title],
         function (err) {
             if (err) {
-                console.error('❌ 创建Flow失败:', err);
+                console.error(' 创建Flow失败:', err);
                 return res.status(500).json({ error: err.message });
             }
-            console.log('✅ 创建思维流成功:', id);
+            console.log(' 创建思维流成功:', id);
             res.json({ id, title, created_at: new Date().toISOString() });
         }
     );
@@ -3923,7 +3923,7 @@ app.get('/api/flows/:id', authenticateToken, (req, res) => {
         [req.params.id, req.user.userId],
         (err, row) => {
             if (err) {
-                console.error('❌ 获取Flow详情失败:', err);
+                console.error(' 获取Flow详情失败:', err);
                 return res.status(500).json({ error: err.message });
             }
             if (!row) {
@@ -3966,13 +3966,13 @@ app.put('/api/flows/:id', authenticateToken, (req, res) => {
         params,
         function (err) {
             if (err) {
-                console.error('❌ 更新Flow失败:', err);
+                console.error(' 更新Flow失败:', err);
                 return res.status(500).json({ error: err.message });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: 'Flow not found' });
             }
-            console.log('✅ 更新思维流成功:', req.params.id);
+            console.log(' 更新思维流成功:', req.params.id);
             res.json({ success: true });
         }
     );
@@ -3985,13 +3985,13 @@ app.delete('/api/flows/:id', authenticateToken, (req, res) => {
         [req.params.id, req.user.userId],
         function (err) {
             if (err) {
-                console.error('❌ 删除Flow失败:', err);
+                console.error(' 删除Flow失败:', err);
                 return res.status(500).json({ error: err.message });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: 'Flow not found' });
             }
-            console.log('✅ 删除思维流成功:', req.params.id);
+            console.log(' 删除思维流成功:', req.params.id);
             res.json({ success: true });
         }
     );
@@ -4011,7 +4011,7 @@ app.get('/api/messages/:messageId/attachments', authenticateToken, (req, res) =>
         [messageId],
         (err, row) => {
             if (err) {
-                console.error('❌ 获取附件失败:', err);
+                console.error(' 获取附件失败:', err);
                 return res.status(500).json({ error: '数据库错误' });
             }
 
@@ -4045,7 +4045,7 @@ app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (r
     // 验证会话归属
     db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
         if (err) {
-            console.error('❌ 查询会话失败:', err);
+            console.error(' 查询会话失败:', err);
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -4056,7 +4056,7 @@ app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (r
         // 删除指定消息
         db.run('DELETE FROM messages WHERE id = ? AND session_id = ?', [messageId, sessionId], function (err) {
             if (err) {
-                console.error('❌ 删除消息失败:', err);
+                console.error(' 删除消息失败:', err);
                 return res.status(500).json({ error: '删除失败' });
             }
 
@@ -4064,7 +4064,7 @@ app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (r
                 return res.status(404).json({ error: '消息不存在' });
             }
 
-            console.log(`✅ 已删除消息 ID: ${messageId}`);
+            console.log(` 已删除消息 ID: ${messageId}`);
             res.json({ success: true, deletedId: messageId });
         });
     });
@@ -4082,7 +4082,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
     // 验证会话归属
     db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
         if (err) {
-            console.error('❌ 查询会话失败:', err);
+            console.error(' 查询会话失败:', err);
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -4095,7 +4095,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
             [content, messageId, sessionId],
             function (err) {
                 if (err) {
-                    console.error('❌ 更新消息失败:', err);
+                    console.error(' 更新消息失败:', err);
                     return res.status(500).json({ error: '更新失败' });
                 }
 
@@ -4103,7 +4103,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
                     return res.status(404).json({ error: '消息不存在' });
                 }
 
-                console.log(`✅ 已更新消息 ID: ${messageId}`);
+                console.log(` 已更新消息 ID: ${messageId}`);
                 res.json({ success: true, updatedId: messageId, content });
             }
         );
@@ -4117,7 +4117,7 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
     // 验证会话归属
     db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
         if (err) {
-            console.error('❌ 查询会话失败:', err);
+            console.error(' 查询会话失败:', err);
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -4139,7 +4139,7 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
                     [sessionId, targetMsg.created_at],
                     (err, messages) => {
                         if (err) {
-                            console.error('❌ 获取消息失败:', err);
+                            console.error(' 获取消息失败:', err);
                             return res.status(500).json({ error: '数据库错误' });
                         }
                         res.json(messages);
@@ -4155,7 +4155,7 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
 app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
 
-    console.log('✅ 文件上传成功:', req.file.filename);
+    console.log(' 文件上传成功:', req.file.filename);
     res.json({
         success: true,
         file: {
@@ -4168,11 +4168,11 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
     });
 });
 
-// ✅ 修复：流式聊天路由
+//  修复：流式聊天路由
 app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => {
-    console.log('💬 收到聊天请求');
+    console.log(' 收到聊天请求');
 
-    let requestId = null;  // ✅ 关键修复：在函数开始声明requestId
+    let requestId = null;  //  关键修复：在函数开始声明requestId
 
     try {
         const {
@@ -4199,10 +4199,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let thinkingMode = !!thinkingModeInput;
         const normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
 
-        console.log(`🔍 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
+        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
 
-        // 🔍 调试：打印收到的消息结构
-        console.log(`📨 收到 ${messages.length} 条消息:`);
+        //  调试：打印收到的消息结构
+        console.log(` 收到 ${messages.length} 条消息:`);
         messages.forEach((m, i) => {
             const hasValidAttachments = m.attachments && Array.isArray(m.attachments);
             console.log(`   [${i}] role=${m.role}, hasAttachments=${hasValidAttachments}, attachmentsCount=${hasValidAttachments ? m.attachments.length : 0}`);
@@ -4232,11 +4232,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 生成请求ID
         requestId = `req_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
 
-        // ✅ 添加活跃请求记录（用于取消机制）
+        //  添加活跃请求记录（用于取消机制）
         db.run('INSERT INTO active_requests (id, user_id, session_id) VALUES (?, ?, ?)',
             [requestId, req.user.userId, sessionId || 'anonymous']);
 
-        // ✅ 防御性检查：验证 messages 存在且非空
+        //  防御性检查：验证 messages 存在且非空
         if (!Array.isArray(messages) || messages.length === 0) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: '消息不能为空' }));
@@ -4244,7 +4244,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return;
         }
 
-        // ✅✅ 关键修复：在所有 res.write() 调用之前，先设置 SSE 响应头
+        //  关键修复：在所有 res.write() 调用之前，先设置 SSE 响应头
         // 这确保后续所有的 res.write() 都能正常工作
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
@@ -4254,13 +4254,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 注意：X-Model-Used 在后面确定最终模型后再设置
         res.flushHeaders();  // 立即发送头部，开始SSE流
 
-        // 🚀 预设答案快速通道：在所有路由逻辑之前检查，确保所有模式都能生效
+        //  预设答案快速通道：在所有路由逻辑之前检查，确保所有模式都能生效
         const lastUserMsg = messages[messages.length - 1];
         const userContent = typeof lastUserMsg.content === 'string'
             ? lastUserMsg.content
             : JSON.stringify(lastUserMsg.content);
 
-        console.log(`📝 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
+        console.log(` 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
 
         let agentRuntime = {
             enabled: false,
@@ -4273,9 +4273,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         };
 
         const presetAnswers = {
-            '你好': '你好！很高兴见到你 😊',
-            '谢谢': '不客气！很高兴能帮到你 👍',
-            '再见': '再见！期待下次与你交谈 👋',
+            '你好': '你好！很高兴见到你 ',
+            '谢谢': '不客气！很高兴能帮到你 ',
+            '再见': '再见！期待下次与你交谈 ',
             'hello': 'Hello! Nice to meet you!',
             'hi': 'Hi there! How can I help you?',
             'thank you': 'You\'re welcome!',
@@ -4287,7 +4287,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const presetAnswer = presetAnswers[trimmedContent] || presetAnswers[userContent.trim()]; // 兼容原始大小写
 
         if (presetAnswer) {
-            console.log(`\n⚡ 命中预设答案: "${userContent.trim()}" -> 直接返回，无需调用AI`);
+            console.log(`\n 命中预设答案: "${userContent.trim()}" -> 直接返回，无需调用AI`);
 
             // SSE头已在前面设置，直接发送预设答案
             res.write(`data: ${JSON.stringify({ type: 'content', content: presetAnswer })}\n\n`);
@@ -4295,7 +4295,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             // 保存到数据库
             if (sessionId) {
-                console.log('\n💾 保存预设答案到数据库');
+                console.log('\n 保存预设答案到数据库');
 
                 // 保存用户消息
                 await new Promise((resolve) => {
@@ -4303,8 +4303,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
                         [sessionId, 'user', userContent],
                         (err) => {
-                            if (err) console.error('❌ 保存用户消息失败:', err);
-                            else console.log(`✅ 用户消息已保存 (${userContent.length}字符)`);
+                            if (err) console.error(' 保存用户消息失败:', err);
+                            else console.log(` 用户消息已保存 (${userContent.length}字符)`);
                             resolve();
                         }
                     );
@@ -4316,8 +4316,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode) VALUES (?, ?, ?, ?, ?, ?, ?)',
                         [sessionId, 'assistant', presetAnswer, 'preset', 0, 0, 0],
                         (err) => {
-                            if (err) console.error('❌ 保存预设答案失败:', err);
-                            else console.log(`✅ 预设答案已保存 (${presetAnswer.length}字符)`);
+                            if (err) console.error(' 保存预设答案失败:', err);
+                            else console.log(` 预设答案已保存 (${presetAnswer.length}字符)`);
                             resolve();
                         }
                     );
@@ -4329,8 +4329,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                         [sessionId],
                         (err) => {
-                            if (err) console.error('❌ 更新会话时间戳失败:', err);
-                            else console.log('✅ 会话时间戳已更新');
+                            if (err) console.error(' 更新会话时间戳失败:', err);
+                            else console.log(' 会话时间戳已更新');
                             resolve();
                         }
                     );
@@ -4339,7 +4339,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
-            console.log('\n✅ 预设答案处理完成（0成本）\n');
+            console.log('\n 预设答案处理完成（0成本）\n');
             return;
         }
 
@@ -4347,7 +4347,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const activeRuleInstruction = buildRuleInjectionInstruction(resolvedPromptRule);
         if (resolvedPromptRule) {
             const matched = (resolvedPromptRule.matchedKeywords || []).join(', ');
-            console.log(`🎯 RULE_HIT id=${resolvedPromptRule.ruleId} matched=[${matched}]`);
+            console.log(` RULE_HIT id=${resolvedPromptRule.ruleId} matched=[${matched}]`);
             res.write(`data: ${JSON.stringify({
                 type: 'rule_injection',
                 ruleId: resolvedPromptRule.ruleId,
@@ -4365,7 +4365,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         });
         const activeDomainInstruction = buildDomainInjectionInstruction(resolvedDomainPrompt);
         if (resolvedDomainPrompt) {
-            console.log(`🎯 DOMAIN_PROMPT mode=${resolvedDomainPrompt.domainMode} lang=${resolvedDomainPrompt.promptLanguage}`);
+            console.log(` DOMAIN_PROMPT mode=${resolvedDomainPrompt.domainMode} lang=${resolvedDomainPrompt.promptLanguage}`);
             res.write(`data: ${JSON.stringify({
                 type: 'domain_injection',
                 domainMode: resolvedDomainPrompt.domainMode,
@@ -4394,11 +4394,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         status: 'failed',
                         detail: '点数不足，已自动回退到免费模型路径'
                     });
-                    console.warn(`⚠️ 用户 ${req.user.userId} 点数不足，跳过Agent模式`);
+                    console.warn(` 用户 ${req.user.userId} 点数不足，跳过Agent模式`);
                 } else {
                     pointsAlreadyDeducted = Number(agentPoints?.pointsDeducted || 0) > 0;
                     if (pointsAlreadyDeducted) {
-                        console.log(`💳 Agent请求已扣点: user=${req.user.userId}, remaining=${agentPoints.remainingPoints}`);
+                        console.log(` Agent请求已扣点: user=${req.user.userId}, remaining=${agentPoints.remainingPoints}`);
                     }
                 }
             } catch (pointsErr) {
@@ -4412,13 +4412,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     status: 'failed',
                     detail: '点数检查失败，已回退免费模型路径'
                 });
-                console.error(`⚠️ Agent点数检查失败，回退免费模型: ${pointsErr.message}`);
+                console.error(` Agent点数检查失败，回退免费模型: ${pointsErr.message}`);
             }
         }
 
         if (normalizedAgentMode === 'on') {
             if (agentHardDisabled) {
-                console.warn('⚠️ AGENT_HARD_DISABLE=1，强制回退单模型路径');
+                console.warn(' AGENT_HARD_DISABLE=1，强制回退单模型路径');
                 emitAgentEvent(res, {
                     type: 'agent_status',
                     role: 'master',
@@ -4430,7 +4430,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 effectiveAgentMode = 'off';
             } else if (effectiveAgentMode !== 'on') {
                 // 前置点数检查已判定回退，不再进入并行Agent调用
-                console.warn('⚠️ Agent模式已因点数/策略回退到单模型路径');
+                console.warn(' Agent模式已因点数/策略回退到单模型路径');
             } else {
                 try {
                     const agentTraceState = {
@@ -4554,7 +4554,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         }
                     };
 
-                    console.log('\n🤖 启用真并行 Multi-Agent 模式 (K2.5)\n');
+                    console.log('\n 启用真并行 Multi-Agent 模式 (K2.5)\n');
                     const agentResult = await runTrueParallelAgentMode({
                         res,
                         messages,
@@ -4610,7 +4610,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     }
 
                     if (sessionId) {
-                        console.log('\n💾 保存真并行 Agent 结果到数据库');
+                        console.log('\n 保存真并行 Agent 结果到数据库');
 
                         const lastUserMessage = messages[messages.length - 1];
                         if (lastUserMessage && lastUserMessage.role === 'user') {
@@ -4689,10 +4689,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
                     res.end();
-                    console.log('\n✅ 真并行 Multi-Agent 处理完成\n');
+                    console.log('\n 真并行 Multi-Agent 处理完成\n');
                     return;
                 } catch (agentPipelineError) {
-                    console.error('⚠️ 真并行Agent流程失败，回退单模型路径:', agentPipelineError.message);
+                    console.error(' 真并行Agent流程失败，回退单模型路径:', agentPipelineError.message);
                     emitAgentEvent(res, {
                         type: 'agent_status',
                         role: 'master',
@@ -4716,7 +4716,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 qualityProfile
             });
         } catch (agentError) {
-            console.error('⚠️ Multi-Agent 编排初始化失败，回退单模型路径:', agentError.message);
+            console.error(' Multi-Agent 编排初始化失败，回退单模型路径:', agentError.message);
             emitAgentEvent(res, {
                 type: 'agent_status',
                 role: 'master',
@@ -4748,7 +4748,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             });
             userMembershipTier = String(userTierRow?.membership || 'free').toUpperCase();
         } catch (tierErr) {
-            console.warn(`⚠️ 读取会员等级失败，按free处理: ${tierErr.message}`);
+            console.warn(` 读取会员等级失败，按free处理: ${tierErr.message}`);
             userMembershipTier = 'FREE';
         }
         const normalizedMembershipTier = String(userMembershipTier || 'FREE').toLowerCase();
@@ -4758,7 +4758,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let routing = null;      // 对应的路由配置
         let autoRoutingReason = '';
 
-        console.log(`\n🎯 模型选择开始: 用户指定 = ${model}`);
+        console.log(`\n 模型选择开始: 用户指定 = ${model}`);
 
         // 关键修复：只检测【当前用户消息】的多模态内容，而不是整个对话历史！
         // 这样只有当前消息带图片才会用 VL 模型，之前对话中的图片不会影响后续消息
@@ -4767,7 +4767,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let isMultimodalRequest = currentMessageMultimodal.hasMultimodal;
 
         if (isMultimodalRequest) {
-            console.log(`\n🎨 🎨 🎨 当前消息检测到多模态内容!!!`);
+            console.log(`\n   当前消息检测到多模态内容!!!`);
             console.log(`   类型: ${getMultimodalTypeDescription(currentMessageMultimodal.types)}`);
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
@@ -4779,27 +4779,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 // Gemini 3 Flash / Qwen3-Omni 等原生支持多模态，直接使用
                 finalModel = model;
                 autoRoutingReason = `${model} 原生支持多模态，直接处理${getMultimodalTypeDescription(currentMessageMultimodal.types)}`;
-                console.log(`   ✅ 模型 ${model} 原生支持多模态，无需切换`);
+                console.log(`    模型 ${model} 原生支持多模态，无需切换`);
             } else {
                 // 非多模态模型自动切换到视觉模型
                 finalModel = 'qwen3-vl';
                 autoRoutingReason = `${model || 'auto'} 不支持多模态，自动切换到Qwen3-Omni视觉语言模型处理${getMultimodalTypeDescription(currentMessageMultimodal.types)}`;
-                console.log(`   🔄 ${model || 'auto'} 不支持多模态，切换到 qwen3-vl (Qwen/Qwen3-Omni-30B-A3B-Instruct)`);
+                console.log(`    ${model || 'auto'} 不支持多模态，切换到 qwen3-vl (Qwen/Qwen3-Omni-30B-A3B-Instruct)`);
             }
         } else if (model === 'auto') {
             // 智能模型策略：free/pro/max 全部默认 K2.5
             finalModel = 'kimi-k2.5';
             autoRoutingReason = `${userMembershipTier} 用户智能模型默认使用 Kimi K2.5`;
-            console.log(`🤖 auto_route_decision: ${autoRoutingReason}`);
+            console.log(` auto_route_decision: ${autoRoutingReason}`);
         }
 
 
         // Auto + 联网：优先保证可用性，DeepSeek 下回退到硅基免费 Qwen2.5-7B
         if (model === 'auto' && internetMode) {
-            console.log(`🌐 Auto+联网模式: 使用 ${finalModel}（支持联网）`);
+            console.log(` Auto+联网模式: 使用 ${finalModel}（支持联网）`);
         }
 
-        // ✅ 关键修复：添加白名单验证（防御性编程）
+        //  关键修复：添加白名单验证（防御性编程）
         const VALID_MODELS = [
             'deepseek-v3',
             'deepseek-v3.2-speciale',
@@ -4818,7 +4818,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 注意：多模态检测已在上面执行，这里不再重复
 
         if (!VALID_MODELS.includes(finalModel)) {
-            console.warn(`⚠️ 无效模型 ${finalModel},回退到 qwen2.5-7b`);
+            console.warn(` 无效模型 ${finalModel},回退到 qwen2.5-7b`);
             finalModel = 'qwen2.5-7b';
             autoRoutingReason = '无效模型,自动回退到Qwen2.5-7B(免费)';
         }
@@ -4840,13 +4840,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     if (!poeQuotaResult.allowed) {
                         finalModel = 'qwen2.5-7b';
                         autoRoutingReason = 'Poe free 配额已用尽，自动切换到 Qwen2.5-7B(免费)';
-                        console.warn(`⚠️ poe_fallback quota_exceeded -> ${finalModel}`);
+                        console.warn(` poe_fallback quota_exceeded -> ${finalModel}`);
                     } else if (thinkingMode) {
                         thinkingMode = false;
-                        console.log('ℹ️ free + Poe 已强制关闭 thinkingMode');
+                        console.log(' free + Poe 已强制关闭 thinkingMode');
                     }
                 } catch (poeQuotaError) {
-                    console.warn(`⚠️ Poe配额检查失败，回退免费模型: ${poeQuotaError.message}`);
+                    console.warn(` Poe配额检查失败，回退免费模型: ${poeQuotaError.message}`);
                     finalModel = 'qwen2.5-7b';
                     autoRoutingReason = 'Poe配额检查失败，自动回退到Qwen2.5-7B(免费)';
                 }
@@ -4855,11 +4855,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (isPoeModelAlias(finalModel)) {
                 const poeResolution = resolvePoeModelAlias(finalModel);
                 if (!poeResolution.available) {
-                    console.warn(`⚠️ poe_fallback unavailable alias=${finalModel} -> kimi-k2.5`);
+                    console.warn(` poe_fallback unavailable alias=${finalModel} -> kimi-k2.5`);
                     finalModel = 'kimi-k2.5';
                     autoRoutingReason = `Poe模型暂不可用，已回退到 Kimi K2.5 (${poeResolution.alias})`;
                 } else {
-                    console.log(`✅ poe_model_sync route alias=${finalModel} model=${poeResolution.model} source=${poeResolution.source}`);
+                    console.log(` poe_model_sync route alias=${finalModel} model=${poeResolution.model} source=${poeResolution.source}`);
                 }
             }
         }
@@ -4869,7 +4869,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             autoRoutingReason = autoRoutingReason
                 ? `${autoRoutingReason}; 点数不足自动切换到Qwen2.5-7B(免费)`
                 : '点数不足自动切换到Qwen2.5-7B(免费)';
-            console.log(`💳 点数不足强制免费模型: user=${req.user.userId}`);
+            console.log(` 点数不足强制免费模型: user=${req.user.userId}`);
         } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted) {
             try {
                 const pointsResult = await checkAndDeductPoints(req.user.userId, finalModel);
@@ -4878,31 +4878,31 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     autoRoutingReason = autoRoutingReason
                         ? `${autoRoutingReason}; 点数不足自动切换到Qwen2.5-7B(免费)`
                         : '点数不足自动切换到Qwen2.5-7B(免费)';
-                    console.log(`💳 点数不足自动切换免费模型: user=${req.user.userId}`);
+                    console.log(` 点数不足自动切换免费模型: user=${req.user.userId}`);
                 } else if (Number(pointsResult?.pointsDeducted || 0) > 0) {
                     pointsAlreadyDeducted = true;
-                    console.log(`💳 已扣点: user=${req.user.userId}, remaining=${pointsResult.remainingPoints}`);
+                    console.log(` 已扣点: user=${req.user.userId}, remaining=${pointsResult.remainingPoints}`);
                 }
             } catch (pointsErr) {
                 finalModel = 'qwen2.5-7b';
                 autoRoutingReason = autoRoutingReason
                     ? `${autoRoutingReason}; 点数检查失败，回退到Qwen2.5-7B(免费)`
                     : '点数检查失败，回退到Qwen2.5-7B(免费)';
-                console.error(`⚠️ 点数检查失败，回退免费模型: ${pointsErr.message}`);
+                console.error(` 点数检查失败，回退免费模型: ${pointsErr.message}`);
             }
         }
 
         // 关键修复：现在finalModel已经是具体的模型名，再获取routing
         routing = MODEL_ROUTING[finalModel];
         if (!routing) {
-            console.error(`❌ 模型路由配置未找到: ${finalModel}`);
+            console.error(` 模型路由配置未找到: ${finalModel}`);
             res.write(`data: ${JSON.stringify({ type: 'error', error: `配置错误: ${finalModel}` })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
-        console.log(`\n🔌 路由配置: provider=${routing.provider}, model=${routing.model}`);
+        console.log(`\n 路由配置: provider=${routing.provider}, model=${routing.model}`);
 
         let actualModel = routing.model;
         if (routing.provider === 'poe') {
@@ -4910,7 +4910,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (poeResolution.available && poeResolution.model) {
                 actualModel = poeResolution.model;
             } else {
-                console.warn(`⚠️ poe_fallback runtime_unavailable alias=${finalModel} -> kimi-k2.5`);
+                console.warn(` poe_fallback runtime_unavailable alias=${finalModel} -> kimi-k2.5`);
                 finalModel = 'kimi-k2.5';
                 routing = MODEL_ROUTING[finalModel];
                 actualModel = routing.model;
@@ -4921,25 +4921,25 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // DeepSeek思考模式自动切换
         if (finalModel === 'deepseek-v3' && thinkingMode) {
             actualModel = routing.thinkingModel || 'deepseek-reasoner';
-            console.log(`🧠 DeepSeek思考模式: 切换到 ${actualModel}`);
+            console.log(` DeepSeek思考模式: 切换到 ${actualModel}`);
         }
 
         // DeepSeek-V3.2-Speciale 强制使用思考模式
         if (finalModel === 'deepseek-v3.2-speciale') {
             actualModel = 'deepseek-reasoner';  // 特殊端点使用 reasoner
-            console.log(`🧠 DeepSeek-V3.2-Speciale: 强制使用思考模式 (${actualModel})`);
+            console.log(` DeepSeek-V3.2-Speciale: 强制使用思考模式 (${actualModel})`);
         }
 
         // Kimi K2.5 思考模式自动切换
         if ((finalModel === 'kimi-k2.5' || finalModel === 'kimi-k2') && thinkingMode && routing.thinkingModel) {
             actualModel = routing.thinkingModel;
-            console.log(`🧠 Kimi K2.5 思考模式: 切换到 ${actualModel}`);
+            console.log(` Kimi K2.5 思考模式: 切换到 ${actualModel}`);
         }
 
-        // ✅ 关键修复：验证提供商配置存在（防止404错误）
+        //  关键修复：验证提供商配置存在（防止404错误）
         let providerConfig = API_PROVIDERS[routing.provider];
         if (!providerConfig) {
-            console.error(`❌ API提供商配置未找到: ${routing.provider}`);
+            console.error(` API提供商配置未找到: ${routing.provider}`);
             res.write(`data: ${JSON.stringify({ type: 'error', error: `不支持的提供商: ${routing.provider}` })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
@@ -4947,14 +4947,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
         if (!providerConfig.apiKey) {
             const missingEnvKey = providerConfig.envKey || 'API_KEY';
-            console.error(`❌ 缺少API环境变量: ${missingEnvKey}`);
+            console.error(` 缺少API环境变量: ${missingEnvKey}`);
             res.write(`data: ${JSON.stringify({ type: 'error', error: `服务器未配置${missingEnvKey}` })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
-        console.log(`✅ API端点: ${providerConfig.baseURL}`);
+        console.log(` API端点: ${providerConfig.baseURL}`);
 
         // 关键修复：通过SSE发送实际使用的模型信息（因为响应头已经发送，无法再设置X-Model-Used）
         res.write(`data: ${JSON.stringify({
@@ -4964,20 +4964,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             reason: autoRoutingReason,
             provider: routing.provider
         })}\n\n`);
-        console.log(`📤 已发送模型信息: finalModel=${finalModel}, actualModel=${actualModel}`);
+        console.log(` 已发送模型信息: finalModel=${finalModel}, actualModel=${actualModel}`);
 
-        // 🔍 流式工具调用模式 (Streaming Function Calling)
+        //  流式工具调用模式 (Streaming Function Calling)
         // 不再预先判断，而是在流式响应中检测 tool_calls
         let searchContext = '';
         let searchSources = [];
         let useStreamingTools = false;  // 标记是否启用流式工具调用
 
         if (internetMode && routing.provider !== 'aliyun') {
-            console.log(`🌐 联网模式: 启用流式工具调用 (Streaming Function Calling)`);
+            console.log(` 联网模式: 启用流式工具调用 (Streaming Function Calling)`);
             useStreamingTools = true;
             // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
         } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
-            console.log(`ℹ️ DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
+            console.log(` DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
         }
 
         // 构建消息数组
@@ -4986,7 +4986,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 如果是多模态请求，转换消息格式为Omni格式
         if (isMultimodalRequest) {
             finalMessages = convertMessagesToOmniFormat(finalMessages);
-            console.log(`🎨 消息已转换为多模态格式`);
+            console.log(` 消息已转换为多模态格式`);
         }
 
         // 添加系统提示词（包含搜索结果）
@@ -4995,25 +4995,25 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             ? `${systemPrompt || ''}\n${searchContext}`.trim()
             : systemPrompt || '';
 
-        // 🔧 流式工具调用：在系统提示词中告知 AI 它有搜索能力
+        //  流式工具调用：在系统提示词中告知 AI 它有搜索能力
         if (useStreamingTools) {
             const toolHint = `\n\n[系统提示] 当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”，请至少调用一次 web_search 再回答；涉及天气、新闻、股价、时效数据时也应按需调用，并可在必要时再次调用。`;
             systemContent = systemContent ? `${systemContent}${toolHint}` : toolHint.trim();
-            console.log(`🔧 已添加工具提示到系统提示词`);
+            console.log(` 已添加工具提示到系统提示词`);
         }
 
         if (activeDomainInstruction) {
             systemContent = systemContent
                 ? `${systemContent}\n\n${activeDomainInstruction}`
                 : activeDomainInstruction;
-            console.log(`🔧 已注入领域系统提示词: ${resolvedDomainPrompt?.domainMode || 'unknown'}`);
+            console.log(` 已注入领域系统提示词: ${resolvedDomainPrompt?.domainMode || 'unknown'}`);
         }
 
         if (activeRuleInstruction) {
             systemContent = systemContent
                 ? `${systemContent}\n\n${activeRuleInstruction}`
                 : activeRuleInstruction;
-            console.log(`🔧 已注入规则提示到系统提示词: ${resolvedPromptRule?.ruleId || 'unknown'}`);
+            console.log(` 已注入规则提示到系统提示词: ${resolvedPromptRule?.ruleId || 'unknown'}`);
         }
 
         if (systemContent) {
@@ -5040,11 +5040,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (routing.provider === 'siliconflow') {
                 // SiliconFlow: 使用 enable_thinking 开关
                 requestBody.enable_thinking = !!thinkingMode;
-                console.log(`🧠 Kimi K2.5 enable_thinking=${requestBody.enable_thinking} (${thinkingMode ? '深度模式' : '快速模式'})`);
+                console.log(` Kimi K2.5 enable_thinking=${requestBody.enable_thinking} (${thinkingMode ? '深度模式' : '快速模式'})`);
             } else {
                 // Moonshot 原生兼容写法
                 requestBody.thinking = { type: thinkingMode ? 'enabled' : 'disabled' };
-                console.log(`🧠 Kimi K2.5 thinking=${requestBody.thinking.type} (${thinkingMode ? '深度模式' : '快速模式'})`);
+                console.log(` Kimi K2.5 thinking=${requestBody.thinking.type} (${thinkingMode ? '深度模式' : '快速模式'})`);
             }
         } else {
             requestBody.temperature = parseFloat(temperature) || 0.7;
@@ -5053,7 +5053,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const modelThinkingBudget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
             if (modelThinkingBudget !== null) {
                 requestBody.thinking_budget = modelThinkingBudget;
-                console.log(`🧠 ${actualModel} thinking_budget=${modelThinkingBudget} (${thinkingMode ? '思考模式' : '快速模式'})`);
+                console.log(` ${actualModel} thinking_budget=${modelThinkingBudget} (${thinkingMode ? '思考模式' : '快速模式'})`);
             }
         }
 
@@ -5061,38 +5061,38 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile);
             if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
                 requestBody.extra_body = poeExtraBody;
-                console.log(`🧩 Poe extra_body 已注入: ${JSON.stringify(poeExtraBody)}`);
+                console.log(` Poe extra_body 已注入: ${JSON.stringify(poeExtraBody)}`);
             }
         }
 
-        // 🔧 流式工具调用：为请求添加 tools 参数
+        //  流式工具调用：为请求添加 tools 参数
         if (useStreamingTools) {
             requestBody.tools = TOOL_DEFINITIONS;
             // 支持“先说一部分，再按需调用工具，再继续说”
             requestBody.tool_choice = "auto";
-            console.log(`🔧 已为流式调用添加工具定义: ${TOOL_DEFINITIONS.length}个工具`);
+            console.log(` 已为流式调用添加工具定义: ${TOOL_DEFINITIONS.length}个工具`);
         }
 
         // Qwen3-VL 视觉语言模型配置 (SiliconFlow)
         if (finalModel === 'qwen3-vl') {
             // Qwen3-VL-235B-A22B-Thinking 内置思考能力，需要更大的token限制
             requestBody.max_tokens = Math.max(parseInt(max_tokens, 10) || 4096, 4096);
-            console.log(`🔍 Qwen3-VL 视觉语言模型配置已应用 (max_tokens: ${requestBody.max_tokens})`);
+            console.log(` Qwen3-VL 视觉语言模型配置已应用 (max_tokens: ${requestBody.max_tokens})`);
         }
 
-        // ✅ 防御性检查：确保数值解析成功
+        //  防御性检查：确保数值解析成功
         if (Object.prototype.hasOwnProperty.call(requestBody, 'temperature') &&
             (isNaN(requestBody.temperature) || requestBody.temperature < 0 || requestBody.temperature > 2)) {
-            console.warn(`⚠️ 无效的temperature值: ${temperature}，使用默认值0.7`);
+            console.warn(` 无效的temperature值: ${temperature}，使用默认值0.7`);
             requestBody.temperature = 0.7;
         }
         if (Object.prototype.hasOwnProperty.call(requestBody, 'top_p') &&
             (isNaN(requestBody.top_p) || requestBody.top_p < 0 || requestBody.top_p > 1)) {
-            console.warn(`⚠️ 无效的top_p值: ${top_p}，使用默认值0.9`);
+            console.warn(` 无效的top_p值: ${top_p}，使用默认值0.9`);
             requestBody.top_p = 0.9;
         }
         if (isNaN(requestBody.max_tokens) || requestBody.max_tokens < 100 || requestBody.max_tokens > 8000) {
-            console.warn(`⚠️ 无效的max_tokens值: ${max_tokens}，使用默认值2000`);
+            console.warn(` 无效的max_tokens值: ${max_tokens}，使用默认值2000`);
             requestBody.max_tokens = 2000;
         }
 
@@ -5100,18 +5100,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (thinkingMode && routing.provider === 'aliyun') {
             requestBody.enable_thinking = true;
 
-            // ✅ 思考预算直接放顶层，不用extra_body
+            //  思考预算直接放顶层，不用extra_body
             const budget = parseInt(thinkingBudget);
             const validBudget = Math.max(256, Math.min(isNaN(budget) ? 1024 : budget, 32768));
 
-            requestBody.thinking_budget = validBudget;  // ✅ 改为直接放顶层
+            requestBody.thinking_budget = validBudget;  //  改为直接放顶层
 
-            console.log(`🧠 Qwen思考模式已开启, 预算: ${validBudget} tokens`);
+            console.log(` Qwen思考模式已开启, 预算: ${validBudget} tokens`);
         }
 
         // 阿里云互联网模式
         if (internetMode && routing.provider === 'aliyun') {
-            // ✅ 修复：确保enable_search是布尔值，不能是其他类型
+            //  修复：确保enable_search是布尔值，不能是其他类型
             requestBody.enable_search = true;
             // 新增：启用搜索来源和角标功能
             requestBody.search_options = {
@@ -5119,25 +5119,25 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 enable_citation: true,      // 在回答中插入角标
                 citation_format: "[<number>]"  // 角标格式: [1], [2]
             };
-            console.log(`🌐 阿里云互联网搜索已开启（启Enable角标引用）`);
+            console.log(` 阿里云互联网搜索已开启（启Enable角标引用）`);
         }
 
         // DeepSeek参数
         if (routing.provider === 'deepseek') {
-            // ✅ 确保frequency_penalty和presence_penalty是有效的数值
+            //  确保frequency_penalty和presence_penalty是有效的数值
             const freqPenalty = parseFloat(frequency_penalty);
             const presPenalty = parseFloat(presence_penalty);
 
             requestBody.frequency_penalty = (isNaN(freqPenalty) ? 0 : Math.max(0, Math.min(freqPenalty, 2)));
             requestBody.presence_penalty = (isNaN(presPenalty) ? 0 : Math.max(0, Math.min(presPenalty, 2)));
 
-            console.log(`📊 DeepSeek参数: frequency_penalty=${requestBody.frequency_penalty}, presence_penalty=${requestBody.presence_penalty}`);
+            console.log(` DeepSeek参数: frequency_penalty=${requestBody.frequency_penalty}, presence_penalty=${requestBody.presence_penalty}`);
         }
 
-        console.log(`\n📤 最终请求体 (前1000字符):`);
+        console.log(`\n 最终请求体 (前1000字符):`);
         console.log(JSON.stringify(requestBody, null, 2).substring(0, 1000));
 
-        // ✅ 加强过滤：将autoRoutingReason转换为可以放入HTTP头的格式（移除所有中文和特殊字符）
+        //  加强过滤：将autoRoutingReason转换为可以放入HTTP头的格式（移除所有中文和特殊字符）
         const reasonForHeader = (autoRoutingReason || '')
             .replace(/[\u4e00-\u9fa5\u3000-\u303F\uFF00-\uFFEF]/g, '')  // 移除所有中日韩字符
             .replace(/[^\x20-\x7E]/g, '')      // 只保留可打印ASCII字符
@@ -5145,9 +5145,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             .trim()
             .substring(0, 100);
 
-        // ✅ 验证请求体的关键字段
+        //  验证请求体的关键字段
         if (!requestBody.model) {
-            console.error('❌ 请求体缺少model字段');
+            console.error(' 请求体缺少model字段');
             res.write(`data: ${JSON.stringify({ type: 'error', error: '模型配置错误' })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
@@ -5155,7 +5155,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         if (!Array.isArray(requestBody.messages) || requestBody.messages.length === 0) {
-            console.error('❌ 请求体消息为空');
+            console.error(' 请求体消息为空');
             res.write(`data: ${JSON.stringify({ type: 'error', error: '消息不能为空' })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
@@ -5166,27 +5166,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 新增：如果有搜索来源，立即发送给前端
         if (searchSources && searchSources.length > 0) {
             res.write(`data: ${JSON.stringify({ type: 'sources', sources: searchSources })}\n\n`);
-            console.log(`📤 已发送 ${searchSources.length} 个搜索来源到前端`);
+            console.log(` 已发送 ${searchSources.length} 个搜索来源到前端`);
         }
 
-        console.log(`\n📤 发送请求到 ${routing.provider} - ${actualModel}\n`);
+        console.log(`\n 发送请求到 ${routing.provider} - ${actualModel}\n`);
 
-        // ✅ 关键修复：调用API
-        console.log(`🌐 正在调用: ${providerConfig.baseURL}`);
+        //  关键修复：调用API
+        console.log(` 正在调用: ${providerConfig.baseURL}`);
         console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
 
-        // ✅ 修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
+        //  修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 120000);
 
-        // ✅ 关键修复：将变量声明移到try块外部，避免作用域问题
+        //  关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
         let reasoningContent = '';
         let rawToolContent = '';
         let agentSynthesizerRunning = false;
         let agentResearcherRunning = false;
 
-        // 🔥 Gemini API 特殊处理
+        //  Gemini API 特殊处理
         const isGeminiAPI = providerConfig.isGemini || routing.isGemini;
 
         try {
@@ -5285,7 +5285,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     };
                 }
 
-                console.log(`🔷 Gemini API 请求: ${apiUrl}`);
+                console.log(` Gemini API 请求: ${apiUrl}`);
                 console.log(`   模型: ${actualModel}`);
                 console.log(`   消息数: ${geminiContents.length}`);
             } else {
@@ -5298,7 +5298,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 fetchBody = requestBody;
             }
 
-            console.log(`🌐 正在调用: ${apiUrl}`);
+            console.log(` 正在调用: ${apiUrl}`);
             console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
 
             let apiResponse = await fetch(apiUrl, {
@@ -5310,12 +5310,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             clearTimeout(timeoutId); // 清除超时定时器
 
-            console.log(`📥 API响应状态: ${apiResponse.status} ${apiResponse.statusText}`);
+            console.log(` API响应状态: ${apiResponse.status} ${apiResponse.statusText}`);
 
-            // ✅ 修复错误处理
+            //  修复错误处理
             if (!apiResponse.ok) {
                 let errorText = await apiResponse.text();
-                console.error(`❌ API返回错误:`);
+                console.error(` API返回错误:`);
                 console.error(`   状态码: ${apiResponse.status}`);
                 console.error(`   响应体: ${errorText.substring(0, 500)}`);
 
@@ -5326,7 +5326,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     apiResponse.status >= 400 &&
                     apiResponse.status < 500
                 ) {
-                    console.warn(`⚠️ poe_fallback retry_without_extra_body model=${finalModel} status=${apiResponse.status}`);
+                    console.warn(` poe_fallback retry_without_extra_body model=${finalModel} status=${apiResponse.status}`);
                     const retryBody = { ...requestBody };
                     delete retryBody.extra_body;
 
@@ -5348,9 +5348,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     if (!apiResponse.ok) {
                         errorText = await apiResponse.text();
-                        console.warn(`⚠️ poe_fallback retry_failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
+                        console.warn(` poe_fallback retry_failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
                     } else {
-                        console.log('✅ Poe 参数回退重试成功（已移除 extra_body）');
+                        console.log(' Poe 参数回退重试成功（已移除 extra_body）');
                     }
                 }
 
@@ -5366,7 +5366,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
 
                     if (fallbackRouting && fallbackProviderConfig?.apiKey) {
-                        console.warn(`⚠️ poe_fallback to=${fallbackModel} status=${apiResponse.status}`);
+                        console.warn(` poe_fallback to=${fallbackModel} status=${apiResponse.status}`);
                         routing = fallbackRouting;
                         providerConfig = fallbackProviderConfig;
                         finalModel = fallbackModel;
@@ -5412,9 +5412,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                         if (!apiResponse.ok) {
                             errorText = await apiResponse.text();
-                            console.warn(`⚠️ poe_fallback_to_kimi failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
+                            console.warn(` poe_fallback_to_kimi failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
                         } else {
-                            console.log(`✅ poe_fallback_to_kimi 成功: ${actualModel}`);
+                            console.log(` poe_fallback_to_kimi 成功: ${actualModel}`);
                         }
                     }
                 }
@@ -5431,7 +5431,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
 
                         if (fallbackRouting && fallbackProviderConfig?.apiKey) {
-                            console.warn(`⚠️ 检测到硅基余额不足，自动回退到免费模型 ${fallbackModel}`);
+                            console.warn(` 检测到硅基余额不足，自动回退到免费模型 ${fallbackModel}`);
                             routing = fallbackRouting;
                             providerConfig = fallbackProviderConfig;
                             finalModel = fallbackModel;
@@ -5481,7 +5481,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                             if (!apiResponse.ok) {
                                 const fallbackErrorText = await apiResponse.text();
-                                console.error(`❌ 备用模型也失败: ${apiResponse.status} ${fallbackErrorText.substring(0, 300)}`);
+                                console.error(` 备用模型也失败: ${apiResponse.status} ${fallbackErrorText.substring(0, 300)}`);
                                 const fallbackMsg = `AI服务调用失败: 主模型余额不足，备用模型失败 ${apiResponse.status} ${fallbackErrorText.substring(0, 100)}`;
                                 res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackMsg })}\n\n`);
                                 res.end();
@@ -5489,7 +5489,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 return;
                             }
 
-                            console.log(`✅ 备用模型连接成功，继续流式输出: ${fallbackModel}`);
+                            console.log(` 备用模型连接成功，继续流式输出: ${fallbackModel}`);
                         } else {
                             const errorMsg = `AI服务调用失败: ${apiResponse.status} ${errorText.substring(0, 100)}`;
                             res.write(`data: ${JSON.stringify({ type: 'error', error: errorMsg })}\n\n`);
@@ -5507,16 +5507,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             }
 
-            console.log('✅ API连接成功，开始接收流式响应\n');
+            console.log(' API连接成功，开始接收流式响应\n');
 
             const reader = apiResponse.body.getReader();
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
 
-            // 🔧 流式工具调用：累积 tool_calls 数据
+            //  流式工具调用：累积 tool_calls 数据
             let accumulatedToolCalls = [];  // 累积的工具调用
             let pendingToolCall = null;     // 当前正在累积的工具调用
             let streamFinishReason = null;  // 流结束原因
+            let streamProviderError = null; // 流式事件级错误（HTTP仍可能是200）
             let toolMarkerCarry = '';
             let inToolCallSection = false;
             const TOOL_CALL_SECTION_START = '<|tool_calls_section_begin|>';
@@ -5601,7 +5602,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             while (true) {
                 const isCancelled = await checkCancellation();
                 if (isCancelled) {
-                    console.log(`🛑 请求被用户取消: ${requestId}`);
+                    console.log(` 请求被用户取消: ${requestId}`);
                     res.write(`data: ${JSON.stringify({ type: 'cancelled' })}\n\n`);
                     res.end();
                     reader.cancel();
@@ -5626,6 +5627,15 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         const data = trimmed.slice(6);
                         try {
                             const parsed = JSON.parse(data);
+                            if (parsed?.error) {
+                                const errPayload = parsed.error;
+                                const errMessage = typeof errPayload === 'string'
+                                    ? errPayload
+                                    : (errPayload?.message || JSON.stringify(errPayload));
+                                streamProviderError = errMessage;
+                                console.error(` 流式事件错误(${routing.provider}): ${errMessage}`);
+                                continue;
+                            }
 
                             if (isGeminiAPI) {
                                 // ============ Gemini 响应格式解析 ============
@@ -5644,7 +5654,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 // ============ OpenAI 兼容格式解析 ============
                                 const choice = parsed.choices?.[0];
 
-                                // ✅ 修复：处理推理内容（支持 DeepSeek 和 Qwen）
+                                //  修复：处理推理内容（支持 DeepSeek 和 Qwen）
                                 const delta = choice?.delta || {};
                                 const reasoning = delta.reasoning_content || delta.reasoning;
                                 const content = delta.content;
@@ -5677,7 +5687,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     }
                                 }
 
-                                // 🔧 流式工具调用：检测 tool_calls
+                                //  流式工具调用：检测 tool_calls
                                 if (delta.tool_calls && useStreamingTools) {
                                     for (const tc of delta.tool_calls) {
                                         const idx = tc.index || 0;
@@ -5726,19 +5736,115 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         searchSources = qwenSources;
                                     }
                                     res.write(`data: ${JSON.stringify({ type: 'sources', sources: qwenSources })}\n\n`);
-                                    console.log(`📤 阿里云search_info: 已发送 ${qwenSources.length} 个来源`);
+                                    console.log(` 阿里云search_info: 已发送 ${qwenSources.length} 个来源`);
                                 }
                             }
                         } catch (e) {
-                            console.error('⚠️ 解析响应行错误:', e.message);
+                            console.error(' 解析响应行错误:', e.message);
                         }
                     }
                 }
 
                 if (done) {
-                    console.log('✅ 流式响应结束');
+                    console.log(' 流式响应结束');
                     break;
                 }
+            }
+
+            // Poe 在部分错误场景会返回 HTTP 200 + SSE error 事件，导致无正文但不触发HTTP错误分支
+            // 这里做兜底回退，避免前端只看到“生成中断”
+            if (routing.provider === 'poe' && !String(fullContent || '').trim()) {
+                console.warn(` poe_fallback empty_stream -> kimi-k2.5 reason=${streamProviderError || 'empty_stream'}`);
+                const fallbackModel = 'kimi-k2.5';
+                const fallbackRouting = MODEL_ROUTING[fallbackModel];
+                const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
+
+                if (!fallbackRouting || !fallbackProviderConfig?.apiKey) {
+                    const fallbackErrorMsg = `Poe流式输出为空: ${streamProviderError || 'empty_stream'}`;
+                    res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackErrorMsg })}\n\n`);
+                    res.end();
+                    db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                    return;
+                }
+
+                routing = fallbackRouting;
+                providerConfig = fallbackProviderConfig;
+                finalModel = fallbackModel;
+                actualModel = fallbackRouting.model;
+                useStreamingTools = false;
+
+                res.write(`data: ${JSON.stringify({
+                    type: 'model_info',
+                    model: finalModel,
+                    actualModel,
+                    reason: 'poe_stream_error_fallback_to_kimi',
+                    provider: routing.provider
+                })}\n\n`);
+
+                const fallbackBody = {
+                    model: actualModel,
+                    messages: finalMessages,
+                    max_tokens: parseInt(max_tokens, 10) || 2000,
+                    stream: false,
+                    enable_thinking: !!thinkingMode
+                };
+
+                let fallbackResponse;
+                try {
+                    fallbackResponse = await fetch(providerConfig.baseURL, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${providerConfig.apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(fallbackBody)
+                    });
+                } catch (fallbackErr) {
+                    const fallbackErrorMsg = `Poe回退Kimi失败: ${fallbackErr.message}`;
+                    res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackErrorMsg })}\n\n`);
+                    res.end();
+                    db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                    return;
+                }
+
+                if (!fallbackResponse.ok) {
+                    const fallbackErrorText = await fallbackResponse.text();
+                    const fallbackErrorMsg = `Poe回退Kimi失败: ${fallbackResponse.status} ${fallbackErrorText.substring(0, 180)}`;
+                    res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackErrorMsg })}\n\n`);
+                    res.end();
+                    db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                    return;
+                }
+
+                const fallbackJson = await fallbackResponse.json();
+                let fallbackContent = fallbackJson?.choices?.[0]?.message?.content || '';
+                if (Array.isArray(fallbackContent)) {
+                    fallbackContent = fallbackContent
+                        .map((part) => {
+                            if (typeof part === 'string') return part;
+                            if (part?.text) return part.text;
+                            if (typeof part?.content === 'string') return part.content;
+                            return '';
+                        })
+                        .join('');
+                } else if (typeof fallbackContent !== 'string') {
+                    fallbackContent = String(fallbackContent || '');
+                }
+                const cleanedFallbackContent = sanitizeStreamingContent(fallbackContent);
+                if (cleanedFallbackContent) {
+                    fullContent += cleanedFallbackContent;
+                    res.write(`data: ${JSON.stringify({ type: 'content', content: cleanedFallbackContent })}\n\n`);
+                }
+
+                const fallbackReasoning = fallbackJson?.choices?.[0]?.message?.reasoning_content
+                    || fallbackJson?.choices?.[0]?.message?.reasoning
+                    || '';
+                if (fallbackReasoning && thinkingMode) {
+                    reasoningContent += String(fallbackReasoning);
+                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: String(fallbackReasoning) })}\n\n`);
+                }
+
+                streamFinishReason = 'stop';
             }
 
             const extractFallbackToolCalls = (rawText = '') => {
@@ -5781,7 +5887,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 arguments: JSON.parse(argumentText)
                             });
                         } catch (e) {
-                            console.warn('⚠️ 无法解析工具参数(JSON):', argumentText);
+                            console.warn(' 无法解析工具参数(JSON):', argumentText);
                         }
                     }
                 }
@@ -5841,7 +5947,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (useStreamingTools && accumulatedToolCalls.length === 0 && rawToolContent) {
                 const fallbackCalls = extractFallbackToolCalls(rawToolContent);
                 if (fallbackCalls.length > 0) {
-                    console.log(`⚠️ 检测到 AI 以文本形式输出工具调用，已转换为标准 tool_calls: ${fallbackCalls.length} 个`);
+                    console.log(` 检测到 AI 以文本形式输出工具调用，已转换为标准 tool_calls: ${fallbackCalls.length} 个`);
                     for (let i = 0; i < fallbackCalls.length; i++) {
                         const call = fallbackCalls[i];
                         accumulatedToolCalls.push({
@@ -5857,7 +5963,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
 
             if (useStreamingTools && streamFinishReason !== 'tool_calls' && accumulatedToolCalls.length === 0) {
-                console.warn(`⚠️ 联网模式已开启，但模型未触发工具调用: model=${actualModel}`);
+                console.warn(` 联网模式已开启，但模型未触发工具调用: model=${actualModel}`);
                 if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                     emitAgentEvent(res, {
                         type: 'agent_status',
@@ -5872,7 +5978,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (useStreamingTools && accumulatedToolCalls.length > 0) {
                 let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls);
                 if (pendingToolCalls.length === 0) {
-                    console.warn(`⚠️ 收到 tool_calls 但均无效，已跳过`);
+                    console.warn(` 收到 tool_calls 但均无效，已跳过`);
                 } else {
                     let toolRound = 0;
                     const maxToolRounds = 5;
@@ -5880,14 +5986,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     while (pendingToolCalls.length > 0 && toolRound < maxToolRounds) {
                         toolRound += 1;
-                        console.log(`🔁 工具调用轮次: ${toolRound}, calls=${pendingToolCalls.length}`);
+                        console.log(` 工具调用轮次: ${toolRound}, calls=${pendingToolCalls.length}`);
 
                         const executedToolResults = [];
                         for (const toolCall of pendingToolCalls) {
                             const toolName = toolCall.function.name;
                             const args = toolCall._args;
 
-                            console.log(`🔧 执行工具: ${toolName}, args=${JSON.stringify(args)}`);
+                            console.log(` 执行工具: ${toolName}, args=${JSON.stringify(args)}`);
                             if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
@@ -5906,7 +6012,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                             const executor = TOOL_EXECUTORS[toolName];
                             if (!executor) {
-                                console.warn(`⚠️ 未找到工具执行器: ${toolName}`);
+                                console.warn(` 未找到工具执行器: ${toolName}`);
                                 continue;
                             }
 
@@ -5941,7 +6047,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 if (currentSources.length > 0) {
                                     res.write(`data: ${JSON.stringify({ type: 'sources', sources: currentSources })}\n\n`);
                                 }
-                                console.log(`✅ 工具执行完成: ${searchResults.length} 条结果`);
+                                console.log(` 工具执行完成: ${searchResults.length} 条结果`);
                                 if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                     emitAgentEvent(res, {
                                         type: 'agent_status',
@@ -5971,7 +6077,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         }
 
                         if (executedToolResults.length === 0) {
-                            console.warn(`⚠️ 本轮没有可执行的工具结果，结束工具循环`);
+                            console.warn(` 本轮没有可执行的工具结果，结束工具循环`);
                             break;
                         }
 
@@ -6025,7 +6131,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             }
                         }
 
-                        console.log(`🔄 发起续传流式调用 (round=${toolRound})...`);
+                        console.log(` 发起续传流式调用 (round=${toolRound})...`);
                         // 重置工具标记清洗器状态，避免跨轮污染
                         toolMarkerCarry = '';
                         inToolCallSection = false;
@@ -6041,7 +6147,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                         if (!continueResponse.ok) {
                             const continueErr = await continueResponse.text();
-                            console.error(`❌ 续传请求失败: ${continueResponse.status} ${continueErr.substring(0, 300)}`);
+                            console.error(` 续传请求失败: ${continueResponse.status} ${continueErr.substring(0, 300)}`);
                             break;
                         }
 
@@ -6156,11 +6262,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         }
 
                         pendingToolCalls = normalizeToolCalls(continueAccumulatedToolCalls);
-                        console.log(`✅ 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${continueStreamFinishReason || 'unknown'}`);
+                        console.log(` 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${continueStreamFinishReason || 'unknown'}`);
                     }
 
                     if (toolRound >= maxToolRounds && pendingToolCalls.length > 0) {
-                        console.warn(`⚠️ 工具调用轮次达到上限(${maxToolRounds})，强制结束以避免死循环`);
+                        console.warn(` 工具调用轮次达到上限(${maxToolRounds})，强制结束以避免死循环`);
                     }
                 }
             }
@@ -6168,14 +6274,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             clearTimeout(timeoutId);
             if (fetchError.name === 'AbortError') {
-                console.error('❌ API请求超时 (120s)');
+                console.error(' API请求超时 (120s)');
                 res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI服务请求超时(120秒)，请检查网络连接或稍后重试' })}\n\n`);
             } else if (fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT') {
-                console.error('❌ 连接超时:', fetchError.message);
+                console.error(' 连接超时:', fetchError.message);
                 console.error('   可能原因: 1) 网络不稳定 2) API服务响应慢 3) 防火墙阻止');
                 res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI服务连接超时，请检查：1) 网络连接是否正常 2) 服务器防火墙设置 3) API服务状态，然后重试' })}\n\n`);
             } else {
-                console.error('❌ Fetch错误:', fetchError);
+                console.error(' Fetch错误:', fetchError);
                 res.write(`data: ${JSON.stringify({ type: 'error', error: `网络请求失败: ${fetchError.message}` })}\n\n`);
             }
             res.end();
@@ -6280,9 +6386,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
-        // ✅ 完整的消息保存逻辑
+        //  完整的消息保存逻辑
         if (sessionId) {
-            console.log('\n💾 开始保存消息到数据库');
+            console.log('\n 开始保存消息到数据库');
 
             // 1. 保存用户消息（包含附件信息）
             const lastUserMsg = messages[messages.length - 1];
@@ -6313,7 +6419,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         }
                     });
                     attachmentsJson = JSON.stringify(previewAttachments);
-                    console.log(`📎 保存 ${previewAttachments.length} 个附件信息`);
+                    console.log(` 保存 ${previewAttachments.length} 个附件信息`);
                 }
 
                 // 使用毫秒级时间戳确保用户消息严格早于AI消息
@@ -6324,10 +6430,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         [sessionId, 'user', userContent, attachmentsJson, userMsgTimestamp],
                         (err) => {
                             if (err) {
-                                console.error('❌ 保存用户消息失败:', err);
+                                console.error(' 保存用户消息失败:', err);
                                 reject(err);
                             } else {
-                                console.log(`✅ 用户消息已保存 (${userContent.length}字符${attachmentsJson ? ', 含附件' : ''})`);
+                                console.log(` 用户消息已保存 (${userContent.length}字符${attachmentsJson ? ', 含附件' : ''})`);
                                 resolve();
                             }
                         }
@@ -6349,7 +6455,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 extractedTitle = titleMatch[1].trim();
                 // 从内容中移除标题标记
                 contentToSave = contentToSave.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
-                console.log(`📋 提取到标题: "${extractedTitle}"`);
+                console.log(` 提取到标题: "${extractedTitle}"`);
             }
 
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
@@ -6364,10 +6470,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, aiMsgTimestamp],
                     (err) => {
                         if (err) {
-                            console.error('❌ 保存AI消息失败:', err);
+                            console.error(' 保存AI消息失败:', err);
                             reject(err);
                         } else {
-                            console.log(`✅ AI回复已保存:`);
+                            console.log(` AI回复已保存:`);
                             console.log(`   - 内容: ${contentToSave.length}字符`);
                             console.log(`   - 思考: ${reasoningContent.length}字符`);
                             console.log(`   - 模型: ${finalModel}`);
@@ -6389,14 +6495,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     [extractedTitle, sessionId],
                     (updateErr) => {
                         if (!updateErr) {
-                            console.log(`✅ 会话标题已更新: "${extractedTitle}"`);
+                            console.log(` 会话标题已更新: "${extractedTitle}"`);
                             // 通知前端标题更新
                             res.write(`data: ${JSON.stringify({
                                 type: 'title',
                                 title: extractedTitle
                             })}\n\n`);
                         } else {
-                            console.error('❌ 更新会话标题失败:', updateErr);
+                            console.error(' 更新会话标题失败:', updateErr);
                         }
                     }
                 );
@@ -6408,8 +6514,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                     [sessionId],
                     (err) => {
-                        if (err) console.error('❌ 更新会话时间戳失败:', err);
-                        else console.log('✅ 会话时间戳已更新');
+                        if (err) console.error(' 更新会话时间戳失败:', err);
+                        else console.log(' 会话时间戳已更新');
                         resolve();
                     }
                 );
@@ -6428,18 +6534,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
         res.end();
 
-        console.log('\n✅ 聊天处理完成\n');
+        console.log('\n 聊天处理完成\n');
 
     } catch (error) {
-        console.error('❌ 聊天错误:', error);
+        console.error(' 聊天错误:', error);
         try {
             res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
             res.end();
         } catch (writeError) {
-            console.error('❌ 写入响应错误:', writeError);
+            console.error(' 写入响应错误:', writeError);
         }
     } finally {
-        // ✅ 关键修复：添加null检查
+        //  关键修复：添加null检查
         if (requestId) {
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
         }
@@ -6472,7 +6578,7 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
                     if (err) {
                         return res.status(500).json({ error: '停止失败' });
                     }
-                    console.log('🛑 停止请求:', requestId);
+                    console.log(' 停止请求:', requestId);
                     res.json({ success: true, message: '已发送停止信号' });
                 }
             );
@@ -6545,7 +6651,7 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
                 points = config.dailyPoints;
                 db.run('UPDATE users SET points = ?, last_daily_grant = ? WHERE id = ?',
                     [points, today, user.id]);
-                console.log(`✨ 用户 ${user.id} (${membership}) 自动发放 ${points} 点数`);
+                console.log(` 用户 ${user.id} (${membership}) 自动发放 ${points} 点数`);
             }
         }
 
@@ -6572,7 +6678,7 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ 获取会员状态失败:', error);
+        console.error(' 获取会员状态失败:', error);
         res.status(500).json({ error: '获取会员状态失败' });
     }
 });
@@ -6613,7 +6719,7 @@ app.post('/api/user/checkin', authenticateToken, async (req, res) => {
                 });
         });
 
-        console.log(`✅ 用户 ${user.id} 签到成功，获得 ${MEMBERSHIP_CONFIG.free.dailyPoints} 点数`);
+        console.log(` 用户 ${user.id} 签到成功，获得 ${MEMBERSHIP_CONFIG.free.dailyPoints} 点数`);
         res.json({
             success: true,
             pointsGained: MEMBERSHIP_CONFIG.free.dailyPoints,
@@ -6621,7 +6727,7 @@ app.post('/api/user/checkin', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ 签到失败:', error);
+        console.error(' 签到失败:', error);
         res.status(500).json({ error: '签到失败' });
     }
 });
@@ -6675,7 +6781,7 @@ async function checkAndConsumePoeQuota(userId, membership) {
                 const currentUsed = sameDay ? Number(row.poe_usage_count || 0) : 0;
 
                 if (currentUsed >= limit) {
-                    console.warn(`⚠️ poe_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
+                    console.warn(` poe_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
                     return resolve({
                         allowed: false,
                         limit,
@@ -6692,7 +6798,7 @@ async function checkAndConsumePoeQuota(userId, membership) {
                     (updateErr) => {
                         if (updateErr) return reject(updateErr);
                         const remaining = Math.max(0, limit - nextUsed);
-                        console.log(`✅ poe_quota_consume user=${userId} used=${nextUsed}/${limit} remaining=${remaining}`);
+                        console.log(` poe_quota_consume user=${userId} used=${nextUsed}/${limit} remaining=${remaining}`);
                         resolve({
                             allowed: true,
                             limit,
@@ -6811,10 +6917,10 @@ app.post('/api/admin/login', (req, res) => {
 
     if (username === ADMIN_CONFIG.username && password === ADMIN_CONFIG.password) {
         const token = jwt.sign({ isAdmin: true, loginTime: Date.now() }, ADMIN_CONFIG.secret, { expiresIn: '8h' });
-        console.log('🔐 管理员登录成功');
+        console.log(' 管理员登录成功');
         res.json({ success: true, token });
     } else {
-        console.log('⚠️ 管理员登录失败尝试');
+        console.log(' 管理员登录失败尝试');
         res.status(401).json({ error: '管理员凭据无效' });
     }
 });
@@ -6912,7 +7018,7 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ 获取统计数据失败:', error);
+        console.error(' 获取统计数据失败:', error);
         res.status(500).json({ error: '获取统计数据失败' });
     }
 });
@@ -6937,7 +7043,7 @@ app.get('/api/admin/users', authenticateAdmin, (req, res) => {
         LIMIT ? OFFSET ?
     `, [limit, offset], (err, users) => {
         if (err) {
-            console.error('❌ 获取用户列表失败:', err);
+            console.error(' 获取用户列表失败:', err);
             return res.status(500).json({ error: '获取用户列表失败' });
         }
         res.json({ users, offset, limit });
@@ -6990,7 +7096,7 @@ app.get('/api/admin/users/:userId/detail', authenticateAdmin, async (req, res) =
 
         res.json({ user, sessions });
     } catch (error) {
-        console.error('❌ 获取用户详情失败:', error);
+        console.error(' 获取用户详情失败:', error);
         res.status(500).json({ error: '获取用户详情失败' });
     }
 });
@@ -7045,7 +7151,7 @@ app.get('/api/admin/sessions/:sessionId/messages', authenticateAdmin, async (req
 
         res.json({ session, messages, totalCount, offset, limit });
     } catch (error) {
-        console.error('❌ 获取会话消息失败:', error);
+        console.error(' 获取会话消息失败:', error);
         res.status(500).json({ error: '获取会话消息失败' });
     }
 });
@@ -7066,7 +7172,7 @@ app.get('/api/admin/users/:userId/messages', authenticateAdmin, (req, res) => {
         LIMIT ? OFFSET ?
     `, [userId, limit, offset], (err, messages) => {
         if (err) {
-            console.error('❌ 获取用户消息失败:', err);
+            console.error(' 获取用户消息失败:', err);
             return res.status(500).json({ error: '获取用户消息失败' });
         }
         res.json({ messages, offset, limit });
@@ -7085,13 +7191,13 @@ app.delete('/api/admin/users/:userId', authenticateAdmin, (req, res) => {
         db.run('DELETE FROM device_fingerprints WHERE user_id = ?', [userId]);
         db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
             if (err) {
-                console.error('❌ 删除用户失败:', err);
+                console.error(' 删除用户失败:', err);
                 return res.status(500).json({ error: '删除用户失败' });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(`🗑️ 管理员删除用户 ID: ${userId}`);
+            console.log(` 管理员删除用户 ID: ${userId}`);
             res.json({ success: true, deletedUserId: userId });
         });
     });
@@ -7125,13 +7231,13 @@ app.put('/api/admin/users/:userId/membership', authenticateAdmin, (req, res) => 
         WHERE id = ?
     `, [membership, membershipStart, membershipEnd, userId], function (err) {
         if (err) {
-            console.error('❌ 设置会员失败:', err);
+            console.error(' 设置会员失败:', err);
             return res.status(500).json({ error: '设置会员失败' });
         }
         if (this.changes === 0) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        console.log(`👑 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`);
+        console.log(` 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`);
         res.json({ success: true, membership, membershipStart, membershipEnd });
     });
 });
@@ -7162,13 +7268,13 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             WHERE id = ?
         `, [points, expireDate, userId], function (err) {
             if (err) {
-                console.error('❌ 添加购买点数失败:', err);
+                console.error(' 添加购买点数失败:', err);
                 return res.status(500).json({ error: '添加点数失败' });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(`💰 管理员给用户 ${userId} 添加 ${points} 购买点数`);
+            console.log(` 管理员给用户 ${userId} 添加 ${points} 购买点数`);
             res.json({ success: true, pointsAdded: points, type: 'purchased' });
         });
     } else {
@@ -7177,13 +7283,13 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?
         `, [points, userId], function (err) {
             if (err) {
-                console.error('❌ 添加每日点数失败:', err);
+                console.error(' 添加每日点数失败:', err);
                 return res.status(500).json({ error: '添加点数失败' });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(`⚡ 管理员给用户 ${userId} 添加 ${points} 每日点数`);
+            console.log(` 管理员给用户 ${userId} 添加 ${points} 每日点数`);
             res.json({ success: true, pointsAdded: points, type: 'daily' });
         });
     }
@@ -7221,7 +7327,7 @@ app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
 
     db.all(query, params, (err, messages) => {
         if (err) {
-            console.error('❌ 获取消息列表失败:', err);
+            console.error(' 获取消息列表失败:', err);
             return res.status(500).json({ error: '获取消息列表失败' });
         }
         res.json({ messages, offset, limit });
@@ -7234,13 +7340,13 @@ app.delete('/api/admin/messages/:messageId', authenticateAdmin, (req, res) => {
 
     db.run('DELETE FROM messages WHERE id = ?', [messageId], function (err) {
         if (err) {
-            console.error('❌ 删除消息失败:', err);
+            console.error(' 删除消息失败:', err);
             return res.status(500).json({ error: '删除消息失败' });
         }
         if (this.changes === 0) {
             return res.status(404).json({ error: '消息不存在' });
         }
-        console.log(`🗑️ 管理员删除消息 ID: ${messageId}`);
+        console.log(` 管理员删除消息 ID: ${messageId}`);
         res.json({ success: true, deletedMessageId: messageId });
     });
 });
@@ -7260,7 +7366,7 @@ app.get('/api/admin/sessions', authenticateAdmin, (req, res) => {
         LIMIT ? OFFSET ?
     `, [limit, offset], (err, sessions) => {
         if (err) {
-            console.error('❌ 获取会话列表失败:', err);
+            console.error(' 获取会话列表失败:', err);
             return res.status(500).json({ error: '获取会话列表失败' });
         }
         res.json({ sessions, offset, limit });
@@ -7275,13 +7381,13 @@ app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, (req, res) => {
         db.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
         db.run('DELETE FROM sessions WHERE id = ?', [sessionId], function (err) {
             if (err) {
-                console.error('❌ 删除会话失败:', err);
+                console.error(' 删除会话失败:', err);
                 return res.status(500).json({ error: '删除会话失败' });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: '会话不存在' });
             }
-            console.log(`🗑️ 管理员删除会话 ID: ${sessionId}`);
+            console.log(` 管理员删除会话 ID: ${sessionId}`);
             res.json({ success: true, deletedSessionId: sessionId });
         });
     });
@@ -7298,7 +7404,7 @@ app.use((req, res) => {
 
 // ==================== 错误处理 ====================
 app.use((err, req, res, next) => {
-    console.error('❌ 服务器错误:', err);
+    console.error(' 服务器错误:', err);
     res.status(500).json({
         error: '服务器内部错误',
         message: err.message
@@ -7310,31 +7416,31 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║            🚀 RAI v0.9 已启动                            ║
+║             RAI v0.9 已启动                            ║
 ║                                                          ║
-║  📡 服务地址: http://0.0.0.0:${PORT}                     ║
-║  📊 数据库: ${dbPath}                                    ║
-║  🔐 JWT认证: ✅                                         ║
-║  🤖 AI提供商: Tavily + 流动硅基                           ║
-║  🧠 思考模式: ✅                                         ║
-║  🛑 停止输出: ✅                                         ║
+║   服务地址: http://0.0.0.0:${PORT}                     ║
+║   数据库: ${dbPath}                                    ║
+║   JWT认证:                                          ║
+║   AI提供商: Tavily + 流动硅基                           ║
+║   思考模式:                                          ║
+║   停止输出:                                          ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
   `);
 
     db.get('SELECT COUNT(*) as count FROM users', (err, row) => {
         if (!err) {
-            console.log(`✅ 数据库正常, 当前用户数: ${row.count}`);
+            console.log(` 数据库正常, 当前用户数: ${row.count}`);
         }
     });
 });
 
 // 优雅退出
 process.on('SIGTERM', () => {
-    console.log('⚠️ 收到SIGTERM信号,准备关闭服务器');
+    console.log(' 收到SIGTERM信号,准备关闭服务器');
     db.close((err) => {
-        if (err) console.error('❌ 关闭数据库失败:', err);
-        else console.log('✅ 数据库已关闭');
+        if (err) console.error(' 关闭数据库失败:', err);
+        else console.log(' 数据库已关闭');
         process.exit(0);
     });
 });

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -309,7 +309,7 @@
               <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
             </svg>
           </div>
-          <h1 class="welcome-title" data-i18n="welcome-title">How can I help you? ✨</h1>
+          <h1 class="welcome-title" data-i18n="welcome-title">How can I help you? </h1>
 
           <div class="welcome-actions">
             <div class="action-card" onclick="handleActionCard('write')">
@@ -402,21 +402,34 @@
                   </div>
 
                   <!-- 推理强度 -->
-                  <div class="more-menu-item more-menu-item-static" onclick="event.stopPropagation()">
-                    <div class="more-menu-item-icon">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-                        <path
-                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q33 0 62.5-12.5T594-206l-56-56q-12 9-26.5 13.5T480-244q-39 0-66.5-27.5T386-338q0-17 4.5-31.5T404-396l-56-56q-19 22-29.5 49.5T308-338q0 72 50 122t122 50Zm200-200q0-72-50-122T508-604q-17 0-31.5 4.5T448-586l56 56q12-9 26.5-13.5T562-548q39 0 66.5 27.5T656-454q0 17-4.5 31.5T638-396l56 56q19-22 29.5-49.5T734-454Z" />
-                      </svg>
+                  <div class="more-menu-item more-menu-item-static reasoning-profile-item" onclick="event.stopPropagation()">
+                    <div class="reasoning-profile-header">
+                      <div class="more-menu-item-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                          <path
+                            d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q33 0 62.5-12.5T594-206l-56-56q-12 9-26.5 13.5T480-244q-39 0-66.5-27.5T386-338q0-17 4.5-31.5T404-396l-56-56q-19 22-29.5 49.5T308-338q0 72 50 122t122 50Zm200-200q0-72-50-122T508-604q-17 0-31.5 4.5T448-586l56 56q12-9 26.5-13.5T562-548q39 0 66.5 27.5T656-454q0 17-4.5 31.5T638-396l56 56q19-22 29.5-49.5T734-454Z" />
+                        </svg>
+                      </div>
+                      <span class="more-menu-item-text" data-i18n="reasoning-profile">推理时间</span>
                     </div>
-                    <span class="more-menu-item-text" data-i18n="reasoning-profile">推理强度</span>
-                    <select id="reasoningProfileSelect" class="reasoning-profile-select"
-                      onchange="setReasoningProfile(this.value); event.stopPropagation();">
-                      <option value="low" data-i18n="reasoning-low">低</option>
-                      <option value="medium" data-i18n="reasoning-medium">中</option>
-                      <option value="high" data-i18n="reasoning-high">高</option>
-                      <option value="mixed" data-i18n="reasoning-mixed">混合</option>
-                    </select>
+                    <div class="reasoning-profile-slider-wrap">
+                      <input
+                        id="reasoningProfileSlider"
+                        class="reasoning-profile-slider"
+                        type="range"
+                        min="0"
+                        max="3"
+                        step="1"
+                        value="0"
+                        oninput="setReasoningProfileFromSlider(this.value)"
+                      >
+                      <div class="reasoning-profile-labels">
+                        <span data-i18n="reasoning-low">短</span>
+                        <span data-i18n="reasoning-medium">中</span>
+                        <span data-i18n="reasoning-high">长</span>
+                        <span data-i18n="reasoning-mixed">自适应</span>
+                      </div>
+                    </div>
                   </div>
 
                   <!-- Agent 模式开关 -->
@@ -591,56 +604,6 @@
                       </div>
                     </div>
 
-                    <div class="model-menu-divider"></div>
-
-                    <!-- Poe 模型 -->
-                    <div class="model-menu-item" data-model="poe-claude"
-                      onclick="selectModelFromMenu('poe-claude', 'Claude · Poe')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M160-120v-80h640v80H160Zm80-160q-33 0-56.5-23.5T160-360v-360q0-33 23.5-56.5T240-800h480q33 0 56.5 23.5T800-720v360q0 33-23.5 56.5T720-280H240Zm0-80h480v-360H240v360Zm80-80h320v-80H320v80Zm0-140h320v-80H320v80Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Claude Haiku 4.5 <span class="model-badge">Poe</span></div>
-                      </div>
-                    </div>
-
-                    <div class="model-menu-item" data-model="poe-gpt"
-                      onclick="selectModelFromMenu('poe-gpt', 'ChatGPT · Poe')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm-40-200v-100h-100v-80h100v-100h80v100h100v80h-100v100h-80Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">GPT-5 Nano <span class="model-badge">Poe</span></div>
-                      </div>
-                    </div>
-
-                    <div class="model-menu-item" data-model="poe-grok"
-                      onclick="selectModelFromMenu('poe-grok', 'Grok · Poe')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="m280-80 48-248-192-168 252-24 92-232 92 232 252 24-192 168 48 248-200-128L280-80Zm200-227 92 58-24-110 85-74-112-10-41-104-41 104-112 10 85 74-24 110 92-58Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Grok 4.1 Fast Reasoning <span class="model-badge">Poe</span></div>
-                      </div>
-                    </div>
-
-                    <div class="model-menu-item" data-model="poe-gemini"
-                      onclick="selectModelFromMenu('poe-gemini', 'Gemini · Poe')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M480-80 320-240l56-56 64 64v-224h80v224l64-64 56 56L480-80Zm-200-520v-80h400v80H280Zm0 160v-80h400v80H280Zm0 160v-80h400v80H280Z" />
-                      </svg>
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">Gemini 3 Flash <span class="model-badge">Poe</span></div>
-                      </div>
-                    </div>
 
                     <div class="model-menu-divider"></div>
 
@@ -889,23 +852,24 @@
       </div>
 
       <div class="settings-body">
-        <!-- 🎫 会员状态区域 -->
+        <!--  会员状态区域 -->
         <div class="settings-group" id="settingsMembershipSection">
-          <h3 class="settings-group-title">🎫 会员状态</h3>
+          <h3 class="settings-group-title"> <span data-i18n="membership-status-title">会员状态</span></h3>
           <div class="settings-membership-section">
             <div class="settings-membership-header">
               <span class="settings-membership-badge free" id="settingsMembershipBadge">free</span>
-              <span onclick="openMembershipPlans()" class="settings-upgrade-link">体验更多使用点数？</span>
+              <span onclick="openMembershipPlans()" class="settings-upgrade-link"
+                data-i18n="upgrade-points-link">体验更多使用点数？</span>
             </div>
             <div class="settings-points-display">
-              <span class="points-icon">⚡</span>
-              <span>剩余点数: <strong id="settingsPointsDisplay">0</strong></span>
+              <span class="points-icon"></span>
+              <span><span data-i18n="remaining-points-label">剩余点数</span>: <strong id="settingsPointsDisplay">0</strong></span>
             </div>
             <button id="settingsCheckinBtn" onclick="userCheckin(); updateSettingsMembership();"
-              class="settings-checkin-btn">
-              签到 +20 ⚡
+              class="settings-checkin-btn" data-i18n="checkin-bonus">
+              签到 +20 
             </button>
-            <div class="settings-created-at" id="settingsCreatedAt">创建于: -</div>
+            <div class="settings-created-at" id="settingsCreatedAt"><span data-i18n="created-at-prefix">创建于</span>: -</div>
           </div>
         </div>
 
@@ -1062,40 +1026,6 @@
           <div class="model-description">Kimi K2.5</div>
         </div>
 
-        <div class="model-card" data-model="poe-claude" onclick="selectModelFromModal('poe-claude', 'Claude · Poe')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path
-              d="M160-120v-80h640v80H160Zm80-160q-33 0-56.5-23.5T160-360v-360q0-33 23.5-56.5T240-800h480q33 0 56.5 23.5T800-720v360q0 33-23.5 56.5T720-280H240Zm0-80h480v-360H240v360Zm80-80h320v-80H320v80Zm0-140h320v-80H320v80Z" />
-          </svg>
-          <div class="model-label">Claude</div>
-          <div class="model-description">Poe · Haiku 4.5</div>
-        </div>
-
-        <div class="model-card" data-model="poe-gpt" onclick="selectModelFromModal('poe-gpt', 'ChatGPT · Poe')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm-40-200v-140H300v-80h140v-140h80v140h140v80H520v140h-80Z" />
-          </svg>
-          <div class="model-label">ChatGPT</div>
-          <div class="model-description">Poe · GPT-5 Nano</div>
-        </div>
-
-        <div class="model-card" data-model="poe-grok" onclick="selectModelFromModal('poe-grok', 'Grok · Poe')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path
-              d="m280-80 48-248-192-168 252-24 92-232 92 232 252 24-192 168 48 248-200-128L280-80Zm200-227 92 58-24-110 85-74-112-10-41-104-41 104-112 10 85 74-24 110 92-58Z" />
-          </svg>
-          <div class="model-label">Grok</div>
-          <div class="model-description">Poe · 4.1 Fast</div>
-        </div>
-
-        <div class="model-card" data-model="poe-gemini" onclick="selectModelFromModal('poe-gemini', 'Gemini · Poe')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path d="M440-80v-280H160v-80h280v-280h80v280h280v80H520v280h-80Z" />
-          </svg>
-          <div class="model-label">Gemini</div>
-          <div class="model-description">Poe · 3 Flash</div>
-        </div>
-
         <!-- DeepSeek V3 -->
         <div class="model-card" data-model="deepseek-v3" onclick="selectModelFromModal('deepseek-v3', 'DeepSeek V3')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
@@ -1131,12 +1061,7 @@
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
           <option value="qwen2.5-7b" data-i18n="fastMode">极速</option>
-          <option value="deepseek-v3" data-i18n="expertMode">专家</option>
-          <option value="kimi-k2.5">Kimi K2.5</option>
-          <option value="poe-claude">Claude · Poe</option>
-          <option value="poe-gpt">ChatGPT · Poe</option>
-          <option value="poe-grok">Grok · Poe</option>
-          <option value="poe-gemini">Gemini · Poe</option>
+          <option value="kimi-k2.5" data-i18n="expertMode">专家</option>
         </select>
       </div>
 

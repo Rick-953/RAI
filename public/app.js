@@ -1,4 +1,4 @@
-// ==================== ChatFlow iframe 模式检测 ====================
+﻿// ==================== ChatFlow iframe 模式检测 ====================
 // 检测是否在 ChatFlow iframe 模式下运行
 const isChatFlowIframeMode = new URLSearchParams(window.location.search).get('mode') === 'chatflow';
 
@@ -9,7 +9,7 @@ let pendingCanvasCallback = null;
 // ChatFlow iframe 模式初始化
 if (isChatFlowIframeMode) {
   document.addEventListener('DOMContentLoaded', () => {
-    console.log('📱 ChatFlow iframe 模式已启用');
+    console.log(' ChatFlow iframe 模式已启用');
 
     // 隐藏侧边栏（但保留顶部导航）
     // const sidebar = document.getElementById('sidebar');
@@ -23,7 +23,7 @@ if (isChatFlowIframeMode) {
       // 接收画布数据
       if (e.data.action === 'canvas-data') {
         chatFlowCanvasContext = e.data.canvas || '';
-        console.log('📋 收到画布上下文:', chatFlowCanvasContext.substring(0, 100) + '...');
+        console.log(' 收到画布上下文:', chatFlowCanvasContext.substring(0, 100) + '...');
 
         // 如果有等待的回调，执行它
         if (pendingCanvasCallback) {
@@ -44,7 +44,7 @@ if (isChatFlowIframeMode) {
           source: 'chatflow-iframe'
         }));
         e.dataTransfer.effectAllowed = 'copy';
-        console.log('🖱️ 拖拽选中文本:', selection.substring(0, 50) + (selection.length > 50 ? '...' : ''));
+        console.log(' 拖拽选中文本:', selection.substring(0, 50) + (selection.length > 50 ? '...' : ''));
       } else {
         // 没有选中文本时阻止拖拽
         e.preventDefault();
@@ -66,7 +66,7 @@ function requestCanvasContext(callback) {
   // 超时处理（500ms 后如果没收到回复，使用空上下文）
   setTimeout(() => {
     if (pendingCanvasCallback) {
-      console.warn('⚠️ 画布上下文请求超时');
+      console.warn(' 画布上下文请求超时');
       pendingCanvasCallback('');
       pendingCanvasCallback = null;
     }
@@ -78,18 +78,18 @@ function requestCanvasContext(callback) {
 // Robust loading with CDN fallback
 window.addEventListener('load', function () {
   if (typeof marked === 'undefined' && !window.marked) {
-    console.warn('⚠️ Local marked.js failed to load. Attempting CDN fallback...');
+    console.warn(' Local marked.js failed to load. Attempting CDN fallback...');
     var script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
     script.onload = function () {
-      console.log('✅ Marked.js loaded from CDN');
+      console.log(' Marked.js loaded from CDN');
       if (typeof renderMessages === 'function') {
-        console.log('🔄 Re-rendering messages...');
+        console.log(' Re-rendering messages...');
         renderMessages();
       }
     };
     script.onerror = function () {
-      console.error('❌ Critical: Marked.js failed to load from both local and CDN');
+      console.error(' Critical: Marked.js failed to load from both local and CDN');
       // Define a simple fallback
       window.marked = {
         parse: function (text) { return text; }
@@ -97,7 +97,7 @@ window.addEventListener('load', function () {
     };
     document.head.appendChild(script);
   } else {
-    console.log('✅ Marked.js loaded successfully (Local)');
+    console.log(' Marked.js loaded successfully (Local)');
   }
 });
 
@@ -184,8 +184,8 @@ function renderMarkdownWithMath(text, isStreaming = false) {
     });
   }
 
-  // 6. 🎨 Mermaid 图表处理：检测并转换 mermaid 代码块为渲染容器
-  // 🎨 流式模式下跳过转换（使用独立的 mermaidLivePreview 容器实时渲染）
+  // 6.  Mermaid 图表处理：检测并转换 mermaid 代码块为渲染容器
+  //  流式模式下跳过转换（使用独立的 mermaidLivePreview 容器实时渲染）
   if (!isStreaming) {
     html = html.replace(
       /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
@@ -263,7 +263,7 @@ function renderSourcesList(sources, language) {
               onclick="toggleSourcesList(this)"
             >
               <span class="sources-toggle-text">${expandText} (${sourceCount})</span>
-              <span class="sources-toggle-icon">▶</span>
+              <span class="sources-toggle-icon"></span>
             </button>
           </div>
           <div class="sources-body">
@@ -314,7 +314,7 @@ function toggleSourcesList(button) {
     textEl.textContent = `${nextExpanded ? collapseText : expandText} (${count})`;
   }
   if (iconEl) {
-    iconEl.textContent = nextExpanded ? '▼' : '▶';
+    iconEl.textContent = nextExpanded ? '▼' : '';
   }
   button.setAttribute('data-expanded', nextExpanded ? 'true' : 'false');
 }
@@ -631,23 +631,23 @@ function initMermaid() {
       mindmap: { useMaxWidth: true },
       c4: { useMaxWidth: true }
     });
-    console.log('✅ Mermaid 初始化完成 (主题:', isDark ? 'dark' : 'default', ')');
+    console.log(' Mermaid 初始化完成 (主题:', isDark ? 'dark' : 'default', ')');
   } else {
-    console.warn('⚠️ Mermaid 库未加载');
+    console.warn(' Mermaid 库未加载');
   }
 }
 
 // 渲染页面中的所有 Mermaid 图表
 async function renderMermaidCharts() {
   if (typeof mermaid === 'undefined') {
-    console.warn('⚠️ Mermaid 库未加载，跳过图表渲染');
+    console.warn(' Mermaid 库未加载，跳过图表渲染');
     return;
   }
 
   const containers = document.querySelectorAll('.mermaid-container:not(.rendered)');
   if (containers.length === 0) return;
 
-  console.log(`🎨 开始渲染 ${containers.length} 个 Mermaid 图表`);
+  console.log(` 开始渲染 ${containers.length} 个 Mermaid 图表`);
 
   for (const container of containers) {
     const code = decodeURIComponent(container.dataset.mermaidCode || '');
@@ -677,9 +677,9 @@ async function renderMermaidCharts() {
           `;
       container.appendChild(toolbar);
 
-      console.log(`✅ 图表渲染成功: ${container.id}`);
+      console.log(` 图表渲染成功: ${container.id}`);
     } catch (err) {
-      console.error('❌ Mermaid 渲染失败:', err);
+      console.error(' Mermaid 渲染失败:', err);
       container.innerHTML = `<div class="mermaid-error">
             <span class="mermaid-error-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
@@ -699,7 +699,7 @@ function copyMermaidCode(containerId) {
   if (!container) return;
   const code = decodeURIComponent(container.dataset.mermaidCode || '');
   navigator.clipboard.writeText('```mermaid\n' + code + '\n```').then(() => {
-    console.log('✅ Mermaid 代码已复制');
+    console.log(' Mermaid 代码已复制');
   });
 }
 
@@ -833,7 +833,7 @@ function bindMermaidFullscreenEvents() {
   // 复制代码
   document.getElementById('mermaidCopyBtn').onclick = () => {
     navigator.clipboard.writeText('```mermaid\n' + mermaidFullscreenState.currentCode + '\n```');
-    console.log('✅ Mermaid 代码已复制');
+    console.log(' Mermaid 代码已复制');
   };
 
   // 下载
@@ -1116,11 +1116,11 @@ async function renderSingleMermaidContainer(container, code, cache) {
     // 缓存渲染结果
     cache.set(container.dataset.mermaidCode, container.cloneNode(true));
 
-    console.log(`✅ 流式渲染 Mermaid 图表: ${container.id}`);
+    console.log(` 流式渲染 Mermaid 图表: ${container.id}`);
   } catch (err) {
     container.classList.remove('rendering');
     // 渲染失败则保持loading状态，等待更多内容（可能代码不完整）
-    console.debug('⏳ Mermaid 代码可能不完整，等待更多内容...', err.message);
+    console.debug(' Mermaid 代码可能不完整，等待更多内容...', err.message);
   }
 }
 
@@ -1189,7 +1189,7 @@ const ICON_PATHS = {
   // 搜索图标 - 用于侧边栏对话搜索框、欢迎页面搜索动作卡片
   'search': '<path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>',
 
-  // 📤 上传文件图标 - 用于新建对话按钮、新建空间按钮、附件上传按钮
+  //  上传文件图标 - 用于新建对话按钮、新建空间按钮、附件上传按钮
   'add': { viewBox: '0 -960 960 960', content: '<path d="M440-280h80v-168l64 64 56-56-160-160-160 160 56 56 64-64v168ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z"/>' },
 
   // 文件夹图标 - 用于侧边栏空间分组标题
@@ -1219,10 +1219,10 @@ const ICON_PATHS = {
   // 地球/联网图标 - 用于输入框工具栏联网按钮、侧边栏语言切换提示
   'language': '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.91-4.33-3.56zm2.95-8H5.08c.96-1.65 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/>',
 
-  // 齿轮/设置图标💡 灯泡/推理图标 - 用于输入框推理模式按钮、AI消息思考过程标签（已更换为灯泡样式）
+  // 齿轮/设置图标 灯泡/推理图标 - 用于输入框推理模式按钮、AI消息思考过程标签（已更换为灯泡样式）
   'psychology': { viewBox: '0 -960 960 960', content: '<path d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z"/>' },
 
-  // ⬆️ 发送箭头图标（加粗版）- 用于输入框发送按钮
+  //  发送箭头图标（加粗版）- 用于输入框发送按钮
   'arrow_upward': '<path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" stroke-width="2"/>',
 
   // 停止方块图标 - 用于停止AI生成按钮
@@ -1231,7 +1231,7 @@ const ICON_PATHS = {
   // 关闭/叉号图标 - 用于设置面板关闭按钮、对话删除等
   'close': '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>',
 
-  // 🤖 AI机器人图标 - 用于AI消息的头像、模型标签
+  //  AI机器人图标 - 用于AI消息的头像、模型标签
   'smart_toy': {
     viewBox: '0 0 64 64',
     content: '<circle cx="32" cy="32" r="14" fill="currentColor"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>'
@@ -1256,10 +1256,10 @@ const ICON_PATHS = {
   'format_quote': '<path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/>',
 
 
-  // ✨ Sparkle/星星闪烁图标 - 用于思考(Chain of Thought)UI的图标
+  //  Sparkle/星星闪烁图标 - 用于思考(Chain of Thought)UI的图标
   'sparkles': { viewBox: '0 -960 960 960', content: '<path d="m354-247 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-80l65-281L80-550l288-25 112-265 112 265 288 25-218 189 65 281-247-149L233-80Z"/>' },
 
-  // 🪐 RAI 彩色Logo - 用于侧边栏品牌Logo、AI消息头像、欢迎页面
+  //  RAI 彩色Logo - 用于侧边栏品牌Logo、AI消息头像、欢迎页面
   'rai_logo_colored': {
     viewBox: '0 0 64 64',
     fill: 'none',
@@ -1443,9 +1443,19 @@ const LEGACY_MODEL_ALIASES = {
   'qwen-max': 'qwen2.5-7b'
 };
 
+const HIDDEN_MODEL_PREFIXES = ['poe-'];
+
+function isHiddenModelId(modelId) {
+  const normalized = String(modelId || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return HIDDEN_MODEL_PREFIXES.some(prefix => normalized.startsWith(prefix));
+}
+
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
-  return LEGACY_MODEL_ALIASES[raw] || raw;
+  const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
+  if (!normalized) return normalized;
+  return isHiddenModelId(normalized) ? 'auto' : normalized;
 }
 
 function isPoeModelSelected(modelId = appState.selectedModel) {
@@ -1467,17 +1477,56 @@ function normalizeReasoningProfile(value) {
   return 'low';
 }
 
+const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'mixed'];
+
+function reasoningProfileToIndex(profile) {
+  const normalized = normalizeReasoningProfile(profile);
+  const idx = REASONING_PROFILE_ORDER.indexOf(normalized);
+  return idx >= 0 ? idx : 0;
+}
+
+function reasoningIndexToProfile(index) {
+  const num = Number(index);
+  if (!Number.isFinite(num)) return 'low';
+  const clamped = Math.max(0, Math.min(3, Math.round(num)));
+  return REASONING_PROFILE_ORDER[clamped] || 'low';
+}
+
+function updateReasoningProfileSliderVisual(sliderEl) {
+  if (!sliderEl) return;
+  const min = Number(sliderEl.min || 0);
+  const max = Number(sliderEl.max || 3);
+  const current = Number(sliderEl.value || 0);
+  const range = max - min || 1;
+  const progress = ((current - min) / range) * 100;
+  sliderEl.style.setProperty('--slider-progress', `${progress}%`);
+}
+
+function setReasoningProfileFromSlider(indexValue) {
+  const profile = reasoningIndexToProfile(indexValue);
+  setReasoningProfile(profile);
+}
+
 function setReasoningProfile(profile) {
   appState.reasoningProfile = normalizeReasoningProfile(profile);
   updateReasoningProfileControl();
 }
 
 function updateReasoningProfileControl() {
-  const select = document.getElementById('reasoningProfileSelect');
-  if (!select) return;
   const normalized = normalizeReasoningProfile(appState.reasoningProfile);
-  if (select.value !== normalized) {
+
+  const select = document.getElementById('reasoningProfileSelect');
+  if (select && select.value !== normalized) {
     select.value = normalized;
+  }
+
+  const slider = document.getElementById('reasoningProfileSlider');
+  if (slider) {
+    const targetIndex = String(reasoningProfileToIndex(normalized));
+    if (slider.value !== targetIndex) {
+      slider.value = targetIndex;
+    }
+    updateReasoningProfileSliderVisual(slider);
   }
 }
 
@@ -1663,6 +1712,8 @@ const i18n = {
     'new-chat': '新对话',
     'sidebar-spaces': '空间',
     'new-space': '新建空间',
+    'sidebar-flows': '思维流',
+    'new-flow': '新建 ChatFlow',
     'sidebar-sessions': '对话',
     'settings': '设置',
     'logout': '退出',
@@ -1698,12 +1749,24 @@ const i18n = {
     'custom-system-prompt': '自定义系统提示词',
     'system-prompt-desc': '设置AI的角色和行为',
     'system-prompt-placeholder': '例如: 我希望获得简洁明了的答案...',
+    'preferences-title': '您有什么偏好？',
+    'preferences-desc': '设置AI的角色和行为',
+    'preferences-placeholder': '例如: 我希望获得简短回复...',
+    'advanced-options': '高级选项',
+    'membership-status-title': '会员状态',
+    'upgrade-points-link': '体验更多使用点数？',
+    'remaining-points-label': '剩余点数',
+    'created-at-prefix': '创建于',
+    'checkin-bonus': '签到 +20 ',
+    'checkin-done': '今日已签到 ✓',
+    'checkin-success': '签到成功！获得 {points} 点数 ',
+    'network-error': '网络错误',
     'cancel': '取消',
     'save-settings': '保存设置',
     // 模型选择相关
     'model-smart': '智能模型',
-    'model-fast': '极速模式',
-    'model-expert': '专家模式',
+    'model-fast': '极速模型',
+    'model-expert': '专家模型',
     'model-all': '全部模型',
     'select-model': '选择模型',
     // 引用功能
@@ -1713,13 +1776,21 @@ const i18n = {
     // 更多菜单
     'internet-search': '联网搜索',
     'reasoning-mode': '推理模式',
-    'reasoning-profile': '推理强度',
-    'reasoning-low': '低',
+    'reasoning-profile': '推理时间',
+    'reasoning-low': '短',
     'reasoning-medium': '中',
-    'reasoning-high': '高',
-    'reasoning-mixed': '混合',
+    'reasoning-high': '长',
+    'reasoning-mixed': '自适应',
     'agent-mode': '4倍速深度研究',
-    'add-attachment': '添加附件'
+    'add-attachment': '添加附件',
+    'internetSearch': '联网搜索',
+    'thinkingMode': '思考模式',
+    'regenerateTitle': '重新生成回复',
+    'selectModel': '选择模型',
+    'smartMode': '智能模型',
+    'fastMode': '极速模型',
+    'expertMode': '专家模型',
+    'regenerate': '重新生成'
   },
   'en': {
     'login-title': 'Welcome Back',
@@ -1741,6 +1812,8 @@ const i18n = {
     'new-chat': 'New Chat',
     'sidebar-spaces': 'Spaces',
     'new-space': 'New Space',
+    'sidebar-flows': 'ChatFlow',
+    'new-flow': 'New ChatFlow',
     'sidebar-sessions': 'Conversations',
     'settings': 'Settings',
     'logout': 'Logout',
@@ -1776,6 +1849,18 @@ const i18n = {
     'custom-system-prompt': 'Custom System Prompt',
     'system-prompt-desc': 'Set AI role and behavior',
     'system-prompt-placeholder': 'e.g., You are a professional programming assistant...',
+    'preferences-title': 'Your Preferences',
+    'preferences-desc': 'Set AI role and behavior',
+    'preferences-placeholder': 'e.g., I prefer concise replies...',
+    'advanced-options': 'Advanced Options',
+    'membership-status-title': 'Membership Status',
+    'upgrade-points-link': 'Need more usage points?',
+    'remaining-points-label': 'Remaining Points',
+    'created-at-prefix': 'Created At',
+    'checkin-bonus': 'Check in +20 ',
+    'checkin-done': 'Checked in today ✓',
+    'checkin-success': 'Check-in successful! +{points} ',
+    'network-error': 'Network error',
     'cancel': 'Cancel',
     'save-settings': 'Save Settings',
     // Model selection
@@ -1795,11 +1880,23 @@ const i18n = {
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
-    'reasoning-mixed': 'Mixed',
+    'reasoning-mixed': 'Adaptive',
     'agent-mode': 'Research Turbo (4x)',
-    'add-attachment': 'Add Attachment'
+    'add-attachment': 'Add Attachment',
+    'internetSearch': 'Web Search',
+    'thinkingMode': 'Thinking Mode',
+    'regenerateTitle': 'Regenerate Response',
+    'selectModel': 'Select Model',
+    'smartMode': 'Smart Model',
+    'fastMode': 'Fast Mode',
+    'expertMode': 'Expert Mode',
+    'regenerate': 'Regenerate'
   }
 };
+
+function i18nText(key, fallback = '') {
+  return i18n[appState.language]?.[key] || fallback;
+}
 
 
 // 主题切换
@@ -1883,6 +1980,10 @@ function setLanguage(lang) {
 
   updateReasoningProfileControl();
   updatePoeQuotaHint();
+  updateSettingsMembership();
+  if (!appState.isStreaming) {
+    renderMessages();
+  }
 }
 
 // 初始化主题和语言
@@ -2039,7 +2140,7 @@ function handleRAuthCallback() {
   const urlParams = new URLSearchParams(window.location.search);
   const tokenFromUrl = urlParams.get('token');
   if (tokenFromUrl) {
-    console.log('📥 从 RAuth 获取到 token');
+    console.log(' 从 RAuth 获取到 token');
     localStorage.setItem(RAUTH_TOKEN_KEY, tokenFromUrl);
     // 清除 URL 中的 token 参数
     const url = new URL(window.location.href);
@@ -2064,7 +2165,7 @@ async function checkRAuthAvailable() {
     clearTimeout(timeoutId);
     return true; // 服务可用
   } catch (error) {
-    console.warn('⚠️ RAuth 服务不可用:', error.message);
+    console.warn(' RAuth 服务不可用:', error.message);
     return false;
   }
 }
@@ -2077,7 +2178,7 @@ async function redirectToRAuth() {
     window.location.href = `${RAUTH_URL}?redirect=${returnUrl}`;
   } else {
     // RAuth 不可用，显示本地登录界面
-    console.log('⚠️ RAuth 服务不可用，显示本地登录界面');
+    console.log(' RAuth 服务不可用，显示本地登录界面');
     document.getElementById('appContainer').style.display = 'none';
     document.getElementById('authContainer').classList.add('active');
   }
@@ -2093,7 +2194,7 @@ async function verifyRAuthToken(token) {
     });
     const data = await response.json();
     if (data.valid) {
-      console.log('✅ RAuth token 验证成功');
+      console.log(' RAuth token 验证成功');
       return {
         userId: data.userId,
         email: data.email,
@@ -2103,13 +2204,13 @@ async function verifyRAuthToken(token) {
     }
     return null;
   } catch (error) {
-    console.error('❌ RAuth token 验证失败:', error);
+    console.error(' RAuth token 验证失败:', error);
     return null;
   }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('✅ RAI v0.8 初始化 (SSO 已启用)');
+  console.log(' RAI v0.8 初始化 (SSO 已启用)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -2159,7 +2260,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } else {
     // 4. 没有 token，重定向到 RAuth 登录
-    console.log('⚠️ 未找到有效 token，重定向到 RAuth 登录');
+    console.log(' 未找到有效 token，重定向到 RAuth 登录');
     redirectToRAuth();
     return;
   }
@@ -2216,7 +2317,7 @@ function toggleModelDropdown() {
   const customSelect = document.getElementById('modelSelectCustom');
 
   if (!dropdown || !customSelect) {
-    console.error('❌ 模型选择器元素未找到');
+    console.error(' 模型选择器元素未找到');
     return;
   }
 
@@ -2298,7 +2399,7 @@ function toggleInternetFromMenu(event) {
     toggle.classList.toggle('active', appState.internetMode);
   }
 
-  console.log(`🌐 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
+  console.log(` 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
 }
 
 // 从菜单切换推理模式
@@ -2316,14 +2417,9 @@ function toggleThinkingFromMenu(event) {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
+  updateToolbarUI();
 
-  // 直接更新toggle UI
-  const toggle = document.getElementById('thinkingToggle');
-  if (toggle) {
-    toggle.classList.toggle('active', appState.thinkingMode);
-  }
-
-  console.log(`🧠 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
+  console.log(` 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
 }
 
 // 从菜单切换Agent模式
@@ -2336,7 +2432,7 @@ function toggleAgentFromMenu(event) {
     toggle.classList.toggle('active', appState.agentMode);
   }
 
-  console.log(`🤖 Agent模式: ${appState.agentMode ? '开启' : '关闭'}`);
+  console.log(` Agent模式: ${appState.agentMode ? '开启' : '关闭'}`);
 }
 
 
@@ -2410,7 +2506,7 @@ function toggleThinkingBudget() {
   const expandBtn = document.getElementById('thinkingExpandBtn');
 
   if (!modal || !expandBtn) {
-    console.warn('⚠️ 思考预算模态框元素未找到');
+    console.warn(' 思考预算模态框元素未找到');
     return;
   }
 
@@ -2443,10 +2539,12 @@ function updateToolbarUI() {
   const internetToggle = document.getElementById('internetToggle');
   const thinkingToggle = document.getElementById('thinkingToggle');
   const agentToggle = document.getElementById('agentToggle');
+  const reasoningProfileItem = document.querySelector('.reasoning-profile-item');
   const thinkingMenuItem = thinkingToggle?.closest('.more-menu-item');
   const thinkingBtn = document.getElementById('thinkingBtn');
   const internetBtn = document.getElementById('internetBtn');
   const reasoningSelect = document.getElementById('reasoningProfileSelect');
+  const reasoningSlider = document.getElementById('reasoningProfileSlider');
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
   const supportsThinking = !!currentModel?.supportsThinking;
   const forceDisableThinking = isFreePoeMode();
@@ -2491,8 +2589,15 @@ function updateToolbarUI() {
     }
   }
 
-  if (reasoningSelect) {
-    updateReasoningProfileControl();
+  const showReasoningProfile = supportsThinking && appState.thinkingMode && !forceDisableThinking;
+  if (reasoningProfileItem) {
+    reasoningProfileItem.style.display = showReasoningProfile ? 'flex' : 'none';
+  }
+
+  if (reasoningSelect || reasoningSlider) {
+    if (showReasoningProfile) {
+      updateReasoningProfileControl();
+    }
   }
   updatePoeQuotaHint();
 }
@@ -2549,7 +2654,7 @@ function updateModelControls() {
   const model = MODELS[appState.selectedModel];
 
   if (!model) {
-    console.warn(`⚠️ 未找到模型配置: ${appState.selectedModel}`);
+    console.warn(` 未找到模型配置: ${appState.selectedModel}`);
     return;
   }
 
@@ -2588,7 +2693,7 @@ function toggleThinking() {
   const model = MODELS[appState.selectedModel];
 
   if (!model || !model.supportsThinking) {
-    console.warn('⚠️ 当前模型不支持思考模式');
+    console.warn(' 当前模型不支持思考模式');
     return;
   }
   if (isFreePoeMode()) {
@@ -2630,13 +2735,13 @@ function parseThinkingPreview(rawContent) {
     }
   }
 
-  // ✅ 修复：如果没有"-"格式，尝试提取第一句有意义的文本
+  //  修复：如果没有"-"格式，尝试提取第一句有意义的文本
   const firstMeaningful = rawContent.trim().split(/[\n.!?。！？]/)[0]?.trim();
   if (firstMeaningful && firstMeaningful.length > 5) {
     return firstMeaningful.length > 40 ? firstMeaningful.substring(0, 40) + '...' : firstMeaningful;
   }
 
-  // ✅ 修复：返回默认文本而不是空字符串
+  //  修复：返回默认文本而不是空字符串
   return appState.language === 'zh-CN' ? 'AI 正在分析内容...' : 'AI is analyzing...';
 }
 
@@ -2649,7 +2754,7 @@ function updateThinkingPreview(previewText) {
     previewEl.textContent = previewText;
     if (previewContainer) previewContainer.style.display = 'inline-flex';
   } else if (previewContainer && !previewText) {
-    // ✅ 修复：如果没有预览文本，隐藏容器避免显示空条
+    //  修复：如果没有预览文本，隐藏容器避免显示空条
     previewContainer.style.display = 'none';
   }
 }
@@ -2964,14 +3069,17 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
       if (data?.success) {
         appState.profileDefaultModel = normalizeSelectedModelId(modelId);
       } else if (data?.error) {
-        console.warn('⚠️ 保存默认模型失败:', data.error);
+        console.warn(' 保存默认模型失败:', data.error);
       }
     })
-    .catch((err) => console.error('❌ 保存默认模型网络错误:', err));
+    .catch((err) => console.error(' 保存默认模型网络错误:', err));
 }
 
 function selectModelFromMenu(model, displayName, i18nKey) {
   appState.selectedModel = normalizeSelectedModelId(model);
+  if (isHiddenModelId(model)) {
+    console.log(' Poe models are hidden. Fallback to auto model.');
+  }
   applyFreePoeThinkingPolicy();
   updateSelectedModelText(appState.selectedModel);
 
@@ -2981,7 +3089,7 @@ function selectModelFromMenu(model, displayName, i18nKey) {
   closeModelModal();
   persistDefaultModelPreference(appState.selectedModel);
 
-  console.log(`✅ 已切换模型: ${appState.selectedModel} (${displayName})`);
+  console.log(` 已切换模型: ${appState.selectedModel} (${displayName})`);
 }
 
 function selectModelFromModal(model, displayName) {
@@ -3068,7 +3176,7 @@ function saveSettings() {
   const systemPromptEl = document.getElementById('systemPrompt');
 
   if (!temperatureSlider || !topPSlider || !maxTokensSlider) {
-    console.error('❌ 设置表单元素未找到');
+    console.error(' 设置表单元素未找到');
     return;
   }
 
@@ -3077,11 +3185,11 @@ function saveSettings() {
   const maxTokens = parseInt(maxTokensSlider.value, 10);
   const frequencyPenalty = parseFloat(frequencySlider?.value || 0);
   const presencePenalty = parseFloat(presenceSlider?.value || 0);
-  // ✅ 修复：确保systemPrompt正确读取和处理，处理空字符串和null
+  //  修复：确保systemPrompt正确读取和处理，处理空字符串和null
   const systemPrompt = (systemPromptEl?.value || '').trim();
 
   if (isNaN(temperature) || isNaN(topP) || isNaN(maxTokens)) {
-    console.error('❌ 参数值无效');
+    console.error(' 参数值无效');
     return;
   }
 
@@ -3090,7 +3198,7 @@ function saveSettings() {
   appState.maxTokens = maxTokens;
   appState.frequencyPenalty = frequencyPenalty;
   appState.presencePenalty = presencePenalty;
-  appState.systemPrompt = systemPrompt;  // ✅ 保存trimmed版本
+  appState.systemPrompt = systemPrompt;  //  保存trimmed版本
 
   const settings = {
     temperature,
@@ -3102,9 +3210,9 @@ function saveSettings() {
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
-  // ✅ 修复：同步保存到后端数据库
+  //  修复：同步保存到后端数据库
   if (appState.token) {
-    console.log(`📤 正在将设置同步到云端...`);
+    console.log(` 正在将设置同步到云端...`);
     console.log(`   系统提示词长度: ${systemPrompt.length}字符`);
 
     fetch(`${API_BASE}/user/config`, {
@@ -3121,7 +3229,7 @@ function saveSettings() {
         max_tokens: maxTokens,
         frequency_penalty: frequencyPenalty,
         presence_penalty: presencePenalty,
-        system_prompt: systemPrompt,  // ✅ 确保发送正确的值
+        system_prompt: systemPrompt,  //  确保发送正确的值
         thinking_mode: appState.thinkingMode ? 1 : 0,
         internet_mode: appState.internetMode ? 1 : 0
       })
@@ -3129,15 +3237,15 @@ function saveSettings() {
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          console.log('✅ 云端配置已同步');
+          console.log(' 云端配置已同步');
         } else {
-          console.warn('⚠️ 云端同步失败:', data.error);
+          console.warn(' 云端同步失败:', data.error);
         }
       })
-      .catch(err => console.error('❌ 保存配置网络错误:', err));
+      .catch(err => console.error(' 保存配置网络错误:', err));
   }
 
-  console.log('✅ 设置已保存本地并同步云端');
+  console.log(' 设置已保存本地并同步云端');
 
   closeSettings();
 }
@@ -3150,7 +3258,7 @@ function renderMessages() {
   const welcome = document.getElementById('welcomeScreen');
 
   if (!container || !welcome) {
-    console.error('❌ 消息容器或欢迎屏幕未找到');
+    console.error(' 消息容器或欢迎屏幕未找到');
     return;
   }
 
@@ -3175,20 +3283,20 @@ function renderMessages() {
   appState.userScrolledUp = false;
   scrollToBottom(true);
 
-  // 🎨 渲染 Mermaid 图表
+  //  渲染 Mermaid 图表
   setTimeout(() => renderMermaidCharts(), 100);
 
-  // 💻 处理代码块：添加语言标签、复制按钮、语法高亮
+  //  处理代码块：添加语言标签、复制按钮、语法高亮
   setTimeout(() => processCodeBlocks(container), 50);
 
-  // 📍 更新对话索引导航器
+  //  更新对话索引导航器
   setTimeout(() => renderChatIndexTimeline(), 150);
 }
 
 // 修复：改进createMessageElement，添加安全的事件处理
 function createMessageElement(message) {
   if (!message || !message.role) {
-    console.warn('⚠️ 无效的消息对象');
+    console.warn(' 无效的消息对象');
     return null;
   }
 
@@ -3222,9 +3330,17 @@ function createMessageElement(message) {
       processTrace = null;
     }
   }
-  const hasProcessTrace = !!(processTrace && typeof processTrace === 'object');
+  const hasAgentProcessTrace = !!(
+    processTrace &&
+    typeof processTrace === 'object' &&
+    (
+      processTrace.mode === 'agent' ||
+      (Array.isArray(processTrace.tasks) && processTrace.tasks.length > 0) ||
+      (Array.isArray(processTrace.drafts) && processTrace.drafts.length > 0)
+    )
+  );
 
-  if (message.role === 'assistant' && (hasReasoning || hasInternet || hasProcessTrace)) {
+  if (message.role === 'assistant' && (hasReasoning || hasInternet || hasAgentProcessTrace)) {
     const timelineDiv = document.createElement('div');
     timelineDiv.className = 'thinking-timeline';
     const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -3280,7 +3396,7 @@ function createMessageElement(message) {
           `;
     }
 
-    if (hasProcessTrace) {
+    if (hasAgentProcessTrace) {
       const normalizeStatusClass = (status) => {
         const s = String(status || '').toLowerCase();
         if (s === 'start' || s === 'active' || s === 'running') return 'running';
@@ -3334,7 +3450,7 @@ function createMessageElement(message) {
           <div class="agent-draft-item">
             <button class="agent-draft-header" type="button" data-target="${draftId}">
               <span class="agent-draft-title">${role} · task-${taskId}</span>
-              <span class="agent-draft-toggle">▶</span>
+              <span class="agent-draft-toggle"></span>
             </button>
             <div class="agent-draft-summary">${summary}</div>
             <pre class="agent-draft-content" id="${draftId}">${body}</pre>
@@ -3392,7 +3508,7 @@ function createMessageElement(message) {
       }, 0);
     }
 
-    if (hasProcessTrace) {
+    if (hasAgentProcessTrace) {
       setTimeout(() => {
         const traceToggleBtn = timelineDiv.querySelector(`#${thinkingId}-trace-toggle`);
         const traceListEl = timelineDiv.querySelector(`#${thinkingId}-trace-list`);
@@ -3419,7 +3535,7 @@ function createMessageElement(message) {
             if (expanded) {
               target.classList.remove('expanded');
               btn.classList.remove('expanded');
-              if (icon) icon.textContent = '▶';
+              if (icon) icon.textContent = '';
             } else {
               target.classList.add('expanded');
               btn.classList.add('expanded');
@@ -3487,12 +3603,12 @@ function createMessageElement(message) {
             };
             itemDiv.appendChild(img);
           } else {
-            itemDiv.innerHTML = `<div style="padding: 20px; text-align: center;">🖼️</div>`;
+            itemDiv.innerHTML = `<div style="padding: 20px; text-align: center;"></div>`;
           }
         } else if (att.type === 'video') {
           itemDiv.className = 'message-attachment-item media-attachment';
           itemDiv.innerHTML = `
-                <span class="media-icon">🎬</span>
+                <span class="media-icon"></span>
                 <div class="media-info">
                   <div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div>
                   <div class="media-name">${att.fileName || ''}</div>
@@ -3501,7 +3617,7 @@ function createMessageElement(message) {
         } else if (att.type === 'audio') {
           itemDiv.className = 'message-attachment-item media-attachment';
           itemDiv.innerHTML = `
-                <span class="media-icon">🎵</span>
+                <span class="media-icon"></span>
                 <div class="media-info">
                   <div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div>
                   <div class="media-name">${att.fileName || ''}</div>
@@ -3510,7 +3626,7 @@ function createMessageElement(message) {
         } else if (att.type === 'document') {
           itemDiv.className = 'message-attachment-item media-attachment';
           itemDiv.innerHTML = `
-                <span class="media-icon">📄</span>
+                <span class="media-icon"></span>
                 <div class="media-info">
                   <div class="media-type">${appState.language === 'zh-CN' ? '文档' : 'Document'}</div>
                   <div class="media-name">${att.fileName || ''}</div>
@@ -3531,7 +3647,7 @@ function createMessageElement(message) {
 
   const textDiv = document.createElement('div');
   textDiv.className = 'message-text';
-  // 🔧 移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
+  //  移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
   const cleanContent = (message.content || '').replace(/<<<.{1,30}>>>\s*$/g, '').trim();
   // 使用renderMarkdownWithMath渲染Markdown和数学公式
   let renderedContent = renderMarkdownWithMath(cleanContent);
@@ -3542,7 +3658,7 @@ function createMessageElement(message) {
     try {
       sources = JSON.parse(sources);
     } catch (e) {
-      console.warn('⚠️ 解析 sources JSON 失败:', e);
+      console.warn(' 解析 sources JSON 失败:', e);
       sources = null;
     }
   }
@@ -3629,7 +3745,7 @@ function createMessageElement(message) {
         // 优先使用现代API
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(textToCopy);
-          console.log('✅ 复制成功');
+          console.log(' 复制成功');
         } else {
           // 备用方案：使用传统方法
           const textarea = document.createElement('textarea');
@@ -3640,7 +3756,7 @@ function createMessageElement(message) {
           textarea.select();
           document.execCommand('copy');
           document.body.removeChild(textarea);
-          console.log('✅ 复制成功（备用方法）');
+          console.log(' 复制成功（备用方法）');
         }
 
         // 更新按钮状态
@@ -3656,7 +3772,7 @@ function createMessageElement(message) {
               `;
         }, 2000);
       } catch (err) {
-        console.error('❌ 复制失败:', err);
+        console.error(' 复制失败:', err);
         alert(appState.language === 'zh-CN' ? '复制失败' : 'Copy failed');
       }
     });
@@ -3784,17 +3900,17 @@ async function loadMessageAttachments(messageId, containerElement) {
         itemDiv.appendChild(img);
       } else if (att.type === 'video') {
         itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon">🎬</span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
+        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
       } else if (att.type === 'audio') {
         itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon">🎵</span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
+        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
       }
 
       if (itemDiv.innerHTML) containerElement.appendChild(itemDiv);
     });
 
   } catch (error) {
-    console.error('❌ 加载附件失败:', error);
+    console.error(' 加载附件失败:', error);
     containerElement.innerHTML = `
           <div class="lazy-attachment-placeholder error" onclick="loadMessageAttachments(${messageId}, this.parentElement)">
             <span>${appState.language === 'zh-CN' ? '加载失败，点击重试' : 'Failed, click to retry'}</span>
@@ -3849,7 +3965,7 @@ function toggleSidebar() {
 // 修复：改进deleteSession函数
 async function deleteSession(event, sessionId) {
   if (!event) {
-    console.warn('⚠️ 事件对象未传递');
+    console.warn(' 事件对象未传递');
     return;
   }
 
@@ -3876,7 +3992,7 @@ async function deleteSession(event, sessionId) {
 
     await loadSessions();
   } catch (error) {
-    console.error('❌ 删除会话失败:', error);
+    console.error(' 删除会话失败:', error);
     alert(appState.language === 'zh-CN' ? '删除失败' : 'Delete failed');
   }
 }
@@ -3939,14 +4055,14 @@ function startEditMessage(message, messageDiv) {
 // 保存编辑的消息
 async function saveEditMessage(message, newContent, messageDiv, editContainer, textDiv) {
   if (!appState.currentSession) {
-    console.error('❌ 无法保存：缺少会话');
+    console.error(' 无法保存：缺少会话');
     alert(appState.language === 'zh-CN' ? '请先刷新页面' : 'Please refresh the page first');
     return;
   }
 
   // 如果消息没有ID，需要先从数据库重新加载消息获取ID
   if (!message.id) {
-    console.log('⚠️ 消息没有ID，正在从数据库重新加载...');
+    console.log(' 消息没有ID，正在从数据库重新加载...');
     try {
       const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
         headers: { 'Authorization': `Bearer ${appState.token}` }
@@ -3960,15 +4076,15 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
         );
         if (msgIndex !== -1 && appState.messages[msgIndex].id) {
           message.id = appState.messages[msgIndex].id;
-          console.log(`✅ 已获取消息ID: ${message.id}`);
+          console.log(` 已获取消息ID: ${message.id}`);
         } else {
-          console.error('❌ 无法找到消息ID');
+          console.error(' 无法找到消息ID');
           alert(appState.language === 'zh-CN' ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
           return;
         }
       }
     } catch (error) {
-      console.error('❌ 重新加载消息失败:', error);
+      console.error(' 重新加载消息失败:', error);
       alert(appState.language === 'zh-CN' ? '加载失败，请重试' : 'Load failed, please retry');
       return;
     }
@@ -3990,7 +4106,7 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
     }
 
     const result = await response.json();
-    console.log('✅ 消息已更新:', result);
+    console.log(' 消息已更新:', result);
 
     // 更新本地状态
     message.content = newContent;
@@ -4011,7 +4127,7 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
     }
 
   } catch (error) {
-    console.error('❌ 更新消息失败:', error);
+    console.error(' 更新消息失败:', error);
     alert(appState.language === 'zh-CN' ? '更新失败' : 'Update failed');
   }
 }
@@ -4049,11 +4165,11 @@ async function ensureMessageHasId(message) {
   if (message.id) return message;
 
   if (!appState.currentSession) {
-    console.error('❌ 无法获取消息ID：缺少会话');
+    console.error(' 无法获取消息ID：缺少会话');
     return null;
   }
 
-  console.log('⚠️ 消息没有ID，正在从数据库重新加载...');
+  console.log(' 消息没有ID，正在从数据库重新加载...');
   try {
     const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
       headers: { 'Authorization': `Bearer ${appState.token}` }
@@ -4073,14 +4189,14 @@ async function ensureMessageHasId(message) {
     if (foundMsg && foundMsg.id) {
       // 更新本地消息数组
       appState.messages = dbMessages;
-      console.log(`✅ 已获取消息ID: ${foundMsg.id}`);
+      console.log(` 已获取消息ID: ${foundMsg.id}`);
       return foundMsg;
     } else {
-      console.error('❌ 无法在数据库中找到该消息');
+      console.error(' 无法在数据库中找到该消息');
       return null;
     }
   } catch (error) {
-    console.error('❌ 重新加载消息失败:', error);
+    console.error(' 重新加载消息失败:', error);
     return null;
   }
 }
@@ -4093,7 +4209,7 @@ async function deleteMessageFromDB(message) {
   // 确保消息有ID
   const msgWithId = await ensureMessageHasId(message);
   if (!msgWithId || !msgWithId.id) {
-    console.error('❌ 无法删除：无法获取消息ID');
+    console.error(' 无法删除：无法获取消息ID');
     return false;
   }
 
@@ -4107,10 +4223,10 @@ async function deleteMessageFromDB(message) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    console.log(`✅ 已从数据库删除消息 ID: ${msgWithId.id}`);
+    console.log(` 已从数据库删除消息 ID: ${msgWithId.id}`);
     return true;
   } catch (error) {
-    console.error('❌ 删除消息失败:', error);
+    console.error(' 删除消息失败:', error);
     return false;
   }
 }
@@ -4162,7 +4278,7 @@ function quoteMessage(message) {
     input.focus();
   }
 
-  console.log('✅ 已引用消息:', message.role);
+  console.log(' 已引用消息:', message.role);
 }
 
 // 移除引用
@@ -4230,7 +4346,14 @@ function openRegenerateModal(message) {
   if (!modal) return;
 
   // 设置默认值
-  document.getElementById('regenerateModelSelect').value = appState.selectedModel || 'auto';
+  const regenerateModelSelect = document.getElementById('regenerateModelSelect');
+  const defaultModel = normalizeSelectedModelId(appState.selectedModel || 'auto') || 'auto';
+  if (regenerateModelSelect) {
+    regenerateModelSelect.value = defaultModel;
+    if (regenerateModelSelect.value !== defaultModel) {
+      regenerateModelSelect.value = 'auto';
+    }
+  }
   document.getElementById('regenerateInternetToggle').checked = appState.internetMode || false;
   document.getElementById('regenerateThinkingToggle').checked = appState.thinkingMode || false;
 
@@ -4265,7 +4388,7 @@ async function confirmRegenerate() {
 
   // 如果消息没有ID，需要先从数据库重新加载消息获取ID
   if (!currentTarget.id && appState.currentSession) {
-    console.log('⚠️ 消息没有ID，正在从数据库重新加载...');
+    console.log(' 消息没有ID，正在从数据库重新加载...');
     try {
       const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
         headers: { 'Authorization': `Bearer ${appState.token}` }
@@ -4279,15 +4402,15 @@ async function confirmRegenerate() {
         );
         if (foundMsg && foundMsg.id) {
           currentTarget = foundMsg;
-          console.log(`✅ 已获取消息ID: ${foundMsg.id}`);
+          console.log(` 已获取消息ID: ${foundMsg.id}`);
         } else {
-          console.error('❌ 无法找到消息ID');
+          console.error(' 无法找到消息ID');
           alert(appState.language === 'zh-CN' ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
           return;
         }
       }
     } catch (error) {
-      console.error('❌ 重新加载消息失败:', error);
+      console.error(' 重新加载消息失败:', error);
       alert(appState.language === 'zh-CN' ? '加载失败，请重试' : 'Load failed, please retry');
       return;
     }
@@ -4302,7 +4425,7 @@ async function confirmRegenerate() {
     );
   }
   if (msgIndex === -1) {
-    console.error('❌ 无法找到要重新生成的消息');
+    console.error(' 无法找到要重新生成的消息');
     return;
   }
 
@@ -4320,7 +4443,7 @@ async function confirmRegenerate() {
   const originalThinking = appState.thinkingMode;
 
   // 临时应用新设置
-  appState.selectedModel = normalizeSelectedModelId(selectedModel);
+  appState.selectedModel = normalizeSelectedModelId(selectedModel || 'auto') || 'auto';
   appState.internetMode = internetMode;
   appState.thinkingMode = thinkingMode;
   applyFreePoeThinkingPolicy();
@@ -4419,10 +4542,10 @@ async function streamAIResponse(messages, aiMsg) {
       mermaidPreviewContainer.classList.add('rendered');
       lastValidMermaidCode = code;
 
-      console.log('✅ Mermaid 实时渲染成功');
+      console.log(' Mermaid 实时渲染成功');
     } catch (err) {
       // 语法错误，保持上一次的渲染结果
-      console.debug('⏳ Mermaid 语法不完整，保持上一帧');
+      console.debug(' Mermaid 语法不完整，保持上一帧');
     }
   }
 
@@ -4603,15 +4726,15 @@ async function streamAIResponse(messages, aiMsg) {
     }
 
     // 流结束后最终渲染一次（确保完整内容显示）
-    console.log('✅ 流式响应完成');
+    console.log(' 流式响应完成');
 
   } catch (error) {
-    console.error('❌ 流式请求失败:', error);
+    console.error(' 流式请求失败:', error);
     aiMsg.content = appState.language === 'zh-CN' ? '生成失败，请重试' : 'Generation failed, please retry';
   } finally {
     appState.isStreaming = false;
 
-    // 🎨 清理持久的 Mermaid 预览容器（最终渲染会创建正式的容器）
+    //  清理持久的 Mermaid 预览容器（最终渲染会创建正式的容器）
     if (mermaidPreviewContainer) {
       mermaidPreviewContainer.remove();
       mermaidPreviewContainer = null;
@@ -4630,7 +4753,7 @@ async function streamAIResponse(messages, aiMsg) {
           renderMessages();
         }
       } catch (e) {
-        console.warn('⚠️ 重新加载消息失败:', e);
+        console.warn(' 重新加载消息失败:', e);
       }
     }
   }
@@ -4680,14 +4803,14 @@ function renderSessionAttachmentPreview(attachment) {
             <img src="${attachment.data}" alt="图片" loading="lazy">
           </div>`;
     } else {
-      return `<div class="session-attachment-preview">🖼️</div>`;
+      return `<div class="session-attachment-preview"></div>`;
     }
   } else if (attachment.type === 'video') {
-    return `<div class="session-attachment-preview video-preview">🎬</div>`;
+    return `<div class="session-attachment-preview video-preview"></div>`;
   } else if (attachment.type === 'audio') {
-    return `<div class="session-attachment-preview audio-preview">🎵</div>`;
+    return `<div class="session-attachment-preview audio-preview"></div>`;
   } else if (attachment.type === 'document') {
-    return `<div class="session-attachment-preview">📄</div>`;
+    return `<div class="session-attachment-preview"></div>`;
   }
   return '';
 }
@@ -4696,7 +4819,7 @@ function renderSessions() {
   const container = document.getElementById('sessionsContainer');
 
   if (!container) {
-    console.error('❌ 找不到会话容器');
+    console.error(' 找不到会话容器');
     return;
   }
 
@@ -4791,7 +4914,7 @@ function setupSessionsLoaderObserver() {
       if (entry.isIntersecting &&
         appState.sessionsPagination.hasMore &&
         !appState.sessionsPagination.isLoading) {
-        console.log('📜 触发加载更多会话...');
+        console.log(' 触发加载更多会话...');
         loadSessions(false);  // false = 追加模式
       }
     });
@@ -4809,13 +4932,13 @@ function setupSessionsLoaderObserver() {
 async function sendMessage(message = null) {
   // 如果在 ChatFlow iframe 模式下，发送前先请求最新的画布上下文
   if (isChatFlowIframeMode) {
-    console.log('⏳ 发送前请求画布上下文...');
+    console.log(' 发送前请求画布上下文...');
     await new Promise(resolve => requestCanvasContext(resolve));
   }
 
   const input = document.getElementById('messageInput');
   if (!input) {
-    console.error('❌ 消息输入框未找到');
+    console.error(' 消息输入框未找到');
     return;
   }
 
@@ -4839,7 +4962,7 @@ async function sendMessage(message = null) {
   input.value = '';
   autoResizeInput();
 
-  // 🗨️ 处理引用内容
+  //  处理引用内容
   let finalMessageContent = messageText || message || '请分析这个文件';
   if (appState.currentQuote) {
     const quoteLabel = appState.currentQuote.role === 'user'
@@ -4853,7 +4976,7 @@ async function sendMessage(message = null) {
     // 清除引用状态
     appState.currentQuote = null;
     updateQuoteUI();
-    console.log('✅ 引用内容已添加到消息');
+    console.log(' 引用内容已添加到消息');
   }
 
   // 构建带附件的用户消息
@@ -4870,7 +4993,7 @@ async function sendMessage(message = null) {
       data: currentAttachment.data,  // Base64 data URL
       fileName: currentAttachment.fileName
     }];
-    console.log(`📎 消息包含附件: ${currentAttachment.type} - ${currentAttachment.fileName}`);
+    console.log(` 消息包含附件: ${currentAttachment.type} - ${currentAttachment.fileName}`);
   }
 
   appState.messages.push(userMsg);
@@ -4883,7 +5006,7 @@ async function sendMessage(message = null) {
       content: m.content
     };
     // 如果有附件，也传递给服务器
-    // 🔧 增强防御性检查：确保 attachments 是数组
+    //  增强防御性检查：确保 attachments 是数组
     let attachments = m.attachments;
     // 如果是字符串（从数据库加载的JSON），尝试解析
     if (typeof attachments === 'string') {
@@ -4909,7 +5032,7 @@ async function sendMessage(message = null) {
         ...messages[lastUserMsgIndex],
         content: messages[lastUserMsgIndex].content + '\n\n' + chatFlowCanvasContext
       };
-      console.log('📋 已注入画布上下文到用户消息');
+      console.log(' 已注入画布上下文到用户消息');
     }
   }
 
@@ -4936,6 +5059,28 @@ async function sendMessage(message = null) {
     : (appState.thinkingMode
       ? (appState.language === 'zh-CN' ? '推理中...' : 'Reasoning...')
       : (appState.language === 'zh-CN' ? '思考中...' : 'Thinking...'));
+  const enableProcessTrace = appState.agentMode === true;
+  const processTraceStepHtml = enableProcessTrace ? `
+            <!-- 步骤3: 过程轨迹 -->
+            <div class="thinking-step" id="stepProcessTrace" data-status="running">
+              <div class="thinking-step-node"></div>
+              <div class="thinking-step-content">
+                <button class="process-trace-toggle" id="processTraceToggle">
+                  <span>${appState.language === 'zh-CN' ? '过程轨迹' : 'Process Trace'}</span>
+                  <span class="toggle-icon">▼</span>
+                </button>
+                <div class="thinking-step-detail" id="processTraceDetail">${appState.language === 'zh-CN' ? '实时记录中（默认折叠）' : 'Tracing (collapsed by default)'}</div>
+                <div class="agent-trace-toolbar" id="agentTraceToolbar" style="display: none;">
+                  <button class="agent-trace-btn" id="agentExpandAllBtn">${appState.language === 'zh-CN' ? '展开全部' : 'Expand All'}</button>
+                  <button class="agent-trace-btn" id="agentCollapseAllBtn">${appState.language === 'zh-CN' ? '折叠全部' : 'Collapse All'}</button>
+                </div>
+                <div class="agent-task-list" id="agentTaskList"></div>
+                <div class="agent-draft-list" id="agentDraftList"></div>
+                <div class="agent-metrics" id="agentMetrics" style="display: none;"></div>
+                <div class="process-trace-list" id="processTraceList"></div>
+              </div>
+            </div>
+            ` : '';
 
   aiMsgDiv.innerHTML = `
         <div class="message-avatar">
@@ -4972,26 +5117,7 @@ async function sendMessage(message = null) {
                 <div class="thinking-step-detail" id="generatingDetail"></div>
               </div>
             </div>
-
-            <!-- 步骤3: 过程轨迹 -->
-            <div class="thinking-step" id="stepProcessTrace" data-status="running">
-              <div class="thinking-step-node"></div>
-              <div class="thinking-step-content">
-                <button class="process-trace-toggle" id="processTraceToggle">
-                  <span>${appState.language === 'zh-CN' ? '过程轨迹' : 'Process Trace'}</span>
-                  <span class="toggle-icon">▼</span>
-                </button>
-                <div class="thinking-step-detail" id="processTraceDetail">${appState.language === 'zh-CN' ? '实时记录中（默认折叠）' : 'Tracing (collapsed by default)'}</div>
-                <div class="agent-trace-toolbar" id="agentTraceToolbar" style="display: none;">
-                  <button class="agent-trace-btn" id="agentExpandAllBtn">${appState.language === 'zh-CN' ? '展开全部' : 'Expand All'}</button>
-                  <button class="agent-trace-btn" id="agentCollapseAllBtn">${appState.language === 'zh-CN' ? '折叠全部' : 'Collapse All'}</button>
-                </div>
-                <div class="agent-task-list" id="agentTaskList"></div>
-                <div class="agent-draft-list" id="agentDraftList"></div>
-                <div class="agent-metrics" id="agentMetrics" style="display: none;"></div>
-                <div class="process-trace-list" id="processTraceList"></div>
-              </div>
-            </div>
+            ${processTraceStepHtml}
             
             <!-- 步骤4: 深度思考 (仅在思考模式下显示) -->
             <div class="thinking-step" id="stepDeepThinking" data-status="pending" style="${appState.thinkingMode ? '' : 'display: none;'}">
@@ -5176,7 +5302,7 @@ async function sendMessage(message = null) {
 
       const icon = document.createElement('span');
       icon.className = 'agent-draft-toggle';
-      icon.textContent = draft.expanded ? '▼' : '▶';
+      icon.textContent = draft.expanded ? '▼' : '';
 
       header.appendChild(left);
       header.appendChild(right);
@@ -5310,6 +5436,7 @@ async function sendMessage(message = null) {
   const processTraceEvents = [];
 
   function addProcessTraceItem(kind, text) {
+    if (!enableProcessTrace) return;
     if (!processTraceList || !text) return;
     processTraceEvents.push({
       ts: Date.now(),
@@ -5480,7 +5607,7 @@ async function sendMessage(message = null) {
     if (modelUsed) {
       appState.lastModelUsed = modelUsed;
       appState.lastRoutingReason = routingReason || '';
-      console.log(`✅ 实际使用模型: ${modelUsed}`);
+      console.log(` 实际使用模型: ${modelUsed}`);
       console.log(`   选择原因: ${appState.lastRoutingReason}`);
 
       if (appState.selectedModel === 'auto') {
@@ -5502,14 +5629,18 @@ async function sendMessage(message = null) {
     if (thinkingTimeline) {
       thinkingTimeline.style.display = 'block';
       updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN' ? '正在判断...' : 'Deciding...');
-      updateStepStatus(stepProcessTrace, 'active', appState.language === 'zh-CN' ? '实时记录中...' : 'Tracing...');
+      if (enableProcessTrace) {
+        updateStepStatus(stepProcessTrace, 'active', appState.language === 'zh-CN' ? '实时记录中...' : 'Tracing...');
+      }
     }
 
-    addProcessTraceItem('info', appState.language === 'zh-CN' ? '开始流式请求' : 'Streaming request started');
-    appendFrameworkRequirements(effectiveSystemPrompt);
-    addProcessTraceItem('info', appState.language === 'zh-CN'
-      ? `模型: ${modelUsed || appState.selectedModel}`
-      : `Model: ${modelUsed || appState.selectedModel}`);
+    if (enableProcessTrace) {
+      addProcessTraceItem('info', appState.language === 'zh-CN' ? '开始流式请求' : 'Streaming request started');
+      appendFrameworkRequirements(effectiveSystemPrompt);
+      addProcessTraceItem('info', appState.language === 'zh-CN'
+        ? `模型: ${modelUsed || appState.selectedModel}`
+        : `Model: ${modelUsed || appState.selectedModel}`);
+    }
 
     // 隐藏加载状态
     const loadingStatus = document.getElementById('loadingStatus');
@@ -5518,7 +5649,7 @@ async function sendMessage(message = null) {
     const streamingEl = document.getElementById('streamingContent');
     const aiAvatar = aiMsgDiv.querySelector('.ai-avatar');
 
-    // 🎨 多图防抖动缓存（状态外置 + 缓存注入）
+    //  多图防抖动缓存（状态外置 + 缓存注入）
     const lastValidMermaids = {}; // 格式: { "0": "code...", "1": "code..." }
     const renderedSvgs = {};      // 格式: { "0": "<svg>...</svg>", "1": "<svg>...</svg>" }
 
@@ -5531,7 +5662,7 @@ async function sendMessage(message = null) {
     let lastMermaidRender = 0;  // 上次 Mermaid 渲染时间
     const CHAR_RENDER_INTERVAL = 12;  // 字符渲染间隔 (ms)
     const MARKDOWN_RENDER_INTERVAL = 700;  // Markdown 渲染间隔 (ms) - 足够让动画可见
-    const MERMAID_RENDER_INTERVAL = 500;  // 🎨 Mermaid 渲染间隔 (ms) - 更快以实现实时效果
+    const MERMAID_RENDER_INTERVAL = 500;  //  Mermaid 渲染间隔 (ms) - 更快以实现实时效果
     const MAX_ANIMATED_CHARS = 5;  // 最多同时动画的字符数
 
     // 对最后 N 个字符添加动画效果
@@ -5589,7 +5720,7 @@ async function sendMessage(message = null) {
       }
     }
 
-    // 执行 Markdown 渲染 + 动画 + Citations + 🎨 内联 Mermaid 替换
+    // 执行 Markdown 渲染 + 动画 + Citations +  内联 Mermaid 替换
     function renderStreamingContent() {
       if (!streamingEl || !displayedContent) return;
 
@@ -5601,7 +5732,7 @@ async function sendMessage(message = null) {
         html = renderCitations(html, currentSources);
       }
 
-      // 🎨 核心逻辑：将 Mermaid 代码块就地替换为图表容器（缓存注入）
+      //  核心逻辑：将 Mermaid 代码块就地替换为图表容器（缓存注入）
       let diagramCount = 0;
       html = html.replace(
         /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
@@ -5636,20 +5767,20 @@ async function sendMessage(message = null) {
       streamingEl.innerHTML = html;
       applyCharAnimations(streamingEl);
 
-      // 🎨 异步渲染所有图表
+      //  异步渲染所有图表
       const now = Date.now();
       if (now - lastMermaidRender >= MERMAID_RENDER_INTERVAL) {
         tryRenderMermaidLive();
         lastMermaidRender = now;
       }
 
-      // 💻 实时处理代码块：添加语言标签、复制按钮、语法高亮
+      //  实时处理代码块：添加语言标签、复制按钮、语法高亮
       processCodeBlocksStreaming(streamingEl);
 
       scrollToBottom();
     }
 
-    // 🎨 多图防抖动：查找内联 Mermaid 容器并异步渲染
+    //  多图防抖动：查找内联 Mermaid 容器并异步渲染
     async function tryRenderMermaidLive() {
       if (typeof mermaid === 'undefined' || !streamingEl) return;
 
@@ -5690,10 +5821,10 @@ async function sendMessage(message = null) {
                 currentWrapper.classList.add('rendered');
               }
             }
-            // console.log(`✅ Mermaid 图表 #${index + 1} 实时渲染成功`);
+            // console.log(` Mermaid 图表 #${index + 1} 实时渲染成功`);
           } catch (err) {
             // 渲染失败：保持上一帧（缓存中的 SVG 会在下次 renderStreamingContent 时自动注入）
-            // console.debug(`⏳ Mermaid 图表 #${index + 1} 语法不完整，保持上一帧`);
+            // console.debug(` Mermaid 图表 #${index + 1} 语法不完整，保持上一帧`);
           }
         })();
       });
@@ -5732,7 +5863,7 @@ async function sendMessage(message = null) {
       isCharRendering = false;
       // 最终渲染确保 Markdown 完整（包含 citations 和 Mermaid）
       if (displayedContent && streamingEl) {
-        // 🔧 修复：使用 renderStreamingContent 保持 Mermaid 内联渲染逻辑一致
+        //  修复：使用 renderStreamingContent 保持 Mermaid 内联渲染逻辑一致
         renderStreamingContent();
 
         // 移除所有动画类（流结束）
@@ -5740,13 +5871,13 @@ async function sendMessage(message = null) {
           el.classList.remove('streaming-char');
         });
 
-        // 🔧 修复：最终 Mermaid 渲染（同时支持两种容器格式）
+        //  修复：最终 Mermaid 渲染（同时支持两种容器格式）
         setTimeout(() => {
           tryRenderMermaidLive();  // 处理 .mermaid-inline-wrapper
           renderMermaidCharts();   // 处理 .mermaid-container (兼容历史消息)
         }, 100);
 
-        // 💻 处理代码块：添加语言标签、复制按钮、语法高亮
+        //  处理代码块：添加语言标签、复制按钮、语法高亮
         setTimeout(() => processCodeBlocks(streamingEl?.closest('.message')), 50);
       }
     }
@@ -5909,12 +6040,12 @@ async function sendMessage(message = null) {
             // 处理标题更新
             if (parsed.title && appState.currentSession) {
               appState.currentSession.title = parsed.title;
-              console.log(`✅ 会话标题已更新: "${parsed.title}"`);
+              console.log(` 会话标题已更新: "${parsed.title}"`);
               loadSessions().catch(err => console.error('刷新会话列表失败:', err));
 
               // 新增：如果处于 ChatFlow iframe 模式，同步标题给父窗口
               if (isChatFlowIframeMode) {
-                console.log('📤 同步标题给 Chat Flow:', parsed.title);
+                console.log(' 同步标题给 Chat Flow:', parsed.title);
                 window.parent.postMessage({
                   action: 'update-flow-title',
                   title: parsed.title
@@ -5926,7 +6057,7 @@ async function sendMessage(message = null) {
           else if (parsed.type === 'model_info') {
             appState.lastModelUsed = parsed.model;
             appState.lastRoutingReason = parsed.reason || '';
-            console.log(`📍 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
+            console.log(` 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
             console.log(`   路由原因: ${parsed.reason || '用户选择'}`);
             addProcessTraceItem('info', appState.language === 'zh-CN'
               ? `模型路由: ${parsed.model} (${parsed.actualModel})`
@@ -5948,7 +6079,7 @@ async function sendMessage(message = null) {
             if (parsed.sources && Array.isArray(parsed.sources)) {
               currentSources = mergeAndReindexSources(currentSources, parsed.sources);
               aiMsg.sources = currentSources;
-              console.log(`📥 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
+              console.log(` 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
               addProcessTraceItem('search', appState.language === 'zh-CN'
                 ? `来源更新: ${currentSources.length} 条`
                 : `Sources updated: ${currentSources.length}`);
@@ -6080,7 +6211,7 @@ async function sendMessage(message = null) {
               ? `返工#${agentRetryCount}: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
-          // 🔍 处理搜索状态 - 更新到时间轴第一步
+          //  处理搜索状态 - 更新到时间轴第一步
           else if (parsed.type === 'search_status') {
             if (parsed.status === 'analyzing') {
               // 正在分析是否需要搜索
@@ -6122,7 +6253,7 @@ async function sendMessage(message = null) {
             scrollToBottom();
           }
           else if (parsed.type === 'done') {
-            console.log('✅ 流式响应完成');
+            console.log(' 流式响应完成');
 
             // 停止字符渲染队列
             stopCharRender();
@@ -6138,7 +6269,7 @@ async function sendMessage(message = null) {
             if (aiAvatar) aiAvatar.classList.remove('thinking');
           }
           else if (parsed.type === 'cancelled') {
-            console.log('⚠️ 响应已取消');
+            console.log(' 响应已取消');
             stopCharRender();  // 停止字符渲染
             updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN' ? '过程已取消' : 'Trace cancelled');
             addProcessTraceItem('info', appState.language === 'zh-CN' ? '请求已取消' : 'Request cancelled');
@@ -6156,7 +6287,7 @@ async function sendMessage(message = null) {
             break;
           }
         } catch (e) {
-          console.error('⚠️ 解析响应错误:', e);
+          console.error(' 解析响应错误:', e);
         }
       }
     }
@@ -6191,16 +6322,20 @@ async function sendMessage(message = null) {
       usage: d.usage || {},
       searchCount: Number(d.searchCount || 0)
     }));
-    const processTraceSnapshot = {
-      version: 1,
-      mode: appState.agentMode ? 'agent' : 'single',
-      tasks: taskSnapshot,
-      drafts: draftSnapshot,
-      metrics: agentRunState.metrics || null,
-      trace: processTraceEvents
-    };
-    if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
-      processTraceSnapshot.forceSubAgents = 4;
+    let serializedProcessTrace = null;
+    if (enableProcessTrace) {
+      const processTraceSnapshot = {
+        version: 1,
+        mode: appState.agentMode ? 'agent' : 'single',
+        tasks: taskSnapshot,
+        drafts: draftSnapshot,
+        metrics: agentRunState.metrics || null,
+        trace: processTraceEvents
+      };
+      if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
+        processTraceSnapshot.forceSubAgents = 4;
+      }
+      serializedProcessTrace = JSON.stringify(processTraceSnapshot);
     }
 
     const aiMsg = {
@@ -6210,7 +6345,7 @@ async function sendMessage(message = null) {
       model: appState.lastModelUsed || appState.selectedModel,
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
-      process_trace: JSON.stringify(processTraceSnapshot),
+      process_trace: serializedProcessTrace,
       sources: currentSources.length > 0 ? currentSources : null,  // 新增：存储来源
       created_at: new Date().toISOString()
     };
@@ -6222,7 +6357,7 @@ async function sendMessage(message = null) {
     await loadSessions();
 
   } catch (error) {
-    console.error('❌ 发送消息错误:', error);
+    console.error(' 发送消息错误:', error);
     alert(appState.language === 'zh-CN' ? '发送失败,请检查网络连接' : 'Send failed, check network');
     // 确保停止AI头像闪烁
     const aiAvatar = document.querySelector('.message.assistant:last-child .ai-avatar');
@@ -6242,7 +6377,7 @@ async function sendMessage(message = null) {
     const titleMatch = fullContent.match(/<<<(.{1,30})>>>\s*$/);
     if (titleMatch && titleMatch[1]) {
       const newTitle = titleMatch[1].trim();
-      console.log(`📝 检测到新标题: "${newTitle}"`);
+      console.log(` 检测到新标题: "${newTitle}"`);
 
       if (appState.currentSession) {
         // 1. 更新本地状态
@@ -6257,10 +6392,10 @@ async function sendMessage(message = null) {
           },
           body: JSON.stringify({ title: newTitle })
         }).then(() => {
-          console.log('✅ 标题已同步到服务器');
+          console.log(' 标题已同步到服务器');
           // 3. 刷新侧边栏
           loadSessions();
-        }).catch(err => console.error('❌ 同步标题失败:', err));
+        }).catch(err => console.error(' 同步标题失败:', err));
       }
     }
   }
@@ -6269,7 +6404,7 @@ async function sendMessage(message = null) {
 // 修复：改进stopGeneration函数
 async function stopGeneration() {
   if (!appState.currentRequestId) {
-    console.warn('⚠️ 没有活跃的请求');
+    console.warn(' 没有活跃的请求');
     return;
   }
 
@@ -6289,9 +6424,9 @@ async function stopGeneration() {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    console.log('🛑 已发送停止请求');
+    console.log(' 已发送停止请求');
   } catch (error) {
-    console.error('❌ 停止失败:', error);
+    console.error(' 停止失败:', error);
   }
 }
 
@@ -6342,7 +6477,7 @@ function handleFileUpload() {
   const fileInput = document.getElementById('fileInput');
   const attachBtn = document.getElementById('attachBtn');
   if (!fileInput) {
-    console.error('❌ 文件输入框未找到');
+    console.error(' 文件输入框未找到');
     return;
   }
 
@@ -6364,7 +6499,7 @@ function toggleInternet() {
   const tooltipText = appState.language === 'zh-CN' ? '联网' : 'Internet';
   showButtonTooltip(internetBtn, tooltipText);
 
-  console.log(`🌐 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
+  console.log(` 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
 }
 
 // 切换推理模式
@@ -6385,24 +6520,24 @@ function toggleThinking() {
   const tooltipText = appState.language === 'zh-CN' ? '推理' : 'Reasoning';
   showButtonTooltip(thinkingBtn, tooltipText);
 
-  console.log(`🧠 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
+  console.log(` 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
 }
 
 // 修复：改进handleFileSelected - 添加完整的错误处理
 function handleFileSelected(event) {
   if (!event || !event.target) {
-    console.error('❌ 事件对象无效');
+    console.error(' 事件对象无效');
     return;
   }
 
   const files = event.target.files;
   if (!files || files.length === 0) {
-    console.warn('⚠️ 未选择文件');
+    console.warn(' 未选择文件');
     return;
   }
 
   const file = files[0];
-  console.log(`✅ 选中文件: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+  console.log(` 选中文件: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
 
   // 文件类型验证
   const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
@@ -6427,7 +6562,7 @@ function handleFileSelected(event) {
   // TODO: 实现文件上传到服务器的逻辑
   // 这里应该将文件上传到后端，并获取URL或ID
   // 然后可以在发送消息时附加文件信息
-  console.log('📎 文件已准备，等待上传实现');
+  console.log(' 文件已准备，等待上传实现');
 
   // 临时提示用户
   const msg = appState.language === 'zh-CN'
@@ -6438,13 +6573,13 @@ function handleFileSelected(event) {
 
 // 修复：改进showModelRoutingInfo
 function showModelRoutingInfo(modelUsed, reason) {
-  console.log(`🤖 [Auto路由] 使用模型: ${modelUsed}, 原因: ${reason}`);
+  console.log(` [Auto路由] 使用模型: ${modelUsed}, 原因: ${reason}`);
 }
 
 // 修复：改进handleViewportResize
 function handleViewportResize() {
   // 处理viewport变化时的布局调整
-  console.log('📱 Viewport已调整大小');
+  console.log(' Viewport已调整大小');
 }
 
 // ==================== 认证相关 ====================
@@ -6490,7 +6625,7 @@ async function handleRegister(event) {
     }
   } catch (error) {
     showError(errorEl, appState.language === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error');
-    console.error('❌ 注册错误:', error);
+    console.error(' 注册错误:', error);
   } finally {
     registerBtn.disabled = false;
     registerBtn.textContent = appState.language === 'zh-CN' ? '注册' : 'Register';
@@ -6514,7 +6649,7 @@ async function verifyToken() {
       appState.token = null;
     }
   } catch (error) {
-    console.error('❌ 验证token失败:', error);
+    console.error(' 验证token失败:', error);
     localStorage.removeItem('rai_token');
     appState.token = null;
   }
@@ -6774,7 +6909,7 @@ async function handleAuthSubmit() {
     }
   } catch (error) {
     showAuthError(appState.language === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error');
-    console.error('❌ 认证错误:', error);
+    console.error(' 认证错误:', error);
   } finally {
     // 恢复按钮状态
     if (submitBtn) {
@@ -6806,7 +6941,7 @@ function showError(element, message) {
 
 async function loadUserData() {
   try {
-    console.log('📥 加载用户数据...');
+    console.log(' 加载用户数据...');
 
     const profileResponse = await fetch(`${API_BASE}/user/profile`, {
       headers: { 'Authorization': `Bearer ${appState.token}` }
@@ -6821,7 +6956,7 @@ async function loadUserData() {
     const realEmail = appState.user?.email || profile.email || '';
     const displayName = appState.user?.username || profile.username || (realEmail ? realEmail.split('@')[0] : '用户');
 
-    console.log('📧 显示邮箱:', realEmail);
+    console.log(' 显示邮箱:', realEmail);
 
     document.getElementById('userName').textContent = displayName;
     // userEmail 元素已移除，不再显示邮箱在侧边栏
@@ -6832,7 +6967,7 @@ async function loadUserData() {
       email: realEmail
     };
 
-    // ✅ 修复：检查profile对象的所有必需字段
+    //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
       if (profile.default_model !== undefined) {
         const rememberedModel = normalizeSelectedModelId(profile.default_model || 'auto');
@@ -6844,16 +6979,16 @@ async function loadUserData() {
       if (profile.max_tokens !== undefined) appState.maxTokens = parseInt(profile.max_tokens, 10) || 2000;
       if (profile.frequency_penalty !== undefined) appState.frequencyPenalty = parseFloat(profile.frequency_penalty) || 0;
       if (profile.presence_penalty !== undefined) appState.presencePenalty = parseFloat(profile.presence_penalty) || 0;
-      // ✅ 关键修复：正确处理system_prompt，确保始终是字符串
+      //  关键修复：正确处理system_prompt，确保始终是字符串
       if (profile.system_prompt !== undefined) {
         appState.systemPrompt = (profile.system_prompt || '');
-        console.log(`✅ 加载系统提示词: ${appState.systemPrompt.length}字符`);
+        console.log(` 加载系统提示词: ${appState.systemPrompt.length}字符`);
       }
       // 读取用户偏好；若模型不支持会在 updateModelControls 里自动关闭
       if (profile.thinking_mode !== undefined) {
         appState.thinkingMode = (profile.thinking_mode === 1 || profile.thinking_mode === true);
       }
-      // ✅ 修复：保持联网模式默认开启，除非用户明确关闭
+      //  修复：保持联网模式默认开启，除非用户明确关闭
       // 数据库默认值0表示"未设置"，不覆盖前端默认值true
       // 前端已默认开启联网，所以这里不再处理 internet_mode
 
@@ -6862,31 +6997,31 @@ async function loadUserData() {
       updateModelControls();
       updateMenuSelection();
       updateToolbarUI();
-      console.log('✅ 用户配置已加载到UI');
+      console.log(' 用户配置已加载到UI');
     } else {
-      console.warn('⚠️ profile对象格式不正确');
+      console.warn(' profile对象格式不正确');
     }
 
-    console.log('📋 加载历史会话...');
+    console.log(' 加载历史会话...');
     await loadSessions();
 
     if (appState.sessions && appState.sessions.length > 0) {
-      console.log(`✅ 找到 ${appState.sessions.length} 个历史会话,自动加载最新会话`);
+      console.log(` 找到 ${appState.sessions.length} 个历史会话,自动加载最新会话`);
       await loadSession(appState.sessions[0].id);
     } else {
-      console.log('ℹ️ 无历史会话,显示欢迎界面');
+      console.log(' 无历史会话,显示欢迎界面');
       showWelcome();
     }
 
-    console.log('✅ 用户数据加载完成');
+    console.log(' 用户数据加载完成');
 
-    // 🎫 获取并显示会员状态 + 应用模型策略
+    //  获取并显示会员状态 + 应用模型策略
     await fetchUserMembership({ applyPolicy: true, initial: true });
     updateUserAreaWithMembership();
   } catch (error) {
-    console.error('❌ 加载用户数据失败:', error);
+    console.error(' 加载用户数据失败:', error);
     if (error.message.includes('500')) {
-      console.warn('⚠️ 用户配置加载失败,使用默认配置继续');
+      console.warn(' 用户配置加载失败,使用默认配置继续');
       showWelcome();
     } else {
       alert((appState.language === 'zh-CN' ? '加载失败: ' : 'Load failed: ') + error.message);
@@ -6967,7 +7102,7 @@ async function createNewSpace() {
   const name = prompt('请输入空间名称:');
   if (!name || !name.trim()) return;
 
-  const icon = prompt('请输入图标 emoji (可选):', '📚');
+  const icon = prompt('请输入图标 emoji (可选):', '');
 
   try {
     const response = await fetch(`${API_BASE}/spaces`, {
@@ -6979,14 +7114,14 @@ async function createNewSpace() {
       body: JSON.stringify({
         name: name.trim(),
         description: '',
-        icon: icon || '📚'
+        icon: icon || ''
       })
     });
 
     if (!response.ok) throw new Error('创建空间失败');
 
     const { space } = await response.json();
-    console.log('✅ 空间创建成功:', space);
+    console.log(' 空间创建成功:', space);
 
     // 重新加载空间列表
     await loadSpaces();
@@ -7089,7 +7224,7 @@ function uploadDocument() {
       if (!response.ok) throw new Error('上传失败');
 
       const result = await response.json();
-      console.log('✅ 文件上传成功:', result);
+      console.log(' 文件上传成功:', result);
 
       // 重新加载文档列表和空间列表
       await loadDocuments(appState.currentSpaceId);
@@ -7119,7 +7254,7 @@ async function deleteDocument(spaceId, docId) {
 
     if (!response.ok) throw new Error('删除失败');
 
-    console.log('✅ 文档删除成功');
+    console.log(' 文档删除成功');
 
     // 重新加载文档列表和空间列表
     await loadDocuments(spaceId);
@@ -7144,7 +7279,7 @@ async function deleteSpace(spaceId) {
 
     if (!response.ok) throw new Error('删除失败');
 
-    console.log('✅ 空间删除成功');
+    console.log(' 空间删除成功');
 
     // 如果删除的是当前选中的空间，清空状态
     if (appState.currentSpaceId === spaceId) {
@@ -7196,7 +7331,7 @@ async function selectScenario(scenario) {
     appState.temperature = params.temperature;
     appState.topP = params.top_p;
     appState.presencePenalty = params.presence_penalty;
-    console.log(`✅ 切换到${scenario}模式:`, params);
+    console.log(` 切换到${scenario}模式:`, params);
   }
 }
 
@@ -7246,7 +7381,7 @@ async function loadFlowsList() {
     chatFlowState.flows = flows;
     renderFlowsList(flows);
   } catch (error) {
-    console.error('❌ 加载思维流列表失败:', error);
+    console.error(' 加载思维流列表失败:', error);
   }
 }
 
@@ -7280,7 +7415,7 @@ function renderFlowsList(flows) {
 // 创建新 Flow
 async function createNewFlow() {
   try {
-    const defaultTitle = appState.language === 'zh-CN' ? '新思维流' : 'New Flow';
+    const defaultTitle = appState.language === 'zh-CN' ? '新思维流' : 'New ChatFlow';
     const response = await fetch('/api/flows', {
       method: 'POST',
       headers: {
@@ -7293,12 +7428,12 @@ async function createNewFlow() {
     if (!response.ok) throw new Error('创建失败');
 
     const flow = await response.json();
-    console.log('✅ 创建思维流成功:', flow.id);
+    console.log(' 创建思维流成功:', flow.id);
 
     await loadFlowsList();
     openFlow(flow.id);
   } catch (error) {
-    console.error('❌ 创建思维流失败:', error);
+    console.error(' 创建思维流失败:', error);
     alert(appState.language === 'zh-CN' ? '创建思维流失败，请重试' : 'Failed to create flow, please retry');
   }
 }
@@ -7344,9 +7479,9 @@ async function openFlow(flowId) {
     renderFlowsList(chatFlowState.flows);
 
 
-    console.log('✅ 打开思维流:', flowId);
+    console.log(' 打开思维流:', flowId);
   } catch (error) {
-    console.error('❌ 打开思维流失败:', error);
+    console.error(' 打开思维流失败:', error);
     alert(appState.language === 'zh-CN' ? '打开思维流失败，请重试' : 'Failed to open flow, please retry');
   }
 }
@@ -7376,9 +7511,9 @@ async function deleteFlow(flowId) {
     }
 
     await loadFlowsList();
-    console.log('✅ 删除思维流成功:', flowId);
+    console.log(' 删除思维流成功:', flowId);
   } catch (error) {
-    console.error('❌ 删除思维流失败:', error);
+    console.error(' 删除思维流失败:', error);
     alert('删除思维流失败，请重试');
   }
 }
@@ -7408,7 +7543,7 @@ async function saveFlowState() {
       })
     });
   } catch (error) {
-    console.error('❌ 保存思维流状态失败:', error);
+    console.error(' 保存思维流状态失败:', error);
   }
 }
 
@@ -7493,13 +7628,13 @@ function initChatFlowCanvas() {
         const iframe = document.getElementById('chatflowIframe');
         // 验证消息来源是我们的 iframe
         if (iframe && iframe.contentWindow === e.source) {
-          console.log('📥 收到 iframe 的画布请求');
+          console.log(' 收到 iframe 的画布请求');
           let canvasData = '';
           // 尝试获取画布数据
           if (typeof serializeCanvasToPrompt === 'function') {
             canvasData = serializeCanvasToPrompt();
           } else {
-            console.warn('⚠️ serializeCanvasToPrompt 未定义');
+            console.warn(' serializeCanvasToPrompt 未定义');
           }
 
           // 发送回 iframe
@@ -7507,13 +7642,13 @@ function initChatFlowCanvas() {
             action: 'canvas-data',
             canvas: canvasData
           }, '*');
-          console.log('📤 已发送画布数据给 iframe');
+          console.log(' 已发送画布数据给 iframe');
         }
       } else if (e.data.action === 'update-flow-title') {
         const iframe = document.getElementById('chatflowIframe');
         // 验证消息来源
         if (iframe && iframe.contentWindow === e.source && e.data.title && chatFlowState.currentFlowId) {
-          console.log('📥 收到 iframe 的标题同步:', e.data.title);
+          console.log(' 收到 iframe 的标题同步:', e.data.title);
 
           // 1. 更新 UI 标题
           const titleEl = document.getElementById('chatflowTitle');
@@ -7535,9 +7670,9 @@ function initChatFlowCanvas() {
             },
             body: JSON.stringify({ title: e.data.title })
           }).then(res => {
-            if (res.ok) console.log('✅ Flow 标题已保存到数据库');
-            else console.error('❌ 保存 Flow 标题失败');
-          }).catch(err => console.error('❌ 保存 Flow 标题请求错误:', err));
+            if (res.ok) console.log(' Flow 标题已保存到数据库');
+            else console.error(' 保存 Flow 标题失败');
+          }).catch(err => console.error(' 保存 Flow 标题请求错误:', err));
         }
       }
 
@@ -7722,7 +7857,7 @@ function addStickyNoteAt(x, y) {
   renderCanvasNodes();
   renderEdges();
   saveFlowState();
-  console.log('✅ 在位置创建便签:', x, y);
+  console.log(' 在位置创建便签:', x, y);
 }
 
 // 在指定位置添加文本节点
@@ -7744,7 +7879,7 @@ function addTextNodeAt(x, y) {
   renderCanvasNodes();
   renderEdges();
   saveFlowState();
-  console.log('✅ 在位置创建文本节点:', x, y);
+  console.log(' 在位置创建文本节点:', x, y);
 
   // 创建后立即进入编辑模式
   setTimeout(() => {
@@ -7778,7 +7913,7 @@ async function pasteClipboardAsNode(x, y) {
     renderEdges();
     saveFlowState();
     showToast(appState.language === 'zh-CN' ? '已粘贴到画布' : 'Pasted to canvas');
-    console.log('✅ 从剪贴板粘贴节点:', x, y);
+    console.log(' 从剪贴板粘贴节点:', x, y);
   } catch (err) {
     console.error('读取剪贴板失败:', err);
     showToast(appState.language === 'zh-CN' ? '无法读取剪贴板' : 'Cannot read clipboard');
@@ -7983,7 +8118,7 @@ async function sendChatFlowMessage() {
             ...messages[lastUserMsgIndex],
             content: messages[lastUserMsgIndex].content + canvasContext
           };
-          console.log('📋 已注入画布上下文到用户消息');
+          console.log(' 已注入画布上下文到用户消息');
         }
       }
     }
@@ -8094,9 +8229,9 @@ async function sendChatFlowMessage() {
             if (titleEl) titleEl.textContent = extractedTitle;
             // 重新加载侧边栏列表
             loadFlowsList();
-            console.log('📋 Flow 标题已更新:', extractedTitle);
+            console.log(' Flow 标题已更新:', extractedTitle);
           } catch (err) {
-            console.error('❌ 更新 Flow 标题失败:', err);
+            console.error(' 更新 Flow 标题失败:', err);
           }
         }
       }
@@ -8105,7 +8240,7 @@ async function sendChatFlowMessage() {
     // 完成后渲染最终内容
     renderChatFlowMessages();
   } catch (error) {
-    console.error('❌ Chat Flow LLM 调用失败:', error);
+    console.error(' Chat Flow LLM 调用失败:', error);
     // 添加错误消息
     chatFlowState.messages.push({
       role: 'assistant',
@@ -8257,7 +8392,7 @@ function createCanvasNode(message, x, y, sourceIndex) {
   renderEdges();
   saveFlowState();
 
-  console.log('✅ 创建节点:', nodeId);
+  console.log(' 创建节点:', nodeId);
 }
 
 // 创建文本节点（从选中文本拖拽）
@@ -8289,7 +8424,7 @@ function createTextNode(text, x, y) {
   renderEdges();
   saveFlowState();
 
-  console.log('✅ 从选中文本创建节点:', nodeId);
+  console.log(' 从选中文本创建节点:', nodeId);
   showToast('已添加到画布');
 }
 
@@ -8557,7 +8692,7 @@ function initChatFlowDragDrop() {
   if (!container) return;
 
   window._chatFlowDragDropInitialized = true;
-  console.log('📦 初始化 Canvas 拖拽支持');
+  console.log(' 初始化 Canvas 拖拽支持');
 
   container.addEventListener('dragover', (e) => {
     e.preventDefault(); // 允许放置
@@ -8566,7 +8701,7 @@ function initChatFlowDragDrop() {
 
   container.addEventListener('drop', (e) => {
     e.preventDefault();
-    console.log('📥 Canvas 收到 Drop 事件');
+    console.log(' Canvas 收到 Drop 事件');
 
     try {
       const dataStr = e.dataTransfer.getData('text/plain');
@@ -8599,10 +8734,10 @@ function initChatFlowDragDrop() {
         renderEdges();
         saveFlowState();
 
-        console.log('✅ 拖拽创建节点成功:', nodeId, '坐标:', parseInt(x), parseInt(y));
+        console.log(' 拖拽创建节点成功:', nodeId, '坐标:', parseInt(x), parseInt(y));
       }
     } catch (err) {
-      console.error('❌ 处理拖拽数据失败:', err);
+      console.error(' 处理拖拽数据失败:', err);
     }
   });
 }
@@ -8761,7 +8896,7 @@ function createEdge(fromId, toId, label = '') {
   chatFlowState.edges.push(edge);
   renderEdges();
   saveFlowState();
-  console.log('✅ 创建连线:', edgeId);
+  console.log(' 创建连线:', edgeId);
 }
 
 // 渲染所有边
@@ -9536,7 +9671,7 @@ function initAutoSave() {
   autoSaveInterval = setInterval(() => {
     if (chatFlowState.currentFlowId) {
       saveFlowState();
-      console.log('⏱️ 自动保存完成');
+      console.log(' 自动保存完成');
     }
   }, 5000);
 }
@@ -9550,18 +9685,18 @@ function initAutoSave() {
 function serializeCanvasToPrompt() {
   if (chatFlowState.nodes.length === 0 && chatFlowState.edges.length === 0) return '';
 
-  let context = '\n\n---\n📋 **当前思维画布内容：**\n\n';
+  let context = '\n\n---\n **当前思维画布内容：**\n\n';
 
   // 1. 输出所有节点
   if (chatFlowState.nodes.length > 0) {
     context += '**节点列表：**\n';
     chatFlowState.nodes.forEach((node, index) => {
       const typeLabel = {
-        'user': '👤 用户',
-        'assistant': '🤖 AI',
-        'sticky': '📌 便签',
-        'text': '📝 文本'
-      }[node.type] || '📄 节点';
+        'user': ' 用户',
+        'assistant': ' AI',
+        'sticky': ' 便签',
+        'text': ' 文本'
+      }[node.type] || ' 节点';
 
       const content = (node.fullContent || node.content || '').replace(/\n/g, ' ').slice(0, 100);
       context += `${index + 1}. [${node.id}] ${typeLabel}: "${content}"${content.length >= 100 ? '...' : ''}\n`;
@@ -9659,11 +9794,11 @@ async function loadSessions(reset = true) {
     appState.sessionsPagination.hasMore = data.hasMore;
     appState.sessionsPagination.offset += data.sessions.length;
 
-    console.log(`✅ 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
+    console.log(` 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
     renderSessions();
 
   } catch (error) {
-    console.error('❌ 加载会话失败:', error);
+    console.error(' 加载会话失败:', error);
     if (reset) {
       appState.sessions = [];
     }
@@ -9742,7 +9877,7 @@ function initChatScrollListener() {
     }
   }, { passive: true });
 
-  console.log('✅ 智能滚动监听器已初始化');
+  console.log(' 智能滚动监听器已初始化');
 }
 
 // 初始化 Material Design 涟漪效果
@@ -9802,14 +9937,14 @@ async function createNewSession() {
       // }
     }
   } catch (error) {
-    console.error('❌ 创建会话失败:', error);
+    console.error(' 创建会话失败:', error);
     alert(appState.language === 'zh-CN' ? '创建对话失败' : 'Failed to create chat');
   }
 }
 
 async function loadSession(sessionId) {
   try {
-    console.log('📖 加载会话:', sessionId);
+    console.log(' 加载会话:', sessionId);
 
     const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
       headers: { 'Authorization': `Bearer ${appState.token}` }
@@ -9824,7 +9959,7 @@ async function loadSession(sessionId) {
     appState.currentSession = appState.sessions.find(s => s.id === sessionId);
     appState.messages = Array.isArray(messages) ? messages : [];
 
-    console.log(`✅ 加载到 ${messages.length} 条消息`);
+    console.log(` 加载到 ${messages.length} 条消息`);
 
     renderMessages();
     renderSessions();
@@ -9835,7 +9970,7 @@ async function loadSession(sessionId) {
     // }
 
   } catch (error) {
-    console.error('❌ 加载消息失败:', error);
+    console.error(' 加载消息失败:', error);
     alert(appState.language === 'zh-CN' ? '加载对话失败' : 'Failed to load chat');
   }
 }
@@ -9926,7 +10061,7 @@ function toggleThinkingContent(id) {
   const icon = document.getElementById(`${id}-icon`);
 
   if (!content || !icon) {
-    console.warn(`⚠️ 找不到元素: ${id}`);
+    console.warn(` 找不到元素: ${id}`);
     return;
   }
 
@@ -9976,9 +10111,9 @@ function loadSettings() {
       if (settings.frequencyPenalty !== undefined) appState.frequencyPenalty = settings.frequencyPenalty;
       if (settings.presencePenalty !== undefined) appState.presencePenalty = settings.presencePenalty;
       if (settings.systemPrompt !== undefined) appState.systemPrompt = settings.systemPrompt;
-      console.log('✅ 从本地存储加载设置成功');
+      console.log(' 从本地存储加载设置成功');
     } catch (e) {
-      console.warn('⚠️ 解析本地设置失败:', e);
+      console.warn(' 解析本地设置失败:', e);
     }
   }
 }
@@ -10355,7 +10490,7 @@ async function processUploadedFile(file) {
         data: event.target.result,  // Base64 data URL
         fileName: file.name
       };
-      console.log(`✅ ${attachmentType}文件已选择: ${file.name}`);
+      console.log(` ${attachmentType}文件已选择: ${file.name}`);
       updateAttachmentUI();
     };
     reader.readAsDataURL(file);
@@ -10376,10 +10511,10 @@ async function processUploadedFile(file) {
         fileId: data.file_id,
         fileName: file.name
       };
-      console.log('✅ 文档上传成功');
+      console.log(' 文档上传成功');
       updateAttachmentUI();
     } catch (error) {
-      console.error('❌ 文档上传失败:', error);
+      console.error(' 文档上传失败:', error);
       alert(appState.language === 'zh-CN' ? '文档上传失败' : 'Document upload failed');
     }
   }
@@ -10524,11 +10659,11 @@ function initDragAndDrop() {
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       processUploadedFile(files[0]);
-      console.log('📁 拖拽上传文件:', files[0].name);
+      console.log(' 拖拽上传文件:', files[0].name);
     }
   });
 
-  console.log('✅ 拖拽上传功能已初始化');
+  console.log(' 拖拽上传功能已初始化');
 }
 
 // ==================== 对话索引导航器 ====================
@@ -10864,7 +10999,7 @@ function initChatIndexListener() {
   // 初始化移动端滑动操作
   initMobileTouchNavigation();
 
-  console.log('✅ 对话索引导航器滚动监听器已初始化');
+  console.log(' 对话索引导航器滚动监听器已初始化');
 }
 
 // 移动端触摸滑动导航
@@ -11070,7 +11205,7 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
         poeRemaining: Number(data.poeRemaining || 0),
         poeResetAt: data.poeResetAt || null
       };
-      console.log('✅ 会员状态更新:', userMembershipState);
+      console.log(' 会员状态更新:', userMembershipState);
       if (applyPolicy) {
         applyMembershipModelPolicy({ initial, previousMembership });
       }
@@ -11084,27 +11219,28 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
 
 // 用户签到 (设置面板用)
 async function userCheckin() {
-  console.log('🔄 userCheckin() 被调用');
+  console.log(' userCheckin() 被调用');
   try {
     const token = appState.token;
-    console.log('🔑 Token:', token ? '存在' : '不存在');
+    console.log(' Token:', token ? '存在' : '不存在');
     if (!token) {
-      console.error('❌ 无token，取消签到');
+      console.error(' 无token，取消签到');
       return;
     }
 
-    console.log('📤 发送签到请求...');
+    console.log(' 发送签到请求...');
     const res = await fetch('/api/user/checkin', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` }
     });
 
-    console.log('📥 响应状态:', res.status);
+    console.log(' 响应状态:', res.status);
     const data = await res.json();
-    console.log('📦 响应数据:', data);
+    console.log(' 响应数据:', data);
 
     if (res.ok) {
-      alert(`签到成功！获得 ${data.pointsGained} 点数 ⚡`);
+      const successTpl = i18nText('checkin-success', '签到成功！获得 {points} 点数 ');
+      alert(successTpl.replace('{points}', data.pointsGained));
       await fetchUserMembership();
       updateSettingsMembership();
       updateUserAreaWithMembership();
@@ -11112,8 +11248,8 @@ async function userCheckin() {
       alert(data.error || '签到失败');
     }
   } catch (e) {
-    console.error('❌ 签到错误:', e);
-    alert('网络错误: ' + e.message);
+    console.error(' 签到错误:', e);
+    alert(`${i18nText('network-error', '网络错误')}: ${e.message}`);
   }
 }
 
@@ -11139,7 +11275,7 @@ function createMembershipPlansModal() {
   modal.innerHTML = `
         <div class="membership-plans-box">
           <div class="membership-plans-header">
-            <h2>🎫 会员计划</h2>
+            <h2> 会员计划</h2>
             <button class="admin-close-btn" onclick="closeMembershipPlans()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -11182,12 +11318,12 @@ function createMembershipPlansModal() {
             <div class="membership-divider"></div>
 
             <div class="membership-extra-section">
-              <h3>💎 按需享用</h3>
+              <h3> 按需享用</h3>
               <p>单独捐赠获取点数，购买的点数 2 年有效。</p>
             </div>
 
             <div class="membership-contact">
-              <p>📧 购买请联系: <a href="mailto:rick080402@gmail.com">rick080402@gmail.com</a></p>
+              <p> 购买请联系: <a href="mailto:rick080402@gmail.com">rick080402@gmail.com</a></p>
               <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 8px;">目前购买需要通过邮箱联系</p>
             </div>
           </div>
@@ -11226,7 +11362,7 @@ function updateUserAreaWithMembership() {
             transition: transform 0.2s, box-shadow 0.2s;
           " onmouseover="this.style.transform='scale(1.02)';this.style.boxShadow='0 4px 12px rgba(245, 213, 71, 0.4)';"
              onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 8px rgba(245, 213, 71, 0.3)';">
-            签到 +20 ⚡
+            ${i18nText('checkin-bonus', '签到 +20 ')}
           </button>
         `;
   } else {
@@ -11238,24 +11374,24 @@ function updateUserAreaWithMembership() {
 
 // 侧边栏签到函数 - 签到成功后隐藏按钮
 async function sidebarCheckin() {
-  console.log('🔄 sidebarCheckin() 被调用');
+  console.log(' sidebarCheckin() 被调用');
   try {
     const token = appState.token;
-    console.log('🔑 Token:', token ? '存在' : '不存在');
+    console.log(' Token:', token ? '存在' : '不存在');
     if (!token) {
-      console.error('❌ 无token，取消签到');
+      console.error(' 无token，取消签到');
       return;
     }
 
-    console.log('📤 发送签到请求...');
+    console.log(' 发送签到请求...');
     const res = await fetch('/api/user/checkin', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` }
     });
 
-    console.log('📥 响应状态:', res.status);
+    console.log(' 响应状态:', res.status);
     const data = await res.json();
-    console.log('📦 响应数据:', data);
+    console.log(' 响应数据:', data);
 
     if (res.ok) {
       // 更新状态
@@ -11272,12 +11408,13 @@ async function sidebarCheckin() {
       updateSettingsMembership();
 
       // 显示成功提示
-      showToast(`签到成功！+${data.pointsGained} ⚡`);
+      const successTpl = i18nText('checkin-success', '签到成功！获得 {points} 点数 ');
+      showToast(successTpl.replace('{points}', data.pointsGained));
     } else {
       showToast(data.error || '签到失败', 'error');
     }
   } catch (e) {
-    showToast('网络错误', 'error');
+    showToast(i18nText('network-error', '网络错误'), 'error');
   }
 }
 
@@ -11303,11 +11440,11 @@ function updateSettingsMembership() {
       checkinBtn.style.display = 'none';
     } else if (!m.canCheckin) {
       checkinBtn.disabled = true;
-      checkinBtn.textContent = '今日已签到 ✓';
+      checkinBtn.textContent = i18nText('checkin-done', '今日已签到 ✓');
     } else {
       checkinBtn.disabled = false;
       checkinBtn.style.display = 'inline-block';
-      checkinBtn.textContent = '签到 +20 ⚡';
+      checkinBtn.textContent = i18nText('checkin-bonus', '签到 +20 ');
     }
   }
 
@@ -11315,7 +11452,8 @@ function updateSettingsMembership() {
   const created = document.getElementById('settingsCreatedAt');
   if (created && m.createdAt) {
     const date = new Date(m.createdAt);
-    created.textContent = `创建于: ${date.toLocaleDateString('zh-CN')}`;
+    const locale = appState.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+    created.textContent = `${i18nText('created-at-prefix', '创建于')}: ${date.toLocaleDateString(locale)}`;
   }
 
   // 隐藏升级链接（非free用户）
@@ -11752,7 +11890,7 @@ async function loadAdminUsers() {
               <td>${user.email}</td>
               <td>${user.username || '-'}</td>
               <td>${membershipBadge}</td>
-              <td>${totalPoints} ⚡</td>
+              <td>${totalPoints} </td>
               <td>${user.messageCount || 0}</td>
               <td>
                 <button class="admin-action-btn view" onclick="event.stopPropagation();openUserDetailModal(${user.id})">查看</button>
@@ -11866,7 +12004,7 @@ async function viewUserMessages(userId) {
       html += `
             <tr>
               <td>${msg.id}</td>
-              <td>${msg.role === 'user' ? '👤 用户' : '🤖 AI'}</td>
+              <td>${msg.role === 'user' ? ' 用户' : ' AI'}</td>
               <td class="admin-msg-content">${escapeHtml(content)}</td>
               <td>${msg.model || '-'}</td>
               <td>${formatDate(msg.created_at)}</td>
@@ -11932,7 +12070,7 @@ async function loadAdminMessages() {
             <tr>
               <td>${msg.id}</td>
               <td>${msg.username || msg.email || '-'}</td>
-              <td>${msg.role === 'user' ? '👤' : '🤖'}</td>
+              <td>${msg.role === 'user' ? '' : ''}</td>
               <td class="admin-msg-content">${escapeHtml(content)}</td>
               <td>${msg.model || '-'}</td>
               <td>${formatDate(msg.created_at)}</td>
@@ -12040,7 +12178,7 @@ function formatDate(dateStr) {
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
     e.preventDefault();
-    console.log('🔐 管理员快捷键触发');
+    console.log(' 管理员快捷键触发');
     if (adminState.isLoggedIn) {
       openAdminPanel();
     } else {
@@ -12074,7 +12212,7 @@ async function openUserDetailModal(userId) {
   modal.innerHTML = `
     <div class="user-detail-container">
       <div class="user-detail-header">
-        <h2>👤 用户详情</h2>
+        <h2> 用户详情</h2>
         <button class="admin-close-btn" onclick="closeUserDetailModal()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -12100,9 +12238,9 @@ async function openUserDetailModal(userId) {
 
     renderUserDetail(data.user, data.sessions);
   } catch (err) {
-    console.error('❌ 获取用户详情失败:', err);
+    console.error(' 获取用户详情失败:', err);
     modal.querySelector('.user-detail-body').innerHTML = `
-      <div class="user-detail-error">❌ ${err.message}</div>
+      <div class="user-detail-error"> ${err.message}</div>
     `;
   }
 }
@@ -12119,7 +12257,7 @@ function renderUserDetail(user, sessions) {
     <div class="user-detail-content">
       <!-- 用户信息卡片 -->
       <div class="user-info-card">
-        <h3>📋 基本信息</h3>
+        <h3> 基本信息</h3>
         <div class="user-info-grid">
           <div class="user-info-item">
             <span class="label">用户ID</span>
@@ -12139,7 +12277,7 @@ function renderUserDetail(user, sessions) {
           </div>
           <div class="user-info-item">
             <span class="label">当前点数</span>
-            <span class="value">${totalPoints} ⚡</span>
+            <span class="value">${totalPoints} </span>
           </div>
           <div class="user-info-item">
             <span class="label">会话数</span>
@@ -12167,7 +12305,7 @@ function renderUserDetail(user, sessions) {
       <!-- 会话列表和消息查看区域 -->
       <div class="user-sessions-area">
         <div class="user-sessions-list">
-          <h3>💬 对话列表 (${sessions.length})</h3>
+          <h3> 对话列表 (${sessions.length})</h3>
           <div class="sessions-scroll">
             ${sessions.length === 0 ? '<div class="no-sessions">该用户暂无对话</div>' : sessions.map(s => `
               <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}" 
@@ -12220,8 +12358,8 @@ async function loadSessionMessages(sessionId) {
 
     renderSessionMessages(data.session, data.messages, data.totalCount);
   } catch (err) {
-    console.error('❌ 获取会话消息失败:', err);
-    messagesArea.innerHTML = `<div class="ud-messages-error">❌ ${err.message}</div>`;
+    console.error(' 获取会话消息失败:', err);
+    messagesArea.innerHTML = `<div class="ud-messages-error"> ${err.message}</div>`;
   }
 }
 
@@ -12244,7 +12382,7 @@ function renderSessionMessages(session, messages, totalCount) {
 
   messages.forEach(msg => {
     const isUser = msg.role === 'user';
-    const roleLabel = isUser ? '👤 用户' : '🤖 AI';
+    const roleLabel = isUser ? ' 用户' : ' AI';
     const roleClass = isUser ? 'user-msg' : 'ai-msg';
 
     // 完整显示消息内容，不截断
@@ -12262,7 +12400,7 @@ function renderSessionMessages(session, messages, totalCount) {
         </div>
         ${msg.reasoning_content ? `
           <details class="ud-message-reasoning">
-            <summary>🧠 思考过程 (点击展开)</summary>
+            <summary> 思考过程 (点击展开)</summary>
             <pre>${escapeHtml(msg.reasoning_content)}</pre>
           </details>
         ` : ''}
