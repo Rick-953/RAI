@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-visual">
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#0D0D0D">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -368,7 +368,7 @@
             <div class="input-toolbar">
               <!-- 更多菜单 -->
               <div class="more-menu-container">
-                <button class="toolbar-btn" id="moreBtn" onclick="toggleMoreMenu()">
+                <button type="button" class="toolbar-btn" id="moreBtn" onclick="toggleMoreMenu()">
                   <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
                     width="20" height="20" fill="currentColor">
                     <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" stroke="currentColor" stroke-width="0.5" />
@@ -626,14 +626,14 @@
                 </div>
               </div>
 
-              <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+              <button type="button" class="send-btn" id="sendBtn" onclick="sendMessage()">
                 <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
                   height="24" fill="currentColor">
                   <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" stroke-width="2" />
                 </svg>
               </button>
 
-              <button class="stop-btn" id="stopBtn" style="display: none;" onclick="stopGeneration()">
+              <button type="button" class="stop-btn" id="stopBtn" style="display: none;" onclick="stopGeneration()">
                 <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
                   height="24" fill="currentColor">
                   <path d="M6 6h12v12H6z" />

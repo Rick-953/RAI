@@ -2121,6 +2121,7 @@ function autoResizeInput() {
 
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+  window.mobileKeyboardHandler?.syncComposerMetrics();
 }
 
 function handleInputKeydown(event) {
@@ -2128,6 +2129,10 @@ function handleInputKeydown(event) {
     event.preventDefault();
     sendMessage();
   }
+}
+
+function preserveMobileInputFocus() {
+  window.mobileKeyboardHandler?.restoreInputFocus();
 }
 
 // ==================== RAuth SSO 配置 ====================
@@ -2216,11 +2221,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const inputContainer = document.getElementById('inputContainer');
   if (inputContainer) {
     inputContainer.addEventListener('click', handleInputContainerClick);
-    // 移动端触摸支持
-    inputContainer.addEventListener('touchstart', (e) => {
-      // 不阻止默认行为，允许后续的focus事件
-      handleInputContainerClick(e);
-    }, { passive: true });
   }
 
   // 初始化主题和语言
@@ -2373,6 +2373,8 @@ function toggleMoreMenu() {
       updateReasoningProfileControl();
       updatePoeQuotaHint();
     }
+
+    preserveMobileInputFocus();
   }
 }
 
@@ -2400,6 +2402,7 @@ function toggleInternetFromMenu(event) {
   }
 
   console.log(` 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
+  preserveMobileInputFocus();
 }
 
 // 从菜单切换推理模式
@@ -2409,17 +2412,20 @@ function toggleThinkingFromMenu(event) {
   if (!currentModel?.supportsThinking) {
     appState.thinkingMode = false;
     updateToolbarUI();
+    preserveMobileInputFocus();
     return;
   }
   if (isFreePoeMode()) {
     appState.thinkingMode = false;
     updateToolbarUI();
+    preserveMobileInputFocus();
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
   updateToolbarUI();
 
   console.log(` 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
+  preserveMobileInputFocus();
 }
 
 // 从菜单切换Agent模式
@@ -2433,6 +2439,7 @@ function toggleAgentFromMenu(event) {
   }
 
   console.log(` Agent模式: ${appState.agentMode ? '开启' : '关闭'}`);
+  preserveMobileInputFocus();
 }
 
 
@@ -2969,6 +2976,7 @@ function openModelModal() {
     if (menu.classList.contains('active')) {
       updateMenuSelection();
     }
+    preserveMobileInputFocus();
   }
 }
 
@@ -3088,6 +3096,7 @@ function selectModelFromMenu(model, displayName, i18nKey) {
   updatePoeQuotaHint();
   closeModelModal();
   persistDefaultModelPreference(appState.selectedModel);
+  preserveMobileInputFocus();
 
   console.log(` 已切换模型: ${appState.selectedModel} (${displayName})`);
 }
@@ -3149,15 +3158,6 @@ document.addEventListener('click', (e) => {
     closeSettings();
   }
 });
-
-// 移动端键盘适配 - 最简单保守方案
-// 只处理iOS的滚动问题，让Android使用默认行为
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('scroll', () => {
-    // 防止iOS橡皮筋效果
-    window.scrollTo(0, 0);
-  });
-}
 
 function scrollToBottom() {
   const chatContainer = document.querySelector('.chat-container');
@@ -5667,57 +5667,7 @@ async function sendMessage(message = null) {
 
     // 对最后 N 个字符添加动画效果
     function applyCharAnimations(container) {
-      if (!container) return;
-
-      const isInCodeLikeContext = (node) => {
-        let current = node?.parentElement || null;
-        while (current) {
-          const tag = current.tagName;
-          if (tag === 'CODE' || tag === 'PRE' || tag === 'KBD' || tag === 'SAMP') {
-            return true;
-          }
-          current = current.parentElement;
-        }
-        return false;
-      };
-
-      // 获取所有文本节点
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
-      const textNodes = [];
-      let node;
-      while (node = walker.nextNode()) {
-        if (node.textContent.trim() && !isInCodeLikeContext(node)) {
-          textNodes.push(node);
-        }
-      }
-
-      if (textNodes.length === 0) return;
-
-      // 获取最后一个有内容的文本节点
-      const lastTextNode = textNodes[textNodes.length - 1];
-      const text = lastTextNode.textContent;
-
-      if (text.length <= MAX_ANIMATED_CHARS) {
-        // 整个节点都需要动画
-        const wrapper = document.createElement('span');
-        wrapper.className = 'streaming-char';
-        wrapper.textContent = text;
-        lastTextNode.parentNode.replaceChild(wrapper, lastTextNode);
-      } else {
-        // 只对最后 N 个字符添加动画
-        const normalText = text.slice(0, -MAX_ANIMATED_CHARS);
-        const animatedText = text.slice(-MAX_ANIMATED_CHARS);
-
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(document.createTextNode(normalText));
-
-        const animSpan = document.createElement('span');
-        animSpan.className = 'streaming-char';
-        animSpan.textContent = animatedText;
-        fragment.appendChild(animSpan);
-
-        lastTextNode.parentNode.replaceChild(fragment, lastTextNode);
-      }
+      return;
     }
 
     // 执行 Markdown 渲染 + 动画 + Citations +  内联 Mermaid 替换
@@ -10125,13 +10075,11 @@ if (document.readyState !== 'loading') {
   document.addEventListener('DOMContentLoaded', updateModelControls);
 }
 
-// ==================== 移动端键盘处理器 (iOS VisualViewport 修复版 v2) ====================
+// ==================== 移动端键盘处理器 (iOS/Android IME 稳定版) ====================
 class MobileKeyboardHandler {
   constructor(options = {}) {
     this.options = {
       scrollThreshold: options.scrollThreshold || 0.85,
-      iosDelay: options.iosDelay || 0,
-      androidDelay: options.androidDelay || 300,
       debug: options.debug || false,
       ...options
     };
@@ -10140,22 +10088,22 @@ class MobileKeyboardHandler {
     this.isAndroid = /Android/i.test(navigator.userAgent);
     this.isMobile = this.isIOS || this.isAndroid;
 
+    this.root = document.documentElement;
+    this.body = document.body;
     this.activeInput = null;
     this.keyboardOpen = false;
-    this.visualViewport = window.visualViewport;
+    this.visualViewport = window.visualViewport || null;
     this.inputContainer = document.getElementById('inputContainer');
-
-    // iOS 专用状态
-    this.lastViewportHeight = window.innerHeight;
-    this.keyboardAnimating = false;
+    this.inputArea = document.querySelector('.input-area');
+    this.chatContainer = document.getElementById('chatContainer');
     this.rafId = null;
-    this.checkInterval = null;
+    this.composerObserver = null;
 
-    // 绑定方法
     this.handleViewportChange = this.handleViewportChange.bind(this);
     this.handleFocusIn = this.handleFocusIn.bind(this);
     this.handleFocusOut = this.handleFocusOut.bind(this);
-    this.resetPosition = this.resetPosition.bind(this);
+    this.handleControlPointerDown = this.handleControlPointerDown.bind(this);
+    this.syncComposerMetrics = this.syncComposerMetrics.bind(this);
 
     if (this.isMobile) {
       this.init();
@@ -10167,106 +10115,34 @@ class MobileKeyboardHandler {
   }
 
   init() {
-    // 1. VisualViewport 监听 (iOS 核心修复)
-    if (this.visualViewport) {
-      if (this.isIOS) {
-        // iOS: 必须监听 resize 和 scroll 来实时调整位置
-        this.visualViewport.addEventListener('resize', this.handleViewportChange);
-        this.visualViewport.addEventListener('scroll', this.handleViewportChange);
-      } else {
-        // Android: 仅监听 resize 用于检测键盘
-        this.visualViewport.addEventListener('resize', this.handleViewportChange);
-      }
-    }
+    this.root.classList.add('mobile-viewport-managed');
+    this.body.classList.add('mobile-viewport-managed');
 
-    // 2. Focus 监听
+    this.updateViewportVars();
+    this.syncComposerMetrics();
+    this.setupViewportListeners();
     this.setupFocusListeners();
+    this.setupControlFocusGuard();
+    this.setupComposerObserver();
 
-    // 3. 平台特定修复
     if (this.isAndroid) this.applyAndroidFixes();
     if (this.isIOS) this.applyIOSFixes();
 
-    this.log('MobileKeyboardHandler 初始化完成', { isIOS: this.isIOS, isAndroid: this.isAndroid });
+    this.log('MobileKeyboardHandler initialized', {
+      isIOS: this.isIOS,
+      isAndroid: this.isAndroid
+    });
   }
 
-  handleViewportChange() {
-    if (!this.visualViewport) return;
-
-    // iOS 专用定位逻辑 - 增强版
-    if (this.isIOS && this.inputContainer) {
-      // 取消之前的 RAF 防止抖动
-      if (this.rafId) {
-        cancelAnimationFrame(this.rafId);
-      }
-
-      this.rafId = requestAnimationFrame(() => {
-        const viewport = this.visualViewport;
-        const layoutHeight = window.innerHeight;
-        const visualHeight = viewport.height;
-        const visualTop = viewport.offsetTop;
-        const scale = viewport.scale || 1;
-
-        // 计算真实的偏移量（考虑缩放）
-        const offset = Math.max(0, (layoutHeight - visualHeight) / scale - visualTop);
-
-        // 检测键盘是否在动画中
-        const heightDiff = Math.abs(this.lastViewportHeight - visualHeight);
-        this.keyboardAnimating = heightDiff > 5 && heightDiff < 200;
-        this.lastViewportHeight = visualHeight;
-
-        // 只有当偏移量显著（>10px）时才应用
-        if (offset > 10) {
-          // 使用 bottom 定位而非 transform，更稳定
-          this.inputContainer.style.position = 'fixed';
-          this.inputContainer.style.bottom = `${offset}px`;
-          this.inputContainer.style.left = '0';
-          this.inputContainer.style.right = '0';
-          this.inputContainer.style.transform = 'none';
-          this.keyboardOpen = true;
-        } else if (!this.keyboardAnimating) {
-          this.resetPosition();
-        }
-
-        this.log('iOS Adjust:', { layoutHeight, visualHeight, visualTop, offset, animating: this.keyboardAnimating });
-      });
+  setupViewportListeners() {
+    if (this.visualViewport && !this.isIOS) {
+      // iOS 使用原生键盘布局，避免在键盘动画期间反复改写高度变量
+      this.visualViewport.addEventListener('resize', this.handleViewportChange);
     }
-
-    // Android 逻辑 (保持不变)
-    if (this.isAndroid) {
-      const currentHeight = this.visualViewport.height;
-      const keyboardHeight = window.innerHeight - currentHeight;
-      this.keyboardOpen = keyboardHeight > 150;
-      if (this.keyboardOpen) {
-        setTimeout(() => this.adjustAndroidPosition(), 100);
-      }
+    if (!this.isIOS) {
+      window.addEventListener('resize', this.handleViewportChange);
     }
-  }
-
-  resetPosition() {
-    if (this.inputContainer) {
-      this.inputContainer.style.position = '';
-      this.inputContainer.style.bottom = '';
-      this.inputContainer.style.left = '';
-      this.inputContainer.style.right = '';
-      this.inputContainer.style.transform = '';
-    }
-    this.keyboardOpen = false;
-  }
-
-  adjustAndroidPosition() {
-    if (!this.activeInput) return;
-    const inputRect = this.activeInput.getBoundingClientRect();
-    const viewportTop = this.visualViewport ? this.visualViewport.offsetTop : 0;
-    const viewportHeight = this.visualViewport ? this.visualViewport.height : window.innerHeight;
-    const inputBottomRelative = inputRect.bottom - viewportTop;
-    const threshold = viewportHeight * 0.85;
-
-    if (inputBottomRelative > threshold) {
-      const scrollAmount = inputBottomRelative - threshold + 20;
-      if (scrollAmount > 0) {
-        window.scrollBy({ top: scrollAmount, behavior: 'smooth' });
-      }
-    }
+    window.addEventListener('orientationchange', this.handleViewportChange);
   }
 
   setupFocusListeners() {
@@ -10274,64 +10150,161 @@ class MobileKeyboardHandler {
     document.addEventListener('focusout', this.handleFocusOut);
   }
 
+  setupControlFocusGuard() {
+    document.addEventListener('pointerdown', this.handleControlPointerDown, true);
+  }
+
+  setupComposerObserver() {
+    if (!this.inputArea || typeof ResizeObserver === 'undefined') return;
+
+    this.composerObserver = new ResizeObserver(() => {
+      this.syncComposerMetrics();
+    });
+    this.composerObserver.observe(this.inputArea);
+  }
+
+  updateViewportVars() {
+    if (this.isIOS) {
+      this.keyboardOpen = Boolean(this.activeInput);
+      this.root.style.setProperty('--app-height', '100dvh');
+      this.root.style.setProperty('--viewport-offset-top', '0px');
+      this.root.style.setProperty('--keyboard-offset', '0px');
+      this.body.classList.toggle('keyboard-open', this.keyboardOpen);
+      return;
+    }
+
+    const viewportHeight = this.visualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
+    const viewportTop = this.visualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
+    const appHeight = Math.max(320, viewportHeight);
+    const keyboardHeight = Math.max(0, window.innerHeight - viewportHeight - viewportTop);
+    const keyboardThreshold = this.isIOS ? 120 : 150;
+
+    this.keyboardOpen = keyboardHeight > keyboardThreshold;
+    this.root.style.setProperty('--app-height', `${appHeight}px`);
+    this.root.style.setProperty('--viewport-offset-top', `${viewportTop}px`);
+    this.root.style.setProperty('--keyboard-offset', `${keyboardHeight}px`);
+    this.body.classList.toggle('keyboard-open', this.keyboardOpen);
+
+    this.log('Viewport sync', {
+      appHeight,
+      viewportHeight,
+      viewportTop,
+      keyboardHeight,
+      keyboardOpen: this.keyboardOpen
+    });
+  }
+
+  syncComposerMetrics() {
+    if (!this.inputArea) return;
+
+    const composerHeight = Math.ceil(this.inputArea.getBoundingClientRect().height || 0);
+    if (composerHeight > 0) {
+      this.root.style.setProperty('--composer-height', `${composerHeight}px`);
+    }
+  }
+
+  handleViewportChange() {
+    if (this.rafId) {
+      cancelAnimationFrame(this.rafId);
+    }
+
+    this.rafId = requestAnimationFrame(() => {
+      this.updateViewportVars();
+      this.syncComposerMetrics();
+
+      if (this.isAndroid && this.keyboardOpen) {
+        this.keepChatAnchored();
+      }
+    });
+  }
+
   handleFocusIn(event) {
     const target = event.target;
     if (!this.isInputElement(target)) return;
 
     this.activeInput = target;
-    this.keyboardOpen = true;
 
     if (window.expandInput && !window.appState?.inputExpanded) {
       window.expandInput();
     }
 
-    // iOS: 延迟触发位置更新，等待键盘完全弹出
     if (this.isIOS) {
-      // 清除之前的检查间隔
-      if (this.checkInterval) {
-        clearInterval(this.checkInterval);
-      }
-
-      // 立即触发一次
-      setTimeout(() => this.handleViewportChange(), 100);
-
-      // 持续监听直到键盘稳定（最多1秒）
-      let checkCount = 0;
-      this.checkInterval = setInterval(() => {
-        this.handleViewportChange();
-        checkCount++;
-        if (checkCount > 10 || !this.keyboardAnimating) {
-          clearInterval(this.checkInterval);
-          this.checkInterval = null;
-        }
-      }, 100);
+      this.updateViewportVars();
+      return;
     }
 
-    // Android: 滚动
-    if (this.isAndroid) {
-      setTimeout(() => {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 300);
-    }
+    this.updateViewportVars();
+    this.syncComposerMetrics();
+
+    // interactive-widget=resizes-content + dvh 已处理键盘布局
+    // 不再在 focus 阶段强推二次/三次重算，避免键盘动画期间抖动
   }
 
   handleFocusOut(event) {
-    if (event.target === this.activeInput) {
-      this.activeInput = null;
+    if (event.target !== this.activeInput) return;
 
-      // 清除检查间隔
-      if (this.checkInterval) {
-        clearInterval(this.checkInterval);
-        this.checkInterval = null;
-      }
+    this.activeInput = null;
 
-      // 延迟重置，避免键盘收起时的闪烁
-      setTimeout(() => {
-        if (!this.activeInput) {
-          this.resetPosition();
-        }
-      }, 300);
+    if (this.isIOS) {
+      this.updateViewportVars();
+      return;
     }
+
+    window.setTimeout(() => {
+      if (!document.querySelector('textarea:focus, input:focus')) {
+        this.updateViewportVars();
+      }
+    }, 120);
+  }
+
+  handleControlPointerDown(event) {
+    if (!this.isMobile) return;
+
+    const target = event.target;
+    const input = document.getElementById('messageInput');
+    if (!input || document.activeElement !== input) return;
+    if (!this.shouldPreserveInputFocus(target)) return;
+
+    event.preventDefault();
+  }
+
+  shouldPreserveInputFocus(target) {
+    if (!target || !(target instanceof Element)) return false;
+    if (target.closest('textarea, input[type="text"], input[type="email"], input[type="password"], select')) return false;
+    if (target.closest('input[type="range"], .reasoning-profile-slider, .thinking-budget-slider')) return false;
+
+    return Boolean(
+      target.closest('.toolbar-btn, .send-btn, .stop-btn, .more-menu-item, .model-select-custom, .model-menu-item')
+    );
+  }
+
+  keepChatAnchored(force = false) {
+    if (!this.chatContainer) return;
+    if (appState?.userScrolledUp && !force) return;
+
+    this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+  }
+
+  restoreInputFocus() {
+    if (!this.isMobile) return;
+
+    const input = document.getElementById('messageInput');
+    if (!input || input.disabled) return;
+    if (!this.keyboardOpen && document.activeElement !== input) return;
+
+    const selectionStart = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+    const selectionEnd = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
+
+    requestAnimationFrame(() => {
+      input.focus({ preventScroll: true });
+      if (typeof input.setSelectionRange === 'function') {
+        try {
+          input.setSelectionRange(selectionStart, selectionEnd);
+        } catch (error) {
+          this.log('Selection restore skipped', error);
+        }
+      }
+    });
   }
 
   applyAndroidFixes() {
@@ -10340,28 +10313,24 @@ class MobileKeyboardHandler {
       container.addEventListener('click', (e) => {
         const input = document.getElementById('messageInput');
         if (input && e.target !== input && !e.target.closest('button')) {
-          setTimeout(() => input.focus(), 10);
+          setTimeout(() => input.focus({ preventScroll: true }), 10);
         }
       });
     }
   }
 
   applyIOSFixes() {
-    // 禁用双击缩放
     document.addEventListener('touchstart', (e) => {
       if (e.touches.length > 1) e.preventDefault();
     }, { passive: false });
 
-    // 修复 iOS Safari 输入框聚焦时的跳动
     const messageInput = document.getElementById('messageInput');
     if (messageInput) {
-      // 禁止输入区域的弹性滚动
       messageInput.addEventListener('touchmove', (e) => {
         e.stopPropagation();
       }, { passive: false });
     }
 
-    // 禁止 iOS 弹性滚动影响输入区域
     if (this.inputContainer) {
       this.inputContainer.addEventListener('touchmove', (e) => {
         e.stopPropagation();
@@ -10370,7 +10339,8 @@ class MobileKeyboardHandler {
   }
 
   isInputElement(element) {
-    return element.tagName === 'TEXTAREA' || (element.tagName === 'INPUT' && element.type === 'text');
+    return element.tagName === 'TEXTAREA'
+      || (element.tagName === 'INPUT' && ['text', 'email', 'password'].includes(element.type));
   }
 }
 

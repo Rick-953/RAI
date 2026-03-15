@@ -63,6 +63,10 @@
   --z-overlay: 999;
   --z-sidebar: 100;
   --z-header: 90;
+  --app-height: 100vh;
+  --composer-height: 200px;
+  --keyboard-offset: 0px;
+  --viewport-offset-top: 0px;
 }
 
 /* 浅色主题 */
@@ -95,9 +99,78 @@ body {
   color: var(--text-primary);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
-  position: fixed;
-  /* 防止iOS橡皮筋效果 */
   transition: background-color 0.3s, color 0.3s;
+}
+
+html.mobile-viewport-managed,
+body.mobile-viewport-managed {
+  height: var(--app-height);
+  min-height: var(--app-height);
+}
+
+body.mobile-viewport-managed {
+  position: relative;
+  inset: auto;
+  overflow: hidden;
+}
+
+body.mobile-viewport-managed .app-container {
+  height: var(--app-height);
+  min-height: var(--app-height);
+}
+
+body.mobile-viewport-managed .main-content {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: auto;
+  height: 100%;
+  min-height: 0;
+}
+
+body.mobile-viewport-managed .chat-container {
+  padding-bottom: var(--spacing-md);
+  scroll-padding-bottom: var(--spacing-xl);
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.mobile-viewport-managed .input-area {
+  position: relative;
+  bottom: auto;
+  left: auto;
+  right: auto;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top: none;
+  padding: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  flex-shrink: 0;
+}
+
+body.mobile-viewport-managed .input-wrapper {
+  max-width: 100%;
+}
+
+body.mobile-viewport-managed .input-container {
+  background: rgba(26, 26, 26, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-dark);
+  padding-bottom: calc(var(--spacing-md) + env(safe-area-inset-bottom, 0px));
+}
+
+[data-theme="light"] body.mobile-viewport-managed .input-container {
+  background: rgba(245, 245, 245, 0.7);
+}
+
+body.mobile-viewport-managed .main-content::after,
+body.mobile-viewport-managed .chat-edge-blur-bottom {
+  display: none;
 }
 
 
@@ -120,6 +193,7 @@ body {
   display: flex;
   width: 100%;
   height: 100%;
+  min-height: 0;
   background-color: transparent;
   /* 改为透明 */
   position: relative;
@@ -1836,7 +1910,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: var(--spacing-xl) var(--spacing-lg);
-  padding-bottom: 200px;
+  padding-bottom: calc(var(--composer-height, 200px) + var(--spacing-xl));
   display: flex;
   flex-direction: column;
   scrollbar-width: thin;
@@ -3345,28 +3419,17 @@ body {
   vertical-align: baseline;
 }
 
-/* ==================== 流式输出模糊动画 ==================== */
-@keyframes streamBlurIn {
-  0% {
-    opacity: 0;
-    filter: blur(8px);
-    transform: translateY(4px);
-  }
-
-  100% {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0);
-  }
-}
-
+/* ==================== 流式输出（禁用蹦字模糊动画） ==================== */
 .streaming-char {
   display: inline;
-  animation: streamBlurIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  animation: none !important;
+  filter: none !important;
+  opacity: 1 !important;
 }
 
 #streamingContent {
-  animation: streamBlurIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  animation: none !important;
+  filter: none !important;
 }
 
 /* 表格容器 - 支持水平滚动 */
@@ -5015,6 +5078,7 @@ body {
   flex-shrink: 0;
   background: var(--accent-color);
   color: var(--bg-primary);
+  touch-action: manipulation;
 }
 
 .send-btn:hover:not(:disabled) {
@@ -5815,8 +5879,12 @@ body {
   }
 
   .app-container {
-    display: block;
+    display: flex;
+    flex-direction: column;
     position: relative;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
   }
 
   .sidebar {
@@ -5836,46 +5904,41 @@ body {
   }
 
   .main-content {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    position: relative;
+    flex: 1;
+    min-height: 0;
     width: 100%;
+    height: auto;
     margin: 0;
   }
 
   .mobile-header {
     display: flex;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+    position: relative;
+    flex-shrink: 0;
     z-index: var(--z-header);
   }
 
-  /* 移动端边缘羽化效果 - 调整位置避开顶栏 */
-  .main-content::before {
-    top: var(--header-height);
-    /* 从顶栏下方开始 */
-    height: 50px;
-  }
-
-  .chat-edge-blur-top {
-    top: var(--header-height);
-    /* 从顶栏下方开始 */
+  .main-content::before,
+  .main-content::after,
+  .chat-edge-blur-top,
+  .chat-edge-blur-bottom {
+    display: none;
   }
 
   .chat-container {
-    padding-top: calc(var(--header-height) + var(--spacing-lg));
+    padding-top: var(--spacing-lg);
     padding-left: var(--spacing-md);
     padding-right: var(--spacing-md);
-    height: 100%;
+    padding-bottom: var(--spacing-md);
+    height: auto;
+    min-height: 0;
   }
 
   .input-area {
     padding: var(--spacing-md);
     padding-bottom: calc(var(--spacing-md) + env(safe-area-inset-bottom));
+    background: transparent;
   }
 
   .input-toolbar {
@@ -6471,6 +6534,7 @@ body {
   transition: background 0.15s;
   color: var(--text-primary);
   font-size: 14px;
+  touch-action: manipulation;
 }
 
 .more-menu-item:hover {
@@ -6525,6 +6589,12 @@ body {
   padding-left: 32px;
 }
 
+.toolbar-btn,
+.model-select-custom,
+.model-menu-item {
+  touch-action: manipulation;
+}
+
 .reasoning-profile-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -6534,13 +6604,11 @@ body {
   border: none;
   outline: none;
   cursor: pointer;
-  background: linear-gradient(
-    to right,
-    var(--accent-color) 0%,
-    var(--accent-color) var(--slider-progress, 0%),
-    var(--border-color) var(--slider-progress, 0%),
-    var(--border-color) 100%
-  );
+  background: linear-gradient(to right,
+      var(--accent-color) 0%,
+      var(--accent-color) var(--slider-progress, 0%),
+      var(--border-color) var(--slider-progress, 0%),
+      var(--border-color) 100%);
 }
 
 .reasoning-profile-slider::-webkit-slider-thumb {
@@ -6686,27 +6754,11 @@ body {
 
 /* ==================== AI Smooth Fusion 流式动画 ==================== */
 
-/* Fusion Reveal 动画：每个新字符的入场效果
-       0.8s持续时间 vs 12ms生成间隔 = 多个字符同时执行动画
-       创造"液体流动"般的视觉连续性
-    */
-@keyframes fusionReveal {
-  0% {
-    opacity: 0;
-    filter: blur(4px);
-    color: var(--fusion-highlight-color, #a5b4fc);
-  }
-
-  100% {
-    opacity: 1;
-    filter: blur(0);
-    color: inherit;
-  }
-}
-
 .streaming-char {
   display: inline;
-  animation: fusionReveal 0.25s ease-out forwards;
+  animation: none !important;
+  filter: none !important;
+  color: inherit;
 }
 
 /* 浅色主题适配 */
@@ -8260,4 +8312,32 @@ body.chatflow-iframe-mode .message-content {
 body.chatflow-iframe-mode .message-content::selection {
   background: var(--color-saturn-yellow);
   color: #000;
+}
+
+/* ===== 移动端输入区黑条终极兜底 ===== */
+@media (max-width: 768px) {
+
+  .main-content::after,
+  .chat-edge-blur-bottom {
+    display: none !important;
+  }
+
+  .input-area {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-top: none !important;
+    padding-bottom: var(--spacing-md) !important;
+  }
+
+  .input-container {
+    background: rgba(26, 26, 26, 0.85) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    padding-bottom: calc(var(--spacing-md) + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  [data-theme="light"] .input-container {
+    background: rgba(245, 245, 245, 0.85) !important;
+  }
 }
