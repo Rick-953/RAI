@@ -9,6 +9,7 @@ Included sanitized source archives:
 - `RAI 基于0.6 多模态 模型路由 game版本` -> `2025-12-09`
 - `RAI 0.81` -> `2025-12-27`
 - `RAI 0.85+ chat flow` -> `2026-01-11`
+- `RAI 0.9` -> `2026-04-08`
 - `RAI 0.85++ 最后一个保留模型路由版本` -> `2026-01-30`
 
 Sanitization rules applied:
