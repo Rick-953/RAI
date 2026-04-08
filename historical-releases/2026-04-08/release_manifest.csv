@@ -1,0 +1,10 @@
+﻿version,date,date_basis,source_folder,archive_name,copied_files,redacted_files,excluded_files,post_scan_hits
+RAI ? 0.2,2025-11-15,zip_time,RAI β 0.2,rai-beta-0.2_2025-11-15_sanitized.zip,9,3,1,0
+RAI 0.3,2025-11-16,zip_time,RAI 0.3,rai-0.3_2025-11-16_sanitized.zip,8,5,2,0
+RAI 0.4,2025-11-20,core_source_time,RAI0.4,rai-0.4_2025-11-20_sanitized.zip,57,6,3,0
+RAI 0.5???????,2025-11-27,zip_time,RAI0.5（带模型路由）,rai-0.5-model-routing_2025-11-27_sanitized.zip,18,2,1,0
+RAI 0.6 ???,2025-12-10,core_source_time,RAI 0.6 多模态,rai-0.6-multimodal_2025-12-10_sanitized.zip,5,1,7,0
+RAI ??0.6 ??? ???? game??,2025-12-09,core_source_time,RAI 基于0.6 多模态 模型路由 game版本,rai-0.6-game-routing_2025-12-09_sanitized.zip,5,1,1,0
+RAI 0.81,2025-12-27,core_source_time,RAI 0.81,rai-0.81_2025-12-27_sanitized.zip,9,2,14,0
+RAI 0.85+ chat flow,2026-01-11,source_latest_time,RAI 0.85+ chat flow,rai-0.85-chatflow_2026-01-11_sanitized.zip,15,2,8,0
+RAI 0.85++ ????????????,2026-01-30,package_snapshot_time,RAI 0.85++ 最后一个保留模型路由版本,rai-0.85pp-last-routing_2026-01-30_sanitized.zip,18,4,13,0
