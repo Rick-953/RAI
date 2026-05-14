@@ -28,14 +28,39 @@ if (trustProxyEnv) {
 }
 app.set('trust proxy', trustProxySetting);
 const PORT = process.env.PORT || 3009;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+function requireSecretEnv(name, minLength = 32) {
+    const value = String(process.env[name] || '').trim();
+    if (value.length < minLength) {
+        console.error(` 启动失败: ${name} 未配置或长度不足 ${minLength} 字符`);
+        process.exit(1);
+    }
+    return value;
+}
+
+const JWT_SECRET = requireSecretEnv('JWT_SECRET', 32);
+const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions').trim();
+const NEWAPI_BASE_URL = (process.env.NEWAPI_BASE_URL || 'https://api.18363221.xyz/v1/chat/completions').trim();
+const GOOGLE_GEMINI_BASE_URL = (process.env.GOOGLE_GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/models').trim();
+const ZTX6D_APP_ID = String(process.env.ZTX6D_APP_ID || '').trim();
+const ZTX6D_APP_KEY = String(process.env.ZTX6D_APP_KEY || '').trim();
+const ZTX6D_API_URL = (process.env.ZTX6D_API_URL || 'https://passport.ztx6d.com/open.php').trim();
+const ZTX6D_LOGIN_URL = (process.env.ZTX6D_LOGIN_URL || 'https://passport.ztx6d.com/').trim();
+const ZTX6D_CALLBACK_URL = (process.env.ZTX6D_CALLBACK_URL || '').trim();
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').trim();
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || 'admin').trim();
+const ADMIN_PASSWORD_HASH = requireSecretEnv('ADMIN_PASSWORD_HASH', 50);
+const ADMIN_JWT_SECRET = requireSecretEnv('ADMIN_JWT_SECRET', 32);
+const ZTX6D_RT_TTL_MS = 10 * 60 * 1000;
 const ENV_API_KEYS = {
     TAVILY_API_KEY: (process.env.TAVILY_API_KEY || '').trim(),
     ALIYUN_API_KEY: (process.env.ALIYUN_API_KEY || '').trim(),
     DEEPSEEK_API_KEY: (process.env.DEEPSEEK_API_KEY || '').trim(),
     SILICONFLOW_API_KEY: (process.env.SILICONFLOW_API_KEY || '').trim(),
     GOOGLE_GEMINI_API_KEY: (process.env.GOOGLE_GEMINI_API_KEY || '').trim(),
-    POE_API_KEY: (process.env.POE_API_KEY || '').trim()
+    POE_API_KEY: (process.env.POE_API_KEY || '').trim(),
+    OPENROUTER_API_KEY: (process.env.OPENROUTER_API_KEY || '').trim(),
+    NEWAPI_API_KEY: (process.env.NEWAPI_API_KEY || '').trim()
 };
 
 const POE_STATIC_MODEL_MAP = {
@@ -54,6 +79,7 @@ const POE_ALIAS_HINTS = {
 
 const POE_MODEL_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const POE_DAILY_LIMIT_FREE = 3;
+const GPT55_DAILY_LIMIT_FREE = 10;
 
 const poeModelRegistry = {
     hasSuccessfulSync: false,
@@ -389,6 +415,243 @@ const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 // ==================== 原生工具调用 (Function Calling) ====================
 
+const FINANCE_ALLOWED_RANGES = new Set(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max']);
+const FINANCE_ALLOWED_INTERVALS = new Set(['1m', '2m', '5m', '15m', '30m', '60m', '90m', '1d', '1wk', '1mo', '3mo']);
+const FINANCE_DEFAULT_RANGE = '1mo';
+const FINANCE_DEFAULT_INTERVAL = '1d';
+const FINANCE_CACHE_TTL_MS = 60 * 1000;
+const FINANCE_QUOTE_CACHE = new Map();
+const YAHOO_FINANCE_CHART_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
+const YAHOO_FINANCE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0 Safari/537.36';
+
+function createFinanceError(statusCode, code, message, details = null) {
+    const error = new Error(message);
+    error.statusCode = statusCode;
+    error.code = code;
+    error.details = details;
+    return error;
+}
+
+function normalizeFinanceSymbolInput(symbol = '') {
+    return String(symbol || '')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, '')
+        .replace(/，/g, ',');
+}
+
+function resolveFinanceSymbol(symbol = '') {
+    const normalized = normalizeFinanceSymbolInput(symbol);
+    if (!normalized) {
+        throw createFinanceError(400, 'invalid_symbol', 'symbol 不能为空');
+    }
+
+    if (/^[A-Z0-9^._=-]{1,20}\.(SS|SZ|HK)$/.test(normalized) || /^[A-Z][A-Z0-9^._=-]{0,19}$/.test(normalized)) {
+        return normalized;
+    }
+
+    if (/^6\d{5}$/.test(normalized)) return `${normalized}.SS`;
+    if (/^(0\d{5}|3\d{5})$/.test(normalized)) return `${normalized}.SZ`;
+    if (/^\d{4,5}$/.test(normalized)) return `${normalized}.HK`;
+
+    throw createFinanceError(400, 'invalid_symbol', `无法识别的证券代码: ${symbol}`);
+}
+
+function normalizeFinanceRange(range = FINANCE_DEFAULT_RANGE) {
+    const normalized = String(range || FINANCE_DEFAULT_RANGE).trim().toLowerCase();
+    if (!FINANCE_ALLOWED_RANGES.has(normalized)) {
+        throw createFinanceError(400, 'invalid_range', `不支持的 range: ${range}`, {
+            allowed: Array.from(FINANCE_ALLOWED_RANGES)
+        });
+    }
+    return normalized;
+}
+
+function normalizeFinanceInterval(interval = FINANCE_DEFAULT_INTERVAL) {
+    const normalized = String(interval || FINANCE_DEFAULT_INTERVAL).trim().toLowerCase();
+    if (!FINANCE_ALLOWED_INTERVALS.has(normalized)) {
+        throw createFinanceError(400, 'invalid_interval', `不支持的 interval: ${interval}`, {
+            allowed: Array.from(FINANCE_ALLOWED_INTERVALS)
+        });
+    }
+    return normalized;
+}
+
+function toFiniteNumber(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function toIsoTimestamp(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return '';
+    return new Date(numeric * 1000).toISOString();
+}
+
+function buildFinanceSeries(result = {}) {
+    const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+    const quoteSeries = result.indicators?.quote?.[0] || {};
+    const opens = Array.isArray(quoteSeries.open) ? quoteSeries.open : [];
+    const highs = Array.isArray(quoteSeries.high) ? quoteSeries.high : [];
+    const lows = Array.isArray(quoteSeries.low) ? quoteSeries.low : [];
+    const closes = Array.isArray(quoteSeries.close) ? quoteSeries.close : [];
+    const volumes = Array.isArray(quoteSeries.volume) ? quoteSeries.volume : [];
+
+    return timestamps.map((timestamp, index) => ({
+        timestamp: toIsoTimestamp(timestamp),
+        open: toFiniteNumber(opens[index]),
+        high: toFiniteNumber(highs[index]),
+        low: toFiniteNumber(lows[index]),
+        close: toFiniteNumber(closes[index]),
+        volume: toFiniteNumber(volumes[index])
+    })).filter((item) => item.timestamp && (
+        item.open !== null ||
+        item.high !== null ||
+        item.low !== null ||
+        item.close !== null ||
+        item.volume !== null
+    ));
+}
+
+function buildFinanceWarnings(resolvedSymbol = '') {
+    const warnings = ['Yahoo Finance 免费数据可能存在延迟，不应视为逐笔实时成交数据。'];
+    if (/\.(SS|SZ|HK)$/.test(resolvedSymbol)) {
+        warnings.push('A股 / 港股通常为延迟行情，适合参考，不适合作为高频交易依据。');
+    }
+    return warnings;
+}
+
+function normalizeFinanceQuoteResponse(chartResult, {
+    symbol,
+    resolvedSymbol,
+    range,
+    interval,
+    cacheHit = false
+}) {
+    const meta = chartResult?.meta || {};
+    const series = buildFinanceSeries(chartResult);
+    const lastSeriesPoint = [...series].reverse().find((point) => point.close !== null) || null;
+
+    const price = toFiniteNumber(
+        meta.regularMarketPrice ??
+        meta.postMarketPrice ??
+        meta.preMarketPrice ??
+        lastSeriesPoint?.close
+    );
+    const previousClose = toFiniteNumber(
+        meta.chartPreviousClose ??
+        meta.previousClose ??
+        meta.regularMarketPreviousClose
+    );
+    const change = (price !== null && previousClose !== null) ? Number((price - previousClose).toFixed(6)) : null;
+    const changePercent = (change !== null && previousClose) ? Number(((change / previousClose) * 100).toFixed(4)) : null;
+
+    return {
+        symbol: normalizeFinanceSymbolInput(symbol),
+        resolvedSymbol,
+        range,
+        interval,
+        source: 'Yahoo Finance via RAI proxy',
+        delayed: true,
+        meta: {
+            shortName: meta.shortName || '',
+            longName: meta.longName || '',
+            currency: meta.currency || '',
+            exchangeName: meta.exchangeName || '',
+            instrumentType: meta.instrumentType || '',
+            marketState: meta.marketState || '',
+            timezone: meta.exchangeTimezoneName || meta.timezone || ''
+        },
+        quote: {
+            price,
+            previousClose,
+            change,
+            changePercent,
+            timestamp: toIsoTimestamp(meta.regularMarketTime || chartResult?.timestamp?.slice(-1)?.[0] || 0)
+        },
+        series,
+        cache: {
+            hit: cacheHit,
+            ttlSeconds: Math.floor(FINANCE_CACHE_TTL_MS / 1000)
+        },
+        warnings: buildFinanceWarnings(resolvedSymbol)
+    };
+}
+
+async function fetchYahooFinanceQuote({ symbol, range = FINANCE_DEFAULT_RANGE, interval = FINANCE_DEFAULT_INTERVAL }) {
+    const resolvedSymbol = resolveFinanceSymbol(symbol);
+    const normalizedRange = normalizeFinanceRange(range);
+    const normalizedInterval = normalizeFinanceInterval(interval);
+    const cacheKey = `${resolvedSymbol}|${normalizedRange}|${normalizedInterval}`;
+    const now = Date.now();
+
+    const cached = FINANCE_QUOTE_CACHE.get(cacheKey);
+    if (cached && (now - cached.ts) < FINANCE_CACHE_TTL_MS) {
+        return {
+            ...cached.data,
+            cache: {
+                ...cached.data.cache,
+                hit: true
+            }
+        };
+    }
+
+    const requestUrl = `${YAHOO_FINANCE_CHART_BASE_URL}/${encodeURIComponent(resolvedSymbol)}?${new URLSearchParams({
+        range: normalizedRange,
+        interval: normalizedInterval
+    }).toString()}`;
+
+    let response;
+    try {
+        response = await fetch(requestUrl, {
+            headers: {
+                'User-Agent': YAHOO_FINANCE_USER_AGENT,
+                Accept: 'application/json'
+            }
+        });
+    } catch (error) {
+        throw createFinanceError(502, 'upstream_request_failed', `Yahoo Finance 请求失败: ${error.message}`);
+    }
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw createFinanceError(502, 'upstream_bad_status', `Yahoo Finance 返回异常状态: ${response.status}`, {
+            status: response.status,
+            preview: errText.slice(0, 200)
+        });
+    }
+
+    let payload;
+    try {
+        payload = await response.json();
+    } catch (error) {
+        throw createFinanceError(502, 'upstream_invalid_json', `Yahoo Finance 返回数据无法解析: ${error.message}`);
+    }
+
+    const chartResult = payload?.chart?.result?.[0];
+    const chartError = payload?.chart?.error;
+    if (!chartResult || chartError) {
+        throw createFinanceError(502, 'upstream_no_chart', chartError?.description || 'Yahoo Finance 未返回有效行情数据', {
+            symbol: resolvedSymbol
+        });
+    }
+
+    const normalized = normalizeFinanceQuoteResponse(chartResult, {
+        symbol,
+        resolvedSymbol,
+        range: normalizedRange,
+        interval: normalizedInterval,
+        cacheHit: false
+    });
+
+    FINANCE_QUOTE_CACHE.set(cacheKey, {
+        ts: now,
+        data: normalized
+    });
+
+    return normalized;
+}
+
 // 工具定义 - Kimi K2.5 原生支持
 const TOOL_DEFINITIONS = [{
     type: "function",
@@ -406,15 +669,42 @@ const TOOL_DEFINITIONS = [{
             }
         }
     }
+}, {
+    type: "function",
+    function: {
+        name: "finance_quote",
+        description: "获取股票、ETF、指数的行情和历史K线数据。适用于证券代码、价格、涨跌幅、历史走势、K线区间等问题。A股/港股通常为延迟数据。",
+        parameters: {
+            type: "object",
+            required: ["symbol"],
+            properties: {
+                symbol: {
+                    type: "string",
+                    description: "证券代码，例如 600519.SS、0700.HK、AAPL、SPY"
+                },
+                range: {
+                    type: "string",
+                    description: "历史区间，可选 1d,5d,1mo,3mo,6mo,1y,2y,5y,10y,ytd,max"
+                },
+                interval: {
+                    type: "string",
+                    description: "K线周期，可选 1m,2m,5m,15m,30m,60m,90m,1d,1wk,1mo,3mo"
+                }
+            }
+        }
+    }
 }];
 
 // 工具执行器映射
 const TOOL_EXECUTORS = {
     web_search: async (args, searchDepth = 'basic') => {
-        // 成本控制：无论是否思考，每次搜索都只取5条
         const maxResults = 5;
         console.log(` 执行工具 web_search: query="${args.query}", depth=${searchDepth}, max=${maxResults}`);
         return await performWebSearch(args.query, maxResults, searchDepth);
+    },
+    finance_quote: async (args) => {
+        console.log(` 执行工具 finance_quote: symbol="${args.symbol}", range="${args.range || FINANCE_DEFAULT_RANGE}", interval="${args.interval || FINANCE_DEFAULT_INTERVAL}"`);
+        return await fetchYahooFinanceQuote(args);
     }
 };
 
@@ -605,6 +895,21 @@ const DOMAIN_MODE_ALIASES = {
     writing: 'writing',
     writer: 'writing',
     '写作': 'writing',
+    finance: 'finance',
+    financial: 'finance',
+    stock: 'finance',
+    stocks: 'finance',
+    ticker: 'finance',
+    quote: 'finance',
+    market: 'finance',
+    markets: 'finance',
+    '财务': 'finance',
+    '金融': 'finance',
+    '股票': 'finance',
+    '证券': 'finance',
+    '港股': 'finance',
+    'a股': 'finance',
+    'A股': 'finance',
     code: 'coding',
     coding: 'coding',
     programmer: 'coding',
@@ -622,6 +927,7 @@ const DOMAIN_MODE_ALIASES = {
 
 const DOMAIN_LABELS = {
     writing: { zh: '写作', en: 'Writing' },
+    finance: { zh: '财务', en: 'Finance' },
     coding: { zh: '代码', en: 'Coding' },
     research: { zh: '搜索/研究', en: 'Search/Research' },
     translation: { zh: '翻译', en: 'Translation' }
@@ -662,6 +968,50 @@ QUALITY MARKERS: vivid imagery, rhythmic sentence variation, emotional resonance
 
 【质量标准】
 意象鲜明，句式富有节奏，情感共鸣，主线清晰，开头结尾令人印象深刻。`
+    },
+    finance: {
+        en: `You are a market and finance analyst focused on practical stock, ETF, index, and quote interpretation.
+
+CORE DIRECTIVES:
+- Use the finance_quote tool first for symbol-based market data, price, change, and K-line/history questions
+- Never fabricate prices, percentage changes, or chart trends
+- Separate market data from your own interpretation
+- Clearly note that free Yahoo Finance data for A-shares and Hong Kong stocks is usually delayed and not tick-level real-time
+- If the user does not provide a recognizable ticker or market suffix, ask for the symbol before making claims
+- Use web_search only for news, filings, company events, macro background, or analyst commentary
+
+OUTPUT PROTOCOL:
+1. Identify the ticker or market first when needed
+2. Present a compact market data summary
+3. Explain trend, volatility, and key levels in plain language
+4. Mark uncertainty and delay risk explicitly
+5. Distinguish facts, calculations, and opinion
+
+TOOL PRIORITY:
+- Use finance_quote for quotes, price moves, trend ranges, and historical candles
+- Use web_search only after finance_quote when news or context is needed
+- Cite Yahoo Finance market data with alpha markers like [A], [B] when the tool provides them`,
+        zh: `你是一位市场与财务分析助手，专注于股票、ETF、指数与行情解读。
+
+【核心指令】
+- 只要问题涉及证券代码、价格、涨跌幅、区间走势、K线、成交量，优先调用 finance_quote 工具取数
+- 绝不编造价格、涨跌幅、历史走势或财务市场数据
+- 明确区分“市场数据事实”和“你的分析判断”
+- 明确提示：Yahoo Finance 免费数据中的 A 股 / 港股通常为延迟行情，并非逐笔实时成交
+- 如果用户没有提供可识别的 ticker 或市场后缀，先要求补充证券代码后再下结论
+- 只有在需要新闻、公告、财报背景、研报观点、宏观背景时，再结合 web_search
+
+【输出规范】
+1. 先识别或确认证券代码 / 市场
+2. 先给结构化市场数据摘要
+3. 再解释区间趋势、波动、关键价位
+4. 明确说明延迟数据与不确定性
+5. 清晰区分事实、计算结果与分析意见
+
+【工具优先级】
+- finance_quote：用于行情、涨跌、区间走势、历史 K 线
+- web_search：用于新闻、公告、事件背景与外部信息补充
+- 如果使用 Yahoo Finance 行情数据，请在正文中使用字母角标，例如 [A]、[B]`
     },
     coding: {
         en: `You are a senior software engineer with 15+ years across full-stack, systems, and architecture. You write production-grade code.
@@ -1038,6 +1388,122 @@ function resolveThinkingBudgetForModel(modelName = '', thinkingMode = false, thi
     const parsed = parseInt(thinkingBudget, 10);
     if (isNaN(parsed) || parsed <= 0) return 1024;
     return Math.max(1, Math.min(parsed, 32768));
+}
+
+function resolveDeepSeekReasoningEffort(reasoningProfile = 'low') {
+    const profile = normalizeReasoningProfile(reasoningProfile);
+    return (profile === 'high' || profile === 'mixed') ? 'max' : 'high';
+}
+
+function resolveOpenAIReasoningEffort(reasoningProfile = 'low') {
+    const profile = normalizeReasoningProfile(reasoningProfile);
+    if (profile === 'high' || profile === 'mixed') return 'high';
+    if (profile === 'medium') return 'medium';
+    return 'low';
+}
+
+function resolveNewApiReasoningEffort(modelName = '', thinkingMode = false, reasoningProfile = 'low') {
+    const profile = normalizeReasoningProfile(reasoningProfile);
+    const normalizedModel = String(modelName || '').trim().toLowerCase();
+
+    if (normalizedModel === 'gpt-5.5') {
+        if (!thinkingMode) return 'none';
+        if (profile === 'mixed') return 'xhigh';
+        if (profile === 'high') return 'high';
+        if (profile === 'medium') return 'medium';
+        return 'low';
+    }
+
+    if (normalizedModel.includes('grok')) {
+        if (!thinkingMode) return 'none';
+        if (profile === 'mixed') return 'high';
+        if (profile === 'high') return 'high';
+        if (profile === 'medium') return 'medium';
+        return 'low';
+    }
+
+    return thinkingMode ? resolveOpenAIReasoningEffort(profile) : null;
+}
+
+function resolveOpenRouterReasoningEffort(actualModel = '', reasoningProfile = 'low') {
+    const profile = normalizeReasoningProfile(reasoningProfile);
+    const normalizedModel = String(actualModel || '').trim().toLowerCase();
+
+    if (normalizedModel.includes('gpt-oss')) {
+        if (profile === 'high' || profile === 'mixed') return 'high';
+        if (profile === 'medium') return 'medium';
+        return 'low';
+    }
+
+    if (profile === 'mixed') return 'high';
+    if (profile === 'high') return 'high';
+    if (profile === 'medium') return 'medium';
+    return 'low';
+}
+
+function applyNewApiModelParams(body, actualModel = '', thinkingMode = false, reasoningProfile = 'low') {
+    if (!body || typeof body !== 'object') return;
+    const effort = resolveNewApiReasoningEffort(actualModel, thinkingMode, reasoningProfile);
+    if (effort) {
+        body.reasoning_effort = effort;
+        if (String(actualModel || '').toLowerCase().includes('grok')) {
+            body.reasoning = { effort };
+        } else {
+            delete body.reasoning;
+        }
+    } else {
+        delete body.reasoning_effort;
+        delete body.reasoning;
+    }
+}
+
+function applyOpenRouterReasoningParams(body, actualModel = '', thinkingMode = false, reasoningProfile = 'low') {
+    if (!body || typeof body !== 'object') return;
+
+    const normalizedModel = String(actualModel || '').trim().toLowerCase();
+    const isGptOss = normalizedModel.includes('gpt-oss');
+    const isOpenRouterFree = normalizedModel === 'openrouter/free';
+
+    if (!isGptOss && !isOpenRouterFree && !normalizedModel.includes('gemma')) {
+        delete body.reasoning;
+        return;
+    }
+
+    if (isGptOss) {
+        if (thinkingMode) {
+            body.reasoning = {
+                effort: resolveOpenRouterReasoningEffort(actualModel, reasoningProfile),
+                exclude: false
+            };
+        } else {
+            body.reasoning = { exclude: true };
+        }
+        return;
+    }
+
+    if (thinkingMode) {
+        body.reasoning = {
+            effort: resolveOpenRouterReasoningEffort(actualModel, reasoningProfile),
+            exclude: false
+        };
+    } else {
+        delete body.reasoning;
+    }
+}
+
+function applyDeepSeekV4ModeParams(body, thinkingMode = false, reasoningProfile = 'low') {
+    if (!body || typeof body !== 'object') return;
+
+    body.thinking = { type: thinkingMode ? 'enabled' : 'disabled' };
+    if (thinkingMode) {
+        body.reasoning_effort = resolveDeepSeekReasoningEffort(reasoningProfile);
+        delete body.temperature;
+        delete body.top_p;
+        delete body.frequency_penalty;
+        delete body.presence_penalty;
+    } else {
+        delete body.reasoning_effort;
+    }
 }
 
 function buildSiliconflowFreeFallbackRequestBody({
@@ -1712,13 +2178,143 @@ function extractSourcesForSSE(results) {
     // 跳过AI摘要，只返回实际网页来源
     return results
         .filter(r => r.url && r.url.trim() !== '')
-        .map((r, index) => ({
-            index: index + 1,
+        .map((r) => ({
             title: r.title || '未知标题',
             url: r.url,
             favicon: r.favicon || '',
-            site_name: r.url ? new URL(r.url).hostname.replace('www.', '') : ''
+            site_name: r.url ? new URL(r.url).hostname.replace('www.', '') : '',
+            snippet: r.snippet || '',
+            provider: 'tavily',
+            sourceKind: 'web',
+            markerType: 'numeric',
+            label: 'Tavily'
         }));
+}
+
+function alphaMarkerFromIndex(index) {
+    let current = Number(index || 1);
+    let marker = '';
+    while (current > 0) {
+        const remainder = (current - 1) % 26;
+        marker = String.fromCharCode(65 + remainder) + marker;
+        current = Math.floor((current - 1) / 26);
+    }
+    return marker || 'A';
+}
+
+function getSourceKind(source = {}) {
+    if (source.sourceKind) return source.sourceKind;
+    if (source.provider === 'yahoo_finance') return 'finance';
+    return 'web';
+}
+
+function getSourceIdentityKey(source = {}) {
+    return [
+        String(source.provider || ''),
+        String(source.url || ''),
+        String(source.title || ''),
+        String(source.symbol || ''),
+        String(source.range || ''),
+        String(source.interval || '')
+    ].join('|');
+}
+
+function appendAnnotatedSources(existingSources = [], incomingSources = []) {
+    const merged = Array.isArray(existingSources) ? existingSources.map((source) => ({ ...source })) : [];
+    const seen = new Set(merged.map(getSourceIdentityKey));
+
+    let webCounter = merged.filter((source) => getSourceKind(source) === 'web').length;
+    let financeCounter = merged.filter((source) => getSourceKind(source) === 'finance').length;
+    const newlyAdded = [];
+
+    for (const rawSource of (Array.isArray(incomingSources) ? incomingSources : [])) {
+        if (!rawSource || typeof rawSource !== 'object') continue;
+        const source = { ...rawSource };
+        const identityKey = getSourceIdentityKey(source);
+        if (seen.has(identityKey)) continue;
+        seen.add(identityKey);
+
+        const sourceKind = getSourceKind(source);
+        source.sourceKind = sourceKind;
+        source.provider = source.provider || (sourceKind === 'finance' ? 'yahoo_finance' : 'tavily');
+        source.label = source.label || (sourceKind === 'finance' ? 'Yahoo Finance' : 'Tavily');
+
+        if (sourceKind === 'finance') {
+            financeCounter += 1;
+            source.markerType = 'alpha';
+            source.marker = source.marker || alphaMarkerFromIndex(financeCounter);
+            source.index = source.index || financeCounter;
+        } else {
+            webCounter += 1;
+            source.markerType = 'numeric';
+            source.marker = source.marker || String(webCounter);
+            source.index = source.index || webCounter;
+        }
+
+        merged.push(source);
+        newlyAdded.push(source);
+    }
+
+    return { merged, newlyAdded };
+}
+
+function emitSourcesEvent(res, sources = []) {
+    if (!res || !Array.isArray(sources) || sources.length === 0) return;
+    res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
+}
+
+function buildFinanceSourceForSSE(financeResult = {}) {
+    const resolvedSymbol = financeResult.resolvedSymbol || financeResult.symbol || '';
+    if (!resolvedSymbol) return [];
+
+    const titleBase = financeResult.meta?.shortName || financeResult.meta?.longName || resolvedSymbol;
+    return [{
+        title: `${titleBase} (${resolvedSymbol})`,
+        url: `https://finance.yahoo.com/quote/${encodeURIComponent(resolvedSymbol)}`,
+        favicon: '',
+        site_name: 'finance.yahoo.com',
+        provider: 'yahoo_finance',
+        sourceKind: 'finance',
+        markerType: 'alpha',
+        label: 'Yahoo Finance',
+        symbol: resolvedSymbol,
+        range: financeResult.range || FINANCE_DEFAULT_RANGE,
+        interval: financeResult.interval || FINANCE_DEFAULT_INTERVAL,
+        delayed: !!financeResult.delayed
+    }];
+}
+
+function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
+    if (toolName === 'web_search') {
+        return {
+            query: args.query || '',
+            results: (result?.results || []).map((item) => ({
+                title: item.title || '',
+                url: item.url || '',
+                snippet: item.snippet || ''
+            })),
+            images: result?.images || [],
+            citations: sources.map((source) => ({
+                marker: source.marker,
+                title: source.title,
+                url: source.url,
+                snippet: source.snippet || ''
+            })),
+            citation_instruction: 'When citing these web sources, use numeric markers exactly like [1], [2], [3].'
+        };
+    }
+
+    if (toolName === 'finance_quote') {
+        const financeSource = Array.isArray(sources) ? sources[0] : null;
+        return {
+            ...result,
+            citation_marker: financeSource?.marker || 'A',
+            citation_label: financeSource?.label || 'Yahoo Finance',
+            citation_instruction: `When citing this market data, use the alpha marker [${financeSource?.marker || 'A'}].`
+        };
+    }
+
+    return result;
 }
 
 /**
@@ -1745,10 +2341,11 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
     return new Promise((resolve, reject) => {
         const urlParts = new URL(providerConfig.baseURL);
 
+        const requestLib = urlParts.protocol === 'https:' ? https : require('http');
         const options = {
             hostname: urlParts.hostname,
-            port: 443,
-            path: urlParts.pathname,
+            port: urlParts.port || (urlParts.protocol === 'https:' ? 443 : 80),
+            path: urlParts.pathname + urlParts.search,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1756,7 +2353,7 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
             }
         };
 
-        const req = https.request(options, (res) => {
+        const req = requestLib.request(options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
@@ -1807,7 +2404,7 @@ function dedupeSources(sources = []) {
     const seen = new Set();
     const deduped = [];
     for (const source of sources) {
-        const key = `${source?.url || ''}|${source?.title || ''}`;
+        const key = getSourceIdentityKey(source);
         if (seen.has(key)) continue;
         seen.add(key);
         deduped.push(source);
@@ -1846,18 +2443,48 @@ function normalizeToolCalls(toolCalls = []) {
         } catch (e) {
             args = {};
         }
-        if (toolCall.function.name !== 'web_search') continue;
-        const query = String(args.query || '').trim();
-        if (!query) continue;
-        normalized.push({
-            id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
-            type: 'function',
-            function: {
-                name: toolCall.function.name,
-                arguments: JSON.stringify({ query })
-            },
-            _args: { query }
-        });
+        const toolName = String(toolCall.function.name || '').trim();
+        if (toolName === 'web_search') {
+            const query = String(args.query || '').trim();
+            if (!query) continue;
+            normalized.push({
+                id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
+                type: 'function',
+                function: {
+                    name: toolName,
+                    arguments: JSON.stringify({ query })
+                },
+                _args: { query }
+            });
+            continue;
+        }
+
+        if (toolName === 'finance_quote') {
+            const rawSymbol = String(args.symbol || args.ticker || '').trim();
+            if (!rawSymbol) continue;
+            let normalizedSymbol;
+            try {
+                normalizedSymbol = resolveFinanceSymbol(rawSymbol);
+            } catch (error) {
+                console.warn(` 跳过无效 finance_quote symbol: ${rawSymbol}`);
+                continue;
+            }
+
+            const normalizedArgs = {
+                symbol: normalizedSymbol,
+                range: normalizeFinanceRange(args.range || FINANCE_DEFAULT_RANGE),
+                interval: normalizeFinanceInterval(args.interval || FINANCE_DEFAULT_INTERVAL)
+            };
+            normalized.push({
+                id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
+                type: 'function',
+                function: {
+                    name: toolName,
+                    arguments: JSON.stringify(normalizedArgs)
+                },
+                _args: normalizedArgs
+            });
+        }
     }
     return normalized;
 }
@@ -1939,16 +2566,50 @@ async function executeSearchWithBudget({
         message: `找到 ${normalizedResult.results?.length || 0} 条结果`
     });
 
-    const currentSources = extractSourcesForSSE(normalizedResult.results || []);
-    if (currentSources.length > 0 && res) {
-        res.write(`data: ${JSON.stringify({ type: 'sources', sources: currentSources })}\n\n`);
-    }
-
     return {
         result: normalizedResult,
         cached: false,
         searchCountInc: 1
     };
+}
+
+async function executeNormalizedToolCall({
+    toolCall,
+    searchBudget,
+    taskKey,
+    res,
+    actualModel,
+    thinkingMode
+}) {
+    const toolName = toolCall?.function?.name;
+    const args = toolCall?._args || {};
+
+    if (toolName === 'web_search') {
+        const searchResult = await executeSearchWithBudget({
+            query: args.query,
+            taskKey,
+            searchBudget,
+            res,
+            actualModel,
+            thinkingMode
+        });
+        return {
+            result: searchResult.result,
+            sources: extractSourcesForSSE(searchResult.result?.results || []),
+            searchCountInc: searchResult.searchCountInc
+        };
+    }
+
+    if (toolName === 'finance_quote') {
+        const financeResult = await TOOL_EXECUTORS.finance_quote(args);
+        return {
+            result: financeResult,
+            sources: buildFinanceSourceForSSE(financeResult),
+            searchCountInc: 0
+        };
+    }
+
+    throw new Error(`不支持的工具: ${toolName}`);
 }
 
 async function callK2p5NonStream({
@@ -2067,9 +2728,8 @@ async function callK2p5NonStream({
 
         const executedToolMessages = [];
         for (const toolCall of normalizedCalls) {
-            const query = toolCall._args.query;
-            const searchResult = await executeSearchWithBudget({
-                query,
+            const toolResult = await executeNormalizedToolCall({
+                toolCall,
                 taskKey,
                 searchBudget,
                 res,
@@ -2077,17 +2737,20 @@ async function callK2p5NonStream({
                 thinkingMode
             });
 
-            const modelPayload = searchResult.result;
-            searchCount += searchResult.searchCountInc;
-            const currentSources = extractSourcesForSSE(modelPayload.results || []);
-            if (currentSources.length > 0) {
-                aggregatedSources = dedupeSources([...aggregatedSources, ...currentSources]);
-            }
+            searchCount += Number(toolResult.searchCountInc || 0);
+            const sourceAppendResult = appendAnnotatedSources(aggregatedSources, toolResult.sources);
+            aggregatedSources = sourceAppendResult.merged;
+            emitSourcesEvent(res, sourceAppendResult.newlyAdded);
 
             executedToolMessages.push({
                 role: 'tool',
                 tool_call_id: toolCall.id,
-                content: JSON.stringify(modelPayload)
+                content: JSON.stringify(buildToolResultForLLM({
+                    toolName: toolCall.function.name,
+                    result: toolResult.result,
+                    sources: sourceAppendResult.newlyAdded,
+                    args: toolCall._args || {}
+                }))
             });
         }
 
@@ -2278,25 +2941,27 @@ async function callK2p5Stream({
 
         const executedToolMessages = [];
         for (const toolCall of normalizedCalls) {
-            const query = toolCall._args.query;
-            const searchResult = await executeSearchWithBudget({
-                query,
+            const toolResult = await executeNormalizedToolCall({
+                toolCall,
                 taskKey,
                 searchBudget,
                 res,
                 actualModel,
                 thinkingMode
             });
-            const modelPayload = searchResult.result;
-            searchCount += searchResult.searchCountInc;
-            const currentSources = extractSourcesForSSE(modelPayload.results || []);
-            if (currentSources.length > 0) {
-                aggregatedSources = dedupeSources([...aggregatedSources, ...currentSources]);
-            }
+            searchCount += Number(toolResult.searchCountInc || 0);
+            const sourceAppendResult = appendAnnotatedSources(aggregatedSources, toolResult.sources);
+            aggregatedSources = sourceAppendResult.merged;
+            emitSourcesEvent(res, sourceAppendResult.newlyAdded);
             executedToolMessages.push({
                 role: 'tool',
                 tool_call_id: toolCall.id,
-                content: JSON.stringify(modelPayload)
+                content: JSON.stringify(buildToolResultForLLM({
+                    toolName: toolCall.function.name,
+                    result: toolResult.result,
+                    sources: sourceAppendResult.newlyAdded,
+                    args: toolCall._args || {}
+                }))
             });
         }
 
@@ -2865,7 +3530,7 @@ const API_PROVIDERS = {
         apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
         envKey: 'DEEPSEEK_API_KEY',
         baseURL: 'https://api.deepseek.com/v1/chat/completions',
-        models: ['deepseek-chat', 'deepseek-reasoner']
+        models: ['deepseek-v4-flash', 'deepseek-v4-pro']
     },
 
     // 硅基流动 SiliconFlow - Kimi K2.5 模型 + Qwen2.5-7B (免费)
@@ -2875,21 +3540,12 @@ const API_PROVIDERS = {
         baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
         models: ['Pro/moonshotai/Kimi-K2.5', 'moonshotai/Kimi-K2-Instruct-0905', 'Qwen/Qwen2.5-7B-Instruct']
     },
-    // 硅基流动 SiliconFlow - Qwen3 VL 视觉模型 (图像理解)
-    siliconflow_vl: {
-        apiKey: ENV_API_KEYS.SILICONFLOW_API_KEY,
-        envKey: 'SILICONFLOW_API_KEY',
-        baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
-        models: ['Qwen/Qwen3-Omni-30B-A3B-Instruct'],
-        multimodal: true,  // 标记支持多模态
-        visionModel: true  // 标记这是视觉模型
-    },
-    // Google Gemini API - Gemini 3 Flash Preview (多模态)
+    // Google Generative Language API - Gemini/Gemma models
     google_gemini: {
         apiKey: ENV_API_KEYS.GOOGLE_GEMINI_API_KEY,
         envKey: 'GOOGLE_GEMINI_API_KEY',
-        baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',  // 基础URL，实际使用时会拼接模型名
-        models: ['Gemini 3 Flash Preview'],
+        baseURL: GOOGLE_GEMINI_BASE_URL,  // 基础URL，实际使用时会拼接模型名
+        models: ['gemini-3-flash-preview', 'gemma-4-31b-it'],
         isGemini: true,  // 标记这是Gemini API，需要特殊处理
         multimodal: true  // 支持图片/视频等多模态输入
     },
@@ -2899,6 +3555,26 @@ const API_PROVIDERS = {
         envKey: 'POE_API_KEY',
         baseURL: 'https://api.poe.com/v1/chat/completions',
         models: Object.values(POE_STATIC_MODEL_MAP)
+    },
+    // OpenRouter OpenAI-compatible API
+    openrouter: {
+        apiKey: ENV_API_KEYS.OPENROUTER_API_KEY,
+        envKey: 'OPENROUTER_API_KEY',
+        baseURL: OPENROUTER_BASE_URL,
+        models: [
+            'anthropic/claude-sonnet-4.6',
+            'anthropic/claude-3-haiku',
+            'openai/gpt-oss-120b:free',
+            'google/gemma-4-31b-it:free',
+            'openrouter/free'
+        ]
+    },
+    // NewAPI OpenAI-compatible gateway
+    newapi: {
+        apiKey: ENV_API_KEYS.NEWAPI_API_KEY,
+        envKey: 'NEWAPI_API_KEY',
+        baseURL: NEWAPI_BASE_URL,
+        models: ['gpt-5.5', 'grok-4.2']
     }
 };
 
@@ -2922,6 +3598,22 @@ function logApiKeyReadiness() {
 logApiKeyReadiness();
 startPoeModelSyncJob();
 
+const LEGACY_MODEL_ALIASES = {
+    'qwen3-vl': 'kimi-k2.5',
+    'deepseek-chat': 'deepseek-v3',
+    'deepseek-reasoner': 'deepseek-v3',
+    'deepseek-v4-flash': 'deepseek-v3',
+    'claude-haiku': 'anthropic/claude-3-haiku',
+    'anthropic/claude-3-haiku:beta': 'anthropic/claude-3-haiku'
+};
+
+function normalizeIncomingModelId(modelId = 'auto') {
+    const normalized = String(modelId || 'auto').trim();
+    const aliased = LEGACY_MODEL_ALIASES[normalized] || normalized;
+    if (String(aliased).startsWith('x-ai/grok-4.20')) return 'grok-4.2';
+    return aliased || 'auto';
+}
+
 // 模型路由映射 (支持auto模式)
 const MODEL_ROUTING = {
     // 具体模型配置
@@ -2929,31 +3621,31 @@ const MODEL_ROUTING = {
     'qwen-flash': { provider: 'siliconflow', model: 'Qwen/Qwen2.5-7B-Instruct' },
     'qwen-plus': { provider: 'siliconflow', model: 'Qwen/Qwen2.5-7B-Instruct' },
     'qwen-max': { provider: 'siliconflow', model: 'Qwen/Qwen2.5-7B-Instruct' },
-    // Qwen3-VL 视觉语言模型 (硅基流动 - 图像理解)
-    'qwen3-vl': {
-        provider: 'siliconflow_vl',
-        model: 'Qwen/Qwen3-Omni-30B-A3B-Instruct',
-        multimodal: true,      // 支持多模态
-        visionModel: true      // 这是视觉模型
-    },
     'deepseek-v3': {
         provider: 'deepseek',
-        model: 'deepseek-chat',
-        thinkingModel: 'deepseek-reasoner'
+        model: 'deepseek-v4-flash',
+        thinkingModel: 'deepseek-v4-flash'
+    },
+    'deepseek-v3.2-speciale': {
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+        thinkingModel: 'deepseek-v4-pro'
     },
     // Kimi K2.5 - 月之暗面高性能模型
     'kimi-k2.5': {
         provider: 'siliconflow',
         model: 'Pro/moonshotai/Kimi-K2.5',
         thinkingModel: 'Pro/moonshotai/Kimi-K2.5',  // K2.5统一模型
-        supportsWebSearch: true
+        supportsWebSearch: true,
+        multimodal: true
     },
     // 兼容旧配置: kimi-k2 自动路由到 K2.5
     'kimi-k2': {
         provider: 'siliconflow',
         model: 'Pro/moonshotai/Kimi-K2.5',
         thinkingModel: 'Pro/moonshotai/Kimi-K2.5',
-        supportsWebSearch: true  // 支持Tavily联网搜索
+        supportsWebSearch: true,  // 支持Tavily联网搜索
+        multimodal: true
     },
     // Qwen2.5-7B 免费模型
     'qwen2.5-7b': {
@@ -2970,6 +3662,62 @@ const MODEL_ROUTING = {
         supportsThinking: false,
         supportsWebSearch: true,
         multimodal: false
+    },
+    // OpenRouter 模型
+    'chatgpt-gpt-oss-120b': {
+        provider: 'openrouter',
+        model: 'openai/gpt-oss-120b:free',
+        supportsThinking: true,
+        supportsWebSearch: false,
+        multimodal: false
+    },
+    'grok-4.2': {
+        provider: 'newapi',
+        model: 'grok-4.2',
+        supportsThinking: true,
+        supportsWebSearch: false,
+        multimodal: false
+    },
+    'gpt-5.5': {
+        provider: 'newapi',
+        model: 'gpt-5.5',
+        supportsThinking: true,
+        supportsWebSearch: false,
+        multimodal: false
+    },
+    'claude-haiku': {
+        provider: 'openrouter',
+        model: 'anthropic/claude-3-haiku',
+        fallbackModels: ['anthropic/claude-3-haiku'],
+        supportsThinking: false,
+        supportsWebSearch: false,
+        multimodal: true
+    },
+    'anthropic/claude-sonnet-4.6': {
+        provider: 'openrouter',
+        model: 'anthropic/claude-sonnet-4.6',
+        fallbackModels: ['anthropic/claude-sonnet-4.6'],
+        supportsThinking: false,
+        supportsWebSearch: false,
+        multimodal: true
+    },
+    'anthropic/claude-3-haiku': {
+        provider: 'openrouter',
+        model: 'anthropic/claude-3-haiku',
+        fallbackModels: ['anthropic/claude-3-haiku'],
+        supportsThinking: false,
+        supportsWebSearch: false,
+        multimodal: true
+    },
+    'gemma': {
+        provider: 'google_gemini',
+        model: 'gemma-4-31b-it',
+        isGemini: true,
+        supportsThinking: true,
+        supportsWebSearch: false,
+        multimodal: true,
+        contextWindow: 256000,
+        maxOutputTokens: 8000
     },
     // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
     'gemini-3-flash': {
@@ -3012,6 +3760,29 @@ const MODEL_ROUTING = {
     }
 };
 
+const UNIVERSAL_RUNTIME_FALLBACK_MODELS = [
+    'chatgpt-gpt-oss-120b',
+    'gemma',
+    'qwen2.5-7b'
+];
+
+function getRuntimeFallbackModelIds(currentModel = '') {
+    const current = normalizeIncomingModelId(currentModel);
+    return UNIVERSAL_RUNTIME_FALLBACK_MODELS.filter((modelId) => modelId !== current);
+}
+
+function findAvailableRuntimeFallbackModelId(currentModel = '') {
+    return getRuntimeFallbackModelIds(currentModel).find((modelId) => {
+        const route = MODEL_ROUTING[modelId];
+        const provider = route ? API_PROVIDERS[route.provider] : null;
+        return !!(route && provider?.apiKey);
+    }) || null;
+}
+
+function resolveFreeFallbackModelId(currentModel = '') {
+    return findAvailableRuntimeFallbackModelId(currentModel) || 'qwen2.5-7b';
+}
+
 
 // 创建目录
 const dirs = ['uploads', 'avatars', 'database'];
@@ -3033,6 +3804,10 @@ const db = new sqlite3.Database(dbPath, (err) => {
         console.log(' 数据库已连接:', dbPath);
 
         // ==================== SQLite 性能优化 ====================
+        db.run("PRAGMA foreign_keys=ON;", (err) => {
+            if (err) console.warn(' 外键约束启用失败:', err.message);
+            else console.log(' SQLite 外键约束已启用');
+        });
         db.run("PRAGMA journal_mode=WAL;", (err) => {
             if (err) console.warn(' WAL模式设置失败:', err.message);
             else console.log(' SQLite WAL模式已启用');
@@ -3053,6 +3828,10 @@ db.serialize(() => {
     password_hash TEXT NOT NULL,
     username TEXT,
     avatar_url TEXT,
+    external_provider TEXT,
+    external_uid TEXT,
+    gpt55_usage_date DATE,
+    gpt55_usage_count INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME
   )`);
@@ -3063,6 +3842,7 @@ db.serialize(() => {
     user_id INTEGER NOT NULL,
     title TEXT DEFAULT '新对话',
     model TEXT DEFAULT 'deepseek-v3',
+    session_kind TEXT DEFAULT 'chat',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_archived INTEGER DEFAULT 0,
@@ -3122,15 +3902,40 @@ db.serialize(() => {
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
-    // Chat Flow 思维流表
+    // ChatFlow 表
     db.run(`CREATE TABLE IF NOT EXISTS flows (
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    title TEXT DEFAULT '新思维流',
+    title TEXT DEFAULT '新 ChatFlow',
+    session_id TEXT,
     chat_history TEXT DEFAULT '[]',
     canvas_state TEXT DEFAULT '{"nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS auth_ztx6d_rt (
+    rt TEXT PRIMARY KEY,
+    return_path TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    bind_user_id INTEGER
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS message_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
+    comment TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, message_id),
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
@@ -3210,6 +4015,46 @@ db.serialize(() => {
             }
         });
 
+        db.run(`ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加session_kind列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加session_kind列到sessions表');
+            }
+        });
+
+        db.run(`ALTER TABLE flows ADD COLUMN session_id TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加session_id列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加session_id列到flows表');
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN external_provider TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加external_provider列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加external_provider列到users表');
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN external_uid TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加external_uid列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加external_uid列到users表');
+            }
+        });
+
+        db.run(`ALTER TABLE auth_ztx6d_rt ADD COLUMN bind_user_id INTEGER`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加ZTX6D bind_user_id列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加bind_user_id列到auth_ztx6d_rt表');
+            }
+        });
+
         // 创建索引以加速查询
         // 注意：索引方向要与查询一致（ASC）
         db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at ASC, id ASC)`, (err) => {
@@ -3225,6 +4070,46 @@ db.serialize(() => {
                 console.warn(` 创建sessions索引失败:`, err.message);
             } else {
                 console.log(' sessions表索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_kind_updated ON sessions(user_id, session_kind, is_archived, updated_at DESC)`, (err) => {
+            if (err) {
+                console.warn(` 创建sessions(session_kind)索引失败:`, err.message);
+            } else {
+                console.log(' sessions(session_kind)索引就绪');
+            }
+        });
+
+        db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_identity ON users(external_provider, external_uid) WHERE external_provider IS NOT NULL AND external_uid IS NOT NULL`, (err) => {
+            if (err) {
+                console.warn(` 创建users外部身份索引失败:`, err.message);
+            } else {
+                console.log(' users外部身份索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_auth_ztx6d_rt_expires ON auth_ztx6d_rt(expires_at)`, (err) => {
+            if (err) {
+                console.warn(` 创建ZTX6D rt索引失败:`, err.message);
+            } else {
+                console.log(' ZTX6D rt索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_message_feedback_created ON message_feedback(created_at DESC)`, (err) => {
+            if (err) {
+                console.warn(` 创建message_feedback时间索引失败:`, err.message);
+            } else {
+                console.log(' message_feedback时间索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_message_feedback_rating_created ON message_feedback(rating, created_at DESC)`, (err) => {
+            if (err) {
+                console.warn(` 创建message_feedback评分索引失败:`, err.message);
+            } else {
+                console.log(' message_feedback评分索引就绪');
             }
         });
 
@@ -3303,14 +4188,67 @@ db.serialize(() => {
             }
         });
 
+        // GPT-5.5 限免使用日期（free 每日10次限制）
+        db.run(`ALTER TABLE users ADD COLUMN gpt55_usage_date DATE`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加gpt55_usage_date列失败:`, err.message);
+            }
+        });
+
+        // GPT-5.5 限免使用次数（free 每日10次限制）
+        db.run(`ALTER TABLE users ADD COLUMN gpt55_usage_count INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加gpt55_usage_count列失败:`, err.message);
+            }
+        });
+
         console.log(' VIP会员系统字段就绪');
     });
 });
 
+function buildAllowedCorsOrigins() {
+    const origins = new Set([
+        'http://localhost:3009',
+        'http://127.0.0.1:3009',
+        'http://localhost:3010',
+        'http://127.0.0.1:3010'
+    ]);
+
+    for (const raw of [PUBLIC_BASE_URL, process.env.CORS_ORIGINS]) {
+        if (!raw) continue;
+        for (const value of String(raw).split(',')) {
+            const trimmed = value.trim();
+            if (!trimmed) continue;
+            try {
+                origins.add(new URL(trimmed).origin);
+            } catch (e) {
+                origins.add(trimmed);
+            }
+        }
+    }
+
+    return origins;
+}
+
+const allowedCorsOrigins = buildAllowedCorsOrigins();
+const jsonParser = express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' });
+const chatJsonParser = express.json({ limit: process.env.CHAT_JSON_BODY_LIMIT || '4mb' });
+
 // 中间件配置
-app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || allowedCorsOrigins.has(origin)) return callback(null, true);
+        return callback(new Error('CORS origin not allowed'));
+    },
+    credentials: true
+}));
+app.use((req, res, next) => {
+    if (req.path === '/api/chat/stream') {
+        return chatJsonParser(req, res, next);
+    }
+    return jsonParser(req, res, next);
+});
+app.use(express.urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT || '1mb' }));
 // 静态资源缓存配置（1天 = 86400秒）
 const staticCacheOptions = {
     maxAge: '1d',
@@ -3318,8 +4256,20 @@ const staticCacheOptions = {
     lastModified: true
 };
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'), staticCacheOptions));
-app.use('/avatars', express.static(path.join(__dirname, 'avatars'), staticCacheOptions));
+const avatarStaticOptions = {
+    ...staticCacheOptions,
+    setHeaders(res) {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+    }
+};
+
+app.use('/avatars', (req, res, next) => {
+    const ext = path.extname(req.path).toLowerCase().slice(1);
+    if (!['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+        return res.status(404).end();
+    }
+    next();
+}, express.static(path.join(__dirname, 'avatars'), avatarStaticOptions));
 app.use(express.static(path.join(__dirname, 'public'), staticCacheOptions));
 
 // 限流配置
@@ -3334,6 +4284,20 @@ const apiLimiter = rateLimit({
     max: 100,
     message: { error: '请求过于频繁,请稍后再试' }
 });
+
+const adminLoginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 8,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: '管理员登录尝试过多,请稍后再试' }
+});
+
+function parseBoundedInteger(value, defaultValue, min, max) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.min(Math.max(parsed, min), max);
+}
 
 // JWT验证中间件
 const authenticateToken = (req, res, next) => {
@@ -3365,21 +4329,69 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 增加到 50MB
-    fileFilter: (req, file, cb) => {
-        // 扩展支持的文件类型
-        const allowedExtensions = /jpeg|jpg|png|gif|webp|svg|bmp|ico|tiff|heic|heif|pdf|doc|docx|txt|md|json|xml|csv|log|yaml|yml|ini|conf|js|ts|jsx|tsx|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte|swift|kt|go|rs|rb|php|sh|sql|mp4|webm|mkv|flv|wmv|avi|mov|m4v|mp3|wav|m4a|ogg|flac|aac|wma|opus/i;
-        const allowedMimeTypes = /image|video|audio|text|application\/(json|pdf|msword|vnd\.openxmlformats)/i;
+const BLOCKED_UPLOAD_EXTENSIONS = new Set([
+    'svg', 'html', 'htm', 'js', 'mjs', 'cjs', 'jsx', 'sh', 'bash', 'zsh',
+    'ps1', 'bat', 'cmd', 'sql', 'php', 'pl', 'rb', 'exe', 'dll', 'msi',
+    'jar', 'com', 'scr', 'vbs', 'wsf'
+]);
+const AVATAR_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
+const ATTACHMENT_EXTENSIONS = new Set([
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'heic', 'heif',
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+    'txt', 'md', 'json', 'xml', 'csv', 'log', 'yaml', 'yml', 'ini', 'conf',
+    'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'css', 'scss', 'less',
+    'vue', 'svelte', 'swift', 'kt', 'go', 'rs',
+    'mp4', 'webm', 'mkv', 'flv', 'wmv', 'avi', 'mov', 'm4v',
+    'mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'wma', 'opus'
+]);
 
-        const ext = path.extname(file.originalname).toLowerCase().slice(1);
-        const extValid = allowedExtensions.test(ext);
-        const mimeValid = allowedMimeTypes.test(file.mimetype);
+function getUploadExtension(file) {
+    return path.extname(file.originalname || '').toLowerCase().slice(1);
+}
 
-        if (extValid || mimeValid) return cb(null, true);
-        cb(new Error('不支持的文件类型'));
+function validateAvatarUpload(req, file, cb) {
+    const ext = getUploadExtension(file);
+    if (!AVATAR_EXTENSIONS.has(ext)) {
+        return cb(new Error('头像仅支持 jpg/png/webp/gif 图片'));
     }
+    if (!/^image\/(jpeg|png|gif|webp)$/i.test(file.mimetype || '')) {
+        return cb(new Error('头像 MIME 类型不合法'));
+    }
+    return cb(null, true);
+}
+
+function validateAttachmentUpload(req, file, cb) {
+    const ext = getUploadExtension(file);
+    if (!ext || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext)) {
+        return cb(new Error('不支持的文件类型'));
+    }
+    if (/html|javascript|svg|x-sh|x-msdownload/i.test(file.mimetype || '')) {
+        return cb(new Error('不支持的文件类型'));
+    }
+    return cb(null, true);
+}
+
+function runUpload(middleware, req, res, next) {
+    middleware(req, res, (err) => {
+        if (!err) return next();
+        if (err instanceof multer.MulterError) {
+            const message = err.code === 'LIMIT_FILE_SIZE' ? '文件大小超过限制' : '文件上传失败';
+            return res.status(400).json({ error: message });
+        }
+        return res.status(400).json({ error: err.message || '文件上传失败' });
+    });
+}
+
+const avatarUpload = multer({
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: validateAvatarUpload
+});
+
+const attachmentUpload = multer({
+    storage: storage,
+    limits: { fileSize: 20 * 1024 * 1024 },
+    fileFilter: validateAttachmentUpload
 });
 
 // ==================== 测试路由 ====================
@@ -3390,6 +4402,367 @@ app.get('/api/test', (req, res) => {
         timestamp: new Date().toISOString(),
         providers: Object.keys(API_PROVIDERS)
     });
+});
+
+app.get('/api/quote/:symbol', async (req, res) => {
+    try {
+        const quote = await fetchYahooFinanceQuote({
+            symbol: req.params.symbol,
+            range: req.query.range || FINANCE_DEFAULT_RANGE,
+            interval: req.query.interval || FINANCE_DEFAULT_INTERVAL
+        });
+        res.json(quote);
+    } catch (error) {
+        const statusCode = Number(error?.statusCode || 502);
+        res.status(statusCode).json({
+            error: {
+                code: error?.code || 'finance_quote_failed',
+                message: error?.message || '获取行情失败',
+                details: error?.details || null
+            }
+        });
+    }
+});
+
+function isZtx6dEnabled() {
+    return !!(ZTX6D_APP_ID && ZTX6D_APP_KEY);
+}
+
+function resolvePublicBaseUrl(req) {
+    if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL.replace(/\/+$/, '');
+    const protocol = req.protocol || 'https';
+    const host = req.get('host') || 'rai.rick.quest';
+    return `${protocol}://${host}`;
+}
+
+function resolveZtx6dCallbackUrl(req) {
+    const publicBase = resolvePublicBaseUrl(req);
+    if (ZTX6D_CALLBACK_URL) {
+        try {
+            const configured = new URL(ZTX6D_CALLBACK_URL);
+            const publicUrl = new URL(publicBase);
+            const publicPath = publicUrl.pathname.replace(/\/+$/, '');
+            const configuredPath = configured.pathname.replace(/\/+$/, '');
+            if (publicPath && publicPath !== '/' && configured.origin === publicUrl.origin && !configuredPath.startsWith(`${publicPath}/`)) {
+                return `${publicBase}/api/auth/ztx6d/callback`;
+            }
+        } catch (error) {
+            console.warn(` ZTX6D_CALLBACK_URL格式无效，使用PUBLIC_BASE_URL生成回调: ${error.message}`);
+            return `${publicBase}/api/auth/ztx6d/callback`;
+        }
+        return ZTX6D_CALLBACK_URL;
+    }
+    return `${publicBase}/api/auth/ztx6d/callback`;
+}
+
+function normalizeReturnPath(value = '/') {
+    const raw = String(value || '/').trim();
+    if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/';
+    return raw;
+}
+
+function buildClientAuthRedirect(req, returnPath, params = {}) {
+    const publicUrl = new URL(resolvePublicBaseUrl(req));
+    const basePath = publicUrl.pathname.replace(/\/+$/, '');
+    const targetUrl = new URL(normalizeReturnPath(returnPath), `${publicUrl.origin}/`);
+    if (basePath && basePath !== '/' && targetUrl.origin === publicUrl.origin && !(targetUrl.pathname === basePath || targetUrl.pathname.startsWith(`${basePath}/`))) {
+        targetUrl.pathname = `${basePath}${targetUrl.pathname === '/' ? '/' : targetUrl.pathname}`;
+    }
+    const url = new URL(targetUrl.toString());
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+            url.searchParams.set(key, String(value));
+        }
+    });
+    return url.toString();
+}
+
+async function fetchZtx6dOpenApi(action, payload) {
+    const url = new URL(ZTX6D_API_URL);
+    url.searchParams.set('action', action);
+
+    const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    let data = null;
+    const text = await response.text();
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            throw new Error(`ztx6d_invalid_json:${text.substring(0, 160)}`);
+        }
+    }
+
+    if (!response.ok || data?.error) {
+        const code = data?.error || `http_${response.status}`;
+        const error = new Error(`ztx6d_${action}_${code}`);
+        error.code = code;
+        error.statusCode = response.status || 502;
+        throw error;
+    }
+
+    return data || {};
+}
+
+async function cleanupExpiredZtx6dRt() {
+    try {
+        await dbRunAsync(
+            'DELETE FROM auth_ztx6d_rt WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
+            [Date.now(), Date.now() - 24 * 60 * 60 * 1000]
+        );
+    } catch (error) {
+        console.warn(` ZTX6D rt清理失败: ${error.message}`);
+    }
+}
+
+async function findOrCreateZtx6dUser(uid) {
+    const externalUid = String(uid || '').trim();
+    if (!externalUid) {
+        throw new Error('missing_ztx6d_uid');
+    }
+
+    const provider = 'ztx6d';
+    const syntheticEmail = `ztx6d-${externalUid}@passport.ztx6d.local`;
+    const username = `ztx6d_${externalUid}`;
+
+    let user = await dbGetAsync(
+        'SELECT id, email, username, avatar_url FROM users WHERE external_provider = ? AND external_uid = ?',
+        [provider, externalUid]
+    );
+
+    if (!user) {
+        const existingSyntheticUser = await dbGetAsync(
+            'SELECT id, email, username, avatar_url FROM users WHERE email = ?',
+            [syntheticEmail]
+        );
+
+        if (existingSyntheticUser) {
+            await dbRunAsync(
+                'UPDATE users SET external_provider = ?, external_uid = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?',
+                [provider, externalUid, existingSyntheticUser.id]
+            );
+            user = { ...existingSyntheticUser, username: existingSyntheticUser.username || username };
+        } else {
+            const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+            const result = await dbRunAsync(
+                'INSERT INTO users (email, password_hash, username, external_provider, external_uid, last_login) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
+                [syntheticEmail, passwordHash, username, provider, externalUid]
+            );
+            await dbRunAsync('INSERT OR IGNORE INTO user_configs (user_id) VALUES (?)', [result.lastID]);
+            user = {
+                id: result.lastID,
+                email: syntheticEmail,
+                username,
+                avatar_url: null
+            };
+        }
+    } else {
+        await dbRunAsync('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+        await dbRunAsync('INSERT OR IGNORE INTO user_configs (user_id) VALUES (?)', [user.id]);
+    }
+
+    return user;
+}
+
+async function bindZtx6dUser(userId, uid) {
+    const targetUserId = Number(userId);
+    const externalUid = String(uid || '').trim();
+    const provider = 'ztx6d';
+
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+        const error = new Error('invalid_bind_user');
+        error.code = 'user_not_found';
+        throw error;
+    }
+
+    if (!externalUid) {
+        const error = new Error('missing_ztx6d_uid');
+        error.code = 'missing_uid';
+        throw error;
+    }
+
+    const existingBinding = await dbGetAsync(
+        'SELECT id, email, username, avatar_url FROM users WHERE external_provider = ? AND external_uid = ?',
+        [provider, externalUid]
+    );
+
+    if (existingBinding && Number(existingBinding.id) !== targetUserId) {
+        const error = new Error('ztx6d_uid_already_bound');
+        error.code = 'already_bound';
+        throw error;
+    }
+
+    const user = await dbGetAsync(
+        'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
+        [targetUserId]
+    );
+
+    if (!user) {
+        const error = new Error('bind_user_not_found');
+        error.code = 'user_not_found';
+        throw error;
+    }
+
+    const currentProvider = String(user.external_provider || '').trim();
+    const currentUid = String(user.external_uid || '').trim();
+    if (currentProvider && (currentProvider !== provider || currentUid !== externalUid)) {
+        const error = new Error('local_user_already_bound');
+        error.code = 'user_already_bound';
+        throw error;
+    }
+
+    await dbRunAsync(
+        'UPDATE users SET external_provider = ?, external_uid = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?',
+        [provider, externalUid, targetUserId]
+    );
+    await dbRunAsync('INSERT OR IGNORE INTO user_configs (user_id) VALUES (?)', [targetUserId]);
+
+    return {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        avatar_url: user.avatar_url
+    };
+}
+
+function redirectZtx6dError(req, returnPath, code) {
+    const safeCode = String(code || 'auth_failed').replace(/[^a-z0-9_-]/gi, '_').slice(0, 80);
+    return buildClientAuthRedirect(req, returnPath, {
+        auth_error: `ztx6d_${safeCode}`
+    });
+}
+
+app.get('/api/auth/ztx6d/status', (req, res) => {
+    res.json({
+        success: true,
+        enabled: isZtx6dEnabled(),
+        provider: 'ztx6d',
+        loginUrl: '/api/auth/ztx6d/start',
+        bindUrl: '/api/auth/ztx6d/bind/start',
+        callbackUrl: resolveZtx6dCallbackUrl(req)
+    });
+});
+
+app.get('/api/auth/ztx6d/start', authLimiter, async (req, res) => {
+    const returnPath = normalizeReturnPath(req.query.return || '/');
+
+    if (!isZtx6dEnabled()) {
+        return res.status(503).json({ success: false, error: 'ztx6d_disabled' });
+    }
+
+    try {
+        await cleanupExpiredZtx6dRt();
+        const data = await fetchZtx6dOpenApi('create_rt', {
+            appid: Number(ZTX6D_APP_ID),
+            appkey: ZTX6D_APP_KEY,
+            once: 1
+        });
+        const rt = String(data?.rt || '').trim();
+        if (!rt) {
+            return res.status(502).json({ success: false, error: 'ztx6d_missing_rt' });
+        }
+
+        await dbRunAsync(
+            'INSERT OR REPLACE INTO auth_ztx6d_rt (rt, return_path, created_at, expires_at, consumed_at, bind_user_id) VALUES (?, ?, ?, ?, NULL, NULL)',
+            [rt, returnPath, Date.now(), Date.now() + ZTX6D_RT_TTL_MS]
+        );
+
+        const loginUrl = new URL(ZTX6D_LOGIN_URL);
+        loginUrl.searchParams.set('rt', rt);
+        res.redirect(loginUrl.toString());
+    } catch (error) {
+        console.error(` ZTX6D create_rt失败: ${error.message}`);
+        res.status(502).json({ success: false, error: error.code || 'ztx6d_create_rt_failed' });
+    }
+});
+
+app.post('/api/auth/ztx6d/bind/start', authenticateToken, authLimiter, async (req, res) => {
+    const returnPath = normalizeReturnPath(req.body?.return || req.query.return || '/');
+
+    if (!isZtx6dEnabled()) {
+        return res.status(503).json({ success: false, error: 'ztx6d_disabled' });
+    }
+
+    try {
+        await cleanupExpiredZtx6dRt();
+        const data = await fetchZtx6dOpenApi('create_rt', {
+            appid: Number(ZTX6D_APP_ID),
+            appkey: ZTX6D_APP_KEY,
+            once: 1
+        });
+        const rt = String(data?.rt || '').trim();
+        if (!rt) {
+            return res.status(502).json({ success: false, error: 'ztx6d_missing_rt' });
+        }
+
+        await dbRunAsync(
+            'INSERT OR REPLACE INTO auth_ztx6d_rt (rt, return_path, created_at, expires_at, consumed_at, bind_user_id) VALUES (?, ?, ?, ?, NULL, ?)',
+            [rt, returnPath, Date.now(), Date.now() + ZTX6D_RT_TTL_MS, req.user.userId]
+        );
+
+        const loginUrl = new URL(ZTX6D_LOGIN_URL);
+        loginUrl.searchParams.set('rt', rt);
+        res.json({ success: true, redirectUrl: loginUrl.toString() });
+    } catch (error) {
+        console.error(` ZTX6D bind create_rt失败: ${error.message}`);
+        res.status(502).json({ success: false, error: error.code || 'ztx6d_create_rt_failed' });
+    }
+});
+
+app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
+    const rt = String(req.query.rt || '').trim();
+    let returnPath = '/';
+
+    if (!isZtx6dEnabled()) {
+        return res.redirect(redirectZtx6dError(req, returnPath, 'disabled'));
+    }
+
+    if (!rt) {
+        return res.redirect(redirectZtx6dError(req, returnPath, 'missing_rt'));
+    }
+
+    try {
+        const pending = await dbGetAsync('SELECT * FROM auth_ztx6d_rt WHERE rt = ?', [rt]);
+        returnPath = normalizeReturnPath(pending?.return_path || '/');
+
+        if (!pending || pending.consumed_at || Number(pending.expires_at || 0) < Date.now()) {
+            return res.redirect(redirectZtx6dError(req, returnPath, 'invalid_or_expired_rt'));
+        }
+
+        const data = await fetchZtx6dOpenApi('get_rt', {
+            appid: Number(ZTX6D_APP_ID),
+            appkey: ZTX6D_APP_KEY,
+            rt
+        });
+
+        const uid = data?.uid;
+        if (uid === undefined || uid === null || String(uid).trim() === '') {
+            return res.redirect(redirectZtx6dError(req, returnPath, 'missing_uid'));
+        }
+
+        await dbRunAsync('UPDATE auth_ztx6d_rt SET consumed_at = ? WHERE rt = ?', [Date.now(), rt]);
+        const bindUserId = Number(pending.bind_user_id || 0);
+        const user = bindUserId > 0
+            ? await bindZtx6dUser(bindUserId, uid)
+            : await findOrCreateZtx6dUser(uid);
+        const token = jwt.sign(
+            { userId: user.id, email: user.email, provider: 'ztx6d' },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        res.redirect(buildClientAuthRedirect(req, returnPath, {
+            rai_token: token,
+            auth_provider: 'ztx6d'
+        }));
+    } catch (error) {
+        console.error(` ZTX6D callback失败: ${error.message}`);
+        res.redirect(redirectZtx6dError(req, returnPath, error.code || 'callback_failed'));
+    }
 });
 
 // ==================== 认证路由 ====================
@@ -3512,7 +4885,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
     db.get(
-        'SELECT id, email, username, avatar_url FROM users WHERE id = ?',
+        'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
         [req.user.userId],
         (err, user) => {
             if (err || !user) {
@@ -3527,6 +4900,7 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 app.get('/api/user/profile', authenticateToken, (req, res) => {
     db.get(
         `SELECT u.id, u.email, u.username, u.avatar_url, u.created_at, u.last_login,
+      u.external_provider, u.external_uid,
       COALESCE(c.theme, 'dark') as theme,
       COALESCE(c.default_model, 'auto') as default_model,
       COALESCE(c.temperature, 0.7) as temperature,
@@ -3550,6 +4924,8 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                     email: 'user@example.com',
                     username: 'User',
                     avatar_url: null,
+                    external_provider: null,
+                    external_uid: null,
                     created_at: new Date().toISOString(),
                     last_login: new Date().toISOString(),
                     theme: 'dark',
@@ -3573,6 +4949,8 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                     email: 'user@example.com',
                     username: 'User',
                     avatar_url: null,
+                    external_provider: null,
+                    external_uid: null,
                     created_at: new Date().toISOString(),
                     last_login: new Date().toISOString(),
                     theme: 'dark',
@@ -3594,6 +4972,8 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 email: user.email || '',
                 username: user.username || user.email.split('@')[0],
                 avatar_url: user.avatar_url || null,
+                external_provider: user.external_provider || null,
+                external_uid: user.external_uid || null,
                 created_at: user.created_at,
                 last_login: user.last_login,
                 theme: user.theme || 'dark',
@@ -3658,7 +5038,7 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
     );
 });
 
-app.post('/api/user/avatar', authenticateToken, upload.single('avatar'), (req, res) => {
+app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
 
     const avatarUrl = `/avatars/${req.file.filename}`;
@@ -3671,155 +5051,69 @@ app.post('/api/user/avatar', authenticateToken, upload.single('avatar'), (req, r
     });
 });
 
-// ==================== VIP会员系统路由 ====================
-// 获取用户会员状态
-app.get('/api/user/membership', authenticateToken, (req, res) => {
-    db.get(
-        `SELECT id, email, username, created_at, membership, membership_start, membership_end, 
-         points, last_checkin, purchased_points, purchased_points_expire, last_daily_grant,
-         poe_usage_date, poe_usage_count
-         FROM users WHERE id = ?`,
-        [req.user.userId],
-        (err, user) => {
-            if (err) {
-                console.error(' 获取会员状态失败:', err);
-                return res.status(500).json({ error: '数据库错误' });
-            }
-            if (!user) {
-                return res.status(404).json({ error: '用户不存在' });
-            }
-
-            const today = new Date().toISOString().split('T')[0];
-            const canCheckin = user.membership === 'free' && user.last_checkin !== today;
-            const poeUsedToday = user.poe_usage_date === today ? Number(user.poe_usage_count || 0) : 0;
-            const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
-
-            // 计算总点数：当前点数 + 购买的点数（如果未过期）
-            let totalPoints = user.points || 0;
-            if (user.purchased_points && user.purchased_points_expire) {
-                const expireDate = new Date(user.purchased_points_expire);
-                if (expireDate > new Date()) {
-                    totalPoints += user.purchased_points;
-                }
-            }
-
-            res.json({
-                membership: user.membership || 'free',
-                membershipStart: user.membership_start,
-                membershipEnd: user.membership_end,
-                points: user.points || 0,
-                purchasedPoints: user.purchased_points || 0,
-                totalPoints: totalPoints,
-                canCheckin: canCheckin,
-                lastCheckin: user.last_checkin,
-                createdAt: user.created_at,
-                poeDailyLimit: POE_DAILY_LIMIT_FREE,
-                poeUsedToday,
-                poeRemaining,
-                poeResetAt: buildPoeResetAtISO()
-            });
-        }
-    );
-});
-
-// 用户签到（每日+20点数）
-app.post('/api/user/checkin', authenticateToken, (req, res) => {
-    const today = new Date().toISOString().split('T')[0];
-
-    db.get('SELECT id, membership, last_checkin, points FROM users WHERE id = ?',
-        [req.user.userId],
-        (err, user) => {
-            if (err) {
-                console.error(' 签到查询失败:', err);
-                return res.status(500).json({ error: '数据库错误' });
-            }
-            if (!user) {
-                return res.status(404).json({ error: '用户不存在' });
-            }
-
-            // 只有free用户需要签到
-            if (user.membership !== 'free') {
-                return res.status(400).json({ error: '会员用户无需签到，每日自动获得点数' });
-            }
-
-            // 检查今天是否已签到
-            if (user.last_checkin === today) {
-                return res.status(400).json({ error: '今日已签到' });
-            }
-
-            const pointsGained = 20;
-            const newPoints = (user.points || 0) + pointsGained;
-
-            db.run(
-                'UPDATE users SET points = ?, last_checkin = ? WHERE id = ?',
-                [newPoints, today, req.user.userId],
-                function (err) {
-                    if (err) {
-                        console.error(' 签到更新失败:', err);
-                        return res.status(500).json({ error: '签到失败' });
-                    }
-
-                    console.log(` 用户 ${req.user.userId} 签到成功，获得 ${pointsGained} 点数，当前点数: ${newPoints}`);
-                    res.json({
-                        success: true,
-                        pointsGained: pointsGained,
-                        currentPoints: newPoints,
-                        message: `签到成功！获得 ${pointsGained} 点数`
-                    });
-                }
-            );
-        }
-    );
-});
-
 // ==================== 会话管理路由 ====================
-app.get('/api/sessions', authenticateToken, (req, res) => {
-    // 分页参数：offset（偏移量）和 limit（每页数量）
-    const offset = parseInt(req.query.offset) || 0;
-    const limit = parseInt(req.query.limit) || 20;
+app.get('/api/sessions', authenticateToken, async (req, res) => {
+    try {
+        await ensureSessionKindColumn();
 
-    // 优化：简化查询，移除慢速子查询（message_count, recent_attachments）
-    // 只保留 last_message 用于侧边栏预览
-    db.all(
-        `SELECT s.id, s.title, s.model, s.updated_at, s.created_at,
-      (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message
-    FROM sessions s
-    WHERE s.user_id = ? AND s.is_archived = 0
-    ORDER BY s.updated_at DESC
-    LIMIT ? OFFSET ?`,
-        [req.user.userId, limit, offset],
-        (err, sessions) => {
-            if (err) {
-                console.error(' 获取会话列表失败:', err);
-                return res.status(500).json({ error: '数据库错误' });
+        // 分页参数：offset（偏移量）和 limit（每页数量）
+        const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+        const limit = parseBoundedInteger(req.query.limit, 20, 1, 100);
+
+        // 优化：简化查询，移除慢速子查询（message_count, recent_attachments）
+        // 只保留 last_message 用于侧边栏预览
+        db.all(
+            `SELECT s.id, s.title, s.model, s.updated_at, s.created_at,
+          (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message,
+          (SELECT content FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY created_at DESC, id DESC LIMIT 1) as last_assistant_message
+        FROM sessions s
+        WHERE s.user_id = ? AND s.is_archived = 0 AND COALESCE(s.session_kind, 'chat') = 'chat'
+        ORDER BY s.updated_at DESC
+        LIMIT ? OFFSET ?`,
+            [req.user.userId, limit, offset],
+            (err, sessions) => {
+                if (err) {
+                    console.error(' 获取会话列表失败:', err);
+                    return res.status(500).json({ error: '数据库错误' });
+                }
+                // 返回带有分页信息的响应
+                res.json({
+                    sessions: sessions,
+                    hasMore: sessions.length === limit,
+                    offset: offset,
+                    limit: limit
+                });
             }
-            // 返回带有分页信息的响应
-            res.json({
-                sessions: sessions,
-                hasMore: sessions.length === limit,
-                offset: offset,
-                limit: limit
-            });
-        }
-    );
+        );
+    } catch (error) {
+        console.error(' 确保sessions表结构失败:', error);
+        res.status(500).json({ error: '数据库结构初始化失败' });
+    }
 });
 
-app.post('/api/sessions', authenticateToken, (req, res) => {
-    const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const { title, model } = req.body;
+app.post('/api/sessions', authenticateToken, async (req, res) => {
+    try {
+        await ensureSessionKindColumn();
 
-    db.run(
-        'INSERT INTO sessions (id, user_id, title, model) VALUES (?, ?, ?, ?)',
-        [sessionId, req.user.userId, title || '新对话', model || 'deepseek-v3'],
-        (err) => {
-            if (err) {
-                console.error(' 创建会话失败:', err);
-                return res.status(500).json({ error: '创建失败' });
+        const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const { title, model, session_kind: sessionKind = 'chat' } = req.body;
+
+        db.run(
+            'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
+            [sessionId, req.user.userId, title || '新对话', model || 'deepseek-v3', sessionKind || 'chat'],
+            (err) => {
+                if (err) {
+                    console.error(' 创建会话失败:', err);
+                    return res.status(500).json({ error: '创建失败' });
+                }
+                console.log(' 创建会话成功:', sessionId);
+                res.json({ success: true, sessionId });
             }
-            console.log(' 创建会话成功:', sessionId);
-            res.json({ success: true, sessionId });
-        }
-    );
+        );
+    } catch (error) {
+        console.error(' 确保sessions表结构失败:', error);
+        res.status(500).json({ error: '数据库结构初始化失败' });
+    }
 });
 
 app.put('/api/sessions/:id', authenticateToken, (req, res) => {
@@ -3880,121 +5174,575 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
     });
 });
 
-// ==================== Chat Flow 思维流 API ====================
+// ==================== ChatFlow API ====================
+
+const FLOW_DEFAULT_CANVAS_STATE = Object.freeze({
+    nodes: [],
+    edges: [],
+    viewport: {
+        x: 0,
+        y: 0,
+        zoom: 1
+    }
+});
+
+const CANVAS_OPS_START_TOKEN = '[CANVAS_OPS]';
+const CANVAS_OPS_END_TOKEN = '[/CANVAS_OPS]';
+const TITLE_START_TOKEN = '[TITLE]';
+const TITLE_END_TOKEN = '[/TITLE]';
+const STRUCTURED_OUTPUT_TOKENS = [
+    CANVAS_OPS_START_TOKEN,
+    CANVAS_OPS_END_TOKEN,
+    TITLE_START_TOKEN,
+    TITLE_END_TOKEN
+];
+
+function cloneFlowDefaultCanvasState() {
+    return JSON.parse(JSON.stringify(FLOW_DEFAULT_CANVAS_STATE));
+}
+
+function safeJsonParse(rawValue, fallbackValue) {
+    if (rawValue === null || rawValue === undefined || rawValue === '') {
+        return fallbackValue;
+    }
+
+    if (typeof rawValue === 'object') {
+        return rawValue;
+    }
+
+    try {
+        return JSON.parse(rawValue);
+    } catch (error) {
+        return fallbackValue;
+    }
+}
+
+function normalizeFlowViewport(viewport = {}) {
+    const x = Number(viewport?.x);
+    const y = Number(viewport?.y);
+    const zoom = Number(viewport?.zoom);
+    return {
+        x: Number.isFinite(x) ? x : 0,
+        y: Number.isFinite(y) ? y : 0,
+        zoom: Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+    };
+}
+
+function normalizeFlowCanvasNode(node = {}) {
+    const normalizedNode = { ...node };
+
+    if (normalizedNode.sourceMessageId !== undefined && normalizedNode.sourceMessageId !== null && normalizedNode.sourceMessageId !== '') {
+        const numericMessageId = Number(normalizedNode.sourceMessageId);
+        normalizedNode.sourceMessageId = Number.isFinite(numericMessageId) ? numericMessageId : normalizedNode.sourceMessageId;
+    } else {
+        delete normalizedNode.sourceMessageId;
+    }
+
+    if (normalizedNode.sourceIndex !== undefined && normalizedNode.sourceIndex !== null && normalizedNode.sourceIndex !== '') {
+        const numericSourceIndex = Number(normalizedNode.sourceIndex);
+        normalizedNode.sourceIndex = Number.isFinite(numericSourceIndex) ? numericSourceIndex : normalizedNode.sourceIndex;
+    } else {
+        delete normalizedNode.sourceIndex;
+    }
+
+    return normalizedNode;
+}
+
+function normalizeFlowCanvasState(rawCanvasState) {
+    const parsedCanvasState = safeJsonParse(rawCanvasState, cloneFlowDefaultCanvasState()) || cloneFlowDefaultCanvasState();
+    const viewport = normalizeFlowViewport(parsedCanvasState.viewport || parsedCanvasState.viewPort || {});
+    const nodes = Array.isArray(parsedCanvasState.nodes)
+        ? parsedCanvasState.nodes.map((node) => normalizeFlowCanvasNode(node)).filter(Boolean)
+        : [];
+    const edges = Array.isArray(parsedCanvasState.edges)
+        ? parsedCanvasState.edges.map((edge) => ({ ...edge })).filter(Boolean)
+        : [];
+
+    return {
+        nodes,
+        edges,
+        viewport
+    };
+}
+
+function normalizeLegacyFlowMessages(rawChatHistory) {
+    const parsedChatHistory = safeJsonParse(rawChatHistory, []);
+    if (!Array.isArray(parsedChatHistory)) return [];
+
+    return parsedChatHistory
+        .filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
+        .map((item) => ({
+            role: item.role,
+            content: typeof item.content === 'string' ? item.content : String(item.content || '')
+        }));
+}
+
+function trimStructuredTokenPrefix(text = '') {
+    let result = String(text || '');
+    for (const token of STRUCTURED_OUTPUT_TOKENS) {
+        const maxPrefixLength = Math.min(token.length - 1, result.length);
+        for (let len = maxPrefixLength; len > 0; len -= 1) {
+            if (token.startsWith(result.slice(-len))) {
+                result = result.slice(0, -len);
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+function parseCanvasPatchPayload(rawPatchText = '') {
+    const raw = String(rawPatchText || '').trim();
+    if (!raw) {
+        return {
+            canvasPatch: null,
+            canvasPatchRaw: '',
+            canvasPatchParseError: null
+        };
+    }
+
+    try {
+        return {
+            canvasPatch: JSON.parse(raw),
+            canvasPatchRaw: raw,
+            canvasPatchParseError: null
+        };
+    } catch (error) {
+        return {
+            canvasPatch: null,
+            canvasPatchRaw: raw,
+            canvasPatchParseError: error.message
+        };
+    }
+}
+
+function extractLegacyTrailingTitle(text = '') {
+    const source = String(text || '').trimEnd();
+    const match = source.match(/<{2,3}\s*([^<>\n]{1,40}?)\s*>{2,3}\s*$/);
+    if (!match) {
+        return {
+            title: null,
+            cleanContent: source.trim()
+        };
+    }
+
+    return {
+        title: String(match[1] || '').replace(/\s+/g, ' ').trim() || null,
+        cleanContent: source.replace(/<{2,3}\s*([^<>\n]{1,40}?)\s*>{2,3}\s*$/, '').trim()
+    };
+}
+
+function parseStructuredAssistantOutput(rawText = '') {
+    const source = String(rawText || '');
+    let visibleContent = '';
+    let extractedTitle = null;
+    let canvasPatchRaw = '';
+    let canvasPatch = null;
+    let canvasPatchParseError = null;
+    let cursor = 0;
+
+    while (cursor < source.length) {
+        if (source.startsWith(TITLE_START_TOKEN, cursor)) {
+            const titleEnd = source.indexOf(TITLE_END_TOKEN, cursor + TITLE_START_TOKEN.length);
+            if (titleEnd === -1) {
+                break;
+            }
+            if (extractedTitle === null) {
+                extractedTitle = source.slice(cursor + TITLE_START_TOKEN.length, titleEnd).trim();
+            }
+            cursor = titleEnd + TITLE_END_TOKEN.length;
+            continue;
+        }
+
+        if (source.startsWith(CANVAS_OPS_START_TOKEN, cursor)) {
+            const patchEnd = source.indexOf(CANVAS_OPS_END_TOKEN, cursor + CANVAS_OPS_START_TOKEN.length);
+            if (patchEnd === -1) {
+                break;
+            }
+            if (!canvasPatchRaw) {
+                const parsedPatch = parseCanvasPatchPayload(source.slice(cursor + CANVAS_OPS_START_TOKEN.length, patchEnd));
+                canvasPatchRaw = parsedPatch.canvasPatchRaw;
+                canvasPatch = parsedPatch.canvasPatch;
+                canvasPatchParseError = parsedPatch.canvasPatchParseError;
+            }
+            cursor = patchEnd + CANVAS_OPS_END_TOKEN.length;
+            continue;
+        }
+
+        visibleContent += source[cursor];
+        cursor += 1;
+    }
+
+    const legacyTitleResult = extractedTitle ? null : extractLegacyTrailingTitle(visibleContent);
+    if (legacyTitleResult?.title) {
+        extractedTitle = legacyTitleResult.title;
+        visibleContent = legacyTitleResult.cleanContent;
+    }
+
+    return {
+        visibleContent: trimStructuredTokenPrefix(visibleContent).trimEnd(),
+        extractedTitle,
+        canvasPatch,
+        canvasPatchRaw,
+        canvasPatchParseError
+    };
+}
+
+async function createSessionRecord({ userId, title, model = 'auto', sessionKind = 'chat' }) {
+    await ensureSessionKindColumn();
+    const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    await dbRunAsync(
+        'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
+        [sessionId, userId, title || '新对话', model || 'auto', sessionKind || 'chat']
+    );
+    return sessionId;
+}
+
+async function getSessionMessagesBySessionId(sessionId) {
+    return dbAllAsync(
+        `SELECT id, session_id, role, content, reasoning_content, model,
+                enable_search, thinking_mode, internet_mode, sources, process_trace, created_at,
+                CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
+                     THEN 1 ELSE 0 END as has_attachments
+         FROM messages
+         WHERE session_id = ?
+         ORDER BY created_at ASC, id ASC`,
+        [sessionId]
+    );
+}
+
+async function migrateLegacyFlowRow(flowRow, userId) {
+    await ensureChatFlowSchemaColumns();
+    const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const legacyMessages = normalizeLegacyFlowMessages(flowRow.chat_history);
+    const normalizedCanvasState = normalizeFlowCanvasState(flowRow.canvas_state);
+    const insertedMessageIds = [];
+
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        await dbRunAsync(
+            'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
+            [sessionId, userId, flowRow.title || '新 ChatFlow', 'auto', 'flow']
+        );
+
+        for (let index = 0; index < legacyMessages.length; index += 1) {
+            const legacyMessage = legacyMessages[index];
+            const createdAt = new Date(Date.now() + index).toISOString();
+            const insertResult = await dbRunAsync(
+                'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
+                [sessionId, legacyMessage.role, legacyMessage.content, createdAt]
+            );
+            insertedMessageIds.push(insertResult.lastID);
+        }
+
+        const migratedCanvasState = normalizeFlowCanvasState({
+            ...normalizedCanvasState,
+            nodes: normalizedCanvasState.nodes.map((node) => {
+                if ((node.sourceMessageId === undefined || node.sourceMessageId === null || node.sourceMessageId === '') &&
+                    Number.isInteger(node.sourceIndex) &&
+                    insertedMessageIds[node.sourceIndex]) {
+                    return {
+                        ...node,
+                        sourceMessageId: insertedMessageIds[node.sourceIndex]
+                    };
+                }
+                return node;
+            })
+        });
+
+        await dbRunAsync(
+            'UPDATE flows SET session_id = ?, canvas_state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+            [sessionId, JSON.stringify(migratedCanvasState), flowRow.id, userId]
+        );
+
+        await dbRunAsync('COMMIT');
+
+        return {
+            ...flowRow,
+            session_id: sessionId,
+            canvas_state: JSON.stringify(migratedCanvasState)
+        };
+    } catch (error) {
+        try {
+            await dbRunAsync('ROLLBACK');
+        } catch (rollbackError) {
+            console.warn(' 回滚旧Flow迁移事务失败:', rollbackError.message);
+        }
+        throw error;
+    }
+}
+
+async function ensureFlowRecord(flowId, userId) {
+    await ensureChatFlowSchemaColumns();
+    let flowRow = await dbGetAsync('SELECT * FROM flows WHERE id = ? AND user_id = ?', [flowId, userId]);
+    if (!flowRow) return null;
+
+    if (flowRow.session_id) {
+        const linkedSession = await dbGetAsync(
+            'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
+            [flowRow.session_id, userId]
+        );
+        if (!linkedSession) {
+            flowRow = await migrateLegacyFlowRow(flowRow, userId);
+        }
+    } else {
+        flowRow = await migrateLegacyFlowRow(flowRow, userId);
+    }
+
+    const normalizedCanvasState = normalizeFlowCanvasState(flowRow.canvas_state);
+    const messages = flowRow.session_id ? await getSessionMessagesBySessionId(flowRow.session_id) : [];
+
+    return {
+        ...flowRow,
+        canvas_state: normalizedCanvasState,
+        chat_history: normalizeLegacyFlowMessages(flowRow.chat_history),
+        messages
+    };
+}
+
+async function syncFlowTitle(flowId, userId, title) {
+    await ensureChatFlowSchemaColumns();
+    const trimmedTitle = String(title || '').trim();
+    if (!trimmedTitle) return null;
+
+    const flowRow = await dbGetAsync('SELECT id, session_id FROM flows WHERE id = ? AND user_id = ?', [flowId, userId]);
+    if (!flowRow) return null;
+
+    await dbRunAsync(
+        'UPDATE flows SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+        [trimmedTitle, flowId, userId]
+    );
+
+    if (flowRow.session_id) {
+        await dbRunAsync(
+            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+            [trimmedTitle, flowRow.session_id, userId]
+        );
+    }
+
+    return {
+        title: trimmedTitle,
+        sessionId: flowRow.session_id || null
+    };
+}
+
+function buildFlowCanvasSystemInstruction({ flowRecord, canvasContext, uiSurface, canvasApplyMode }) {
+    if (!flowRecord) return '';
+
+    const normalizedCanvasContext = (() => {
+        if (!canvasContext) return null;
+        if (typeof canvasContext === 'string') {
+            try {
+                return JSON.parse(canvasContext);
+            } catch (error) {
+                return null;
+            }
+        }
+        return canvasContext;
+    })();
+
+    const flowTitle = String(flowRecord?.title || '新 ChatFlow').trim() || '新 ChatFlow';
+    const mobilePrompt = uiSurface === 'chatflow-mobile'
+        ? '\n4. 当前界面是移动端 ChatFlow 浮窗，请优先给出简短、直接、便于继续操作画布的回答。'
+        : '';
+    const canvasModeHint = canvasApplyMode === 'direct'
+        ? '当前用户偏好是直接应用画布修改。'
+        : '当前用户偏好是审核后应用画布修改。';
+    const serializedContext = normalizedCanvasContext
+        ? JSON.stringify(normalizedCanvasContext)
+        : JSON.stringify({
+            nodes: flowRecord.canvas_state?.nodes || [],
+            edges: flowRecord.canvas_state?.edges || [],
+            viewport: flowRecord.canvas_state?.viewport || FLOW_DEFAULT_CANVAS_STATE.viewport,
+            selectedNodeIds: [],
+            flowTitle
+        });
+
+    return [
+        `当前处于 ChatFlow 专属会话，Flow 标题为「${flowTitle}」。`,
+        '你可以结合当前画布上下文回答，但不要把画布上下文原样复述给用户。',
+        '如果你认为应该修改画布，请在正常回答之外，追加一个隐藏结构化区块，格式必须严格为：[CANVAS_OPS]{...}[/CANVAS_OPS]。',
+        '可用操作仅限：add_node、update_node、delete_node、add_edge、update_edge、delete_edge、auto_layout。',
+        '不要输出自由手绘、整张清空或图片节点相关操作。',
+        canvasModeHint,
+        '标题仍需在回复末尾使用 [TITLE]标题[/TITLE] 生成，标题简短即可。',
+        mobilePrompt,
+        `当前画布上下文(JSON): ${serializedContext}`
+    ].filter(Boolean).join('\n');
+}
 
 // 获取用户的 Flow 列表
-app.get('/api/flows', authenticateToken, (req, res) => {
-    db.all(
-        `SELECT id, title, created_at, updated_at FROM flows WHERE user_id = ? ORDER BY updated_at DESC`,
-        [req.user.userId],
-        (err, rows) => {
-            if (err) {
-                console.error(' 获取Flow列表失败:', err);
-                return res.status(500).json({ error: err.message });
+app.get('/api/flows', authenticateToken, async (req, res) => {
+    try {
+        await ensureChatFlowSchemaColumns();
+        db.all(
+            `SELECT f.id, f.title, f.session_id, f.created_at, f.updated_at,
+                    (SELECT content FROM messages WHERE session_id = f.session_id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message
+             FROM flows f
+             WHERE f.user_id = ?
+             ORDER BY f.updated_at DESC`,
+            [req.user.userId],
+            (err, rows) => {
+                if (err) {
+                    console.error(' 获取Flow列表失败:', err);
+                    return res.status(500).json({ error: err.message });
+                }
+                res.json(rows);
             }
-            res.json(rows);
-        }
-    );
+        );
+    } catch (error) {
+        console.error(' 确保Flow表结构失败:', error);
+        res.status(500).json({ error: '数据库结构初始化失败' });
+    }
 });
 
 // 创建新 Flow
-app.post('/api/flows', authenticateToken, (req, res) => {
-    const { title = '新思维流' } = req.body;
+app.post('/api/flows', authenticateToken, async (req, res) => {
+    const { title = '新 ChatFlow' } = req.body;
     const id = `flow-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
-    db.run(
-        `INSERT INTO flows (id, user_id, title) VALUES (?, ?, ?)`,
-        [id, req.user.userId, title],
-        function (err) {
-            if (err) {
-                console.error(' 创建Flow失败:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            console.log(' 创建思维流成功:', id);
-            res.json({ id, title, created_at: new Date().toISOString() });
+    try {
+        await ensureChatFlowSchemaColumns();
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        const sessionId = await createSessionRecord({
+            userId: req.user.userId,
+            title,
+            model: 'auto',
+            sessionKind: 'flow'
+        });
+        await dbRunAsync(
+            `INSERT INTO flows (id, user_id, title, session_id) VALUES (?, ?, ?, ?)`,
+            [id, req.user.userId, title, sessionId]
+        );
+        await dbRunAsync('COMMIT');
+
+        console.log(' 创建ChatFlow成功:', id);
+        res.json({
+            id,
+            title,
+            session_id: sessionId,
+            created_at: new Date().toISOString()
+        });
+    } catch (error) {
+        try {
+            await dbRunAsync('ROLLBACK');
+        } catch (rollbackError) {
+            console.warn(' 回滚创建Flow事务失败:', rollbackError.message);
         }
-    );
+        console.error(' 创建Flow失败:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // 获取单个 Flow 详情
-app.get('/api/flows/:id', authenticateToken, (req, res) => {
-    db.get(
-        `SELECT * FROM flows WHERE id = ? AND user_id = ?`,
-        [req.params.id, req.user.userId],
-        (err, row) => {
-            if (err) {
-                console.error(' 获取Flow详情失败:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            if (!row) {
-                return res.status(404).json({ error: 'Flow not found' });
-            }
-            // 解析JSON字段
-            res.json({
-                ...row,
-                chat_history: JSON.parse(row.chat_history || '[]'),
-                canvas_state: JSON.parse(row.canvas_state || '{"nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}')
-            });
+app.get('/api/flows/:id', authenticateToken, async (req, res) => {
+    try {
+        await ensureChatFlowSchemaColumns();
+        const flow = await ensureFlowRecord(req.params.id, req.user.userId);
+        if (!flow) {
+            return res.status(404).json({ error: 'Flow not found' });
         }
-    );
+
+        res.json({
+            ...flow,
+            session_id: flow.session_id || null
+        });
+    } catch (error) {
+        console.error(' 获取Flow详情失败:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // 更新 Flow
-app.put('/api/flows/:id', authenticateToken, (req, res) => {
-    const { title, chat_history, canvas_state } = req.body;
-    const updates = [];
-    const params = [];
+app.put('/api/flows/:id', authenticateToken, async (req, res) => {
+    const { title, chat_history, canvas_state: canvasStateInput } = req.body;
 
-    if (title !== undefined) {
-        updates.push('title = ?');
-        params.push(title);
-    }
-    if (chat_history !== undefined) {
-        updates.push('chat_history = ?');
-        params.push(JSON.stringify(chat_history));
-    }
-    if (canvas_state !== undefined) {
-        updates.push('canvas_state = ?');
-        params.push(JSON.stringify(canvas_state));
-    }
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-
-    params.push(req.params.id, req.user.userId);
-
-    db.run(
-        `UPDATE flows SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
-        params,
-        function (err) {
-            if (err) {
-                console.error(' 更新Flow失败:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            if (this.changes === 0) {
-                return res.status(404).json({ error: 'Flow not found' });
-            }
-            console.log(' 更新思维流成功:', req.params.id);
-            res.json({ success: true });
+    try {
+        await ensureChatFlowSchemaColumns();
+        const currentFlow = await dbGetAsync(
+            'SELECT id, user_id, session_id FROM flows WHERE id = ? AND user_id = ?',
+            [req.params.id, req.user.userId]
+        );
+        if (!currentFlow) {
+            return res.status(404).json({ error: 'Flow not found' });
         }
-    );
+
+        const updates = [];
+        const params = [];
+
+        if (title !== undefined) {
+            updates.push('title = ?');
+            params.push(String(title || '').trim() || '新 ChatFlow');
+        }
+
+        if (canvasStateInput !== undefined) {
+            updates.push('canvas_state = ?');
+            params.push(JSON.stringify(normalizeFlowCanvasState(canvasStateInput)));
+        }
+
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(req.params.id, req.user.userId);
+
+        await dbRunAsync(
+            `UPDATE flows SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
+            params
+        );
+
+        if (title !== undefined && currentFlow.session_id) {
+            await dbRunAsync(
+                'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                [String(title || '').trim() || '新 ChatFlow', currentFlow.session_id, req.user.userId]
+            );
+        }
+
+        if (chat_history !== undefined) {
+            console.warn(` Flow ${req.params.id} 收到废弃字段 chat_history，已忽略`);
+        }
+
+        console.log(' 更新ChatFlow成功:', req.params.id);
+        res.json({ success: true });
+    } catch (error) {
+        console.error(' 更新Flow失败:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // 删除 Flow
-app.delete('/api/flows/:id', authenticateToken, (req, res) => {
-    db.run(
-        `DELETE FROM flows WHERE id = ? AND user_id = ?`,
-        [req.params.id, req.user.userId],
-        function (err) {
-            if (err) {
-                console.error(' 删除Flow失败:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            if (this.changes === 0) {
-                return res.status(404).json({ error: 'Flow not found' });
-            }
-            console.log(' 删除思维流成功:', req.params.id);
-            res.json({ success: true });
+app.delete('/api/flows/:id', authenticateToken, async (req, res) => {
+    try {
+        await ensureChatFlowSchemaColumns();
+        const flow = await dbGetAsync(
+            'SELECT id, session_id FROM flows WHERE id = ? AND user_id = ?',
+            [req.params.id, req.user.userId]
+        );
+        if (!flow) {
+            return res.status(404).json({ error: 'Flow not found' });
         }
-    );
+
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        await dbRunAsync(
+            'DELETE FROM flows WHERE id = ? AND user_id = ?',
+            [req.params.id, req.user.userId]
+        );
+        if (flow.session_id) {
+            await dbRunAsync(
+                'DELETE FROM sessions WHERE id = ? AND user_id = ? AND COALESCE(session_kind, ?) = ?',
+                [flow.session_id, req.user.userId, 'flow', 'flow']
+            );
+        }
+        await dbRunAsync('COMMIT');
+
+        console.log(' 删除ChatFlow成功:', req.params.id);
+        res.json({ success: true });
+    } catch (error) {
+        try {
+            await dbRunAsync('ROLLBACK');
+        } catch (rollbackError) {
+            console.warn(' 回滚删除Flow事务失败:', rollbackError.message);
+        }
+        console.error(' 删除Flow失败:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // ==================== 消息管理API ====================
@@ -4152,18 +5900,43 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
 
 // ==================== AI聊天路由 ====================
 
-app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => {
+app.post('/api/upload', authenticateToken, (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next), (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
 
+    const forwardedPrefix = String(req.headers['x-forwarded-prefix'] || '').replace(/\/+$/, '');
     console.log(' 文件上传成功:', req.file.filename);
     res.json({
         success: true,
         file: {
             filename: req.file.filename,
             originalName: req.file.originalname,
-            filePath: `/uploads/${req.file.filename}`,
+            filePath: `${forwardedPrefix}/api/uploads/${req.file.filename}`,
             fileType: req.file.mimetype,
             size: req.file.size
+        }
+    });
+});
+
+app.get('/api/uploads/:filename', authenticateToken, (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    if (!filename || filename !== req.params.filename || filename.includes('..')) {
+        return res.status(400).json({ error: '无效文件名' });
+    }
+
+    const ext = path.extname(filename).toLowerCase().slice(1);
+    if (!ATTACHMENT_EXTENSIONS.has(ext) || BLOCKED_UPLOAD_EXTENSIONS.has(ext)) {
+        return res.status(404).json({ error: '文件不存在' });
+    }
+
+    const filePath = path.join(__dirname, 'uploads', filename);
+    if (!filePath.startsWith(path.join(__dirname, 'uploads'))) {
+        return res.status(400).json({ error: '无效文件名' });
+    }
+
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.download(filePath, filename, (err) => {
+        if (err && !res.headersSent) {
+            res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: '文件下载失败' });
         }
     });
 });
@@ -4176,9 +5949,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
     try {
         const {
-            sessionId,
+            sessionId: requestedSessionId,
+            flowId,
             messages,
-            model = 'auto',  // 默认为auto模式
+            model: requestedModel = 'auto',  // 默认为auto模式
             thinkingMode: thinkingModeInput = false,
             thinkingBudget = 1024,
             internetMode = false,
@@ -4193,13 +5967,24 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             frequency_penalty = 0,
             presence_penalty = 0,
             systemPrompt,
+            promptTimeContext = null,
             domainMode = '',
-            uiLanguage = ''
+            uiLanguage = '',
+            canvasContext = null,
+            canvasApplyMode = 'review',
+            uiSurface = ''
         } = req.body;
+        let sessionId = requestedSessionId;
+        let flowRecord = null;
         let thinkingMode = !!thinkingModeInput;
+        const model = normalizeIncomingModelId(requestedModel);
         const normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
+        const normalizedPromptTimeContext = normalizePromptTimeContext(promptTimeContext);
 
         console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
+        if (requestedModel !== model) {
+            console.log(` 已将旧模型ID ${requestedModel} 归一化为 ${model}`);
+        }
 
         //  调试：打印收到的消息结构
         console.log(` 收到 ${messages.length} 条消息:`);
@@ -4215,6 +6000,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             return res.status(400).json({ error: '消息不能为空' });
         }
 
+        if (flowId) {
+            flowRecord = await ensureFlowRecord(flowId, req.user.userId);
+            if (!flowRecord) {
+                return res.status(404).json({ error: 'Flow not found' });
+            }
+            sessionId = flowRecord.session_id || null;
+        }
+
         // 验证会话所有权
         if (sessionId) {
             const session = await new Promise((resolve, reject) => {
@@ -4226,6 +6019,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             if (!session || session.user_id !== req.user.userId) {
                 return res.status(403).json({ error: '无权访问此会话' });
+            }
+        }
+
+        if (
+            model === 'claude-haiku' ||
+            model === 'anthropic/claude-sonnet-4.6' ||
+            model === 'anthropic/claude-3-haiku'
+        ) {
+            const membershipSnapshot = await getUserMembershipSnapshot(req.user.userId);
+            const membershipTier = String(membershipSnapshot?.membership || 'free').toLowerCase();
+            if (membershipTier !== 'max') {
+                return res.status(403).json({ error: '该模型仅 MAX 会员可用' });
             }
         }
 
@@ -4259,6 +6064,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const userContent = typeof lastUserMsg.content === 'string'
             ? lastUserMsg.content
             : JSON.stringify(lastUserMsg.content);
+        const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
 
         console.log(` 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
 
@@ -4313,8 +6119,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 // 保存预设答案
                 await new Promise((resolve) => {
                     db.run(
-                        'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        [sessionId, 'assistant', presetAnswer, 'preset', 0, 0, 0],
+                        'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode, process_trace) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [sessionId, 'assistant', presetAnswer, 'preset', 0, 0, 0, promptContextTrace ? JSON.stringify(promptContextTrace) : null],
                         (err) => {
                             if (err) console.error(' 保存预设答案失败:', err);
                             else console.log(` 预设答案已保存 (${presetAnswer.length}字符)`);
@@ -4373,14 +6179,37 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             })}\n\n`);
         }
 
+        let userMembershipTier = 'free';
+        try {
+            const membershipStatus = await getUserMembershipStatus(req.user.userId);
+            userMembershipTier = String(membershipStatus?.membership || 'free');
+        } catch (tierErr) {
+            console.warn(` 读取会员等级失败，按free处理: ${tierErr.message}`);
+            userMembershipTier = 'free';
+        }
+        const normalizedMembershipTier = String(userMembershipTier || 'free').toLowerCase();
         const normalizedAgentMode = normalizeAgentMode(agentMode);
         let effectiveAgentMode = normalizedAgentMode;
         const agentHardDisabled = process.env.AGENT_HARD_DISABLE === '1';
         let pointsAlreadyDeducted = false;
         let forceFreeModelByQuota = false;
+        let gpt55QuotaConsumed = false;
+
+        if (normalizedAgentMode === 'on' && normalizedMembershipTier !== 'max') {
+            effectiveAgentMode = 'off';
+            emitAgentEvent(res, {
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: 'master',
+                status: 'failed',
+                detail: '4倍速深度研究仅 MAX 会员可用，已自动回退单模型'
+            });
+            console.warn(` 用户 ${req.user.userId} 非MAX会员，跳过Agent模式`);
+        }
 
         // Agent模式默认走高质量模型，先做点数检查，避免后续失败后再回退
-        if (normalizedAgentMode === 'on' && !agentHardDisabled) {
+        if (normalizedAgentMode === 'on' && effectiveAgentMode === 'on' && !agentHardDisabled) {
             try {
                 const agentPoints = await checkAndDeductPoints(req.user.userId, 'kimi-k2.5');
                 if (agentPoints?.useFreeModel) {
@@ -4580,7 +6409,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     let contentToSave = String(agentResult?.content || '').trim();
                     contentToSave = contentToSave
                         .replace(/<\|[^|]+\|>/g, '')
-                        .replace(/functions\.web_search:\d+/g, '')
+                        .replace(/functions\.\w+:\d+/g, '')
                         .trim();
                     const reasoningToSave = String(agentResult?.reasoningContent || '').trim();
                     const searchSources = dedupeSources(Array.isArray(agentResult?.sources) ? agentResult.sources : []);
@@ -4599,15 +6428,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         retry: agentTraceState.retry,
                         metrics: agentTraceState.metrics,
                         draftDeltas: agentTraceState.draftDeltas || [],
-                        savedAt: agentTraceState.savedAt
+                        savedAt: agentTraceState.savedAt,
+                        prompt_context: promptContextTrace?.prompt_context || null
                     });
-
-                    let extractedTitle = null;
-                    const titleMatch = contentToSave.match(/\[TITLE\](.*?)\[\/TITLE\]/);
-                    if (titleMatch && titleMatch[1]) {
-                        extractedTitle = titleMatch[1].trim();
-                        contentToSave = contentToSave.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
-                    }
+                    const structuredAgentOutput = parseStructuredAssistantOutput(contentToSave);
+                    contentToSave = structuredAgentOutput.visibleContent || contentToSave;
+                    const extractedTitle = structuredAgentOutput.extractedTitle || null;
 
                     if (sessionId) {
                         console.log('\n 保存真并行 Agent 结果到数据库');
@@ -4667,15 +6493,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         });
 
                         if (extractedTitle) {
-                            db.run(
-                                'UPDATE sessions SET title = ? WHERE id = ?',
-                                [extractedTitle, sessionId],
-                                (updateErr) => {
-                                    if (!updateErr) {
-                                        res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
+                            if (flowId) {
+                                await syncFlowTitle(flowId, req.user.userId, extractedTitle);
+                                res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
+                            } else {
+                                db.run(
+                                    'UPDATE sessions SET title = ? WHERE id = ?',
+                                    [extractedTitle, sessionId],
+                                    (updateErr) => {
+                                        if (!updateErr) {
+                                            res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
+                                        }
                                     }
-                                }
-                            );
+                                );
+                            }
                         }
 
                         await new Promise((resolve) => {
@@ -4685,6 +6516,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 () => resolve()
                             );
                         });
+                    }
+
+                    if (flowId && structuredAgentOutput.canvasPatchRaw) {
+                        res.write(`data: ${JSON.stringify({
+                            type: 'canvas_patch',
+                            patch: structuredAgentOutput.canvasPatch,
+                            raw: structuredAgentOutput.canvasPatchRaw,
+                            valid: !structuredAgentOutput.canvasPatchParseError,
+                            error: structuredAgentOutput.canvasPatchParseError || null
+                        })}\n\n`);
                     }
 
                     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
@@ -4734,25 +6575,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             };
         }
 
-        let userMembershipTier = 'free';
-        try {
-            const userTierRow = await new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT COALESCE(membership, ?) AS membership FROM users WHERE id = ?',
-                    ['free', req.user.userId],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row || null);
-                    }
-                );
-            });
-            userMembershipTier = String(userTierRow?.membership || 'free').toUpperCase();
-        } catch (tierErr) {
-            console.warn(` 读取会员等级失败，按free处理: ${tierErr.message}`);
-            userMembershipTier = 'FREE';
-        }
-        const normalizedMembershipTier = String(userMembershipTier || 'FREE').toLowerCase();
-
         // 智能路由：根据最后一条用户消息自动选择模型
         let finalModel = model;  // 最终选中的模型类型
         let routing = null;      // 对应的路由配置
@@ -4771,20 +6593,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`   类型: ${getMultimodalTypeDescription(currentMessageMultimodal.types)}`);
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
-            // 定义原生支持多模态的模型列表（Gemini / Qwen / Kimi K2.5）
-            const NATIVE_MULTIMODAL_MODELS = ['gemini-3-flash', 'qwen3-vl', 'kimi-k2.5', 'kimi-k2'];
+            const multimodalTypesText = getMultimodalTypeDescription(currentMessageMultimodal.types);
+            const defaultMultimodalModel = model === 'auto' ? 'kimi-k2.5' : model;
+            const requestedRouting = MODEL_ROUTING[defaultMultimodalModel];
+            const supportsNativeMultimodal = model === 'auto' || !!requestedRouting?.multimodal;
 
-            // 检查用户选择的模型是否原生支持多模态
-            if (NATIVE_MULTIMODAL_MODELS.includes(model)) {
-                // Gemini 3 Flash / Qwen3-Omni 等原生支持多模态，直接使用
-                finalModel = model;
-                autoRoutingReason = `${model} 原生支持多模态，直接处理${getMultimodalTypeDescription(currentMessageMultimodal.types)}`;
-                console.log(`    模型 ${model} 原生支持多模态，无需切换`);
+            if (supportsNativeMultimodal) {
+                finalModel = defaultMultimodalModel;
+                autoRoutingReason = model === 'auto'
+                    ? `${userMembershipTier} 用户智能模型默认使用 Kimi K2.5 处理${multimodalTypesText}`
+                    : `${defaultMultimodalModel} 原生支持多模态，直接处理${multimodalTypesText}`;
+                console.log(`    模型 ${finalModel} 原生支持多模态，无需切换`);
             } else {
-                // 非多模态模型自动切换到视觉模型
-                finalModel = 'qwen3-vl';
-                autoRoutingReason = `${model || 'auto'} 不支持多模态，自动切换到Qwen3-Omni视觉语言模型处理${getMultimodalTypeDescription(currentMessageMultimodal.types)}`;
-                console.log(`    ${model || 'auto'} 不支持多模态，切换到 qwen3-vl (Qwen/Qwen3-Omni-30B-A3B-Instruct)`);
+                finalModel = 'kimi-k2.5';
+                autoRoutingReason = `${model || 'auto'} 不支持多模态，自动切换到 Kimi K2.5 处理${multimodalTypesText}`;
+                console.log(`    ${model || 'auto'} 不支持多模态，切换到 kimi-k2.5 (Pro/moonshotai/Kimi-K2.5)`);
             }
         } else if (model === 'auto') {
             // 智能模型策略：free/pro/max 全部默认 K2.5
@@ -4803,11 +6626,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const VALID_MODELS = [
             'deepseek-v3',
             'deepseek-v3.2-speciale',
-            'qwen3-vl',
             'kimi-k2.5',
             'kimi-k2',
             'qwen2.5-7b',
             'qwen3-8b',
+            'chatgpt-gpt-oss-120b',
+            'grok-4.2',
+            'gpt-5.5',
+            'claude-haiku',
+            'anthropic/claude-sonnet-4.6',
+            'anthropic/claude-3-haiku',
+            'gemma',
             'gemini-3-flash',
             'poe-claude',
             'poe-gpt',
@@ -4818,9 +6647,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // 注意：多模态检测已在上面执行，这里不再重复
 
         if (!VALID_MODELS.includes(finalModel)) {
-            console.warn(` 无效模型 ${finalModel},回退到 qwen2.5-7b`);
-            finalModel = 'qwen2.5-7b';
-            autoRoutingReason = '无效模型,自动回退到Qwen2.5-7B(免费)';
+            const fallbackModel = resolveFreeFallbackModelId(finalModel);
+            console.warn(` 无效模型 ${finalModel},回退到 ${fallbackModel}`);
+            finalModel = fallbackModel;
+            autoRoutingReason = `无效模型,按备用链自动回退到 ${fallbackModel}`;
         }
 
         // Poe 路由策略：先做 free 配额与 thinking 强制，再做模型可用性校验
@@ -4838,8 +6668,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     })}\n\n`);
 
                     if (!poeQuotaResult.allowed) {
-                        finalModel = 'qwen2.5-7b';
-                        autoRoutingReason = 'Poe free 配额已用尽，自动切换到 Qwen2.5-7B(免费)';
+                        const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                        finalModel = fallbackModel;
+                        autoRoutingReason = `Poe free 配额已用尽，按备用链自动切换到 ${fallbackModel}`;
                         console.warn(` poe_fallback quota_exceeded -> ${finalModel}`);
                     } else if (thinkingMode) {
                         thinkingMode = false;
@@ -4847,47 +6678,88 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     }
                 } catch (poeQuotaError) {
                     console.warn(` Poe配额检查失败，回退免费模型: ${poeQuotaError.message}`);
-                    finalModel = 'qwen2.5-7b';
-                    autoRoutingReason = 'Poe配额检查失败，自动回退到Qwen2.5-7B(免费)';
+                    const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                    finalModel = fallbackModel;
+                    autoRoutingReason = `Poe配额检查失败，按备用链自动回退到 ${fallbackModel}`;
                 }
             }
 
             if (isPoeModelAlias(finalModel)) {
                 const poeResolution = resolvePoeModelAlias(finalModel);
                 if (!poeResolution.available) {
-                    console.warn(` poe_fallback unavailable alias=${finalModel} -> kimi-k2.5`);
-                    finalModel = 'kimi-k2.5';
-                    autoRoutingReason = `Poe模型暂不可用，已回退到 Kimi K2.5 (${poeResolution.alias})`;
+                    const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                    console.warn(` poe_fallback unavailable alias=${finalModel} -> ${fallbackModel}`);
+                    finalModel = fallbackModel;
+                    autoRoutingReason = `Poe模型暂不可用，按备用链回退到 ${fallbackModel} (${poeResolution.alias})`;
                 } else {
                     console.log(` poe_model_sync route alias=${finalModel} model=${poeResolution.model} source=${poeResolution.source}`);
                 }
             }
         }
 
-        if (forceFreeModelByQuota && finalModel !== 'qwen2.5-7b') {
-            finalModel = 'qwen2.5-7b';
+        if (finalModel === 'gpt-5.5' && normalizedMembershipTier === 'free') {
+            try {
+                const gpt55QuotaResult = await checkAndConsumeGpt55Quota(req.user.userId, 'free');
+                res.write(`data: ${JSON.stringify({
+                    type: 'quota_info',
+                    provider: 'newapi_gpt55',
+                    gpt55Remaining: gpt55QuotaResult.remaining,
+                    gpt55Used: gpt55QuotaResult.used,
+                    gpt55Limit: gpt55QuotaResult.limit,
+                    resetAt: gpt55QuotaResult.resetAt
+                })}\n\n`);
+
+                if (!gpt55QuotaResult.allowed) {
+                    const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                    res.write(`data: ${JSON.stringify({
+                        type: 'model_info',
+                        model: fallbackModel,
+                        actualModel: MODEL_ROUTING[fallbackModel]?.model || fallbackModel,
+                        reason: `GPT-5.5 限免次数已用完，按备用链回退到 ${fallbackModel}`,
+                        provider: MODEL_ROUTING[fallbackModel]?.provider || 'unknown'
+                    })}\n\n`);
+                    finalModel = fallbackModel;
+                    autoRoutingReason = `GPT-5.5 限免次数已用完，free 用户每日 ${gpt55QuotaResult.limit} 次，按备用链回退到 ${fallbackModel}`;
+                    console.warn(` gpt55_quota_fallback quota_exceeded -> ${finalModel}`);
+                } else {
+                    gpt55QuotaConsumed = true;
+                    console.log(` gpt55_quota_consume user=${req.user.userId} used=${gpt55QuotaResult.used}/${gpt55QuotaResult.limit}`);
+                }
+            } catch (gpt55QuotaError) {
+                console.warn(` GPT-5.5配额检查失败: ${gpt55QuotaError.message}`);
+                const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                finalModel = fallbackModel;
+                autoRoutingReason = `GPT-5.5限免配额检查失败，按备用链回退到 ${fallbackModel}`;
+            }
+        }
+
+        if (forceFreeModelByQuota && !isFreeModelIdentifier(finalModel)) {
+            const fallbackModel = resolveFreeFallbackModelId(finalModel);
+            finalModel = fallbackModel;
             autoRoutingReason = autoRoutingReason
-                ? `${autoRoutingReason}; 点数不足自动切换到Qwen2.5-7B(免费)`
-                : '点数不足自动切换到Qwen2.5-7B(免费)';
+                ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}`
+                : `点数不足按备用链自动切换到 ${fallbackModel}`;
             console.log(` 点数不足强制免费模型: user=${req.user.userId}`);
         } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted) {
             try {
                 const pointsResult = await checkAndDeductPoints(req.user.userId, finalModel);
                 if (pointsResult?.useFreeModel && finalModel !== 'qwen2.5-7b') {
-                    finalModel = 'qwen2.5-7b';
+                    const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                    finalModel = fallbackModel;
                     autoRoutingReason = autoRoutingReason
-                        ? `${autoRoutingReason}; 点数不足自动切换到Qwen2.5-7B(免费)`
-                        : '点数不足自动切换到Qwen2.5-7B(免费)';
+                        ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}`
+                        : `点数不足按备用链自动切换到 ${fallbackModel}`;
                     console.log(` 点数不足自动切换免费模型: user=${req.user.userId}`);
                 } else if (Number(pointsResult?.pointsDeducted || 0) > 0) {
                     pointsAlreadyDeducted = true;
                     console.log(` 已扣点: user=${req.user.userId}, remaining=${pointsResult.remainingPoints}`);
                 }
             } catch (pointsErr) {
-                finalModel = 'qwen2.5-7b';
+                const fallbackModel = resolveFreeFallbackModelId(finalModel);
+                finalModel = fallbackModel;
                 autoRoutingReason = autoRoutingReason
-                    ? `${autoRoutingReason}; 点数检查失败，回退到Qwen2.5-7B(免费)`
-                    : '点数检查失败，回退到Qwen2.5-7B(免费)';
+                    ? `${autoRoutingReason}; 点数检查失败，按备用链回退到 ${fallbackModel}`
+                    : `点数检查失败，按备用链回退到 ${fallbackModel}`;
                 console.error(` 点数检查失败，回退免费模型: ${pointsErr.message}`);
             }
         }
@@ -4918,16 +6790,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
-        // DeepSeek思考模式自动切换
-        if (finalModel === 'deepseek-v3' && thinkingMode) {
-            actualModel = routing.thinkingModel || 'deepseek-reasoner';
-            console.log(` DeepSeek思考模式: 切换到 ${actualModel}`);
+        // DeepSeek V4 使用同一模型，通过 thinking 参数切换思考/非思考模式
+        if (routing.provider === 'deepseek' && thinkingMode && routing.thinkingModel) {
+            actualModel = routing.thinkingModel;
+            console.log(` DeepSeek V4 思考模式: 使用 ${actualModel}`);
         }
 
-        // DeepSeek-V3.2-Speciale 强制使用思考模式
+        // DeepSeek-V3.2-Speciale 已隐藏；兼容旧会话并映射到 V4 Pro 思考模式
         if (finalModel === 'deepseek-v3.2-speciale') {
-            actualModel = 'deepseek-reasoner';  // 特殊端点使用 reasoner
-            console.log(` DeepSeek-V3.2-Speciale: 强制使用思考模式 (${actualModel})`);
+            actualModel = routing.thinkingModel || 'deepseek-v4-pro';
+            thinkingMode = true;
+            console.log(` DeepSeek-V3.2-Speciale: 兼容映射到 ${actualModel}`);
         }
 
         // Kimi K2.5 思考模式自动切换
@@ -4938,6 +6811,22 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         //  关键修复：验证提供商配置存在（防止404错误）
         let providerConfig = API_PROVIDERS[routing.provider];
+        if (!providerConfig || !providerConfig.apiKey) {
+            const fallbackModel = findAvailableRuntimeFallbackModelId(finalModel);
+            if (fallbackModel) {
+                const missingReason = !providerConfig
+                    ? `提供商配置缺失: ${routing.provider}`
+                    : `缺少环境变量: ${providerConfig.envKey || 'API_KEY'}`;
+                console.warn(` ${missingReason}，按备用链回退到 ${fallbackModel}`);
+                finalModel = fallbackModel;
+                routing = MODEL_ROUTING[finalModel];
+                actualModel = routing.model;
+                providerConfig = API_PROVIDERS[routing.provider];
+                autoRoutingReason = autoRoutingReason
+                    ? `${autoRoutingReason}; ${missingReason}，按备用链回退到 ${fallbackModel}`
+                    : `${missingReason}，按备用链回退到 ${fallbackModel}`;
+            }
+        }
         if (!providerConfig) {
             console.error(` API提供商配置未找到: ${routing.provider}`);
             res.write(`data: ${JSON.stringify({ type: 'error', error: `不支持的提供商: ${routing.provider}` })}\n\n`);
@@ -4972,7 +6861,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let searchSources = [];
         let useStreamingTools = false;  // 标记是否启用流式工具调用
 
-        if (internetMode && routing.provider !== 'aliyun') {
+        if (internetMode && routing.provider !== 'aliyun' && routing.supportsWebSearch !== false) {
             console.log(` 联网模式: 启用流式工具调用 (Streaming Function Calling)`);
             useStreamingTools = true;
             // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
@@ -5016,6 +6905,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 已注入规则提示到系统提示词: ${resolvedPromptRule?.ruleId || 'unknown'}`);
         }
 
+        if (flowRecord) {
+            const flowCanvasInstruction = buildFlowCanvasSystemInstruction({
+                flowRecord,
+                canvasContext,
+                uiSurface,
+                canvasApplyMode
+            });
+            if (flowCanvasInstruction) {
+                systemContent = systemContent
+                    ? `${systemContent}\n\n${flowCanvasInstruction}`
+                    : flowCanvasInstruction;
+                console.log(` 已注入 ChatFlow 专属上下文: flow=${flowRecord.id}, session=${flowRecord.session_id}`);
+            }
+        }
+
         if (systemContent) {
             finalMessages.unshift({
                 role: 'system',
@@ -5032,6 +6936,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             max_tokens: parseInt(max_tokens, 10) || 2000,
             stream: true  // Qwen3-Omni-Flash要求必须开启流式
         };
+        if (routing.provider === 'openrouter' && Array.isArray(routing.fallbackModels) && routing.fallbackModels.length > 1) {
+            requestBody.models = routing.fallbackModels;
+            console.log(` OpenRouter fallback models: ${routing.fallbackModels.join(' -> ')}`);
+        }
 
         // Kimi K2.5 参数规则：
         // 1) 默认思考开启；要快速响应需显式关闭思考
@@ -5071,13 +6979,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             // 支持“先说一部分，再按需调用工具，再继续说”
             requestBody.tool_choice = "auto";
             console.log(` 已为流式调用添加工具定义: ${TOOL_DEFINITIONS.length}个工具`);
-        }
-
-        // Qwen3-VL 视觉语言模型配置 (SiliconFlow)
-        if (finalModel === 'qwen3-vl') {
-            // Qwen3-VL-235B-A22B-Thinking 内置思考能力，需要更大的token限制
-            requestBody.max_tokens = Math.max(parseInt(max_tokens, 10) || 4096, 4096);
-            console.log(` Qwen3-VL 视觉语言模型配置已应用 (max_tokens: ${requestBody.max_tokens})`);
         }
 
         //  防御性检查：确保数值解析成功
@@ -5124,18 +7025,37 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         // DeepSeek参数
         if (routing.provider === 'deepseek') {
-            //  确保frequency_penalty和presence_penalty是有效的数值
-            const freqPenalty = parseFloat(frequency_penalty);
-            const presPenalty = parseFloat(presence_penalty);
+            applyDeepSeekV4ModeParams(requestBody, !!thinkingMode, normalizedReasoningProfile);
 
-            requestBody.frequency_penalty = (isNaN(freqPenalty) ? 0 : Math.max(0, Math.min(freqPenalty, 2)));
-            requestBody.presence_penalty = (isNaN(presPenalty) ? 0 : Math.max(0, Math.min(presPenalty, 2)));
+            if (!thinkingMode) {
+                //  确保frequency_penalty和presence_penalty是有效的数值
+                const freqPenalty = parseFloat(frequency_penalty);
+                const presPenalty = parseFloat(presence_penalty);
 
-            console.log(` DeepSeek参数: frequency_penalty=${requestBody.frequency_penalty}, presence_penalty=${requestBody.presence_penalty}`);
+                requestBody.frequency_penalty = (isNaN(freqPenalty) ? 0 : Math.max(0, Math.min(freqPenalty, 2)));
+                requestBody.presence_penalty = (isNaN(presPenalty) ? 0 : Math.max(0, Math.min(presPenalty, 2)));
+
+                console.log(` DeepSeek V4非思考模式: thinking=disabled, frequency_penalty=${requestBody.frequency_penalty}, presence_penalty=${requestBody.presence_penalty}`);
+            } else {
+                console.log(` DeepSeek V4思考模式: thinking=enabled, reasoning_effort=${requestBody.reasoning_effort}`);
+            }
         }
 
-        console.log(`\n 最终请求体 (前1000字符):`);
-        console.log(JSON.stringify(requestBody, null, 2).substring(0, 1000));
+        if (routing.provider === 'newapi') {
+            applyNewApiModelParams(requestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
+            if (requestBody.reasoning_effort) {
+                console.log(` NewAPI ${actualModel} reasoning_effort=${requestBody.reasoning_effort}`);
+            }
+        }
+
+        if (routing.provider === 'openrouter') {
+            applyOpenRouterReasoningParams(requestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
+            if (requestBody.reasoning) {
+                console.log(` OpenRouter ${actualModel} reasoning=${JSON.stringify(requestBody.reasoning)}`);
+            }
+        }
+
+        console.log(` 请求体摘要: messages=${requestBody.messages?.length || 0}, tools=${requestBody.tools?.length || 0}, stream=${!!requestBody.stream}`);
 
         //  加强过滤：将autoRoutingReason转换为可以放入HTTP头的格式（移除所有中文和特殊字符）
         const reasonForHeader = (autoRoutingReason || '')
@@ -5173,7 +7093,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         //  关键修复：调用API
         console.log(` 正在调用: ${providerConfig.baseURL}`);
-        console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
+        console.log(`   API密钥: 已配置`);
 
         //  修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
         const controller = new AbortController();
@@ -5185,9 +7105,244 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let rawToolContent = '';
         let agentSynthesizerRunning = false;
         let agentResearcherRunning = false;
+        let rawAssistantStructuredBuffer = '';
+        let latestStructuredAssistantOutput = {
+            visibleContent: '',
+            extractedTitle: null,
+            canvasPatch: null,
+            canvasPatchRaw: '',
+            canvasPatchParseError: null
+        };
+
+        const emitStructuredAssistantChunk = (rawChunk = '') => {
+            const normalizedChunk = typeof rawChunk === 'string' ? rawChunk : String(rawChunk || '');
+            if (!normalizedChunk) return '';
+
+            rawAssistantStructuredBuffer += normalizedChunk;
+            latestStructuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer);
+            const nextVisibleContent = latestStructuredAssistantOutput.visibleContent || '';
+            const visibleDelta = nextVisibleContent.startsWith(fullContent)
+                ? nextVisibleContent.slice(fullContent.length)
+                : nextVisibleContent;
+
+            fullContent = nextVisibleContent;
+
+            if (visibleDelta) {
+                res.write(`data: ${JSON.stringify({ type: 'content', content: visibleDelta })}\n\n`);
+            }
+
+            return visibleDelta;
+        };
 
         //  Gemini API 特殊处理
-        const isGeminiAPI = providerConfig.isGemini || routing.isGemini;
+        let isGeminiAPI = providerConfig.isGemini || routing.isGemini;
+
+        const buildRuntimeFallbackRequestBody = (fallbackModelId, fallbackRouting, fallbackActualModel) => {
+            if (fallbackRouting.provider === 'siliconflow') {
+                return buildSiliconflowFreeFallbackRequestBody({
+                    actualModel: fallbackActualModel,
+                    messages: finalMessages,
+                    internetMode,
+                    thinkingMode,
+                    thinkingBudget,
+                    temperature,
+                    top_p,
+                    max_tokens
+                });
+            }
+
+            const body = {
+                model: fallbackActualModel,
+                messages: finalMessages,
+                max_tokens: parseInt(max_tokens, 10) || 2000,
+                stream: true,
+                temperature: parseFloat(temperature) || 0.7,
+                top_p: parseFloat(top_p) || 0.9
+            };
+
+            if (
+                fallbackRouting.provider === 'openrouter' &&
+                Array.isArray(fallbackRouting.fallbackModels) &&
+                fallbackRouting.fallbackModels.length > 1
+            ) {
+                body.models = fallbackRouting.fallbackModels;
+            }
+
+            if (fallbackRouting.provider === 'openrouter') {
+                applyOpenRouterReasoningParams(body, fallbackActualModel, !!thinkingMode, normalizedReasoningProfile);
+            }
+
+            if (internetMode && fallbackRouting.provider !== 'aliyun' && fallbackRouting.supportsWebSearch !== false) {
+                body.tools = TOOL_DEFINITIONS;
+                body.tool_choice = 'auto';
+            }
+
+            return body;
+        };
+
+        const buildFetchPayloadForAttempt = (attemptProviderConfig, attemptRouting, attemptActualModel, attemptRequestBody) => {
+            const attemptIsGeminiAPI = attemptProviderConfig.isGemini || attemptRouting.isGemini;
+            if (!attemptIsGeminiAPI) {
+                return {
+                    isGeminiAPI: false,
+                    apiUrl: attemptProviderConfig.baseURL,
+                    fetchHeaders: {
+                        'Authorization': `Bearer ${attemptProviderConfig.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    fetchBody: attemptRequestBody
+                };
+            }
+
+            const geminiContents = [];
+            for (const msg of finalMessages) {
+                if (msg.role === 'system') continue;
+                const geminiRole = msg.role === 'assistant' ? 'model' : 'user';
+                const parts = [];
+
+                if (Array.isArray(msg.content)) {
+                    for (const item of msg.content) {
+                        if (item.type === 'text') {
+                            parts.push({ text: item.text });
+                        } else if (item.type === 'image_url' && item.image_url?.url) {
+                            const imageUrl = item.image_url.url;
+                            if (imageUrl.startsWith('data:')) {
+                                const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+                                if (matches) {
+                                    parts.push({
+                                        inlineData: {
+                                            mimeType: matches[1],
+                                            data: matches[2]
+                                        }
+                                    });
+                                }
+                            } else {
+                                parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/jpeg' } });
+                            }
+                        }
+                    }
+                } else {
+                    parts.push({ text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) });
+                }
+
+                if (msg.attachments && Array.isArray(msg.attachments)) {
+                    for (const att of msg.attachments) {
+                        if (att.type === 'image' && att.data) {
+                            const imageData = att.data;
+                            if (imageData.startsWith('data:')) {
+                                const matches = imageData.match(/^data:([^;]+);base64,(.+)$/);
+                                if (matches) {
+                                    parts.push({
+                                        inlineData: {
+                                            mimeType: matches[1],
+                                            data: matches[2]
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                geminiContents.push({ role: geminiRole, parts });
+            }
+
+            const fetchBody = {
+                contents: geminiContents,
+                generationConfig: {
+                    temperature: parseFloat(temperature) || 0.7,
+                    topP: parseFloat(top_p) || 0.9,
+                    maxOutputTokens: Math.min(parseInt(max_tokens, 10) || 2000, attemptRouting.maxOutputTokens || 8000)
+                }
+            };
+
+            const systemMsg = finalMessages.find(m => m.role === 'system');
+            if (systemMsg) {
+                fetchBody.systemInstruction = {
+                    parts: [{ text: typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content) }]
+                };
+            }
+
+            return {
+                isGeminiAPI: true,
+                apiUrl: `${attemptProviderConfig.baseURL}/${attemptActualModel}:streamGenerateContent?key=${attemptProviderConfig.apiKey}&alt=sse`,
+                fetchHeaders: {
+                    'Content-Type': 'application/json'
+                },
+                fetchBody
+            };
+        };
+
+        const tryUniversalRuntimeFallback = async ({ failedStatus, failedBody, reason }) => {
+            const candidates = getRuntimeFallbackModelIds(finalModel);
+            for (const fallbackModel of candidates) {
+                const fallbackRouting = MODEL_ROUTING[fallbackModel];
+                const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
+                if (!fallbackRouting || !fallbackProviderConfig?.apiKey) {
+                    const missingEnv = fallbackProviderConfig?.envKey || fallbackRouting?.provider || fallbackModel;
+                    console.warn(` runtime_fallback skip=${fallbackModel} missing=${missingEnv}`);
+                    continue;
+                }
+
+                const fallbackActualModel = fallbackRouting.model;
+                const fallbackUseStreamingTools = !!(internetMode && fallbackRouting.provider !== 'aliyun' && fallbackRouting.supportsWebSearch !== false);
+                const fallbackRequestBody = buildRuntimeFallbackRequestBody(fallbackModel, fallbackRouting, fallbackActualModel);
+                const payload = buildFetchPayloadForAttempt(
+                    fallbackProviderConfig,
+                    fallbackRouting,
+                    fallbackActualModel,
+                    fallbackRequestBody
+                );
+
+                const fallbackController = new AbortController();
+                const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 120000);
+                let fallbackResponse;
+                try {
+                    const safeFallbackUrl = payload.isGeminiAPI
+                        ? payload.apiUrl.replace(/key=[^&]+/, 'key=***')
+                        : payload.apiUrl;
+                    console.warn(` runtime_fallback try=${fallbackModel} provider=${fallbackRouting.provider} url=${safeFallbackUrl}`);
+                    fallbackResponse = await fetch(payload.apiUrl, {
+                        method: 'POST',
+                        headers: payload.fetchHeaders,
+                        body: JSON.stringify(payload.fetchBody),
+                        signal: fallbackController.signal
+                    });
+                } catch (fallbackErr) {
+                    clearTimeout(fallbackTimeoutId);
+                    console.warn(` runtime_fallback network_failed model=${fallbackModel} error=${fallbackErr.message}`);
+                    continue;
+                }
+                clearTimeout(fallbackTimeoutId);
+
+                if (!fallbackResponse.ok) {
+                    const fallbackErrorText = await fallbackResponse.text();
+                    console.warn(` runtime_fallback failed model=${fallbackModel} status=${fallbackResponse.status} body=${fallbackErrorText.substring(0, 220)}`);
+                    continue;
+                }
+
+                routing = fallbackRouting;
+                providerConfig = fallbackProviderConfig;
+                finalModel = fallbackModel;
+                actualModel = fallbackActualModel;
+                requestBody = fallbackRequestBody;
+                useStreamingTools = fallbackUseStreamingTools;
+                isGeminiAPI = payload.isGeminiAPI;
+
+                const fallbackReason = reason || `primary_failed_${failedStatus || 'network'}`;
+                res.write(`data: ${JSON.stringify({
+                    type: 'model_info',
+                    model: finalModel,
+                    actualModel,
+                    reason: `runtime_fallback:${fallbackReason}`,
+                    provider: routing.provider
+                })}\n\n`);
+                console.warn(` runtime_fallback success model=${fallbackModel} actual=${actualModel} from_status=${failedStatus || 'network'} body=${String(failedBody || '').substring(0, 160)}`);
+                return { response: fallbackResponse, errorText: '' };
+            }
+
+            return null;
+        };
 
         try {
             let apiUrl, fetchHeaders, fetchBody;
@@ -5274,7 +7429,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     generationConfig: {
                         temperature: parseFloat(temperature) || 0.7,
                         topP: parseFloat(top_p) || 0.9,
-                        maxOutputTokens: parseInt(max_tokens, 10) || 2000
+                        maxOutputTokens: Math.min(parseInt(max_tokens, 10) || 2000, routing.maxOutputTokens || 8000)
                     }
                 };
 
@@ -5285,7 +7440,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     };
                 }
 
-                console.log(` Gemini API 请求: ${apiUrl}`);
+                const safeGeminiApiUrl = apiUrl.replace(/key=[^&]+/, 'key=***');
+                console.log(` Gemini API 请求: ${safeGeminiApiUrl}`);
                 console.log(`   模型: ${actualModel}`);
                 console.log(`   消息数: ${geminiContents.length}`);
             } else {
@@ -5298,17 +7454,32 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 fetchBody = requestBody;
             }
 
-            console.log(` 正在调用: ${apiUrl}`);
-            console.log(`   API密钥: ${providerConfig.apiKey.substring(0, 10)}...`);
+            const safeApiUrl = isGeminiAPI ? apiUrl.replace(/key=[^&]+/, 'key=***') : apiUrl;
+            console.log(` 正在调用: ${safeApiUrl}`);
+            console.log(`   API密钥: 已配置`);
 
-            let apiResponse = await fetch(apiUrl, {
-                method: 'POST',
-                headers: fetchHeaders,
-                body: JSON.stringify(fetchBody),
-                signal: controller.signal
-            });
-
-            clearTimeout(timeoutId); // 清除超时定时器
+            let apiResponse;
+            try {
+                apiResponse = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: fetchHeaders,
+                    body: JSON.stringify(fetchBody),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId); // 清除超时定时器
+            } catch (primaryFetchError) {
+                clearTimeout(timeoutId);
+                const fallbackResult = await tryUniversalRuntimeFallback({
+                    failedStatus: primaryFetchError.name === 'AbortError' ? 'timeout' : 'network',
+                    failedBody: primaryFetchError.message,
+                    reason: `${routing.provider}_${actualModel}_${primaryFetchError.name === 'AbortError' ? 'timeout' : 'network_error'}`
+                });
+                if (fallbackResult?.response) {
+                    apiResponse = fallbackResult.response;
+                } else {
+                    throw primaryFetchError;
+                }
+            }
 
             console.log(` API响应状态: ${apiResponse.status} ${apiResponse.statusText}`);
 
@@ -5318,6 +7489,24 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 console.error(` API返回错误:`);
                 console.error(`   状态码: ${apiResponse.status}`);
                 console.error(`   响应体: ${errorText.substring(0, 500)}`);
+
+                if (gpt55QuotaConsumed && finalModel === 'gpt-5.5') {
+                    try {
+                        const refundedQuota = await refundGpt55Quota(req.user.userId);
+                        gpt55QuotaConsumed = false;
+                        res.write(`data: ${JSON.stringify({
+                            type: 'quota_info',
+                            provider: 'newapi_gpt55',
+                            gpt55Remaining: refundedQuota.remaining,
+                            gpt55Used: refundedQuota.used,
+                            gpt55Limit: refundedQuota.limit,
+                            resetAt: refundedQuota.resetAt
+                        })}\n\n`);
+                        console.warn(` gpt55_quota_refund user=${req.user.userId} status=${apiResponse.status}`);
+                    } catch (refundError) {
+                        console.warn(` GPT-5.5配额回滚失败: ${refundError.message}`);
+                    }
+                }
 
                 // Poe 4xx 参数错误：去掉 extra_body 重试一次
                 if (
@@ -5351,6 +7540,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         console.warn(` poe_fallback retry_failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
                     } else {
                         console.log(' Poe 参数回退重试成功（已移除 extra_body）');
+                    }
+                }
+
+                if (!apiResponse.ok) {
+                    const fallbackResult = await tryUniversalRuntimeFallback({
+                        failedStatus: apiResponse.status,
+                        failedBody: errorText,
+                        reason: `${routing.provider}_${actualModel}_failed`
+                    });
+                    if (fallbackResult?.response) {
+                        apiResponse = fallbackResult.response;
+                        errorText = fallbackResult.errorText || '';
                     }
                 }
 
@@ -5420,6 +7621,66 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
 
                 if (!apiResponse.ok) {
+                    if (isGeminiAPI && finalModel === 'gemma') {
+                        const fallbackProviderConfig = API_PROVIDERS.openrouter;
+                        if (fallbackProviderConfig?.apiKey) {
+                            console.warn(` Gemma Google API unavailable, fallback to OpenRouter free route: status=${apiResponse.status}`);
+                            routing = {
+                                provider: 'openrouter',
+                                model: 'openrouter/free',
+                                fallbackModels: ['openrouter/free', 'openai/gpt-oss-120b:free'],
+                                supportsThinking: true,
+                                supportsWebSearch: false,
+                                multimodal: false
+                            };
+                            providerConfig = fallbackProviderConfig;
+                            actualModel = routing.model;
+                            requestBody = {
+                                model: actualModel,
+                                models: routing.fallbackModels,
+                                messages: finalMessages,
+                                max_tokens: parseInt(max_tokens, 10) || 2000,
+                                stream: true,
+                                temperature: parseFloat(temperature) || 0.7,
+                                top_p: parseFloat(top_p) || 0.9
+                            };
+                            applyOpenRouterReasoningParams(requestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
+
+                            res.write(`data: ${JSON.stringify({
+                                type: 'model_info',
+                                model: finalModel,
+                                actualModel,
+                                reason: 'gemma_google_api_fallback',
+                                provider: routing.provider
+                            })}\n\n`);
+
+                            try {
+                                apiResponse = await fetch(providerConfig.baseURL, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Authorization': `Bearer ${providerConfig.apiKey}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify(requestBody)
+                                });
+                            } catch (fallbackErr) {
+                                const fallbackErrorMsg = `AI服务调用失败: Gemma Google API不可用且备用路由失败: ${fallbackErr.message}`;
+                                res.write(`data: ${JSON.stringify({ type: 'error', error: fallbackErrorMsg })}\n\n`);
+                                res.end();
+                                db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+                                return;
+                            }
+
+                            if (!apiResponse.ok) {
+                                errorText = await apiResponse.text();
+                                console.warn(` gemma_google_api_fallback failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
+                            } else {
+                                console.log(` Gemma Google API fallback connected: ${actualModel}`);
+                            }
+                        }
+                    }
+
+                    if (!apiResponse.ok) {
                     // SiliconFlow/Kimi 余额不足时，自动回退到免费模型，避免全站不可用
                     const canFallbackToAliyun =
                         isInsufficientBalanceError(apiResponse.status, errorText) &&
@@ -5504,6 +7765,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
                         return;
                     }
+                    }
                 }
             }
 
@@ -5522,6 +7784,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             let inToolCallSection = false;
             const TOOL_CALL_SECTION_START = '<|tool_calls_section_begin|>';
             const TOOL_CALL_SECTION_END = '<|tool_calls_section_end|>';
+            let thinkTagCarry = '';
+            let inThinkSection = false;
+            const THINK_SECTION_START = '<think>';
+            const THINK_SECTION_END = '</think>';
 
             const sanitizeStreamingContent = (chunk = '') => {
                 if (!useStreamingTools || !chunk) return chunk;
@@ -5561,13 +7827,62 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
 
                 visible = visible.replace(/<\|[^|]+\|>/g, '');
-                visible = visible.replace(/functions\.web_search:\d+/g, '');
+                visible = visible.replace(/functions\.\w+:\d+/g, '');
 
                 if (/^\s*\{[\s\S]*"query"[\s\S]*\}\s*$/.test(visible)) {
                     return '';
                 }
 
                 return visible;
+            };
+
+            const splitEmbeddedThinkContent = (chunk = '', allowReasoning = false) => {
+                let text = thinkTagCarry + String(chunk || '');
+                thinkTagCarry = '';
+                let visible = '';
+                let reasoning = '';
+
+                while (text.length > 0) {
+                    if (inThinkSection) {
+                        const endIdx = text.indexOf(THINK_SECTION_END);
+                        if (endIdx === -1) {
+                            const safeLen = Math.max(0, text.length - (THINK_SECTION_END.length - 1));
+                            const reasoningChunk = text.slice(0, safeLen);
+                            if (allowReasoning && reasoningChunk) {
+                                reasoning += reasoningChunk;
+                            }
+                            thinkTagCarry = text.slice(safeLen);
+                            return { visible, reasoning };
+                        }
+
+                        const reasoningChunk = text.slice(0, endIdx);
+                        if (allowReasoning && reasoningChunk) {
+                            reasoning += reasoningChunk;
+                        }
+                        text = text.slice(endIdx + THINK_SECTION_END.length);
+                        inThinkSection = false;
+                        continue;
+                    }
+
+                    const startIdx = text.indexOf(THINK_SECTION_START);
+                    if (startIdx === -1) {
+                        const partialIdx = text.lastIndexOf('<');
+                        if (partialIdx !== -1 && THINK_SECTION_START.startsWith(text.slice(partialIdx))) {
+                            visible += text.slice(0, partialIdx);
+                            thinkTagCarry = text.slice(partialIdx);
+                            return { visible, reasoning };
+                        }
+                        visible += text;
+                        text = '';
+                        continue;
+                    }
+
+                    visible += text.slice(0, startIdx);
+                    text = text.slice(startIdx + THINK_SECTION_START.length);
+                    inThinkSection = true;
+                }
+
+                return { visible, reasoning };
             };
 
             // 某些模型会把“累计文本”重复放在后续delta中，这里统一做去重增量提取
@@ -5644,9 +7959,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 if (candidate) {
                                     const parts = candidate.content?.parts || [];
                                     for (const part of parts) {
-                                        if (part.text) {
-                                            fullContent += part.text;
-                                            res.write(`data: ${JSON.stringify({ type: 'content', content: part.text })}\n\n`);
+                                        if (!part.text) continue;
+                                        if (part.thought) {
+                                            if (thinkingMode) {
+                                                const reasoningDelta = extractIncrementalChunk(reasoningContent, part.text);
+                                                if (reasoningDelta) {
+                                                    reasoningContent += reasoningDelta;
+                                                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                                }
+                                            }
+                                            continue;
+                                        }
+
+                                        const visibleDelta = extractIncrementalChunk(fullContent, part.text);
+                                        if (visibleDelta) {
+                                            emitStructuredAssistantChunk(visibleDelta);
                                         }
                                     }
                                 }
@@ -5670,7 +7997,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 if (content) {
                                     rawToolContent += content;
                                     const filteredContent = sanitizeStreamingContent(content);
-                                    const incrementalContent = extractIncrementalChunk(fullContent, filteredContent);
+                                    const splitThinkContent = splitEmbeddedThinkContent(filteredContent, !!thinkingMode);
+
+                                    if (splitThinkContent.reasoning) {
+                                        const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
+                                        if (reasoningDelta) {
+                                            reasoningContent += reasoningDelta;
+                                            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                        }
+                                    }
+
+                                    const incrementalContent = extractIncrementalChunk(fullContent, splitThinkContent.visible);
 
                                     if (incrementalContent.length > 0) {
                                         if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('synthesizer') && !agentSynthesizerRunning) {
@@ -5679,11 +8016,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                                 role: 'synthesizer',
                                                 status: 'running',
                                                 detail: '正在生成候选答案'
-                                            });
+                                                });
                                             agentSynthesizerRunning = true;
                                         }
-                                        fullContent += incrementalContent;
-                                        res.write(`data: ${JSON.stringify({ type: 'content', content: incrementalContent })}\n\n`);
+                                        emitStructuredAssistantChunk(incrementalContent);
                                     }
                                 }
 
@@ -5725,18 +8061,19 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 const searchInfo = parsed.search_info || parsed.output?.search_info;
                                 if (searchInfo && searchInfo.search_results && searchInfo.search_results.length > 0) {
                                     const qwenSources = searchInfo.search_results.map(r => ({
-                                        index: r.index || 0,
                                         title: r.title || '未知来源',
                                         url: r.url || '',
                                         favicon: r.icon || '',
-                                        site_name: r.site_name || ''
+                                        site_name: r.site_name || '',
+                                        provider: 'aliyun_search',
+                                        sourceKind: 'web',
+                                        markerType: 'numeric',
+                                        label: 'Web Search'
                                     }));
-                                    // 更新 searchSources 变量，确保保存消息时包含来源信息
-                                    if (!searchSources || searchSources.length === 0) {
-                                        searchSources = qwenSources;
-                                    }
-                                    res.write(`data: ${JSON.stringify({ type: 'sources', sources: qwenSources })}\n\n`);
-                                    console.log(` 阿里云search_info: 已发送 ${qwenSources.length} 个来源`);
+                                    const sourceAppendResult = appendAnnotatedSources(searchSources, qwenSources);
+                                    searchSources = sourceAppendResult.merged;
+                                    emitSourcesEvent(res, sourceAppendResult.newlyAdded);
+                                    console.log(` 阿里云search_info: 已发送 ${sourceAppendResult.newlyAdded.length} 个来源`);
                                 }
                             }
                         } catch (e) {
@@ -5831,14 +8168,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     fallbackContent = String(fallbackContent || '');
                 }
                 const cleanedFallbackContent = sanitizeStreamingContent(fallbackContent);
-                if (cleanedFallbackContent) {
-                    fullContent += cleanedFallbackContent;
-                    res.write(`data: ${JSON.stringify({ type: 'content', content: cleanedFallbackContent })}\n\n`);
+                const splitFallbackContent = splitEmbeddedThinkContent(cleanedFallbackContent, !!thinkingMode);
+                if (splitFallbackContent.visible) {
+                    emitStructuredAssistantChunk(splitFallbackContent.visible);
                 }
 
                 const fallbackReasoning = fallbackJson?.choices?.[0]?.message?.reasoning_content
                     || fallbackJson?.choices?.[0]?.message?.reasoning
                     || '';
+                if (splitFallbackContent.reasoning && thinkingMode) {
+                    reasoningContent += String(splitFallbackContent.reasoning);
+                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: String(splitFallbackContent.reasoning) })}\n\n`);
+                }
                 if (fallbackReasoning && thinkingMode) {
                     reasoningContent += String(fallbackReasoning);
                     res.write(`data: ${JSON.stringify({ type: 'reasoning', content: String(fallbackReasoning) })}\n\n`);
@@ -5859,7 +8200,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         const parsedCalls = JSON.parse(trimmedText);
                         if (Array.isArray(parsedCalls)) {
                             for (const call of parsedCalls) {
-                                if (call?.name === 'web_search' && call.arguments) {
+                                if ((call?.name === 'web_search' || call?.name === 'finance_quote') && call.arguments) {
                                     fallbackCalls.push({
                                         name: call.name,
                                         arguments: call.arguments
@@ -5879,7 +8220,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     while ((markerMatch = markerRegex.exec(trimmedText)) !== null) {
                         const functionName = markerMatch[1];
                         const argumentText = markerMatch[2];
-                        if (functionName !== 'web_search') continue;
+                        if (functionName !== 'web_search' && functionName !== 'finance_quote') continue;
 
                         try {
                             fallbackCalls.push({
@@ -5893,13 +8234,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
 
                 // 3) 松散文本格式
-                if (fallbackCalls.length === 0 && trimmedText.includes('functions.web_search')) {
-                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,120}?(\{[\s\S]*?"query"[\s\S]*?\})/g;
+                if (fallbackCalls.length === 0 && trimmedText.includes('functions.')) {
+                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,160}?(\{[\s\S]*?"(?:query|symbol)"[\s\S]*?\})/g;
                     let looseMatch;
                     while ((looseMatch = looseRegex.exec(trimmedText)) !== null) {
                         const functionName = looseMatch[1];
                         const argumentText = looseMatch[2];
-                        if (functionName !== 'web_search') continue;
+                        if (functionName !== 'web_search' && functionName !== 'finance_quote') continue;
 
                         try {
                             fallbackCalls.push({
@@ -5927,18 +8268,49 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         continue;
                     }
 
-                    if (!args || typeof args !== 'object' || typeof args.query !== 'string' || !args.query.trim()) {
+                    const toolName = String(toolCall.function.name || '').trim();
+                    if (toolName === 'web_search') {
+                        if (!args || typeof args !== 'object' || typeof args.query !== 'string' || !args.query.trim()) {
+                            continue;
+                        }
+
+                        normalized.push({
+                            ...toolCall,
+                            function: {
+                                ...toolCall.function,
+                                arguments: JSON.stringify({ query: args.query.trim() })
+                            },
+                            _args: { query: args.query.trim() }
+                        });
                         continue;
                     }
 
-                    normalized.push({
-                        ...toolCall,
-                        function: {
-                            ...toolCall.function,
-                            arguments: JSON.stringify(args)
-                        },
-                        _args: args
-                    });
+                    if (toolName === 'finance_quote') {
+                        const rawSymbol = String(args.symbol || args.ticker || '').trim();
+                        if (!rawSymbol) {
+                            continue;
+                        }
+
+                        let normalizedArgs;
+                        try {
+                            normalizedArgs = {
+                                symbol: resolveFinanceSymbol(rawSymbol),
+                                range: normalizeFinanceRange(args.range || FINANCE_DEFAULT_RANGE),
+                                interval: normalizeFinanceInterval(args.interval || FINANCE_DEFAULT_INTERVAL)
+                            };
+                        } catch (error) {
+                            continue;
+                        }
+
+                        normalized.push({
+                            ...toolCall,
+                            function: {
+                                ...toolCall.function,
+                                arguments: JSON.stringify(normalizedArgs)
+                            },
+                            _args: normalizedArgs
+                        });
+                    }
                 }
                 return normalized;
             };
@@ -5994,7 +8366,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             const args = toolCall._args;
 
                             console.log(` 执行工具: ${toolName}, args=${JSON.stringify(args)}`);
-                            if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
+                            const isSearchTool = toolName === 'web_search';
+                            if (isSearchTool && agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
                                     role: 'researcher',
@@ -6003,12 +8376,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 });
                                 agentResearcherRunning = true;
                             }
-                            res.write(`data: ${JSON.stringify({
-                                type: 'search_status',
-                                status: 'searching',
-                                query: args.query,
-                                message: `正在搜索: "${args.query}"`
-                            })}\n\n`);
+                            if (isSearchTool) {
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'search_status',
+                                    status: 'searching',
+                                    query: args.query,
+                                    message: `正在搜索: "${args.query}"`
+                                })}\n\n`);
+                            }
 
                             const executor = TOOL_EXECUTORS[toolName];
                             if (!executor) {
@@ -6016,63 +8391,98 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 continue;
                             }
 
-                            const searchDepth = getTavilySearchDepth(actualModel, thinkingMode);
-                            const result = await executor(args, searchDepth);
-                            executedToolResults.push({ toolCall, result });
+                            const searchDepth = isSearchTool ? getTavilySearchDepth(actualModel, thinkingMode) : null;
+                            const result = isSearchTool
+                                ? await executor(args, searchDepth)
+                                : await executor(args);
 
-                            const searchResults = result.results || result;
-                            let searchImages = result.images || [];
-                            if (searchImages.length > 0) {
-                                searchImages = await filterValidImages(searchImages, 5, 3000);
-                            }
-
-                            if (searchResults && searchResults.length > 0) {
-                                const currentSources = extractSourcesForSSE(searchResults);
-                                if (currentSources.length > 0) {
-                                    const sourceMap = new Map((searchSources || []).map(s => [`${s.url}|${s.title}`, s]));
-                                    for (const s of currentSources) {
-                                        sourceMap.set(`${s.url}|${s.title}`, s);
-                                    }
-                                    searchSources = Array.from(sourceMap.values());
+                            if (isSearchTool) {
+                                const searchResults = result.results || result;
+                                let searchImages = result.images || [];
+                                if (searchImages.length > 0) {
+                                    searchImages = await filterValidImages(searchImages, 5, 3000);
                                 }
 
-                                res.write(`data: ${JSON.stringify({
-                                    type: 'search_status',
-                                    status: 'complete',
-                                    query: args.query,
-                                    resultCount: searchResults.length,
-                                    message: `找到 ${searchResults.length} 条结果`
-                                })}\n\n`);
+                                if (searchResults && searchResults.length > 0) {
+                                    const currentSources = extractSourcesForSSE(searchResults);
+                                    const sourceAppendResult = appendAnnotatedSources(searchSources, currentSources);
+                                    searchSources = sourceAppendResult.merged;
 
-                                if (currentSources.length > 0) {
-                                    res.write(`data: ${JSON.stringify({ type: 'sources', sources: currentSources })}\n\n`);
-                                }
-                                console.log(` 工具执行完成: ${searchResults.length} 条结果`);
-                                if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
-                                    emitAgentEvent(res, {
-                                        type: 'agent_status',
-                                        role: 'researcher',
-                                        status: 'done',
-                                        detail: `完成检索: ${searchResults.length} 条结果`
+                                    res.write(`data: ${JSON.stringify({
+                                        type: 'search_status',
+                                        status: 'complete',
+                                        query: args.query,
+                                        resultCount: searchResults.length,
+                                        message: `找到 ${searchResults.length} 条结果`
+                                    })}\n\n`);
+
+                                    emitSourcesEvent(res, sourceAppendResult.newlyAdded);
+                                    executedToolResults.push({
+                                        toolCall,
+                                        result: buildToolResultForLLM({
+                                            toolName,
+                                            result: {
+                                                ...result,
+                                                images: searchImages
+                                            },
+                                            sources: sourceAppendResult.newlyAdded,
+                                            args
+                                        })
                                     });
-                                    agentResearcherRunning = false;
+                                    console.log(` 工具执行完成: ${searchResults.length} 条结果`);
+                                    if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
+                                        emitAgentEvent(res, {
+                                            type: 'agent_status',
+                                            role: 'researcher',
+                                            status: 'done',
+                                            detail: `完成检索: ${searchResults.length} 条结果`
+                                        });
+                                        agentResearcherRunning = false;
+                                    }
+                                } else {
+                                    res.write(`data: ${JSON.stringify({
+                                        type: 'search_status',
+                                        status: 'no_results',
+                                        query: args.query,
+                                        message: '未找到相关结果'
+                                    })}\n\n`);
+                                    executedToolResults.push({
+                                        toolCall,
+                                        result: buildToolResultForLLM({
+                                            toolName,
+                                            result: {
+                                                ...result,
+                                                images: searchImages
+                                            },
+                                            sources: [],
+                                            args
+                                        })
+                                    });
+                                    if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
+                                        emitAgentEvent(res, {
+                                            type: 'agent_status',
+                                            role: 'researcher',
+                                            status: 'done',
+                                            detail: '检索完成: 无结果'
+                                        });
+                                        agentResearcherRunning = false;
+                                    }
                                 }
                             } else {
-                                res.write(`data: ${JSON.stringify({
-                                    type: 'search_status',
-                                    status: 'no_results',
-                                    query: args.query,
-                                    message: '未找到相关结果'
-                                })}\n\n`);
-                                if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
-                                    emitAgentEvent(res, {
-                                        type: 'agent_status',
-                                        role: 'researcher',
-                                        status: 'done',
-                                        detail: '检索完成: 无结果'
-                                    });
-                                    agentResearcherRunning = false;
-                                }
+                                const financeSources = buildFinanceSourceForSSE(result);
+                                const sourceAppendResult = appendAnnotatedSources(searchSources, financeSources);
+                                searchSources = sourceAppendResult.merged;
+                                emitSourcesEvent(res, sourceAppendResult.newlyAdded);
+                                executedToolResults.push({
+                                    toolCall,
+                                    result: buildToolResultForLLM({
+                                        toolName,
+                                        result,
+                                        sources: sourceAppendResult.newlyAdded,
+                                        args
+                                    })
+                                });
+                                console.log(` 工具执行完成: finance_quote symbol=${result?.resolvedSymbol || args.symbol}`);
                             }
                         }
 
@@ -6109,6 +8519,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             tools: TOOL_DEFINITIONS,
                             tool_choice: "auto"
                         };
+                        if (routing.provider === 'openrouter' && Array.isArray(routing.fallbackModels) && routing.fallbackModels.length > 1) {
+                            continueRequestBody.models = routing.fallbackModels;
+                        }
 
                         if (isKimiK25Model) {
                             if (routing.provider === 'siliconflow') {
@@ -6124,6 +8537,15 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 continueRequestBody.thinking_budget = continueThinkingBudget;
                             }
                         }
+                        if (routing.provider === 'deepseek') {
+                            applyDeepSeekV4ModeParams(continueRequestBody, !!thinkingMode, normalizedReasoningProfile);
+                        }
+                        if (routing.provider === 'newapi') {
+                            applyNewApiModelParams(continueRequestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
+                        }
+                        if (routing.provider === 'openrouter') {
+                            applyOpenRouterReasoningParams(continueRequestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
+                        }
                         if (routing.provider === 'poe') {
                             const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile);
                             if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
@@ -6135,6 +8557,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         // 重置工具标记清洗器状态，避免跨轮污染
                         toolMarkerCarry = '';
                         inToolCallSection = false;
+                        thinkTagCarry = '';
+                        inThinkSection = false;
 
                         const continueResponse = await fetch(providerConfig.baseURL, {
                             method: 'POST',
@@ -6196,7 +8620,15 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         continueRawToolContent += continueDelta.content;
                                         rawToolContent += continueDelta.content;
                                         const filteredContinueContent = sanitizeStreamingContent(continueDelta.content);
-                                        const incrementalContinueContent = extractIncrementalChunk(fullContent, filteredContinueContent);
+                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, !!thinkingMode);
+                                        if (splitContinueThink.reasoning) {
+                                            const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
+                                            if (reasoningDelta) {
+                                                reasoningContent += reasoningDelta;
+                                                res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                            }
+                                        }
+                                        const incrementalContinueContent = extractIncrementalChunk(fullContent, splitContinueThink.visible);
                                         if (incrementalContinueContent.length > 0) {
                                             if (agentRuntime.enabled && agentRuntime.selectedAgents.includes('synthesizer') && !agentSynthesizerRunning) {
                                                 emitAgentEvent(res, {
@@ -6207,8 +8639,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                                 });
                                                 agentSynthesizerRunning = true;
                                             }
-                                            fullContent += incrementalContinueContent;
-                                            res.write(`data: ${JSON.stringify({ type: 'content', content: incrementalContinueContent })}\n\n`);
+                                            emitStructuredAssistantChunk(incrementalContinueContent);
                                         }
                                     }
 
@@ -6341,8 +8772,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     if (agentRuntime.retriesUsed >= AGENT_MAX_RETRIES) {
                         const conservativeNote = buildConservativeFallbackNote(agentRuntime.fingerprint);
-                        fullContent += conservativeNote;
-                        res.write(`data: ${JSON.stringify({ type: 'content', content: conservativeNote })}\n\n`);
+                        emitStructuredAssistantChunk(conservativeNote);
                     }
 
                     qualityResult = runVerifier({
@@ -6441,33 +8871,34 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 });
             }
 
-            // 2. 提取并处理标题 (如果存在)
+            // 2. 提取并处理标题 / 画布Patch (如果存在)
             let contentToSave = fullContent || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
             // 兜底清洗：避免工具调用标记残留到数据库
             contentToSave = contentToSave
                 .replace(/<\|[^|]+\|>/g, '')
-                .replace(/functions\.web_search:\d+/g, '')
+                .replace(/functions\.\w+:\d+/g, '')
                 .trim();
-            let extractedTitle = null;
-
-            const titleMatch = contentToSave.match(/\[TITLE\](.*?)\[\/TITLE\]/);
-            if (titleMatch && titleMatch[1]) {
-                extractedTitle = titleMatch[1].trim();
-                // 从内容中移除标题标记
-                contentToSave = contentToSave.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
+            const structuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer || contentToSave);
+            const extractedTitle = structuredAssistantOutput.extractedTitle || null;
+            contentToSave = (structuredAssistantOutput.visibleContent || contentToSave).trim();
+            if (!contentToSave) {
+                contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
+            }
+            if (extractedTitle) {
                 console.log(` 提取到标题: "${extractedTitle}"`);
             }
 
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
             // 序列化 sources 为 JSON 字符串
             const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
+            const assistantProcessTraceJson = promptContextTrace ? JSON.stringify(promptContextTrace) : null;
 
             // 使用毫秒级时间戳，确保AI消息严格晚于用户消息
             const aiMsgTimestamp = new Date().toISOString();
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, aiMsgTimestamp],
+                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp],
                     (err) => {
                         if (err) {
                             console.error(' 保存AI消息失败:', err);
@@ -6489,23 +8920,42 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             // 4. 如果提取到标题,更新会话标题（每次对话都更新）
             if (extractedTitle) {
-                // 每次对话都更新标题，不再限制只在新对话时更新
-                db.run(
-                    'UPDATE sessions SET title = ? WHERE id = ?',
-                    [extractedTitle, sessionId],
-                    (updateErr) => {
-                        if (!updateErr) {
-                            console.log(` 会话标题已更新: "${extractedTitle}"`);
-                            // 通知前端标题更新
-                            res.write(`data: ${JSON.stringify({
-                                type: 'title',
-                                title: extractedTitle
-                            })}\n\n`);
-                        } else {
-                            console.error(' 更新会话标题失败:', updateErr);
+                if (flowId) {
+                    await syncFlowTitle(flowId, req.user.userId, extractedTitle);
+                    console.log(` Flow标题已更新: "${extractedTitle}"`);
+                    res.write(`data: ${JSON.stringify({
+                        type: 'title',
+                        title: extractedTitle
+                    })}\n\n`);
+                } else {
+                    // 每次对话都更新标题，不再限制只在新对话时更新
+                    db.run(
+                        'UPDATE sessions SET title = ? WHERE id = ?',
+                        [extractedTitle, sessionId],
+                        (updateErr) => {
+                            if (!updateErr) {
+                                console.log(` 会话标题已更新: "${extractedTitle}"`);
+                                // 通知前端标题更新
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'title',
+                                    title: extractedTitle
+                                })}\n\n`);
+                            } else {
+                                console.error(' 更新会话标题失败:', updateErr);
+                            }
                         }
-                    }
-                );
+                    );
+                }
+            }
+
+            if (flowId && structuredAssistantOutput.canvasPatchRaw) {
+                res.write(`data: ${JSON.stringify({
+                    type: 'canvas_patch',
+                    patch: structuredAssistantOutput.canvasPatch,
+                    raw: structuredAssistantOutput.canvasPatchRaw,
+                    valid: !structuredAssistantOutput.canvasPatchParseError,
+                    error: structuredAssistantOutput.canvasPatchParseError || null
+                })}\n\n`);
             }
 
             // 5. 更新会话时间戳
@@ -6590,145 +9040,451 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
 
 // 会员配置
 const MEMBERSHIP_CONFIG = {
-    free: { dailyPoints: 20, needsCheckin: true },
-    Pro: { dailyPoints: 90, needsCheckin: false },
-    MAX: { dailyPoints: 10000, needsCheckin: false }
+    free: { checkinPoints: 20 },
+    Pro: { redeemCost: 600, durationDays: 30 },
+    MAX: { redeemCost: 6000, durationDays: 30 }
 };
+
+function dbGetAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(query, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
+
+function dbAllAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(query, params, (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+        });
+    });
+}
+
+function dbRunAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(query, params, function (err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
+
+app.post('/api/messages/:messageId/feedback', authenticateToken, async (req, res) => {
+    try {
+        const messageId = Number.parseInt(req.params.messageId, 10);
+        const rating = String(req.body?.rating || '').trim();
+        const comment = String(req.body?.comment || '').trim();
+
+        if (!Number.isInteger(messageId) || messageId <= 0) {
+            return res.status(400).json({ error: '无效的消息ID' });
+        }
+
+        if (!['up', 'down'].includes(rating)) {
+            return res.status(400).json({ error: '无效的反馈类型' });
+        }
+
+        if (comment.length > 1000) {
+            return res.status(400).json({ error: '反馈内容不能超过1000字' });
+        }
+
+        const message = await dbGetAsync(`
+            SELECT m.id, m.session_id, m.role, s.user_id
+            FROM messages m
+            JOIN sessions s ON m.session_id = s.id
+            WHERE m.id = ? AND s.user_id = ?
+        `, [messageId, req.user.userId]);
+
+        if (!message) {
+            return res.status(404).json({ error: '消息不存在' });
+        }
+
+        if (message.role !== 'assistant') {
+            return res.status(400).json({ error: '只能反馈AI回复' });
+        }
+
+        await dbRunAsync(`
+            INSERT INTO message_feedback (message_id, session_id, user_id, rating, comment, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, message_id) DO UPDATE SET
+                rating = excluded.rating,
+                comment = excluded.comment,
+                updated_at = CURRENT_TIMESTAMP
+        `, [message.id, message.session_id, req.user.userId, rating, comment || null]);
+
+        res.json({
+            success: true,
+            feedback: {
+                messageId: message.id,
+                rating,
+                comment
+            }
+        });
+    } catch (error) {
+        console.error('保存消息反馈失败:', error);
+        res.status(500).json({ error: '保存反馈失败' });
+    }
+});
+
+let ensureSessionKindColumnPromise = null;
+let ensureFlowSessionIdColumnPromise = null;
+
+async function ensureColumnExists(tableName, columnName, alterSql) {
+    const columns = await dbAllAsync(`PRAGMA table_info(${tableName})`);
+    if (columns.some((column) => String(column?.name || '').trim() === columnName)) {
+        return false;
+    }
+
+    try {
+        await dbRunAsync(alterSql);
+        return true;
+    } catch (error) {
+        if (String(error?.message || '').includes('duplicate column')) {
+            return false;
+        }
+        throw error;
+    }
+}
+
+async function ensureSessionKindColumn() {
+    if (!ensureSessionKindColumnPromise) {
+        ensureSessionKindColumnPromise = (async () => {
+            await ensureColumnExists('sessions', 'session_kind', `ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`);
+            await dbRunAsync(`CREATE INDEX IF NOT EXISTS idx_sessions_user_kind_updated ON sessions(user_id, session_kind, is_archived, updated_at DESC)`);
+        })().catch((error) => {
+            ensureSessionKindColumnPromise = null;
+            throw error;
+        });
+    }
+
+    return ensureSessionKindColumnPromise;
+}
+
+async function ensureFlowSessionIdColumn() {
+    if (!ensureFlowSessionIdColumnPromise) {
+        ensureFlowSessionIdColumnPromise = ensureColumnExists('flows', 'session_id', `ALTER TABLE flows ADD COLUMN session_id TEXT`).catch((error) => {
+            ensureFlowSessionIdColumnPromise = null;
+            throw error;
+        });
+    }
+
+    return ensureFlowSessionIdColumnPromise;
+}
+
+async function ensureChatFlowSchemaColumns() {
+    await ensureSessionKindColumn();
+    await ensureFlowSessionIdColumn();
+}
+
+function getTodayDateString() {
+    return new Date().toISOString().split('T')[0];
+}
+
+function normalizePromptTimeContext(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const datetime = typeof raw.datetime === 'string' ? raw.datetime.trim() : '';
+    if (!datetime) return null;
+
+    const timezone = typeof raw.timezone === 'string' && raw.timezone.trim()
+        ? raw.timezone.trim()
+        : 'unknown';
+    const locale = typeof raw.locale === 'string' && raw.locale.trim()
+        ? raw.locale.trim()
+        : 'unknown';
+    const timeOfDay = typeof raw.timeOfDay === 'string' && raw.timeOfDay.trim()
+        ? raw.timeOfDay.trim()
+        : 'unknown';
+    const hour = Number(raw.hour);
+
+    return {
+        datetime,
+        timezone,
+        locale,
+        timeOfDay,
+        hour: Number.isFinite(hour) ? hour : null
+    };
+}
+
+function buildPromptContextTrace(promptTimeContext) {
+    if (!promptTimeContext) return null;
+
+    return {
+        prompt_context: {
+            injection: 'per_request_datetime',
+            injectedAt: new Date().toISOString(),
+            requestTimeContext: promptTimeContext
+        }
+    };
+}
+
+function buildMembershipEndISO(currentEnd, durationDays) {
+    const now = new Date();
+    const parsedEnd = currentEnd ? new Date(currentEnd) : null;
+    const hasActiveEnd = parsedEnd && !Number.isNaN(parsedEnd.getTime()) && parsedEnd > now;
+    const baseDate = hasActiveEnd ? parsedEnd : now;
+    const nextEnd = new Date(baseDate.getTime());
+    nextEnd.setDate(nextEnd.getDate() + durationDays);
+    return nextEnd.toISOString();
+}
+
+async function getUserMembershipSnapshot(userId) {
+    const user = await dbGetAsync(`
+        SELECT id, email, username, created_at,
+               COALESCE(membership, 'free') AS membership,
+               membership_start, membership_end,
+               COALESCE(points, 0) AS points,
+               COALESCE(purchased_points, 0) AS purchased_points,
+               purchased_points_expire,
+               last_checkin, last_daily_grant,
+               poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count,
+               gpt55_usage_date, COALESCE(gpt55_usage_count, 0) AS gpt55_usage_count
+        FROM users WHERE id = ?
+    `, [userId]);
+
+    if (!user) return null;
+
+    const now = new Date();
+    const today = getTodayDateString();
+    let membership = user.membership || 'free';
+    let membershipStart = user.membership_start || null;
+    let membershipEnd = user.membership_end || null;
+
+    if (membership !== 'free' && membershipEnd) {
+        const endDate = new Date(membershipEnd);
+        if (!Number.isNaN(endDate.getTime()) && endDate < now) {
+            membership = 'free';
+            membershipStart = null;
+            membershipEnd = null;
+            await dbRunAsync(
+                'UPDATE users SET membership = ?, membership_start = NULL, membership_end = NULL WHERE id = ?',
+                ['free', user.id]
+            );
+        }
+    }
+
+    let points = Number(user.points || 0);
+    let purchasedPoints = Number(user.purchased_points || 0);
+    let purchasedPointsExpire = user.purchased_points_expire || null;
+
+    if (purchasedPoints > 0 && purchasedPointsExpire) {
+        const expireDate = new Date(purchasedPointsExpire);
+        if (!Number.isNaN(expireDate.getTime()) && expireDate < now) {
+            purchasedPoints = 0;
+            purchasedPointsExpire = null;
+            await dbRunAsync(
+                'UPDATE users SET purchased_points = 0, purchased_points_expire = NULL WHERE id = ?',
+                [user.id]
+            );
+        }
+    }
+
+    const totalPoints = points + purchasedPoints;
+    const canCheckin = user.last_checkin !== today;
+    const poeUsedToday = user.poe_usage_date === today ? Number(user.poe_usage_count || 0) : 0;
+    const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
+    const gpt55UsedToday = user.gpt55_usage_date === today ? Number(user.gpt55_usage_count || 0) : 0;
+    const gpt55Remaining = Math.max(0, GPT55_DAILY_LIMIT_FREE - gpt55UsedToday);
+
+    return {
+        membership,
+        membershipStart,
+        membershipEnd,
+        points,
+        purchasedPoints,
+        purchasedPointsExpire,
+        totalPoints,
+        canCheckin,
+        lastCheckin: user.last_checkin,
+        createdAt: user.created_at,
+        poeDailyLimit: POE_DAILY_LIMIT_FREE,
+        poeUsedToday,
+        poeRemaining,
+        poeResetAt: buildPoeResetAtISO(),
+        gpt55DailyLimit: GPT55_DAILY_LIMIT_FREE,
+        gpt55UsedToday,
+        gpt55Remaining,
+        gpt55ResetAt: buildPoeResetAtISO()
+    };
+}
 
 // 获取会员状态和点数
 app.get('/api/user/membership', authenticateToken, async (req, res) => {
     try {
-        const user = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT id, email, username, created_at,
-                       COALESCE(membership, 'free') as membership,
-                       membership_start, membership_end,
-                       COALESCE(points, 0) as points,
-                       COALESCE(purchased_points, 0) as purchased_points,
-                       purchased_points_expire,
-                       last_checkin, last_daily_grant,
-                       poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count
-                FROM users WHERE id = ?
-            `, [req.user.userId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        if (!user) {
+        const snapshot = await getUserMembershipSnapshot(req.user.userId);
+        if (!snapshot) {
             return res.status(404).json({ error: '用户不存在' });
         }
-
-        // 检查会员是否过期
-        let membership = user.membership || 'free';
-        if (membership !== 'free' && user.membership_end) {
-            const endDate = new Date(user.membership_end);
-            if (endDate < new Date()) {
-                // 会员已过期，降级为 free
-                membership = 'free';
-                db.run('UPDATE users SET membership = ? WHERE id = ?', ['free', user.id]);
-            }
-        }
-
-        // 检查购买点数是否过期
-        let purchasedPoints = user.purchased_points || 0;
-        if (purchasedPoints > 0 && user.purchased_points_expire) {
-            const expireDate = new Date(user.purchased_points_expire);
-            if (expireDate < new Date()) {
-                purchasedPoints = 0;
-                db.run('UPDATE users SET purchased_points = 0 WHERE id = ?', [user.id]);
-            }
-        }
-
-        // 检查今日是否需要自动发放点数（Pro/MAX）
-        const today = new Date().toISOString().split('T')[0];
-        let points = user.points || 0;
-
-        if (membership !== 'free' && user.last_daily_grant !== today) {
-            // 自动发放每日点数
-            const config = MEMBERSHIP_CONFIG[membership];
-            if (config) {
-                points = config.dailyPoints;
-                db.run('UPDATE users SET points = ?, last_daily_grant = ? WHERE id = ?',
-                    [points, today, user.id]);
-                console.log(` 用户 ${user.id} (${membership}) 自动发放 ${points} 点数`);
-            }
-        }
-
-        // 检查今日是否可以签到（free用户）
-        const canCheckin = membership === 'free' && user.last_checkin !== today;
-        const poeUsedToday = user.poe_usage_date === today ? Number(user.poe_usage_count || 0) : 0;
-        const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
-
-        res.json({
-            membership,
-            membershipStart: user.membership_start,
-            membershipEnd: user.membership_end,
-            points,
-            purchasedPoints,
-            purchasedPointsExpire: user.purchased_points_expire,
-            totalPoints: points + purchasedPoints,
-            canCheckin,
-            lastCheckin: user.last_checkin,
-            createdAt: user.created_at,
-            poeDailyLimit: POE_DAILY_LIMIT_FREE,
-            poeUsedToday,
-            poeRemaining,
-            poeResetAt: buildPoeResetAtISO()
-        });
-
+        res.json(snapshot);
     } catch (error) {
         console.error(' 获取会员状态失败:', error);
         res.status(500).json({ error: '获取会员状态失败' });
     }
 });
 
-// 每日签到（free用户）
+// 每日签到（所有登录用户每天一次）
 app.post('/api/user/checkin', authenticateToken, async (req, res) => {
     try {
-        const user = await new Promise((resolve, reject) => {
-            db.get('SELECT id, membership, points, last_checkin FROM users WHERE id = ?',
-                [req.user.userId], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-        });
+        const user = await dbGetAsync(
+            'SELECT id, COALESCE(points, 0) AS points, last_checkin FROM users WHERE id = ?',
+            [req.user.userId]
+        );
 
         if (!user) {
             return res.status(404).json({ error: '用户不存在' });
         }
 
-        const membership = user.membership || 'free';
-        if (membership !== 'free') {
-            return res.status(400).json({ error: 'Pro/MAX 用户无需签到，每日自动发放点数' });
-        }
-
-        const today = new Date().toISOString().split('T')[0];
+        const today = getTodayDateString();
         if (user.last_checkin === today) {
             return res.status(400).json({ error: '今日已签到' });
         }
 
-        // 签到获得20点
-        const newPoints = (user.points || 0) + MEMBERSHIP_CONFIG.free.dailyPoints;
+        const pointsGained = MEMBERSHIP_CONFIG.free.checkinPoints;
+        const newPoints = Number(user.points || 0) + pointsGained;
 
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE users SET points = ?, last_checkin = ? WHERE id = ?',
-                [newPoints, today, user.id], (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-        });
+        await dbRunAsync(
+            'UPDATE users SET points = ?, last_checkin = ? WHERE id = ?',
+            [newPoints, today, user.id]
+        );
 
-        console.log(` 用户 ${user.id} 签到成功，获得 ${MEMBERSHIP_CONFIG.free.dailyPoints} 点数`);
+        const snapshot = await getUserMembershipSnapshot(user.id);
+        console.log(` 用户 ${user.id} 签到成功，获得 ${pointsGained} 点数`);
         res.json({
             success: true,
-            pointsGained: MEMBERSHIP_CONFIG.free.dailyPoints,
-            newPoints
+            pointsGained,
+            newPoints,
+            currentPoints: snapshot?.totalPoints ?? newPoints,
+            totalPoints: snapshot?.totalPoints ?? newPoints,
+            canCheckin: snapshot?.canCheckin ?? false
         });
-
     } catch (error) {
         console.error(' 签到失败:', error);
         res.status(500).json({ error: '签到失败' });
+    }
+});
+
+// 点数兑换会员
+app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
+    const tier = String(req.body?.tier || '').trim();
+    const config = MEMBERSHIP_CONFIG[tier];
+
+    if (!config || tier === 'free') {
+        return res.status(400).json({ error: '无效的会员档位' });
+    }
+
+    let inTransaction = false;
+
+    try {
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        inTransaction = true;
+
+        const user = await dbGetAsync(`
+            SELECT id,
+                   membership, membership_start, membership_end,
+                   COALESCE(points, 0) AS points,
+                   COALESCE(purchased_points, 0) AS purchased_points,
+                   purchased_points_expire
+            FROM users WHERE id = ?
+        `, [req.user.userId]);
+
+        if (!user) {
+            await dbRunAsync('ROLLBACK');
+            inTransaction = false;
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        const currentMembership = String(user.membership || 'free');
+        const currentMembershipEnd = user.membership_end ? new Date(user.membership_end) : null;
+        const hasActiveMembership = currentMembership !== 'free' &&
+            currentMembershipEnd &&
+            !Number.isNaN(currentMembershipEnd.getTime()) &&
+            currentMembershipEnd > new Date();
+
+        if (currentMembership === 'MAX' && tier === 'Pro' && hasActiveMembership) {
+            await dbRunAsync('ROLLBACK');
+            inTransaction = false;
+            return res.status(400).json({ error: '当前已是更高档位，请直接续期当前会员' });
+        }
+
+        let points = Number(user.points || 0);
+        let purchasedPoints = Number(user.purchased_points || 0);
+        let purchasedPointsExpire = user.purchased_points_expire || null;
+
+        if (purchasedPoints > 0 && purchasedPointsExpire) {
+            const expireDate = new Date(purchasedPointsExpire);
+            if (!Number.isNaN(expireDate.getTime()) && expireDate < new Date()) {
+                purchasedPoints = 0;
+                purchasedPointsExpire = null;
+                await dbRunAsync(
+                    'UPDATE users SET purchased_points = 0, purchased_points_expire = NULL WHERE id = ?',
+                    [user.id]
+                );
+            }
+        }
+
+        const totalPoints = points + purchasedPoints;
+        if (totalPoints < config.redeemCost) {
+            await dbRunAsync('ROLLBACK');
+            inTransaction = false;
+            return res.status(400).json({ error: '点数不足，请先签到累积点数' });
+        }
+
+        let remainingCost = config.redeemCost;
+        if (points >= remainingCost) {
+            points -= remainingCost;
+            remainingCost = 0;
+        } else {
+            remainingCost -= points;
+            points = 0;
+            purchasedPoints -= remainingCost;
+        }
+
+        const membershipStart = new Date().toISOString();
+        const membershipEnd = buildMembershipEndISO(user.membership_end, config.durationDays);
+
+        await dbRunAsync(`
+            UPDATE users SET
+                membership = ?,
+                membership_start = ?,
+                membership_end = ?,
+                points = ?,
+                purchased_points = ?,
+                purchased_points_expire = ?,
+                last_daily_grant = NULL
+            WHERE id = ?
+        `, [
+            tier,
+            membershipStart,
+            membershipEnd,
+            points,
+            purchasedPoints,
+            purchasedPoints > 0 ? purchasedPointsExpire : null,
+            user.id
+        ]);
+
+        await dbRunAsync('COMMIT');
+        inTransaction = false;
+
+        const snapshot = await getUserMembershipSnapshot(user.id);
+        console.log(` 用户 ${user.id} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`);
+        res.json({
+            success: true,
+            tier,
+            pointsSpent: config.redeemCost,
+            ...snapshot
+        });
+    } catch (error) {
+        if (inTransaction) {
+            try {
+                await dbRunAsync('ROLLBACK');
+            } catch (rollbackError) {
+                console.error(' 兑换会员回滚失败:', rollbackError);
+            }
+        }
+        console.error(' 兑换会员失败:', error);
+        res.status(500).json({ error: '兑换会员失败' });
     }
 });
 
@@ -6741,6 +9497,13 @@ function isFreeModelIdentifier(modelUsed = '') {
         modelText === 'qwen-flash' ||
         modelText === 'qwen-plus' ||
         modelText === 'qwen-max' ||
+        modelText === 'chatgpt-gpt-oss-120b' ||
+        modelText === 'grok-4.2' ||
+        modelText === 'gpt-5.5' ||
+        modelText === 'gemma' ||
+        modelText === 'gemma-4-31b-it' ||
+        modelText === 'openai/gpt-oss-120b:free' ||
+        modelText === 'google/gemma-4-31b-it:free' ||
         modelText.includes('qwen2.5-7b-instruct') ||
         modelText.includes('qwen/qwen2.5-7b-instruct');
 }
@@ -6811,6 +9574,91 @@ async function checkAndConsumePoeQuota(userId, membership) {
             }
         );
     });
+}
+
+// free 用户 GPT-5.5 每24小时最多10次
+async function checkAndConsumeGpt55Quota(userId, membership) {
+    const tier = String(membership || 'free').toLowerCase();
+    const limit = GPT55_DAILY_LIMIT_FREE;
+    const resetAt = buildPoeResetAtISO();
+
+    if (tier !== 'free') {
+        return {
+            allowed: true,
+            limit: null,
+            used: 0,
+            remaining: null,
+            resetAt
+        };
+    }
+
+    const today = getTodayDateString();
+    return await new Promise((resolve, reject) => {
+        db.get(
+            'SELECT gpt55_usage_date, COALESCE(gpt55_usage_count, 0) AS gpt55_usage_count FROM users WHERE id = ?',
+            [userId],
+            (err, row) => {
+                if (err) return reject(err);
+                if (!row) return reject(new Error('用户不存在'));
+
+                const sameDay = row.gpt55_usage_date === today;
+                const currentUsed = sameDay ? Number(row.gpt55_usage_count || 0) : 0;
+
+                if (currentUsed >= limit) {
+                    console.warn(` gpt55_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
+                    return resolve({
+                        allowed: false,
+                        limit,
+                        used: currentUsed,
+                        remaining: 0,
+                        resetAt
+                    });
+                }
+
+                const nextUsed = currentUsed + 1;
+                db.run(
+                    'UPDATE users SET gpt55_usage_date = ?, gpt55_usage_count = ? WHERE id = ?',
+                    [today, nextUsed, userId],
+                    (updateErr) => {
+                        if (updateErr) return reject(updateErr);
+                        const remaining = Math.max(0, limit - nextUsed);
+                        resolve({
+                            allowed: true,
+                            limit,
+                            used: nextUsed,
+                            remaining,
+                            resetAt
+                        });
+                    }
+                );
+            }
+        );
+    });
+}
+
+async function refundGpt55Quota(userId) {
+    const today = getTodayDateString();
+    await dbRunAsync(
+        `UPDATE users
+         SET gpt55_usage_count = CASE
+             WHEN gpt55_usage_date = ? AND COALESCE(gpt55_usage_count, 0) > 0 THEN gpt55_usage_count - 1
+             ELSE COALESCE(gpt55_usage_count, 0)
+         END
+         WHERE id = ?`,
+        [today, userId]
+    );
+
+    const row = await dbGetAsync(
+        'SELECT gpt55_usage_date, COALESCE(gpt55_usage_count, 0) AS gpt55_usage_count FROM users WHERE id = ?',
+        [userId]
+    );
+    const used = row?.gpt55_usage_date === today ? Number(row.gpt55_usage_count || 0) : 0;
+    return {
+        limit: GPT55_DAILY_LIMIT_FREE,
+        used,
+        remaining: Math.max(0, GPT55_DAILY_LIMIT_FREE - used),
+        resetAt: buildPoeResetAtISO()
+    };
 }
 
 // 辅助函数：检查并扣减点数
@@ -6885,13 +9733,6 @@ async function checkAndDeductPoints(userId, modelUsed) {
 
 // ==================== 管理员后台系统 ====================
 
-// 管理员配置（独立于用户系统）
-const ADMIN_CONFIG = {
-    username: 'admin',
-    password: 'RAI@Admin2025',
-    secret: 'admin-jwt-secret-rai-2025'
-};
-
 // 管理员认证中间件
 const authenticateAdmin = (req, res, next) => {
     const token = req.headers['x-admin-token'];
@@ -6899,7 +9740,7 @@ const authenticateAdmin = (req, res, next) => {
         return res.status(401).json({ error: '需要管理员令牌' });
     }
     try {
-        const decoded = jwt.verify(token, ADMIN_CONFIG.secret);
+        const decoded = jwt.verify(token, ADMIN_JWT_SECRET);
         if (decoded.isAdmin) {
             req.isAdmin = true;
             next();
@@ -6912,16 +9753,24 @@ const authenticateAdmin = (req, res, next) => {
 };
 
 // 管理员登录
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
     const { username, password } = req.body;
 
-    if (username === ADMIN_CONFIG.username && password === ADMIN_CONFIG.password) {
-        const token = jwt.sign({ isAdmin: true, loginTime: Date.now() }, ADMIN_CONFIG.secret, { expiresIn: '8h' });
-        console.log(' 管理员登录成功');
-        res.json({ success: true, token });
-    } else {
+    try {
+        const usernameOk = String(username || '').trim() === ADMIN_USERNAME;
+        const passwordOk = usernameOk && await bcrypt.compare(String(password || ''), ADMIN_PASSWORD_HASH);
+
+        if (passwordOk) {
+            const token = jwt.sign({ isAdmin: true, username: ADMIN_USERNAME, loginTime: Date.now() }, ADMIN_JWT_SECRET, { expiresIn: '8h' });
+            console.log(' 管理员登录成功');
+            return res.json({ success: true, token });
+        }
+
         console.log(' 管理员登录失败尝试');
-        res.status(401).json({ error: '管理员凭据无效' });
+        return res.status(401).json({ error: '管理员凭据无效' });
+    } catch (err) {
+        console.error(' 管理员登录校验失败:', err.message);
+        return res.status(401).json({ error: '管理员凭据无效' });
     }
 });
 
@@ -7007,6 +9856,14 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
             });
         });
 
+        const feedbackStats = await dbGetAsync(`
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END) AS positive,
+                SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END) AS negative
+            FROM message_feedback
+        `);
+
         res.json({
             totalUsers,
             totalSessions,
@@ -7014,7 +9871,12 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
             todayMessages,
             dailyStats,
             modelUsage,
-            topUsers
+            topUsers,
+            feedbackStats: {
+                total: Number(feedbackStats?.total || 0),
+                positive: Number(feedbackStats?.positive || 0),
+                negative: Number(feedbackStats?.negative || 0)
+            }
         });
 
     } catch (error) {
@@ -7023,10 +9885,83 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
     }
 });
 
+app.get('/api/admin/feedback', authenticateAdmin, async (req, res) => {
+    try {
+        const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+        const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
+        const rating = String(req.query.rating || '').trim();
+        const search = String(req.query.search || '').trim();
+
+        const where = [];
+        const params = [];
+
+        if (['up', 'down'].includes(rating)) {
+            where.push('mf.rating = ?');
+            params.push(rating);
+        }
+
+        if (search) {
+            where.push(`(
+                mf.comment LIKE ? OR
+                m.content LIKE ? OR
+                s.title LIKE ? OR
+                u.email LIKE ? OR
+                u.username LIKE ?
+            )`);
+            const searchTerm = `%${search}%`;
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+        }
+
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        const feedback = await dbAllAsync(`
+            SELECT
+                mf.id,
+                mf.message_id,
+                mf.session_id,
+                mf.user_id,
+                mf.rating,
+                mf.comment,
+                mf.created_at,
+                mf.updated_at,
+                m.content AS message_content,
+                m.model AS message_model,
+                s.title AS session_title,
+                u.email AS user_email,
+                u.username AS username
+            FROM message_feedback mf
+            JOIN messages m ON mf.message_id = m.id
+            JOIN sessions s ON mf.session_id = s.id
+            JOIN users u ON mf.user_id = u.id
+            ${whereSql}
+            ORDER BY mf.updated_at DESC, mf.id DESC
+            LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
+
+        const totalRow = await dbGetAsync(`
+            SELECT COUNT(*) AS count
+            FROM message_feedback mf
+            JOIN messages m ON mf.message_id = m.id
+            JOIN sessions s ON mf.session_id = s.id
+            JOIN users u ON mf.user_id = u.id
+            ${whereSql}
+        `, params);
+
+        res.json({
+            feedback,
+            total: Number(totalRow?.count || 0),
+            offset,
+            limit
+        });
+    } catch (error) {
+        console.error(' 获取反馈列表失败:', error);
+        res.status(500).json({ error: '获取反馈列表失败' });
+    }
+});
+
 // 获取所有用户列表
 app.get('/api/admin/users', authenticateAdmin, (req, res) => {
-    const offset = parseInt(req.query.offset) || 0;
-    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+    const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
 
     db.all(`
         SELECT u.id, u.email, u.username, u.avatar_url, u.created_at, u.last_login,
@@ -7104,8 +10039,8 @@ app.get('/api/admin/users/:userId/detail', authenticateAdmin, async (req, res) =
 // 获取指定会话的所有消息（完整内容）
 app.get('/api/admin/sessions/:sessionId/messages', authenticateAdmin, async (req, res) => {
     const { sessionId } = req.params;
-    const offset = parseInt(req.query.offset) || 0;
-    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+    const limit = parseBoundedInteger(req.query.limit, 100, 1, 200);
 
     try {
         // 获取会话信息
@@ -7159,8 +10094,8 @@ app.get('/api/admin/sessions/:sessionId/messages', authenticateAdmin, async (req
 // 获取指定用户的详细信息和消息
 app.get('/api/admin/users/:userId/messages', authenticateAdmin, (req, res) => {
     const { userId } = req.params;
-    const offset = parseInt(req.query.offset) || 0;
-    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+    const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
 
     db.all(`
         SELECT m.id, m.session_id, m.role, m.content, m.model, m.created_at,
@@ -7180,27 +10115,28 @@ app.get('/api/admin/users/:userId/messages', authenticateAdmin, (req, res) => {
 });
 
 // 删除用户（及其所有数据）
-app.delete('/api/admin/users/:userId', authenticateAdmin, (req, res) => {
+app.delete('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
     const { userId } = req.params;
 
-    // 先删除用户的所有消息和会话，再删除用户
-    db.serialize(() => {
-        db.run('DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)', [userId]);
-        db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
-        db.run('DELETE FROM user_configs WHERE user_id = ?', [userId]);
-        db.run('DELETE FROM device_fingerprints WHERE user_id = ?', [userId]);
-        db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
-            if (err) {
-                console.error(' 删除用户失败:', err);
-                return res.status(500).json({ error: '删除用户失败' });
-            }
-            if (this.changes === 0) {
-                return res.status(404).json({ error: '用户不存在' });
-            }
-            console.log(` 管理员删除用户 ID: ${userId}`);
-            res.json({ success: true, deletedUserId: userId });
-        });
-    });
+    try {
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        await dbRunAsync('DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)', [userId]);
+        await dbRunAsync('DELETE FROM sessions WHERE user_id = ?', [userId]);
+        await dbRunAsync('DELETE FROM user_configs WHERE user_id = ?', [userId]);
+        await dbRunAsync('DELETE FROM device_fingerprints WHERE user_id = ?', [userId]);
+        const result = await dbRunAsync('DELETE FROM users WHERE id = ?', [userId]);
+        if (result.changes === 0) {
+            await dbRunAsync('ROLLBACK');
+            return res.status(404).json({ error: '用户不存在' });
+        }
+        await dbRunAsync('COMMIT');
+        console.log(` 管理员删除用户 ID: ${userId}`);
+        return res.json({ success: true, deletedUserId: userId });
+    } catch (err) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        console.error(' 删除用户失败:', err);
+        return res.status(500).json({ error: '删除用户失败' });
+    }
 });
 
 // 管理员设置用户会员等级
@@ -7297,8 +10233,8 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
 
 // 获取所有消息（带分页和筛选）
 app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
-    const offset = parseInt(req.query.offset) || 0;
-    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+    const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
     const search = req.query.search || '';
     const userId = req.query.userId || '';
 
@@ -7353,8 +10289,8 @@ app.delete('/api/admin/messages/:messageId', authenticateAdmin, (req, res) => {
 
 // 获取所有会话
 app.get('/api/admin/sessions', authenticateAdmin, (req, res) => {
-    const offset = parseInt(req.query.offset) || 0;
-    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+    const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
 
     db.all(`
         SELECT s.id, s.title, s.model, s.created_at, s.updated_at,
@@ -7374,23 +10310,25 @@ app.get('/api/admin/sessions', authenticateAdmin, (req, res) => {
 });
 
 // 删除会话
-app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, (req, res) => {
+app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, async (req, res) => {
     const { sessionId } = req.params;
 
-    db.serialize(() => {
-        db.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-        db.run('DELETE FROM sessions WHERE id = ?', [sessionId], function (err) {
-            if (err) {
-                console.error(' 删除会话失败:', err);
-                return res.status(500).json({ error: '删除会话失败' });
-            }
-            if (this.changes === 0) {
-                return res.status(404).json({ error: '会话不存在' });
-            }
-            console.log(` 管理员删除会话 ID: ${sessionId}`);
-            res.json({ success: true, deletedSessionId: sessionId });
-        });
-    });
+    try {
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        await dbRunAsync('DELETE FROM messages WHERE session_id = ?', [sessionId]);
+        const result = await dbRunAsync('DELETE FROM sessions WHERE id = ?', [sessionId]);
+        if (result.changes === 0) {
+            await dbRunAsync('ROLLBACK');
+            return res.status(404).json({ error: '会话不存在' });
+        }
+        await dbRunAsync('COMMIT');
+        console.log(` 管理员删除会话 ID: ${sessionId}`);
+        return res.json({ success: true, deletedSessionId: sessionId });
+    } catch (err) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        console.error(' 删除会话失败:', err);
+        return res.status(500).json({ error: '删除会话失败' });
+    }
 });
 
 // ==================== 404处理 ====================
@@ -7416,7 +10354,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║             RAI v0.9 已启动                            ║
+║             RAI v0.10.7 已启动                         ║
 ║                                                          ║
 ║   服务地址: http://0.0.0.0:${PORT}                     ║
 ║   数据库: ${dbPath}                                    ║

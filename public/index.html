@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#0D0D0D">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -16,6 +16,7 @@
 
   <!-- Marked.js for Markdown Rendering -->
   <script src="lib/marked.min.js"></script>
+  <script src="lib/purify.min.js"></script>
 
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
@@ -32,7 +33,7 @@
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260514-mermaid-xychart-fix-1">
 </head>
 
 <body>
@@ -77,6 +78,10 @@
             <button type="button" class="auth-btn" id="authSubmitBtn" onclick="handleAuthSubmit()"
               data-i18n="login-btn">登录</button>
           </div>
+
+          <div class="auth-sso-container" id="ztx6dSsoContainer" style="display: none;">
+            <button type="button" class="auth-sso-btn" onclick="startZtx6dLogin()">ZTX6D 登录</button>
+          </div>
         </div>
 
         <!-- 登录/注册切换 和 语言切换 - 放到表单下方 -->
@@ -97,13 +102,25 @@
   <div class="app-container" id="appContainer" style="display: none;">
     <!-- 移动端头部 -->
     <div class="mobile-header" id="mobileHeader">
-      <button class="hamburger-btn" onclick="toggleSidebar()">
-        <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-          height="24" fill="currentColor">
-          <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
-        </svg>
-      </button>
-      <div class="mobile-logo">RAI</div>
+      <div class="mobile-left-controls">
+        <button class="hamburger-btn" onclick="toggleSidebar()">
+          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
+            height="24" fill="currentColor">
+            <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
+          </svg>
+        </button>
+        <div class="mobile-logo">RAI</div>
+      </div>
+      <div class="mobile-center-controls">
+        <button type="button" class="model-select-custom mobile-model-selector" id="mobileModelSelectCustom"
+          onclick="openModelModal('mobileModelSelectCustom')">
+          <span class="model-select-label" data-model-label data-i18n="model-smart">智能模型</span>
+          <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
+          </svg>
+        </button>
+      </div>
       <div class="header-controls">
         <button class="control-btn" onclick="toggleTheme()" title="切换主题">
           <svg class="material-symbols-outlined" id="mobileThemeIcon" xmlns="http://www.w3.org/2000/svg"
@@ -146,7 +163,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick · v0.9</div>
+              <div class="logo-subtitle">by Rick · v0.10.7</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -211,15 +228,28 @@
             </div>
           </div>
 
-          <!-- Chat Flow 思维流分组 -->
+          <!-- ChatFlow 分组 -->
           <div class="sidebar-group">
             <div class="sidebar-group-header" onclick="toggleGroup('flows')">
-              <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                width="24" height="24" fill="currentColor">
-                <path
-                  d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h200v-80H240v80Zm280 0h160v-80H520v80ZM240-440h160v-80H240v80Zm200 0h280v-80H440v80ZM240-600h280v-80H240v80Zm320 0h160v-80H560v80Z" />
+              <svg class="flow-group-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="24" height="24">
+                <defs>
+                  <linearGradient id="planetGradFlow" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#f5d547;stop-opacity:1" />
+                    <stop offset="100%" style="stop-color:#e6a824;stop-opacity:1" />
+                  </linearGradient>
+                  <linearGradient id="ringGradFlow" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" style="stop-color:#f9e79f;stop-opacity:1" />
+                    <stop offset="100%" style="stop-color:#fef5e7;stop-opacity:1" />
+                  </linearGradient>
+                </defs>
+                <circle cx="32" cy="32" r="14" fill="url(#planetGradFlow)" />
+                <path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none"
+                  stroke="url(#ringGradFlow)" stroke-width="4" stroke-linecap="round" opacity="0.8" />
+                <path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(#ringGradFlow)" stroke-width="4"
+                  stroke-linecap="round" opacity="0.9" />
+                <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
               </svg>
-              <span class="sidebar-group-title" data-i18n="sidebar-flows">思维流</span>
+              <span class="sidebar-group-title" data-i18n="sidebar-flows">ChatFlow</span>
               <svg class="material-symbols-outlined group-toggle-icon" id="flowsToggle"
                 xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
@@ -231,7 +261,7 @@
                   height="24" fill="currentColor">
                   <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                 </svg>
-                <span data-i18n="new-flow">新建思维流</span>
+                <span data-i18n="new-flow">新建 ChatFlow</span>
               </button>
               <div class="flows-list" id="flowsList"></div>
             </div>
@@ -321,13 +351,13 @@
               <span class="action-card-title" data-i18n="action-write">写作</span>
             </div>
 
-            <div class="action-card" onclick="handleActionCard('search')">
+            <div class="action-card" onclick="handleActionCard('finance')">
               <svg class="material-symbols-outlined action-card-icon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path
-                  d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                  d="M3 17h3.2l3.7-4.44 3.2 2.67L21 6v3h-2V9.7l-5.58 6.97-3.33-2.78L7.13 17H11v2H3v-2z" />
               </svg>
-              <span class="action-card-title" data-i18n="action-search">搜索</span>
+              <span class="action-card-title" data-i18n="action-finance">财务</span>
             </div>
 
             <div class="action-card" onclick="handleActionCard('code')">
@@ -433,7 +463,7 @@
                   </div>
 
                   <!-- Agent 模式开关 -->
-                  <div class="more-menu-item" onclick="toggleAgentFromMenu(event)">
+                  <div class="more-menu-item" data-required-membership="max" onclick="toggleAgentFromMenu(event)">
                     <div class="more-menu-item-icon">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
                         <path
@@ -484,8 +514,8 @@
 
               <!-- 自定义模型选择器 -->
               <div class="model-selector">
-                <div class="model-select-custom" id="modelSelectCustom" onclick="openModelModal()">
-                  <span id="selectedModelText" data-i18n="model-smart">智能模型</span>
+                <div class="model-select-custom" id="modelSelectCustom" onclick="openModelModal('modelSelectCustom')">
+                  <span id="selectedModelText" class="model-select-label" data-model-label data-i18n="model-smart">智能模型</span>
                   <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                     <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -560,14 +590,10 @@
                     <div class="model-menu-divider"></div>
 
                     <div class="model-menu-item" data-model="deepseek-v3"
-                      onclick="selectModelFromMenu('deepseek-v3', 'DeepSeek V3.2')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M320-280q17 0 28.5-11.5T360-320q0-17-11.5-28.5T320-360q-17 0-28.5 11.5T280-320q0 17 11.5 28.5T320-280Zm0-160q17 0 28.5-11.5T360-480q0-17-11.5-28.5T320-520q-17 0-28.5 11.5T280-480q0 17 11.5 28.5T320-440Zm0-160q17 0 28.5-11.5T360-640q0-17-11.5-28.5T320-680q-17 0-28.5 11.5T280-640q0 17 11.5 28.5T320-600Zm120 320h240v-80H440v80Zm0-160h240v-80H440v80Zm0-160h240v-80H440v80ZM200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Z" />
-                      </svg>
+                      onclick="selectModelFromMenu('deepseek-v3', 'DeepSeek V4')">
+                      <span class="model-menu-icon model-provider-icon deepseek-provider-icon" aria-hidden="true"></span>
                       <div class="model-menu-content">
-                        <div class="model-menu-title">DeepSeek V3.2</div>
+                        <div class="model-menu-title">DeepSeek V4</div>
                       </div>
                     </div>
 
@@ -575,35 +601,84 @@
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Kimi K2.5 -->
+                    <!-- Kimi -->
                     <div class="model-menu-item" data-model="kimi-k2.5"
-                      onclick="selectModelFromMenu('kimi-k2.5', 'Kimi K2.5')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="m226-559 78 33q14-28 29-54t33-52l-56-11-84 84Zm142 83 114 113q42-16 90-49t90-75q70-70 109.5-155.5T806-800q-72-5-158 34.5T492-656q-42 42-75 90t-49 90Zm178-65q-23-23-23-56.5t23-56.5q23-23 57-23t57 23q23 23 23 56.5T660-541q-23 23-57 23t-57-23Zm19 321 84-84-11-56q-26 18-52 32.5T532-299l33 79Zm313-653q19 121-23.5 235.5T708-419l20 99q4 20-2 39t-20 33L538-80l-84-197-171-171-197-84 167-168q14-14 33.5-20t39.5-2l99 20q104-104 218-147t235-24ZM157-321q35-35 85.5-35.5T328-322q35 35 34.5 85.5T327-151q-25 25-83.5 43T82-76q14-103 32-161.5t43-83.5Zm57 56q-10 10-20 36.5T180-175q27-4 53.5-13.5T270-208q12-12 13-29t-11-29q-12-12-29-11.5T214-265Z" />
-                      </svg>
+                      onclick="selectModelFromMenu('kimi-k2.5', 'Kimi')">
+                      <img class="model-menu-icon model-provider-img kimi-provider-img" src="icons/kimi.png" alt="" aria-hidden="true">
                       <div class="model-menu-content">
-                        <div class="model-menu-title">Kimi K2.5</div>
-                        <div class="model-menu-description">Pro / 256K / Vision / Tools / Prefix</div>
+                        <div class="model-menu-title">Kimi</div>
                       </div>
                     </div>
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Qwen2.5-7B 免费模型 -->
+                    <!-- Qwen 免费模型 -->
                     <div class="model-menu-item" data-model="qwen2.5-7b"
-                      onclick="selectModelFromMenu('qwen2.5-7b', 'Qwen2.5 7B')">
-                      <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
-                        fill="currentColor">
-                        <path
-                          d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm-40-200v-100h-100v-80h100v-100h80v100h100v80h-100v100h-80Z" />
-                      </svg>
+                      onclick="selectModelFromMenu('qwen2.5-7b', 'Qwen')">
+                      <img class="model-menu-icon model-provider-img qwen-provider-img" src="icons/Qwen.png" alt="" aria-hidden="true">
                       <div class="model-menu-content">
-                        <div class="model-menu-title">Qwen2.5 7B <span class="model-badge free">免费</span></div>
+                        <div class="model-menu-title"><span class="model-menu-name">Qwen</span><span class="model-badge free">免费</span></div>
                       </div>
                     </div>
 
+
+                    <div class="model-menu-divider"></div>
+
+                    <!-- ChatGPT OpenRouter 免费模型 -->
+                    <div class="model-menu-item" data-model="chatgpt-gpt-oss-120b"
+                      onclick="selectModelFromMenu('chatgpt-gpt-oss-120b', 'ChatGPT')">
+                      <span class="model-menu-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">ChatGPT</span><span class="model-badge limited-free">限免</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-item" data-model="gpt-5.5"
+                      onclick="selectModelFromMenu('gpt-5.5', 'GPT-5.5')">
+                      <span class="model-menu-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">GPT-5.5</span><span class="model-badge limited-free">限免</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-item" data-model="grok-4.2"
+                      onclick="selectModelFromMenu('grok-4.2', 'Grok 4.2')">
+                      <span class="model-menu-icon model-provider-icon grok-provider-icon" aria-hidden="true"></span>
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">Grok 4.2</span><span class="model-badge limited-free">限免</span></div>
+                      </div>
+                    </div>
+
+                    <!-- Claude Sonnet -->
+                    <div class="model-menu-item" data-model="anthropic/claude-sonnet-4.6"
+                      data-required-membership="MAX"
+                      onclick="selectModelFromMenu('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">
+                      <img class="model-menu-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">Claude Sonnet 4.6</span><span class="model-badge max-only">MAX</span></div>
+                      </div>
+                    </div>
+
+                    <!-- Claude Haiku -->
+                    <div class="model-menu-item" data-model="anthropic/claude-3-haiku"
+                      data-required-membership="MAX"
+                      onclick="selectModelFromMenu('anthropic/claude-3-haiku', 'Claude 3 Haiku')">
+                      <img class="model-menu-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">Claude 3 Haiku</span><span class="model-badge max-only">MAX</span></div>
+                      </div>
+                    </div>
+
+                    <div class="model-menu-divider"></div>
+
+                    <!-- Gemma Google API 限免模型 -->
+                    <div class="model-menu-item" data-model="gemma"
+                      onclick="selectModelFromMenu('gemma', 'Gemma')">
+                      <img class="model-menu-icon model-provider-img" src="icons/GoogleGemini.svg" alt="" aria-hidden="true">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">Gemma</span><span class="model-badge limited-free">限免</span></div>
+                      </div>
+                    </div>
 
                     <div class="model-menu-divider"></div>
 
@@ -647,7 +722,7 @@
   </div>
   </div>
 
-  <!-- Chat Flow 思维流工作区 -->
+  <!-- ChatFlow 工作区 -->
   <div class="chatflow-workspace" id="chatFlowWorkspace" style="display: none;">
     <!-- 返回按钮 -->
     <button class="chatflow-back-btn" onclick="closeChatFlow()">
@@ -657,14 +732,91 @@
       <span data-i18n="back-to-chat">返回对话</span>
     </button>
 
-    <!-- 左侧 LLM 面板 - 嵌入 RAI 主界面 iframe -->
+    <!-- 左侧 LLM 面板 -->
     <div class="chatflow-llm-panel" id="chatflowLLMPanel">
-      <div class="chatflow-header">
-        <h3 class="chatflow-title" id="chatflowTitle">新思维流</h3>
+      <div class="chatflow-sheet-grabber" id="chatflowSheetGrabber" aria-hidden="true">
+        <span></span>
       </div>
-      <!-- 嵌入 RAI 主界面，带 mode=chatflow 参数 -->
-      <iframe id="chatflowIframe" class="chatflow-iframe" src="/?mode=chatflow" title="RAI Chat"
-        allowfullscreen></iframe>
+      <div class="chatflow-header">
+        <div class="chatflow-header-main">
+          <h3 class="chatflow-title" id="chatflowTitle">新 ChatFlow</h3>
+          <p class="chatflow-header-meta" id="chatflowHeaderMeta">ChatFlow Session</p>
+        </div>
+      </div>
+
+      <div class="chatflow-patch-banner" id="chatflowPatchBanner" style="display: none;">
+        <div class="chatflow-patch-banner-title" id="chatflowPatchBannerTitle">AI 画布建议已准备</div>
+        <div class="chatflow-patch-summary" id="chatflowPatchSummary"></div>
+        <div class="chatflow-patch-actions">
+          <button type="button" class="chatflow-patch-btn primary" id="chatflowPatchApplyBtn"
+            onclick="applyPendingCanvasPatch()">应用</button>
+          <button type="button" class="chatflow-patch-btn" id="chatflowPatchDismissBtn"
+            onclick="dismissPendingCanvasPatch()">忽略</button>
+          <button type="button" class="chatflow-patch-btn" id="chatflowPatchUndoBtn" style="display: none;"
+            onclick="undoLastCanvasPatch()">撤回上一次 AI 修改</button>
+        </div>
+      </div>
+
+      <div class="chatflow-messages" id="chatflowMessages"></div>
+
+      <div class="chatflow-input-area">
+        <div class="chatflow-input-wrapper">
+          <div class="chatflow-input-container">
+            <div class="chatflow-input-row">
+              <textarea id="chatflowMessageInput" class="chatflow-message-input" rows="1"
+                placeholder="输入消息，让 AI 帮你梳理并修改画布" oninput="autoResizeChatFlowInput()"
+                onkeydown="handleChatFlowInputKeydown(event)"></textarea>
+            </div>
+            <div class="chatflow-input-toolbar">
+              <button type="button" class="chatflow-toolbar-btn" id="chatflowInternetToggle"
+                onclick="toggleChatFlowInternet(event)" title="联网">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+                  <path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q146 0 255.5 91.5T872-559h-82q-19-73-68.5-130.5T600-776v16q0 33-23.5 56.5T520-680h-80v80q0 17-11.5 28.5T400-560h-80v80h80v120h-40L168-552q-3 18-5.5 36t-2.5 36q0 131 92 225t228 95v80Zm364-20L716-228q-21 12-45 20t-51 8q-75 0-127.5-52.5T440-380q0-75 52.5-127.5T620-560q75 0 127.5 52.5T800-380q0 27-8 51t-20 45l128 128-56 56ZM691-309q29-29 29-71t-29-71q-29-29-71-29t-71 29q-29 29-29 71t29 71q29 29 71 29t71-29Z" />
+                </svg>
+              </button>
+              <button type="button" class="chatflow-toolbar-btn" id="chatflowThinkingToggle"
+                onclick="toggleChatFlowThinking(event)" title="推理">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
+                  <path d="M574.5-774.5Q560-789 560-810t14.5-35.5Q589-860 610-860t35.5 14.5Q660-831 660-810t-14.5 35.5Q631-760 610-760t-35.5-14.5Zm0 660Q560-129 560-150t14.5-35.5Q589-200 610-200t35.5 14.5Q660-171 660-150t-14.5 35.5Q631-100 610-100t-35.5-14.5Zm160-520Q720-649 720-670t14.5-35.5Q749-720 770-720t35.5 14.5Q820-691 820-670t-14.5 35.5Q791-620 770-620t-35.5-14.5Zm0 380Q720-269 720-290t14.5-35.5Q749-340 770-340t35.5 14.5Q820-311 820-290t-14.5 35.5Q791-240 770-240t-35.5-14.5Zm60-190Q780-459 780-480t14.5-35.5Q809-530 830-530t35.5 14.5Q880-501 880-480t-14.5 35.5Q851-430 830-430t-35.5-14.5ZM480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880v80q-134 0-227 93t-93 227q0 134 93 227t227 93v80Zm132-212L440-464v-216h80v184l148 148-56 56Z" />
+                </svg>
+              </button>
+              <button type="button" class="chatflow-mode-chip" id="chatflowPatchModeBtn" onclick="toggleChatFlowPatchMode()">
+                审核后应用
+              </button>
+              <div class="chatflow-toolbar-spacer"></div>
+              <div class="chatflow-model-selector">
+                <button type="button" class="chatflow-model-select" onclick="toggleChatFlowModelMenu()">
+                  <span id="chatflowSelectedModel">Auto</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M7 10l5 5 5-5z" />
+                  </svg>
+                </button>
+                <div class="chatflow-model-menu" id="chatflowModelMenu">
+                  <div class="model-menu-item" onclick="selectChatFlowModel('auto', 'Auto')">Auto</div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('kimi-k2.5', 'Kimi')">Kimi</div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen2.5-7b', 'Qwen')">Qwen</div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('chatgpt-gpt-oss-120b', 'ChatGPT')">ChatGPT</div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('gpt-5.5', 'GPT-5.5')">GPT-5.5</div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('grok-4.2', 'Grok 4.2')">Grok 4.2</div>
+                  <div class="model-menu-item" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">Claude Sonnet 4.6</div>
+                  <div class="model-menu-item" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-3-haiku', 'Claude 3 Haiku')">Claude 3 Haiku</div>
+                  <div class="model-menu-item" onclick="selectChatFlowModel('gemma', 'Gemma')">Gemma</div>
+                </div>
+              </div>
+              <button type="button" class="chatflow-send-btn" id="chatflowSendBtn" onclick="sendChatFlowMessage()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M2 21 23 12 2 3v7l15 2-15 2v7Z" />
+                </svg>
+              </button>
+              <button type="button" class="chatflow-stop-btn" id="chatflowStopBtn" onclick="stopChatFlowGeneration()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M6 6h12v12H6z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 可拖拽分隔栏 -->
@@ -701,7 +853,7 @@
           <path
             d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm280-80q-82 0-155-31.5T201-401q-51-58-82-131.5T80-688l80-32q31 113 127 186.5T520-460q137 0 233-73.5T880-720l80 32q-38 82-105.5 145.5T716-441q-71 41-154 61t-82 0Z" />
         </svg>
-        <span>从左侧拖拽消息到画布，开始构建思维图谱</span>
+        <span>从左侧拖拽消息到画布，开始构建 ChatFlow</span>
       </div>
 
       <!-- 缩放控制 -->
@@ -859,17 +1011,28 @@
             <div class="settings-membership-header">
               <span class="settings-membership-badge free" id="settingsMembershipBadge">free</span>
               <span onclick="openMembershipPlans()" class="settings-upgrade-link"
-                data-i18n="upgrade-points-link">体验更多使用点数？</span>
+                data-i18n="upgrade-points-link">点数兑换会员</span>
             </div>
             <div class="settings-points-display">
               <span class="points-icon"></span>
               <span><span data-i18n="remaining-points-label">剩余点数</span>: <strong id="settingsPointsDisplay">0</strong></span>
             </div>
-            <button id="settingsCheckinBtn" onclick="userCheckin(); updateSettingsMembership();"
+            <button id="settingsCheckinBtn" onclick="userCheckin()"
               class="settings-checkin-btn" data-i18n="checkin-bonus">
               签到 +20 
             </button>
             <div class="settings-created-at" id="settingsCreatedAt"><span data-i18n="created-at-prefix">创建于</span>: -</div>
+          </div>
+        </div>
+
+        <div class="settings-group" id="ztx6dBindingSection" style="display: none;">
+          <h3 class="settings-group-title">账号绑定</h3>
+          <div class="setting-item ztx6d-binding-card">
+            <label class="setting-label">ZTX6D</label>
+            <div class="ztx6d-binding-actions">
+              <p class="setting-description ztx6d-binding-status" id="ztx6dBindingStatus">未绑定</p>
+              <button type="button" class="btn btn-secondary" id="ztx6dBindBtn" onclick="bindZtx6dAccount()">绑定 ZTX6D</button>
+            </div>
           </div>
         </div>
 
@@ -1013,7 +1176,7 @@
             <path d="m280-80 160-300-320-40 480-460h80L520-580l320 40L360-80h-80Z" />
           </svg>
           <div class="model-label">极速模式</div>
-          <div class="model-description">Qwen2.5 7B（免费）</div>
+          <div class="model-description">快速响应</div>
         </div>
 
         <!-- 专家模式 -->
@@ -1023,20 +1186,59 @@
               d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
           </svg>
           <div class="model-label">专家模式</div>
-          <div class="model-description">Kimi K2.5</div>
+          <div class="model-description">复杂任务</div>
         </div>
 
-        <!-- DeepSeek V3 -->
-        <div class="model-card" data-model="deepseek-v3" onclick="selectModelFromModal('deepseek-v3', 'DeepSeek V3')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path
-              d="M320-280q17 0 28.5-11.5T360-320q0-17-11.5-28.5T320-360q-17 0-28.5 11.5T280-320q0 17 11.5 28.5T320-280Zm0-160q17 0 28.5-11.5T360-480q0-17-11.5-28.5T320-520q-17 0-28.5 11.5T280-480q0 17 11.5 28.5T320-440Zm0-160q17 0 28.5-11.5T360-640q0-17-11.5-28.5T320-680q-17 0-28.5 11.5T280-640q0 17 11.5 28.5T320-600Zm120 320h240v-80H440v80Zm0-160h240v-80H440v80Zm0-160h240v-80H440v80ZM200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm0-560v560-560Z" />
-          </svg>
-          <div class="model-label">DeepSeek V3</div>
-          <div class="model-description">深度推理</div>
+        <!-- DeepSeek V4 -->
+        <div class="model-card" data-model="deepseek-v3" onclick="selectModelFromModal('deepseek-v3', 'DeepSeek V4')">
+          <span class="model-icon model-provider-icon deepseek-provider-icon" aria-hidden="true"></span>
+          <div class="model-label">DeepSeek V4</div>
+          <div class="model-description">1M / Thinking</div>
         </div>
 
         <!-- DeepSeek Speciale 已隐藏 (临时模型已过期) -->
+
+        <!-- ChatGPT OpenRouter -->
+        <div class="model-card" data-model="chatgpt-gpt-oss-120b" onclick="selectModelFromModal('chatgpt-gpt-oss-120b', 'ChatGPT')">
+          <span class="model-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
+          <div class="model-label">ChatGPT</div>
+          <div class="model-description">OpenRouter 限免</div>
+        </div>
+
+        <!-- GPT-5.5 NewAPI -->
+        <div class="model-card" data-model="gpt-5.5" onclick="selectModelFromModal('gpt-5.5', 'GPT-5.5')">
+          <span class="model-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
+          <div class="model-label">GPT-5.5</div>
+          <div class="model-description">限免：free 每日 10 次</div>
+        </div>
+
+        <!-- Grok OpenRouter -->
+        <div class="model-card" data-model="grok-4.2" onclick="selectModelFromModal('grok-4.2', 'Grok 4.2')">
+          <span class="model-icon model-provider-icon grok-provider-icon" aria-hidden="true"></span>
+          <div class="model-label">Grok 4.2</div>
+          <div class="model-description">限免模型</div>
+        </div>
+
+        <!-- Claude Sonnet -->
+        <div class="model-card" data-model="anthropic/claude-sonnet-4.6" data-required-membership="MAX" onclick="selectModelFromModal('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">
+          <img class="model-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
+          <div class="model-label">Claude Sonnet 4.6</div>
+          <div class="model-description">仅 MAX 可用</div>
+        </div>
+
+        <!-- Claude Haiku -->
+        <div class="model-card" data-model="anthropic/claude-3-haiku" data-required-membership="MAX" onclick="selectModelFromModal('anthropic/claude-3-haiku', 'Claude 3 Haiku')">
+          <img class="model-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
+          <div class="model-label">Claude 3 Haiku</div>
+          <div class="model-description">仅 MAX 可用</div>
+        </div>
+
+        <!-- Gemma Google API -->
+        <div class="model-card" data-model="gemma" onclick="selectModelFromModal('gemma', 'Gemma')">
+          <img class="model-icon model-provider-img" src="icons/GoogleGemini.svg" alt="" aria-hidden="true">
+          <div class="model-label">Gemma</div>
+          <div class="model-description">Google API 限免</div>
+        </div>
 
         <!-- LMStudio Local -->
         <div class="model-card" data-model="lmstudio-local" onclick="selectModelFromModal('lmstudio-local', '本地模型')">
@@ -1062,6 +1264,12 @@
           <option value="auto" data-i18n="smartMode">最佳</option>
           <option value="qwen2.5-7b" data-i18n="fastMode">极速</option>
           <option value="kimi-k2.5" data-i18n="expertMode">专家</option>
+          <option value="chatgpt-gpt-oss-120b">ChatGPT</option>
+          <option value="gpt-5.5">GPT-5.5 (限免10次/天)</option>
+          <option value="grok-4.2">Grok 4.2 (限免)</option>
+          <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6 (MAX)</option>
+          <option value="anthropic/claude-3-haiku">Claude 3 Haiku (MAX)</option>
+          <option value="gemma">Gemma</option>
         </select>
       </div>
 
@@ -1095,7 +1303,9 @@
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script src="app.js"></script>
+  <script src="app.js?v=20260514-mermaid-xychart-fix-1"></script>
 </body>
 
 </html>
+
+

@@ -1,4 +1,4 @@
-﻿// ==================== ChatFlow iframe 模式检测 ====================
+// ==================== ChatFlow iframe 模式检测 ====================
 // 检测是否在 ChatFlow iframe 模式下运行
 const isChatFlowIframeMode = new URLSearchParams(window.location.search).get('mode') === 'chatflow';
 
@@ -83,6 +83,7 @@ window.addEventListener('load', function () {
     script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
     script.onload = function () {
       console.log(' Marked.js loaded from CDN');
+      configureMarkedSecurity();
       if (typeof renderMessages === 'function') {
         console.log(' Re-rendering messages...');
         renderMessages();
@@ -106,15 +107,78 @@ window.addEventListener('load', function () {
 // 渲染带数学公式的Markdown文本
 // @param {string} text - 要渲染的文本
 // @param {boolean} isStreaming - 是否流式模式（流式模式下用占位符替代图片）
+let markedSecurityConfigured = false;
+
+function configureMarkedSecurity() {
+  const markedLib = window.marked || (typeof marked !== 'undefined' ? marked : null);
+  if (!markedLib || markedSecurityConfigured) return;
+
+  if (typeof markedLib.Renderer === 'function') {
+    const renderer = new markedLib.Renderer();
+    renderer.html = function (html) {
+      return escapeHtml(String(html || ''));
+    };
+
+    if (typeof markedLib.use === 'function') {
+      markedLib.use({ renderer });
+    } else if (typeof markedLib.setOptions === 'function') {
+      markedLib.setOptions({ renderer });
+    }
+  }
+
+  markedSecurityConfigured = true;
+}
+
+const RAI_SANITIZE_CONFIG = {
+  USE_PROFILES: { html: true },
+  ALLOWED_TAGS: [
+    'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em', 'h1', 'h2',
+    'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'li', 'ol', 'p', 'pre', 'span',
+    'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'ul'
+  ],
+  ALLOWED_ATTR: [
+    'alt', 'aria-hidden', 'aria-label', 'class', 'data-lang', 'data-mermaid-code',
+    'data-mermaid-index', 'data-src', 'href', 'id', 'loading', 'rel', 'role', 'src', 'target', 'title'
+  ],
+  ALLOW_DATA_ATTR: true,
+  FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'svg', 'math'],
+  FORBID_ATTR: ['style'],
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#|data:image\/(?:png|jpeg|gif|webp);base64,)/i
+};
+
+function sanitizeRenderedHtml(html) {
+  if (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function') {
+    return window.DOMPurify.sanitize(String(html || ''), RAI_SANITIZE_CONFIG);
+  }
+  return escapeHtml(String(html || ''));
+}
+
+function sanitizeReasoningText(text) {
+  const escaped = escapeHtml(String(text || ''))
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+
+  if (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function') {
+    return window.DOMPurify.sanitize(escaped, {
+      ALLOWED_TAGS: ['strong', 'br'],
+      ALLOWED_ATTR: []
+    });
+  }
+  return escaped;
+}
+
 function renderMarkdownWithMath(text, isStreaming = false) {
   if (!text) return '';
+
+  const normalizedText = normalizeMarkdownTables(String(text || ''));
+  const { text: mermaidProtectedText, blocks: mermaidBlocks } = extractMermaidBlocks(normalizedText);
 
   // 临时存储公式的映射
   const mathStore = new Map();
   let counter = 0;
 
   // 1. 保护 $$ ... $$ 块级公式
-  let protectedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
+  let protectedText = mermaidProtectedText.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
     const id = `@@MATHBLOCK${counter++}@@`;
     mathStore.set(id, { formula: formula.trim(), display: true });
     return id;
@@ -132,6 +196,7 @@ function renderMarkdownWithMath(text, isStreaming = false) {
   // 3. Markdown解析
   let html = '';
   if (typeof marked !== 'undefined' && marked.parse) {
+    configureMarkedSecurity();
     html = marked.parse(protectedText);
   } else {
     html = protectedText;
@@ -145,7 +210,7 @@ function renderMarkdownWithMath(text, isStreaming = false) {
           displayMode: data.display,
           throwOnError: false,
           errorColor: '#ff6b6b',
-          trust: true,
+          trust: false,
           strict: false
         });
         html = html.replace(new RegExp(id, 'g'), rendered);
@@ -204,7 +269,368 @@ function renderMarkdownWithMath(text, isStreaming = false) {
     );
   }
 
-  return html;
+  html = restoreMermaidPlaceholders(html, mermaidBlocks, isStreaming);
+  html = wrapTablesInHtml(html);
+
+  return sanitizeRenderedHtml(html);
+}
+
+function looksLikeMarkdownTableRow(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) return false;
+  return (trimmed.match(/\|/g) || []).length >= 2;
+}
+
+function looksLikeMarkdownTableSeparator(line) {
+  return /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?\s*)\|?\s*$/.test(String(line || ''));
+}
+
+function normalizeMarkdownTables(text) {
+  const source = String(text || '').replace(/\r\n?/g, '\n');
+  const lines = source.split('\n');
+  const output = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const nextLine = lines[i + 1];
+
+    if (looksLikeMarkdownTableRow(line) && looksLikeMarkdownTableSeparator(nextLine)) {
+      if (output.length > 0 && output[output.length - 1].trim() !== '') {
+        output.push('');
+      }
+
+      output.push(line.trimEnd());
+      output.push(String(nextLine || '').trimEnd());
+      i += 1;
+
+      while (i + 1 < lines.length && looksLikeMarkdownTableRow(lines[i + 1])) {
+        i += 1;
+        output.push(lines[i].trimEnd());
+      }
+
+      if (i + 1 < lines.length && lines[i + 1].trim() !== '') {
+        output.push('');
+      }
+      continue;
+    }
+
+    output.push(line);
+  }
+
+  return output.join('\n');
+}
+
+function parseMermaidOpeningFence(line) {
+  const match = String(line || '').match(/^\s*(`{3,}|~{3,})\s*mermaid\b\s*(.*)$/i);
+  if (!match) return null;
+  return {
+    marker: match[1][0],
+    trailing: match[2] || ''
+  };
+}
+
+function isMermaidClosingFenceLine(line) {
+  const value = String(line || '').trim();
+  return /^`{2,}$/.test(value) || /^~{3,}$/.test(value);
+}
+
+function splitMermaidInlineFence(line) {
+  const value = String(line || '');
+  const tickIndex = value.search(/`{2,}/);
+  const tildeIndex = value.search(/~{3,}/);
+  const indexes = [tickIndex, tildeIndex].filter(index => index >= 0);
+  if (!indexes.length) return null;
+
+  const index = Math.min(...indexes);
+  const markerMatch = value.slice(index).match(/^(`{2,}|~{3,})/);
+  if (!markerMatch) return null;
+
+  return {
+    before: value.slice(0, index).trimEnd(),
+    after: value.slice(index + markerMatch[0].length)
+  };
+}
+
+function stripMermaidFenceNoise(code) {
+  const lines = normalizeMermaidCode(code).split('\n');
+  const output = [];
+
+  for (const line of lines) {
+    if (isMermaidClosingFenceLine(line)) break;
+
+    const inlineFence = splitMermaidInlineFence(line);
+    if (inlineFence) {
+      if (inlineFence.before.trim()) {
+        output.push(inlineFence.before);
+      }
+      break;
+    }
+
+    output.push(line);
+  }
+
+  return normalizeMermaidCode(output.join('\n'));
+}
+
+function extractMermaidBlocks(text) {
+  const source = String(text || '').replace(/\r\n?/g, '\n');
+  const lines = source.split('\n');
+  const output = [];
+  const blocks = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const opening = parseMermaidOpeningFence(lines[i]);
+
+    if (!opening) {
+      output.push(lines[i]);
+      continue;
+    }
+
+    const codeLines = [];
+    const openingTrailing = opening.trailing.trim();
+    if (openingTrailing) {
+      codeLines.push(openingTrailing);
+    }
+
+    let afterClosingFence = '';
+    i += 1;
+
+    for (; i < lines.length; i += 1) {
+      const line = lines[i];
+
+      if (isMermaidClosingFenceLine(line)) {
+        break;
+      }
+
+      const inlineFence = splitMermaidInlineFence(line);
+      if (inlineFence) {
+        if (inlineFence.before.trim()) {
+          codeLines.push(inlineFence.before);
+        }
+        afterClosingFence = inlineFence.after;
+        break;
+      }
+
+      codeLines.push(line);
+    }
+
+    const token = `@@MERMAIDBLOCK${blocks.length}@@`;
+    blocks.push(stripMermaidFenceNoise(codeLines.join('\n')));
+    output.push(token);
+
+    if (afterClosingFence.trim()) {
+      output.push(afterClosingFence);
+    }
+  }
+
+  return {
+    text: output.join('\n'),
+    blocks
+  };
+}
+
+function restoreMermaidPlaceholders(html, blocks, isStreaming = false) {
+  let restoredHtml = String(html || '');
+
+  blocks.forEach((blockCode, index) => {
+    const token = `@@MERMAIDBLOCK${index}@@`;
+    const normalizedCode = normalizeMermaidCode(blockCode);
+    const replacement = isStreaming
+      ? `<div class="mermaid-inline-wrapper" data-mermaid-index="${index}" data-mermaid-code="${encodeURIComponent(normalizedCode)}"><div class="mermaid-preview-container"><div class="mermaid-loading"><span>图表 ${index + 1} 渲染中...</span></div></div></div>`
+      : `<div class="mermaid-container" id="mermaid-${Math.random().toString(36).slice(2, 11)}" data-mermaid-code="${encodeURIComponent(normalizedCode)}"></div>`;
+    restoredHtml = restoredHtml.replace(new RegExp(token, 'g'), replacement);
+  });
+
+  return restoredHtml;
+}
+
+function wrapTablesInHtml(html) {
+  return String(html || '').replace(
+    /(<table[\s\S]*?<\/table>)/gi,
+    '<div class="table-wrapper">$1</div>'
+  );
+}
+
+function normalizeMermaidCode(code) {
+  return String(code || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/^\s+|\s+$/g, '');
+}
+
+function decodeHtmlEntities(value) {
+  if (!value) return '';
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function sanitizeMermaidCode(code) {
+  let normalized = stripMermaidFenceNoise(normalizeMermaidCode(decodeHtmlEntities(code)));
+
+  if (!normalized) return '';
+
+  normalized = normalized
+    .replace(/<\/?(span|math|semantics|annotation|mrow|mn|mo|mi|mtext|pre|code|div)[^>]*>/gi, '')
+    .replace(/<\/?br\s*\/?>/gi, '<br/>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/[ \t]+\n/g, '\n');
+
+  normalized = normalized.replace(
+    /^(\s*[xy]-axis\s+.+?)\s*[←↔→]+\s*(.+)$/gim,
+    '$1 --> $2'
+  );
+
+  normalized = repairXyChartSyntax(normalized);
+
+  if (/^\s*bar\s*$/i.test(normalized.split('\n')[0] || '')) {
+    const converted = convertLegacyBarChart(normalized);
+    if (converted) {
+      normalized = converted;
+    }
+  }
+
+  return normalizeMermaidCode(normalized);
+}
+
+function escapeMermaidQuotedText(value) {
+  return String(value || '').trim().replace(/^["']|["']$/g, '').replace(/"/g, '\\"');
+}
+
+function quoteMermaidText(value) {
+  const text = String(value || '').trim();
+  if (!text) return '""';
+  if (/^".*"$/.test(text)) return text;
+  return `"${escapeMermaidQuotedText(text)}"`;
+}
+
+function splitXyChartClauses(line) {
+  return String(line || '')
+    .replace(/\s+(?=(?:title\b|x-axis\b|y-axis\b|bar\s*\[|line\s*\[))/gi, '\n')
+    .split('\n')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function quoteXyAxisLabels(rawLabels) {
+  return String(rawLabels || '')
+    .split(',')
+    .map((label) => {
+      const trimmed = label.trim();
+      if (!trimmed) return '';
+      if (/^".*"$/.test(trimmed) || /^'.*'$/.test(trimmed)) {
+        return quoteMermaidText(trimmed);
+      }
+      if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return trimmed;
+      return quoteMermaidText(trimmed);
+    })
+    .filter(Boolean)
+    .join(', ');
+}
+
+function repairXyChartSyntax(code) {
+  const lines = normalizeMermaidCode(code).split('\n');
+  if (!lines.length) return code;
+
+  const firstLineMatch = lines[0].trim().match(/^(xychart(?:-beta)?)(?:\s+(.+))?$/i);
+  if (!firstLineMatch) return code;
+
+  const output = [firstLineMatch[1].toLowerCase() === 'xychart' ? 'xychart-beta' : firstLineMatch[1]];
+  const pendingLines = [];
+  if (firstLineMatch[2]) {
+    pendingLines.push(...splitXyChartClauses(firstLineMatch[2]));
+  }
+  for (let i = 1; i < lines.length; i += 1) {
+    pendingLines.push(...splitXyChartClauses(lines[i]));
+  }
+
+  pendingLines.forEach((rawLine) => {
+    let line = rawLine.trim();
+    if (!line) return;
+
+    const titleMatch = line.match(/^title\s*:?\s+(.+)$/i);
+    if (titleMatch) {
+      output.push(`  title ${quoteMermaidText(titleMatch[1])}`);
+      return;
+    }
+
+    const xAxisMatch = line.match(/^x-axis\s*\[(.*)\]\s*$/i);
+    if (xAxisMatch) {
+      output.push(`  x-axis [${quoteXyAxisLabels(xAxisMatch[1])}]`);
+      return;
+    }
+
+    const yAxisMatch = line.match(/^y-axis\s+(.+)$/i);
+    if (yAxisMatch) {
+      const rest = yAxisMatch[1].trim();
+      if (/^-?\d+(?:\.\d+)?\s*-->\s*-?\d+(?:\.\d+)?$/.test(rest) || /^".*"/.test(rest)) {
+        output.push(`  y-axis ${rest}`);
+        return;
+      }
+
+      const rangedLabelMatch = rest.match(/^(.+?)\s+(-?\d+(?:\.\d+)?\s*-->\s*-?\d+(?:\.\d+)?)$/);
+      if (rangedLabelMatch) {
+        output.push(`  y-axis ${quoteMermaidText(rangedLabelMatch[1])} ${rangedLabelMatch[2]}`);
+      } else {
+        output.push(`  y-axis ${quoteMermaidText(rest)}`);
+      }
+      return;
+    }
+
+    const seriesMatch = line.match(/^(bar|line)\s*(?:\[)?\s*([^\]]+?)\s*(?:\])?$/i);
+    if (seriesMatch) {
+      output.push(`  ${seriesMatch[1].toLowerCase()} [${seriesMatch[2].trim()}]`);
+      return;
+    }
+
+    output.push(`  ${line}`);
+  });
+
+  return output.join('\n');
+}
+
+function convertLegacyBarChart(code) {
+  const lines = normalizeMermaidCode(code).split('\n').map((line) => line.trim()).filter(Boolean);
+  if (!lines.length || lines[0].toLowerCase() !== 'bar') return null;
+
+  let title = '';
+  let yAxisLabel = 'Value';
+  const labels = [];
+  const values = [];
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^title\s+/i.test(line)) {
+      title = line.replace(/^title\s+/i, '').trim();
+      continue;
+    }
+    if (/^axis\s+y\s+/i.test(line)) {
+      yAxisLabel = line.replace(/^axis\s+y\s+/i, '').trim();
+      continue;
+    }
+
+    const entryMatch = line.match(/^"(.+?)"\s*:\s*(-?\d+(?:\.\d+)?)$/);
+    if (entryMatch) {
+      labels.push(entryMatch[1]);
+      values.push(Number(entryMatch[2]));
+    }
+  }
+
+  if (labels.length === 0 || labels.length !== values.length) return null;
+
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const padding = Math.max(1, Math.ceil((maxValue - minValue) * 0.1));
+  const lowerBound = Math.floor(minValue - padding);
+  const upperBound = Math.ceil(maxValue + padding);
+
+  return [
+    'xychart-beta',
+    title ? `  title "${title.replace(/"/g, '\\"')}"` : '',
+    `  x-axis [${labels.map((label) => `"${label.replace(/"/g, '\\"')}"`).join(', ')}]`,
+    `  y-axis "${yAxisLabel.replace(/"/g, '\\"')}" ${lowerBound} --> ${upperBound}`,
+    `  bar [${values.join(', ')}]`
+  ].filter(Boolean).join('\n');
 }
 
 // HTML转义辅助函数
@@ -226,25 +652,27 @@ function restoreAndRenderMath(element) {
 function renderCitations(html, sources) {
   if (!sources || sources.length === 0) return html;
 
-  // 匹配 [1] [2] 等角标格式
-  return html.replace(/\[(\d+)\]/g, (match, num) => {
-    const index = parseInt(num);
-    const source = sources.find(s => s.index === index);
+  const annotatedSources = annotateSourceMarkers(sources);
+
+  return html.replace(/\[([0-9]+|[A-Z]{1,3})\]/g, (match, markerText) => {
+    const normalizedMarker = String(markerText || '').toUpperCase();
+    const source = annotatedSources.find((item) => String(item.marker || '').toUpperCase() === normalizedMarker);
     if (source && source.url) {
-      return `<a href="${source.url}" target="_blank" rel="noopener" class="citation-badge" title="${source.title || '来源'}">${num}</a>`;
+      return `<a href="${source.url}" target="_blank" rel="noopener" class="citation-badge citation-badge-${source.markerType || 'numeric'}" title="${source.title || '来源'}">[${normalizedMarker}]</a>`;
     }
-    return match; // 如果没有对应来源，保持原样
+    return match;
   });
 }
 
-// 新增：渲染来源列表
 function renderSourcesList(sources, language) {
   if (!sources || sources.length === 0) return '';
 
+  const annotatedSources = annotateSourceMarkers(sources);
+  const groupedSources = groupSourcesForDisplay(annotatedSources, language);
   const headerText = language === 'zh-CN' ? '来源' : 'Sources';
   const expandText = language === 'zh-CN' ? '展开来源' : 'Show Sources';
   const collapseText = language === 'zh-CN' ? '收起来源' : 'Hide Sources';
-  const sourceCount = sources.length;
+  const sourceCount = annotatedSources.length;
 
   let html = `
         <div class="sources-list is-collapsed">
@@ -266,29 +694,45 @@ function renderSourcesList(sources, language) {
               <span class="sources-toggle-icon"></span>
             </button>
           </div>
-          <div class="sources-body">
       `;
 
-  sources.forEach(source => {
-    const domain = source.site_name || (source.url ? new URL(source.url).hostname.replace('www.', '') : '');
-    const faviconHtml = source.favicon
-      ? `<img class="source-favicon" src="${source.favicon}" alt="" onerror="this.style.display='none'">`
-      : `<div class="source-favicon-placeholder"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></div>`;
+  groupedSources.forEach((group) => {
+    if (!group.sources.length) return;
 
     html += `
-          <a href="${source.url || '#'}" target="_blank" rel="noopener" class="source-card">
-            <span class="source-index">${source.index}</span>
-            ${faviconHtml}
-            <div class="source-info">
-              <div class="source-title">${escapeHtml(source.title || '未知来源')}</div>
-              <div class="source-domain">${escapeHtml(domain)}</div>
+          <div class="sources-group">
+            <div class="sources-group-title">${group.title}</div>
+            <div class="sources-body">
+        `;
+
+    group.sources.forEach((source) => {
+      const domain = source.site_name || (source.url ? new URL(source.url).hostname.replace('www.', '') : '');
+      const faviconHtml = source.favicon
+        ? `<img class="source-favicon" src="${source.favicon}" alt="" onerror="this.style.display='none'">`
+        : `<div class="source-favicon-placeholder"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></div>`;
+      const metaLine = group.kind === 'finance'
+        ? `${escapeHtml(source.label || 'Yahoo Finance')} · ${escapeHtml(source.symbol || '')} · ${escapeHtml(source.range || '')}/${escapeHtml(source.interval || '')}`
+        : escapeHtml(domain);
+
+      html += `
+            <a href="${source.url || '#'}" target="_blank" rel="noopener" class="source-card source-card-${group.kind}">
+              <span class="source-index">${escapeHtml(source.marker || '')}</span>
+              ${faviconHtml}
+              <div class="source-info">
+                <div class="source-title">${escapeHtml(source.title || '未知来源')}</div>
+                <div class="source-domain">${metaLine}</div>
+              </div>
+            </a>
+          `;
+    });
+
+    html += `
             </div>
-          </a>
+          </div>
         `;
   });
 
   html += `
-          </div>
         </div>
       `;
   return html;
@@ -325,7 +769,14 @@ function mergeAndReindexSources(existingSources = [], incomingSources = []) {
 
   const append = (source) => {
     if (!source || typeof source !== 'object') return;
-    const key = `${String(source.url || '')}|${String(source.title || '')}`;
+    const key = [
+      String(source.provider || ''),
+      String(source.url || ''),
+      String(source.title || ''),
+      String(source.symbol || ''),
+      String(source.range || ''),
+      String(source.interval || '')
+    ].join('|');
     if (!source.url || seen.has(key)) return;
     seen.add(key);
     merged.push({
@@ -337,10 +788,88 @@ function mergeAndReindexSources(existingSources = [], incomingSources = []) {
   (Array.isArray(existingSources) ? existingSources : []).forEach(append);
   (Array.isArray(incomingSources) ? incomingSources : []).forEach(append);
 
-  return merged.map((source, idx) => ({
-    ...source,
-    index: idx + 1
-  }));
+  return annotateSourceMarkers(merged);
+}
+
+function getSourceKind(source) {
+  if (source?.sourceKind) return source.sourceKind;
+  if (source?.provider === 'yahoo_finance') return 'finance';
+  return 'web';
+}
+
+function alphaMarkerFromIndex(index) {
+  let current = Number(index || 1);
+  let marker = '';
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    marker = String.fromCharCode(65 + remainder) + marker;
+    current = Math.floor((current - 1) / 26);
+  }
+  return marker || 'A';
+}
+
+function annotateSourceMarkers(sources = []) {
+  let webCounter = 0;
+  let financeCounter = 0;
+
+  return (Array.isArray(sources) ? sources : []).map((source) => {
+    const sourceKind = getSourceKind(source);
+    if (source.marker) {
+      if (sourceKind === 'finance') {
+        financeCounter += 1;
+      } else {
+        webCounter += 1;
+      }
+      return {
+        ...source,
+        sourceKind,
+        markerType: source.markerType || (sourceKind === 'finance' ? 'alpha' : 'numeric')
+      };
+    }
+
+    if (sourceKind === 'finance') {
+      financeCounter += 1;
+      return {
+        ...source,
+        sourceKind,
+        markerType: 'alpha',
+        marker: alphaMarkerFromIndex(financeCounter),
+        index: source.index || financeCounter
+      };
+    }
+
+    webCounter += 1;
+    return {
+      ...source,
+      sourceKind,
+      markerType: 'numeric',
+      marker: String(webCounter),
+      index: source.index || webCounter
+    };
+  });
+}
+
+function groupSourcesForDisplay(sources = [], language = appState.language) {
+  const isChinese = language === 'zh-CN';
+  const groups = [
+    {
+      kind: 'web',
+      title: isChinese ? '网页来源 / Tavily' : 'Web Sources / Tavily',
+      sources: []
+    },
+    {
+      kind: 'finance',
+      title: isChinese ? '市场数据 / Yahoo Finance' : 'Market Data / Yahoo Finance',
+      sources: []
+    }
+  ];
+
+  (Array.isArray(sources) ? sources : []).forEach((source) => {
+    const group = groups.find((item) => item.kind === getSourceKind(source));
+    if (group) group.sources.push(source);
+  });
+
+  return groups.filter((group) => group.sources.length > 0);
 }
 
 // ==================== 代码块处理功能 ====================
@@ -637,63 +1166,118 @@ function initMermaid() {
   }
 }
 
+async function renderMermaidSvg(code, renderId) {
+  if (typeof mermaid === 'undefined') {
+    throw new Error('Mermaid library not loaded');
+  }
+
+  const sanitizedCode = sanitizeMermaidCode(code);
+  if (!sanitizedCode) {
+    throw new Error('Empty Mermaid code');
+  }
+
+  const renderHost = document.createElement('div');
+  renderHost.className = 'mermaid-render-host';
+  renderHost.style.cssText = 'position:fixed;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0;';
+  document.body.appendChild(renderHost);
+
+  try {
+    cleanupMermaidRenderArtifacts(renderId, renderHost);
+    await mermaid.parse(sanitizedCode);
+    const { svg } = await mermaid.render(renderId, sanitizedCode, renderHost);
+    if (isMermaidErrorOutput(svg)) {
+      throw new Error('Mermaid syntax error');
+    }
+    cleanupMermaidRenderArtifacts(renderId, renderHost);
+    return { svg, code: sanitizedCode };
+  } finally {
+    cleanupMermaidRenderArtifacts(renderId, renderHost);
+    if (renderHost.parentNode) {
+      renderHost.parentNode.removeChild(renderHost);
+    }
+    cleanupStrayMermaidErrorArtifacts();
+  }
+}
+
 // 渲染页面中的所有 Mermaid 图表
 async function renderMermaidCharts() {
   if (typeof mermaid === 'undefined') {
-    console.warn(' Mermaid 库未加载，跳过图表渲染');
+    console.warn('Mermaid library not loaded; skip rendering.');
     return;
   }
+
+  cleanupStrayMermaidErrorArtifacts();
 
   const containers = document.querySelectorAll('.mermaid-container:not(.rendered)');
   if (containers.length === 0) return;
 
-  console.log(` 开始渲染 ${containers.length} 个 Mermaid 图表`);
+  console.log(`Start rendering ${containers.length} Mermaid chart(s)`);
 
   for (const container of containers) {
-    const code = decodeURIComponent(container.dataset.mermaidCode || '');
+    const originalCode = decodeURIComponent(container.dataset.mermaidCode || '');
+    const code = sanitizeMermaidCode(originalCode);
     if (!code) continue;
 
+    const renderId = container.id + '-svg';
+
     try {
-      const { svg } = await mermaid.render(container.id + '-svg', code);
+      const { svg, code: renderedCode } = await renderMermaidSvg(code, renderId);
+      container.dataset.mermaidCode = encodeURIComponent(renderedCode);
       container.innerHTML = svg;
       container.classList.add('rendered');
 
-      // 添加工具栏
-      const toolbar = document.createElement('div');
-      toolbar.className = 'mermaid-toolbar';
-      toolbar.innerHTML = `
-            <button onclick="showMermaidCode('${container.id}')" title="查看代码">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-            </button>
-            <button onclick="copyMermaidCode('${container.id}')" title="复制代码">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-            <button onclick="downloadMermaidSVG('${container.id}')" title="下载SVG">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </button>
-            <button onclick="toggleMermaidFullscreen('${container.id}')" title="全屏查看">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            </button>
-          `;
-      container.appendChild(toolbar);
+      addMermaidToolbar(container);
 
-      console.log(` 图表渲染成功: ${container.id}`);
+      console.log(`Mermaid chart rendered: ${container.id}`);
     } catch (err) {
-      console.error(' Mermaid 渲染失败:', err);
+      console.error('Mermaid render failed:', err);
+      cleanupStrayMermaidErrorArtifacts();
       container.innerHTML = `<div class="mermaid-error">
             <span class="mermaid-error-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-              图表渲染失败
+              Diagram render failed
             </span>
-            <pre>${escapeHtml(err.message || '语法错误')}</pre>
-            <details><summary>查看原始代码</summary><pre>${escapeHtml(code)}</pre></details>
+            <pre>${escapeHtml(err.message || 'Syntax error')}</pre>
+            <details><summary>View chart code</summary><pre>${escapeHtml(originalCode)}</pre></details>
           </div>`;
       container.classList.add('render-error');
     }
   }
 }
 
-// 复制 Mermaid 代码
+function isMermaidErrorOutput(svg) {
+  const text = String(svg || '');
+  return text.includes('aria-roledescription="error"') || text.includes('Syntax error in text');
+}
+
+function cleanupMermaidRenderArtifacts(renderId, renderHost = null) {
+  const wrapperId = 'd' + renderId;
+  const selectors = ['#' + CSS.escape(renderId), '#' + CSS.escape(wrapperId)];
+
+  document.querySelectorAll(selectors.join(',')).forEach((node) => {
+    if (renderHost && renderHost.contains(node)) return;
+    if (node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+  });
+
+  if (renderHost) {
+    renderHost.innerHTML = '';
+  }
+}
+
+function cleanupStrayMermaidErrorArtifacts() {
+  document.querySelectorAll('body > div[id^="dmermaid-"]').forEach((node) => {
+    if (node.querySelector('svg[aria-roledescription="error"], .error-icon, .error-text')) {
+      node.remove();
+    }
+  });
+
+  document.querySelectorAll('body > svg[id^="mermaid-"][aria-roledescription="error"]').forEach((node) => {
+    node.remove();
+  });
+}
+
 function copyMermaidCode(containerId) {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -895,7 +1479,7 @@ function bindMermaidFullscreenEvents() {
       touchStartY = e.touches[0].clientY - mermaidFullscreenState.translateY;
       wrapper.classList.add('dragging');
     }
-  }, { passive: true });
+  });
 
   wrapper.addEventListener('touchmove', (e) => {
     if (e.touches.length === 2) {
@@ -1103,9 +1687,16 @@ async function renderSingleMermaidContainer(container, code, cache) {
   container.classList.add('rendering');
 
   try {
-    const id = container.id + '-svg';
-    const { svg } = await mermaid.render(id, code);
+    const sanitizedCode = sanitizeMermaidCode(code);
+    if (!sanitizedCode) {
+      container.classList.remove('rendering');
+      return;
+    }
 
+    const id = container.id + '-svg';
+    const { svg, code: renderedCode } = await renderMermaidSvg(sanitizedCode, id);
+
+    container.dataset.mermaidCode = encodeURIComponent(renderedCode);
     container.innerHTML = svg;
     container.classList.remove('rendering');
     container.classList.add('rendered');
@@ -1224,6 +1815,7 @@ const ICON_PATHS = {
 
   //  发送箭头图标（加粗版）- 用于输入框发送按钮
   'arrow_upward': '<path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" stroke-width="2"/>',
+  'south': '<path d="M4 12l1.41-1.41L11 16.17V4h2v12.17l5.58-5.59L20 12l-8 8-8-8z"/>',
 
   // 停止方块图标 - 用于停止AI生成按钮
   'stop': '<path d="M6 6h12v12H6z"/>',
@@ -1239,6 +1831,11 @@ const ICON_PATHS = {
 
   // 复制图标 - 用于复制AI消息内容按钮
   'content_copy': '<path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>',
+  'thumb_up': '<path d="M21 8h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2c0-1.1-.9-2-2-2zM9 19V9l4.34-4.34L12 10h9v2l-3 7H9zM1 9h4v12H1z"/>',
+  'thumb_down': '<path d="M3 16h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2H6c-.83 0-1.54.5-1.84 1.22L1.14 11.27c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2zm12-11v10l-4.34 4.34L12 14H3v-2l3-7h9zm4-2h4v12h-4z"/>',
+
+  // 图片图标 - 用于附件预览
+  'image': '<path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5zM8 8.5c0-.83.67-1.5 1.5-1.5S11 7.67 11 8.5 10.33 10 9.5 10 8 9.33 8 8.5z"/>',
 
   // 对勾/完成图标 - 用于复制成功后的反馈提示
   'check': '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
@@ -1287,7 +1884,27 @@ function getSvgIcon(name, className = '', size = 24) {
   return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${size}" height="${size}" fill="${fill}">${content}</svg>`;
 }
 
-const API_BASE = '/api';
+const APP_BASE_PATH = window.location.pathname === '/beta' || window.location.pathname.startsWith('/beta/')
+  ? '/beta'
+  : '';
+const API_BASE = `${APP_BASE_PATH}/api`;
+
+if (APP_BASE_PATH && typeof window.fetch === 'function') {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function (resource, init) {
+    if (typeof resource === 'string' && resource.startsWith('/api/')) {
+      return nativeFetch(`${APP_BASE_PATH}${resource}`, init);
+    }
+    if (resource instanceof Request) {
+      const url = new URL(resource.url, window.location.origin);
+      if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
+        const nextUrl = `${APP_BASE_PATH}${url.pathname}${url.search}${url.hash}`;
+        return nativeFetch(new Request(nextUrl, resource), init);
+      }
+    }
+    return nativeFetch(resource, init);
+  };
+}
 
 const appState = {
   user: null,
@@ -1321,6 +1938,11 @@ const appState = {
   touchStartY: 0,
   touchMoveX: 0,
   isSwiping: false,
+  sidebarGestureMode: null,
+  sidebarGestureLocked: false,
+  ztx6dSsoEnabled: false,
+  ztx6dBindUrl: '/auth/ztx6d/bind/start',
+  activeModelMenuAnchorId: 'modelSelectCustom',
   theme: 'dark',
   language: 'zh-CN',
   lastModelUsed: '',  // 记录最后使用的实际模型
@@ -1341,6 +1963,12 @@ const appState = {
   // 智能滚动控制
   userScrolledUp: false,  // 用户是否主动向上滚动
   lastScrollTop: 0,  // 上次滚动位置
+  scrollFollowMode: 'following', // 'following' | 'pausedByUser'
+  scrollBottomThreshold: 160,
+  pendingScrollTimer: null,
+  mobileComposerFocusTimer: null,
+  pendingMobileComposerFocus: false,
+  isProgrammaticScroll: false,
   // 引用功能状态
   currentQuote: null,  // 当前引用的消息 { role: 'user'|'assistant', content: string }
   // 会话列表分页状态
@@ -1352,6 +1980,12 @@ const appState = {
   }
 };
 
+const feedbackModalState = {
+  message: null,
+  rating: null,
+  isSubmitting: false
+};
+
 const MODELS = {
   "auto": {
     name: "最佳 Auto",
@@ -1360,12 +1994,13 @@ const MODELS = {
     supportsThinking: true
   },
   'deepseek-v3': {
-    name: 'DeepSeekV3.2',
+    name: 'DeepSeek V4',
     provider: 'deepseek',
-    supportsThinking: true
+    supportsThinking: true,
+    contextWindow: 1000000
   },
   'deepseek-v3.2-speciale': {
-    name: 'DeepSeekV3.2-Speciale',
+    name: 'DeepSeek V4 Pro',
     provider: 'deepseek_v3_2_speciale',
     supportsThinking: true,
     thinkingOnly: true,  // 只支持思考模式
@@ -1374,7 +2009,7 @@ const MODELS = {
   },
   // Kimi K2.5 - 月之暗面高性能模型
   'kimi-k2.5': {
-    name: 'Kimi K2.5',
+    name: 'Kimi',
     provider: 'siliconflow',
     supportsThinking: true,
     supportsVision: true,
@@ -1384,23 +2019,70 @@ const MODELS = {
   },
   // 兼容旧配置：kimi-k2 自动视作 kimi-k2.5
   'kimi-k2': {
-    name: 'Kimi K2.5',
+    name: 'Kimi',
     provider: 'siliconflow',
     supportsThinking: true
   },
   // Qwen2.5-7B 免费模型
   'qwen2.5-7b': {
-    name: 'Qwen2.5 7B',
+    name: 'Qwen',
     provider: 'siliconflow',
     supportsThinking: false,
     isFree: true  // 标记为免费模型
   },
   // 兼容旧ID
   'qwen3-8b': {
-    name: 'Qwen2.5 7B',
+    name: 'Qwen',
     provider: 'siliconflow',
     supportsThinking: false,
     isFree: true
+  },
+  'chatgpt-gpt-oss-120b': {
+    name: 'ChatGPT',
+    provider: 'openrouter',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    isFree: true
+  },
+  'grok-4.2': {
+    name: 'Grok 4.2',
+    provider: 'newapi',
+    supportsThinking: true,
+    supportsReasoningProfile: false,
+    isFree: true
+  },
+  'gpt-5.5': {
+    name: 'GPT-5.5',
+    provider: 'newapi',
+    supportsThinking: true,
+    supportsReasoningProfile: true
+  },
+  'claude-haiku': {
+    name: 'Claude 3 Haiku',
+    provider: 'openrouter',
+    supportsThinking: false,
+    supportsVision: true
+  },
+  'anthropic/claude-sonnet-4.6': {
+    name: 'Claude Sonnet 4.6',
+    provider: 'openrouter',
+    supportsThinking: false,
+    supportsVision: true
+  },
+  'anthropic/claude-3-haiku': {
+    name: 'Claude 3 Haiku',
+    provider: 'openrouter',
+    supportsThinking: false,
+    supportsVision: true
+  },
+  'gemma': {
+    name: 'Gemma',
+    provider: 'google_gemini',
+    supportsThinking: true,
+    supportsReasoningProfile: false,
+    isFree: true,
+    supportsVision: true,
+    contextWindow: 256000
   },
   'poe-claude': {
     name: 'Claude (Poe)',
@@ -1437,10 +2119,19 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
+  'qwen3-vl': 'kimi-k2.5',
   'qwen3-8b': 'qwen2.5-7b',
   'qwen-flash': 'qwen2.5-7b',
   'qwen-plus': 'qwen2.5-7b',
-  'qwen-max': 'qwen2.5-7b'
+  'qwen-max': 'qwen2.5-7b',
+  'deepseek-chat': 'deepseek-v3',
+  'deepseek-reasoner': 'deepseek-v3',
+  'deepseek-v4-flash': 'deepseek-v3',
+  'openai/gpt-oss-120b:free': 'chatgpt-gpt-oss-120b',
+  'claude-haiku': 'anthropic/claude-3-haiku',
+  'anthropic/claude-3-haiku:beta': 'anthropic/claude-3-haiku',
+  'gemma-4-31b-it': 'gemma',
+  'google/gemma-4-31b-it:free': 'gemma'
 };
 
 const HIDDEN_MODEL_PREFIXES = ['poe-'];
@@ -1454,6 +2145,7 @@ function isHiddenModelId(modelId) {
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
   const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
+  if (String(normalized).startsWith('x-ai/grok-4.20')) return 'grok-4.2';
   if (!normalized) return normalized;
   return isHiddenModelId(normalized) ? 'auto' : normalized;
 }
@@ -1467,8 +2159,69 @@ function isFreeMembershipUser() {
   return String(userMembershipState?.membership || 'free').toLowerCase() === 'free';
 }
 
+function isMaxMembershipUser() {
+  return String(userMembershipState?.membership || 'free').toLowerCase() === 'max';
+}
+
+const TITLE_MARKER_REGEX = /\[TITLE\]([\s\S]{1,40}?)\[\/TITLE\]\s*$/i;
+const LEGACY_TITLE_MARKER_REGEX = /<{2,3}\s*([^<>\n]{1,40}?)\s*>{2,3}\s*$/;
+
+function extractTrailingTitleMarker(text = '') {
+  const source = String(text || '').trimEnd();
+  if (!source) {
+    return { title: '', cleanContent: '' };
+  }
+
+  const titleMatch = source.match(TITLE_MARKER_REGEX);
+  if (titleMatch) {
+    const title = String(titleMatch[1] || '').replace(/\s+/g, ' ').trim();
+    return {
+      title,
+      cleanContent: source.replace(TITLE_MARKER_REGEX, '').trim()
+    };
+  }
+
+  const legacyMatch = source.match(LEGACY_TITLE_MARKER_REGEX);
+  if (legacyMatch) {
+    const title = String(legacyMatch[1] || '').replace(/\s+/g, ' ').trim();
+    return {
+      title,
+      cleanContent: source.replace(LEGACY_TITLE_MARKER_REGEX, '').trim()
+    };
+  }
+
+  return { title: '', cleanContent: source.trim() };
+}
+
+function stripTrailingTitleMarker(text = '') {
+  return extractTrailingTitleMarker(text).cleanContent;
+}
+
+function isDefaultConversationTitle(title = '') {
+  const normalized = String(title || '').trim().toLowerCase();
+  return !normalized || normalized === '新对话' || normalized === 'new chat' || normalized === 'untitled';
+}
+
+function getSessionDisplayTitle(session = {}) {
+  const rawTitle = String(session?.title || '').trim();
+  if (!isDefaultConversationTitle(rawTitle)) {
+    return rawTitle;
+  }
+
+  const markerSource = session?.last_assistant_message || session?.last_message || '';
+  const markerTitle = extractTrailingTitleMarker(markerSource).title;
+  return markerTitle || rawTitle || (appState.language === 'zh-CN' ? '新对话' : 'New Chat');
+}
+
 function isFreePoeMode(modelId = appState.selectedModel) {
   return isPoeModelSelected(modelId) && isFreeMembershipUser();
+}
+
+function isMembershipLockedModel(modelId) {
+  const normalized = normalizeSelectedModelId(modelId);
+  const isMaxOnlyModel = normalized === 'anthropic/claude-sonnet-4.6'
+    || normalized === 'anthropic/claude-3-haiku';
+  return isMaxOnlyModel && !isMaxMembershipUser();
 }
 
 function normalizeReasoningProfile(value) {
@@ -1571,6 +2324,18 @@ function applyFreePoeThinkingPolicy() {
 }
 
 function applyQuotaInfoEvent(payload = {}) {
+  if (payload.provider === 'newapi_gpt55') {
+    const limit = Number(payload.gpt55Limit ?? userMembershipState.gpt55DailyLimit ?? 10);
+    const used = Number(payload.gpt55Used ?? userMembershipState.gpt55UsedToday ?? 0);
+    const remaining = Number(payload.gpt55Remaining ?? Math.max(0, limit - used));
+
+    userMembershipState.gpt55DailyLimit = Number.isFinite(limit) ? limit : 10;
+    userMembershipState.gpt55UsedToday = Number.isFinite(used) ? used : 0;
+    userMembershipState.gpt55Remaining = Number.isFinite(remaining) ? remaining : 0;
+    userMembershipState.gpt55ResetAt = payload.resetAt || userMembershipState.gpt55ResetAt || null;
+    return;
+  }
+
   if (payload.provider !== 'poe') return;
 
   const limit = Number(payload.poeLimit ?? userMembershipState.poeDailyLimit ?? 3);
@@ -1661,6 +2426,7 @@ function buildSystemPrompt() {
 你有网络搜索能力。当用户询问需要实时信息的问题时，请主动调用 web_search 工具获取最新数据，然后基于搜索结果回答用户。
 在合适的时候，使用图片增强回复。需要使用 Markdown 语法 ![描述](图片链接) 网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。
 你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
+Mermaid 必须以独立一行的 \`\`\`mermaid 开始，并以独立一行的 \`\`\` 结束；不要使用两个反引号闭合，也不要把正文接在结束符同一行。
 支持的图表类型:
 1. **流程图**: \`flowchart TD/LR\` - 用于流程、逻辑、决策
 2. **时序图**: \`sequenceDiagram\` - 用于交互、API调用流程
@@ -1672,6 +2438,19 @@ function buildSystemPrompt() {
 8. **思维导图**: \`mindmap\` - 用于知识梳理
 9. **用户旅程图**: \`journey\` - 用于用户体验分析
 10. **象限图**: \`quadrantChart\` - 用于四象限分析
+统计图规范:
+- 柱状图和折线趋势图必须使用 \`xychart-beta\`，不要输出旧式 \`bar\` 图表、JSON、HTML 或 Markdown 表格冒充图表。
+- \`title\` 和 \`y-axis\` 文本必须使用英文双引号，例如 \`title "月度业务量"\`、\`y-axis "数量" 0 --> 250\`。
+- \`x-axis\` 分类标签使用数组，中文标签也加英文双引号，例如 \`x-axis ["一月", "二月", "三月"]\`。
+- 占比图使用 \`pie\`，不要用 xychart-beta 模拟饼图。
+最小统计图示例:
+\`\`\`mermaid
+xychart-beta
+  title "月度业务量"
+  x-axis ["一月", "二月", "三月"]
+  y-axis "数量" 0 --> 250
+  bar [120, 180, 150]
+\`\`\`
 可以使用图片，Mermaid中适合类型的图表等增强说明效果。
 
 ---
@@ -1683,12 +2462,17 @@ function buildSystemPrompt() {
 
 ---
 
-# 对话标题：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出严格遵循格式：<<<标题>>>
+# 对话标题：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出严格遵循格式：[TITLE]标题[/TITLE]
 `;
 }
 
-// 保留变量名以兼容（初始值，实际发送时动态生成）
-const BUILT_IN_SYSTEM_PROMPT = buildSystemPrompt();
+function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt) {
+  const trimmedCustomPrompt = String(customPrompt || '').trim();
+  const promptBase = buildSystemPrompt();
+  return trimmedCustomPrompt
+    ? `${promptBase}\n\n以下是用户个人偏好，请参考：\n${trimmedCustomPrompt}`
+    : promptBase;
+}
 
 // 多语言支持
 const i18n = {
@@ -1712,14 +2496,15 @@ const i18n = {
     'new-chat': '新对话',
     'sidebar-spaces': '空间',
     'new-space': '新建空间',
-    'sidebar-flows': '思维流',
+    'sidebar-flows': 'ChatFlow',
     'new-flow': '新建 ChatFlow',
     'sidebar-sessions': '对话',
     'settings': '设置',
     'logout': '退出',
     'welcome-title': '询问任何问题:D',
-    'welcome-subtitle': '可以帮您写作,翻译,构思\n您专属RAI助理',
+    'welcome-subtitle': '可以帮您写作,财务分析,翻译与构思\n您专属RAI助理',
     'action-write': '写作',
+    'action-finance': '财务',
     'action-search': '搜索',
     'action-code': '代码',
     'action-translate': '翻译',
@@ -1754,7 +2539,7 @@ const i18n = {
     'preferences-placeholder': '例如: 我希望获得简短回复...',
     'advanced-options': '高级选项',
     'membership-status-title': '会员状态',
-    'upgrade-points-link': '体验更多使用点数？',
+    'upgrade-points-link': '点数兑换会员',
     'remaining-points-label': '剩余点数',
     'created-at-prefix': '创建于',
     'checkin-bonus': '签到 +20 ',
@@ -1818,8 +2603,9 @@ const i18n = {
     'settings': 'Settings',
     'logout': 'Logout',
     'welcome-title': 'How can I help you?',
-    'welcome-subtitle': 'I can help you write, translate, and brainstorm\nYour personal RAI assistant',
+    'welcome-subtitle': 'I can help you write, analyze finance, translate, and brainstorm\nYour personal RAI assistant',
     'action-write': 'Write',
+    'action-finance': 'Finance',
     'action-search': 'Search',
     'action-code': 'Code',
     'action-translate': 'Translate',
@@ -1854,7 +2640,7 @@ const i18n = {
     'preferences-placeholder': 'e.g., I prefer concise replies...',
     'advanced-options': 'Advanced Options',
     'membership-status-title': 'Membership Status',
-    'upgrade-points-link': 'Need more usage points?',
+    'upgrade-points-link': 'Redeem membership with points',
     'remaining-points-label': 'Remaining Points',
     'created-at-prefix': 'Created At',
     'checkin-bonus': 'Check in +20 ',
@@ -1981,6 +2767,7 @@ function setLanguage(lang) {
   updateReasoningProfileControl();
   updatePoeQuotaHint();
   updateSettingsMembership();
+  updateScrollResumeButton();
   if (!appState.isStreaming) {
     renderMessages();
   }
@@ -2088,26 +2875,32 @@ function handleActionCard(action) {
 
   const domainModeMap = {
     write: 'writing',
+    finance: 'finance',
     search: 'research',
     code: 'coding',
     translate: 'translation'
   };
   appState.pendingDomainMode = domainModeMap[action] || null;
+  const isEnglish = String(appState.language || '').toLowerCase().startsWith('en');
 
   let text = '';
   switch (action) {
     case 'write':
-      text = '帮我写一篇文章：';
+      text = isEnglish ? 'Help me write something:' : '帮我写一篇文章：';
+      break;
+    case 'finance':
+      text = isEnglish ? 'Analyze this stock or finance question:' : '帮我分析这只股票/财务问题：';
+      if (!appState.internetMode) toggleInternet();
       break;
     case 'search':
-      text = '搜索：';
+      text = isEnglish ? 'Search:' : '搜索：';
       if (!appState.internetMode) toggleInternet();
       break;
     case 'code':
-      text = '帮我写代码：';
+      text = isEnglish ? 'Help me write code:' : '帮我写代码：';
       break;
     case 'translate':
-      text = '翻译：';
+      text = isEnglish ? 'Translate:' : '翻译：';
       break;
   }
 
@@ -2135,87 +2928,189 @@ function preserveMobileInputFocus() {
   window.mobileKeyboardHandler?.restoreInputFocus();
 }
 
-// ==================== RAuth SSO 配置 ====================
-const RAUTH_URL = 'http://localhost:3011';  // RAuth 统一认证服务地址
-const RAUTH_TOKEN_KEY = 'rauth_token';  // SSO token 存储键名
-const RAI_TOKEN_KEY = 'rai_token';  // 兼容旧 token
+function focusMessageInputForNewChat(force = false) {
+  if (window.innerWidth > 768) return;
 
-// SSO: 检测从 RAuth 返回的 token 参数
-function handleRAuthCallback() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const tokenFromUrl = urlParams.get('token');
+  const input = document.getElementById('messageInput');
+  if (!input || input.disabled) return;
+
+  const shouldForceFocus = force || appState.pendingMobileComposerFocus;
+  appState.pendingMobileComposerFocus = shouldForceFocus;
+
+  if (appState.mobileComposerFocusTimer) {
+    clearTimeout(appState.mobileComposerFocusTimer);
+  }
+
+  const runFocus = () => {
+    if (window.innerWidth > 768) return;
+
+    if (window.expandInput && !appState.inputExpanded) {
+      window.expandInput();
+    }
+
+    requestAnimationFrame(() => {
+      try {
+        input.focus({ preventScroll: true });
+      } catch (error) {
+        input.focus();
+      }
+
+      const end = input.value.length;
+      if (typeof input.setSelectionRange === 'function') {
+        try {
+          input.setSelectionRange(end, end);
+        } catch (error) {
+          console.debug('Skip mobile selection restore:', error);
+        }
+      }
+
+      window.mobileKeyboardHandler?.keepChatAnchored?.(true);
+    });
+  };
+
+  appState.mobileComposerFocusTimer = window.setTimeout(() => {
+    runFocus();
+    window.setTimeout(runFocus, 180);
+    appState.mobileComposerFocusTimer = null;
+    appState.pendingMobileComposerFocus = false;
+  }, shouldForceFocus ? 24 : 72);
+}
+
+// ==================== ZTX6D SSO 配置 ====================
+const RAI_TOKEN_KEY = 'rai_token';
+const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
+
+function showAuthScreen() {
+  document.getElementById('appContainer').style.display = 'none';
+  document.getElementById('authContainer').classList.add('active');
+}
+
+function handleRaiTokenCallback() {
+  const url = new URL(window.location.href);
+  const tokenFromUrl = url.searchParams.get('rai_token') || url.searchParams.get('token');
+  const authError = url.searchParams.get('auth_error');
+
   if (tokenFromUrl) {
-    console.log(' 从 RAuth 获取到 token');
-    localStorage.setItem(RAUTH_TOKEN_KEY, tokenFromUrl);
-    // 清除 URL 中的 token 参数
-    const url = new URL(window.location.href);
+    console.log(' 从 SSO 回调获取到 RAI token');
+    localStorage.setItem(RAI_TOKEN_KEY, tokenFromUrl);
+    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+    url.searchParams.delete('rai_token');
     url.searchParams.delete('token');
-    window.history.replaceState({}, document.title, url.pathname + url.search);
+    url.searchParams.delete('auth_provider');
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
     return tokenFromUrl;
   }
+
+  if (authError) {
+    const message = appState.language === 'zh-CN'
+      ? `ZTX6D 登录失败: ${authError}`
+      : `ZTX6D login failed: ${authError}`;
+    const hasStoredToken = !!localStorage.getItem(RAI_TOKEN_KEY);
+    url.searchParams.delete('auth_error');
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    setTimeout(() => {
+      if (hasStoredToken) {
+        showToast(message);
+      } else {
+        showAuthError(message);
+      }
+    }, 0);
+  }
+
   return null;
 }
 
-// SSO: 检测 RAuth 服务是否可用
-async function checkRAuthAvailable() {
+async function loadZtx6dSsoStatus() {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3秒超时
-    const response = await fetch(`${RAUTH_URL}/api/auth/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'test' }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    return true; // 服务可用
-  } catch (error) {
-    console.warn(' RAuth 服务不可用:', error.message);
-    return false;
-  }
-}
-
-// SSO: 重定向到 RAuth 登录页面（先检测服务可用性）
-async function redirectToRAuth() {
-  const isAvailable = await checkRAuthAvailable();
-  if (isAvailable) {
-    const returnUrl = encodeURIComponent(window.location.href);
-    window.location.href = `${RAUTH_URL}?redirect=${returnUrl}`;
-  } else {
-    // RAuth 不可用，显示本地登录界面
-    console.log(' RAuth 服务不可用，显示本地登录界面');
-    document.getElementById('appContainer').style.display = 'none';
-    document.getElementById('authContainer').classList.add('active');
-  }
-}
-
-// SSO: 验证 RAuth token
-async function verifyRAuthToken(token) {
-  try {
-    const response = await fetch(`${RAUTH_URL}/api/auth/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token })
-    });
+    const response = await fetch(`${API_BASE}/auth/ztx6d/status`, { cache: 'no-store' });
     const data = await response.json();
-    if (data.valid) {
-      console.log(' RAuth token 验证成功');
-      return {
-        userId: data.userId,
-        email: data.email,
-        username: data.username,
-        avatarUrl: data.avatarUrl
-      };
-    }
-    return null;
+    appState.ztx6dSsoEnabled = !!data?.enabled;
+    appState.ztx6dBindUrl = String(data?.bindUrl || '/auth/ztx6d/bind/start').replace(/^\/api(?=\/)/, '');
   } catch (error) {
-    console.error(' RAuth token 验证失败:', error);
-    return null;
+    appState.ztx6dSsoEnabled = false;
+    console.warn(' ZTX6D SSO 状态检查失败:', error.message);
+  } finally {
+    const container = document.getElementById('ztx6dSsoContainer');
+    if (container) {
+      container.style.display = appState.ztx6dSsoEnabled ? 'block' : 'none';
+    }
+    updateZtx6dBindingUI();
+  }
+}
+
+function startZtx6dLogin() {
+  const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}` || '/';
+  window.location.href = `${API_BASE}/auth/ztx6d/start?return=${encodeURIComponent(returnPath)}`;
+}
+
+function updateZtx6dBindingUI() {
+  const section = document.getElementById('ztx6dBindingSection');
+  const statusEl = document.getElementById('ztx6dBindingStatus');
+  const bindBtn = document.getElementById('ztx6dBindBtn');
+  if (!section || !statusEl || !bindBtn) return;
+
+  const externalProvider = appState.user?.externalProvider || appState.user?.external_provider || '';
+  const externalUid = appState.user?.externalUid || appState.user?.external_uid || '';
+  const isBound = externalProvider === 'ztx6d' && !!externalUid;
+
+  section.style.display = (appState.ztx6dSsoEnabled || isBound) ? 'block' : 'none';
+
+  if (isBound) {
+    statusEl.textContent = `已绑定 ZTX6D UID ${externalUid}`;
+    bindBtn.textContent = '已绑定';
+    bindBtn.disabled = true;
+    return;
+  }
+
+  if (!appState.ztx6dSsoEnabled) {
+    statusEl.textContent = 'ZTX6D SSO 未配置';
+    bindBtn.textContent = '绑定 ZTX6D';
+    bindBtn.disabled = true;
+    return;
+  }
+
+  statusEl.textContent = '未绑定，绑定后可直接使用 ZTX6D 登录当前 RAI 账号';
+  bindBtn.textContent = '绑定 ZTX6D';
+  bindBtn.disabled = false;
+}
+
+async function bindZtx6dAccount() {
+  if (!appState.token) {
+    showToast(appState.language === 'zh-CN' ? '请先登录' : 'Please log in first');
+    return;
+  }
+
+  if (!appState.ztx6dSsoEnabled) {
+    showToast(appState.language === 'zh-CN' ? 'ZTX6D SSO 未配置' : 'ZTX6D SSO is not configured');
+    return;
+  }
+
+  const bindBtn = document.getElementById('ztx6dBindBtn');
+  if (bindBtn) bindBtn.disabled = true;
+
+  try {
+    const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}` || '/';
+    const response = await fetch(`${API_BASE}${appState.ztx6dBindUrl}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${appState.token}`
+      },
+      body: JSON.stringify({ return: returnPath })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success || !data?.redirectUrl) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+    window.location.href = data.redirectUrl;
+  } catch (error) {
+    if (bindBtn) bindBtn.disabled = false;
+    showToast(`${appState.language === 'zh-CN' ? '绑定失败' : 'Bind failed'}: ${error.message}`);
   }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.8 初始化 (SSO 已启用)');
+  console.log(' RAI v0.10.7 初始化 (ZTX6D SSO / NewAPI)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -2225,44 +3120,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 初始化主题和语言
   initThemeAndLanguage();
+  await loadZtx6dSsoStatus();
 
-  // ==================== SSO 认证流程 ====================
-  // 1. 检测 URL 中是否有从 RAuth 返回的 token
-  let token = handleRAuthCallback();
+  // ==================== 认证流程 ====================
+  // 1. 检测 URL 中是否有服务端 SSO 回调返回的 RAI token
+  let token = handleRaiTokenCallback();
 
   // 2. 如果 URL 中没有 token，检查 localStorage
   if (!token) {
-    token = localStorage.getItem(RAUTH_TOKEN_KEY) || localStorage.getItem(RAI_TOKEN_KEY);
+    token = localStorage.getItem(RAI_TOKEN_KEY);
   }
 
   // 3. 如果有 token，验证它
   if (token) {
     appState.token = token;
-    // 优先使用 RAuth 验证（如果是 rauth_token）
-    if (localStorage.getItem(RAUTH_TOKEN_KEY) || handleRAuthCallback()) {
-      const rauthUser = await verifyRAuthToken(token);
-      if (rauthUser) {
-        appState.user = rauthUser;
-        // 同时保存到 rai_token 以兼容后端 API
-        localStorage.setItem(RAI_TOKEN_KEY, token);
-        showApp();
-        await loadUserData();
-      } else {
-        // RAuth token 无效，重定向到 RAuth 重新登录
-        localStorage.removeItem(RAUTH_TOKEN_KEY);
-        localStorage.removeItem(RAI_TOKEN_KEY);
-        redirectToRAuth();
-        return;
-      }
-    } else {
-      // 使用旧的 RAI token 验证
-      verifyToken();
+    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+    const valid = await verifyToken();
+    if (!valid) {
+      showAuthScreen();
     }
   } else {
-    // 4. 没有 token，重定向到 RAuth 登录
-    console.log(' 未找到有效 token，重定向到 RAuth 登录');
-    redirectToRAuth();
-    return;
+    // 4. 没有 token，显示本地登录；如 ZTX6D 已配置，会显示 SSO 按钮
+    console.log(' 未找到有效 token，显示登录界面');
+    showAuthScreen();
   }
 
   loadSettings();
@@ -2333,28 +3213,136 @@ function toggleModelDropdown() {
 
 function closeModelDropdown() {
   const dropdown = document.getElementById('modelDropdown');
-  const customSelect = document.getElementById('modelSelectCustom');
 
   if (dropdown) {
     dropdown.classList.remove('open');
   }
 
-  if (customSelect) {
-    customSelect.classList.remove('open');
-  }
+  syncModelMenuTriggerState(null);
 }
 
 // ==================== 工具栏功能 ====================
+
+function resolveModelMenuAnchor(anchorOrId = null) {
+  if (anchorOrId && typeof anchorOrId !== 'string') {
+    return anchorOrId;
+  }
+
+  if (anchorOrId) {
+    return document.getElementById(anchorOrId);
+  }
+
+  return document.getElementById(appState.activeModelMenuAnchorId)
+    || document.getElementById('modelSelectCustom')
+    || document.getElementById('mobileModelSelectCustom');
+}
+
+function getModelMenuPositionConfig(anchor) {
+  if (anchor?.id === 'mobileModelSelectCustom') {
+    return { align: 'center', vertical: 'below' };
+  }
+
+  return { align: 'right', vertical: 'above' };
+}
+
+function syncModelMenuTriggerState(activeAnchor = null) {
+  document.querySelectorAll('.model-select-custom').forEach((trigger) => {
+    trigger.classList.toggle('open', !!activeAnchor && trigger === activeAnchor);
+  });
+}
+
+function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') {
+  if (!menu || !anchor) return;
+
+  if (menu.parentElement !== document.body) {
+    document.body.appendChild(menu);
+  }
+
+  const viewportPadding = 12;
+  const gap = 8;
+  const anchorRect = anchor.getBoundingClientRect();
+
+  // 先临时定位到左上角以获取准确尺寸
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  menu.style.bottom = 'auto';
+  // 限制菜单最大高度为 anchor 上方可用空间
+  const availableSpace = vertical === 'below'
+    ? window.innerHeight - anchorRect.bottom - viewportPadding - gap
+    : anchorRect.top - viewportPadding - gap;
+  menu.style.maxHeight = `${Math.max(availableSpace, 200)}px`;
+
+  const menuRect = menu.getBoundingClientRect();
+
+  // 始终向上弹出（输入框在页面底部）
+  let left;
+  if (align === 'right') {
+    left = anchorRect.right - menuRect.width;
+  } else if (align === 'center') {
+    left = anchorRect.left + ((anchorRect.width - menuRect.width) / 2);
+  } else {
+    left = anchorRect.left;
+  }
+
+  left = Math.max(viewportPadding, Math.min(left, window.innerWidth - menuRect.width - viewportPadding));
+
+  menu.style.setProperty('--menu-origin-x', align === 'right' ? 'right' : align === 'center' ? 'center' : 'left');
+  menu.style.setProperty('--menu-origin-y', vertical === 'below' ? 'top' : 'bottom');
+  menu.style.left = `${Math.round(left)}px`;
+
+  if (vertical === 'below') {
+    const top = Math.max(
+      viewportPadding,
+      Math.min(anchorRect.bottom + gap, window.innerHeight - menuRect.height - viewportPadding)
+    );
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.bottom = 'auto';
+    return;
+  }
+
+  const bottom = Math.max(
+    viewportPadding,
+    Math.min(window.innerHeight - anchorRect.top + gap, window.innerHeight - viewportPadding)
+  );
+  menu.style.top = 'auto';
+  menu.style.bottom = `${Math.round(bottom)}px`;
+}
+
+function repositionComposerMenus() {
+  const moreMenu = document.getElementById('moreMenu');
+  const moreBtn = document.getElementById('moreBtn');
+  if (moreMenu?.classList.contains('active') && moreBtn) {
+    positionFloatingMenu(moreMenu, moreBtn, 'left');
+  }
+
+  const modelMenu = document.getElementById('modelDropdownMenu');
+  const modelBtn = resolveModelMenuAnchor();
+  if (modelMenu?.classList.contains('active') && modelBtn) {
+    const { align, vertical } = getModelMenuPositionConfig(modelBtn);
+    positionFloatingMenu(modelMenu, modelBtn, align, vertical);
+  }
+}
+
+function scheduleComposerMenuReposition(frames = 2) {
+  let remaining = Math.max(1, frames);
+  const tick = () => {
+    repositionComposerMenus();
+    remaining -= 1;
+    if (remaining > 0) {
+      requestAnimationFrame(tick);
+    }
+  };
+  requestAnimationFrame(tick);
+}
 
 // 切换更多菜单显示/隐藏
 function toggleMoreMenu() {
   const menu = document.getElementById('moreMenu');
   if (menu) {
-    const isOpening = !menu.classList.contains('active');
+    closeModelModal();
     menu.classList.toggle('active');
 
-    // 当菜单打开时，同步toggle状态
-    if (isOpening) {
+    if (menu.classList.contains('active')) {
       const internetToggle = document.getElementById('internetToggle');
       const thinkingToggle = document.getElementById('thinkingToggle');
       const agentToggle = document.getElementById('agentToggle');
@@ -2372,9 +3360,8 @@ function toggleMoreMenu() {
       updateToolbarUI();
       updateReasoningProfileControl();
       updatePoeQuotaHint();
+      positionFloatingMenu(menu, document.getElementById('moreBtn'), 'left');
     }
-
-    preserveMobileInputFocus();
   }
 }
 
@@ -2384,7 +3371,7 @@ document.addEventListener('click', function (e) {
   const menu = document.getElementById('moreMenu');
   const moreBtn = document.getElementById('moreBtn');
   if (menu && menu.classList.contains('active')) {
-    if (!menu.contains(e.target) && !moreBtn.contains(e.target)) {
+    if (!menu.contains(e.target) && !moreBtn?.contains(e.target)) {
       menu.classList.remove('active');
     }
   }
@@ -2413,16 +3400,19 @@ function toggleThinkingFromMenu(event) {
     appState.thinkingMode = false;
     updateToolbarUI();
     preserveMobileInputFocus();
+    scheduleComposerMenuReposition(8);
     return;
   }
   if (isFreePoeMode()) {
     appState.thinkingMode = false;
     updateToolbarUI();
     preserveMobileInputFocus();
+    scheduleComposerMenuReposition(8);
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
   updateToolbarUI();
+  scheduleComposerMenuReposition(8);
 
   console.log(` 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
   preserveMobileInputFocus();
@@ -2431,6 +3421,17 @@ function toggleThinkingFromMenu(event) {
 // 从菜单切换Agent模式
 function toggleAgentFromMenu(event) {
   event.stopPropagation(); // 防止关闭菜单
+  if (!isMaxMembershipUser()) {
+    appState.agentMode = false;
+    updateToolbarUI();
+    showToast(appState.language === 'zh-CN' ? '4倍速深度研究仅 MAX 会员可用' : 'Research Turbo is only available for MAX members');
+    if (typeof openMembershipPlans === 'function') {
+      openMembershipPlans();
+    }
+    preserveMobileInputFocus();
+    return;
+  }
+
   appState.agentMode = !appState.agentMode;
 
   const toggle = document.getElementById('agentToggle');
@@ -2446,7 +3447,7 @@ function toggleAgentFromMenu(event) {
 // 从菜单触发文件上传
 function handleFileUploadFromMenu() {
   const menu = document.getElementById('moreMenu');
-  if (menu) menu.classList.remove('active');
+  menu?.classList.remove('active');
   handleFileUpload();
 }
 
@@ -2548,16 +3549,23 @@ function updateToolbarUI() {
   const agentToggle = document.getElementById('agentToggle');
   const reasoningProfileItem = document.querySelector('.reasoning-profile-item');
   const thinkingMenuItem = thinkingToggle?.closest('.more-menu-item');
+  const agentMenuItem = agentToggle?.closest('.more-menu-item');
   const thinkingBtn = document.getElementById('thinkingBtn');
   const internetBtn = document.getElementById('internetBtn');
   const reasoningSelect = document.getElementById('reasoningProfileSelect');
   const reasoningSlider = document.getElementById('reasoningProfileSlider');
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
   const supportsThinking = !!currentModel?.supportsThinking;
+  const supportsReasoningProfile = supportsThinking && currentModel?.supportsReasoningProfile !== false;
   const forceDisableThinking = isFreePoeMode();
+  const forceDisableAgent = !isMaxMembershipUser();
 
   if (forceDisableThinking) {
     appState.thinkingMode = false;
+  }
+
+  if (forceDisableAgent) {
+    appState.agentMode = false;
   }
 
   if (internetToggle) {
@@ -2576,6 +3584,14 @@ function updateToolbarUI() {
 
   if (agentToggle) {
     agentToggle.classList.toggle('active', appState.agentMode);
+    agentToggle.classList.toggle('disabled', forceDisableAgent);
+  }
+
+  if (agentMenuItem) {
+    agentMenuItem.classList.toggle('is-disabled', forceDisableAgent);
+    agentMenuItem.title = forceDisableAgent
+      ? (appState.language === 'zh-CN' ? '仅 MAX 会员可用' : 'MAX members only')
+      : '';
   }
 
   if (thinkingBtn) {
@@ -2596,7 +3612,7 @@ function updateToolbarUI() {
     }
   }
 
-  const showReasoningProfile = supportsThinking && appState.thinkingMode && !forceDisableThinking;
+  const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode && !forceDisableThinking;
   if (reasoningProfileItem) {
     reasoningProfileItem.style.display = showReasoningProfile ? 'flex' : 'none';
   }
@@ -2607,6 +3623,9 @@ function updateToolbarUI() {
     }
   }
   updatePoeQuotaHint();
+  if (document.getElementById('moreMenu')?.classList.contains('active')) {
+    scheduleComposerMenuReposition(6);
+  }
 }
 
 // 修复：改进updateSliderValue函数
@@ -2652,6 +3671,8 @@ function updateSettingsUI() {
   if (systemPromptEl) {
     systemPromptEl.value = appState.systemPrompt;
   }
+
+  updateZtx6dBindingUI();
 }
 
 // 修复：改进updateModelControls函数，添加null检查
@@ -2969,19 +3990,30 @@ function toggleHistoryThinkingUI(thinkingId) {
 }
 
 // ==================== 模型选择下拉菜单函数 ====================
-function openModelModal() {
+function openModelModal(anchorOrId = null) {
   const menu = document.getElementById('modelDropdownMenu');
-  if (menu) {
-    menu.classList.toggle('active');
-    if (menu.classList.contains('active')) {
-      updateMenuSelection();
-    }
-    preserveMobileInputFocus();
+  const selector = resolveModelMenuAnchor(anchorOrId);
+  if (!menu || !selector) return;
+
+  if (menu.classList.contains('active') && appState.activeModelMenuAnchorId === selector.id) {
+    closeModelModal();
+  } else {
+    const moreMenu = document.getElementById('moreMenu');
+    moreMenu?.classList.remove('active');
+    menu.classList.remove('closing');
+    menu.classList.add('active');
+    appState.activeModelMenuAnchorId = selector.id;
+    syncModelMenuTriggerState(selector);
+    updateMenuSelection();
+    const { align, vertical } = getModelMenuPositionConfig(selector);
+    positionFloatingMenu(menu, selector, align, vertical);
+    scheduleComposerMenuReposition();
   }
 }
 
 function closeModelModal() {
   const menu = document.getElementById('modelDropdownMenu');
+  syncModelMenuTriggerState(null);
   if (menu && menu.classList.contains('active')) {
     // 移除active，添加closing触发关闭动画
     menu.classList.remove('active');
@@ -2998,15 +4030,46 @@ function closeModelModal() {
 function toggleAllModels() {
   const section = document.getElementById('allModelsSection');
   const toggleItem = document.querySelector('[data-toggle="all-models"]');
+  const arrow = document.getElementById('allModelsArrow');
 
   if (section && toggleItem) {
-    if (section.style.display === 'none') {
-      section.style.display = 'block';
-      toggleItem.classList.add('expanded');
-    } else {
-      section.style.display = 'none';
-      toggleItem.classList.remove('expanded');
+    if (section._hideTimer) {
+      clearTimeout(section._hideTimer);
+      section._hideTimer = null;
     }
+
+    const isExpanded = section.classList.contains('expanded');
+
+    if (!isExpanded) {
+      section.style.display = 'block';
+      section.style.maxHeight = '0px';
+      section.style.opacity = '0';
+      section.style.transform = 'translateY(-4px)';
+      void section.offsetHeight;
+      section.classList.add('expanded');
+      section.style.maxHeight = `${section.scrollHeight}px`;
+      section.style.opacity = '1';
+      section.style.transform = 'translateY(0)';
+      toggleItem.classList.add('expanded');
+      arrow?.classList.add('expanded');
+    } else {
+      section.style.maxHeight = `${section.scrollHeight}px`;
+      void section.offsetHeight;
+      section.classList.remove('expanded');
+      section.style.maxHeight = '0px';
+      section.style.opacity = '0';
+      section.style.transform = 'translateY(-4px)';
+      toggleItem.classList.remove('expanded');
+      arrow?.classList.remove('expanded');
+      section._hideTimer = window.setTimeout(() => {
+        if (!section.classList.contains('expanded')) {
+          section.style.display = 'none';
+        }
+        section._hideTimer = null;
+      }, 220);
+    }
+
+    scheduleComposerMenuReposition(8);
   }
 }
 
@@ -3019,6 +4082,23 @@ function updateMenuSelection() {
     } else {
       item.classList.remove('selected');
     }
+    const requiredMembership = String(item.getAttribute('data-required-membership') || '').trim().toLowerCase();
+    const locked = requiredMembership === 'max' && !isMaxMembershipUser();
+    item.classList.toggle('membership-locked', locked);
+    item.classList.toggle('membership-available', requiredMembership === 'max' && !locked);
+  });
+
+  document.querySelectorAll('.model-card').forEach((card) => {
+    const requiredMembership = String(card.getAttribute('data-required-membership') || '').trim().toLowerCase();
+    const locked = requiredMembership === 'max' && !isMaxMembershipUser();
+    card.classList.toggle('membership-locked', locked);
+    card.classList.toggle('membership-available', requiredMembership === 'max' && !locked);
+  });
+
+  ['claude-haiku', 'anthropic/claude-sonnet-4.6', 'anthropic/claude-3-haiku'].forEach((modelId) => {
+    document.querySelectorAll(`#regenerateModelSelect option[value="${modelId}"]`).forEach((option) => {
+      option.disabled = !isMaxMembershipUser();
+    });
   });
 }
 
@@ -3037,17 +4117,19 @@ function getModelDisplayMeta(modelId) {
 }
 
 function updateSelectedModelText(modelId = appState.selectedModel) {
-  const selectedText = document.getElementById('selectedModelText');
-  if (!selectedText) return;
+  const selectedTextNodes = document.querySelectorAll('[data-model-label]');
+  if (!selectedTextNodes.length) return;
 
   const meta = getModelDisplayMeta(modelId);
-  if (meta.i18nKey && i18n?.[appState.language]?.[meta.i18nKey]) {
-    selectedText.textContent = i18n[appState.language][meta.i18nKey];
-    selectedText.setAttribute('data-i18n', meta.i18nKey);
-  } else {
-    selectedText.textContent = meta.fallback;
-    selectedText.removeAttribute('data-i18n');
-  }
+  selectedTextNodes.forEach((selectedText) => {
+    if (meta.i18nKey && i18n?.[appState.language]?.[meta.i18nKey]) {
+      selectedText.textContent = i18n[appState.language][meta.i18nKey];
+      selectedText.setAttribute('data-i18n', meta.i18nKey);
+    } else {
+      selectedText.textContent = meta.fallback;
+      selectedText.removeAttribute('data-i18n');
+    }
+  });
 }
 
 function persistDefaultModelPreference(modelId = appState.selectedModel) {
@@ -3084,6 +4166,10 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
 }
 
 function selectModelFromMenu(model, displayName, i18nKey) {
+  if (isMembershipLockedModel(model)) {
+    console.warn(' 该模型仅 MAX 会员可用');
+    return;
+  }
   appState.selectedModel = normalizeSelectedModelId(model);
   if (isHiddenModelId(model)) {
     console.log(' Poe models are hidden. Fallback to auto model.');
@@ -3102,6 +4188,10 @@ function selectModelFromMenu(model, displayName, i18nKey) {
 }
 
 function selectModelFromModal(model, displayName) {
+  if (isMembershipLockedModel(model)) {
+    selectModelFromMenu(model, displayName || model, null);
+    return;
+  }
   selectModelFromMenu(model, displayName || model, null);
   const modelModal = document.getElementById('modelModal');
   if (modelModal) {
@@ -3112,10 +4202,11 @@ function selectModelFromModal(model, displayName) {
 // 点击页面其他地方关闭下拉菜单
 document.addEventListener('click', (e) => {
   const menu = document.getElementById('modelDropdownMenu');
-  const selector = document.getElementById('modelSelectCustom');
+  const isClickInsideTrigger = Array.from(document.querySelectorAll('.model-select-custom'))
+    .some((selector) => selector.contains(e.target));
 
-  if (menu && selector) {
-    if (!menu.contains(e.target) && !selector.contains(e.target)) {
+  if (menu) {
+    if (!menu.contains(e.target) && !isClickInsideTrigger) {
       closeModelModal();
     }
   }
@@ -3139,6 +4230,7 @@ function openSettings() {
     settingsModal.classList.add('active');
     appState.settingsOpen = true;
     updateSettingsUI();
+    updateZtx6dBindingUI();
   }
 }
 
@@ -3158,13 +4250,6 @@ document.addEventListener('click', (e) => {
     closeSettings();
   }
 });
-
-function scrollToBottom() {
-  const chatContainer = document.querySelector('.chat-container');
-  if (chatContainer) {
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-  }
-}
 
 // 修复：改进saveSettings函数，添加null检查
 function saveSettings() {
@@ -3280,7 +4365,7 @@ function renderMessages() {
   });
 
   // 完整渲染时强制滚动到底部并重置状态
-  appState.userScrolledUp = false;
+  setScrollFollowMode('following');
   scrollToBottom(true);
 
   //  渲染 Mermaid 图表
@@ -3291,6 +4376,183 @@ function renderMessages() {
 
   //  更新对话索引导航器
   setTimeout(() => renderChatIndexTimeline(), 150);
+}
+
+function createMessageFeedbackButton(message, rating) {
+  const button = document.createElement('button');
+  const isPositive = rating === 'up';
+  button.className = `action-btn feedback-btn feedback-${rating}-btn`;
+  button.type = 'button';
+  button.title = appState.language === 'zh-CN'
+    ? (isPositive ? '点赞这条回复' : '倒赞这条回复')
+    : (isPositive ? 'Like this answer' : 'Dislike this answer');
+  button.dataset.feedbackRating = rating;
+  if (message?.id) {
+    button.dataset.feedbackMessageId = String(message.id);
+  }
+  if (message?.feedback_rating === rating) {
+    button.classList.add('active');
+  }
+  button.innerHTML = getSvgIcon(isPositive ? 'thumb_up' : 'thumb_down', 'material-symbols-outlined', 16);
+  button.addEventListener('click', () => openFeedbackModal(message, rating));
+  return button;
+}
+
+function ensureFeedbackModal() {
+  let modal = document.getElementById('messageFeedbackModal');
+  if (modal) return modal;
+
+  modal = document.createElement('div');
+  modal.id = 'messageFeedbackModal';
+  modal.className = 'feedback-modal-overlay';
+  modal.innerHTML = `
+    <div class="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedbackModalTitle">
+      <button class="feedback-modal-close" type="button" aria-label="Close">${getSvgIcon('close', 'material-symbols-outlined', 16)}</button>
+      <div class="feedback-modal-icon" id="feedbackModalIcon"></div>
+      <h3 id="feedbackModalTitle"></h3>
+      <p id="feedbackModalHint" class="feedback-modal-hint"></p>
+      <textarea id="feedbackCommentInput" class="feedback-textarea" maxlength="1000"></textarea>
+      <div class="feedback-modal-actions">
+        <button class="feedback-cancel-btn" type="button">${appState.language === 'zh-CN' ? '取消' : 'Cancel'}</button>
+        <button class="feedback-submit-btn" id="feedbackSubmitBtn" type="button">${appState.language === 'zh-CN' ? '提交反馈' : 'Submit feedback'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeFeedbackModal();
+  });
+  modal.querySelector('.feedback-modal-close')?.addEventListener('click', closeFeedbackModal);
+  modal.querySelector('.feedback-cancel-btn')?.addEventListener('click', closeFeedbackModal);
+  modal.querySelector('#feedbackSubmitBtn')?.addEventListener('click', submitMessageFeedback);
+  return modal;
+}
+
+function openFeedbackModal(message, rating) {
+  if (!appState.token) {
+    showToast(appState.language === 'zh-CN' ? '请先登录后反馈' : 'Please log in to send feedback');
+    return;
+  }
+
+  feedbackModalState.message = message;
+  feedbackModalState.rating = rating;
+  feedbackModalState.isSubmitting = false;
+
+  const modal = ensureFeedbackModal();
+  const isPositive = rating === 'up';
+  modal.querySelector('#feedbackModalIcon').innerHTML = getSvgIcon(isPositive ? 'thumb_up' : 'thumb_down', 'material-symbols-outlined', 24);
+  modal.querySelector('#feedbackModalTitle').textContent = appState.language === 'zh-CN'
+    ? (isPositive ? '这条回复哪里好？' : '这条回复哪里不好？')
+    : (isPositive ? 'What worked well?' : 'What should be improved?');
+  modal.querySelector('#feedbackModalHint').textContent = appState.language === 'zh-CN'
+    ? (isPositive ? '可以写下有帮助、准确或表达好的地方。' : '可以写下不准确、不完整或体验不好的地方。')
+    : (isPositive ? 'Tell us what was helpful, accurate, or clear.' : 'Tell us what was inaccurate, incomplete, or confusing.');
+  const textarea = modal.querySelector('#feedbackCommentInput');
+  textarea.placeholder = appState.language === 'zh-CN'
+    ? '选填，最多1000字'
+    : 'Optional, up to 1000 characters';
+  textarea.value = message?.feedback_comment || '';
+  modal.classList.add('active');
+  setTimeout(() => textarea.focus(), 50);
+}
+
+function closeFeedbackModal() {
+  const modal = document.getElementById('messageFeedbackModal');
+  if (modal) modal.classList.remove('active');
+  feedbackModalState.message = null;
+  feedbackModalState.rating = null;
+  feedbackModalState.isSubmitting = false;
+}
+
+async function resolveFeedbackMessageId(message) {
+  if (message?.id) return message.id;
+  if (!appState.currentSession?.id) return null;
+
+  const response = await fetch(`${API_BASE}/sessions/${appState.currentSession.id}/messages`, {
+    headers: { 'Authorization': `Bearer ${appState.token}` }
+  });
+  if (!response.ok) return null;
+
+  const dbMessages = await response.json();
+  if (Array.isArray(dbMessages)) {
+    appState.messages = dbMessages;
+    const matched = [...dbMessages].reverse().find((item) =>
+      item.role === 'assistant' && item.content === message?.content
+    );
+    if (matched?.id) {
+      message.id = matched.id;
+      return matched.id;
+    }
+  }
+  return null;
+}
+
+function refreshFeedbackButtonState(messageId, rating) {
+  document.querySelectorAll(`.feedback-btn[data-feedback-message-id="${messageId}"]`).forEach((button) => {
+    button.classList.toggle('active', button.dataset.feedbackRating === rating);
+  });
+}
+
+async function submitMessageFeedback() {
+  if (feedbackModalState.isSubmitting) return;
+  const message = feedbackModalState.message;
+  const rating = feedbackModalState.rating;
+  const comment = document.getElementById('feedbackCommentInput')?.value.trim() || '';
+  const submitBtn = document.getElementById('feedbackSubmitBtn');
+
+  try {
+    feedbackModalState.isSubmitting = true;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = appState.language === 'zh-CN' ? '提交中...' : 'Submitting...';
+    }
+
+    const hadMessageId = !!message?.id;
+    const messageId = await resolveFeedbackMessageId(message);
+    if (!messageId) {
+      showToast(appState.language === 'zh-CN' ? '消息保存后才能反馈，请稍后再试' : 'Please try again after the message is saved');
+      return;
+    }
+
+    const response = await fetch(`${API_BASE}/messages/${messageId}/feedback`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ rating, comment })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    message.id = messageId;
+    message.feedback_rating = rating;
+    message.feedback_comment = comment;
+    const stored = appState.messages.find((item) => item.id === messageId);
+    if (stored) {
+      stored.feedback_rating = rating;
+      stored.feedback_comment = comment;
+    }
+    if (hadMessageId) {
+      refreshFeedbackButtonState(messageId, rating);
+    } else {
+      renderMessages();
+    }
+    showToast(appState.language === 'zh-CN' ? '反馈已提交' : 'Feedback submitted');
+    closeFeedbackModal();
+  } catch (error) {
+    console.error('提交反馈失败:', error);
+    showToast(error.message || (appState.language === 'zh-CN' ? '反馈提交失败' : 'Feedback failed'));
+  } finally {
+    feedbackModalState.isSubmitting = false;
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = appState.language === 'zh-CN' ? '提交反馈' : 'Submit feedback';
+    }
+  }
 }
 
 // 修复：改进createMessageElement，添加安全的事件处理
@@ -3484,7 +4746,7 @@ function createMessageElement(message) {
     // 填充深度思考内容
     if (hasReasoning) {
       const deepContent = timelineDiv.querySelector(`#${thinkingId}-content`);
-      const formattedText = message.reasoning_content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      const formattedText = sanitizeReasoningText(message.reasoning_content);
       if (deepContent) {
         deepContent.innerHTML = `<span class="thinking-sentence">${formattedText}</span>`;
       }
@@ -3611,7 +4873,7 @@ function createMessageElement(message) {
                 <span class="media-icon"></span>
                 <div class="media-info">
                   <div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div>
-                  <div class="media-name">${att.fileName || ''}</div>
+            <div class="media-name">${escapeHtml(att.fileName || '')}</div>
                 </div>
               `;
         } else if (att.type === 'audio') {
@@ -3620,7 +4882,7 @@ function createMessageElement(message) {
                 <span class="media-icon"></span>
                 <div class="media-info">
                   <div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div>
-                  <div class="media-name">${att.fileName || ''}</div>
+            <div class="media-name">${escapeHtml(att.fileName || '')}</div>
                 </div>
               `;
         } else if (att.type === 'document') {
@@ -3629,7 +4891,7 @@ function createMessageElement(message) {
                 <span class="media-icon"></span>
                 <div class="media-info">
                   <div class="media-type">${appState.language === 'zh-CN' ? '文档' : 'Document'}</div>
-                  <div class="media-name">${att.fileName || ''}</div>
+            <div class="media-name">${escapeHtml(att.fileName || '')}</div>
                 </div>
               `;
         }
@@ -3648,7 +4910,7 @@ function createMessageElement(message) {
   const textDiv = document.createElement('div');
   textDiv.className = 'message-text';
   //  移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
-  const cleanContent = (message.content || '').replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+  const cleanContent = stripTrailingTitleMarker(message.content || '');
   // 使用renderMarkdownWithMath渲染Markdown和数学公式
   let renderedContent = renderMarkdownWithMath(cleanContent);
 
@@ -3668,14 +4930,14 @@ function createMessageElement(message) {
     renderedContent = renderCitations(renderedContent, sources);
   }
 
-  textDiv.innerHTML = renderedContent;
+  textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
   content.appendChild(textDiv);
 
 
   // 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
   if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
     const sourcesDiv = document.createElement('div');
-    sourcesDiv.innerHTML = renderSourcesList(sources, appState.language);
+    sourcesDiv.innerHTML = sanitizeRenderedHtml(renderSourcesList(sources, appState.language));
     content.appendChild(sourcesDiv);
   }
 
@@ -3778,6 +5040,8 @@ function createMessageElement(message) {
     });
 
     metaDiv.appendChild(copyBtn);
+    metaDiv.appendChild(createMessageFeedbackButton(message, 'up'));
+    metaDiv.appendChild(createMessageFeedbackButton(message, 'down'));
 
     // 添加编辑按钮
     const editBtn = document.createElement('button');
@@ -3900,10 +5164,10 @@ async function loadMessageAttachments(messageId, containerElement) {
         itemDiv.appendChild(img);
       } else if (att.type === 'video') {
         itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
+        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
       } else if (att.type === 'audio') {
         itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div><div class="media-name">${att.fileName || ''}</div></div>`;
+        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
       }
 
       if (itemDiv.innerHTML) containerElement.appendChild(itemDiv);
@@ -3926,11 +5190,14 @@ function openSidebar() {
 
   if (sidebar) {
     sidebar.classList.add('active');
+    sidebar.classList.remove('dragging');
     sidebar.style.transform = '';
   }
 
   if (overlay) {
     overlay.classList.add('active');
+    overlay.classList.remove('dragging');
+    overlay.style.opacity = '';
   }
 
   appState.sidebarOpen = true;
@@ -3943,11 +5210,14 @@ function closeSidebar() {
 
   if (sidebar) {
     sidebar.classList.remove('active');
+    sidebar.classList.remove('dragging');
     sidebar.style.transform = '';
   }
 
   if (overlay) {
     overlay.classList.remove('active');
+    overlay.classList.remove('dragging');
+    overlay.style.opacity = '';
   }
 
   appState.sidebarOpen = false;
@@ -4009,7 +5279,7 @@ function startEditMessage(message, messageDiv) {
   if (!textDiv) return;
 
   // 获取原始内容（移除可能的标题标记）
-  const originalContent = (message.content || '').replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+  const originalContent = stripTrailingTitleMarker(message.content || '');
 
   // 保存原始HTML以便取消时恢复
   const originalHtml = textDiv.innerHTML;
@@ -4395,24 +5665,20 @@ async function confirmRegenerate() {
       });
       if (response.ok) {
         const dbMessages = await response.json();
-        appState.messages = dbMessages;
         // 找到对应内容的消息并更新目标
-        const foundMsg = appState.messages.find(m =>
+        const foundMsg = dbMessages.find(m =>
           m.content === currentTarget.content && m.role === 'assistant'
         );
         if (foundMsg && foundMsg.id) {
+          appState.messages = dbMessages;
           currentTarget = foundMsg;
           console.log(` 已获取消息ID: ${foundMsg.id}`);
         } else {
-          console.error(' 无法找到消息ID');
-          alert(appState.language === 'zh-CN' ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
-          return;
+          console.warn(' Regenerate target has no saved ID yet; continuing with local message state.');
         }
       }
     } catch (error) {
       console.error(' 重新加载消息失败:', error);
-      alert(appState.language === 'zh-CN' ? '加载失败，请重试' : 'Load failed, please retry');
-      return;
     }
   }
 
@@ -4507,24 +5773,23 @@ async function streamAIResponse(messages, aiMsg) {
   const loadedImageContainers = new Map();
 
   // 使用骨架中预先创建的 Mermaid 预览容器
-  const mermaidPreviewContainer = aiMsgElement?.querySelector('#mermaidLivePreview');
+  let mermaidPreviewContainer = aiMsgElement?.querySelector('#mermaidLivePreview');
   let lastValidMermaidCode = ''; // 上次成功渲染的代码
 
   // 从原始文本中提取 Mermaid 代码并尝试实时渲染
   async function tryRenderMermaidFromText(fullText) {
     if (typeof mermaid === 'undefined' || !mermaidPreviewContainer) return;
 
-    // 提取 mermaid 代码块（支持未闭合的情况）
-    const mermaidRegex = /```mermaid\n([\s\S]*?)(```|$)/;
-    const match = fullText.match(mermaidRegex);
+    // 提取 mermaid 代码块（支持未闭合和少一个反引号的情况）
+    const mermaidBlocks = extractMermaidBlocks(fullText).blocks;
 
-    if (!match) {
+    if (!mermaidBlocks.length) {
       // 没有 mermaid 代码块，隐藏预览
       mermaidPreviewContainer.style.display = 'none';
       return;
     }
 
-    const code = match[1].trim();
+    const code = sanitizeMermaidCode(mermaidBlocks[mermaidBlocks.length - 1]);
     if (!code || code === lastValidMermaidCode) return; // 代码没变化，跳过
 
     // 显示容器
@@ -4630,11 +5895,12 @@ async function streamAIResponse(messages, aiMsg) {
         agentPolicy: appState.agentPolicy,
         qualityProfile: appState.qualityProfile,
         temperature: appState.temperature,
-        topP: appState.topP,
-        maxTokens: appState.maxTokens,
-        frequencyPenalty: appState.frequencyPenalty,
-        presencePenalty: appState.presencePenalty,
-        systemPrompt: buildSystemPrompt() + (appState.systemPrompt ? '\n\nUser Custom Instructions:\n' + appState.systemPrompt : '')
+        top_p: appState.topP,
+        max_tokens: appState.maxTokens,
+        frequency_penalty: appState.frequencyPenalty,
+        presence_penalty: appState.presencePenalty,
+        promptTimeContext: getUserTimeContext(),
+        systemPrompt: buildEffectiveSystemPrompt()
       })
     });
 
@@ -4842,6 +6108,8 @@ function renderSessions() {
     const div = document.createElement('div');
     div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}`;
     div.setAttribute('data-session-id', session.id);
+    const displayTitle = getSessionDisplayTitle(session);
+    const previewText = stripTrailingTitleMarker(session.last_message || '').replace(/\s+/g, ' ').trim();
 
     // 解析附件并生成预览HTML
     const attachments = parseSessionAttachments(session);
@@ -4852,8 +6120,8 @@ function renderSessions() {
     }
 
     div.innerHTML = `
-          <div class="session-title">${escapeHtml(session.title || '')}</div>
-          <div class="session-preview">${escapeHtml((session.last_message || '').substring(0, 50))}...</div>
+          <div class="session-title">${escapeHtml(displayTitle)}</div>
+          <div class="session-preview">${escapeHtml(previewText ? `${previewText.substring(0, 50)}...` : '')}</div>
           ${attachmentsHtml}
           <button class="session-delete-btn" type="button">
             ${getSvgIcon('close', 'material-symbols-outlined', 24)}
@@ -5562,9 +6830,7 @@ async function sendMessage(message = null) {
     return visible;
   }
 
-  const effectiveSystemPrompt = appState.systemPrompt.trim()
-    ? `${BUILT_IN_SYSTEM_PROMPT}\n\n以下是用户个人偏好，请参考：\n${appState.systemPrompt}`
-    : BUILT_IN_SYSTEM_PROMPT;
+  const effectiveSystemPrompt = buildEffectiveSystemPrompt();
   const selectedDomainMode = appState.pendingDomainMode || null;
   appState.pendingDomainMode = null;
 
@@ -5593,6 +6859,7 @@ async function sendMessage(message = null) {
         presence_penalty: appState.presencePenalty,
         domainMode: selectedDomainMode,
         uiLanguage: appState.language,
+        promptTimeContext: getUserTimeContext(),
         systemPrompt: effectiveSystemPrompt,
         // RAG参数
         spaceId: appState.currentSpaceId,
@@ -5616,6 +6883,24 @@ async function sendMessage(message = null) {
     }
 
     appState.currentRequestId = response.headers.get('X-Request-ID');
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorText = await response.text();
+        if (errorText) {
+          try {
+            const parsedError = JSON.parse(errorText);
+            errorMessage = parsedError.error || parsedError.message || errorMessage;
+          } catch (parseError) {
+            errorMessage = errorText;
+          }
+        }
+      } catch (readError) {
+        console.warn('Failed to read stream error body:', readError);
+      }
+      throw new Error(errorMessage);
+    }
 
     if (!response.body) {
       throw new Error('响应体为空');
@@ -5652,6 +6937,7 @@ async function sendMessage(message = null) {
     //  多图防抖动缓存（状态外置 + 缓存注入）
     const lastValidMermaids = {}; // 格式: { "0": "code...", "1": "code..." }
     const renderedSvgs = {};      // 格式: { "0": "<svg>...</svg>", "1": "<svg>...</svg>" }
+    const renderingMermaids = new Set();
 
     // ==================== AI Smooth Fusion 渲染队列 ====================
     let charRenderQueue = [];  // 字符渲染队列
@@ -5674,7 +6960,7 @@ async function sendMessage(message = null) {
     function renderStreamingContent() {
       if (!streamingEl || !displayedContent) return;
 
-      const contentToDisplay = displayedContent.replace(/<<<.{1,30}>>>\s*$/g, '').trim();
+      const contentToDisplay = stripTrailingTitleMarker(displayedContent);
       let html = renderMarkdownWithMath(contentToDisplay, true);
 
       // 处理 citations（如果有 sources）
@@ -5697,15 +6983,18 @@ async function sendMessage(message = null) {
             .replace(/&quot;/g, '"')
             .replace(/&#39;/g, "'")
             .trim();
+          const sanitizedCode = sanitizeMermaidCode(decodedCode);
 
           // 从缓存获取 SVG（如果没有，显示加载动画）
-          const cachedSVG = renderedSvgs[currentId] || `
+          const cachedSVG = lastValidMermaids[currentId] === sanitizedCode && renderedSvgs[currentId]
+            ? renderedSvgs[currentId]
+            : `
                 <div class="mermaid-loading"><span>图表 ${currentId + 1} 渲染中...</span></div>
               `;
 
           // 返回内联图表容器（隐藏代码，只显示图表）
           return `
-                <div class="mermaid-inline-wrapper" data-mermaid-index="${currentId}" data-mermaid-code="${encodeURIComponent(decodedCode)}">
+                <div class="mermaid-inline-wrapper" data-mermaid-index="${currentId}" data-mermaid-code="${encodeURIComponent(sanitizedCode)}">
                   <div class="mermaid-preview-container">
                     ${cachedSVG}
                   </div>
@@ -5715,6 +7004,7 @@ async function sendMessage(message = null) {
       );
 
       streamingEl.innerHTML = html;
+      hydrateStreamingMermaidCache();
       applyCharAnimations(streamingEl);
 
       //  异步渲染所有图表
@@ -5730,6 +7020,24 @@ async function sendMessage(message = null) {
       scrollToBottom();
     }
 
+    function hydrateStreamingMermaidCache() {
+      if (!streamingEl) return;
+      streamingEl.querySelectorAll('.mermaid-inline-wrapper').forEach((wrapper) => {
+        const index = parseInt(wrapper.getAttribute('data-mermaid-index'), 10);
+        const code = sanitizeMermaidCode(decodeURIComponent(wrapper.getAttribute('data-mermaid-code') || ''));
+        if (!code || isNaN(index)) return;
+
+        wrapper.setAttribute('data-mermaid-code', encodeURIComponent(code));
+        if (lastValidMermaids[index] !== code || !renderedSvgs[index]) return;
+
+        const previewContainer = wrapper.querySelector('.mermaid-preview-container');
+        if (previewContainer) {
+          previewContainer.innerHTML = renderedSvgs[index];
+          wrapper.classList.add('rendered');
+        }
+      });
+    }
+
     //  多图防抖动：查找内联 Mermaid 容器并异步渲染
     async function tryRenderMermaidLive() {
       if (typeof mermaid === 'undefined' || !streamingEl) return;
@@ -5741,30 +7049,39 @@ async function sendMessage(message = null) {
       // 遍历每个内联容器
       wrappers.forEach((wrapper) => {
         const index = parseInt(wrapper.getAttribute('data-mermaid-index'), 10);
-        const code = decodeURIComponent(wrapper.getAttribute('data-mermaid-code') || '');
+        const code = sanitizeMermaidCode(decodeURIComponent(wrapper.getAttribute('data-mermaid-code') || ''));
 
         if (!code || isNaN(index)) return;
 
-        // 跳过未变化的代码（防抖核心）
-        if (code === lastValidMermaids[index]) return;
+        if (code === lastValidMermaids[index] && renderedSvgs[index]) {
+          const previewContainer = wrapper.querySelector('.mermaid-preview-container');
+          if (previewContainer && !wrapper.classList.contains('rendered')) {
+            previewContainer.innerHTML = renderedSvgs[index];
+            wrapper.classList.add('rendered');
+          }
+          return;
+        }
+
+        const renderKey = `${index}:${code}`;
+        if (renderingMermaids.has(renderKey)) return;
+        renderingMermaids.add(renderKey);
 
         // 异步渲染（不阻塞主流程）
         (async () => {
           try {
-            // 1. 预检查语法
-            await mermaid.parse(code);
-
-            // 2. 渲染 SVG
             const svgId = `mermaid-inline-svg-${index}-${Date.now()}`;
-            const { svg } = await mermaid.render(svgId, code);
+            const { svg, code: renderedCode } = await renderMermaidSvg(code, svgId);
 
             // 3. 缓存结果
             renderedSvgs[index] = svg;
-            lastValidMermaids[index] = code;
+            lastValidMermaids[index] = renderedCode;
 
             // 4. 直接更新内联容器的 DOM（如果它还存在）
             const currentWrapper = streamingEl.querySelector(`.mermaid-inline-wrapper[data-mermaid-index="${index}"]`);
-            if (currentWrapper) {
+            const currentCode = currentWrapper
+              ? sanitizeMermaidCode(decodeURIComponent(currentWrapper.getAttribute('data-mermaid-code') || ''))
+              : '';
+            if (currentWrapper && currentCode === renderedCode) {
               const previewContainer = currentWrapper.querySelector('.mermaid-preview-container');
               if (previewContainer) {
                 previewContainer.innerHTML = svg;
@@ -5775,6 +7092,8 @@ async function sendMessage(message = null) {
           } catch (err) {
             // 渲染失败：保持上一帧（缓存中的 SVG 会在下次 renderStreamingContent 时自动注入）
             // console.debug(` Mermaid 图表 #${index + 1} 语法不完整，保持上一帧`);
+          } finally {
+            renderingMermaids.delete(renderKey);
           }
         })();
       });
@@ -5839,7 +7158,7 @@ async function sendMessage(message = null) {
       const sentenceSpan = document.createElement('span');
       sentenceSpan.className = 'thinking-sentence';
       // 识别**文本**格式并转换为<strong>标签
-      const formattedText = sentence.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      const formattedText = sanitizeReasoningText(sentence);
       sentenceSpan.innerHTML = formattedText;
       thinkingEl.appendChild(sentenceSpan);
       scrollToBottom();
@@ -5915,7 +7234,7 @@ async function sendMessage(message = null) {
               }
 
               // 格式化并显示内容
-              const formattedText = reasoningContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+              const formattedText = sanitizeReasoningText(reasoningContent);
               currentTyping.innerHTML = formattedText;
 
               // 如果深度思考区域已展开，滚动到底部
@@ -5995,7 +7314,7 @@ async function sendMessage(message = null) {
 
               // 新增：如果处于 ChatFlow iframe 模式，同步标题给父窗口
               if (isChatFlowIframeMode) {
-                console.log(' 同步标题给 Chat Flow:', parsed.title);
+                console.log(' 同步标题给 ChatFlow:', parsed.title);
                 window.parent.postMessage({
                   action: 'update-flow-title',
                   title: parsed.title
@@ -6020,9 +7339,14 @@ async function sendMessage(message = null) {
           }
           else if (parsed.type === 'quota_info') {
             applyQuotaInfoEvent(parsed);
-            addProcessTraceItem('info', appState.language === 'zh-CN'
-              ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
-              : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`);
+            const quotaText = parsed.provider === 'newapi_gpt55'
+              ? (appState.language === 'zh-CN'
+                ? `GPT-5.5限免: 剩余 ${userMembershipState.gpt55Remaining}/${userMembershipState.gpt55DailyLimit}`
+                : `GPT-5.5 free quota: ${userMembershipState.gpt55Remaining}/${userMembershipState.gpt55DailyLimit} remaining`)
+              : (appState.language === 'zh-CN'
+                ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
+                : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`);
+            addProcessTraceItem('info', quotaText);
           }
           // 新增：处理搜索来源
           else if (parsed.type === 'sources') {
@@ -6249,8 +7573,7 @@ async function sendMessage(message = null) {
     const finalReasoningContent = thinkingSentences.join('') + reasoningContent.trim();
 
     // 移除标题标记后再保存到appState
-    const cleanContent = fullContent
-      .replace(/<<<.{1,30}>>>\s*$/g, '')
+    const cleanContent = stripTrailingTitleMarker(fullContent)
       .replace(/<\|[^|]+\|>/g, '')
       .replace(/functions\.web_search:\d+/g, '')
       .trim();
@@ -6308,7 +7631,10 @@ async function sendMessage(message = null) {
 
   } catch (error) {
     console.error(' 发送消息错误:', error);
-    alert(appState.language === 'zh-CN' ? '发送失败,请检查网络连接' : 'Send failed, check network');
+    const message = error?.message || (appState.language === 'zh-CN'
+      ? '发送失败,请检查网络连接'
+      : 'Send failed, check network');
+    alert(message);
     // 确保停止AI头像闪烁
     const aiAvatar = document.querySelector('.message.assistant:last-child .ai-avatar');
     if (aiAvatar) aiAvatar.classList.remove('thinking');
@@ -6324,9 +7650,9 @@ async function sendMessage(message = null) {
 
     // 修复：在流式传输结束后处理标题
     // 提取标题 <<<标题>>> - 匹配回复末尾的三角括号内容
-    const titleMatch = fullContent.match(/<<<(.{1,30})>>>\s*$/);
-    if (titleMatch && titleMatch[1]) {
-      const newTitle = titleMatch[1].trim();
+    const fallbackTitle = extractTrailingTitleMarker(fullContent).title;
+    if (fallbackTitle) {
+      const newTitle = fallbackTitle;
       console.log(` 检测到新标题: "${newTitle}"`);
 
       if (appState.currentSession) {
@@ -6594,14 +7920,17 @@ async function verifyToken() {
       appState.user = data.user;
       showApp();
       await loadUserData();
+      return true;
     } else {
       localStorage.removeItem('rai_token');
       appState.token = null;
+      return false;
     }
   } catch (error) {
     console.error(' 验证token失败:', error);
     localStorage.removeItem('rai_token');
     appState.token = null;
+    return false;
   }
 }
 
@@ -6609,15 +7938,14 @@ function handleLogout() {
   const confirmMsg = appState.language === 'zh-CN' ? '确定要退出登录吗?' : 'Are you sure you want to logout?';
   if (confirm(confirmMsg)) {
     // 清除所有认证 token
-    localStorage.removeItem(RAUTH_TOKEN_KEY);
+    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
     localStorage.removeItem(RAI_TOKEN_KEY);
     appState.token = null;
     appState.user = null;
     appState.sessions = [];
     appState.currentSession = null;
 
-    // 重定向到 RAuth 登录页面
-    redirectToRAuth();
+    showAuthScreen();
   }
 }
 
@@ -6913,8 +8241,13 @@ async function loadUserData() {
     document.getElementById('userAvatar').textContent = realEmail ? realEmail[0].toUpperCase() : 'U';
 
     appState.user = {
+      id: profile.id || appState.user?.id || null,
       username: displayName,
-      email: realEmail
+      email: realEmail,
+      externalProvider: profile.external_provider || appState.user?.external_provider || null,
+      externalUid: profile.external_uid || appState.user?.external_uid || null,
+      external_provider: profile.external_provider || appState.user?.external_provider || null,
+      external_uid: profile.external_uid || appState.user?.external_uid || null
     };
 
     //  修复：检查profile对象的所有必需字段
@@ -7294,11 +8627,26 @@ function formatFileSize(bytes) {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
-// ==================== Chat Flow 思维流核心逻辑 ====================
+// ==================== ChatFlow 核心逻辑 ====================
 
-// Chat Flow 状态
+const CHATFLOW_PATCH_MODE_STORAGE_KEY = 'rai_chatflow_patch_apply_mode';
+const CHATFLOW_MOBILE_PANEL_MIN = 30;
+const CHATFLOW_MOBILE_PANEL_MAX = 70;
+const CHATFLOW_MOBILE_PANEL_DEFAULT = 50;
+const CHATFLOW_ALLOWED_PATCH_OPS = new Set([
+  'add_node',
+  'update_node',
+  'delete_node',
+  'add_edge',
+  'update_edge',
+  'delete_edge',
+  'auto_layout'
+]);
+
+// ChatFlow 状态
 const chatFlowState = {
   currentFlowId: null,
+  sessionId: null,
   flows: [],
   messages: [],
   canvas: {
@@ -7313,11 +8661,405 @@ const chatFlowState = {
   edges: [],
   isInitialized: false,
   // Phase 2 新增
-  selectedModel: 'auto',
+  selectedModel: normalizeSelectedModelId(appState.selectedModel || 'auto') || 'auto',
   thinkingMode: false,
   internetMode: true,
-  isStreaming: false
+  isStreaming: false,
+  currentRequestId: null,
+  patchApplyMode: localStorage.getItem(CHATFLOW_PATCH_MODE_STORAGE_KEY) === 'direct' ? 'direct' : 'review',
+  pendingCanvasPatch: null,
+  canvasHistory: [],
+  lastPatchNotice: null,
+  activityNotice: null,
+  mobilePanelHeight: CHATFLOW_MOBILE_PANEL_DEFAULT
 };
+
+function getChatFlowDefaultCanvasState() {
+  return {
+    nodes: [],
+    edges: [],
+    viewport: {
+      x: 0,
+      y: 0,
+      zoom: 1
+    }
+  };
+}
+
+function normalizeChatFlowViewport(viewport = {}) {
+  const x = Number(viewport?.x);
+  const y = Number(viewport?.y);
+  const zoom = Number(viewport?.zoom);
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+    zoom: Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  };
+}
+
+function normalizeChatFlowCanvasState(rawCanvasState) {
+  const canvasState = rawCanvasState && typeof rawCanvasState === 'object'
+    ? rawCanvasState
+    : getChatFlowDefaultCanvasState();
+
+  return {
+    nodes: Array.isArray(canvasState.nodes) ? canvasState.nodes.map(node => ({ ...node })) : [],
+    edges: Array.isArray(canvasState.edges) ? canvasState.edges.map(edge => ({ ...edge })) : [],
+    viewport: normalizeChatFlowViewport(canvasState.viewport || {})
+  };
+}
+
+function getChatFlowMessageId(message) {
+  const numericId = Number(message?.id);
+  return Number.isFinite(numericId) ? numericId : null;
+}
+
+function getChatFlowNodeSourceMessageId(node) {
+  const numericId = Number(node?.sourceMessageId);
+  return Number.isFinite(numericId) ? numericId : null;
+}
+
+function getChatFlowNodeSourceIndex(node) {
+  const numericIndex = Number(node?.sourceIndex);
+  return Number.isFinite(numericIndex) ? numericIndex : null;
+}
+
+function isChatFlowMobileViewport() {
+  return window.innerWidth <= 768;
+}
+
+function getChatFlowPatchModeLabel(mode = chatFlowState.patchApplyMode) {
+  if (appState.language === 'zh-CN') {
+    return mode === 'direct' ? '直接应用' : '审核后应用';
+  }
+  return mode === 'direct' ? 'Apply Directly' : 'Review First';
+}
+
+function updateChatFlowPatchModeButton() {
+  const button = document.getElementById('chatflowPatchModeBtn');
+  if (button) {
+    button.textContent = getChatFlowPatchModeLabel();
+  }
+}
+
+function updateChatFlowHeaderMeta() {
+  const meta = document.getElementById('chatflowHeaderMeta');
+  if (!meta) return;
+  const modeText = chatFlowState.patchApplyMode === 'direct'
+    ? (appState.language === 'zh-CN' ? 'AI改图: 直接应用' : 'AI edits: direct')
+    : (appState.language === 'zh-CN' ? 'AI改图: 审核后应用' : 'AI edits: review');
+  meta.textContent = chatFlowState.sessionId
+    ? `${modeText} · Session ${chatFlowState.sessionId.slice(-6)}`
+    : modeText;
+}
+
+function persistChatFlowPatchMode() {
+  localStorage.setItem(CHATFLOW_PATCH_MODE_STORAGE_KEY, chatFlowState.patchApplyMode);
+  updateChatFlowPatchModeButton();
+  updateChatFlowHeaderMeta();
+}
+
+function applyChatFlowMobilePanelHeight() {
+  const workspace = document.getElementById('chatFlowWorkspace');
+  const panel = document.getElementById('chatflowLLMPanel');
+  if (!workspace || !panel) return;
+
+  const clampedHeight = Math.max(
+    CHATFLOW_MOBILE_PANEL_MIN,
+    Math.min(CHATFLOW_MOBILE_PANEL_MAX, Number(chatFlowState.mobilePanelHeight) || CHATFLOW_MOBILE_PANEL_DEFAULT)
+  );
+  chatFlowState.mobilePanelHeight = clampedHeight;
+  workspace.style.setProperty('--chatflow-mobile-panel-height', `${clampedHeight}vh`);
+  panel.style.height = isChatFlowMobileViewport() ? `${clampedHeight}vh` : '';
+}
+
+function initChatFlowMobileSheet() {
+  if (window._chatFlowMobileSheetInitialized) return;
+
+  const grabber = document.getElementById('chatflowSheetGrabber');
+  if (!grabber) return;
+
+  window._chatFlowMobileSheetInitialized = true;
+  let isDragging = false;
+  let startY = 0;
+  let startHeight = CHATFLOW_MOBILE_PANEL_DEFAULT;
+
+  const stopDragging = () => {
+    if (!isDragging) return;
+    isDragging = false;
+    document.body.style.userSelect = '';
+    grabber.classList.remove('dragging');
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', stopDragging);
+    window.removeEventListener('pointercancel', stopDragging);
+  };
+
+  const handlePointerMove = (event) => {
+    if (!isDragging || !isChatFlowMobileViewport()) return;
+    const deltaY = startY - event.clientY;
+    const deltaVh = (deltaY / Math.max(window.innerHeight || 1, 1)) * 100;
+    chatFlowState.mobilePanelHeight = Math.max(
+      CHATFLOW_MOBILE_PANEL_MIN,
+      Math.min(CHATFLOW_MOBILE_PANEL_MAX, startHeight + deltaVh)
+    );
+    applyChatFlowMobilePanelHeight();
+  };
+
+  grabber.addEventListener('pointerdown', (event) => {
+    if (!isChatFlowMobileViewport()) return;
+    isDragging = true;
+    startY = event.clientY;
+    startHeight = Number(chatFlowState.mobilePanelHeight) || CHATFLOW_MOBILE_PANEL_DEFAULT;
+    document.body.style.userSelect = 'none';
+    grabber.classList.add('dragging');
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopDragging);
+    window.addEventListener('pointercancel', stopDragging);
+    event.preventDefault();
+  });
+
+  window.addEventListener('resize', applyChatFlowMobilePanelHeight);
+  window.addEventListener('orientationchange', applyChatFlowMobilePanelHeight);
+}
+
+function findChatFlowMessageElement({ messageId = null, sourceIndex = null } = {}) {
+  const hasMessageId = messageId !== null && messageId !== undefined && String(messageId).trim() !== '';
+  const normalizedMessageId = hasMessageId ? Number(messageId) : NaN;
+  if (Number.isFinite(normalizedMessageId)) {
+    const byId = document.querySelector(`.chatflow-message[data-msg-id="${normalizedMessageId}"]`);
+    if (byId) return byId;
+  }
+
+  const normalizedIndex = Number(sourceIndex);
+  if (Number.isFinite(normalizedIndex)) {
+    return document.querySelector(`.chatflow-message[data-msg-index="${normalizedIndex}"]`);
+  }
+
+  return null;
+}
+
+function snapshotChatFlowCanvas() {
+  return JSON.parse(JSON.stringify({
+    nodes: chatFlowState.nodes,
+    edges: chatFlowState.edges,
+    canvas: chatFlowState.canvas
+  }));
+}
+
+function pushChatFlowCanvasHistory() {
+  chatFlowState.canvasHistory.push(snapshotChatFlowCanvas());
+  if (chatFlowState.canvasHistory.length > 10) {
+    chatFlowState.canvasHistory.shift();
+  }
+}
+
+function summarizeCanvasPatch(patch) {
+  const operations = Array.isArray(patch?.operations) ? patch.operations : [];
+  if (!operations.length) {
+    return appState.language === 'zh-CN' ? '没有可应用的画布变更。' : 'No canvas changes to apply.';
+  }
+
+  const counts = operations.reduce((acc, operation) => {
+    const key = String(operation?.type || '').trim();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const labels = {
+    add_node: appState.language === 'zh-CN' ? '新增节点' : 'Add node',
+    update_node: appState.language === 'zh-CN' ? '修改节点' : 'Update node',
+    delete_node: appState.language === 'zh-CN' ? '删除节点' : 'Delete node',
+    add_edge: appState.language === 'zh-CN' ? '新增连线' : 'Add edge',
+    update_edge: appState.language === 'zh-CN' ? '修改连线' : 'Update edge',
+    delete_edge: appState.language === 'zh-CN' ? '删除连线' : 'Delete edge',
+    auto_layout: appState.language === 'zh-CN' ? '自动布局' : 'Auto layout'
+  };
+
+  return Object.entries(counts)
+    .map(([type, count]) => `${labels[type] || type} x${count}`)
+    .join(' · ');
+}
+
+function setChatFlowActivityNotice(title, summary) {
+  chatFlowState.activityNotice = {
+    title: String(title || ''),
+    summary: String(summary || '')
+  };
+  renderChatFlowPatchBanner();
+}
+
+function clearChatFlowActivityNotice() {
+  chatFlowState.activityNotice = null;
+  renderChatFlowPatchBanner();
+}
+
+function getChatFlowWorkingSummary() {
+  const parts = [];
+  if (chatFlowState.internetMode) {
+    parts.push(appState.language === 'zh-CN' ? '正在准备联网搜索' : 'Preparing web search');
+  }
+  parts.push(appState.language === 'zh-CN' ? '正在读取当前画布上下文' : 'Reading canvas context');
+  parts.push(appState.language === 'zh-CN' ? '正在生成回复和画布建议' : 'Generating reply and canvas suggestions');
+  return parts.join(' · ');
+}
+
+function renderChatFlowPatchBanner() {
+  const banner = document.getElementById('chatflowPatchBanner');
+  const titleEl = document.getElementById('chatflowPatchBannerTitle');
+  const summaryEl = document.getElementById('chatflowPatchSummary');
+  const applyBtn = document.getElementById('chatflowPatchApplyBtn');
+  const dismissBtn = document.getElementById('chatflowPatchDismissBtn');
+  const undoBtn = document.getElementById('chatflowPatchUndoBtn');
+
+  if (!banner || !titleEl || !summaryEl || !applyBtn || !dismissBtn || !undoBtn) return;
+
+  banner.classList.remove('is-working');
+
+  if (chatFlowState.pendingCanvasPatch) {
+    banner.style.display = 'block';
+    titleEl.textContent = appState.language === 'zh-CN' ? 'AI 画布建议已准备' : 'AI canvas patch ready';
+    summaryEl.textContent = `${summarizeCanvasPatch(chatFlowState.pendingCanvasPatch.patch)}${chatFlowState.pendingCanvasPatch.error ? `\n${chatFlowState.pendingCanvasPatch.error}` : ''}`;
+    applyBtn.style.display = chatFlowState.pendingCanvasPatch.valid ? 'inline-flex' : 'none';
+    dismissBtn.style.display = 'inline-flex';
+    undoBtn.style.display = 'none';
+    return;
+  }
+
+  if (chatFlowState.activityNotice) {
+    banner.style.display = 'block';
+    banner.classList.add('is-working');
+    titleEl.textContent = chatFlowState.activityNotice.title;
+    summaryEl.textContent = chatFlowState.activityNotice.summary;
+    applyBtn.style.display = 'none';
+    dismissBtn.style.display = 'none';
+    undoBtn.style.display = 'none';
+    return;
+  }
+
+  if (chatFlowState.lastPatchNotice) {
+    banner.style.display = 'block';
+    titleEl.textContent = chatFlowState.lastPatchNotice.title;
+    summaryEl.textContent = chatFlowState.lastPatchNotice.summary;
+    applyBtn.style.display = 'none';
+    dismissBtn.style.display = 'none';
+    undoBtn.style.display = chatFlowState.canvasHistory.length > 0 ? 'inline-flex' : 'none';
+    return;
+  }
+
+  banner.style.display = 'none';
+}
+
+function setChatFlowAppliedPatchNotice(summary) {
+  chatFlowState.lastPatchNotice = {
+    title: appState.language === 'zh-CN' ? 'AI 已修改画布' : 'AI patch applied',
+    summary
+  };
+  renderChatFlowPatchBanner();
+}
+
+function dismissPendingCanvasPatch() {
+  chatFlowState.pendingCanvasPatch = null;
+  chatFlowState.lastPatchNotice = null;
+  renderChatFlowPatchBanner();
+}
+
+function normalizeIncomingCanvasPatch(rawPatch) {
+  const rawOperations = Array.isArray(rawPatch?.operations)
+    ? rawPatch.operations
+    : (Array.isArray(rawPatch?.ops) ? rawPatch.ops : []);
+
+  const operations = rawOperations
+    .map((operation) => {
+      const type = String(operation?.type || '').trim();
+      if (!CHATFLOW_ALLOWED_PATCH_OPS.has(type)) return null;
+      return { ...operation, type };
+    })
+    .filter(Boolean);
+
+  return operations.length > 0 ? { operations } : null;
+}
+
+function validateCanvasPatch(rawPatch) {
+  const patch = normalizeIncomingCanvasPatch(rawPatch);
+  if (!patch) {
+    return {
+      valid: false,
+      patch: null,
+      error: appState.language === 'zh-CN' ? 'AI 返回的画布变更不可解析。' : 'The AI canvas patch could not be parsed.'
+    };
+  }
+
+  const nodeMap = new Map(chatFlowState.nodes.map(node => [String(node.id), node]));
+  for (const operation of patch.operations) {
+    if ((operation.type === 'update_node' || operation.type === 'delete_node') && !nodeMap.has(String(operation.id || operation.nodeId))) {
+      return {
+        valid: false,
+        patch,
+        error: appState.language === 'zh-CN' ? `目标节点不存在: ${operation.id || operation.nodeId}` : `Unknown node: ${operation.id || operation.nodeId}`
+      };
+    }
+
+    if ((operation.type === 'add_edge' || operation.type === 'update_edge') && operation.from && !nodeMap.has(String(operation.from))) {
+      return {
+        valid: false,
+        patch,
+        error: appState.language === 'zh-CN' ? `连线起点不存在: ${operation.from}` : `Unknown edge source: ${operation.from}`
+      };
+    }
+
+    if ((operation.type === 'add_edge' || operation.type === 'update_edge') && operation.to && !nodeMap.has(String(operation.to))) {
+      return {
+        valid: false,
+        patch,
+        error: appState.language === 'zh-CN' ? `连线终点不存在: ${operation.to}` : `Unknown edge target: ${operation.to}`
+      };
+    }
+  }
+
+  return {
+    valid: true,
+    patch,
+    error: null
+  };
+}
+
+function reconcileChatFlowNodeMessageRefs() {
+  let changed = false;
+  chatFlowState.nodes = chatFlowState.nodes.map(node => {
+    if (getChatFlowNodeSourceMessageId(node)) return node;
+    const sourceIndex = getChatFlowNodeSourceIndex(node);
+    if (sourceIndex === null) return node;
+    const mappedMessageId = getChatFlowMessageId(chatFlowState.messages[sourceIndex]);
+    if (!mappedMessageId) return node;
+    changed = true;
+    return {
+      ...node,
+      sourceMessageId: mappedMessageId
+    };
+  });
+
+  if (changed) {
+    saveFlowState();
+  }
+}
+
+async function reloadChatFlowMessages() {
+  if (!chatFlowState.sessionId) return;
+
+  try {
+    const response = await fetch(`${API_BASE}/sessions/${chatFlowState.sessionId}/messages`, {
+      headers: { 'Authorization': `Bearer ${appState.token}` }
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    chatFlowState.messages = await response.json();
+    renderChatFlowMessages();
+    reconcileChatFlowNodeMessageRefs();
+  } catch (error) {
+    console.error(' 刷新 ChatFlow 消息失败:', error);
+  }
+}
 
 // 加载 Flow 列表
 async function loadFlowsList() {
@@ -7331,8 +9073,17 @@ async function loadFlowsList() {
     chatFlowState.flows = flows;
     renderFlowsList(flows);
   } catch (error) {
-    console.error(' 加载思维流列表失败:', error);
+    console.error(' 加载 ChatFlow 列表失败:', error);
   }
+}
+
+function getFlowLastMessagePreview(flow) {
+  const fallback = appState.language === 'zh-CN' ? '暂无对话总结' : 'No conversation summary yet';
+  const text = stripTrailingTitleMarker(flow?.last_message || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return fallback;
+  return text.length > 50 ? `${text.slice(0, 50)}...` : text;
 }
 
 // 渲染 Flow 列表
@@ -7341,7 +9092,7 @@ function renderFlowsList(flows) {
   if (!container) return;
 
   if (flows.length === 0) {
-    const emptyHint = appState.language === 'zh-CN' ? '暂无思维流' : 'No Flows';
+    const emptyHint = appState.language === 'zh-CN' ? '暂无 ChatFlow' : 'No ChatFlow';
     container.innerHTML = `<div class="flow-empty-hint">${emptyHint}</div>`;
     return;
   }
@@ -7349,10 +9100,11 @@ function renderFlowsList(flows) {
   container.innerHTML = flows.map(flow => `
         <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}" 
              onclick="openFlow('${flow.id}')" data-flow-id="${flow.id}">
-          <svg class="flow-item-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Z"/>
-          </svg>
-          <span class="flow-item-title">${escapeHtml(flow.title)}</span>
+          ${getSvgIcon('rai_logo_colored', 'flow-item-icon rai-flow-logo', 18)}
+          <div class="flow-item-main">
+            <div class="flow-item-title">${escapeHtml(flow.title)}</div>
+            <div class="flow-item-preview">${escapeHtml(getFlowLastMessagePreview(flow))}</div>
+          </div>
           <button class="flow-item-delete" onclick="event.stopPropagation(); deleteFlow('${flow.id}')" title="${appState.language === 'zh-CN' ? '删除' : 'Delete'}">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -7365,7 +9117,7 @@ function renderFlowsList(flows) {
 // 创建新 Flow
 async function createNewFlow() {
   try {
-    const defaultTitle = appState.language === 'zh-CN' ? '新思维流' : 'New ChatFlow';
+    const defaultTitle = appState.language === 'zh-CN' ? '新 ChatFlow' : 'New ChatFlow';
     const response = await fetch('/api/flows', {
       method: 'POST',
       headers: {
@@ -7378,13 +9130,13 @@ async function createNewFlow() {
     if (!response.ok) throw new Error('创建失败');
 
     const flow = await response.json();
-    console.log(' 创建思维流成功:', flow.id);
+    console.log(' 创建 ChatFlow 成功:', flow.id);
 
     await loadFlowsList();
-    openFlow(flow.id);
+    await openFlow(flow.id);
   } catch (error) {
-    console.error(' 创建思维流失败:', error);
-    alert(appState.language === 'zh-CN' ? '创建思维流失败，请重试' : 'Failed to create flow, please retry');
+    console.error(' 创建 ChatFlow 失败:', error);
+    alert(appState.language === 'zh-CN' ? '创建 ChatFlow 失败，请重试' : 'Failed to create ChatFlow, please retry');
   }
 }
 
@@ -7398,24 +9150,39 @@ async function openFlow(flowId) {
     if (!response.ok) throw new Error('加载失败');
 
     const flow = await response.json();
+    const normalizedCanvasState = normalizeChatFlowCanvasState(flow.canvas_state);
 
     chatFlowState.currentFlowId = flowId;
-    chatFlowState.messages = flow.chat_history || [];
-    chatFlowState.nodes = flow.canvas_state?.nodes || [];
-    chatFlowState.edges = flow.canvas_state?.edges || [];
+    chatFlowState.sessionId = flow.session_id || null;
+    chatFlowState.messages = Array.isArray(flow.messages)
+      ? flow.messages
+      : (Array.isArray(flow.chat_history) ? flow.chat_history : []);
+    chatFlowState.nodes = normalizedCanvasState.nodes;
+    chatFlowState.edges = normalizedCanvasState.edges;
     chatFlowState.canvas = {
       ...chatFlowState.canvas,
-      ...flow.canvas_state?.viewport
+      ...normalizedCanvasState.viewport
     };
+    chatFlowState.currentRequestId = null;
+    chatFlowState.pendingCanvasPatch = null;
+    chatFlowState.lastPatchNotice = null;
+    chatFlowState.activityNotice = null;
+    chatFlowState.canvasHistory = [];
+    const layoutWasNormalized = normalizeChatFlowCanvasLayoutIfNeeded();
 
     // 更新 UI
     document.getElementById('chatflowTitle').textContent = flow.title;
     document.getElementById('chatFlowWorkspace').style.display = 'flex';
+    updateChatFlowHeaderMeta();
+    updateChatFlowPatchModeButton();
+    applyChatFlowMobilePanelHeight();
+    renderChatFlowPatchBanner();
 
     // 初始化画布
     if (!chatFlowState.isInitialized) {
       initChatFlowCanvas();
       initChatFlowDivider();
+      initChatFlowMobileSheet();
       chatFlowState.isInitialized = true;
     }
 
@@ -7424,28 +9191,39 @@ async function openFlow(flowId) {
     renderCanvasNodes();
     renderEdges(); // 修复: 确保重新打开时渲染连线
     updateCanvasTransform();
+    if (layoutWasNormalized) {
+      fitChatFlowCanvasToNodes();
+      saveFlowState();
+    }
 
     // 更新列表选中状态
     renderFlowsList(chatFlowState.flows);
+    reconcileChatFlowNodeMessageRefs();
+    updateChatFlowControlStates();
 
 
-    console.log(' 打开思维流:', flowId);
+    console.log(' 打开 ChatFlow:', flowId);
   } catch (error) {
-    console.error(' 打开思维流失败:', error);
-    alert(appState.language === 'zh-CN' ? '打开思维流失败，请重试' : 'Failed to open flow, please retry');
+    console.error(' 打开 ChatFlow 失败:', error);
+    alert(appState.language === 'zh-CN' ? '打开 ChatFlow 失败，请重试' : 'Failed to open ChatFlow, please retry');
   }
 }
 
-// 关闭 Chat Flow
+// 关闭 ChatFlow
 function closeChatFlow() {
   document.getElementById('chatFlowWorkspace').style.display = 'none';
   chatFlowState.currentFlowId = null;
+  chatFlowState.sessionId = null;
+  chatFlowState.currentRequestId = null;
+  chatFlowState.pendingCanvasPatch = null;
+  chatFlowState.lastPatchNotice = null;
+  chatFlowState.canvasHistory = [];
   renderFlowsList(chatFlowState.flows);
 }
 
 // 删除 Flow
 async function deleteFlow(flowId) {
-  const confirmMsg = appState.language === 'zh-CN' ? '确定要删除这个思维流吗？' : 'Are you sure you want to delete this flow?';
+  const confirmMsg = appState.language === 'zh-CN' ? '确定要删除这个 ChatFlow 吗？' : 'Are you sure you want to delete this ChatFlow?';
   if (!confirm(confirmMsg)) return;
 
   try {
@@ -7461,10 +9239,10 @@ async function deleteFlow(flowId) {
     }
 
     await loadFlowsList();
-    console.log(' 删除思维流成功:', flowId);
+    console.log(' 删除 ChatFlow 成功:', flowId);
   } catch (error) {
-    console.error(' 删除思维流失败:', error);
-    alert('删除思维流失败，请重试');
+    console.error(' 删除 ChatFlow 失败:', error);
+    alert(appState.language === 'zh-CN' ? '删除 ChatFlow 失败，请重试' : 'Failed to delete ChatFlow, please retry');
   }
 }
 
@@ -7480,7 +9258,6 @@ async function saveFlowState() {
         'Authorization': `Bearer ${appState.token}`
       },
       body: JSON.stringify({
-        chat_history: chatFlowState.messages,
         canvas_state: {
           nodes: chatFlowState.nodes,
           edges: chatFlowState.edges,
@@ -7493,11 +9270,76 @@ async function saveFlowState() {
       })
     });
   } catch (error) {
-    console.error(' 保存思维流状态失败:', error);
+    console.error(' 保存 ChatFlow 状态失败:', error);
   }
 }
 
-// 渲染 Chat Flow 消息
+function createChatFlowDragHandle() {
+  const handle = document.createElement('div');
+  handle.className = 'chatflow-message-drag-handle';
+  handle.title = appState.language === 'zh-CN' ? '拖拽到画布' : 'Drag to canvas';
+  handle.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="16" height="16" fill="currentColor">
+      <path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z"/>
+    </svg>
+  `;
+  return handle;
+}
+
+function createChatFlowMessageElement(message, index) {
+  const role = message?.role === 'user' ? 'user' : 'assistant';
+  const div = document.createElement('div');
+  div.className = `chatflow-message message ${role}`;
+  div.draggable = true;
+  div.dataset.msgIndex = String(index);
+  div.dataset.msgId = getChatFlowMessageId(message) || '';
+
+  div.appendChild(createChatFlowDragHandle());
+
+  const avatar = document.createElement('div');
+  avatar.className = 'message-avatar';
+  if (role === 'user') {
+    const name = appState.user?.username || appState.user?.email || 'U';
+    avatar.textContent = name ? name[0].toUpperCase() : 'U';
+  } else {
+    avatar.innerHTML = getSvgIcon('rai_logo_colored', 'material-symbols-outlined ai-avatar', 24);
+  }
+  div.appendChild(avatar);
+
+  const content = document.createElement('div');
+  content.className = 'message-content';
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'message-text';
+  const cleanContent = stripTrailingTitleMarker(message?.content || '');
+  let renderedContent = renderMarkdownWithMath(cleanContent);
+
+  let sources = message?.sources;
+  if (typeof sources === 'string' && sources.trim()) {
+    try {
+      sources = JSON.parse(sources);
+    } catch (error) {
+      sources = null;
+    }
+  }
+  if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
+    renderedContent = renderCitations(renderedContent, sources);
+  }
+
+  textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
+  content.appendChild(textDiv);
+
+  if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
+    const sourcesDiv = document.createElement('div');
+    sourcesDiv.innerHTML = sanitizeRenderedHtml(renderSourcesList(sources, appState.language));
+    content.appendChild(sourcesDiv);
+  }
+
+  div.appendChild(content);
+  return div;
+}
+
+// 渲染 ChatFlow 消息
 function renderChatFlowMessages() {
   const container = document.getElementById('chatflowMessages');
   if (!container) return;
@@ -7515,24 +9357,24 @@ function renderChatFlowMessages() {
     return;
   }
 
-  container.innerHTML = chatFlowState.messages.map((msg, i) => `
-        <div class="chatflow-message ${msg.role}" draggable="true" data-msg-index="${i}">
-          <div class="chatflow-message-drag-handle" title="${appState.language === 'zh-CN' ? '拖拽到画布' : 'Drag to canvas'}">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="16" height="16" fill="currentColor">
-              <path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z"/>
-            </svg>
-          </div>
-          <div class="chatflow-message-content">${renderMarkdownWithMath(msg.content)}</div>
-        </div>
-      `).join('');
+  container.innerHTML = '';
+  chatFlowState.messages.forEach((msg, i) => {
+    container.appendChild(createChatFlowMessageElement(msg, i));
+  });
+
+  setTimeout(() => renderMermaidCharts(), 100);
+  setTimeout(() => processCodeBlocks(container), 50);
 
   // 添加 hover 事件实现双向高亮
   container.querySelectorAll('.chatflow-message').forEach(msgEl => {
     msgEl.addEventListener('mouseenter', () => {
       const msgIndex = parseInt(msgEl.dataset.msgIndex);
+      const rawMsgId = msgEl.dataset.msgId;
+      const msgId = rawMsgId ? Number(rawMsgId) : NaN;
       // 找到画布上对应的节点并高亮
       chatFlowState.nodes.forEach(node => {
-        if (node.sourceIndex === msgIndex) {
+        if ((Number.isFinite(msgId) && getChatFlowNodeSourceMessageId(node) === msgId) ||
+          getChatFlowNodeSourceIndex(node) === msgIndex) {
           highlightNode(node.id);
         }
       });
@@ -7564,99 +9406,46 @@ function renderCanvasNodes() {
   // TODO: 渲染节点 (Phase 2)
 }
 
-// 初始化 Chat Flow 画布
+// 初始化 ChatFlow 画布
 function initChatFlowCanvas() {
   const svg = document.getElementById('infiniteCanvas');
-  if (!svg) return;
+  if (!svg || window._chatFlowCanvasCoreInitialized) return;
 
-  // ==================== 父窗口消息监听 (响应 iframe 请求) ====================
-  // 防止重复添加监听器
-  if (!window._chatFlowMessageListenerAdded) {
-    window.addEventListener('message', (e) => {
-      // 响应画布数据请求
-      if (e.data.action === 'request-canvas') {
-        const iframe = document.getElementById('chatflowIframe');
-        // 验证消息来源是我们的 iframe
-        if (iframe && iframe.contentWindow === e.source) {
-          console.log(' 收到 iframe 的画布请求');
-          let canvasData = '';
-          // 尝试获取画布数据
-          if (typeof serializeCanvasToPrompt === 'function') {
-            canvasData = serializeCanvasToPrompt();
-          } else {
-            console.warn(' serializeCanvasToPrompt 未定义');
-          }
+  window._chatFlowCanvasCoreInitialized = true;
+  let activePanPointerId = null;
 
-          // 发送回 iframe
-          iframe.contentWindow.postMessage({
-            action: 'canvas-data',
-            canvas: canvasData
-          }, '*');
-          console.log(' 已发送画布数据给 iframe');
-        }
-      } else if (e.data.action === 'update-flow-title') {
-        const iframe = document.getElementById('chatflowIframe');
-        // 验证消息来源
-        if (iframe && iframe.contentWindow === e.source && e.data.title && chatFlowState.currentFlowId) {
-          console.log(' 收到 iframe 的标题同步:', e.data.title);
+  const stopPanning = (event = null) => {
+    if (!chatFlowState.canvas.isPanning) return;
+    if (event && activePanPointerId !== null && event.pointerId !== activePanPointerId) return;
+    chatFlowState.canvas.isPanning = false;
+    activePanPointerId = null;
+    svg.style.cursor = chatFlowState.currentTool === 'connect' ? 'crosshair' : 'grab';
+  };
 
-          // 1. 更新 UI 标题
-          const titleEl = document.getElementById('chatflowTitle');
-          if (titleEl) titleEl.textContent = e.data.title;
+  svg.addEventListener('pointerdown', (event) => {
+    const isCanvasSurface = event.target === svg || event.target.classList.contains('canvas-bg');
+    if (!isCanvasSurface) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
 
-          // 2. 更新本地状态 flow 列表
-          const flow = chatFlowState.flows.find(f => f.id === chatFlowState.currentFlowId);
-          if (flow) {
-            flow.title = e.data.title;
-            renderFlowsList(chatFlowState.flows);
-          }
-
-          // 3. 调用 API 保存到数据库
-          fetch(`/api/flows/${chatFlowState.currentFlowId}`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${appState.token}`
-            },
-            body: JSON.stringify({ title: e.data.title })
-          }).then(res => {
-            if (res.ok) console.log(' Flow 标题已保存到数据库');
-            else console.error(' 保存 Flow 标题失败');
-          }).catch(err => console.error(' 保存 Flow 标题请求错误:', err));
-        }
-      }
-
-    });
-    window._chatFlowMessageListenerAdded = true;
-  }
-
-
-  // 鼠标平移
-  svg.addEventListener('mousedown', (e) => {
-    if (e.target === svg || e.target.classList.contains('canvas-bg')) {
-      chatFlowState.canvas.isPanning = true;
-      chatFlowState.canvas.startX = e.clientX - chatFlowState.canvas.translateX;
-      chatFlowState.canvas.startY = e.clientY - chatFlowState.canvas.translateY;
-      svg.style.cursor = 'grabbing';
-    }
+    chatFlowState.canvas.isPanning = true;
+    chatFlowState.canvas.startX = event.clientX - chatFlowState.canvas.translateX;
+    chatFlowState.canvas.startY = event.clientY - chatFlowState.canvas.translateY;
+    activePanPointerId = event.pointerId;
+    svg.style.cursor = 'grabbing';
+    svg.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
   });
 
-  svg.addEventListener('mousemove', (e) => {
-    if (!chatFlowState.canvas.isPanning) return;
-    chatFlowState.canvas.translateX = e.clientX - chatFlowState.canvas.startX;
-    chatFlowState.canvas.translateY = e.clientY - chatFlowState.canvas.startY;
+  svg.addEventListener('pointermove', (event) => {
+    if (!chatFlowState.canvas.isPanning || event.pointerId !== activePanPointerId) return;
+    chatFlowState.canvas.translateX = event.clientX - chatFlowState.canvas.startX;
+    chatFlowState.canvas.translateY = event.clientY - chatFlowState.canvas.startY;
     updateCanvasTransform();
   });
 
-  svg.addEventListener('mouseup', () => {
-    chatFlowState.canvas.isPanning = false;
-    svg.style.cursor = 'grab';
-  });
-
-  svg.addEventListener('mouseleave', () => {
-    chatFlowState.canvas.isPanning = false;
-    svg.style.cursor = 'grab';
-  });
+  svg.addEventListener('pointerup', stopPanning);
+  svg.addEventListener('pointercancel', stopPanning);
+  svg.addEventListener('lostpointercapture', stopPanning);
 
   // 滚轮缩放
   svg.addEventListener('wheel', (e) => {
@@ -7950,7 +9739,7 @@ function canvasResetView() {
   updateZoomDisplay();
 }
 
-// ==================== Chat Flow UI 控制函数 ====================
+// ==================== ChatFlow UI 控制函数 ====================
 
 // 更多菜单切换
 function toggleChatFlowMoreMenu() {
@@ -7970,12 +9759,48 @@ function toggleChatFlowModelMenu() {
 
 // 选择模型
 function selectChatFlowModel(modelId, modelName) {
+  if (isMembershipLockedModel(modelId)) {
+    console.warn(' 该模型仅 MAX 会员可用');
+    return;
+  }
   chatFlowState.selectedModel = modelId;
   const display = document.getElementById('chatflowSelectedModel');
   if (display) {
-    display.textContent = modelName;
+    display.textContent = modelName || getChatFlowModelLabel(modelId);
   }
   toggleChatFlowModelMenu();
+}
+
+function getChatFlowModelLabel(modelId = chatFlowState.selectedModel) {
+  const normalizedModelId = normalizeSelectedModelId(modelId || 'auto') || 'auto';
+  const model = MODELS[normalizedModelId];
+  if (model?.displayName?.[appState.language]) return model.displayName[appState.language];
+  return model?.name || normalizedModelId;
+}
+
+function updateChatFlowControlStates() {
+  const internetToggle = document.getElementById('chatflowInternetToggle');
+  if (internetToggle) {
+    internetToggle.classList.toggle('active', !!chatFlowState.internetMode);
+  }
+
+  const thinkingToggle = document.getElementById('chatflowThinkingToggle');
+  if (thinkingToggle) {
+    thinkingToggle.classList.toggle('active', !!chatFlowState.thinkingMode);
+  }
+
+  const modelLabel = document.getElementById('chatflowSelectedModel');
+  if (modelLabel) {
+    const label = getChatFlowModelLabel(chatFlowState.selectedModel);
+    modelLabel.textContent = isMembershipLockedModel(chatFlowState.selectedModel)
+      ? `${label} (MAX)`
+      : label;
+  }
+}
+
+function toggleChatFlowPatchMode() {
+  chatFlowState.patchApplyMode = chatFlowState.patchApplyMode === 'review' ? 'direct' : 'review';
+  persistChatFlowPatchMode();
 }
 
 // 联网搜索切换
@@ -8012,7 +9837,7 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Chat Flow 输入处理
+// ChatFlow 输入处理
 function handleChatFlowInputKeydown(event) {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
@@ -8027,12 +9852,356 @@ function autoResizeChatFlowInput() {
   input.style.height = Math.min(input.scrollHeight, 150) + 'px';
 }
 
-// ==================== Chat Flow LLM 调用 ====================
+function buildChatFlowCanvasContext() {
+  return {
+    nodes: chatFlowState.nodes,
+    edges: chatFlowState.edges,
+    viewport: {
+      x: chatFlowState.canvas.translateX,
+      y: chatFlowState.canvas.translateY,
+      zoom: chatFlowState.canvas.scale
+    },
+    selectedNodeIds: Array.from(document.querySelectorAll('.canvas-node.selected')).map(node => node.dataset.nodeId).filter(Boolean),
+    flowTitle: document.getElementById('chatflowTitle')?.textContent || ''
+  };
+}
 
-// 发送 Chat Flow 消息
+function buildChatFlowSystemPrompt() {
+  const mobileCompactHint = isChatFlowMobileViewport()
+    ? (appState.language === 'zh-CN'
+      ? '\n5. 当前是移动端画布浮窗，请尽量简短回答，除非用户明确要长文。'
+      : '\n5. This is the mobile canvas sheet. Keep answers concise unless the user asks for depth.')
+    : '';
+
+  if (appState.language === 'zh-CN') {
+    return `你是 RAI 的 ChatFlow 画布助手，职责是帮助用户梳理问题、改写节点、补充结构、整理连线。
+
+注意事项：
+1. 正常回答要清晰、可执行、便于用户继续操作画布。
+2. 如果需要修改画布，请在正常回答之外，额外输出一个隐藏区块，格式必须严格为：
+[CANVAS_OPS]{"operations":[...] }[/CANVAS_OPS]
+3. 画布操作只允许使用：add_node、update_node、delete_node、add_edge、update_edge、delete_edge、auto_layout。
+4. 每个 add_node 必须提供非空 content。可以附带 fullContent，但不要只写 title、label 或 name。
+5. 回复结尾仍然要输出标题，格式必须严格为：[TITLE]标题[/TITLE]。标题不超过15个字。${mobileCompactHint}`;
+  }
+
+  return `You are RAI's ChatFlow canvas assistant. Help the user structure ideas, update nodes, and improve graph relationships.
+
+Rules:
+1. Keep the visible answer clear and actionable.
+2. If the canvas should change, append a hidden block exactly in this format:
+[CANVAS_OPS]{"operations":[...]}[/CANVAS_OPS]
+3. Allowed operations: add_node, update_node, delete_node, add_edge, update_edge, delete_edge, auto_layout.
+4. Every add_node operation must include non-empty content. fullContent is optional, but do not rely only on title, label, or name.
+5. End the response with a title marker exactly in this format: [TITLE]Short title[/TITLE].${mobileCompactHint}`;
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = typeof value === 'string' ? value : String(value);
+    if (text.trim()) return text.trim();
+  }
+  return '';
+}
+
+function getCanvasNodeTextPayload(payload = {}) {
+  const content = firstNonEmptyString(
+    payload.content,
+    payload.text,
+    payload.label,
+    payload.title,
+    payload.name,
+    payload.summary,
+    payload.description,
+    payload.body
+  );
+  const detail = firstNonEmptyString(
+    payload.fullContent,
+    payload.markdown,
+    payload.details,
+    payload.detail,
+    payload.notes,
+    payload.description,
+    payload.body
+  );
+  const fullContent = detail && detail !== content
+    ? firstNonEmptyString(`${content}\n\n${detail}`, detail, content)
+    : firstNonEmptyString(detail, content);
+  return { content, fullContent };
+}
+
+function getCanvasNodeDisplayText(node = {}) {
+  return firstNonEmptyString(
+    node.content,
+    node.text,
+    node.label,
+    node.title,
+    node.name,
+    node.summary,
+    node.description,
+    node.fullContent
+  );
+}
+
+function normalizeChatFlowNodeType(type) {
+  const normalizedType = String(type || '').trim().toLowerCase();
+  return ['user', 'assistant', 'text', 'sticky'].includes(normalizedType)
+    ? normalizedType
+    : 'text';
+}
+
+function getAutoCanvasNodePosition(index) {
+  const cols = 3;
+  return {
+    x: 120 + (index % cols) * 320,
+    y: 120 + Math.floor(index / cols) * 190
+  };
+}
+
+function layoutChatFlowNodesGrid() {
+  if (!chatFlowState.nodes.length) return;
+  const cols = Math.ceil(Math.sqrt(chatFlowState.nodes.length));
+  const gapX = 320;
+  const gapY = 190;
+  chatFlowState.nodes.forEach((node, index) => {
+    node.x = 120 + (index % cols) * gapX;
+    node.y = 120 + Math.floor(index / cols) * gapY;
+    node.width = Math.max(180, Number(node.width) || 260);
+    node.height = Math.max(96, Number(node.height) || 126);
+    node.type = normalizeChatFlowNodeType(node.type);
+  });
+}
+
+function normalizeChatFlowCanvasLayoutIfNeeded() {
+  if (chatFlowState.nodes.length < 2) return false;
+  const buckets = new Map();
+  let invalidPositionCount = 0;
+
+  chatFlowState.nodes.forEach((node) => {
+    const x = Number(node.x);
+    const y = Number(node.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      invalidPositionCount += 1;
+      return;
+    }
+    const key = `${Math.round(x / 24)}:${Math.round(y / 24)}`;
+    buckets.set(key, (buckets.get(key) || 0) + 1);
+  });
+
+  const maxOverlap = buckets.size ? Math.max(...buckets.values()) : 0;
+  if (invalidPositionCount === 0 && maxOverlap < 2) return false;
+
+  layoutChatFlowNodesGrid();
+  return true;
+}
+
+function fitChatFlowCanvasToNodes() {
+  if (!chatFlowState.nodes.length) return;
+  const container = document.getElementById('chatflowCanvasContainer');
+  if (!container) return;
+
+  const minX = Math.min(...chatFlowState.nodes.map(node => Number(node.x) || 0));
+  const minY = Math.min(...chatFlowState.nodes.map(node => Number(node.y) || 0));
+  const maxX = Math.max(...chatFlowState.nodes.map(node => (Number(node.x) || 0) + (Number(node.width) || 220)));
+  const maxY = Math.max(...chatFlowState.nodes.map(node => (Number(node.y) || 0) + (Number(node.height) || 120)));
+  const contentWidth = Math.max(1, maxX - minX);
+  const contentHeight = Math.max(1, maxY - minY);
+  const padding = 96;
+  const availableWidth = Math.max(1, container.clientWidth - padding * 2);
+  const availableHeight = Math.max(1, container.clientHeight - padding * 2);
+  const nextScale = Math.min(1, availableWidth / contentWidth, availableHeight / contentHeight);
+
+  chatFlowState.canvas.scale = Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1;
+  chatFlowState.canvas.translateX = (container.clientWidth - contentWidth * chatFlowState.canvas.scale) / 2 - minX * chatFlowState.canvas.scale;
+  chatFlowState.canvas.translateY = (container.clientHeight - contentHeight * chatFlowState.canvas.scale) / 2 - minY * chatFlowState.canvas.scale;
+  updateCanvasTransform();
+  updateZoomDisplay();
+}
+
+function applyValidatedCanvasPatch(patch) {
+  let addedNodeCount = 0;
+  let shouldFitCanvas = false;
+
+  for (const operation of patch.operations) {
+    switch (operation.type) {
+      case 'add_node': {
+        const baseNode = operation.node && typeof operation.node === 'object' ? operation.node : operation;
+        const textPayload = getCanvasNodeTextPayload(baseNode);
+        const fallbackContent = appState.language === 'zh-CN' ? '未命名节点' : 'Untitled node';
+        const autoPosition = getAutoCanvasNodePosition(chatFlowState.nodes.length + addedNodeCount);
+        const x = Number(baseNode.x);
+        const y = Number(baseNode.y);
+        const hasX = Number.isFinite(x);
+        const hasY = Number.isFinite(y);
+        const nextNode = {
+          id: String(baseNode.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+          type: normalizeChatFlowNodeType(baseNode.type),
+          content: String(textPayload.content || fallbackContent).slice(0, 240),
+          fullContent: String(textPayload.fullContent || textPayload.content || fallbackContent),
+          x: hasX ? x : autoPosition.x,
+          y: hasY ? y : autoPosition.y,
+          width: Math.max(180, Number(baseNode.width) || 260),
+          height: Math.max(96, Number(baseNode.height) || 126),
+          color: baseNode.color,
+          attachedTo: baseNode.attachedTo,
+          sourceMessageId: baseNode.sourceMessageId
+        };
+        chatFlowState.nodes.push(nextNode);
+        addedNodeCount += 1;
+        shouldFitCanvas = shouldFitCanvas || !hasX || !hasY;
+        break;
+      }
+      case 'update_node': {
+        const nodeId = String(operation.id || operation.nodeId || '');
+        const node = chatFlowState.nodes.find(item => String(item.id) === nodeId);
+        if (!node) break;
+        const payload = operation.node && typeof operation.node === 'object' ? operation.node : operation;
+        if (payload.type !== undefined) node.type = normalizeChatFlowNodeType(payload.type);
+        const hasTextPayload = ['content', 'text', 'label', 'title', 'name', 'summary', 'description', 'body', 'fullContent'].some(key => payload[key] !== undefined);
+        if (hasTextPayload) {
+          const textPayload = getCanvasNodeTextPayload(payload);
+          if (textPayload.content) node.content = String(textPayload.content).slice(0, 240);
+          if (textPayload.fullContent) node.fullContent = String(textPayload.fullContent);
+        }
+        if (payload.x !== undefined && Number.isFinite(Number(payload.x))) node.x = Number(payload.x);
+        if (payload.y !== undefined && Number.isFinite(Number(payload.y))) node.y = Number(payload.y);
+        if (payload.width !== undefined && Number.isFinite(Number(payload.width))) node.width = Math.max(80, Number(payload.width));
+        if (payload.height !== undefined && Number.isFinite(Number(payload.height))) node.height = Math.max(50, Number(payload.height));
+        if (payload.color !== undefined) node.color = payload.color;
+        if (payload.attachedTo !== undefined) node.attachedTo = payload.attachedTo;
+        if (payload.sourceMessageId !== undefined) node.sourceMessageId = payload.sourceMessageId;
+        break;
+      }
+      case 'delete_node': {
+        const nodeId = String(operation.id || operation.nodeId || '');
+        chatFlowState.nodes = chatFlowState.nodes.filter(node => String(node.id) !== nodeId);
+        chatFlowState.edges = chatFlowState.edges.filter(edge => String(edge.from) !== nodeId && String(edge.to) !== nodeId);
+        break;
+      }
+      case 'add_edge': {
+        chatFlowState.edges.push({
+          id: String(operation.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+          from: String(operation.from),
+          to: String(operation.to),
+          label: String(operation.label || '')
+        });
+        break;
+      }
+      case 'update_edge': {
+        const edgeId = String(operation.id || operation.edgeId || '');
+        const edge = chatFlowState.edges.find(item => String(item.id) === edgeId);
+        if (!edge) break;
+        if (operation.from !== undefined) edge.from = String(operation.from);
+        if (operation.to !== undefined) edge.to = String(operation.to);
+        if (operation.label !== undefined) edge.label = String(operation.label || '');
+        break;
+      }
+      case 'delete_edge': {
+        const edgeId = String(operation.id || operation.edgeId || '');
+        chatFlowState.edges = chatFlowState.edges.filter(edge => String(edge.id) !== edgeId);
+        break;
+      }
+      case 'auto_layout': {
+        autoLayoutNodes();
+        shouldFitCanvas = true;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (normalizeChatFlowCanvasLayoutIfNeeded()) {
+    shouldFitCanvas = true;
+  }
+
+  renderCanvasNodes();
+  renderEdges();
+  if (addedNodeCount > 0 || shouldFitCanvas) {
+    fitChatFlowCanvasToNodes();
+  }
+  saveFlowState();
+}
+
+function applyPendingCanvasPatch() {
+  if (!chatFlowState.pendingCanvasPatch?.valid || !chatFlowState.pendingCanvasPatch.patch) return;
+  pushChatFlowCanvasHistory();
+  applyValidatedCanvasPatch(chatFlowState.pendingCanvasPatch.patch);
+  setChatFlowAppliedPatchNotice(summarizeCanvasPatch(chatFlowState.pendingCanvasPatch.patch));
+  chatFlowState.pendingCanvasPatch = null;
+  renderChatFlowPatchBanner();
+}
+
+function undoLastCanvasPatch() {
+  const previousSnapshot = chatFlowState.canvasHistory.pop();
+  if (!previousSnapshot) return;
+  chatFlowState.nodes = previousSnapshot.nodes || [];
+  chatFlowState.edges = previousSnapshot.edges || [];
+  chatFlowState.canvas = {
+    ...chatFlowState.canvas,
+    ...(previousSnapshot.canvas || {})
+  };
+  renderCanvasNodes();
+  renderEdges();
+  updateCanvasTransform();
+  updateZoomDisplay();
+  saveFlowState();
+  chatFlowState.lastPatchNotice = null;
+  renderChatFlowPatchBanner();
+}
+
+function handleIncomingCanvasPatchEvent(eventPayload) {
+  const validation = validateCanvasPatch(eventPayload?.patch);
+  const patchSummary = validation.patch ? summarizeCanvasPatch(validation.patch) : '';
+  if (!validation.valid) {
+    chatFlowState.pendingCanvasPatch = {
+      patch: validation.patch,
+      valid: false,
+      error: eventPayload?.error || validation.error
+    };
+    renderChatFlowPatchBanner();
+    return;
+  }
+
+  if (chatFlowState.patchApplyMode === 'direct') {
+    pushChatFlowCanvasHistory();
+    applyValidatedCanvasPatch(validation.patch);
+    setChatFlowAppliedPatchNotice(patchSummary);
+    return;
+  }
+
+  chatFlowState.pendingCanvasPatch = {
+    patch: validation.patch,
+    valid: true,
+    error: null
+  };
+  chatFlowState.lastPatchNotice = null;
+  renderChatFlowPatchBanner();
+}
+
+function updateChatFlowTitleLocal(title) {
+  const trimmedTitle = String(title || '').trim();
+  if (!trimmedTitle) return;
+
+  const titleEl = document.getElementById('chatflowTitle');
+  if (titleEl) {
+    titleEl.textContent = trimmedTitle;
+  }
+
+  const flow = chatFlowState.flows.find(item => item.id === chatFlowState.currentFlowId);
+  if (flow) {
+    flow.title = trimmedTitle;
+    renderFlowsList(chatFlowState.flows);
+  }
+}
+
+// ==================== ChatFlow LLM 调用 ====================
+
+// 发送 ChatFlow 消息
 async function sendChatFlowMessage() {
   const input = document.getElementById('chatflowMessageInput');
-  if (!input) return;
+  if (!input || !chatFlowState.currentFlowId || chatFlowState.isStreaming) return;
 
   const content = input.value.trim();
   if (!content) return;
@@ -8048,45 +10217,23 @@ async function sendChatFlowMessage() {
   document.getElementById('chatflowSendBtn').style.display = 'none';
   document.getElementById('chatflowStopBtn').style.display = 'flex';
   chatFlowState.isStreaming = true;
+  chatFlowState.pendingCanvasPatch = null;
+  setChatFlowActivityNotice(
+    appState.language === 'zh-CN' ? 'RAI 正在处理' : 'RAI is working',
+    getChatFlowWorkingSummary()
+  );
+
+  let aiMessage = null;
+  let streamErrorMessage = '';
+  let streamWasCancelled = false;
+  let currentSources = [];
 
   try {
-    // 构建消息历史
-    let messages = chatFlowState.messages.map(m => ({
+    const messages = chatFlowState.messages.map(m => ({
       role: m.role,
       content: m.content
     }));
 
-    // ==================== 注入画布上下文 ====================
-    // 将画布内容序列化后附加到用户消息中，让 LLM 了解当前画布状态
-    if (chatFlowState.nodes.length > 0 || chatFlowState.edges.length > 0) {
-      const canvasContext = serializeCanvasToPrompt();
-      if (canvasContext && messages.length > 0) {
-        // 将画布上下文附加到最后一条用户消息
-        const lastUserMsgIndex = messages.map(m => m.role).lastIndexOf('user');
-        if (lastUserMsgIndex >= 0) {
-          messages[lastUserMsgIndex] = {
-            ...messages[lastUserMsgIndex],
-            content: messages[lastUserMsgIndex].content + canvasContext
-          };
-          console.log(' 已注入画布上下文到用户消息');
-        }
-      }
-    }
-
-    // ==================== 系统提示词 ====================
-    // Chat Flow 模式下，添加系统提示词和标题生成指令
-    const chatFlowSystemPrompt = `你是 RAI 思维流助手，专注于帮助用户梳理思路、分析问题和构建知识图谱。
-
-注意事项：
-1. 回答要清晰、有条理，便于用户理解和拖拽到画布
-2. 对于复杂问题，可以分步骤或分要点回答
-3. 适当使用 markdown 格式增强可读性
-4. 如果用户的问题涉及到当前画布内容，请结合画布上下文回答
-
-【重要】请在回答的末尾使用以下格式生成一个简短的对话标题（不超过15个字），标题应该概括本次对话的核心内容：
-[TITLE]这里是标题[/TITLE]`;
-
-    // 调用 LLM API（复用主流程的 API）
     const response = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: {
@@ -8094,26 +10241,31 @@ async function sendChatFlowMessage() {
         'Authorization': `Bearer ${appState.token}`
       },
       body: JSON.stringify({
-        messages: messages,
+        flowId: chatFlowState.currentFlowId,
+        sessionId: chatFlowState.sessionId,
+        messages,
         model: normalizeSelectedModelId(chatFlowState.selectedModel || 'auto'),
         thinkingMode: chatFlowState.thinkingMode || false,
         reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
         internetMode: chatFlowState.internetMode || false,
         stream: true,
-        systemPrompt: chatFlowSystemPrompt
+        promptTimeContext: getUserTimeContext(),
+        systemPrompt: buildChatFlowSystemPrompt(),
+        canvasContext: buildChatFlowCanvasContext(),
+        canvasApplyMode: chatFlowState.patchApplyMode,
+        uiSurface: isChatFlowMobileViewport() ? 'chatflow-mobile' : 'chatflow-desktop'
       })
     });
 
     if (!response.ok) {
       throw new Error('API 请求失败');
     }
+    chatFlowState.currentRequestId = response.headers.get('X-Request-ID') || null;
 
-    // 添加占位 AI 消息
-    const aiMessage = { role: 'assistant', content: '', timestamp: Date.now() };
+    aiMessage = { role: 'assistant', content: '', timestamp: Date.now() };
     chatFlowState.messages.push(aiMessage);
     renderChatFlowMessages();
 
-    // 流式读取
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -8124,97 +10276,151 @@ async function sendChatFlowMessage() {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop();
+      buffer = lines.pop() || '';
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
 
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === 'quota_info') {
-              applyQuotaInfoEvent(parsed);
-              continue;
-            }
-
-            const chunkText = parsed.type === 'content' ? parsed.content : parsed.content;
-            if (chunkText) {
-              aiMessage.content += chunkText;
-              // 更新最后一个消息
-              const msgContainer = document.getElementById('chatflowMessages');
-              const lastMsg = msgContainer?.querySelector('.chatflow-message:last-child .chatflow-message-content');
-              if (lastMsg) {
-                lastMsg.innerHTML = renderMarkdownWithMath(aiMessage.content);
-              }
-            }
-          } catch (e) {
-            // 忽略解析错误
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.type === 'quota_info') {
+            applyQuotaInfoEvent(parsed);
+            continue;
           }
+
+          if (parsed.type === 'search_status') {
+            if (parsed.status === 'searching') {
+              const queryText = parsed.query ? `: ${parsed.query}` : '';
+              setChatFlowActivityNotice(
+                appState.language === 'zh-CN' ? 'RAI 正在联网搜索' : 'RAI is searching the web',
+                appState.language === 'zh-CN' ? `正在搜索${queryText}` : `Searching${queryText}`
+              );
+            } else if (parsed.status === 'done') {
+              const count = Number(parsed.count || parsed.resultCount || 0);
+              setChatFlowActivityNotice(
+                appState.language === 'zh-CN' ? '联网搜索已完成' : 'Web search complete',
+                appState.language === 'zh-CN' ? `已找到 ${count} 条来源，正在整理回答和画布建议` : `${count} sources found. Preparing reply and canvas suggestions.`
+              );
+            } else if (parsed.status === 'analyzing') {
+              setChatFlowActivityNotice(
+                appState.language === 'zh-CN' ? 'RAI 正在分析问题' : 'RAI is analyzing',
+                getChatFlowWorkingSummary()
+              );
+            } else if (parsed.status === 'no_search') {
+              setChatFlowActivityNotice(
+                appState.language === 'zh-CN' ? 'RAI 正在处理画布' : 'RAI is working on the canvas',
+                appState.language === 'zh-CN' ? '无需联网，正在生成回复和画布建议' : 'No web search needed. Generating reply and canvas suggestions.'
+              );
+            }
+            continue;
+          }
+
+          if (parsed.type === 'sources' && Array.isArray(parsed.sources)) {
+            currentSources = mergeAndReindexSources(currentSources, parsed.sources);
+            if (aiMessage) aiMessage.sources = currentSources;
+            setChatFlowActivityNotice(
+              appState.language === 'zh-CN' ? '来源已更新' : 'Sources updated',
+              appState.language === 'zh-CN' ? `收到 ${currentSources.length} 条来源，正在继续生成` : `${currentSources.length} sources received. Continuing generation.`
+            );
+            continue;
+          }
+
+          if (parsed.type === 'content' && parsed.content) {
+            aiMessage.content += parsed.content;
+            const msgContainer = document.getElementById('chatflowMessages');
+            const lastMsg = msgContainer?.querySelector('.chatflow-message:last-child .message-text');
+            if (lastMsg) {
+              lastMsg.innerHTML = renderMarkdownWithMath(aiMessage.content);
+            }
+            continue;
+          }
+
+          if (parsed.type === 'title' && parsed.title) {
+            updateChatFlowTitleLocal(parsed.title);
+            continue;
+          }
+
+          if (parsed.type === 'canvas_patch') {
+            setChatFlowActivityNotice(
+              appState.language === 'zh-CN' ? 'RAI 正在整理画布' : 'RAI is updating the canvas',
+              appState.language === 'zh-CN' ? '已收到画布修改建议，正在校验并渲染' : 'Canvas changes received. Validating and rendering.'
+            );
+            handleIncomingCanvasPatchEvent(parsed);
+            continue;
+          }
+
+          if (parsed.type === 'cancelled') {
+            streamWasCancelled = true;
+            if (aiMessage && !aiMessage.content) {
+              aiMessage.content = appState.language === 'zh-CN' ? '(已停止生成)' : '(Generation stopped)';
+            }
+            continue;
+          }
+
+          if (parsed.type === 'error' && parsed.error) {
+            streamErrorMessage = parsed.error;
+          }
+        } catch (e) {
+          console.warn(' ChatFlow SSE 解析失败:', e);
         }
       }
     }
 
-    // 提取标题并更新 Flow
-    if (aiMessage.content) {
-      const titleMatch = aiMessage.content.match(/\[TITLE\](.*?)\[\/TITLE\]/);
-      if (titleMatch && titleMatch[1]) {
-        const extractedTitle = titleMatch[1].trim();
-        // 从显示内容中移除标题标记
-        aiMessage.content = aiMessage.content.replace(/\[TITLE\].*?\[\/TITLE\]/g, '').trim();
-
-        // 更新 Flow 标题
-        if (chatFlowState.currentFlowId) {
-          try {
-            await fetch(`/api/flows/${chatFlowState.currentFlowId}`, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${appState.token}`
-              },
-              body: JSON.stringify({ title: extractedTitle })
-            });
-            // 更新UI显示的标题
-            const titleEl = document.getElementById('chatflowTitle');
-            if (titleEl) titleEl.textContent = extractedTitle;
-            // 重新加载侧边栏列表
-            loadFlowsList();
-            console.log(' Flow 标题已更新:', extractedTitle);
-          } catch (err) {
-            console.error(' 更新 Flow 标题失败:', err);
-          }
-        }
-      }
+    if (streamErrorMessage) {
+      throw new Error(streamErrorMessage);
     }
 
-    // 完成后渲染最终内容
+    if (streamWasCancelled) {
+      renderChatFlowMessages();
+    }
     renderChatFlowMessages();
+    await reloadChatFlowMessages();
+    await loadFlowsList();
   } catch (error) {
-    console.error(' Chat Flow LLM 调用失败:', error);
-    // 添加错误消息
-    chatFlowState.messages.push({
-      role: 'assistant',
-      content: `抱歉，发生了错误: ${error.message}`,
-      timestamp: Date.now()
-    });
+    console.error(' ChatFlow LLM 调用失败:', error);
+    if (aiMessage) {
+      aiMessage.content = `抱歉，发生了错误: ${error.message}`;
+    } else {
+      chatFlowState.messages.push({
+        role: 'assistant',
+        content: `抱歉，发生了错误: ${error.message}`,
+        timestamp: Date.now()
+      });
+    }
     renderChatFlowMessages();
   } finally {
     // 恢复按钮状态
     document.getElementById('chatflowSendBtn').style.display = 'flex';
     document.getElementById('chatflowStopBtn').style.display = 'none';
     chatFlowState.isStreaming = false;
+    clearChatFlowActivityNotice();
 
     // 保存状态
+    chatFlowState.currentRequestId = null;
     saveFlowState();
   }
 }
 
 // 停止生成
-function stopChatFlowGeneration() {
-  // TODO: 实现取消请求
-  chatFlowState.isStreaming = false;
-  document.getElementById('chatflowSendBtn').style.display = 'flex';
-  document.getElementById('chatflowStopBtn').style.display = 'none';
+async function stopChatFlowGeneration() {
+  if (!chatFlowState.currentRequestId) return;
+
+  try {
+    await fetch(`${API_BASE}/chat/stop`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requestId: chatFlowState.currentRequestId
+      })
+    });
+  } catch (error) {
+    console.error(' 停止 ChatFlow 生成失败:', error);
+  }
 }
 
 // ==================== Phase 2: 拖拽节点生成 ====================
@@ -8313,11 +10519,21 @@ function initChatFlowDragDrop() {
 }
 
 // 创建画布节点
-function createCanvasNode(message, x, y, sourceIndex) {
+function createCanvasNode(message, x, y, sourceReference = null) {
   const nodeId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const sourceIndex = typeof sourceReference === 'object' && sourceReference !== null
+    ? Number(sourceReference.sourceIndex ?? sourceReference.index)
+    : Number(sourceReference);
+  const messageIdFromMessage = getChatFlowMessageId(message);
+  const sourceMessageId = typeof sourceReference === 'object' && sourceReference !== null
+    ? Number(sourceReference.sourceMessageId ?? sourceReference.messageId ?? messageIdFromMessage)
+    : messageIdFromMessage;
+  const normalizedSourceIndex = Number.isFinite(sourceIndex) ? sourceIndex : null;
+  const normalizedSourceMessageId = Number.isFinite(sourceMessageId) ? sourceMessageId : null;
 
   // 清理 Markdown 标记
-  const cleanContent = message.content
+  const messageContent = typeof message?.content === 'string' ? message.content : String(message?.content || '');
+  const cleanContent = messageContent
     .replace(/```[\s\S]*?```/g, '[代码块]')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
@@ -8329,8 +10545,9 @@ function createCanvasNode(message, x, y, sourceIndex) {
     id: nodeId,
     type: message.role === 'user' ? 'user' : 'assistant',
     content: cleanContent,
-    fullContent: message.content,
-    sourceIndex: sourceIndex,
+    fullContent: messageContent,
+    sourceIndex: normalizedSourceIndex,
+    sourceMessageId: normalizedSourceMessageId,
     x: x,
     y: y,
     width: 200,
@@ -8392,10 +10609,14 @@ function renderCanvasNodes() {
   }
 
   chatFlowState.nodes.forEach(node => {
+    const sourceIndex = getChatFlowNodeSourceIndex(node);
+    const sourceMessageId = getChatFlowNodeSourceMessageId(node);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('class', 'canvas-node');
     g.setAttribute('data-node-id', node.id);
-    g.setAttribute('data-source-index', node.sourceIndex || '');
+    g.setAttribute('data-source-index', sourceIndex === null ? '' : String(sourceIndex));
+    g.setAttribute('data-source-message-id', sourceMessageId === null ? '' : String(sourceMessageId));
+    g.setAttribute('data-node-type', node.type || 'text');
     g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
 
     // 背景矩形
@@ -8429,7 +10650,7 @@ function renderCanvasNodes() {
         'assistant': 'AI',
         'text': 'TEXT'
       };
-      roleText.textContent = typeLabels[node.type] || 'NODE';
+      roleText.textContent = typeLabels[normalizeChatFlowNodeType(node.type)] || 'TEXT';
       g.appendChild(roleText);
     }
 
@@ -8441,8 +10662,12 @@ function renderCanvasNodes() {
     fo.setAttribute('height', node.height - (node.type === 'sticky' ? 16 : 32));
 
     const div = document.createElement('div');
-    div.style.cssText = `font-size: 11px; color: ${node.type === 'sticky' ? '#333' : 'var(--text-primary)'}; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;`;
-    div.textContent = node.content;
+    const rootStyle = getComputedStyle(document.body || document.documentElement);
+    const textColor = node.type === 'sticky'
+      ? '#333333'
+      : (rootStyle.getPropertyValue('--text-primary').trim() || '#ECECEC');
+    div.style.cssText = `height: 100%; font-size: 12px; line-height: 1.38; color: ${textColor}; overflow: hidden; white-space: pre-wrap; word-break: break-word;`;
+    div.textContent = getCanvasNodeDisplayText(node) || (appState.language === 'zh-CN' ? '双击编辑节点' : 'Double click to edit');
     fo.appendChild(div);
     g.appendChild(fo);
 
@@ -8475,107 +10700,119 @@ function renderCanvasNodes() {
     g.appendChild(resizeHandle);
 
     // Resize 拖拽逻辑
-    let isResizing = false;
-    let resizeStartX, resizeStartY, resizeStartWidth, resizeStartHeight;
+    resizeHandle.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      event.stopPropagation();
+      event.preventDefault();
 
-    resizeHandle.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      isResizing = true;
-      resizeStartX = e.clientX;
-      resizeStartY = e.clientY;
-      resizeStartWidth = node.width;
-      resizeStartHeight = node.height;
-    });
+      const resizeStartX = event.clientX;
+      const resizeStartY = event.clientY;
+      const resizeStartWidth = node.width;
+      const resizeStartHeight = node.height;
+      const pointerId = event.pointerId;
 
-    document.addEventListener('mousemove', (e) => {
-      if (!isResizing) return;
-      const dx = (e.clientX - resizeStartX) / chatFlowState.canvas.scale;
-      const dy = (e.clientY - resizeStartY) / chatFlowState.canvas.scale;
+      const handleResizeMove = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        const dx = (moveEvent.clientX - resizeStartX) / chatFlowState.canvas.scale;
+        const dy = (moveEvent.clientY - resizeStartY) / chatFlowState.canvas.scale;
+        const newWidth = Math.max(80, resizeStartWidth + dx);
+        const newHeight = Math.max(50, resizeStartHeight + dy);
 
-      // 限制最小尺寸
-      const newWidth = Math.max(80, resizeStartWidth + dx);
-      const newHeight = Math.max(50, resizeStartHeight + dy);
+        node.width = newWidth;
+        node.height = newHeight;
 
-      node.width = newWidth;
-      node.height = newHeight;
+        rect.setAttribute('width', newWidth);
+        rect.setAttribute('height', newHeight);
+        fo.setAttribute('width', newWidth - 16);
+        fo.setAttribute('height', newHeight - (node.type === 'sticky' ? 16 : 32));
+        resizeHandle.setAttribute('x', newWidth - 12);
+        resizeHandle.setAttribute('y', newHeight - 12);
 
-      // 更新节点元素
-      rect.setAttribute('width', newWidth);
-      rect.setAttribute('height', newHeight);
-      fo.setAttribute('width', newWidth - 16);
-      fo.setAttribute('height', newHeight - (node.type === 'sticky' ? 16 : 32));
-      resizeHandle.setAttribute('x', newWidth - 12);
-      resizeHandle.setAttribute('y', newHeight - 12);
+        const ports = g.querySelectorAll('.canvas-node-port');
+        ports.forEach(p => {
+          const portId = p.getAttribute('data-port');
+          if (portId === 'top') p.setAttribute('cx', newWidth / 2);
+          if (portId === 'bottom') {
+            p.setAttribute('cx', newWidth / 2);
+            p.setAttribute('cy', newHeight);
+          }
+          if (portId === 'left') p.setAttribute('cy', newHeight / 2);
+          if (portId === 'right') {
+            p.setAttribute('cx', newWidth);
+            p.setAttribute('cy', newHeight / 2);
+          }
+        });
 
-      // 更新端口位置
-      const ports = g.querySelectorAll('.canvas-node-port');
-      ports.forEach(p => {
-        const portId = p.getAttribute('data-port');
-        if (portId === 'top') { p.setAttribute('cx', newWidth / 2); }
-        if (portId === 'bottom') { p.setAttribute('cx', newWidth / 2); p.setAttribute('cy', newHeight); }
-        if (portId === 'left') { p.setAttribute('cy', newHeight / 2); }
-        if (portId === 'right') { p.setAttribute('cx', newWidth); p.setAttribute('cy', newHeight / 2); }
-      });
+        renderEdges();
+      };
 
-      renderEdges();
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (isResizing) {
-        isResizing = false;
+      const stopResize = (endEvent) => {
+        if (endEvent.pointerId !== pointerId) return;
+        window.removeEventListener('pointermove', handleResizeMove);
+        window.removeEventListener('pointerup', stopResize);
+        window.removeEventListener('pointercancel', stopResize);
         saveFlowState();
-      }
+      };
+
+      resizeHandle.setPointerCapture?.(pointerId);
+      window.addEventListener('pointermove', handleResizeMove);
+      window.addEventListener('pointerup', stopResize);
+      window.addEventListener('pointercancel', stopResize);
     });
 
     // 添加拖拽功能
-    let isDragging = false;
-    let startX, startY, startNodeX, startNodeY;
+    g.addEventListener('pointerdown', (event) => {
+      if (event.target.classList.contains('canvas-node-port')) return;
+      if (event.target.classList.contains('canvas-node-resize')) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
 
-    g.addEventListener('mousedown', (e) => {
-      // 如果点击的是端口，不触发节点拖拽（连接端口用于连线）
-      if (e.target.classList.contains('canvas-node-port')) {
-        return; // 让 initEdgeConnection 处理端口连线
-      }
-      if (e.target.classList.contains('canvas-node-resize')) return;
-
-      // 选择模式下选中节点
       document.querySelectorAll('.canvas-node.selected').forEach(el => el.classList.remove('selected'));
       g.classList.add('selected');
 
-      if (chatFlowState.currentTool === 'select') {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startNodeX = node.x;
-        startNodeY = node.y;
+      if (chatFlowState.currentTool !== 'select') {
+        event.stopPropagation();
+        return;
       }
-      e.stopPropagation();
-    });
 
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      const dx = (e.clientX - startX) / chatFlowState.canvas.scale;
-      const dy = (e.clientY - startY) / chatFlowState.canvas.scale;
-      node.x = startNodeX + dx;
-      node.y = startNodeY + dy;
-      g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
-      // 更新连线
-      renderEdges();
-    });
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startNodeX = node.x;
+      const startNodeY = node.y;
+      const pointerId = event.pointerId;
 
-    document.addEventListener('mouseup', () => {
-      if (isDragging) {
-        isDragging = false;
+      const handleDragMove = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        const dx = (moveEvent.clientX - startX) / chatFlowState.canvas.scale;
+        const dy = (moveEvent.clientY - startY) / chatFlowState.canvas.scale;
+        node.x = startNodeX + dx;
+        node.y = startNodeY + dy;
+        g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+        renderEdges();
+      };
+
+      const stopDragging = (endEvent) => {
+        if (endEvent.pointerId !== pointerId) return;
+        window.removeEventListener('pointermove', handleDragMove);
+        window.removeEventListener('pointerup', stopDragging);
+        window.removeEventListener('pointercancel', stopDragging);
         saveFlowState();
-      }
+      };
+
+      g.setPointerCapture?.(pointerId);
+      window.addEventListener('pointermove', handleDragMove);
+      window.addEventListener('pointerup', stopDragging);
+      window.addEventListener('pointercancel', stopDragging);
+      event.stopPropagation();
+      event.preventDefault();
     });
 
     // 单击高亮对应消息
     g.addEventListener('click', (e) => {
       if (e.target.classList.contains('canvas-node-port')) return;
-      if (node.sourceIndex !== undefined) {
-        highlightMessage(node.sourceIndex);
-      }
+      highlightMessage({
+        messageId: getChatFlowNodeSourceMessageId(node),
+        sourceIndex: getChatFlowNodeSourceIndex(node)
+      });
     });
 
     // 双击编辑
@@ -8593,7 +10830,7 @@ function renderCanvasNodes() {
   });
 }
 
-// 在登录后加载思维流列表
+// 在登录后加载 ChatFlow 列表
 const originalLoadUserData = window.loadUserData;
 window.loadUserData = async function () {
   if (originalLoadUserData) await originalLoadUserData();
@@ -8634,57 +10871,89 @@ function setCanvasTool(tool) {
 
 // ==================== 拖拽功能 ====================
 
-// 初始化 Chat Flow 拖拽功能
+// 初始化 ChatFlow 拖拽功能
 function initChatFlowDragDrop() {
   if (window._chatFlowDragDropInitialized) return;
 
+  const messagesContainer = document.getElementById('chatflowMessages');
   const container = document.getElementById('chatflowCanvasContainer');
-  if (!container) return;
+  if (!messagesContainer || !container) return;
 
   window._chatFlowDragDropInitialized = true;
-  console.log(' 初始化 Canvas 拖拽支持');
+  console.log(' 初始化 ChatFlow 拖拽支持');
+
+  messagesContainer.addEventListener('dragstart', (event) => {
+    const msgElement = event.target.closest('.chatflow-message');
+    if (!msgElement) return;
+
+    const messageIndex = Number(msgElement.dataset.msgIndex);
+    const rawMessageId = msgElement.dataset.msgId;
+    const messageId = rawMessageId ? Number(rawMessageId) : NaN;
+    const message = chatFlowState.messages[messageIndex];
+    if (!message) return;
+
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', JSON.stringify({
+      type: 'message',
+      index: messageIndex,
+      messageId: Number.isFinite(messageId) ? messageId : null
+    }));
+    msgElement.classList.add('dragging');
+  });
+
+  messagesContainer.addEventListener('dragend', (event) => {
+    const msgElement = event.target.closest('.chatflow-message');
+    msgElement?.classList.remove('dragging');
+  });
 
   container.addEventListener('dragover', (e) => {
-    e.preventDefault(); // 允许放置
+    e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
+    container.classList.add('drag-over');
+  });
+
+  container.addEventListener('dragleave', () => {
+    container.classList.remove('drag-over');
   });
 
   container.addEventListener('drop', (e) => {
     e.preventDefault();
-    console.log(' Canvas 收到 Drop 事件');
+    container.classList.remove('drag-over');
 
     try {
+      const rect = container.getBoundingClientRect();
+      const x = (e.clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
+      const y = (e.clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
       const dataStr = e.dataTransfer.getData('text/plain');
-      if (!dataStr) return;
+      let handled = false;
 
-      const data = JSON.parse(dataStr);
+      if (dataStr) {
+        try {
+          const data = JSON.parse(dataStr);
+          if (data?.type === 'message') {
+            const messageIndex = Number(data.index);
+            const message = chatFlowState.messages[messageIndex];
+            if (message) {
+              createCanvasNode(message, x, y, {
+                sourceIndex: messageIndex,
+                messageId: data.messageId
+              });
+              handled = true;
+            }
+          } else if (data?.type === 'selected-text' && data.text) {
+            createTextNode(data.text, x, y);
+            handled = true;
+          }
+        } catch (parseError) {
+          // 非结构化 JSON，继续按普通文本处理
+        }
+      }
 
-      // 检查是否是选中文本拖拽
-      if (data.type === 'selected-text' && data.text) {
-        // 计算画布坐标 (考虑平移和缩放)
-        const rect = container.getBoundingClientRect();
-        const x = (e.clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
-        const y = (e.clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
-
-        // 创建文本节点
-        const nodeId = `node-${Date.now()}`;
-        const node = {
-          id: nodeId,
-          type: 'text',
-          content: data.text.substring(0, 100) + (data.text.length > 100 ? '...' : ''), // 预览内容
-          fullContent: data.text, // 完整内容
-          x: x,
-          y: y,
-          width: 200,
-          height: 100
-        };
-
-        chatFlowState.nodes.push(node);
-        renderCanvasNodes();
-        renderEdges();
-        saveFlowState();
-
-        console.log(' 拖拽创建节点成功:', nodeId, '坐标:', parseInt(x), parseInt(y));
+      if (!handled) {
+        const plainText = dataStr || e.dataTransfer.getData('text');
+        if (plainText && plainText.trim()) {
+          createTextNode(plainText.trim(), x, y);
+        }
       }
     } catch (err) {
       console.error(' 处理拖拽数据失败:', err);
@@ -8709,7 +10978,8 @@ function initEdgeConnection() {
   }
 
   // 修复: 支持选择模式和连线模式都能通过端口连线
-  canvasContainer.addEventListener('mousedown', (e) => {
+  canvasContainer.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     // 检查是否点击了节点端口
     const port = e.target.closest('.canvas-node-port');
     const nodeEl = e.target.closest('.canvas-node');
@@ -8753,7 +11023,7 @@ function initEdgeConnection() {
   });
 
   // 修复: 预览线跟随鼠标（改进坐标计算）
-  canvasContainer.addEventListener('mousemove', (e) => {
+  canvasContainer.addEventListener('pointermove', (e) => {
     if (!chatFlowState.connectingFrom) return;
 
     const previewLine = document.getElementById('edgePreviewLine');
@@ -8764,7 +11034,7 @@ function initEdgeConnection() {
     }
   });
 
-  canvasContainer.addEventListener('mouseup', (e) => {
+  canvasContainer.addEventListener('pointerup', (e) => {
     if (!chatFlowState.connectingFrom) return;
 
     const previewLine = document.getElementById('edgePreviewLine');
@@ -8795,7 +11065,7 @@ function initEdgeConnection() {
         y: (touch1.clientY + touch2.clientY) / 2
       };
     }
-  }, { passive: true });
+  });
 
   canvasContainer.addEventListener('touchmove', (e) => {
     if (e.touches.length === 2) {
@@ -8829,7 +11099,7 @@ function initEdgeConnection() {
 
   canvasContainer.addEventListener('touchend', () => {
     lastTouchDistance = 0;
-  }, { passive: true });
+  });
 }
 
 
@@ -8886,17 +11156,16 @@ function renderEdges() {
     if (edge.label) {
       const labelX = (x1 + x2) / 2;
       const labelY = midY;
+      const labelText = String(edge.label || '');
+      const labelWidth = Math.max(44, Math.min(180, labelText.length * 13 + 20));
 
       const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       labelBg.setAttribute('class', 'canvas-edge-label-bg');
-      labelBg.setAttribute('x', labelX - 30);
+      labelBg.setAttribute('x', labelX - labelWidth / 2);
       labelBg.setAttribute('y', labelY - 10);
-      labelBg.setAttribute('width', '60');
+      labelBg.setAttribute('width', String(labelWidth));
       labelBg.setAttribute('height', '20');
       labelBg.setAttribute('rx', '4');
-      labelBg.setAttribute('fill', 'var(--bg-secondary)');
-      labelBg.setAttribute('stroke', 'var(--border-color)');
-      labelBg.setAttribute('stroke-width', '1');
       g.appendChild(labelBg);
 
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -8905,9 +11174,7 @@ function renderEdges() {
       text.setAttribute('y', labelY + 4);
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('font-size', '11');
-      text.setAttribute('font-weight', '400'); // 修复: 使用正常字重
-      text.setAttribute('fill', 'var(--text-secondary)');
-      text.textContent = edge.label;
+      text.textContent = labelText;
       g.appendChild(text);
     }
 
@@ -9062,6 +11329,7 @@ async function aiDecomposeSelected() {
         }],
         model: 'kimi-k2.5',
         reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
+        promptTimeContext: getUserTimeContext(),
         stream: false
       })
     });
@@ -9102,34 +11370,27 @@ async function aiDecomposeSelected() {
 function autoLayoutNodes() {
   if (chatFlowState.nodes.length === 0) return;
 
-  // 简单的网格布局
-  const cols = Math.ceil(Math.sqrt(chatFlowState.nodes.length));
-  const gapX = 250;
-  const gapY = 150;
-  const startX = 100;
-  const startY = 100;
-
-  chatFlowState.nodes.forEach((node, i) => {
-    node.x = startX + (i % cols) * gapX;
-    node.y = startY + Math.floor(i / cols) * gapY;
-  });
+  layoutChatFlowNodesGrid();
 
   renderCanvasNodes();
   renderEdges();
   saveFlowState();
-  canvasResetView();
+  fitChatFlowCanvasToNodes();
 }
 
 // ==================== 双向高亮 ====================
 
-function highlightMessage(sourceIndex) {
+function highlightMessage(reference = {}) {
   // 清除所有高亮
   document.querySelectorAll('.chatflow-message.highlighted').forEach(el => {
     el.classList.remove('highlighted');
   });
 
   // 高亮对应消息
-  const msgEl = document.querySelector(`.chatflow-message[data-msg-index="${sourceIndex}"]`);
+  const normalizedReference = typeof reference === 'object' && reference !== null
+    ? reference
+    : { sourceIndex: reference };
+  const msgEl = findChatFlowMessageElement(normalizedReference);
   if (msgEl) {
     msgEl.classList.add('highlighted');
     msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -9746,6 +12007,9 @@ async function loadSessions(reset = true) {
 
     console.log(` 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
     renderSessions();
+    if (appState.messages.length === 0) {
+      focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
+    }
 
   } catch (error) {
     console.error(' 加载会话失败:', error);
@@ -9771,62 +12035,152 @@ function showWelcome() {
     messagesList.style.display = 'none';
   }
 
+  setScrollFollowMode('following');
+
   // 隐藏对话索引导航器
   const navigator = document.getElementById('chatIndexNavigator');
   if (navigator) {
     navigator.classList.remove('visible');
     navigator.classList.add('hidden');
   }
+
+  focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
 }
 
 // 别名，确保兼容性
 const renderWelcomeScreen = showWelcome;
 
-// 判断用户是否在底部附近（阈值50px）
-function isNearBottom() {
-  const container = document.getElementById('chatContainer');
-  if (!container) return true;
-  const threshold = 50;
-  return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+function cancelPendingAutoScroll() {
+  if (appState.pendingScrollTimer) {
+    clearTimeout(appState.pendingScrollTimer);
+    appState.pendingScrollTimer = null;
+  }
 }
 
-// 智能滚动到底部：只有用户在底部附近时才自动滚动
-function scrollToBottom(force = false) {
-  const container = document.getElementById('chatContainer');
-  if (!container) return;
+function setScrollFollowMode(mode = 'following') {
+  appState.scrollFollowMode = mode;
+  appState.userScrolledUp = mode === 'pausedByUser';
+  updateScrollResumeButton();
+}
 
-  // 如果用户主动向上滚动了，不强制滚动（除非 force=true）
-  if (appState.userScrolledUp && !force) {
-    return;
+function getScrollResumeButtonText() {
+  return appState.language === 'zh-CN' ? '回到底部' : 'Jump to latest';
+}
+
+function ensureScrollResumeButton() {
+  let button = document.getElementById('scrollResumeBtn');
+  const host = document.querySelector('.input-wrapper') || document.querySelector('.main-content');
+  if (!host) return null;
+
+  if (button) {
+    if (button.parentElement !== host) {
+      host.appendChild(button);
+    }
+    return button;
   }
 
-  setTimeout(() => {
-    container.scrollTop = container.scrollHeight;
-    appState.userScrolledUp = false;
-  }, 100);
+  button = document.createElement('button');
+  button.id = 'scrollResumeBtn';
+  button.type = 'button';
+  button.className = 'scroll-resume-btn hidden';
+  button.innerHTML = getSvgIcon('south', 'scroll-resume-icon', 20);
+  button.addEventListener('click', () => {
+    resumeAutoScroll();
+  });
+  host.appendChild(button);
+  return button;
 }
 
-// 初始化聊天容器的滚动监听
+function updateScrollResumeButton() {
+  const button = ensureScrollResumeButton();
+  const container = getChatScrollElement();
+  const messagesList = document.getElementById('messagesList');
+  if (!button || !container) return;
+
+  const buttonLabel = getScrollResumeButtonText();
+  button.setAttribute('aria-label', buttonLabel);
+  button.title = buttonLabel;
+  const shouldShow = (
+    window.innerWidth > 768 &&
+    appState.scrollFollowMode === 'pausedByUser' &&
+    !!messagesList &&
+    messagesList.style.display !== 'none' &&
+    container.scrollHeight > container.clientHeight + 24
+  );
+
+  button.classList.toggle('hidden', !shouldShow);
+  button.classList.toggle('visible', shouldShow);
+}
+
+function isNearBottom(threshold = null) {
+  const container = getChatScrollElement();
+  if (!container) return true;
+  const resolvedThreshold = threshold || Math.max(appState.scrollBottomThreshold, Math.round(container.clientHeight * 0.2));
+  return (container.scrollHeight - container.scrollTop - container.clientHeight) <= resolvedThreshold;
+}
+
+function performScrollToBottom() {
+  const container = getChatScrollElement();
+  if (!container) return;
+
+  appState.isProgrammaticScroll = true;
+  container.scrollTop = container.scrollHeight;
+  appState.lastScrollTop = container.scrollTop;
+  window.setTimeout(() => {
+    appState.isProgrammaticScroll = false;
+  }, 80);
+}
+
+function scrollToBottom(force = false) {
+  const container = getChatScrollElement();
+  if (!container) return;
+  if (appState.scrollFollowMode === 'pausedByUser' && !force) return;
+
+  cancelPendingAutoScroll();
+  appState.pendingScrollTimer = window.setTimeout(() => {
+    performScrollToBottom();
+    if (force || isNearBottom()) {
+      setScrollFollowMode('following');
+    }
+    appState.pendingScrollTimer = null;
+  }, 16);
+}
+
+function resumeAutoScroll() {
+  setScrollFollowMode('following');
+  scrollToBottom(true);
+}
+
 let chatScrollListenerInitialized = false;
 
 function initChatScrollListener() {
-  const container = document.getElementById('chatContainer');
-  if (!container || chatScrollListenerInitialized) return;
+  if (chatScrollListenerInitialized) return;
 
   chatScrollListenerInitialized = true;
+  ensureScrollResumeButton();
 
-  container.addEventListener('scroll', () => {
+  document.addEventListener('scroll', (event) => {
+    if (!isPrimaryChatScrollTarget(event.target)) return;
+
+    const container = getChatScrollElement();
+    if (!container) return;
+    if (appState.isProgrammaticScroll) return;
+
+    const currentScrollTop = container.scrollTop;
     const nearBottom = isNearBottom();
+    const scrolledUp = currentScrollTop < (appState.lastScrollTop - 6);
 
-    // 如果不在底部附近，说明用户向上滚动了
-    if (!nearBottom) {
-      appState.userScrolledUp = true;
-    } else {
-      // 用户滚到了底部附近，重新启用自动滚动
-      appState.userScrolledUp = false;
+    if (scrolledUp && !nearBottom) {
+      cancelPendingAutoScroll();
+      setScrollFollowMode('pausedByUser');
+    } else if (nearBottom) {
+      setScrollFollowMode('following');
     }
-  }, { passive: true });
 
+    appState.lastScrollTop = currentScrollTop;
+  }, { passive: true, capture: true });
+
+  updateScrollResumeButton();
   console.log(' 智能滚动监听器已初始化');
 }
 
@@ -9863,6 +12217,7 @@ function initRippleEffect() {
 
 async function createNewSession() {
   try {
+    appState.pendingMobileComposerFocus = window.innerWidth <= 768;
     const response = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
       headers: {
@@ -9880,6 +12235,7 @@ async function createNewSession() {
     if (data.success) {
       await loadSessions();
       await loadSession(data.sessionId);
+      focusMessageInputForNewChat(true);
 
       // 移除移动端自动弹出侧边栏
       // if (window.innerWidth <= 768) {
@@ -9913,6 +12269,9 @@ async function loadSession(sessionId) {
 
     renderMessages();
     renderSessions();
+    if (appState.messages.length === 0) {
+      focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
+    }
 
     // 移除移动端自动弹出侧边栏
     // if (window.innerWidth <= 768) {
@@ -9927,61 +12286,162 @@ async function loadSession(sessionId) {
 
 // ==================== 侧边栏滑动手势 ====================
 function initSwipeGestures() {
-  const mainContent = document.querySelector('.main-content');
   const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('mobileOverlay');
+  const mainContent = document.querySelector('.main-content');
+  const mobileHeader = document.getElementById('mobileHeader');
 
-  if (!mainContent || !sidebar) return;
+  if (!mainContent || !sidebar || !overlay) return;
 
-  mainContent.addEventListener('touchstart', (e) => {
-    appState.touchStartX = e.touches[0].clientX;
-    appState.touchStartY = e.touches[0].clientY;
-    appState.isSwiping = false;
-  }, { passive: true });
+  const gestureLockDistance = 12;
+  const gestureCommitDistance = 20;
+  const horizontalDominanceRatio = 1.2;
 
-  mainContent.addEventListener('touchmove', (e) => {
-    if (!appState.touchStartX) return;
+  const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
+  const getSidebarWidth = () => sidebar.getBoundingClientRect().width || sidebar.offsetWidth || window.innerWidth * 0.85;
+  const isGestureBlockedTarget = (target) => Boolean(target?.closest(
+    '.input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
+  ));
 
-    appState.touchMoveX = e.touches[0].clientX;
-    const touchMoveY = e.touches[0].clientY;
+  const setOverlayProgress = (progress, dragging = false) => {
+    const normalized = Math.max(0, Math.min(progress, 1));
+    overlay.classList.toggle('dragging', dragging);
 
-    const deltaX = appState.touchMoveX - appState.touchStartX;
-    const deltaY = Math.abs(touchMoveY - appState.touchStartY);
-
-    if (Math.abs(deltaX) > 30 && Math.abs(deltaX) > deltaY * 2) {
-      appState.isSwiping = true;
-
-      if (deltaX > 0 && appState.touchStartX < 50 && !appState.sidebarOpen) {
-        const translateX = Math.min(deltaX, sidebar.offsetWidth);
-        sidebar.style.transform = `translateX(calc(-100% + ${translateX}px))`;
-      }
-      else if (deltaX < 0 && appState.sidebarOpen) {
-        const translateX = Math.max(deltaX, -sidebar.offsetWidth);
-        sidebar.style.transform = `translateX(${translateX}px)`;
-      }
-    }
-  }, { passive: true });
-
-  mainContent.addEventListener('touchend', () => {
-    if (!appState.isSwiping) {
-      appState.touchStartX = 0;
+    if (normalized <= 0) {
+      overlay.classList.remove('active');
+      overlay.style.opacity = '';
       return;
     }
 
-    const deltaX = appState.touchMoveX - appState.touchStartX;
-    const threshold = sidebar.offsetWidth / 3;
+    overlay.classList.add('active');
+    overlay.style.opacity = normalized.toFixed(3);
+  };
 
-    if (!appState.sidebarOpen && deltaX > threshold) {
-      openSidebar();
-    } else if (appState.sidebarOpen && deltaX < -threshold) {
-      closeSidebar();
-    } else {
-      sidebar.style.transform = '';
-    }
+  const setSidebarProgress = (progress, dragging = false) => {
+    const width = getSidebarWidth();
+    const normalized = Math.max(0, Math.min(progress, 1));
+    const translateX = (normalized - 1) * width;
 
+    sidebar.classList.toggle('dragging', dragging);
+    sidebar.style.transform = `translateX(${Math.round(translateX)}px)`;
+    setOverlayProgress(normalized, dragging);
+  };
+
+  const resetSwipeState = () => {
     appState.touchStartX = 0;
+    appState.touchStartY = 0;
     appState.touchMoveX = 0;
     appState.isSwiping = false;
-  }, { passive: true });
+    appState.sidebarGestureMode = null;
+    appState.sidebarGestureLocked = false;
+    sidebar.classList.remove('dragging');
+    overlay.classList.remove('dragging');
+  };
+
+  const handleTouchStart = (e) => {
+    if (!isMobileViewport() || !e.touches?.length) return;
+
+    const touch = e.touches[0];
+    const target = e.target;
+    const onSidebar = !!target.closest('#sidebar');
+    const onOverlay = !!target.closest('#mobileOverlay');
+    const onHeader = !!target.closest('#mobileHeader');
+    const onMain = !!target.closest('.main-content');
+
+    const canOpen = !appState.sidebarOpen && (onMain || onHeader) && !isGestureBlockedTarget(target);
+    const canClose = appState.sidebarOpen && (onSidebar || onOverlay);
+
+    if (!canOpen && !canClose) return;
+
+    appState.touchStartX = touch.clientX;
+    appState.touchStartY = touch.clientY;
+    appState.touchMoveX = touch.clientX;
+    appState.isSwiping = false;
+    appState.sidebarGestureMode = canOpen ? 'opening' : 'closing';
+    appState.sidebarGestureLocked = false;
+
+    if (canClose) {
+      overlay.classList.add('active');
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (!appState.sidebarGestureMode || !e.touches?.length) return;
+
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - appState.touchStartX;
+    const deltaY = Math.abs(touch.clientY - appState.touchStartY);
+    appState.touchMoveX = touch.clientX;
+
+    if (!appState.sidebarGestureLocked) {
+      if (Math.abs(deltaX) < gestureLockDistance && deltaY < gestureLockDistance) {
+        return;
+      }
+
+      if (deltaY > Math.abs(deltaX) * horizontalDominanceRatio) {
+        resetSwipeState();
+        return;
+      }
+
+      const movingWrongWay = appState.sidebarGestureMode === 'opening' ? deltaX <= 0 : deltaX >= 0;
+      if (movingWrongWay) {
+        if (Math.abs(deltaX) > gestureCommitDistance && Math.abs(deltaX) > deltaY * horizontalDominanceRatio) {
+          resetSwipeState();
+        }
+        return;
+      }
+
+      if (Math.abs(deltaX) < gestureCommitDistance || Math.abs(deltaX) < deltaY * horizontalDominanceRatio) {
+        return;
+      }
+
+      appState.sidebarGestureLocked = true;
+    }
+
+    appState.isSwiping = true;
+
+    const width = getSidebarWidth();
+    const rawProgress = appState.sidebarGestureMode === 'opening'
+      ? Math.max(0, deltaX) / width
+      : 1 + (Math.min(0, deltaX) / width);
+
+    setSidebarProgress(rawProgress, true);
+    e.preventDefault();
+  };
+
+  const handleTouchEnd = () => {
+    if (!appState.sidebarGestureMode) return;
+
+    if (!appState.isSwiping) {
+      resetSwipeState();
+      return;
+    }
+
+    const width = getSidebarWidth();
+    const deltaX = appState.touchMoveX - appState.touchStartX;
+    const finalProgress = appState.sidebarGestureMode === 'opening'
+      ? Math.max(0, deltaX) / width
+      : 1 + (Math.min(0, deltaX) / width);
+    const shouldOpen = appState.sidebarGestureMode === 'opening'
+      ? finalProgress > 0.24
+      : finalProgress > 0.5;
+
+    resetSwipeState();
+
+    if (shouldOpen) {
+      openSidebar();
+    } else {
+      closeSidebar();
+    }
+  };
+
+  [mainContent, mobileHeader, sidebar, overlay].forEach((element) => {
+    if (!element) return;
+    element.addEventListener('touchstart', handleTouchStart, { passive: true });
+    element.addEventListener('touchmove', handleTouchMove, { passive: false });
+    element.addEventListener('touchend', handleTouchEnd, { passive: true });
+    element.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+  });
 }
 
 function selectModel(value, displayName) {
@@ -10197,7 +12657,8 @@ class MobileKeyboardHandler {
   syncComposerMetrics() {
     if (!this.inputArea) return;
 
-    const composerHeight = Math.ceil(this.inputArea.getBoundingClientRect().height || 0);
+    const measurementTarget = this.inputArea.querySelector('.input-container, .input-wrapper') || this.inputArea;
+    const composerHeight = Math.ceil(measurementTarget.getBoundingClientRect().height || 0);
     if (composerHeight > 0) {
       this.root.style.setProperty('--composer-height', `${composerHeight}px`);
     }
@@ -10274,15 +12735,16 @@ class MobileKeyboardHandler {
     if (target.closest('input[type="range"], .reasoning-profile-slider, .thinking-budget-slider')) return false;
 
     return Boolean(
-      target.closest('.toolbar-btn, .send-btn, .stop-btn, .more-menu-item, .model-select-custom, .model-menu-item')
+      target.closest('.send-btn, .stop-btn')
     );
   }
 
   keepChatAnchored(force = false) {
-    if (!this.chatContainer) return;
+    const scrollElement = getChatScrollElement();
+    if (!scrollElement) return;
     if (appState?.userScrolledUp && !force) return;
 
-    this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+    scrollElement.scrollTop = scrollElement.scrollHeight;
   }
 
   restoreInputFocus() {
@@ -10639,6 +13101,48 @@ function initDragAndDrop() {
 // ==================== 对话索引导航器 ====================
 
 // 获取所有消息（包括用户和AI）
+function getChatScrollElement() {
+  const messagesList = document.getElementById('messagesList');
+  if (messagesList && messagesList.style.display !== 'none') {
+    return messagesList;
+  }
+
+  return document.getElementById('chatContainer');
+}
+
+function isPrimaryChatScrollTarget(target) {
+  return Boolean(
+    target &&
+    target instanceof Element &&
+    (target.id === 'messagesList' || target.id === 'chatContainer')
+  );
+}
+
+function getChatViewportAnchorOffset(scrollElement = getChatScrollElement()) {
+  if (!scrollElement) return 120;
+
+  return Math.min(
+    Math.max(scrollElement.clientHeight * 0.36, 120),
+    Math.max(scrollElement.clientHeight - 120, 120)
+  );
+}
+
+function getDisplayedChatIndex() {
+  const timeline = document.getElementById('chatIndexTimeline');
+  const activeLine = timeline?.querySelector('.chat-index-line.active');
+  const activeIndex = activeLine ? parseInt(activeLine.dataset.index, 10) : NaN;
+
+  if (!Number.isNaN(activeIndex)) {
+    return activeIndex;
+  }
+
+  if (Number.isInteger(chatIndexLastActiveIndex) && chatIndexLastActiveIndex >= 0) {
+    return chatIndexLastActiveIndex;
+  }
+
+  return getCurrentChatIndex();
+}
+
 function getChatIndexItems() {
   const items = [];
   const messages = appState.messages || [];
@@ -10710,7 +13214,7 @@ function renderChatIndexTimeline() {
     line.addEventListener('mouseleave', hideChatIndexTooltip);
     line.addEventListener('click', () => {
       // 立即更新高亮状态
-      setActiveIndexLine(idx);
+      setActiveIndexLine(idx, { timelineBehavior: 'smooth' });
       // 滚动到消息
       scrollToMessage(item.messageIndex);
     });
@@ -10719,22 +13223,63 @@ function renderChatIndexTimeline() {
   });
 
   // 更新当前高亮
-  updateChatIndexHighlight();
+  updateChatIndexHighlight({ forceTimelineSync: true });
 }
 
 // 立即设置指定索引为active
-function setActiveIndexLine(activeIdx) {
+let chatIndexLastActiveIndex = -1;
+let chatIndexHighlightRafId = null;
+let chatIndexListenerInitialized = false;
+
+function syncChatIndexTimelineToActive(activeIdx, behavior = 'auto') {
+  const timeline = document.getElementById('chatIndexTimeline');
+  if (!timeline) return;
+
+  const activeLine = timeline.querySelector(`.chat-index-line[data-index="${activeIdx}"]`);
+  if (!activeLine) return;
+
+  const lineCenter = activeLine.offsetTop + (activeLine.offsetHeight / 2);
+  const targetScrollTop = Math.max(0, lineCenter - (timeline.clientHeight / 2));
+  const distance = Math.abs(timeline.scrollTop - targetScrollTop);
+
+  if (distance < 2) return;
+
+  if (typeof timeline.scrollTo === 'function') {
+    timeline.scrollTo({
+      top: targetScrollTop,
+      behavior
+    });
+  } else {
+    timeline.scrollTop = targetScrollTop;
+  }
+}
+
+function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelineSync = false } = {}) {
   const timeline = document.getElementById('chatIndexTimeline');
   if (!timeline) return;
 
   const lines = timeline.querySelectorAll('.chat-index-line');
+  let hasActiveLine = false;
+
   lines.forEach((line, idx) => {
     if (idx === activeIdx) {
       line.classList.add('active');
+      hasActiveLine = true;
     } else {
       line.classList.remove('active');
     }
   });
+
+  if (!hasActiveLine) {
+    chatIndexLastActiveIndex = -1;
+    return;
+  }
+
+  if (forceTimelineSync || chatIndexLastActiveIndex !== activeIdx) {
+    syncChatIndexTimelineToActive(activeIdx, timelineBehavior);
+  }
+
+  chatIndexLastActiveIndex = activeIdx;
 }
 // 显示横线悬浮提示
 function showChatIndexTooltip(event, content) {
@@ -10802,7 +13347,7 @@ function navigateToResponse(direction) {
   const items = getChatIndexItems();
   if (items.length === 0) return;
 
-  const currentIndex = getCurrentChatIndex();
+  const currentIndex = getDisplayedChatIndex();
   let targetIndex;
 
   if (direction === 'prev') {
@@ -10822,11 +13367,16 @@ function navigateToResponse(direction) {
   }
 
   if (items[targetIndex]) {
+    setActiveIndexLine(targetIndex, { timelineBehavior: 'smooth' });
     scrollToMessage(items[targetIndex].messageIndex);
   }
 }
 
 // 显示已到顶/底提示
+window.showNavTooltip = showNavTooltip;
+window.hideNavTooltip = hideNavTooltip;
+window.navigateToResponse = navigateToResponse;
+
 function showBoundaryTooltip(position) {
   const tooltip = document.getElementById('chatIndexNavTooltip');
   if (!tooltip) return;
@@ -10857,22 +13407,35 @@ function showBoundaryTooltip(position) {
 // 滚动到指定消息
 function scrollToMessage(messageIndex) {
   const container = document.getElementById('messagesList');
-  const chatContainer = document.getElementById('chatContainer');
-  if (!container || !chatContainer) return;
+  const scrollElement = getChatScrollElement();
+  if (!container || !scrollElement) return;
 
   const messages = container.querySelectorAll('.message');
   const targetMessage = messages[messageIndex];
 
   if (targetMessage) {
-    // 滚动到消息位置
-    const containerRect = chatContainer.getBoundingClientRect();
+    appState.isProgrammaticScroll = true;
+    const scrollRect = scrollElement.getBoundingClientRect();
     const messageRect = targetMessage.getBoundingClientRect();
-    const scrollTop = chatContainer.scrollTop + messageRect.top - containerRect.top - 100;
+    const anchorOffset = getChatViewportAnchorOffset(scrollElement);
+    const targetScrollTop = scrollElement.scrollTop + (messageRect.top - scrollRect.top) - anchorOffset;
+    const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+    const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, Math.round(targetScrollTop)));
 
-    chatContainer.scrollTo({
-      top: scrollTop,
-      behavior: 'smooth'
-    });
+    if (typeof scrollElement.scrollTo === 'function') {
+      scrollElement.scrollTo({
+        top: clampedScrollTop,
+        behavior: 'smooth'
+      });
+    } else {
+      scrollElement.scrollTop = clampedScrollTop;
+    }
+
+    appState.lastScrollTop = clampedScrollTop;
+    window.setTimeout(() => {
+      appState.isProgrammaticScroll = false;
+      updateChatIndexHighlight({ forceTimelineSync: true });
+    }, 240);
 
     // 短暂高亮目标消息
     targetMessage.style.transition = 'background 0.3s ease';
@@ -10889,25 +13452,37 @@ function getCurrentChatIndex() {
   if (items.length === 0) return 0;
 
   const container = document.getElementById('messagesList');
-  const chatContainer = document.getElementById('chatContainer');
-  if (!container || !chatContainer) return 0;
+  const scrollElement = getChatScrollElement();
+  if (!container || !scrollElement) return 0;
 
   const messages = container.querySelectorAll('.message');
-  const containerRect = chatContainer.getBoundingClientRect();
-  const scrollTop = chatContainer.scrollTop;
+  const containerRect = scrollElement.getBoundingClientRect();
+  const viewportTop = containerRect.top;
+  const viewportBottom = containerRect.bottom;
+  const anchorY = viewportTop + getChatViewportAnchorOffset(scrollElement);
 
   let closestIndex = 0;
-  let closestDistance = Infinity;
+  let bestScore = -Infinity;
 
   items.forEach((item, idx) => {
     const message = messages[item.messageIndex];
     if (message) {
       const messageRect = message.getBoundingClientRect();
-      const messageTop = messageRect.top - containerRect.top + scrollTop;
-      const distance = Math.abs(scrollTop - messageTop + 100);
+      const visibleTop = Math.max(messageRect.top, viewportTop);
+      const visibleBottom = Math.min(messageRect.bottom, viewportBottom);
+      const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+      const containsAnchor = messageRect.top <= anchorY && messageRect.bottom >= anchorY;
+      const distanceToAnchor = containsAnchor
+        ? 0
+        : Math.min(Math.abs(messageRect.top - anchorY), Math.abs(messageRect.bottom - anchorY));
 
-      if (distance < closestDistance) {
-        closestDistance = distance;
+      // 优先当前可视焦点线命中的消息，其次选择可见面积更大的消息。
+      const score = (containsAnchor ? 100000 : 0) + (visibleHeight * 10) - distanceToAnchor;
+
+      const candidateScore = (containsAnchor ? 100000 : 0) + (visibleHeight * 10) - distanceToAnchor;
+
+      if (candidateScore > bestScore) {
+        bestScore = candidateScore;
         closestIndex = idx;
       }
     }
@@ -10917,29 +13492,20 @@ function getCurrentChatIndex() {
 }
 
 // 更新当前高亮
-function updateChatIndexHighlight() {
+function updateChatIndexHighlight({ forceTimelineSync = false, timelineBehavior = 'auto' } = {}) {
   const timeline = document.getElementById('chatIndexTimeline');
   if (!timeline) return;
 
   const currentIndex = getCurrentChatIndex();
-  const lines = timeline.querySelectorAll('.chat-index-line');
-
-  lines.forEach((line, idx) => {
-    if (idx === currentIndex) {
-      line.classList.add('active');
-    } else {
-      line.classList.remove('active');
-    }
-  });
+  setActiveIndexLine(currentIndex, { timelineBehavior, forceTimelineSync });
 
   // 更新按钮状态
-  updateChatIndexNavButtons();
+  updateChatIndexNavButtons(currentIndex);
 }
 
 // 更新导航按钮状态
-function updateChatIndexNavButtons() {
+function updateChatIndexNavButtons(currentIndex = getCurrentChatIndex()) {
   const items = getChatIndexItems();
-  const currentIndex = getCurrentChatIndex();
 
   const prevBtn = document.getElementById('chatIndexPrevBtn');
   const nextBtn = document.getElementById('chatIndexNextBtn');
@@ -10954,23 +13520,35 @@ function updateChatIndexNavButtons() {
 
 // 初始化对话索引导航器滚动监听
 function initChatIndexListener() {
-  const chatContainer = document.getElementById('chatContainer');
-  if (!chatContainer) return;
+  if (chatIndexListenerInitialized) return;
 
-  let scrollTimeout;
-  chatContainer.addEventListener('scroll', () => {
+  const chatContainer = document.getElementById('chatContainer');
+  const messagesList = document.getElementById('messagesList');
+  if (!chatContainer && !messagesList) return;
+
+  chatIndexListenerInitialized = true;
+  const handleIndexScroll = (event) => {
+    if (event && !isPrimaryChatScrollTarget(event.target)) return;
     // 节流处理
-    if (scrollTimeout) clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
+    if (chatIndexHighlightRafId) return;
+    chatIndexHighlightRafId = requestAnimationFrame(() => {
+      chatIndexHighlightRafId = null;
       updateChatIndexHighlight();
-    }, 100);
-  }, { passive: true });
+    });
+  };
 
   // 初始化移动端滑动操作
+  document.addEventListener('scroll', handleIndexScroll, { passive: true, capture: true });
+
   initMobileTouchNavigation();
+  updateChatIndexHighlight({ forceTimelineSync: true });
 
   console.log(' 对话索引导航器滚动监听器已初始化');
 }
+
+window.addEventListener('resize', repositionComposerMenus);
+window.addEventListener('orientationchange', repositionComposerMenus);
+window.visualViewport?.addEventListener('resize', repositionComposerMenus);
 
 // 移动端触摸滑动导航
 function initMobileTouchNavigation() {
@@ -11058,7 +13636,7 @@ function initMobileTouchNavigation() {
       const messageIndex = parseInt(currentTouchLine.dataset.messageIndex);
       const idx = parseInt(currentTouchLine.dataset.index);
       if (!isNaN(messageIndex) && !isNaN(idx)) {
-        setActiveIndexLine(idx);
+        setActiveIndexLine(idx, { timelineBehavior: 'smooth' });
         scrollToMessage(messageIndex);
       }
     }
@@ -11108,6 +13686,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // 用户会员状态
 let userMembershipState = {
   membership: 'free',
+  membershipEnd: null,
   points: 0,
   purchasedPoints: 0,
   totalPoints: 0,
@@ -11116,8 +13695,19 @@ let userMembershipState = {
   poeDailyLimit: 3,
   poeUsedToday: 0,
   poeRemaining: 3,
-  poeResetAt: null
+  poeResetAt: null,
+  gpt55DailyLimit: 10,
+  gpt55UsedToday: 0,
+  gpt55Remaining: 10,
+  gpt55ResetAt: null
 };
+
+const MEMBERSHIP_REDEEM_OPTIONS = {
+  Pro: { pointsCost: 600, durationDays: 30 },
+  MAX: { pointsCost: 6000, durationDays: 30 }
+};
+
+let membershipRedeemPendingTier = null;
 
 let membershipModelPolicyInitialized = false;
 
@@ -11125,7 +13715,7 @@ function applyMembershipModelPolicy({ initial = false, previousMembership = null
   const currentMembership = String(userMembershipState?.membership || 'free');
   const prev = previousMembership ? String(previousMembership) : null;
 
-  // free 用户：默认智能模型（仅首次或从付费降级时强制）
+  // free 用户：默认智能模型（仅首次或从非 free 降级时强制）
   if (currentMembership === 'free') {
     if (initial || (prev && prev !== 'free') || !membershipModelPolicyInitialized) {
       appState.selectedModel = 'auto';
@@ -11173,13 +13763,27 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
         poeDailyLimit: Number(data.poeDailyLimit || 3),
         poeUsedToday: Number(data.poeUsedToday || 0),
         poeRemaining: Number(data.poeRemaining || 0),
-        poeResetAt: data.poeResetAt || null
+        poeResetAt: data.poeResetAt || null,
+        gpt55DailyLimit: Number(data.gpt55DailyLimit || 10),
+        gpt55UsedToday: Number(data.gpt55UsedToday || 0),
+        gpt55Remaining: Number(data.gpt55Remaining || 0),
+        gpt55ResetAt: data.gpt55ResetAt || null
       };
       console.log(' 会员状态更新:', userMembershipState);
+      if (isMembershipLockedModel(appState.selectedModel)) {
+        appState.selectedModel = 'auto';
+        updateSelectedModelText('auto');
+        updateModelControls();
+      }
+      if (isMembershipLockedModel(chatFlowState?.selectedModel)) {
+        chatFlowState.selectedModel = 'auto';
+        updateChatFlowControlStates();
+      }
       if (applyPolicy) {
         applyMembershipModelPolicy({ initial, previousMembership });
       }
       updatePoeQuotaHint();
+      updateMenuSelection();
       updateToolbarUI();
     }
   } catch (e) {
@@ -11214,6 +13818,7 @@ async function userCheckin() {
       await fetchUserMembership();
       updateSettingsMembership();
       updateUserAreaWithMembership();
+      refreshMembershipPlansModal();
     } else {
       alert(data.error || '签到失败');
     }
@@ -11223,9 +13828,233 @@ async function userCheckin() {
   }
 }
 
+function formatMembershipPoints(points) {
+  const locale = appState.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  return Number(points || 0).toLocaleString(locale);
+}
+
+function isMembershipTierActive(tier) {
+  const currentTier = String(userMembershipState.membership || 'free');
+  if (currentTier !== tier) return false;
+
+  if (!userMembershipState.membershipEnd) {
+    return currentTier !== 'free';
+  }
+
+  const endDate = new Date(userMembershipState.membershipEnd);
+  return !Number.isNaN(endDate.getTime()) && endDate > new Date();
+}
+
+function getMembershipExpiryText() {
+  if (!userMembershipState.membershipEnd) return '';
+
+  const endDate = new Date(userMembershipState.membershipEnd);
+  if (Number.isNaN(endDate.getTime())) return '';
+
+  const locale = appState.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  const prefix = appState.language === 'zh-CN' ? '当前到期' : 'Current expiry';
+  return `${prefix}: ${endDate.toLocaleDateString(locale)}`;
+}
+
+function getMembershipPlanFeatures(tier) {
+  const isZh = appState.language === 'zh-CN';
+  if (tier === 'Pro') {
+    return isZh
+      ? ['优先使用点数兑换会员', '支持续期或升级 MAX', '适合日常高频使用']
+      : ['Priority points redemption tier', 'Can renew or upgrade to MAX', 'For frequent everyday use'];
+  }
+
+  return isZh
+    ? ['更高档位会员权益', '适合重度使用场景', '支持直接续期']
+    : ['Higher-tier membership access', 'For heavy usage scenarios', 'Supports direct renewal'];
+}
+
+function getMembershipActionState(tier) {
+  const isZh = appState.language === 'zh-CN';
+  const option = MEMBERSHIP_REDEEM_OPTIONS[tier];
+  const currentTier = String(userMembershipState.membership || 'free');
+  const activeCurrentTier = currentTier !== 'free' && isMembershipTierActive(currentTier);
+  const hasEnoughPoints = Number(userMembershipState.totalPoints || 0) >= option.pointsCost;
+  const insufficientLabel = isZh ? '点数不足' : 'Not enough points';
+
+  if (currentTier === 'MAX' && tier === 'Pro' && activeCurrentTier) {
+    return {
+      disabled: true,
+      label: isZh ? '当前为更高档位' : 'Higher tier active'
+    };
+  }
+
+  if (currentTier === tier && activeCurrentTier) {
+    return {
+      disabled: !hasEnoughPoints,
+      label: hasEnoughPoints
+        ? (isZh ? `续期 ${option.durationDays} 天` : `Renew ${option.durationDays} days`)
+        : insufficientLabel
+    };
+  }
+
+  if (currentTier === 'Pro' && tier === 'MAX' && activeCurrentTier) {
+    return {
+      disabled: !hasEnoughPoints,
+      label: hasEnoughPoints
+        ? (isZh ? `升级并延长 ${option.durationDays} 天` : `Upgrade + ${option.durationDays} days`)
+        : insufficientLabel
+    };
+  }
+
+  return {
+    disabled: !hasEnoughPoints,
+    label: hasEnoughPoints
+      ? (isZh ? `${formatMembershipPoints(option.pointsCost)} 点兑换` : `Redeem for ${formatMembershipPoints(option.pointsCost)} points`)
+      : insufficientLabel
+  };
+}
+
+function renderMembershipPlanCard(tier) {
+  const option = MEMBERSHIP_REDEEM_OPTIONS[tier];
+  const action = getMembershipActionState(tier);
+  const features = getMembershipPlanFeatures(tier);
+  const isCurrent = isMembershipTierActive(tier);
+  const isPending = membershipRedeemPendingTier === tier;
+  const isZh = appState.language === 'zh-CN';
+  const subline = isZh
+    ? `${formatMembershipPoints(option.pointsCost)} 点 / ${option.durationDays} 天`
+    : `${formatMembershipPoints(option.pointsCost)} points / ${option.durationDays} days`;
+
+  return `
+    <div class="membership-plan-card ${tier.toLowerCase()} ${isCurrent ? 'current' : ''}">
+      <div class="membership-plan-name">${tier}</div>
+      <div class="membership-plan-price membership-plan-price-points">${formatMembershipPoints(option.pointsCost)} ${isZh ? '点' : 'pts'}</div>
+      <div class="membership-plan-points">${subline}</div>
+      <div class="membership-plan-features">
+        ${features.join('<br>')}
+      </div>
+      <button
+        class="membership-plan-action"
+        onclick="redeemMembership('${tier}')"
+        ${action.disabled || isPending ? 'disabled' : ''}
+      >
+        ${isPending
+          ? (isZh ? '处理中...' : 'Processing...')
+          : action.label}
+      </button>
+    </div>
+  `;
+}
+
+function renderMembershipPlansModalContent() {
+  const isZh = appState.language === 'zh-CN';
+  const currentPointsLabel = isZh ? '当前点数' : 'Current points';
+  const currentTierLabel = isZh ? '当前会员' : 'Current tier';
+  const expiryText = getMembershipExpiryText();
+
+  return `
+    <div class="membership-plans-box">
+      <div class="membership-plans-header">
+        <h2>${isZh ? '点数兑换会员' : 'Redeem Membership with Points'}</h2>
+        <button class="admin-close-btn" onclick="closeMembershipPlans()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="membership-plans-content">
+        <div class="membership-plans-grid">
+          <div class="membership-plan-card free ${String(userMembershipState.membership || 'free') === 'free' ? 'current' : ''}">
+            <div class="membership-plan-name">free</div>
+            <div class="membership-plan-price">${isZh ? '每日签到' : 'Daily check-in'}</div>
+            <div class="membership-plan-points">${isZh ? '每日签到 +20 点数' : 'Daily check-in +20 points'}</div>
+            <div class="membership-plan-features">
+              ${isZh
+                ? '点数长期累积<br>可兑换 Pro 或 MAX'
+                : 'Points accumulate over time<br>Can redeem Pro or MAX'}
+            </div>
+          </div>
+          ${renderMembershipPlanCard('Pro')}
+          ${renderMembershipPlanCard('MAX')}
+        </div>
+
+        <div class="membership-divider"></div>
+
+        <div class="membership-extra-section">
+          <h3>${isZh ? '点数与会员说明' : 'Points and Membership'}</h3>
+          <p>${currentPointsLabel}: <strong>${formatMembershipPoints(userMembershipState.totalPoints)}</strong></p>
+          <p class="membership-status-note">${currentTierLabel}: ${String(userMembershipState.membership || 'free')}</p>
+          ${expiryText ? `<p class="membership-status-note">${expiryText}</p>` : ''}
+        </div>
+
+        <div class="membership-contact">
+          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:rick080402@gmail.com">rick080402@gmail.com</a></p>
+          <p class="membership-status-note">${isZh ? '如遇点数、签到或会员状态问题，可通过邮箱联系。' : 'If you run into points, check-in, or membership issues, contact us by email.'}</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function refreshMembershipPlansModal() {
+  const modal = document.getElementById('membershipPlansModal');
+  if (!modal) return;
+  modal.innerHTML = renderMembershipPlansModalContent();
+}
+
+async function redeemMembership(tier) {
+  if (membershipRedeemPendingTier) return;
+
+  const token = appState.token;
+  if (!token) {
+    showToast(appState.language === 'zh-CN' ? '请先登录' : 'Please log in first');
+    return;
+  }
+
+  const option = MEMBERSHIP_REDEEM_OPTIONS[tier];
+  if (!option) return;
+
+  const wasActiveTier = isMembershipTierActive(tier);
+  membershipRedeemPendingTier = tier;
+  refreshMembershipPlansModal();
+
+  try {
+    const res = await fetch('/api/user/membership/redeem', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ tier })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || (appState.language === 'zh-CN' ? '兑换失败' : 'Redeem failed'));
+      return;
+    }
+
+    await fetchUserMembership({ applyPolicy: true });
+    updateUserAreaWithMembership();
+    updateSettingsMembership();
+    refreshMembershipPlansModal();
+
+    const successMessage = wasActiveTier
+      ? (appState.language === 'zh-CN'
+        ? `已续期 ${tier} ${option.durationDays} 天`
+        : `${tier} renewed for ${option.durationDays} days`)
+      : (appState.language === 'zh-CN'
+        ? `兑换成功，已开通 ${tier}`
+        : `${tier} activated successfully`);
+    showToast(successMessage);
+  } catch (error) {
+    showToast(appState.language === 'zh-CN' ? '网络错误' : 'Network error');
+  } finally {
+    membershipRedeemPendingTier = null;
+    refreshMembershipPlansModal();
+  }
+}
+
 // 打开会员计划弹窗
 function openMembershipPlans() {
   createMembershipPlansModal();
+  refreshMembershipPlansModal();
   document.getElementById('membershipPlansModal').classList.add('active');
 }
 
@@ -11242,69 +14071,13 @@ function createMembershipPlansModal() {
   const modal = document.createElement('div');
   modal.id = 'membershipPlansModal';
   modal.className = 'membership-plans-overlay';
-  modal.innerHTML = `
-        <div class="membership-plans-box">
-          <div class="membership-plans-header">
-            <h2> 会员计划</h2>
-            <button class="admin-close-btn" onclick="closeMembershipPlans()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          </div>
-          <div class="membership-plans-content">
-            <div class="membership-plans-grid">
-              <div class="membership-plan-card free ${userMembershipState.membership === 'free' ? 'current' : ''}">
-                <div class="membership-plan-name">free</div>
-                <div class="membership-plan-price">免费</div>
-                <div class="membership-plan-points">每日签到获得 20 点数</div>
-                <div class="membership-plan-features">
-                  默认用户套餐<br>
-                  点数长期有效
-                </div>
-              </div>
-              <div class="membership-plan-card pro ${userMembershipState.membership === 'Pro' ? 'current' : ''}">
-                <div class="membership-plan-name">Pro</div>
-                <div class="membership-plan-price">¥15 <small>/月</small></div>
-                <div class="membership-plan-points">每日自动获得 90 点数</div>
-                <div class="membership-plan-features">
-                  基础套餐<br>
-                  无需签到
-                </div>
-              </div>
-              <div class="membership-plan-card max ${userMembershipState.membership === 'MAX' ? 'current' : ''}">
-                <div class="membership-plan-name">MAX</div>
-                <div class="membership-plan-price">¥199 <small>/月</small></div>
-                <div class="membership-plan-points">每日自动获得 10000 点数</div>
-                <div class="membership-plan-features">
-                  顶级套餐<br>
-                  无限推理使用限额<br>
-                  无限文件上传<br>
-                  最高使用额度
-                </div>
-              </div>
-            </div>
-
-            <div class="membership-divider"></div>
-
-            <div class="membership-extra-section">
-              <h3> 按需享用</h3>
-              <p>单独捐赠获取点数，购买的点数 2 年有效。</p>
-            </div>
-
-            <div class="membership-contact">
-              <p> 购买请联系: <a href="mailto:rick080402@gmail.com">rick080402@gmail.com</a></p>
-              <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 8px;">目前购买需要通过邮箱联系</p>
-            </div>
-          </div>
-        </div>
-      `;
   document.body.appendChild(modal);
 
-  // 点击背景关闭
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeMembershipPlans();
   });
+
+  refreshMembershipPlansModal();
 }
 
 // 更新侧边栏用户区域 - 简化版，只显示签到按钮
@@ -11314,8 +14087,8 @@ function updateUserAreaWithMembership() {
 
   const m = userMembershipState;
 
-  // 只有free用户且可以签到时才显示签到按钮
-  if (m.membership === 'free' && m.canCheckin) {
+  // 任何用户只要当天还没签到，都显示签到按钮
+  if (m.canCheckin) {
     checkinContainer.style.display = 'block';
     checkinContainer.innerHTML = `
           <button onclick="sidebarCheckin()" style="
@@ -11336,7 +14109,7 @@ function updateUserAreaWithMembership() {
           </button>
         `;
   } else {
-    // 隐藏签到容器（已签到或非free用户）
+    // 隐藏签到容器（当天已签到）
     checkinContainer.style.display = 'none';
     checkinContainer.innerHTML = '';
   }
@@ -11364,18 +14137,10 @@ async function sidebarCheckin() {
     console.log(' 响应数据:', data);
 
     if (res.ok) {
-      // 更新状态
-      userMembershipState.canCheckin = false;
-      userMembershipState.totalPoints = data.currentPoints;
-
-      // 隐藏签到按钮
-      const checkinContainer = document.getElementById('sidebarCheckinContainer');
-      if (checkinContainer) {
-        checkinContainer.style.display = 'none';
-      }
-
-      // 也更新设置面板中的状态
+      await fetchUserMembership();
+      updateUserAreaWithMembership();
       updateSettingsMembership();
+      refreshMembershipPlansModal();
 
       // 显示成功提示
       const successTpl = i18nText('checkin-success', '签到成功！获得 {points} 点数 ');
@@ -11406,9 +14171,8 @@ function updateSettingsMembership() {
   // 更新签到按钮
   const checkinBtn = document.getElementById('settingsCheckinBtn');
   if (checkinBtn) {
-    if (m.membership !== 'free') {
-      checkinBtn.style.display = 'none';
-    } else if (!m.canCheckin) {
+    if (!m.canCheckin) {
+      checkinBtn.style.display = 'inline-block';
       checkinBtn.disabled = true;
       checkinBtn.textContent = i18nText('checkin-done', '今日已签到 ✓');
     } else {
@@ -11426,11 +14190,13 @@ function updateSettingsMembership() {
     created.textContent = `${i18nText('created-at-prefix', '创建于')}: ${date.toLocaleDateString(locale)}`;
   }
 
-  // 隐藏升级链接（非free用户）
+  // 升级/续期入口始终可见，方便续期和升级
   const upgradeLink = document.querySelector('#settingsMembershipSection .settings-upgrade-link');
   if (upgradeLink) {
-    upgradeLink.style.display = m.membership === 'free' ? 'inline' : 'none';
+    upgradeLink.style.display = 'inline';
   }
+
+  refreshMembershipPlansModal();
 }
 
 // 每60秒刷新一次会员状态
@@ -11613,6 +14379,10 @@ function createAdminPanel() {
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
               <span>消息浏览</span>
             </button>
+            <button class="admin-tab" data-tab="feedback" onclick="switchAdminTab('feedback')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 8h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2c0-1.1-.9-2-2-2zM1 9h4v12H1z"/></svg>
+              <span>用户反馈</span>
+            </button>
             <button class="admin-tab" data-tab="sessions" onclick="switchAdminTab('sessions')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
               <span>会话管理</span>
@@ -11655,6 +14425,19 @@ function createAdminPanel() {
               <div id="adminMessagesTable" class="admin-table-container"></div>
             </div>
 
+            <div id="adminFeedbackTab" class="admin-tab-content">
+              <div class="admin-search-bar admin-feedback-filters">
+                <select id="adminFeedbackRating" onchange="loadAdminFeedback()">
+                  <option value="">全部反馈</option>
+                  <option value="up">点赞</option>
+                  <option value="down">倒赞</option>
+                </select>
+                <input type="text" id="adminFeedbackSearch" placeholder="搜索反馈/回复/用户..." onkeyup="if(event.key==='Enter')loadAdminFeedback()">
+                <button onclick="loadAdminFeedback()">搜索</button>
+              </div>
+              <div id="adminFeedbackTable" class="admin-table-container"></div>
+            </div>
+
             <div id="adminSessionsTab" class="admin-tab-content">
               <div id="adminSessionsTable" class="admin-table-container"></div>
             </div>
@@ -11682,6 +14465,7 @@ function switchAdminTab(tab) {
   if (tab === 'stats') loadAdminStats();
   else if (tab === 'users') loadAdminUsers();
   else if (tab === 'messages') loadAdminMessages();
+  else if (tab === 'feedback') loadAdminFeedback();
   else if (tab === 'sessions') loadAdminSessions();
 }
 
@@ -11791,7 +14575,7 @@ function renderModelChart(modelUsage) {
             <div class="admin-model-bar-bg">
               <div class="admin-model-bar" style="width: ${percent}%; background: ${color}"></div>
             </div>
-            <span class="admin-model-name">${model.model || '未知'}</span>
+            <span class="admin-model-name">${escapeHtml(model.model || '未知')}</span>
             <span class="admin-model-count">${model.count} (${percent}%)</span>
           </div>
         `;
@@ -11815,7 +14599,7 @@ function renderTopUsersChart(topUsers) {
     html += `
           <div class="admin-top-user-item">
             <span class="admin-top-user-rank">#${i + 1}</span>
-            <span class="admin-top-user-name">${user.username || user.email || 'User ' + user.id}</span>
+            <span class="admin-top-user-name">${escapeHtml(user.username || user.email || 'User ' + user.id)}</span>
             <div class="admin-top-user-bar-bg">
               <div class="admin-top-user-bar" style="width: ${width}%"></div>
             </div>
@@ -11857,8 +14641,8 @@ async function loadAdminUsers() {
       html += `
             <tr onclick="openUserDetailModal(${user.id})" style="cursor:pointer" title="点击查看用户详情">
               <td>${user.id}</td>
-              <td>${user.email}</td>
-              <td>${user.username || '-'}</td>
+              <td>${escapeHtml(user.email || '-')}</td>
+              <td>${escapeHtml(user.username || '-')}</td>
               <td>${membershipBadge}</td>
               <td>${totalPoints} </td>
               <td>${user.messageCount || 0}</td>
@@ -11976,7 +14760,7 @@ async function viewUserMessages(userId) {
               <td>${msg.id}</td>
               <td>${msg.role === 'user' ? ' 用户' : ' AI'}</td>
               <td class="admin-msg-content">${escapeHtml(content)}</td>
-              <td>${msg.model || '-'}</td>
+              <td>${escapeHtml(msg.model || '-')}</td>
               <td>${formatDate(msg.created_at)}</td>
             </tr>
           `;
@@ -12039,10 +14823,10 @@ async function loadAdminMessages() {
       html += `
             <tr>
               <td>${msg.id}</td>
-              <td>${msg.username || msg.email || '-'}</td>
+              <td>${escapeHtml(msg.username || msg.email || '-')}</td>
               <td>${msg.role === 'user' ? '' : ''}</td>
               <td class="admin-msg-content">${escapeHtml(content)}</td>
-              <td>${msg.model || '-'}</td>
+              <td>${escapeHtml(msg.model || '-')}</td>
               <td>${formatDate(msg.created_at)}</td>
               <td><button class="admin-action-btn delete" onclick="deleteMessage(${msg.id})">删除</button></td>
             </tr>
@@ -12058,6 +14842,76 @@ async function loadAdminMessages() {
 }
 
 // 删除消息
+async function loadAdminFeedback() {
+  const rating = document.getElementById('adminFeedbackRating')?.value || '';
+  const search = document.getElementById('adminFeedbackSearch')?.value || '';
+  const table = document.getElementById('adminFeedbackTable');
+  if (!table) return;
+
+  try {
+    table.innerHTML = '<div class="admin-loading">加载反馈中...</div>';
+    const params = new URLSearchParams();
+    if (rating) params.set('rating', rating);
+    if (search) params.set('search', search);
+    const res = await fetch(`/api/admin/feedback?${params.toString()}`, {
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    const rows = data.feedback || [];
+    if (!rows.length) {
+      table.innerHTML = '<div class="admin-empty-state">暂无用户反馈</div>';
+      return;
+    }
+
+    let html = `
+      <table class="admin-table admin-feedback-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>类型</th>
+            <th>用户</th>
+            <th>反馈</th>
+            <th>AI回复</th>
+            <th>会话</th>
+            <th>模型</th>
+            <th>时间</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    rows.forEach((item) => {
+      const isPositive = item.rating === 'up';
+      const comment = item.comment || '-';
+      const messageContent = item.message_content || '';
+      const messagePreview = messageContent.substring(0, 180) + (messageContent.length > 180 ? '...' : '');
+      html += `
+        <tr>
+          <td>${item.id}</td>
+          <td><span class="feedback-rating-badge ${isPositive ? 'positive' : 'negative'}">${isPositive ? '点赞' : '倒赞'}</span></td>
+          <td>${escapeHtml(item.username || item.user_email || `#${item.user_id}`)}</td>
+          <td class="admin-feedback-comment">${escapeHtml(comment)}</td>
+          <td class="admin-msg-content">${escapeHtml(messagePreview)}</td>
+          <td class="admin-session-id" title="${escapeHtml(item.session_id || '')}">${escapeHtml(item.session_title || item.session_id || '-')}</td>
+          <td>${escapeHtml(item.message_model || '-')}</td>
+          <td>${formatDate(item.updated_at || item.created_at)}</td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+    table.innerHTML = html;
+  } catch (err) {
+    console.error('加载用户反馈失败:', err);
+    table.innerHTML = `<div class="admin-error">加载反馈失败：${escapeHtml(err.message || 'unknown')}</div>`;
+  }
+}
+
 async function deleteMessage(messageId) {
   if (!confirm('确定要删除这条消息吗？')) return;
 
@@ -12102,9 +14956,9 @@ async function loadAdminSessions() {
       html += `
             <tr>
               <td class="admin-session-id">${session.id.substring(0, 15)}...</td>
-              <td>${session.username || session.email || '-'}</td>
+              <td>${escapeHtml(session.username || session.email || '-')}</td>
               <td>${escapeHtml(session.title || '新对话')}</td>
-              <td>${session.model || '-'}</td>
+              <td>${escapeHtml(session.model || '-')}</td>
               <td>${session.messageCount || 0}</td>
               <td>${formatDate(session.updated_at)}</td>
               <td><button class="admin-action-btn delete" onclick="deleteAdminSession('${session.id}')">删除</button></td>
@@ -12210,7 +15064,7 @@ async function openUserDetailModal(userId) {
   } catch (err) {
     console.error(' 获取用户详情失败:', err);
     modal.querySelector('.user-detail-body').innerHTML = `
-      <div class="user-detail-error"> ${err.message}</div>
+      <div class="user-detail-error"> ${escapeHtml(err.message || '')}</div>
     `;
   }
 }
@@ -12235,11 +15089,11 @@ function renderUserDetail(user, sessions) {
           </div>
           <div class="user-info-item">
             <span class="label">邮箱</span>
-            <span class="value">${user.email}</span>
+            <span class="value">${escapeHtml(user.email || '-')}</span>
           </div>
           <div class="user-info-item">
             <span class="label">用户名</span>
-            <span class="value">${user.username || '未设置'}</span>
+            <span class="value">${escapeHtml(user.username || '未设置')}</span>
           </div>
           <div class="user-info-item">
             <span class="label">会员等级</span>
@@ -12329,8 +15183,43 @@ async function loadSessionMessages(sessionId) {
     renderSessionMessages(data.session, data.messages, data.totalCount);
   } catch (err) {
     console.error(' 获取会话消息失败:', err);
-    messagesArea.innerHTML = `<div class="ud-messages-error"> ${err.message}</div>`;
+    messagesArea.innerHTML = `<div class="ud-messages-error"> ${escapeHtml(err.message || '')}</div>`;
   }
+}
+
+function formatAdminPromptTimeDetails(processTrace) {
+  if (!processTrace || processTrace === 'null') return '';
+
+  let parsedTrace = processTrace;
+  if (typeof parsedTrace === 'string') {
+    try {
+      parsedTrace = JSON.parse(parsedTrace);
+    } catch (error) {
+      return '';
+    }
+  }
+
+  const promptContext = parsedTrace?.prompt_context || parsedTrace?.promptContext || null;
+  const requestTimeContext = promptContext?.requestTimeContext || null;
+  if (!requestTimeContext?.datetime) return '';
+
+  const detailLines = [
+    `datetime: ${requestTimeContext.datetime}`,
+    `timezone: ${requestTimeContext.timezone || 'unknown'}`,
+    `timeOfDay: ${requestTimeContext.timeOfDay || 'unknown'}`,
+    `locale: ${requestTimeContext.locale || 'unknown'}`
+  ];
+
+  if (promptContext?.injectedAt) {
+    detailLines.push(`injectedAt: ${promptContext.injectedAt}`);
+  }
+
+  return `
+    <details class="ud-message-reasoning">
+      <summary>Prompt 时间注入</summary>
+      <pre>${escapeHtml(detailLines.join('\n'))}</pre>
+    </details>
+  `;
 }
 
 // 渲染会话消息
@@ -12363,7 +15252,7 @@ function renderSessionMessages(session, messages, totalCount) {
         <div class="ud-message-header">
           <span class="ud-message-role">${roleLabel}</span>
           <span class="ud-message-time">${formatDate(msg.created_at)}</span>
-          ${msg.model ? `<span class="ud-message-model">${msg.model}</span>` : ''}
+          ${msg.model ? `<span class="ud-message-model">${escapeHtml(msg.model)}</span>` : ''}
         </div>
         <div class="ud-message-content" onclick="this.classList.toggle('expanded')">
           <pre>${escapeHtml(content)}</pre>
@@ -12374,6 +15263,7 @@ function renderSessionMessages(session, messages, totalCount) {
             <pre>${escapeHtml(msg.reasoning_content)}</pre>
           </details>
         ` : ''}
+        ${formatAdminPromptTimeDetails(msg.process_trace)}
       </div>
     `;
   });
