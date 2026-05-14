@@ -4,13 +4,13 @@
 
 ### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
 
-[![Version](https://img.shields.io/badge/Version-0.85+-F59E0B?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.10.7-F59E0B?style=flat-square)]()
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![License](https://img.shields.io/badge/License-Personal_Free-F59E0B?style=flat-square)](#-授权与商用)
 
-**RAI v0.85+** 全新 **Chat Flow 思维流** 功能，将对话与可视化画布结合，构建思维图谱！
+**RAI v0.10.7** 保留 **Chat Flow 思维流**，并补齐 ZTX6D 登录、NewAPI GPT-5.5、模型故障自动降级和 Mermaid 实时图表渲染修复。
 
 ## 官网：rai.rick.quest  
 
@@ -20,7 +20,25 @@
 
 ---
 
-# 最新更新内容
+# 最新更新内容  
+
+## 2026年5月14日 RAI v0.10.7 在线修复
+
+- **ZTX6D 登录**: 新增服务端 SSO 登录与老用户绑定入口，`appkey` 仅在服务端环境变量中使用，前端只接收 RAI 自己签发的 JWT。
+- **NewAPI GPT-5.5**: 接入 OpenAI-compatible NewAPI 通道，模型名 `gpt-5.5`，Base URL 默认 `https://api.18363221.xyz/v1/chat/completions`，前端显示为 **GPT-5.5**。
+- **限免与降级路由**: GPT-5.5 对 free 用户每日 10 次；模型调用失败时按 `GPT-OSS-120B -> Gemma -> Qwen2.5-7B` 顺序自动 fallback，避免单一上游故障直接中断聊天。
+- **Mermaid 实时图表**: 修复流式输出中统计图、饼图、流程图与 Markdown/KaTeX/code block 的冲突；`xychart-beta` 会自动修复常见未加引号语法，最终重渲染保持图表稳定显示。
+- **Grok/Gemma/Claude 路由**: 保留 Grok 4.2 限免、Gemma 官方/relay/备用路由和 Claude relay 兼容逻辑，主 VPS 不直接暴露上游私钥。
+
+## 2026年3月15日模型与财务模式更新
+
+- **智能模型更新**: `auto / 智能模型` 默认走 **Kimi K2.5**，免费回退模型为 **Qwen2.5-7B**
+- **Agent 文案更新**: 原 Agent 模式现显示为 **4倍速深度研究 / Research Turbo (4x)**
+- **新增财务模式**: 首页欢迎动作卡片中的“搜索 / Search”已替换为“财务 / Finance”
+- **Yahoo Finance 服务端代理**: 新增 `/api/quote/:symbol` 与 AI 工具 `finance_quote`，用于证券代码、价格、涨跌幅、区间走势与历史 K 线场景
+- **GitHub 同步规则修正**: README 以 GitHub 历史版本为基线维护，不再默认使用本地旧版 README 覆盖
+
+## 2026年2月27日大幅优化首字延时支持多轮工具调用  
 
 ## 🎨 Chat Flow 思维流 (v0.85+ 重磅新增)
 
