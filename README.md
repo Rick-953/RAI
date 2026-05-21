@@ -25,7 +25,7 @@
 ## 2026年5月14日 RAI v0.10.7 在线修复
 
 - **ZTX6D 登录**: 新增服务端 SSO 登录与老用户绑定入口，`appkey` 仅在服务端环境变量中使用，前端只接收 RAI 自己签发的 JWT。
-- **NewAPI GPT-5.5**: 接入 OpenAI-compatible NewAPI 通道，模型名 `gpt-5.5`，Base URL 默认 `https://api.18363221.xyz/v1/chat/completions`，前端显示为 **GPT-5.5**。
+- **GPT-5.5**: 接入全球最贵个人可购大模型。
 - **限免与降级路由**: GPT-5.5 对 free 用户每日 10 次；模型调用失败时按 `GPT-OSS-120B -> Gemma -> Qwen2.5-7B` 顺序自动 fallback，避免单一上游故障直接中断聊天。
 - **Mermaid 实时图表**: 修复流式输出中统计图、饼图、流程图与 Markdown/KaTeX/code block 的冲突；`xychart-beta` 会自动修复常见未加引号语法，最终重渲染保持图表稳定显示。
 - **Grok/Gemma/Claude 路由**: 保留 Grok 4.2 限免、Gemma 官方/relay/备用路由和 Claude relay 兼容逻辑，主 VPS 不直接暴露上游私钥。
