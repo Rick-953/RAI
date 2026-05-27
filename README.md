@@ -22,6 +22,20 @@
 
 # 最新更新内容  
 
+## 2026年5月14日 RAI v0.10.9.7
+新设置UI UX风格
+<img width="1234" height="850" alt="image" src="https://github.com/user-attachments/assets/3a4366e1-f46a-4db8-b96c-68970e4e6b71" />
+新用户引导 可以在设置 关于界面重看
+<img width="1248" height="900" alt="image" src="https://github.com/user-attachments/assets/14f0f928-d993-4cd0-aae7-9f1e7846145c" />
+<img width="1111" height="850" alt="image" src="https://github.com/user-attachments/assets/9e5212de-669e-49c1-b1f8-6d1cd2de68d4" />
+<img width="1078" height="850" alt="image" src="https://github.com/user-attachments/assets/97724c28-d0fd-4d0b-8920-06c5cec66768" />
+ai可以询问用户（新内置工具）
+<img width="606" height="828" alt="image" src="https://github.com/user-attachments/assets/43e7a75b-fd9b-416e-afb3-1ab7d481f2df" />
+
+
+
+
+
 ## 2026年5月14日 RAI v0.10.7 在线修复
 
 - **ZTX6D 登录**: 新增服务端 SSO 登录与老用户绑定入口，`appkey` 仅在服务端环境变量中使用，前端只接收 RAI 自己签发的 JWT。
