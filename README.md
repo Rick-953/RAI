@@ -8,9 +8,11 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
-[![License](https://img.shields.io/badge/License-Personal_Free-F59E0B?style=flat-square)](#-授权与商用)
+[![License](https://img.shields.io/badge/License-MIT-F59E0B?style=flat-square)](LICENSE)
 
 **RAI v0.10.7** 保留 **Chat Flow 思维流**，并补齐 ZTX6D 登录、NewAPI GPT-5.5、模型故障自动降级和 Mermaid 实时图表渲染修复。
+
+**Live Demo:** [https://rai.rick.quest](https://rai.rick.quest)
 
 ## 官网：rai.rick.quest  
 
@@ -191,7 +193,7 @@ ai可以询问用户（新内置工具）
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/RAI.git
+git clone https://github.com/Rick-953/RAI.git
 cd RAI/rai
 
 # 安装依赖
@@ -514,7 +516,7 @@ Seamlessly combine AI conversations with visual canvas to create your own mind m
 #### Installation
 
 ```bash
-git clone https://github.com/yourusername/RAI.git
+git clone https://github.com/Rick-953/RAI.git
 cd RAI/rai
 npm install
 npm start
@@ -604,14 +606,27 @@ rai/
 
 ### <img src="https://api.iconify.design/material-symbols/play-circle-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Online Demo
 
+- **Live Demo**: [https://rai.rick.quest](https://rai.rick.quest)
 - **Try it out**: Visit [rick.quest](https://rick.quest) and select **RAI**.
 - **Introduction**: Watch how it works at [Introduction Page](https://rick.rth2.xyz/ai/main.html#how-it-works)
 
-### <img src="https://api.iconify.design/material-symbols/license.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> License & Commercial Use
+### Maintainer Status
 
-**Free for personal use and supporting branches.**
+This repository is maintained by [Rick-953](https://github.com/Rick-953), the GitHub account for Rick, the project maintainer.
 
-For **commercial use**, please contact: [rick080402@gmail.com](mailto:rick080402@gmail.com)
+### Roadmap
+
+- Security audit
+- Test coverage
+- CI
+- Model routing evaluation
+- Release automation
+
+### <img src="https://api.iconify.design/material-symbols/license.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> License
+
+This project is licensed under the [MIT License](LICENSE).
+
+For commercial support, deployment help, or partnership discussions, please contact: [rick080402@gmail.com](mailto:rick080402@gmail.com)
 
 ---
 
