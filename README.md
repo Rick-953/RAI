@@ -10,7 +10,7 @@
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![License](https://img.shields.io/badge/License-MIT-F59E0B?style=flat-square)](LICENSE)
 
-**RAI v0.10.7** 保留 **Chat Flow 思维流**，并补齐 ZTX6D 登录、NewAPI GPT-5.5、模型故障自动降级和 Mermaid 实时图表渲染修复。
+**RAI v0.10.7** 保留 **Chat Flow 思维流**，并补齐 ZTX6D 登录、GPT- .5、模型路由和 Mermaid 实时图表渲染修复。
 
 **Live Demo:** [https://rai.rick.quest](https://rai.rick.quest)
 
