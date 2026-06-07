@@ -6,13 +6,17 @@
   <meta name="viewport"
     content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#0D0D0D">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="RAI">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
+  <link rel="manifest" href="site.webmanifest?v=20260604-transparent-icon-download-v010916">
+  <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
   <script src="lib/marked.min.js"></script>
@@ -33,7 +37,7 @@
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260514-mermaid-xychart-fix-1">
+  <link rel="stylesheet" href="styles.css?v=20260604-transparent-icon-download-v010916">
 </head>
 
 <body>
@@ -81,6 +85,7 @@
 
           <div class="auth-sso-container" id="ztx6dSsoContainer" style="display: none;">
             <button type="button" class="auth-sso-btn" onclick="startZtx6dLogin()">ZTX6D 登录</button>
+            <button type="button" class="auth-sso-btn auth-sso-btn-pending" onclick="showRpassPending()" title="待上线">rPass 登录</button>
           </div>
         </div>
 
@@ -90,9 +95,120 @@
             <span data-i18n="no-account">还没有账号?</span>
             <a class="auth-link" onclick="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
           </div>
-          <button class="auth-lang-btn-inline" onclick="toggleLanguage()" title="Switch Language / 切换语言">
-            <span id="authLangText">EN</span>
-          </button>
+        </div>
+        <div class="auth-lang-row" role="group" aria-label="Language">
+          <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" onclick="setLanguage('zh-CN')">简体中文</button>
+          <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" onclick="setLanguage('zh-TW')">繁體中文</button>
+          <button type="button" class="auth-lang-text-btn" data-lang="en" onclick="setLanguage('en')">English</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新用户引导遮罩 -->
+  <div class="onboarding-overlay" id="onboardingOverlay" style="display: none;">
+    <div class="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle" data-step="0">
+      <!-- 图片区：第一页占半屏，后续页保持三分之一 -->
+      <div class="onboarding-hero">
+        <img class="onboarding-hero-image" src="images/onboarding-saturn.png" alt="" aria-hidden="true">
+      </div>
+
+      <!-- 内容区（步骤切换） -->
+      <div class="onboarding-body">
+        <div class="onboarding-step active" id="onboardingStep0">
+          <div class="onboarding-kicker" id="onboardingTitle">RAI</div>
+          <div class="onboarding-step-title" data-i18n="onb-welcome-title">欢迎来到 RAI</div>
+          <p class="onboarding-step-desc" data-i18n="onb-welcome-desc">多模型、深度研究、联网搜索 — 一切尽在指尖。</p>
+        </div>
+        <div class="onboarding-step" id="onboardingStep1">
+          <div class="onboarding-step-title" data-i18n="onb-features-title">强大的 AI 能力</div>
+          <div class="onboarding-features">
+            <div class="onboarding-feature-item onboarding-feature-primary">
+              <span class="onboarding-feature-mark">01</span>
+              <div class="onboarding-feature-copy">
+                <strong data-i18n="onb-feat-models-title">多模型协作</strong>
+                <span data-i18n="onb-feat-models">多模型自由切换（DeepSeek / Kimi / GPT / Claude / Grok / Gemma）</span>
+              </div>
+            </div>
+            <div class="onboarding-feature-item">
+              <span class="onboarding-feature-mark">02</span>
+              <div class="onboarding-feature-copy">
+                <strong data-i18n="onb-feat-research-title">研究模式</strong>
+                <span data-i18n="onb-feat-research">快速 / 深度研究模式 — 多模型互评综合回答</span>
+              </div>
+            </div>
+            <div class="onboarding-feature-item">
+              <span class="onboarding-feature-mark">03</span>
+              <div class="onboarding-feature-copy">
+                <strong data-i18n="onb-feat-search-title">实时信息</strong>
+                <span data-i18n="onb-feat-search">联网搜索 + 实时财经数据</span>
+              </div>
+            </div>
+            <div class="onboarding-feature-item">
+              <span class="onboarding-feature-mark">04</span>
+              <div class="onboarding-feature-copy">
+                <strong data-i18n="onb-feat-files-title">文件理解</strong>
+                <span data-i18n="onb-feat-files">图片 / 视频 / 文件上传分析</span>
+              </div>
+            </div>
+            <div class="onboarding-feature-item">
+              <span class="onboarding-feature-mark">05</span>
+              <div class="onboarding-feature-copy">
+                <strong data-i18n="onb-feat-markdown-title">专业输出</strong>
+                <span data-i18n="onb-feat-markdown">Markdown / 代码高亮 / Mermaid 图表 / 数学公式</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="onboarding-step" id="onboardingStep2">
+          <div class="onboarding-step-title" data-i18n="onb-usage-title">开始使用</div>
+          <div class="onboarding-usage-list">
+            <div class="onboarding-usage-item">
+              <div class="onboarding-usage-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              </div>
+              <div>
+                <strong data-i18n="onb-usage-input-title">输入框</strong>
+                <p data-i18n="onb-usage-input-desc">在底部输入框输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。</p>
+              </div>
+            </div>
+            <div class="onboarding-usage-item">
+              <div class="onboarding-usage-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+              </div>
+              <div>
+                <strong data-i18n="onb-usage-model-title">模型切换</strong>
+                <p data-i18n="onb-usage-model-desc">点击顶部模型选择器，可切换智能模型 / 极速模式 / 专家模式或全部模型。</p>
+              </div>
+            </div>
+            <div class="onboarding-usage-item">
+              <div class="onboarding-usage-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+              </div>
+              <div>
+                <strong data-i18n="onb-usage-sidebar-title">侧边栏</strong>
+                <p data-i18n="onb-usage-sidebar-desc">左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部栏：跳过 + 步骤指示器 + 下一步 -->
+      <div class="onboarding-footer">
+        <div class="onboarding-footer-left">
+          <button class="onboarding-btn onboarding-btn-skip" id="onboardingSkipBtn" data-i18n="onb-skip">跳过</button>
+        </div>
+        <div class="onboarding-footer-center">
+          <div class="onboarding-steps-indicator" id="onboardingStepsIndicator">
+            <span class="onboarding-dot active" data-step="0"></span>
+            <span class="onboarding-dot" data-step="1"></span>
+            <span class="onboarding-dot" data-step="2"></span>
+          </div>
+        </div>
+        <div class="onboarding-footer-right">
+          <button class="onboarding-btn onboarding-btn-next" id="onboardingNextBtn" data-i18n="onb-next">下一步</button>
+          <button class="onboarding-btn onboarding-btn-start" id="onboardingStartBtn" style="display: none;" data-i18n="onb-start">开始使用</button>
         </div>
       </div>
     </div>
@@ -129,8 +245,9 @@
               d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z" />
           </svg>
         </button>
-        <button class="control-btn" onclick="toggleLanguage()" title="切换语言">
-          <span id="mobileLangText" style="font-size: 14px; font-weight: 600;">EN</span>
+        <button class="control-btn language-toggle-btn" onclick="toggleLanguage()" title="切换语言" aria-label="切换语言">
+          <img class="language-toggle-icon" src="icons/settings/language.svg" alt="" aria-hidden="true">
+          <span class="language-toggle-text" id="mobileLangText">EN</span>
         </button>
       </div>
     </div>
@@ -163,7 +280,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick · v0.10.7</div>
+              <div class="logo-subtitle">by Rick · v0.10.9.16</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -174,8 +291,9 @@
                   d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z" />
               </svg>
             </button>
-            <button class="sidebar-control-btn" onclick="toggleLanguage()" title="切换语言">
-              <span class="sidebar-lang-text" id="sidebarLangText">EN</span>
+            <button class="sidebar-control-btn language-toggle-btn" onclick="toggleLanguage()" title="切换语言" aria-label="切换语言">
+              <img class="language-toggle-icon" src="icons/settings/language.svg" alt="" aria-hidden="true">
+              <span class="language-toggle-text sidebar-lang-text" id="sidebarLangText">EN</span>
             </button>
           </div>
         </div>
@@ -250,6 +368,7 @@
                 <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
               </svg>
               <span class="sidebar-group-title" data-i18n="sidebar-flows">ChatFlow</span>
+              <span class="sidebar-beta-badge" data-i18n="sidebar-flows-beta">测试</span>
               <svg class="material-symbols-outlined group-toggle-icon" id="flowsToggle"
                 xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
@@ -297,11 +416,7 @@
             <div class="user-info-top">
               <div class="user-name" id="userName">用户</div>
               <button class="settings-btn-inline" onclick="openSettings()" title="设置">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-                  height="24" fill="currentColor">
-                  <path
-                    d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.58 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
-                </svg>
+                <img class="settings-inline-icon" src="icons/settings/settings.svg" alt="" aria-hidden="true">
               </button>
             </div>
             <!-- 签到按钮容器 - 只在可签到时显示 -->
@@ -462,16 +577,43 @@
                     </div>
                   </div>
 
-                  <!-- Agent 模式开关 -->
-                  <div class="more-menu-item" data-required-membership="max" onclick="toggleAgentFromMenu(event)">
-                    <div class="more-menu-item-icon">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-                        <path
-                          d="M240-160q-50 0-85-35t-35-85v-80h80v80h80v80h-40Zm440 0v-80h80v-80h80v80q0 50-35 85t-85 35h-40Zm80-440v-80h-80v-80h40q50 0 85 35t35 85v40h-80Zm-640 0H40v-40q0-50 35-85t85-35h40v80h-80v80Zm120 360v-480h480v480H240Zm80-80h320v-320H320v320Zm160-80q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0-120Z" />
-                      </svg>
+                  <!-- 研究模式 -->
+                  <div class="more-menu-item more-menu-item-static research-mode-item" onclick="event.stopPropagation()">
+                    <div class="research-mode-header">
+                      <div class="more-menu-item-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                          <path
+                            d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h338q16 0 30.5 6t25.5 17l129 129q11 11 17 25.5t6 30.5v104q-18-7-38-9.5t-42-.5v-80H520v-142H200v560h246q7 22 20 42t30 38H200Zm0-80v-560 560Zm80-80h166q4-21 12-40t21-40H280v80Zm0-160h320v-80H280v80Zm0-160h320v-80H280v80Zm386 520q-79 0-134.5-55.5T476-270q0-79 55.5-134.5T666-460q79 0 134.5 55.5T856-270q0 79-55.5 134.5T666-80Zm0-80q45 0 77.5-32.5T776-270q0-45-32.5-77.5T666-380q-45 0-77.5 32.5T556-270q0 45 32.5 77.5T666-160Zm-40-50 140-140-42-42-98 98-40-40-42 42 82 82Z" />
+                        </svg>
+                      </div>
+                      <span class="more-menu-item-text" data-i18n="research-mode">研究模式</span>
+                      <button
+                        type="button"
+                        class="more-menu-switch"
+                        id="researchModeSwitch"
+                        onclick="toggleResearchModeFromMenu(event)"
+                        aria-label="Toggle research mode"
+                        aria-pressed="false"
+                      >
+                        <span class="more-menu-item-toggle" id="researchModeToggle"></span>
+                      </button>
                     </div>
-                    <span class="more-menu-item-text" data-i18n="agent-mode">4倍速深度研究</span>
-                    <div class="more-menu-item-toggle" id="agentToggle"></div>
+                    <div class="research-mode-slider-wrap">
+                      <input
+                        id="researchModeSlider"
+                        class="reasoning-profile-slider research-mode-slider"
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="1"
+                        value="0"
+                        oninput="setResearchModeFromSlider(this.value)"
+                      >
+                      <div class="reasoning-profile-labels research-mode-labels">
+                        <span data-i18n="research-fast">快速研究</span>
+                        <span data-i18n="research-deep">深度研究</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="more-menu-hint" id="poeQuotaHint" style="display: none;"></div>
@@ -591,7 +733,6 @@
 
                     <div class="model-menu-item" data-model="deepseek-v3"
                       onclick="selectModelFromMenu('deepseek-v3', 'DeepSeek V4')">
-                      <span class="model-menu-icon model-provider-icon deepseek-provider-icon" aria-hidden="true"></span>
                       <div class="model-menu-content">
                         <div class="model-menu-title">DeepSeek V4</div>
                       </div>
@@ -604,7 +745,6 @@
                     <!-- Kimi -->
                     <div class="model-menu-item" data-model="kimi-k2.5"
                       onclick="selectModelFromMenu('kimi-k2.5', 'Kimi')">
-                      <img class="model-menu-icon model-provider-img kimi-provider-img" src="icons/kimi.png" alt="" aria-hidden="true">
                       <div class="model-menu-content">
                         <div class="model-menu-title">Kimi</div>
                       </div>
@@ -615,7 +755,6 @@
                     <!-- Qwen 免费模型 -->
                     <div class="model-menu-item" data-model="qwen2.5-7b"
                       onclick="selectModelFromMenu('qwen2.5-7b', 'Qwen')">
-                      <img class="model-menu-icon model-provider-img qwen-provider-img" src="icons/Qwen.png" alt="" aria-hidden="true">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Qwen</span><span class="model-badge free">免费</span></div>
                       </div>
@@ -627,7 +766,6 @@
                     <!-- ChatGPT OpenRouter 免费模型 -->
                     <div class="model-menu-item" data-model="chatgpt-gpt-oss-120b"
                       onclick="selectModelFromMenu('chatgpt-gpt-oss-120b', 'ChatGPT')">
-                      <span class="model-menu-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">ChatGPT</span><span class="model-badge limited-free">限免</span></div>
                       </div>
@@ -635,7 +773,6 @@
 
                     <div class="model-menu-item" data-model="gpt-5.5"
                       onclick="selectModelFromMenu('gpt-5.5', 'GPT-5.5')">
-                      <span class="model-menu-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">GPT-5.5</span><span class="model-badge limited-free">限免</span></div>
                       </div>
@@ -643,7 +780,6 @@
 
                     <div class="model-menu-item" data-model="grok-4.2"
                       onclick="selectModelFromMenu('grok-4.2', 'Grok 4.2')">
-                      <span class="model-menu-icon model-provider-icon grok-provider-icon" aria-hidden="true"></span>
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Grok 4.2</span><span class="model-badge limited-free">限免</span></div>
                       </div>
@@ -653,7 +789,6 @@
                     <div class="model-menu-item" data-model="anthropic/claude-sonnet-4.6"
                       data-required-membership="MAX"
                       onclick="selectModelFromMenu('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">
-                      <img class="model-menu-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Claude Sonnet 4.6</span><span class="model-badge max-only">MAX</span></div>
                       </div>
@@ -663,7 +798,6 @@
                     <div class="model-menu-item" data-model="anthropic/claude-3-haiku"
                       data-required-membership="MAX"
                       onclick="selectModelFromMenu('anthropic/claude-3-haiku', 'Claude 3 Haiku')">
-                      <img class="model-menu-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Claude 3 Haiku</span><span class="model-badge max-only">MAX</span></div>
                       </div>
@@ -674,7 +808,6 @@
                     <!-- Gemma Google API 限免模型 -->
                     <div class="model-menu-item" data-model="gemma"
                       onclick="selectModelFromMenu('gemma', 'Gemma')">
-                      <img class="model-menu-icon model-provider-img" src="icons/GoogleGemini.svg" alt="" aria-hidden="true">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Gemma</span><span class="model-badge limited-free">限免</span></div>
                       </div>
@@ -792,15 +925,15 @@
                   </svg>
                 </button>
                 <div class="chatflow-model-menu" id="chatflowModelMenu">
-                  <div class="model-menu-item" onclick="selectChatFlowModel('auto', 'Auto')">Auto</div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('kimi-k2.5', 'Kimi')">Kimi</div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('qwen2.5-7b', 'Qwen')">Qwen</div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('chatgpt-gpt-oss-120b', 'ChatGPT')">ChatGPT</div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('gpt-5.5', 'GPT-5.5')">GPT-5.5</div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('grok-4.2', 'Grok 4.2')">Grok 4.2</div>
-                  <div class="model-menu-item" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">Claude Sonnet 4.6</div>
-                  <div class="model-menu-item" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-3-haiku', 'Claude 3 Haiku')">Claude 3 Haiku</div>
-                  <div class="model-menu-item" onclick="selectChatFlowModel('gemma', 'Gemma')">Gemma</div>
+                  <div class="model-menu-item" data-model="auto" onclick="selectChatFlowModel('auto', 'Auto')">Auto</div>
+                  <div class="model-menu-item" data-model="kimi-k2.5" onclick="selectChatFlowModel('kimi-k2.5', 'Kimi')">Kimi</div>
+                  <div class="model-menu-item" data-model="qwen2.5-7b" onclick="selectChatFlowModel('qwen2.5-7b', 'Qwen')">Qwen</div>
+                  <div class="model-menu-item" data-model="chatgpt-gpt-oss-120b" onclick="selectChatFlowModel('chatgpt-gpt-oss-120b', 'ChatGPT')">ChatGPT</div>
+                  <div class="model-menu-item" data-model="gpt-5.5" onclick="selectChatFlowModel('gpt-5.5', 'GPT-5.5')">GPT-5.5</div>
+                  <div class="model-menu-item" data-model="grok-4.2" onclick="selectChatFlowModel('grok-4.2', 'Grok 4.2')">Grok 4.2</div>
+                  <div class="model-menu-item" data-model="anthropic/claude-sonnet-4.6" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">Claude Sonnet 4.6</div>
+                  <div class="model-menu-item" data-model="anthropic/claude-3-haiku" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-3-haiku', 'Claude 3 Haiku')">Claude 3 Haiku</div>
+                  <div class="model-menu-item" data-model="gemma" onclick="selectChatFlowModel('gemma', 'Gemma')">Gemma</div>
                 </div>
               </div>
               <button type="button" class="chatflow-send-btn" id="chatflowSendBtn" onclick="sendChatFlowMessage()">
@@ -991,159 +1124,405 @@
   <!-- 设置面板 -->
 
   <div class="settings-modal" id="settingsModal">
-    <div class="settings-content">
-      <div class="settings-header">
-        <h2 class="settings-title" data-i18n="settings">设置</h2>
-        <button class="close-btn" onclick="closeSettings()">
-          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-            height="24" fill="currentColor">
-            <path
-              d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-          </svg>
+    <div class="settings-content" role="dialog" aria-modal="true" aria-labelledby="settingsPanelTitle">
+      <aside class="settings-sidebar">
+        <button class="settings-close-btn" onclick="closeSettings()" aria-label="关闭设置">
+          <img class="settings-close-icon" src="icons/settings/close.svg" alt="" aria-hidden="true">
         </button>
-      </div>
 
-      <div class="settings-body">
-        <!--  会员状态区域 -->
-        <div class="settings-group" id="settingsMembershipSection">
-          <h3 class="settings-group-title"> <span data-i18n="membership-status-title">会员状态</span></h3>
-          <div class="settings-membership-section">
-            <div class="settings-membership-header">
-              <span class="settings-membership-badge free" id="settingsMembershipBadge">free</span>
-              <span onclick="openMembershipPlans()" class="settings-upgrade-link"
-                data-i18n="upgrade-points-link">点数兑换会员</span>
-            </div>
-            <div class="settings-points-display">
-              <span class="points-icon"></span>
-              <span><span data-i18n="remaining-points-label">剩余点数</span>: <strong id="settingsPointsDisplay">0</strong></span>
-            </div>
-            <button id="settingsCheckinBtn" onclick="userCheckin()"
-              class="settings-checkin-btn" data-i18n="checkin-bonus">
-              签到 +20 
+        <div class="settings-mobile-profile">
+          <button type="button" class="settings-mobile-avatar-btn" onclick="openAvatarPicker()" aria-label="更换头像">
+            <span class="settings-mobile-avatar" id="settingsMobileAvatar">R</span>
+            <span class="settings-mobile-avatar-edit" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                <path d="M3 17.25V21h3.75L17.8 9.95l-3.75-3.75L3 17.25Zm17.7-10.2c.4-.4.4-1.03 0-1.42L18.37 3.3a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.82-1.83Z" />
+              </svg>
+            </span>
+          </button>
+          <div class="settings-mobile-name" id="settingsMobileName">Rick</div>
+        </div>
+
+        <nav class="settings-nav" aria-label="设置分类">
+          <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-rai">我的 RAI</div>
+          <div class="settings-nav-group">
+            <button type="button" class="settings-nav-item active" data-settings-section="language"
+              onclick="switchSettingsSection('language')">
+              <img class="settings-nav-icon" src="icons/settings/language.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-language">语言 / English</span>
             </button>
-            <div class="settings-created-at" id="settingsCreatedAt"><span data-i18n="created-at-prefix">创建于</span>: -</div>
+            <button type="button" class="settings-nav-item" data-settings-section="custom"
+              onclick="switchSettingsSection('custom')">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-custom">自定义</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="appearance"
+              onclick="switchSettingsSection('appearance')">
+              <img class="settings-nav-icon" src="icons/settings/appearance.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-appearance">外观</span>
+            </button>
           </div>
-        </div>
-
-        <div class="settings-group" id="ztx6dBindingSection" style="display: none;">
-          <h3 class="settings-group-title">账号绑定</h3>
-          <div class="setting-item ztx6d-binding-card">
-            <label class="setting-label">ZTX6D</label>
-            <div class="ztx6d-binding-actions">
-              <p class="setting-description ztx6d-binding-status" id="ztx6dBindingStatus">未绑定</p>
-              <button type="button" class="btn btn-secondary" id="ztx6dBindBtn" onclick="bindZtx6dAccount()">绑定 ZTX6D</button>
-            </div>
+          <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-account">账户</div>
+          <div class="settings-nav-group">
+            <button type="button" class="settings-nav-item" data-settings-section="subscription"
+              onclick="switchSettingsSection('subscription')">
+              <img class="settings-nav-icon" src="icons/settings/subscription.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-subscription">订阅</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="account"
+              onclick="switchSettingsSection('account')">
+              <img class="settings-nav-icon" src="icons/settings/account.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-account">账号</span>
+            </button>
           </div>
-        </div>
-
-        <div class="settings-group">
-          <h3 class="settings-group-title" data-i18n="appearance">外观</h3>
-
-          <div class="setting-item">
-            <label class="setting-label" data-i18n="theme-label">主题</label>
-            <p class="setting-description" data-i18n="theme-desc">选择界面主题</p>
-            <div style="display: flex; gap: 8px;">
-              <button class="btn btn-secondary" style="flex: 1;" onclick="setTheme('dark')">
-                <span data-i18n="dark-theme">深色</span>
-              </button>
-              <button class="btn btn-secondary" style="flex: 1;" onclick="setTheme('light')">
-                <span data-i18n="light-theme">浅色</span>
-              </button>
-            </div>
+          <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-system">系统</div>
+          <div class="settings-nav-group">
+            <button type="button" class="settings-nav-item tauri-desktop-only is-hidden" data-settings-section="desktop"
+              onclick="switchSettingsSection('desktop')" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/settings.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-desktop">桌面端</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="advanced"
+              onclick="switchSettingsSection('advanced')">
+              <img class="settings-nav-icon" src="icons/settings/advanced.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-advanced">高级</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="about"
+              onclick="switchSettingsSection('about')">
+              <img class="settings-nav-icon" src="icons/settings/about.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-about">关于</span>
+            </button>
           </div>
+        </nav>
 
-          <div class="setting-item">
-            <label class="setting-label" data-i18n="language-label">语言</label>
-            <p class="setting-description" data-i18n="language-desc">选择界面语言</p>
-            <div style="display: flex; gap: 8px;">
-              <button class="btn btn-secondary" style="flex: 1;" onclick="setLanguage('zh-CN')">
-                <span>中文</span>
-              </button>
-              <button class="btn btn-secondary" style="flex: 1;" onclick="setLanguage('en')">
-                <span>English</span>
-              </button>
-            </div>
-          </div>
-        </div>
+      </aside>
 
-        <div class="settings-group">
-          <h3 class="settings-group-title" data-i18n="preferences-title">您有什么偏好？</h3>
-          <div class="setting-item">
-            <p class="setting-description" data-i18n="preferences-desc">设置AI的角色和行为</p>
-            <textarea class="system-prompt-input" id="systemPrompt" rows="4"
-              data-i18n-placeholder="preferences-placeholder" placeholder="例如: 我希望获得简短回复..."></textarea>
-          </div>
-        </div>
-
-        <div class="settings-group">
-          <div class="advanced-options-header" onclick="toggleAdvancedOptions()">
-            <h3 class="settings-group-title" style="margin-bottom: 0;" data-i18n="advanced-options">高级选项</h3>
-            <svg class="material-symbols-outlined advanced-options-icon" id="advancedOptionsIcon"
-              xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-              <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
+      <main class="settings-main">
+        <div class="settings-main-header">
+          <button type="button" class="settings-back-btn" onclick="showSettingsMobileHome()" aria-label="返回设置主页">
+            <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
+              height="24" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.42-1.41L7.83 13H20v-2z" />
             </svg>
-          </div>
-
-          <div class="advanced-options-content" id="advancedOptionsContent">
-            <div class="setting-item" style="margin-top: 16px;">
-              <label class="setting-label">Temperature</label>
-              <p class="setting-description" data-i18n="temperature-desc">控制回复的随机性 (0-2)</p>
-              <div class="slider-container">
-                <input type="range" class="slider-input" id="temperatureSlider" min="0" max="2" step="0.1" value="0.7"
-                  oninput="updateSliderValue('temperature', this.value)">
-                <span class="slider-value" id="temperatureValue">0.7</span>
-              </div>
-            </div>
-
-            <div class="setting-item">
-              <label class="setting-label">Top P</label>
-              <p class="setting-description" data-i18n="topp-desc">核采样参数 (0-1)</p>
-              <div class="slider-container">
-                <input type="range" class="slider-input" id="topPSlider" min="0" max="1" step="0.05" value="0.9"
-                  oninput="updateSliderValue('topP', this.value)">
-                <span class="slider-value" id="topPValue">0.9</span>
-              </div>
-            </div>
-
-            <div class="setting-item">
-              <label class="setting-label">Max Tokens</label>
-              <p class="setting-description" data-i18n="maxtokens-desc">最大生成长度 (100-8000)</p>
-              <div class="slider-container">
-                <input type="range" class="slider-input" id="maxTokensSlider" min="100" max="8000" step="100"
-                  value="2000" oninput="updateSliderValue('maxTokens', this.value)">
-                <span class="slider-value" id="maxTokensValue">2000</span>
-              </div>
-            </div>
-
-            <div class="setting-item">
-              <label class="setting-label">Frequency Penalty</label>
-              <p class="setting-description" data-i18n="frequency-desc">频率惩罚 (仅DeepSeek)</p>
-              <div class="slider-container">
-                <input type="range" class="slider-input" id="frequencySlider" min="-2" max="2" step="0.1" value="0"
-                  oninput="updateSliderValue('frequency', this.value)">
-                <span class="slider-value" id="frequencyValue">0</span>
-              </div>
-            </div>
-
-            <div class="setting-item">
-              <label class="setting-label">Presence Penalty</label>
-              <p class="setting-description" data-i18n="presence-desc">存在惩罚 (仅DeepSeek)</p>
-              <div class="slider-container">
-                <input type="range" class="slider-input" id="presenceSlider" min="-2" max="2" step="0.1" value="0"
-                  oninput="updateSliderValue('presence', this.value)">
-                <span class="slider-value" id="presenceValue">0</span>
-              </div>
-            </div>
-          </div>
+          </button>
+          <h2 class="settings-title" id="settingsPanelTitle" data-i18n="settings-nav-language">语言 / English</h2>
         </div>
-      </div>
 
-      <div class="settings-footer">
-        <button class="btn btn-danger" onclick="handleLogout()" data-i18n="logout"
-          style="margin-right: auto;">退出登录</button>
-        <button class="btn btn-secondary" onclick="closeSettings()" data-i18n="cancel">取消</button>
-        <button class="btn btn-primary" onclick="saveSettings()" data-i18n="save-settings">保存设置</button>
-      </div>
+        <div class="settings-panel-container">
+          <section class="settings-panel active" id="settingsPanel-language" data-settings-panel="language">
+            <div class="settings-section-intro">
+              <h3 data-i18n="language-label">语言</h3>
+              <p data-i18n="language-desc">选择界面语言</p>
+            </div>
+            <div class="settings-choice-row">
+              <button type="button" class="settings-choice-btn" data-language-option="zh-CN"
+                onclick="setLanguage('zh-CN')">简体中文</button>
+              <button type="button" class="settings-choice-btn" data-language-option="zh-TW"
+                onclick="setLanguage('zh-TW')">繁體中文</button>
+              <button type="button" class="settings-choice-btn" data-language-option="en"
+                onclick="setLanguage('en')">English</button>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-subscription" data-settings-panel="subscription">
+            <div class="settings-section-intro">
+              <h3 data-i18n="membership-status-title">会员状态</h3>
+              <p data-i18n="settings-subscription-desc">签到、任务、点数兑换会员和会员状态</p>
+            </div>
+            <div class="settings-group settings-flat-group" id="settingsMembershipSection">
+              <div class="settings-membership-section">
+                <div class="settings-membership-header">
+                  <span class="settings-membership-badge free" id="settingsMembershipBadge">free</span>
+                  <span onclick="openMembershipPlans()" class="settings-upgrade-link"
+                    data-i18n="upgrade-points-link">点数兑换会员</span>
+                </div>
+                <div class="settings-points-display">
+                  <span class="points-icon"></span>
+                  <span><span data-i18n="remaining-points-label">剩余点数</span>: <strong
+                      id="settingsPointsDisplay">0</strong></span>
+                </div>
+                <button id="settingsCheckinBtn" onclick="userCheckin()" class="settings-checkin-btn"
+                  data-i18n="checkin-bonus">
+                  签到 +20
+                </button>
+                <div class="settings-created-at" id="settingsCreatedAt"><span data-i18n="created-at-prefix">创建于</span>:
+                  -</div>
+              </div>
+              <div id="settingsTaskSection"></div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-account" data-settings-panel="account">
+            <div class="settings-group settings-flat-group" id="settingsAccountSection">
+              <div class="settings-section-row">
+                <div class="settings-section-intro">
+                  <h3 data-i18n="account-settings-title">账号信息</h3>
+                  <p data-i18n="settings-account-desc">用户名、邮箱、密码和第三方绑定状态</p>
+                </div>
+                <button type="button" class="settings-inline-confirm" id="settingsAccountSaveBtn"
+                  onclick="saveSettings({ closeAfterSave: false })" data-settings-save-action
+                  data-label-key="confirm-change" data-i18n="confirm-change">确定</button>
+              </div>
+
+              <div class="settings-avatar-card">
+                <button type="button" class="settings-avatar-preview" id="settingsAvatarPreview" onclick="openAvatarPicker()"
+                  aria-label="更换头像">R</button>
+                <div class="settings-avatar-meta">
+                  <div class="setting-label" data-i18n="avatar-settings-title">头像</div>
+                  <p class="setting-description" data-i18n="avatar-settings-desc">上传自定义头像，用于侧边栏、设置页和聊天消息</p>
+                </div>
+                <button type="button" class="settings-inline-save settings-avatar-action" onclick="openAvatarPicker()"
+                  data-i18n="change-avatar">更换头像</button>
+              </div>
+
+              <div class="settings-form-grid settings-account-grid">
+                <div class="setting-item">
+                  <label class="setting-label" for="settingsUsernameInput" data-i18n="settings-username-label">用户名</label>
+                  <p class="setting-description" data-i18n="settings-username-desc">修改侧边栏显示名称；留空时默认使用邮箱前缀</p>
+                  <input type="text" class="setting-input" id="settingsUsernameInput" maxlength="80"
+                    autocomplete="nickname" data-i18n-placeholder="username-placeholder" placeholder="您的昵称">
+                </div>
+                <div class="setting-item">
+                  <label class="setting-label" for="settingsEmailInput" data-i18n="settings-email-label">邮箱</label>
+                  <p class="setting-description" data-i18n="settings-email-desc">修改登录邮箱，保存后立即生效</p>
+                  <input type="email" class="setting-input" id="settingsEmailInput" maxlength="255" autocomplete="email"
+                    data-i18n-placeholder="settings-email-placeholder" placeholder="name@example.com">
+                </div>
+              </div>
+
+              <div class="settings-subsection">
+                <div class="settings-section-row settings-subsection-row">
+                  <div>
+                    <div class="settings-subsection-title" data-i18n="password-settings-title">修改密码</div>
+                  </div>
+                  <button type="button" class="settings-inline-confirm" id="settingsPasswordSaveBtn"
+                    onclick="saveSettings({ closeAfterSave: false })" data-settings-save-action
+                    data-label-key="confirm-change" data-i18n="confirm-change">确定</button>
+                </div>
+                <div class="settings-form-grid settings-password-grid">
+                  <div class="setting-item">
+                    <label class="setting-label" for="settingsCurrentPasswordInput"
+                      data-i18n="password-current-label">当前密码</label>
+                    <input type="password" class="setting-input" id="settingsCurrentPasswordInput" maxlength="128"
+                      autocomplete="current-password" data-i18n-placeholder="password-current-placeholder"
+                      placeholder="输入当前密码">
+                  </div>
+                  <div class="setting-item">
+                    <label class="setting-label" for="settingsNewPasswordInput" data-i18n="password-new-label">新密码</label>
+                    <input type="password" class="setting-input" id="settingsNewPasswordInput" maxlength="128"
+                      autocomplete="new-password" data-i18n-placeholder="password-new-placeholder" placeholder="至少6位字符">
+                  </div>
+                  <div class="setting-item">
+                    <label class="setting-label" for="settingsConfirmPasswordInput"
+                      data-i18n="password-confirm-label">确认新密码</label>
+                    <input type="password" class="setting-input" id="settingsConfirmPasswordInput" maxlength="128"
+                      autocomplete="new-password" data-i18n-placeholder="password-confirm-placeholder"
+                      placeholder="再次输入新密码">
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-account-logout-row">
+                <button type="button" class="settings-logout-link" onclick="handleLogout()" data-i18n="logout">登出</button>
+              </div>
+            </div>
+
+            <div class="settings-group settings-flat-group" id="ztx6dBindingSection" style="display: none;">
+              <div class="settings-section-intro">
+                <h3 data-i18n="account-binding-title">账号绑定</h3>
+              </div>
+              <div class="setting-item ztx6d-binding-card">
+                <label class="setting-label">ZTX6D</label>
+                <div class="ztx6d-binding-actions">
+                  <p class="setting-description ztx6d-binding-status" id="ztx6dBindingStatus">未绑定</p>
+                  <button type="button" class="btn btn-secondary" id="ztx6dBindBtn" onclick="bindZtx6dAccount()">绑定
+                    ZTX6D</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-appearance" data-settings-panel="appearance">
+            <div class="settings-section-intro">
+              <h3 data-i18n="appearance">外观</h3>
+              <p data-i18n="theme-desc">选择界面主题</p>
+            </div>
+            <div class="settings-choice-row">
+              <button type="button" class="settings-choice-btn" data-theme-option="dark"
+                onclick="setTheme('dark')"><span data-i18n="dark-theme">深色</span></button>
+              <button type="button" class="settings-choice-btn" data-theme-option="light"
+                onclick="setTheme('light')"><span data-i18n="light-theme">浅色</span></button>
+              <button type="button" class="settings-choice-btn" data-theme-option="system"
+                onclick="setTheme('system')"><span data-i18n="system-theme">跟随系统</span></button>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-custom" data-settings-panel="custom">
+            <div class="settings-section-row">
+              <div class="settings-section-intro">
+                <h3 data-i18n="preferences-title">您有什么偏好？</h3>
+                <p data-i18n="preferences-desc">设置AI的角色和行为</p>
+              </div>
+              <button type="button" class="settings-inline-save" onclick="saveSettings({ closeAfterSave: false })"
+                data-settings-save-action data-label-key="save-settings" data-i18n="save-settings">保存设置</button>
+            </div>
+            <textarea class="system-prompt-input" id="systemPrompt" rows="8"
+              data-i18n-placeholder="preferences-placeholder" placeholder="例如: 我希望获得简短回复..."></textarea>
+          </section>
+
+          <section class="settings-panel tauri-desktop-only is-hidden" id="settingsPanel-desktop" data-settings-panel="desktop"
+            aria-hidden="true">
+            <div class="settings-section-intro">
+              <h3 data-i18n="settings-desktop-title">桌面端</h3>
+              <p data-i18n="settings-desktop-desc">控制 macOS 菜单栏或 Windows 系统托盘中的 RAI 窗口。</p>
+            </div>
+            <div class="settings-desktop-card">
+              <div class="settings-desktop-status">
+                <span data-i18n="settings-desktop-status">桌面客户端已连接线上 RAI 服务</span>
+              </div>
+              <div class="settings-desktop-actions">
+                <button type="button" class="settings-inline-save" onclick="openDesktopQuickWindow()"
+                  data-i18n="settings-desktop-open-quick">打开快速小窗</button>
+                <button type="button" class="settings-inline-save" onclick="openDesktopMainWindow()"
+                  data-i18n="settings-desktop-open-main">打开完整窗口</button>
+                <button type="button" class="settings-inline-save secondary" onclick="hideDesktopWindows()"
+                  data-i18n="settings-desktop-hide">隐藏窗口</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-advanced" data-settings-panel="advanced">
+            <div class="settings-section-row">
+              <div class="settings-section-intro">
+                <h3 data-i18n="advanced-options">高级选项</h3>
+                <p data-i18n="settings-advanced-desc">生成参数控制</p>
+              </div>
+              <button type="button" class="settings-inline-save" onclick="saveSettings({ closeAfterSave: false })"
+                data-settings-save-action data-label-key="save-settings" data-i18n="save-settings">保存设置</button>
+            </div>
+
+            <div class="advanced-options-content expanded" id="advancedOptionsContent">
+              <div class="setting-item">
+                <label class="setting-label">Temperature</label>
+                <p class="setting-description" data-i18n="temperature-desc">控制回复的随机性 (0-2)</p>
+                <div class="slider-container">
+                  <input type="range" class="slider-input" id="temperatureSlider" min="0" max="2" step="0.1"
+                    value="0.7" oninput="updateSliderValue('temperature', this.value)">
+                  <span class="slider-value" id="temperatureValue">0.7</span>
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <label class="setting-label">Top P</label>
+                <p class="setting-description" data-i18n="topp-desc">核采样参数 (0-1)</p>
+                <div class="slider-container">
+                  <input type="range" class="slider-input" id="topPSlider" min="0" max="1" step="0.05" value="0.9"
+                    oninput="updateSliderValue('topP', this.value)">
+                  <span class="slider-value" id="topPValue">0.90</span>
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <label class="setting-label">Max Tokens</label>
+                <p class="setting-description" data-i18n="maxtokens-desc">最大生成长度 (100-8000)</p>
+                <div class="slider-container">
+                  <input type="range" class="slider-input" id="maxTokensSlider" min="100" max="8000" step="100"
+                    value="2000" oninput="updateSliderValue('maxTokens', this.value)">
+                  <span class="slider-value" id="maxTokensValue">2000</span>
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <label class="setting-label">Frequency Penalty</label>
+                <p class="setting-description" data-i18n="frequency-desc">频率惩罚 (仅DeepSeek)</p>
+                <div class="slider-container">
+                  <input type="range" class="slider-input" id="frequencySlider" min="-2" max="2" step="0.1" value="0"
+                    oninput="updateSliderValue('frequency', this.value)">
+                  <span class="slider-value" id="frequencyValue">0.0</span>
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <label class="setting-label">Presence Penalty</label>
+                <p class="setting-description" data-i18n="presence-desc">存在惩罚 (仅DeepSeek)</p>
+                <div class="slider-container">
+                  <input type="range" class="slider-input" id="presenceSlider" min="-2" max="2" step="0.1" value="0"
+                    oninput="updateSliderValue('presence', this.value)">
+                  <span class="slider-value" id="presenceValue">0.0</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-about" data-settings-panel="about">
+            <div class="settings-about-card">
+              <div class="settings-about-logo" aria-hidden="true">
+                <svg class="settings-about-logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+                  <defs>
+                    <linearGradient id="planetGradAbout" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" style="stop-color:#f5d547;stop-opacity:1" />
+                      <stop offset="100%" style="stop-color:#e6a824;stop-opacity:1" />
+                    </linearGradient>
+                    <linearGradient id="ringGradAbout" x1="0%" y1="100%" x2="100%" y2="0%">
+                      <stop offset="0%" style="stop-color:#f9e79f;stop-opacity:1" />
+                      <stop offset="100%" style="stop-color:#fef5e7;stop-opacity:1" />
+                    </linearGradient>
+                  </defs>
+                  <circle cx="32" cy="32" r="14" fill="url(#planetGradAbout)" />
+                  <path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none"
+                    stroke="url(#ringGradAbout)" stroke-width="4" stroke-linecap="round" opacity="0.8" />
+                  <path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(#ringGradAbout)" stroke-width="4"
+                    stroke-linecap="round" opacity="0.9" />
+                  <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
+                </svg>
+              </div>
+              <div>
+                <h3 data-i18n="settings-about-title">关于RAI</h3>
+                <p data-i18n="settings-about-desc">您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。</p>
+              </div>
+            </div>
+            <div class="settings-about-links" aria-label="RAI links and author">
+              <a class="settings-about-link" href="https://github.com/Rick-953/RAI" target="_blank" rel="noopener noreferrer">
+                <span data-i18n="settings-about-github-label">GitHub</span>
+                <span>github.com/Rick-953/RAI</span>
+              </a>
+              <a class="settings-about-link" href="mailto:rick080402+raisupport@gmail.com">
+                <span data-i18n="settings-about-author-label">作者 Rick</span>
+                <span>rick080402+raisupport@gmail.com</span>
+              </a>
+              <button type="button" class="settings-about-link settings-about-action" onclick="replayOnboarding()">
+                <span data-i18n="settings-replay-onboarding">重新观看欢迎引导</span>
+                <span>RAI welcome guide</span>
+              </button>
+            </div>
+            <div class="settings-install-card" id="settingsInstallCard">
+              <div class="settings-install-main">
+                <div class="settings-install-icon" aria-hidden="true">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                    <path d="M5 20h14v-2H5v2Zm7-18 5 5h-3v7h-4V7H7l5-5Z" />
+                  </svg>
+                </div>
+                <div class="settings-install-copy">
+                  <h4 data-i18n="settings-install-title">添加到桌面</h4>
+                  <p data-i18n="settings-install-desc">在 Windows、macOS、iPhone 和 iPad 上把 RAI 作为独立应用打开。</p>
+                  <div class="settings-install-status" id="pwaInstallStatus">检测安装方式...</div>
+                </div>
+                <div class="settings-install-actions">
+                  <button type="button" class="settings-install-btn" id="pwaInstallBtn" onclick="handlePwaInstallClick()"
+                    data-i18n="settings-install-action">安装 RAI</button>
+                  <a class="settings-install-download" href="https://rai.rick.quest/downloads/RAI-macOS-arm64-0.10.9.16.dmg"
+                    data-i18n="settings-install-download-macos">下载 macOS 桌面版</a>
+                </div>
+              </div>
+              <ol class="settings-install-steps" id="pwaInstallSteps"></ol>
+            </div>
+            <div class="settings-about-timeline" aria-label="RAI update timeline">
+              <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">更新记录</div>
+              <div class="settings-timeline-list" id="settingsTimelineList"></div>
+              <p class="settings-about-timeline-source" data-i18n="settings-update-timeline-source">来源：本机历史版本目录、运维记录、历史 release manifest、GitHub README。</p>
+            </div>
+          </section>
+        </div>
+      </main>
     </div>
   </div>
 
@@ -1191,7 +1570,6 @@
 
         <!-- DeepSeek V4 -->
         <div class="model-card" data-model="deepseek-v3" onclick="selectModelFromModal('deepseek-v3', 'DeepSeek V4')">
-          <span class="model-icon model-provider-icon deepseek-provider-icon" aria-hidden="true"></span>
           <div class="model-label">DeepSeek V4</div>
           <div class="model-description">1M / Thinking</div>
         </div>
@@ -1200,42 +1578,36 @@
 
         <!-- ChatGPT OpenRouter -->
         <div class="model-card" data-model="chatgpt-gpt-oss-120b" onclick="selectModelFromModal('chatgpt-gpt-oss-120b', 'ChatGPT')">
-          <span class="model-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
           <div class="model-label">ChatGPT</div>
           <div class="model-description">OpenRouter 限免</div>
         </div>
 
         <!-- GPT-5.5 NewAPI -->
         <div class="model-card" data-model="gpt-5.5" onclick="selectModelFromModal('gpt-5.5', 'GPT-5.5')">
-          <span class="model-icon model-provider-icon openai-provider-icon" aria-hidden="true"></span>
           <div class="model-label">GPT-5.5</div>
           <div class="model-description">限免：free 每日 10 次</div>
         </div>
 
         <!-- Grok OpenRouter -->
         <div class="model-card" data-model="grok-4.2" onclick="selectModelFromModal('grok-4.2', 'Grok 4.2')">
-          <span class="model-icon model-provider-icon grok-provider-icon" aria-hidden="true"></span>
           <div class="model-label">Grok 4.2</div>
           <div class="model-description">限免模型</div>
         </div>
 
         <!-- Claude Sonnet -->
         <div class="model-card" data-model="anthropic/claude-sonnet-4.6" data-required-membership="MAX" onclick="selectModelFromModal('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">
-          <img class="model-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
           <div class="model-label">Claude Sonnet 4.6</div>
           <div class="model-description">仅 MAX 可用</div>
         </div>
 
         <!-- Claude Haiku -->
         <div class="model-card" data-model="anthropic/claude-3-haiku" data-required-membership="MAX" onclick="selectModelFromModal('anthropic/claude-3-haiku', 'Claude 3 Haiku')">
-          <img class="model-icon model-provider-img claude-provider-img" src="icons/Anthropic.svg" alt="" aria-hidden="true">
           <div class="model-label">Claude 3 Haiku</div>
           <div class="model-description">仅 MAX 可用</div>
         </div>
 
         <!-- Gemma Google API -->
         <div class="model-card" data-model="gemma" onclick="selectModelFromModal('gemma', 'Gemma')">
-          <img class="model-icon model-provider-img" src="icons/GoogleGemini.svg" alt="" aria-hidden="true">
           <div class="model-label">Gemma</div>
           <div class="model-description">Google API 限免</div>
         </div>
@@ -1297,13 +1669,15 @@
   </div>
 
   <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelected(event)">
+  <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display: none;"
+    onchange="handleAvatarSelected(event)">
 
   <!-- 粒子背景画布 -->
   <canvas id="particleCanvas"
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script src="app.js?v=20260514-mermaid-xychart-fix-1"></script>
+  <script src="app.js?v=20260604-transparent-icon-download-v010916"></script>
 </body>
 
 </html>

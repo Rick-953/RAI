@@ -669,9 +669,10 @@ function renderSourcesList(sources, language) {
 
   const annotatedSources = annotateSourceMarkers(sources);
   const groupedSources = groupSourcesForDisplay(annotatedSources, language);
-  const headerText = language === 'zh-CN' ? '来源' : 'Sources';
-  const expandText = language === 'zh-CN' ? '展开来源' : 'Show Sources';
-  const collapseText = language === 'zh-CN' ? '收起来源' : 'Hide Sources';
+  const isChinese = isChineseLanguage(language);
+  const headerText = isChinese ? '来源' : 'Sources';
+  const expandText = isChinese ? '展开来源' : 'Show Sources';
+  const collapseText = isChinese ? '收起来源' : 'Hide Sources';
   const sourceCount = annotatedSources.length;
 
   let html = `
@@ -850,7 +851,7 @@ function annotateSourceMarkers(sources = []) {
 }
 
 function groupSourcesForDisplay(sources = [], language = appState.language) {
-  const isChinese = language === 'zh-CN';
+  const isChinese = isChineseLanguage(language);
   const groups = [
     {
       kind: 'web',
@@ -971,8 +972,8 @@ function processCodeBlocks(container) {
       }
     }
 
-    // 跳过mermaid
-    if (language === 'mermaid') return;
+    // 跳过 mermaid 和询问用户工具块
+    if (language === 'mermaid' || isAskUserCodeLanguage(language)) return;
 
     // 标记为已处理
     codeElement.classList.add('processed');
@@ -1098,8 +1099,8 @@ function processCodeBlocksStreaming(container) {
       }
     }
 
-    // 跳过mermaid
-    if (language === 'mermaid') return;
+    // 跳过 mermaid 和询问用户工具块
+    if (language === 'mermaid' || isAskUserCodeLanguage(language)) return;
 
     // 标记为流式处理中
     codeElement.classList.add('stream-processed');
@@ -1884,21 +1885,48 @@ function getSvgIcon(name, className = '', size = 24) {
   return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${size}" height="${size}" fill="${fill}">${content}</svg>`;
 }
 
-const APP_BASE_PATH = window.location.pathname === '/beta' || window.location.pathname.startsWith('/beta/')
+const RAI_PRODUCTION_ORIGIN = 'https://rai.rick.quest';
+
+function isTauriDesktopRuntime() {
+  return Boolean(
+    window.__TAURI__ ||
+    window.__TAURI_INTERNALS__ ||
+    window.location.protocol === 'tauri:' ||
+    window.location.hostname === 'tauri.localhost'
+  );
+}
+
+const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
+document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
+const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/beta' || window.location.pathname.startsWith('/beta/'))
   ? '/beta'
   : '';
-const API_BASE = `${APP_BASE_PATH}/api`;
+const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
+const RAI_APP_VERSION = '0.10.9.16';
+const RAI_BUILD_ID = '20260604-transparent-icon-download-v010916';
 
-if (APP_BASE_PATH && typeof window.fetch === 'function') {
+function resolveRaiRemoteUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw || !RAI_IS_TAURI_DESKTOP) return raw;
+  if (/^(https?:|data:|blob:|mailto:|tel:)/i.test(raw)) return raw;
+  if (raw.startsWith('/api/') || raw.startsWith('/avatars/') || raw.startsWith('/uploads/')) {
+    return `${RAI_PRODUCTION_ORIGIN}${raw}`;
+  }
+  return raw;
+}
+
+if ((APP_BASE_PATH || RAI_IS_TAURI_DESKTOP) && typeof window.fetch === 'function') {
   const nativeFetch = window.fetch.bind(window);
   window.fetch = function (resource, init) {
     if (typeof resource === 'string' && resource.startsWith('/api/')) {
-      return nativeFetch(`${APP_BASE_PATH}${resource}`, init);
+      return nativeFetch(RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}${resource}` : `${APP_BASE_PATH}${resource}`, init);
     }
     if (resource instanceof Request) {
       const url = new URL(resource.url, window.location.origin);
       if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
-        const nextUrl = `${APP_BASE_PATH}${url.pathname}${url.search}${url.hash}`;
+        const nextUrl = RAI_IS_TAURI_DESKTOP
+          ? `${RAI_PRODUCTION_ORIGIN}${url.pathname}${url.search}${url.hash}`
+          : `${APP_BASE_PATH}${url.pathname}${url.search}${url.hash}`;
         return nativeFetch(new Request(nextUrl, resource), init);
       }
     }
@@ -1919,9 +1947,11 @@ const appState = {
   thinkingMode: false,  // 默认关闭推理模式
   reasoningProfile: 'low',
   internetMode: true,  // 默认开启联网
-  agentMode: false,  // 默认关闭多Agent协作
+  agentMode: false,  // 兼容旧字段；深度研究由 researchMode 驱动
   agentPolicy: 'dynamic-1-4',
   qualityProfile: 'high',
+  researchModeEnabled: false,
+  researchMode: 'fast',
   inputExpanded: false,  // 输入框展开状态
   thinkingBudget: 1024,
   thinkingBudgetOpen: false,
@@ -1934,6 +1964,9 @@ const appState = {
   pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
   sidebarOpen: false,
   settingsOpen: false,
+  activeSettingsSection: 'language',
+  settingsMobileMode: 'home',
+  settingsHistoryDepth: 0,
   touchStartX: 0,
   touchStartY: 0,
   touchMoveX: 0,
@@ -1944,7 +1977,10 @@ const appState = {
   ztx6dBindUrl: '/auth/ztx6d/bind/start',
   activeModelMenuAnchorId: 'modelSelectCustom',
   theme: 'dark',
+  themePreference: 'dark',
+  systemThemeListenerBound: false,
   language: 'zh-CN',
+  languageToggleChinese: 'zh-CN',
   lastModelUsed: '',  // 记录最后使用的实际模型
   lastRoutingReason: '',  // 记录路由选择原因
   // RAG相关状态
@@ -1968,6 +2004,7 @@ const appState = {
   pendingScrollTimer: null,
   mobileComposerFocusTimer: null,
   pendingMobileComposerFocus: false,
+  mobileHomeAutoFocusUsed: false,
   isProgrammaticScroll: false,
   // 引用功能状态
   currentQuote: null,  // 当前引用的消息 { role: 'user'|'assistant', content: string }
@@ -1979,6 +2016,447 @@ const appState = {
     isLoading: false
   }
 };
+
+let deferredPwaInstallPrompt = null;
+let pwaInstallSupportInitialized = false;
+const RAI_PWA_INSTALLED_HINT_KEY = 'rai_pwa_installed_hint';
+const RAI_INVITE_REF_KEY = 'rai_invite_referrer_id';
+const PWA_INSTALL_REWARD_POINTS = 300;
+const INVITE_REWARD_POINTS = 600;
+const PWA_INSTALL_CLAIM_SOURCE = 'already-installed-claim';
+let pwaInstallTaskReportPending = false;
+let pwaRewardPromptDismissedThisSession = false;
+
+function isPwaStandaloneMode() {
+  return Boolean(
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.matchMedia?.('(display-mode: window-controls-overlay)').matches ||
+    window.navigator?.standalone === true
+  );
+}
+
+function hasStoredPwaInstallHint() {
+  try {
+    return localStorage.getItem(RAI_PWA_INSTALLED_HINT_KEY) === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function storePwaInstallHint() {
+  try {
+    localStorage.setItem(RAI_PWA_INSTALLED_HINT_KEY, '1');
+  } catch (error) {
+    console.warn('无法记录 PWA 安装提示状态:', error);
+  }
+}
+
+function captureInviteRefFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const ref = url.searchParams.get('ref') || url.searchParams.get('invite') || url.searchParams.get('rai_ref');
+    if (!ref || !/^\d{1,12}$/.test(ref)) return;
+    localStorage.setItem(RAI_INVITE_REF_KEY, ref);
+  } catch (error) {
+    console.warn('无法记录邀请来源:', error);
+  }
+}
+
+function getStoredInviteReferrerId() {
+  try {
+    const ref = localStorage.getItem(RAI_INVITE_REF_KEY);
+    return ref && /^\d{1,12}$/.test(ref) ? ref : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function clearStoredInviteReferrerId() {
+  try {
+    localStorage.removeItem(RAI_INVITE_REF_KEY);
+  } catch (error) {
+    console.warn('无法清理邀请来源:', error);
+  }
+}
+
+function getInviteLink() {
+  const userId = appState.user?.id;
+  if (!userId) return window.location.origin + APP_BASE_PATH;
+  const url = new URL(window.location.origin + APP_BASE_PATH + '/');
+  url.searchParams.set('ref', String(userId));
+  return url.toString();
+}
+
+function hasCompletedPwaInstallTask() {
+  return Boolean(userMembershipState?.tasks?.pwaInstall?.completed);
+}
+
+function closePwaRewardPrompt({ dismiss = false } = {}) {
+  if (dismiss) {
+    pwaRewardPromptDismissedThisSession = true;
+  }
+  const overlay = document.getElementById('pwaRewardPrompt');
+  if (overlay) {
+    overlay.classList.remove('active');
+  }
+}
+
+function ensurePwaRewardPrompt() {
+  let overlay = document.getElementById('pwaRewardPrompt');
+  if (overlay) return overlay;
+
+  overlay = document.createElement('div');
+  overlay.id = 'pwaRewardPrompt';
+  overlay.className = 'pwa-reward-overlay';
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) closePwaRewardPrompt({ dismiss: true });
+  });
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function renderPwaRewardPrompt() {
+  const isZh = isChineseLanguage(appState.language);
+  const overlay = ensurePwaRewardPrompt();
+  overlay.innerHTML = `
+    <div class="pwa-reward-card" role="dialog" aria-modal="true" aria-labelledby="pwaRewardTitle">
+      <button type="button" class="pwa-reward-close" onclick="closePwaRewardPrompt({ dismiss: true })" aria-label="${isZh ? '关闭' : 'Close'}">×</button>
+      <div class="pwa-reward-icon" aria-hidden="true"></div>
+      <h2 id="pwaRewardTitle">${isZh ? '添加 RAI 到 App' : 'Add RAI as an app'}</h2>
+      <p>${isZh ? `添加RAI到app获得积分${PWA_INSTALL_REWARD_POINTS}！` : `Add RAI as an app to earn ${PWA_INSTALL_REWARD_POINTS} points.`}</p>
+      <div class="pwa-reward-actions">
+        <button type="button" class="pwa-reward-primary" onclick="handlePwaRewardInstallAction()">${isZh ? '立即添加' : 'Add now'}</button>
+        <button type="button" class="pwa-reward-secondary" onclick="claimAlreadyInstalledPwaReward()">${isZh ? '已添加，领取积分' : 'Already added, claim points'}</button>
+        <button type="button" class="pwa-reward-secondary" onclick="closePwaRewardPrompt({ dismiss: true })">${isZh ? '稍后' : 'Later'}</button>
+      </div>
+    </div>
+  `;
+  return overlay;
+}
+
+function maybeShowPwaRewardPrompt({ force = false } = {}) {
+  if (!appState.token || isChatFlowIframeMode) return;
+  if (RAI_IS_TAURI_DESKTOP) {
+    closePwaRewardPrompt();
+    reportPwaInstallTask('tauri-desktop');
+    return;
+  }
+  if (isPwaStandaloneMode()) {
+    closePwaRewardPrompt();
+    reportPwaInstallTask('standalone-open');
+    return;
+  }
+  if (hasStoredPwaInstallHint()) {
+    closePwaRewardPrompt();
+    reportPwaInstallTask('stored-install-hint');
+    return;
+  }
+  if (hasCompletedPwaInstallTask()) {
+    closePwaRewardPrompt();
+    return;
+  }
+  if (pwaRewardPromptDismissedThisSession && !force) return;
+  const overlay = renderPwaRewardPrompt();
+  requestAnimationFrame(() => overlay.classList.add('active'));
+}
+
+async function handlePwaRewardInstallAction() {
+  await handlePwaInstallClick();
+  if (!deferredPwaInstallPrompt && !isPwaStandaloneMode() && !hasCompletedPwaInstallTask()) {
+    closePwaRewardPrompt({ dismiss: true });
+    if (typeof openSettings === 'function') {
+      openSettings();
+      if (typeof switchSettingsSection === 'function') {
+        switchSettingsSection('about');
+      }
+    }
+  }
+}
+
+async function claimAlreadyInstalledPwaReward() {
+  storePwaInstallHint();
+  const result = await reportPwaInstallTask(PWA_INSTALL_CLAIM_SOURCE);
+  if (!result?.success) {
+    showToast(isChineseLanguage(appState.language)
+      ? '领取失败，请稍后再试'
+      : 'Claim failed. Please try again later');
+  }
+}
+
+async function reportPwaInstallTask(source = 'unknown') {
+  if (!appState.token || pwaInstallTaskReportPending || hasCompletedPwaInstallTask()) return null;
+  pwaInstallTaskReportPending = true;
+  try {
+    const res = await fetch('/api/user/tasks/pwa-install/complete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${appState.token}`
+      },
+      body: JSON.stringify({ source })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${res.status}`);
+    }
+
+    applyUserMembershipData(data);
+    closePwaRewardPrompt();
+    updateUserAreaWithMembership();
+    updateSettingsMembership();
+    refreshMembershipPlansModal();
+
+    if (data.awarded) {
+      showToast(isChineseLanguage(appState.language)
+        ? `已获得 ${data.pointsGained || PWA_INSTALL_REWARD_POINTS} 积分`
+        : `You earned ${data.pointsGained || PWA_INSTALL_REWARD_POINTS} points`);
+    }
+    return data;
+  } catch (error) {
+    console.warn('桌面App任务上报失败:', error);
+    return null;
+  } finally {
+    pwaInstallTaskReportPending = false;
+  }
+}
+
+function detectPwaInstallContext() {
+  const ua = window.navigator.userAgent || '';
+  const platform = window.navigator.platform || '';
+  const isIPadOsDesktopMode = platform === 'MacIntel' && Number(window.navigator.maxTouchPoints || 0) > 1;
+  const isIOS = /iPad|iPhone|iPod/i.test(ua) || isIPadOsDesktopMode;
+  const isAndroid = /Android/i.test(ua);
+  const isMac = !isIOS && /Mac/i.test(platform);
+  const isWindows = /Win/i.test(platform);
+  const isEdge = /Edg\//i.test(ua) || /EdgA/i.test(ua) || /EdgiOS/i.test(ua);
+  const isChrome = !isEdge && (/Chrome|Chromium|CriOS/i.test(ua)) && !/OPR|Opera|SamsungBrowser/i.test(ua);
+  const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Opera|FxiOS/i.test(ua);
+  const isFirefox = /Firefox|FxiOS/i.test(ua);
+  const isDesktop = !isIOS && !isAndroid;
+
+  return {
+    browser: isEdge ? 'edge' : (isChrome ? 'chrome' : (isSafari ? 'safari' : (isFirefox ? 'firefox' : 'other'))),
+    platform: isIOS ? 'ios' : (isAndroid ? 'android' : (isMac ? 'mac' : (isWindows ? 'windows' : 'desktop'))),
+    isDesktop,
+    canPrompt: Boolean(deferredPwaInstallPrompt),
+    installed: isPwaStandaloneMode(),
+    installedHint: hasStoredPwaInstallHint()
+  };
+}
+
+function getPwaInstallCopy() {
+  const context = detectPwaInstallContext();
+  const isZh = isChineseLanguage(appState.language);
+  if (RAI_IS_TAURI_DESKTOP) {
+    return {
+      status: isZh ? 'RAI 已在桌面客户端中打开。' : 'RAI is open in the desktop client.',
+      actionLabel: isZh ? '桌面客户端' : 'Desktop client',
+      disabled: true,
+      steps: isZh
+        ? ['可通过 macOS 菜单栏或 Windows 系统托盘图标再次打开 RAI。']
+        : ['Use the macOS menu bar or Windows system tray icon to open RAI again.']
+    };
+  }
+  const browserName = {
+    chrome: 'Chrome',
+    edge: 'Edge',
+    safari: 'Safari',
+    firefox: 'Firefox',
+    other: isZh ? '当前浏览器' : 'This browser'
+  }[context.browser] || (isZh ? '当前浏览器' : 'This browser');
+  const actionLabel = i18nText('settings-install-action', isZh ? '安装 RAI' : 'Install RAI');
+
+  if (context.installed) {
+    storePwaInstallHint();
+    return {
+      status: i18nText('settings-install-installed', isZh ? 'RAI 已在应用模式中打开。' : 'RAI is already open in app mode.'),
+      actionLabel: isZh ? '已安装' : 'Installed',
+      disabled: true,
+      steps: isZh
+        ? ['可以从桌面、Dock、启动台或开始菜单再次打开 RAI。']
+        : ['Open RAI again from your desktop, Dock, Launchpad, or Start menu.']
+    };
+  }
+
+  if (context.installedHint) {
+    return {
+      status: isZh ? '此浏览器曾记录过安装；如已卸载，请按下方步骤重新添加。' : 'This browser has a previous install record; if removed, follow the steps below to add it again.',
+      actionLabel: isZh ? '查看步骤' : 'View Steps',
+      disabled: false,
+      steps: isZh
+        ? ['如果桌面、Dock、启动台或开始菜单中已有 RAI，可直接从那里打开。', '如果找不到，按当前浏览器菜单重新安装。']
+        : ['If RAI is already on your desktop, Dock, Launchpad, or Start menu, open it there.', 'If it is missing, reinstall it from this browser menu.']
+    };
+  }
+
+  if (context.canPrompt) {
+    return {
+      status: i18nText('settings-install-ready', isZh ? '当前浏览器可直接安装。' : 'This browser can install RAI directly.'),
+      actionLabel,
+      disabled: false,
+      steps: isZh
+        ? [`点击“${actionLabel}”。`, `在 ${browserName} 的安装窗口中确认。`, '安装后可从桌面、Dock、启动台或开始菜单打开 RAI。']
+        : [`Select "${actionLabel}".`, `Confirm in the ${browserName} install window.`, 'Open RAI from your desktop, Dock, Launchpad, or Start menu.']
+    };
+  }
+
+  if (context.platform === 'ios') {
+    const needsSafari = context.browser !== 'safari';
+    return {
+      status: i18nText('settings-install-manual', isZh ? '当前浏览器需要使用浏览器菜单添加。' : 'Use this browser menu to add RAI manually.'),
+      actionLabel: isZh ? '查看步骤' : 'View Steps',
+      disabled: false,
+      steps: isZh
+        ? [
+          needsSafari ? '先用 Safari 打开当前 RAI 网页。' : '点击 Safari 底部或顶部的分享按钮。',
+          needsSafari ? '点击 Safari 的分享按钮。' : '选择“添加到主屏幕”。',
+          needsSafari ? '选择“添加到主屏幕”，再点击“添加”。' : '点击“添加”，RAI 会出现在主屏幕。'
+        ]
+        : [
+          needsSafari ? 'Open this RAI page in Safari first.' : 'Tap the Share button in Safari.',
+          needsSafari ? 'Tap the Share button in Safari.' : 'Choose "Add to Home Screen".',
+          needsSafari ? 'Choose "Add to Home Screen", then tap "Add".' : 'Tap "Add"; RAI will appear on the Home Screen.'
+        ]
+    };
+  }
+
+  if (context.browser === 'safari' && context.platform === 'mac') {
+    return {
+      status: i18nText('settings-install-manual', isZh ? '当前浏览器需要使用浏览器菜单添加。' : 'Use this browser menu to add RAI manually.'),
+      actionLabel: isZh ? '查看步骤' : 'View Steps',
+      disabled: false,
+      steps: isZh
+        ? ['打开 Safari 菜单栏的“文件”。', '选择“添加到 Dock”。', '确认名称为 RAI 后点击“添加”。']
+        : ['Open Safari\'s File menu.', 'Choose "Add to Dock".', 'Confirm the name RAI, then select "Add".']
+    };
+  }
+
+  if ((context.browser === 'chrome' || context.browser === 'edge') && context.isDesktop) {
+    const menuLabel = context.browser === 'edge'
+      ? (isZh ? '应用' : 'Apps')
+      : (isZh ? '保存并分享' : 'Save and share');
+    return {
+      status: i18nText('settings-install-manual', isZh ? '当前浏览器需要使用浏览器菜单添加。' : 'Use this browser menu to add RAI manually.'),
+      actionLabel: isZh ? '查看步骤' : 'View Steps',
+      disabled: false,
+      steps: isZh
+        ? [`打开 ${browserName} 右上角菜单。`, `进入“${menuLabel}”。`, '选择“将此网站作为应用安装”或“安装此页面为应用”。']
+        : [`Open the ${browserName} menu in the top-right corner.`, `Go to "${menuLabel}".`, 'Choose "Install this site as an app" or "Install page as app".']
+    };
+  }
+
+  if (context.platform === 'android' && (context.browser === 'chrome' || context.browser === 'edge')) {
+    return {
+      status: i18nText('settings-install-manual', isZh ? '当前浏览器需要使用浏览器菜单添加。' : 'Use this browser menu to add RAI manually.'),
+      actionLabel: isZh ? '查看步骤' : 'View Steps',
+      disabled: false,
+      steps: isZh
+        ? [`打开 ${browserName} 右上角菜单。`, '选择“安装应用”或“添加到主屏幕”。', '确认后从主屏幕打开 RAI。']
+        : [`Open the ${browserName} menu.`, 'Choose "Install app" or "Add to Home screen".', 'Confirm, then open RAI from the Home screen.']
+    };
+  }
+
+  return {
+    status: i18nText('settings-install-unavailable', isZh ? '当前环境暂不支持安装，请使用 Chrome、Edge 或 Safari 打开。' : 'Install is not available here. Open RAI in Chrome, Edge, or Safari.'),
+    actionLabel: isZh ? '不可用' : 'Unavailable',
+    disabled: true,
+    steps: isZh
+      ? ['在 Windows 或 macOS 上使用 Chrome / Edge / Safari 打开 RAI。', '在移动设备上优先使用 Safari 或 Chrome。']
+      : ['Open RAI in Chrome, Edge, or Safari on Windows or macOS.', 'On mobile, use Safari or Chrome first.']
+  };
+}
+
+function updatePwaInstallUI() {
+  const status = document.getElementById('pwaInstallStatus');
+  const button = document.getElementById('pwaInstallBtn');
+  const steps = document.getElementById('pwaInstallSteps');
+  if (!status || !button || !steps) return;
+
+  const copy = getPwaInstallCopy();
+  status.textContent = copy.status;
+  button.textContent = copy.actionLabel;
+  button.disabled = !!copy.disabled;
+  steps.innerHTML = '';
+  copy.steps.forEach((step) => {
+    const item = document.createElement('li');
+    item.textContent = step;
+    steps.appendChild(item);
+  });
+}
+
+async function handlePwaInstallClick() {
+  if (isPwaStandaloneMode()) {
+    showToast(i18nText('settings-install-opened', isChineseLanguage(appState.language) ? 'RAI 已经以应用模式打开' : 'RAI is already open in app mode'));
+    await reportPwaInstallTask('standalone-click');
+    updatePwaInstallUI();
+    return;
+  }
+
+  if (!deferredPwaInstallPrompt) {
+    showToast(i18nText('settings-install-see-steps', isChineseLanguage(appState.language) ? '请按下方步骤添加到桌面' : 'Follow the steps below to add RAI to your desktop'));
+    updatePwaInstallUI();
+    return;
+  }
+
+  const promptEvent = deferredPwaInstallPrompt;
+  deferredPwaInstallPrompt = null;
+
+  try {
+    promptEvent.prompt();
+    const choice = await promptEvent.userChoice;
+    const accepted = choice?.outcome === 'accepted';
+    if (accepted) {
+      storePwaInstallHint();
+      await reportPwaInstallTask('browser-install-prompt');
+    }
+    showToast(accepted
+      ? i18nText('settings-install-accepted', isChineseLanguage(appState.language) ? '安装已开始' : 'Install started')
+      : i18nText('settings-install-dismissed', isChineseLanguage(appState.language) ? '已取消安装' : 'Install canceled'));
+  } catch (error) {
+    console.warn('PWA 安装提示失败:', error);
+    showToast(i18nText('settings-install-see-steps', isChineseLanguage(appState.language) ? '请按下方步骤添加到桌面' : 'Follow the steps below to add RAI to your desktop'));
+  } finally {
+    updatePwaInstallUI();
+  }
+}
+
+function initPwaInstallSupport() {
+  if (pwaInstallSupportInitialized || isChatFlowIframeMode) return;
+  pwaInstallSupportInitialized = true;
+  if (RAI_IS_TAURI_DESKTOP) {
+    updatePwaInstallUI();
+    maybeShowPwaRewardPrompt();
+    return;
+  }
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    deferredPwaInstallPrompt = event;
+    updatePwaInstallUI();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredPwaInstallPrompt = null;
+    storePwaInstallHint();
+    reportPwaInstallTask('appinstalled');
+    showToast(i18nText('settings-install-accepted', isChineseLanguage(appState.language) ? '安装已开始' : 'Install started'));
+    updatePwaInstallUI();
+  });
+
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .then((registration) => {
+          if (typeof registration.update === 'function') {
+            registration.update().catch(() => null);
+          }
+        })
+        .catch((error) => console.warn('Service Worker 注册失败:', error));
+    });
+  }
+
+  updatePwaInstallUI();
+}
 
 const feedbackModalState = {
   message: null,
@@ -2135,6 +2613,11 @@ const LEGACY_MODEL_ALIASES = {
 };
 
 const HIDDEN_MODEL_PREFIXES = ['poe-'];
+const ALWAYS_VISIBLE_MODEL_IDS = ['auto'];
+const modelVisibilityState = {
+  loaded: false,
+  disabled: new Set()
+};
 
 function isHiddenModelId(modelId) {
   const normalized = String(modelId || '').trim().toLowerCase();
@@ -2148,6 +2631,57 @@ function normalizeSelectedModelId(modelId) {
   if (String(normalized).startsWith('x-ai/grok-4.20')) return 'grok-4.2';
   if (!normalized) return normalized;
   return isHiddenModelId(normalized) ? 'auto' : normalized;
+}
+
+function isModelDisabledByAdmin(modelId) {
+  const normalized = normalizeSelectedModelId(modelId);
+  if (!normalized || ALWAYS_VISIBLE_MODEL_IDS.includes(normalized)) return false;
+  return modelVisibilityState.disabled.has(normalized);
+}
+
+function ensureVisibleSelectedModels() {
+  if (isModelDisabledByAdmin(appState.selectedModel)) {
+    appState.selectedModel = 'auto';
+    updateSelectedModelText('auto');
+    updateModelControls();
+  }
+  if (typeof chatFlowState !== 'undefined' && chatFlowState && isModelDisabledByAdmin(chatFlowState.selectedModel)) {
+    chatFlowState.selectedModel = 'auto';
+    updateChatFlowControlStates();
+  }
+}
+
+function applyModelVisibilityToDom() {
+  document.querySelectorAll('[data-model]').forEach((el) => {
+    const modelId = el.getAttribute('data-model');
+    const hidden = isModelDisabledByAdmin(modelId);
+    el.classList.toggle('admin-model-hidden', hidden);
+    if (hidden) {
+      el.setAttribute('aria-hidden', 'true');
+    } else {
+      el.removeAttribute('aria-hidden');
+    }
+  });
+
+  document.querySelectorAll('#regenerateModelSelect option').forEach((option) => {
+    option.hidden = isModelDisabledByAdmin(option.value);
+  });
+
+  ensureVisibleSelectedModels();
+  updateMenuSelection();
+}
+
+async function fetchModelAvailability() {
+  try {
+    const res = await fetch('/api/model-availability');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    modelVisibilityState.disabled = new Set((data.disabledModels || []).map(normalizeSelectedModelId).filter(Boolean));
+    modelVisibilityState.loaded = true;
+    applyModelVisibilityToDom();
+  } catch (error) {
+    console.warn(' 获取模型开关失败:', error.message || error);
+  }
 }
 
 function isPoeModelSelected(modelId = appState.selectedModel) {
@@ -2210,7 +2744,7 @@ function getSessionDisplayTitle(session = {}) {
 
   const markerSource = session?.last_assistant_message || session?.last_message || '';
   const markerTitle = extractTrailingTitleMarker(markerSource).title;
-  return markerTitle || rawTitle || (appState.language === 'zh-CN' ? '新对话' : 'New Chat');
+  return markerTitle || rawTitle || (isChineseLanguage(appState.language) ? '新对话' : 'New Chat');
 }
 
 function isFreePoeMode(modelId = appState.selectedModel) {
@@ -2304,14 +2838,14 @@ function updatePoeQuotaHint() {
     const limit = Number.isFinite(Number(userMembershipState.poeDailyLimit))
       ? Number(userMembershipState.poeDailyLimit)
       : 3;
-    hintEl.textContent = lang === 'zh-CN'
+    hintEl.textContent = isChineseLanguage(lang)
       ? `Poe 今日剩余 ${remaining}/${limit} 次（free 强制关闭推理）`
       : `Poe remaining today: ${remaining}/${limit} (thinking is disabled for free)`;
     hintEl.style.display = 'block';
     return;
   }
 
-  hintEl.textContent = lang === 'zh-CN'
+  hintEl.textContent = isChineseLanguage(lang)
     ? 'Poe 模型已启用，可调推理强度'
     : 'Poe enabled, reasoning profile is available';
   hintEl.style.display = 'block';
@@ -2350,6 +2884,17 @@ function applyQuotaInfoEvent(payload = {}) {
   updatePoeQuotaHint();
 }
 
+function handlePointsInfoEvent(payload = {}) {
+  const message = payload.message || (isChineseLanguage(appState.language)
+    ? '点数不足，请完成任务或签到增加积分'
+    : 'Not enough points. Complete tasks or check in to earn more points.');
+  showToast(message);
+  if (typeof addProcessTraceItem === 'function') {
+    addProcessTraceItem('info', message);
+  }
+  fetchUserMembership().catch(() => null);
+}
+
 // 获取用户时间上下文（时区、日期时间、时段）
 function getUserTimeContext() {
   const now = new Date();
@@ -2384,20 +2929,24 @@ function getUserTimeContext() {
   };
 }
 
-// 动态生成系统提示词（包含时间上下文和核心原则）
-function buildSystemPrompt() {
-  const timeCtx = getUserTimeContext();
+function getShortUserTimeHint() {
+  const ctx = getUserTimeContext();
+  return `${ctx.datetime.replace(/\s+[A-Za-z]+/, '')}`;
+}
 
+function appendUserTimeHintForPrompt(content) {
+  const text = String(content || '');
+  const hint = isChineseLanguage(appState.language)
+    ? `当前时间：${getShortUserTimeHint()}。仅作背景，不要把回答中心放在时间上。`
+    : `Current time: ${getShortUserTimeHint()}. Background only; do not center the answer on time.`;
+  return `${text}\n\n[${hint}]`;
+}
+
+// 动态生成系统提示词（核心原则；每条用户问题末尾另附短时间）
+function buildSystemPrompt() {
   return `# 角色：
 你是RAI 专业助理拥有人类千年来的丰富阅历
 由 Rick 开发，维护 Rick studio 正当权益。
----
-
-## 用户信息
-- 时间：${timeCtx.datetime}
-- 时区：${timeCtx.timezone}
-- 时段：${timeCtx.timeOfDay}
-
 ---
 
 ## 核心原则
@@ -2420,11 +2969,29 @@ function buildSystemPrompt() {
 绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。
 
 ### 时间感知
-每次回复前注意用户当前时间，针对时间恰当问候用户。
+每次用户问题末尾会附带简短当前时间。它只作为背景参考；除非用户询问时间、日程或时效信息，不要把回答中心放到时间上。
 
 ### 工具列表
 你有网络搜索能力。当用户询问需要实时信息的问题时，请主动调用 web_search 工具获取最新数据，然后基于搜索结果回答用户。
 在合适的时候，使用图片增强回复。需要使用 Markdown 语法 ![描述](图片链接) 网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。
+### 询问用户工具
+当用户需求不明确、需要用户选择方向、范围、语言、风格或下一步时，可以输出一个独立的询问用户工具代码块，界面会渲染成可点击选项和自定义输入框。一次可以问多个问题，问题数量不设上限。
+单问题格式：
+\`\`\`rai_ask_user
+{"question":"你想先做哪一项？","options":["选项一","选项二","选项三"],"placeholder":"输入其他想法，按 Enter 记录"}
+\`\`\`
+多问题格式：
+\`\`\`rai_ask_user
+{"questions":[{"question":"你想先做哪一项？","options":["整理资料","写代码","做设计"],"placeholder":"输入其他任务"},{"question":"你希望输出多详细？","options":["简短","标准","详细"],"placeholder":"输入你的要求"}]}
+\`\`\`
+规则：
+- questions 数组可以包含任意数量的问题；每个问题的 options 也可以有多个，必须短、明确。
+- 每个问题最后一个入口由 placeholder 表示，是用户自定义输入框；用户可先选择或输入全部问题，界面底部有统一“发送选择”按钮。
+- 不要在用户只选了第一个选项后继续回答；必须等用户完成全部问题并点击发送。
+- 只在确实需要用户决策时使用，不要为了普通回复滥用。
+- 工具代码块必须独立出现，不要嵌入表格、列表或引用块。
+- 第一行必须精确使用 \`\`\`rai_ask_user；不要用 \`\`\`json、无语言代码块或普通文本 JSON 代替。
+
 你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
 Mermaid 必须以独立一行的 \`\`\`mermaid 开始，并以独立一行的 \`\`\` 结束；不要使用两个反引号闭合，也不要把正文接在结束符同一行。
 支持的图表类型:
@@ -2500,7 +3067,8 @@ const i18n = {
     'new-flow': '新建 ChatFlow',
     'sidebar-sessions': '对话',
     'settings': '设置',
-    'logout': '退出',
+    'logout': '登出',
+    'back-to-chat': '返回对话',
     'welcome-title': '询问任何问题:D',
     'welcome-subtitle': '可以帮您写作,财务分析,翻译与构思\n您专属RAI助理',
     'action-write': '写作',
@@ -2522,6 +3090,7 @@ const i18n = {
     'theme-desc': '选择界面主题',
     'dark-theme': '深色',
     'light-theme': '浅色',
+    'system-theme': '跟随系统',
     'language-label': '语言',
     'language-desc': '选择界面语言',
     'generation-params': '生成参数',
@@ -2538,6 +3107,97 @@ const i18n = {
     'preferences-desc': '设置AI的角色和行为',
     'preferences-placeholder': '例如: 我希望获得简短回复...',
     'advanced-options': '高级选项',
+    'settings-nav-language': '语言 / English',
+    'settings-nav-subscription': '订阅',
+    'settings-nav-account': '账号',
+    'settings-nav-appearance': '外观',
+    'settings-nav-custom': '自定义',
+    'settings-nav-advanced': '高级',
+    'settings-nav-desktop': '桌面端',
+    'settings-nav-about': '关于',
+    'settings-mobile-section-rai': '我的 RAI',
+    'settings-mobile-section-account': '账户',
+    'settings-mobile-section-system': '系统',
+    'settings-subscription-desc': '签到、任务、点数兑换会员和会员状态',
+    'settings-account-desc': '用户名、邮箱、密码和第三方绑定状态',
+    'settings-advanced-desc': '生成参数控制',
+    'settings-desktop-title': '桌面端',
+    'settings-desktop-desc': '控制 macOS 菜单栏或 Windows 系统托盘中的 RAI 窗口。',
+    'settings-desktop-status': '桌面客户端已连接线上 RAI 服务',
+    'settings-desktop-open-quick': '打开快速小窗',
+    'settings-desktop-open-main': '打开完整窗口',
+    'settings-desktop-hide': '隐藏窗口',
+    'settings-about-title': '关于RAI',
+    'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
+    'settings-about-github-label': 'GitHub',
+    'settings-about-author-label': '作者 Rick',
+    'settings-update-timeline-title': '更新记录',
+    'settings-update-timeline-source': '来源：本机历史版本目录、版本记录、历史 release manifest、GitHub README。',
+    'settings-timeline-details-open': '查看完整更新',
+    'settings-timeline-details-close': '收起完整更新',
+    'settings-replay-onboarding': '重新观看欢迎引导',
+    'settings-install-title': '添加到桌面',
+    'settings-install-desc': '在 Windows、macOS、iPhone 和 iPad 上把 RAI 作为独立应用打开。',
+    'settings-install-action': '安装 RAI',
+    'settings-install-download-macos': '下载 macOS 桌面版',
+    'settings-install-ready': '当前浏览器可直接安装。',
+    'settings-install-installed': 'RAI 已在应用模式中打开。',
+    'settings-install-manual': '当前浏览器需要使用浏览器菜单添加。',
+    'settings-install-unavailable': '当前环境暂不支持安装，请使用 Chrome、Edge 或 Safari 打开。',
+    'settings-install-opened': 'RAI 已经以应用模式打开',
+    'settings-install-accepted': '安装已开始',
+    'settings-install-dismissed': '已取消安装',
+    'settings-install-see-steps': '请按下方步骤添加到桌面',
+    'app-update-title': 'RAI 已更新',
+    'app-update-desc': '当前网页仍是旧版本，刷新后即可使用最新版。',
+    'app-update-button': '刷新更新',
+    'onb-hero-sub': '由 Rick 打造的智能 AI 助手',
+    'onb-welcome-title': '欢迎来到 RAI',
+    'onb-welcome-desc': '多模型、深度研究、联网搜索，一切尽在指尖。',
+    'onb-features-title': '强大的 AI 能力',
+    'onb-feat-models-title': '多模型协作',
+    'onb-feat-models': '多模型自由切换（DeepSeek / Kimi / GPT / Claude / Grok / Gemma）',
+    'onb-feat-research-title': '研究模式',
+    'onb-feat-research': '快速 / 深度研究模式，支持多模型互评综合回答',
+    'onb-feat-search-title': '实时信息',
+    'onb-feat-search': '联网搜索 + 实时财经数据',
+    'onb-feat-files-title': '文件理解',
+    'onb-feat-files': '图片 / 视频 / 文件上传分析',
+    'onb-feat-markdown-title': '专业输出',
+    'onb-feat-markdown': 'Markdown / 代码高亮 / Mermaid 图表 / 数学公式',
+    'onb-usage-title': '开始使用',
+    'onb-usage-input-title': '输入框',
+    'onb-usage-input-desc': '在底部输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。',
+    'onb-usage-model-title': '模型切换',
+    'onb-usage-model-desc': '点击顶部模型选择器，可切换智能模型、极速模式、专家模式或全部模型。',
+    'onb-usage-sidebar-title': '侧边栏',
+    'onb-usage-sidebar-desc': '左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。',
+    'onb-skip': '跳过',
+    'onb-next': '下一步',
+    'onb-start': '开始使用',
+    'sidebar-flows-beta': '测试',
+    'avatar-settings-title': '头像',
+    'avatar-settings-desc': '上传自定义头像，用于侧边栏、设置页和聊天消息',
+    'change-avatar': '更换头像',
+    'avatar-uploading': '头像上传中...',
+    'avatar-upload-success': '头像已更新',
+    'avatar-upload-failed': '头像上传失败',
+    'account-binding-title': '账号绑定',
+    'confirm-change': '确定',
+    'account-settings-title': '账号信息',
+    'settings-username-label': '用户名',
+    'settings-username-desc': '修改侧边栏显示名称；留空时默认使用邮箱前缀',
+    'settings-email-label': '邮箱',
+    'settings-email-desc': '修改登录邮箱，保存后立即生效',
+    'settings-email-placeholder': 'name@example.com',
+    'password-settings-title': '修改密码',
+    'password-settings-desc': '',
+    'password-current-label': '当前密码',
+    'password-new-label': '新密码',
+    'password-confirm-label': '确认新密码',
+    'password-current-placeholder': '输入当前密码',
+    'password-new-placeholder': '至少6位字符',
+    'password-confirm-placeholder': '再次输入新密码',
     'membership-status-title': '会员状态',
     'upgrade-points-link': '点数兑换会员',
     'remaining-points-label': '剩余点数',
@@ -2548,6 +3208,21 @@ const i18n = {
     'network-error': '网络错误',
     'cancel': '取消',
     'save-settings': '保存设置',
+    'save-settings-pending': '保存中...',
+    'settings-save-success': '设置已保存',
+    'settings-save-success-profile': '账号信息和设置已保存',
+    'settings-save-success-password': '密码和设置已保存',
+    'settings-save-success-full': '账号信息、密码和设置已保存',
+    'settings-save-partial': '部分内容已保存，但配置同步失败',
+    'settings-save-failed': '保存失败，请重试',
+    'invalid-email-error': '请输入有效的邮箱地址',
+    'username-too-long-error': '用户名不能超过 80 个字符',
+    'password-current-required-error': '修改密码时必须输入当前密码',
+    'password-new-required-error': '请输入新密码',
+    'password-confirm-required-error': '请再次输入新密码',
+    'password-too-short-error': '新密码至少需要 6 位字符',
+    'password-confirm-mismatch-error': '两次输入的新密码不一致',
+    'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
     'model-smart': '智能模型',
     'model-fast': '极速模型',
@@ -2566,8 +3241,12 @@ const i18n = {
     'reasoning-medium': '中',
     'reasoning-high': '长',
     'reasoning-mixed': '自适应',
-    'agent-mode': '4倍速深度研究',
+    'research-mode': '研究模式',
+    'research-fast': '快速研究',
+    'research-deep': '深度研究',
+    'agent-mode': '深度研究',
     'add-attachment': '添加附件',
+    'rpass-pending': 'rPass 登录待上线',
     'internetSearch': '联网搜索',
     'thinkingMode': '思考模式',
     'regenerateTitle': '重新生成回复',
@@ -2601,7 +3280,8 @@ const i18n = {
     'new-flow': 'New ChatFlow',
     'sidebar-sessions': 'Conversations',
     'settings': 'Settings',
-    'logout': 'Logout',
+    'logout': 'Log out',
+    'back-to-chat': 'Back to Chat',
     'welcome-title': 'How can I help you?',
     'welcome-subtitle': 'I can help you write, analyze finance, translate, and brainstorm\nYour personal RAI assistant',
     'action-write': 'Write',
@@ -2623,6 +3303,7 @@ const i18n = {
     'theme-desc': 'Choose interface theme',
     'dark-theme': 'Dark',
     'light-theme': 'Light',
+    'system-theme': 'System',
     'language-label': 'Language',
     'language-desc': 'Choose interface language',
     'generation-params': 'Generation Parameters',
@@ -2639,6 +3320,97 @@ const i18n = {
     'preferences-desc': 'Set AI role and behavior',
     'preferences-placeholder': 'e.g., I prefer concise replies...',
     'advanced-options': 'Advanced Options',
+    'settings-nav-language': 'Language / 中文',
+    'settings-nav-subscription': 'Subscription',
+    'settings-nav-account': 'Account',
+    'settings-nav-appearance': 'Appearance',
+    'settings-nav-custom': 'Custom',
+    'settings-nav-advanced': 'Advanced',
+    'settings-nav-desktop': 'Desktop',
+    'settings-nav-about': 'About',
+    'settings-mobile-section-rai': 'My RAI',
+    'settings-mobile-section-account': 'Account',
+    'settings-mobile-section-system': 'System',
+    'settings-subscription-desc': 'Check-in, tasks, points redemption, and membership status',
+    'settings-account-desc': 'Username, email, password, and third-party binding status',
+    'settings-advanced-desc': 'Generation parameter controls',
+    'settings-desktop-title': 'Desktop',
+    'settings-desktop-desc': 'Control RAI windows from the macOS menu bar or Windows system tray.',
+    'settings-desktop-status': 'The desktop client is connected to the live RAI service',
+    'settings-desktop-open-quick': 'Open quick window',
+    'settings-desktop-open-main': 'Open full window',
+    'settings-desktop-hide': 'Hide windows',
+    'settings-about-title': 'About RAI',
+    'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
+    'settings-about-github-label': 'GitHub',
+    'settings-about-author-label': 'Author Rick',
+    'settings-update-timeline-title': 'Update Records',
+    'settings-update-timeline-source': 'Sources: local historical version folders, version records, historical release manifest, and GitHub README.',
+    'settings-timeline-details-open': 'View full update',
+    'settings-timeline-details-close': 'Collapse full update',
+    'settings-replay-onboarding': 'Replay welcome guide',
+    'settings-install-title': 'Add to Desktop',
+    'settings-install-desc': 'Open RAI as a standalone app on Windows, macOS, iPhone, and iPad.',
+    'settings-install-action': 'Install RAI',
+    'settings-install-download-macos': 'Download macOS desktop app',
+    'settings-install-ready': 'This browser can install RAI directly.',
+    'settings-install-installed': 'RAI is already open in app mode.',
+    'settings-install-manual': 'Use this browser menu to add RAI manually.',
+    'settings-install-unavailable': 'Install is not available here. Open RAI in Chrome, Edge, or Safari.',
+    'settings-install-opened': 'RAI is already open in app mode',
+    'settings-install-accepted': 'Install started',
+    'settings-install-dismissed': 'Install canceled',
+    'settings-install-see-steps': 'Follow the steps below to add RAI to your desktop',
+    'app-update-title': 'RAI has been updated',
+    'app-update-desc': 'This page is still running an older version. Refresh to use the latest release.',
+    'app-update-button': 'Refresh',
+    'onb-hero-sub': 'Your intelligent AI assistant by Rick',
+    'onb-welcome-title': 'Welcome to RAI',
+    'onb-welcome-desc': 'Multi-model chat, deep research, and web search are ready when you are.',
+    'onb-features-title': 'Powerful AI capability',
+    'onb-feat-models-title': 'Model collaboration',
+    'onb-feat-models': 'Switch freely across DeepSeek, Kimi, GPT, Claude, Grok, and Gemma',
+    'onb-feat-research-title': 'Research mode',
+    'onb-feat-research': 'Fast and Deep Research modes with multi-model review',
+    'onb-feat-search-title': 'Live context',
+    'onb-feat-search': 'Web search plus real-time finance data',
+    'onb-feat-files-title': 'File understanding',
+    'onb-feat-files': 'Analyze images, videos, and uploaded files',
+    'onb-feat-markdown-title': 'Professional output',
+    'onb-feat-markdown': 'Markdown, code highlighting, Mermaid charts, and math',
+    'onb-usage-title': 'Start using RAI',
+    'onb-usage-input-title': 'Composer',
+    'onb-usage-input-desc': 'Type at the bottom, press Enter to send, Shift+Enter for a new line. Drag files in to upload.',
+    'onb-usage-model-title': 'Model switcher',
+    'onb-usage-model-desc': 'Use the top model picker for Smart, Fast, Expert, or all models.',
+    'onb-usage-sidebar-title': 'Sidebar',
+    'onb-usage-sidebar-desc': 'Manage chat history, search conversations, switch theme and language, and open settings.',
+    'onb-skip': 'Skip',
+    'onb-next': 'Next',
+    'onb-start': 'Get started',
+    'sidebar-flows-beta': 'Beta',
+    'avatar-settings-title': 'Avatar',
+    'avatar-settings-desc': 'Upload a custom avatar for the sidebar, settings, and chat messages.',
+    'change-avatar': 'Change Avatar',
+    'avatar-uploading': 'Uploading avatar...',
+    'avatar-upload-success': 'Avatar updated',
+    'avatar-upload-failed': 'Avatar upload failed',
+    'account-binding-title': 'Account Binding',
+    'confirm-change': 'Confirm',
+    'account-settings-title': 'Account',
+    'settings-username-label': 'Username',
+    'settings-username-desc': 'Change the display name shown in the sidebar; if blank, the email prefix will be used.',
+    'settings-email-label': 'Email',
+    'settings-email-desc': 'Change the login email. It takes effect immediately after saving.',
+    'settings-email-placeholder': 'name@example.com',
+    'password-settings-title': 'Change Password',
+    'password-settings-desc': '',
+    'password-current-label': 'Current Password',
+    'password-new-label': 'New Password',
+    'password-confirm-label': 'Confirm New Password',
+    'password-current-placeholder': 'Enter current password',
+    'password-new-placeholder': 'At least 6 characters',
+    'password-confirm-placeholder': 'Enter new password again',
     'membership-status-title': 'Membership Status',
     'upgrade-points-link': 'Redeem membership with points',
     'remaining-points-label': 'Remaining Points',
@@ -2649,6 +3421,21 @@ const i18n = {
     'network-error': 'Network error',
     'cancel': 'Cancel',
     'save-settings': 'Save Settings',
+    'save-settings-pending': 'Saving...',
+    'settings-save-success': 'Settings saved',
+    'settings-save-success-profile': 'Account and settings saved',
+    'settings-save-success-password': 'Password and settings saved',
+    'settings-save-success-full': 'Account, password, and settings saved',
+    'settings-save-partial': 'Part of your changes were saved, but config sync failed',
+    'settings-save-failed': 'Save failed, please try again',
+    'invalid-email-error': 'Please enter a valid email address',
+    'username-too-long-error': 'Username must be 80 characters or fewer',
+    'password-current-required-error': 'Current password is required to change password',
+    'password-new-required-error': 'Please enter a new password',
+    'password-confirm-required-error': 'Please confirm the new password',
+    'password-too-short-error': 'New password must be at least 6 characters',
+    'password-confirm-mismatch-error': 'The new passwords do not match',
+    'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
     'model-smart': 'Smart Model',
     'model-fast': 'Fast Mode',
@@ -2667,8 +3454,12 @@ const i18n = {
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
     'reasoning-mixed': 'Adaptive',
-    'agent-mode': 'Research Turbo (4x)',
+    'research-mode': 'Research Mode',
+    'research-fast': 'Fast Research',
+    'research-deep': 'Deep Research',
+    'agent-mode': 'Deep Research',
     'add-attachment': 'Add Attachment',
+    'rpass-pending': 'rPass login is coming soon',
     'internetSearch': 'Web Search',
     'thinkingMode': 'Thinking Mode',
     'regenerateTitle': 'Regenerate Response',
@@ -2680,8 +3471,1558 @@ const i18n = {
   }
 };
 
+const SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP = [
+  ['设置', '設定'],
+  ['关于', '關於'],
+  ['时间线', '時間線'],
+  ['更新记录', '更新記錄'],
+  ['更新时间线', '更新時間線'],
+  ['浅色模式', '淺色模式'],
+  ['深色模式', '深色模式'],
+  ['移动端', '移動端'],
+  ['二级', '二級'],
+  ['账号', '帳號'],
+  ['订阅', '訂閱'],
+  ['自定义', '自訂'],
+  ['高级', '進階'],
+  ['图标', '圖示'],
+  ['侧边栏', '側邊欄'],
+  ['本地', '本機'],
+  ['服务器', '伺服器'],
+  ['运维', '運維'],
+  ['历史', '歷史'],
+  ['版本', '版本'],
+  ['完整更新', '完整更新'],
+  ['创作', '創作'],
+  ['欢迎', '歡迎'],
+  ['聊天', '聊天'],
+  ['讨论', '討論'],
+  ['邮箱', '信箱'],
+  ['作者', '作者'],
+  ['来源', '來源'],
+  ['头像', '頭像'],
+  ['响应式', '響應式'],
+  ['联网', '連網'],
+  ['模型路由', '模型路由'],
+  ['智能模型', '智慧模型'],
+  ['运行期备用链', '執行期備援鏈'],
+  ['逻辑', '邏輯'],
+  ['补齐', '補齊'],
+  ['跟随系统', '跟隨系統'],
+  ['登出', '登出']
+];
+
+const SIMPLIFIED_TO_TRADITIONAL_CHAR_MAP = {
+  '欢': '歡', '来': '來', '继': '繼', '续': '續', '创': '創', '账': '帳', '号': '號', '开': '開',
+  '对': '對', '邮': '郵', '箱': '箱', '码': '碼', '选': '選', '还': '還', '没': '沒', '册': '冊',
+  '录': '錄', '搜': '搜', '索': '索', '话': '話', '间': '間', '会': '會', '设': '設', '置': '置',
+  '退': '退', '询': '詢', '问': '問', '题': '題', '写': '寫', '财': '財', '务': '務', '析': '析',
+  '译': '譯', '构': '構', '属': '屬', '助': '助', '理': '理', '联': '聯', '网': '網', '推': '推',
+  '预': '預', '算': '算', '控': '控', '制': '制', '长': '長', '输': '輸', '入': '入', '换': '換',
+  '行': '行', '观': '觀', '择': '擇', '界': '界', '语': '語', '参': '參', '数': '數', '随': '隨',
+  '机': '機', '性': '性', '核': '核', '采': '採', '样': '樣', '罚': '罰', '仅': '僅', '词': '詞',
+  '简': '簡', '洁': '潔', '您': '您', '什': '什', '偏': '偏', '好': '好', '项': '項', '订': '訂',
+  '阅': '閱', '关': '關', '于': '於', '态': '態', '点': '點', '兑': '兌', '员': '員', '状': '狀',
+  '户': '戶', '绑': '綁', '态': '態', '统': '統', '专': '專', '化': '化', '级': '級', '线': '線',
+  '传': '傳', '侧': '側', '栏': '欄', '聊': '聊', '天': '天', '显': '顯', '称': '稱', '时': '時',
+  '认': '認', '为': '為', '过': '過', '键': '鍵', '后': '後', '即': '即', '效': '效', '留': '留',
+  '则': '則', '当': '當', '前': '前', '确': '確', '认': '認', '再': '再', '获': '獲', '络': '絡',
+  '误': '誤', '败': '敗', '请': '請', '试': '試', '部': '部', '分': '分', '内': '內', '容': '容',
+  '同': '同', '步': '步', '失': '失', '败': '敗', '须': '須', '与': '與', '两': '兩', '致': '致',
+  '模': '模', '型': '型', '极': '極', '证': '證', '资': '資', '讯': '訊', '复': '復', '应': '應',
+  '页': '頁', '动': '動', '画': '畫', '适': '適', '配': '配', '发': '發', '布': '佈', '历': '歷',
+  '繁': '繁', '体': '體', '浅': '淺', '图': '圖', '标': '標', '异': '異', '常': '常', '终': '終',
+  '览': '覽', '导': '導', '径': '徑', '运': '運', '维': '維', '档': '檔', '额': '額', '层': '層',
+  '级': '級', '护': '護', '备': '備', '份': '份', '启': '啟', '动': '動', '务': '務', '览': '覽',
+  '讨': '討', '论': '論', '议': '議', '细': '細', '库': '庫', '赖': '賴', '据': '據', '驱': '驅',
+  '环': '環', '离': '離', '错': '錯', '实': '實', '际': '際', '签': '簽', '读': '讀', '买': '買',
+  '卖': '賣', '扩': '擴', '载': '載', '链': '鏈', '认': '認', '质': '質', '穷': '窮',
+  '补': '補', '齐': '齊', '测': '測', '验': '驗', '连': '連', '辑': '輯', '邏': '邏'
+};
+
+function toTraditionalText(value) {
+  let text = String(value || '');
+  SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP.forEach(([simplified, traditional]) => {
+    text = text.replaceAll(simplified, traditional);
+  });
+  return text.replace(/[\u4e00-\u9fff]/g, (char) => SIMPLIFIED_TO_TRADITIONAL_CHAR_MAP[char] || char);
+}
+
+i18n['zh-TW'] = Object.fromEntries(
+  Object.entries(i18n['zh-CN']).map(([key, value]) => [key, toTraditionalText(value)])
+);
+
+Object.assign(i18n['zh-TW'], {
+  'settings-nav-language': '語言 / English',
+  'settings-about-title': '關於 RAI',
+  'settings-about-desc': '您的專屬 AI 助理，由 Rick 創作。歡迎隨時找我聊天、討論。',
+  'settings-about-github-label': 'GitHub',
+  'settings-about-author-label': '作者 Rick',
+  'logout': '登出',
+  'system-theme': '跟隨系統',
+  'settings-update-timeline-title': '更新記錄',
+  'settings-update-timeline-source': '來源：本機歷史版本目錄、版本記錄、歷史 release manifest、GitHub README。',
+  'settings-timeline-details-open': '查看完整更新',
+  'settings-timeline-details-close': '收起完整更新',
+  'settings-replay-onboarding': '重新觀看歡迎引導',
+  'settings-install-download-macos': '下載 macOS 桌面版',
+  'sidebar-flows-beta': '測試'
+});
+
+const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-06-04',
+    version: 'v0.10.9.16',
+    zh: {
+      summary: '修复透明矢量图标并加入桌面客户端下载入口。',
+      details: [
+        'RAI 图标不再绘制全画布黑色背景，圆角外区域保持透明。',
+        'Web、PWA 和 Tauri 图标均由无文字土星矢量图重新生成。',
+        '设置关于页的添加到桌面卡片新增 macOS 桌面版下载入口。',
+        '桌面端设置状态行移除绿色圆点装饰，保持统一的设置页设计语言。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the transparent vector icon and added a desktop app download.',
+      details: [
+        'The RAI icon no longer paints a full-canvas black background; the area outside the rounded icon stays transparent.',
+        'Web, PWA, and Tauri icons were regenerated from the text-free Saturn vector mark.',
+        'The About settings install card now includes a macOS desktop app download link.',
+        'The desktop settings status row no longer shows the green dot decoration.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-02',
+    version: 'v0.10.9.15',
+    zh: {
+      summary: '修复桌面小窗登录同步、会员状态和图标圆角。',
+      details: [
+        'macOS 菜单栏快速小窗会在打开和获得焦点时同步主窗口登录状态，不再出现主窗口已登录、小窗未登录。',
+        '桌面端会员、积分、签到和任务状态会在获取成功后主动刷新设置页。',
+        '设置页新增仅桌面客户端可见的“桌面端”入口，可打开快速小窗、完整窗口或隐藏窗口。',
+        'RAI 桌面图标重新生成，保持无文字土星标识，并修正四角露白问题。'
+      ]
+    },
+    en: {
+      summary: 'Fixed desktop quick-window auth sync, membership state, and icon corners.',
+      details: [
+        'The macOS menu bar quick window now syncs login state when opened or focused.',
+        'Desktop membership, points, check-in, and task state refresh the settings page immediately after loading.',
+        'Settings now include a desktop-only section for opening the quick window, full window, or hiding windows.',
+        'The RAI desktop icon was regenerated as a text-free Saturn mark with corrected rounded corners.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-02',
+    version: 'v0.10.9.14',
+    zh: {
+      summary: '新增 Tauri v2 桌面客户端基础版。',
+      details: [
+        'macOS 菜单栏和 Windows 系统托盘加入 RAI 图标，可快速打开对话窗口或完整窗口。',
+        '桌面客户端内置现有静态前端，业务 API 和用户数据统一连接线上 RAI 服务，不打包 Chromium。',
+        '桌面客户端登录后会自动完成“把 RAI 放到桌面”任务上报，仍然只奖励一次。'
+      ]
+    },
+    en: {
+      summary: 'Added the first Tauri v2 desktop client.',
+      details: [
+        'RAI now has a macOS menu bar and Windows system tray icon for quick chat or the full window.',
+        'The desktop client bundles the existing static frontend and connects business APIs to the live RAI service without bundling Chromium.',
+        'After login, the desktop client reports the add-to-desktop task automatically and still only awards points once.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-01',
+    version: 'v0.10.9.13',
+    zh: {
+      summary: '优化桌面 App 任务领取和任务列表样式。',
+      details: [
+        '已添加过 RAI 到桌面的用户可直接领取 300 积分，无需删除并重新安装。',
+        '桌面 App 图标继续只保留土星图形，不在图标内写 RAI。',
+        '任务列表外层去掉背景，只保留单条任务背景，统一设置页视觉语言。'
+      ]
+    },
+    en: {
+      summary: 'Refined desktop app task claiming and task list styling.',
+      details: [
+        'Users who already added RAI to desktop can claim the 300 points directly without reinstalling.',
+        'The desktop app icon remains the Saturn-only mark without RAI text inside the icon.',
+        'The task list wrapper no longer has its own background; each task item keeps the card background.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-31',
+    version: 'v0.10.9.12',
+    zh: {
+      summary: '新增积分任务和桌面 App 奖励提示。',
+      details: [
+        '未完成桌面 App 任务的账号打开网页版时会提示添加 RAI 到 App 可获得 300 积分。',
+        '订阅设置加入任务区：把 RAI 放到桌面 +300，邀请一位用户 +600。',
+        '点数不足时提示通过任务或签到增加积分，并自动回退免费模型。',
+        '研究模式讨论气泡改为左上角小圆角，其余三角大圆角。'
+      ]
+    },
+    en: {
+      summary: 'Added points tasks and desktop app reward prompts.',
+      details: [
+        'Accounts that have not completed the desktop app task now see a web prompt to add RAI as an app for 300 points.',
+        'Subscription settings now include tasks: add RAI to desktop for +300 and invite one user for +600.',
+        'When points run out, RAI prompts users to earn more through tasks or check-in and falls back to a free model.',
+        'Research discussion bubbles now use a small top-left corner and larger remaining corners.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-31',
+    version: 'v0.10.9.11',
+    zh: {
+      summary: '新增跨浏览器添加到桌面能力。',
+      details: [
+        '补齐 Web App Manifest、应用图标和 Service Worker，让 Chrome 与 Edge 能识别为可安装应用。',
+        '关于页新增“添加到桌面”入口，Chrome / Edge 可直接触发浏览器安装弹窗。',
+        'Safari、iPhone 和 iPad 会根据当前平台显示对应的手动添加步骤。',
+        '已针对独立应用打开状态做检测，避免重复提示安装。'
+      ]
+    },
+    en: {
+      summary: 'Added cross-browser desktop install support.',
+      details: [
+        'Added the Web App Manifest, app icon, and Service Worker so Chrome and Edge can recognize RAI as installable.',
+        'Added an Add to Desktop entry in About; Chrome and Edge can open the native browser install prompt.',
+        'Safari, iPhone, and iPad now show platform-specific manual install steps.',
+        'Installed app mode is detected to avoid repeated install prompts.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-28',
+    version: 'v0.10.9.10',
+    zh: {
+      summary: '完善研究讨论气泡、thinking 展示与会员点数。',
+      details: [
+        'Pro 会员兑换点数改为 28 天签到可获得的点数，即 560 点。',
+        '研究讨论完成后会保留 Gemma、Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 的讨论气泡，不再只剩最终回答。',
+        '子模型发言改为头像 + 聊天气泡布局，去掉模型对话边框，并按模型使用轻微区分的品牌色。',
+        '深度研究开启 thinking 时，每个子模型气泡内可折叠查看自己的 thinking。',
+        '研究停止条件收紧为至少 3/4 子模型认为无重大问题；主控模型只负责最终认真陈述，不再质疑用户。',
+        '快速研究强制关闭 thinking 并使用低推理强度，避免表现得像普通模式或残留深度档位。',
+        '询问用户工具继续加固，兼容模型把工具 JSON 意外包进普通代码块的情况。',
+        '询问用户卡片去掉黄色背景和阴影，改为直接展示问题、灰度选项按钮和黑白数字圆标。',
+        '普通模式 thinking 改为轻量折叠面板，去掉厚重卡片边框；侧边栏深浅色和语言切换按钮去掉默认按钮背景。'
+      ]
+    },
+    en: {
+      summary: 'Improved research chat bubbles, per-agent thinking, and membership points.',
+      details: [
+        'Pro redemption now costs 560 points, equal to 28 days of check-ins.',
+        'Research discussions keep the Gemma, Kimi K2.5, GPT-5.5, and DeepSeek V4 Pro bubbles after completion instead of disappearing behind the final answer.',
+        'Sub-agent turns now use an avatar plus chat bubble layout with no dialogue borders and subtly distinct model colors.',
+        'When Deep Research enables thinking, each sub-agent bubble can show its own collapsible thinking.',
+        'Research now requires at least 3/4 sub-agents to report no major issue before the master writes the final answer; the master answers directly instead of challenging the user.',
+        'Fast Research forces thinking off and low reasoning effort so it does not inherit deep-research settings.',
+        'Ask-user rendering is further hardened for cases where a model accidentally wraps the tool JSON in a generic code block.',
+        'Ask-user cards no longer use the yellow background or shadow; questions, neutral option buttons, and black/white number dots are shown directly.',
+        'Ordinary-mode thinking now uses a lighter collapsible panel without heavy card borders, and sidebar theme/language controls no longer have default button backgrounds.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-27',
+    version: 'v0.10.9.9',
+    zh: {
+      summary: '修正快速/深度研究为多模型讨论流程。',
+      details: [
+        '快速研究不再等同普通单模型模式，现在同样进入 Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 讨论流程。',
+        '快速研究关闭 thinking，采用较短讨论轮次；深度研究开启 thinking，采用更完整的多轮质疑。',
+        '研究流程改为先由各模型形成初始结论，再按轮共享结论、互相质疑并修正，直到无重大问题或达到安全轮次上限。',
+        '最终回答只由主控模型在讨论结束后生成，主控必须吸收成立的质疑并标注仍未解决的不确定前提。',
+        '研究过程记录新增 discussionRounds、consensusReached 与轮次质量信息，便于回看模型是否真的讨论过。'
+      ]
+    },
+    en: {
+      summary: 'Changed Fast and Deep Research into true multi-model discussion.',
+      details: [
+        'Fast Research no longer behaves like ordinary single-model chat; it now enters the Kimi K2.5, GPT-5.5, and DeepSeek V4 Pro discussion flow.',
+        'Fast Research disables thinking and uses shorter rounds; Deep Research enables thinking and runs fuller challenge rounds.',
+        'The research flow now starts with initial conclusions, then shares conclusions round by round for mutual critique and revision until no major issue remains or the safe round limit is reached.',
+        'Only the master model writes the final answer after discussion, and it must absorb valid critiques and preserve unresolved uncertainty.',
+        'Process traces now include discussionRounds, consensusReached, and per-round quality information.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-27',
+    version: 'v0.10.9.6',
+    zh: {
+      summary: '加固询问用户工具渲染。',
+      details: [
+        '询问用户工具现在同时识别标准 rai_ask_user 围栏、json 围栏、无语言围栏，以及模型偶发输出的独立 JSON 行。',
+        '解析器会严格校验 question/questions 与 options/placeholder 结构，避免普通代码块被随意误判。',
+        '流式阶段会隐藏未闭合的询问用户工具块，最终消息会渲染为交互卡片，不再残留原始 JSON 或反引号。',
+        '支持只有自定义输入框的问题，兼容单问题与不限数量的 questions 数组。',
+        '提示词补充要求模型必须使用独立的 rai_ask_user 围栏，不得用普通 json 代码块代替。'
+      ]
+    },
+    en: {
+      summary: 'Hardened ask-user tool rendering.',
+      details: [
+        'Ask-user rendering now recognizes the standard rai_ask_user fence, json fences, unlabeled fences, and occasional standalone JSON lines emitted by models.',
+        'The parser strictly validates question/questions plus options/placeholder structure so ordinary code blocks are not broadly misclassified.',
+        'During streaming, incomplete ask-user blocks are hidden; final messages render interactive cards without raw JSON or stray backticks.',
+        'Input-only questions are supported, along with single-question payloads and unlimited questions arrays.',
+        'The prompt now tells models to use an independent rai_ask_user fence and not substitute a generic json code block.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-27',
+    version: 'v0.10.9.5',
+    zh: {
+      summary: '移除全部模型中的商用模型图标。',
+      details: [
+        '全部模型展开列表中的 DeepSeek、Kimi、Qwen、ChatGPT、GPT-5.5、Grok、Claude、Gemma 图标已全部移除，只保留文字与状态徽章。',
+        '模型弹窗中的同类商用模型卡片图标同步移除，避免界面内残留品牌图形。',
+        '智能模型、极速模式、专家模式与全部模型入口图标保留；本地模型入口不受影响。',
+        '为无图标条目补齐纯文字布局，展开列表不再留下左侧空白占位。',
+        '版本号提升至 0.10.9.5，并更新缓存号，旧页面会收到刷新提示。'
+      ]
+    },
+    en: {
+      summary: 'Removed commercial provider icons from the full model list.',
+      details: [
+        'DeepSeek, Kimi, Qwen, ChatGPT, GPT-5.5, Grok, Claude, and Gemma no longer show provider icons in the expanded All Models list, leaving text and badges only.',
+        'The same provider icons were removed from the model modal cards so brand graphics do not linger elsewhere in the UI.',
+        'The top-level Smart, Fast, Expert, and All Models entry icons remain, and the local-model entry is unchanged.',
+        'Text-only menu items now use a dedicated layout so the expanded list no longer leaves an empty left gutter.',
+        'The app version is now 0.10.9.5 with a new build id so older pages surface the refresh prompt.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-26',
+    version: 'v0.10.9.4',
+    zh: {
+      summary: '翻新主页视觉并修复询问用户工具。',
+      details: [
+        '主页侧边栏、新对话、选中对话、输入框、模型菜单和加号菜单改为设置页同款灰度层级，减少硬边框。',
+        '新用户引导第一页图片改为占卡片一半，移除重复关闭按钮，底部顺序调整为跳过、步骤点、下一步。',
+        '重做引导第二页能力介绍卡片，保持第三页结构不变。',
+        '研究模式新增总开关；关闭时不影响普通推理，开启快速研究会关闭 thinking，开启深度研究才进入多模型互评。',
+        '修复 RAI_ASK_USER 被显示成代码块的问题，流式和历史消息都会渲染为可点击/可输入的问题卡片。'
+      ]
+    },
+    en: {
+      summary: 'Refreshed the home UI and fixed ask-user rendering.',
+      details: [
+        'The sidebar, new chat button, active conversation, composer, model menu, and plus menu now use Settings-style grayscale layers with fewer hard borders.',
+        'The first onboarding page image now takes half the card, the duplicate close button is removed, and the footer order is Skip, dots, Next.',
+        'The second onboarding page now uses polished capability cards while the third page keeps its stronger layout.',
+        'Research Mode now has a master switch; off leaves ordinary reasoning alone, Fast disables thinking, and Deep starts the multi-model review flow.',
+        'Fixed RAI_ASK_USER rendering so streaming and saved messages show interactive question cards instead of raw code blocks.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-26',
+    version: 'v0.10.9.3',
+    zh: {
+      summary: '修复登录语言与研究模式交互。',
+      details: [
+        '设置页繁体中文下，简体中文选项保持显示为“简体中文”，避免语言按钮互相误导。',
+        '登录 / 注册页语言按钮改为与签到按钮一致的土星黄选中态，去掉阴影和渐变。',
+        'ZTX6D 登录改为半宽按钮，并新增 rPass 登录占位入口，悬浮或点击提示待上线。',
+        '邮箱输入不再在 .co 阶段自动跳到密码框，渐进式表单隐藏步骤不再预留空白。',
+        '退出登录会关闭设置面板、清除登录态并强制刷新页面。',
+        '原 4 倍速研究入口改为快速研究 / 深度研究两档滑块；快速研究关闭 thinking，深度研究由 Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 互相质疑讨论后，再由 GPT-5.5 或 DeepSeek V4 Pro 主控生成最终回答。'
+      ]
+    },
+    en: {
+      summary: 'Fixed login language UI and research-mode behavior.',
+      details: [
+        'In Traditional Chinese, the Simplified Chinese option now keeps its own label instead of becoming misleading.',
+        'The login language picker now matches the check-in button color with no shadow or gradient.',
+        'ZTX6D login is half-width and an rPass login placeholder now shows coming-soon feedback.',
+        'Email entry no longer advances at .co, and hidden auth steps no longer reserve empty space.',
+        'Logging out closes Settings, clears auth state, and forces a page refresh.',
+        'The old 4x research entry is replaced by a Fast / Deep Research slider; Fast disables thinking, while Deep has Kimi K2.5, GPT-5.5, and DeepSeek V4 Pro challenge each other before GPT-5.5 or DeepSeek V4 Pro produces the final answer.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-26',
+    version: 'v0.10.9.2',
+    zh: {
+      summary: '重做新用户引导、登录语言选择和询问用户工具。',
+      details: [
+        '新用户引导改为账号级完成状态，注册新账号不会被旧浏览器标记跳过。',
+        '引导结束后会在主页显示 RAI 的语言选择问题，用户可选择简体中文、繁體中文或 English。',
+        'AI 新增询问用户工具，可在回复中渲染不限数量的问题，每题最多 3 个选项和一个自定义输入框。',
+        '旧版本网页会检测线上版本变化，并显示一键刷新到最新版的提示。',
+        '登录 / 注册语言切换改为分段按钮，设置页重新观看引导入口移入关于卡片操作区。',
+        '修复无会话新用户侧边栏一直显示加载中的问题。'
+      ]
+    },
+    en: {
+      summary: 'Reworked onboarding, login language selection, and the ask-user tool.',
+      details: [
+        'Onboarding completion is now account-scoped so a new registration is not skipped by an old browser flag.',
+        'After onboarding, RAI asks the new user to choose Simplified Chinese, Traditional Chinese, or English on the home screen.',
+        'Assistant replies can now render unlimited ask-user questions, each with up to three options and one custom input.',
+        'Older open pages now detect newer server versions and show a one-click refresh prompt.',
+        'The login language picker is now a segmented control, and replaying onboarding lives in the About action area.',
+        'Fixed the empty-session sidebar loading state for new users.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-25',
+    version: 'v0.10.9.1',
+    zh: {
+      summary: '管理员后台快捷键适配 macOS。',
+      details: [
+        'macOS 管理员入口快捷键改为 Control + Option + A，避免占用 Chrome 的 Command 快捷键。',
+        'Windows / Linux 继续使用 Ctrl + Shift + A 打开管理员入口。'
+      ]
+    },
+    en: {
+      summary: 'Adjusted the admin panel shortcut for macOS.',
+      details: [
+        'The macOS admin shortcut is now Control + Option + A to avoid Chrome Command-key conflicts.',
+        'Windows and Linux continue to use Ctrl + Shift + A.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-25',
+    version: 'v0.10.9',
+    zh: {
+      summary: '管理员后台新增模型开关。',
+      details: [
+        '管理员可以在后台按模型开启或关闭用户可见性。',
+        '关闭后的模型会从主聊天、移动模型菜单、ChatFlow 和重新生成模型列表中隐藏。',
+        '如果用户当前选择了被关闭模型，会自动切回智能模型。'
+      ]
+    },
+    en: {
+      summary: 'Added admin-controlled model visibility switches.',
+      details: [
+        'Admins can enable or disable user-visible models from the admin panel.',
+        'Disabled models are hidden from chat model menus, ChatFlow, and regenerate choices.',
+        'When a selected model is disabled, the UI automatically switches back to Smart Model.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-22',
+    version: 'v0.10.8',
+    zh: {
+      summary: '设置、侧边栏、点数兑换和更新记录完成一次体验打磨。',
+      details: [
+        '关于页使用 RAI 土星 Logo，更新记录改成面向用户的版本说明，并显示完整年份日期。',
+        '版本号回到 0.10 系列，当前版本显示为 v0.10.8。',
+        '设置页新增跟随系统深浅色，浅色配色更接近现代应用的柔和灰白层级。',
+        '登出入口移动到账号设置内，账号表单、移动端返回箭头和二级菜单状态更加整齐。',
+        '侧边栏修正搜索框右边界、移动端圆角、ChatFlow 测试标识和语言图标按钮。',
+        '点数兑换会员页面改为更清晰的套餐卡片，支持邮箱改为 rick080402+raisupport@gmail.com。'
+      ]
+    },
+    en: {
+      summary: 'Polished Settings, sidebar, points redemption, and the update records experience.',
+      details: [
+        'The About page now uses the RAI Saturn logo, shows user-facing update notes, and includes full year dates.',
+        'The app version returned to the 0.10 line and now displays v0.10.8.',
+        'Settings now supports following the system theme, with a softer modern light palette.',
+        'Log out moved into Account settings, with cleaner account fields, mobile back affordance, and detail-page state.',
+        'The sidebar now has a fixed search edge, rounded mobile drawer, ChatFlow beta badge, and language icon button.',
+        'The points redemption page now uses clearer plan cards and support email is rick080402+raisupport@gmail.com.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-21',
+    version: 'v0.9.4',
+    zh: {
+      summary: '设置页浅色模式和关于页更新记录基础完成。',
+      details: [
+        '设置弹窗、移动端设置主页、二级设置页、输入框、按钮、头像区和更新记录都支持浅色主题。',
+        '设置图标在浅色主题下显示深色，在深色主题下显示浅色。',
+        '关于页从固定内容改为数据驱动更新记录，并加入 GitHub、作者和联系邮箱。',
+        '简体中文、繁体中文和 English 的设置页文案完成同步。'
+      ]
+    },
+    en: {
+      summary: 'Completed the base light theme for Settings and the About update records.',
+      details: [
+        'Settings modal, mobile home, detail pages, inputs, buttons, avatar areas, and update records all support light theme.',
+        'Settings icons now use dark artwork on light theme and light artwork on dark theme.',
+        'About moved from fixed entries to data-driven update records with GitHub, author, and contact email.',
+        'Simplified Chinese, Traditional Chinese, and English Settings copy were synchronized.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-21',
+    version: 'v0.9.3',
+    zh: {
+      summary: '本地 Markdown 渲染更稳定，首屏加载不再依赖外部备用资源。',
+      details: [
+        '修复本地 Markdown 渲染库文件损坏造成的加载风险。',
+        'RAI 可以直接使用内置 Markdown 渲染能力，弱网或外部 CDN 不可用时也更稳。',
+        '关于页补充该版本的更新记录。'
+      ]
+    },
+    en: {
+      summary: 'Made local Markdown rendering more stable without relying on external fallback resources.',
+      details: [
+        'Fixed the damaged local Markdown renderer file that could affect first load.',
+        'RAI can use its bundled Markdown renderer more reliably when networks or CDNs are unavailable.',
+        'Added this version to the About update records.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-21',
+    version: 'v0.9.2',
+    zh: {
+      summary: '浅色主题图标、繁体中文和更新记录入口上线。',
+      details: [
+        '浅色主题下设置入口、关闭按钮和分类图标更清晰。',
+        '语言支持扩展为简体中文、繁体中文和 English。',
+        '关于页首次加入 RAI 更新记录，方便查看版本演进。'
+      ]
+    },
+    en: {
+      summary: 'Added light-theme icon contrast, Traditional Chinese, and the first update records entry.',
+      details: [
+        'Settings entry, close button, and category icons are clearer on light theme.',
+        'Language support expanded to Simplified Chinese, Traditional Chinese, and English.',
+        'About gained RAI update records so version history is easier to review.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-21',
+    version: 'v0.9.1',
+    zh: {
+      summary: '移动端设置更像原生应用，并加入自定义头像。',
+      details: [
+        '移动端设置的字号、头像、按钮高度、圆角和间距更适合触控。',
+        '设置主页和二级页面切换加入非线性淡入、滑移、缩放和轻微模糊。',
+        'Android 系统返回键可以从二级设置返回设置主页，再返回 RAI 主界面。',
+        '用户可以上传自定义头像，并同步显示在侧边栏、设置页和聊天消息中。'
+      ]
+    },
+    en: {
+      summary: 'Made mobile Settings feel more native and added custom avatars.',
+      details: [
+        'Mobile Settings typography, avatar size, button height, radius, and spacing are better tuned for touch.',
+        'Settings home and detail transitions now use non-linear fade, slide, scale, and light blur.',
+        'Android back returns from detail to Settings home, then from Settings home to the RAI main screen.',
+        'Users can upload a custom avatar that appears in the sidebar, Settings, and chat messages.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-21',
+    version: 'v0.9.0',
+    zh: {
+      summary: '移动端设置重做，并修正侧边栏签到按钮。',
+      details: [
+        '移动端设置改为设置主页加二级详情页，更符合手机触控习惯。',
+        '侧边栏签到按钮改为按内容宽度显示，不再占用过多空间。',
+        '设置分类、关闭按钮和侧边栏设置入口加入 SVG 图标。',
+        '移动端设置主页展示用户头像和名称。'
+      ]
+    },
+    en: {
+      summary: 'Rebuilt mobile Settings and fixed the sidebar check-in button.',
+      details: [
+        'Mobile Settings now uses a home page plus detail pages for a better touch flow.',
+        'The sidebar check-in button now sizes to its content instead of taking too much width.',
+        'Settings categories, close button, and sidebar Settings entry gained SVG icons.',
+        'Mobile Settings home shows the user avatar and name.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-14',
+    version: 'v0.10.7',
+    zh: {
+      summary: 'ZTX6D 登录、NewAPI GPT-5.5、故障降级和 Mermaid 实时图表修复。',
+      details: [
+        '新增服务端 ZTX6D SSO 登录和老用户绑定入口，前端只接收 RAI 自签 JWT。',
+        '接入 OpenAI-compatible NewAPI GPT-5.5 通道，并对 free 用户设置每日 10 次限免。',
+        '模型失败时按 GPT-OSS-120B、Gemma、Qwen2.5-7B 自动降级。',
+        '修复流式 Mermaid 统计图、饼图、流程图与 Markdown、KaTeX、代码块冲突。',
+        '保留 Grok 4.2、Gemma 官方/relay/备用路由和 Claude relay 兼容逻辑。'
+      ]
+    },
+    en: {
+      summary: 'Added ZTX6D login, NewAPI GPT-5.5, fallback routing, and live Mermaid fixes.',
+      details: [
+        'Added server-side ZTX6D SSO login and account binding while the frontend only receives RAI JWTs.',
+        'Connected OpenAI-compatible NewAPI GPT-5.5 with a 10-use daily free quota.',
+        'Fallbacks now try GPT-OSS-120B, Gemma, then Qwen2.5-7B when a model fails.',
+        'Fixed streaming Mermaid charts conflicting with Markdown, KaTeX, and code blocks.',
+        'Kept Grok 4.2, Gemma official/relay/fallback routing, and Claude relay compatibility.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-10',
+    version: 'v0.10.6',
+    zh: {
+      summary: 'Grok、Gemma、Claude 多供应商路由和模型菜单打磨。',
+      details: [
+        'Grok 4.2 接入 NewAPI 路由，并清理上游混在正文里的 think 内容。',
+        'Gemma 支持 Google 官方接口、relay 和备用路由。',
+        'Claude OpenRouter 请求改为经美国 relay 转发，上游调用更安全稳定。',
+        '模型供应商图标、短名展示、会员徽标和列表宽度继续统一。'
+      ]
+    },
+    en: {
+      summary: 'Polished Grok, Gemma, Claude provider routing and model menus.',
+      details: [
+        'Routed Grok 4.2 through NewAPI and separated upstream think content from visible replies.',
+        'Added Gemma official Google API, relay, and fallback routing support.',
+        'Moved Claude OpenRouter traffic through a US relay for safer and more stable upstream calls.',
+        'Unified provider icons, short names, membership badges, and model list width behavior.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-06',
+    version: 'v0.10.4',
+    zh: {
+      summary: 'GPT-5.5 限免策略、NewAPI main 分组和运行期备用链。',
+      details: [
+        'GPT-5.5 调整为限免策略，free 每日 10 次，Pro/MAX 不受该限额约束。',
+        '确认 NewAPI 令牌 main 分组可用，直连 gpt-5.5 返回正常。',
+        'ZTX6D 登录绑定和 GPT-5.5 使用配置更完整。',
+        '服务端增加统一运行期备用链，主模型不可用时自动回退。'
+      ]
+    },
+    en: {
+      summary: 'Updated GPT-5.5 free quota, NewAPI main group, and runtime fallback chain.',
+      details: [
+        'Changed GPT-5.5 to a limited-free model: 10 daily uses for free users, unlimited for Pro/MAX.',
+        'Verified the NewAPI main token group can call gpt-5.5 successfully.',
+        'Added ops chapters for ZTX6D login/binding and GPT-5.5 integration parameters.',
+        'Added a unified runtime fallback chain when primary models are unavailable.'
+      ]
+    }
+  },
+  {
+    date: '2026-05-05',
+    version: 'v0.10.3',
+    zh: {
+      summary: 'ZTX6D SSO、账号绑定、NewAPI provider 和 GPT-5.5 模型入口。',
+      details: [
+        '新增 /api/auth/ztx6d/status、start、callback，使用一次性 rt 换取 uid。',
+        '已登录用户可在设置账号里绑定 ZTX6D。',
+        '登录页新增 ZTX6D 登录按钮，并移除生产环境 localhost 旧跳转。',
+        '新增 NewAPI / Lightcone AI provider，并在桌面、移动端、重新生成和 ChatFlow 菜单加入 GPT-5.5。'
+      ]
+    },
+    en: {
+      summary: 'Added ZTX6D SSO, account binding, NewAPI provider, and GPT-5.5 entries.',
+      details: [
+        'Added /api/auth/ztx6d/status, start, and callback using one-time rt exchange for uid.',
+        'Logged-in users can bind ZTX6D from Settings account binding.',
+        'Added a ZTX6D login button and removed old production localhost redirects.',
+        'Added the NewAPI / Lightcone AI provider and GPT-5.5 in desktop, mobile, regenerate, and ChatFlow menus.'
+      ]
+    }
+  },
+  {
+    date: '2026-04-30',
+    version: 'v0.10.0',
+    zh: {
+      summary: 'DeepSeek V4、ChatGPT/Gemma 路由、模型菜单和横屏输入布局。',
+      details: [
+        'DeepSeek 主路由升级为 deepseek-v4-flash，前端显示 DeepSeek V4。',
+        '新增 OpenRouter ChatGPT openai/gpt-oss-120b:free。',
+        'Gemma 切到 Google 官方 Generative Language API，并保留地区限制兜底。',
+        '模型选择菜单缩窄、供应商图标统一，极速/专家入口保持抽象图标。',
+        '桌面与横屏平板首页输入框宽度改为主内容区域约三分之二。',
+        '主站版本同步上线，历史对话与用户数据保持不变。'
+      ]
+    },
+    en: {
+      summary: 'Updated DeepSeek V4, ChatGPT/Gemma routing, model menus, and landscape input layout.',
+      details: [
+        'Upgraded DeepSeek main routing to deepseek-v4-flash and displayed it as DeepSeek V4.',
+        'Added OpenRouter ChatGPT openai/gpt-oss-120b:free.',
+        'Moved Gemma to the Google official Generative Language API with region-limit fallback.',
+        'Narrowed model menus, unified provider icons, and kept Fast/Expert entries abstract.',
+        'Set desktop and landscape tablet welcome input width to about two-thirds of the main content area.',
+        'Published the main site update while preserving chat history and user data.'
+      ]
+    }
+  },
+  {
+    date: '2026-04-08',
+    version: 'v0.9',
+    zh: {
+      summary: '历史版本整理为 0.9 快照节点。',
+      details: [
+        'β0.2、0.3、0.4、0.5、0.6、0.81、0.85+、0.85++ 和 0.9 的历史演进被整理为可追溯记录。',
+        '历史包清理了和用户体验无关的本地状态文件，版本内容更聚焦。',
+        '3月到4月的移动端模型入口、对话索引、Mermaid 错误收敛和滚动体验更新并入该快照说明。'
+      ]
+    },
+    en: {
+      summary: 'Historical archive and 0.9 snapshot milestone.',
+      details: [
+        'Organized the historical progress from beta 0.2 through 0.9 into traceable records.',
+        'Cleaned local state files from historical packages so each record focuses on product changes.',
+        'Grouped March-April mobile model entry, conversation index, Mermaid failure handling, and scrolling updates into this snapshot.'
+      ]
+    }
+  },
+  {
+    date: '2026-01-30',
+    version: 'v0.85++',
+    zh: {
+      summary: '最后一个保留模型路由版本。',
+      details: [
+        '保留 Chat Flow 之前的模型路由能力，作为后续路线的可回退参考点。',
+        '搜索深度映射、原生工具调用和流式工具调用体验进一步稳定。',
+        '首字延时从约 5 秒降至约 1 秒，并支持 AI 边输出边决定是否调用搜索工具。'
+      ]
+    },
+    en: {
+      summary: 'Last archived version that preserves the older model-routing branch.',
+      details: [
+        'Kept the pre-Chat Flow model-routing capability as a fallback reference point.',
+        'Improved Tavily search-depth mapping, native tool calling, and streaming tool-call behavior.',
+        'Reduced first-token latency from about 5 seconds to about 1 second while supporting search decisions during streaming.'
+      ]
+    }
+  },
+  {
+    date: '2026-01-11',
+    version: 'v0.85+',
+    zh: {
+      summary: 'Chat Flow 思维流重磅新增。',
+      details: [
+        '新增无限画布，可把对话内容拖拽到画布组织思路。',
+        '支持节点语义连线、标签说明关系和 AI 自动拆解子话题。',
+        '支持 PNG、SVG、Mermaid、JSON 多格式导出和一键自动布局。',
+        '补齐 Chat Flow 桌面和移动端 README 展示。'
+      ]
+    },
+    en: {
+      summary: 'Major Chat Flow mind-map canvas update.',
+      details: [
+        'Added an infinite canvas where conversations can be dragged into visual thinking space.',
+        'Supported semantic node connections, edge labels, and AI decomposition into subtopics.',
+        'Added PNG, SVG, Mermaid, and JSON export plus one-click auto layout.',
+        'Documented desktop and mobile Chat Flow screenshots in README.'
+      ]
+    }
+  },
+  {
+    date: '2025-12-27',
+    version: 'v0.81',
+    zh: {
+      summary: '0.8 之后的功能整合快照。',
+      details: [
+        '作为 0.85+ 之前的历史功能整合节点归档。',
+        '保留多模型、联网搜索、思考模式、会员系统、引用回复和编辑消息等核心能力。',
+        '该阶段作为后续 Chat Flow 大更新前的稳定基线。'
+      ]
+    },
+    en: {
+      summary: 'Feature consolidation snapshot after 0.8.',
+      details: [
+        'Archived as the historical consolidation point before 0.85+.',
+        'Kept core capabilities including multi-model support, web search, thinking mode, membership, quote reply, and message editing.',
+        'This stage serves as the stable baseline before the later Chat Flow update.'
+      ]
+    }
+  },
+  {
+    date: '2025-12-13',
+    version: 'v0.8',
+    zh: {
+      summary: '图文并茂回复和图表渲染。',
+      details: [
+        'AI 回复过程中支持插入多张图片。',
+        '支持流程图、统计图、思维导图等多种图表输出。',
+        'README 将该阶段标记为图文并茂能力节点。'
+      ]
+    },
+    en: {
+      summary: 'Rich media replies and chart rendering.',
+      details: [
+        'AI replies can include multiple images during generation.',
+        'Added flowcharts, statistical charts, mind maps, and other diagram outputs.',
+        'README marks this as the Rich Media milestone.'
+      ]
+    }
+  },
+  {
+    date: '2025-12-10',
+    version: 'v0.6 多模态',
+    zh: {
+      summary: '多模态能力归档。',
+      details: [
+        '历史目录记录为 RAI 0.6 多模态。',
+        '能力范围覆盖图片理解、视频理解、文档上传与解析。',
+        '多模态能力后来延续到 Qwen VL Max、Qwen3 Omni Flash 和文档解析流程。'
+      ]
+    },
+    en: {
+      summary: 'Multimodal capability archive.',
+      details: [
+        'Historical folder recorded as RAI 0.6 Multimodal.',
+        'Covered image understanding, video understanding, and document upload/parsing.',
+        'The multimodal capability later continued through Qwen VL Max, Qwen3 Omni Flash, and document parsing flows.'
+      ]
+    }
+  },
+  {
+    date: '2025-12-09',
+    version: 'v0.6 game routing',
+    zh: {
+      summary: '基于 0.6 多模态的模型路由 game 分支。',
+      details: [
+        '历史目录记录为“基于 RAI0.6 多模态 模型路由 game 版本”。',
+        '作为 0.6 多模态和模型路由方向的分支快照保留。',
+        '该分支保留了早期模型路由实验方向。'
+      ]
+    },
+    en: {
+      summary: 'Game-routing branch based on the 0.6 multimodal version.',
+      details: [
+        'Historical folder recorded as a model-routing game version based on RAI 0.6 multimodal.',
+        'Kept as a branch snapshot for the multimodal and model-routing direction.',
+        'This branch preserved the early model-routing experiment direction.'
+      ]
+    }
+  },
+  {
+    date: '2025-11-27',
+    version: 'v0.5',
+    zh: {
+      summary: '带模型路由的 0.5 版本。',
+      details: [
+        '引入 Auto 模式，根据复杂度选择 Qwen Flash、Plus、Max。',
+        '加入五维度分析：输入长度、代码检测、数学公式、推理复杂度、语言混合度。',
+        '整合联网搜索、思考模式和本地模型相关文档。'
+      ]
+    },
+    en: {
+      summary: '0.5 release with model routing.',
+      details: [
+        'Introduced Auto mode to choose Qwen Flash, Plus, or Max by complexity.',
+        'Added five-dimension analysis: input length, code detection, math formulas, reasoning complexity, and language mix.',
+        'Integrated web search, thinking mode, and local model documentation.'
+      ]
+    }
+  },
+  {
+    date: '2025-11-20',
+    version: 'v0.4',
+    zh: {
+      summary: '自动路由和运行稳定性提升。',
+      details: [
+        'Auto 模式更稳定，模型选择和请求头处理更可靠。',
+        '修复自动模式 404 和模型选择异常，运行稳定性提升。',
+        '形成自动路由阈值和验证清单，后续版本更容易迭代。'
+      ]
+    },
+    en: {
+      summary: 'Improved auto-routing and runtime stability.',
+      details: [
+        'Made Auto mode more stable with more reliable model selection and request headers.',
+        'Fixed Auto mode 404s and model-selection issues while improving runtime stability.',
+        'Created routing thresholds and verification checklists that made later versions easier to iterate.'
+      ]
+    }
+  },
+  {
+    date: '2025-11-16',
+    version: 'v0.3',
+    zh: {
+      summary: '早期 RAI 源码归档。',
+      details: [
+        'RAI 0.3 保留了早期源码骨架。',
+        '保留早期 Express、SQLite、JWT、前端页面和 AI 聊天基础结构。',
+        '这一版奠定了后续模型路由和多模态能力的基础。'
+      ]
+    },
+    en: {
+      summary: 'Early RAI source archive.',
+      details: [
+        'RAI 0.3 preserved the early source foundation.',
+        'Kept early Express, SQLite, JWT, frontend, and AI chat foundations.',
+        'This version laid the groundwork for later model routing and multimodal features.'
+      ]
+    }
+  },
+  {
+    date: '2025-11-15',
+    version: 'β0.2',
+    zh: {
+      summary: '初始 beta 归档。',
+      details: [
+        'RAI β0.2 是最早的可追溯 beta 节点。',
+        '保留最早期项目骨架、认证和聊天基础能力。',
+        '作为后续 0.3、0.4、0.5 演进的起点。'
+      ]
+    },
+    en: {
+      summary: 'Initial beta archive.',
+      details: [
+        'RAI beta 0.2 is the earliest traceable beta milestone.',
+        'Kept the earliest project skeleton, authentication, and chat basics.',
+        'Served as the starting point for later 0.3, 0.4, and 0.5 evolution.'
+      ]
+    }
+  }
+];
+
+const SUPPORTED_LANGUAGES = ['zh-CN', 'zh-TW', 'en'];
+const LANGUAGE_OPTION_LABELS = {
+  'zh-CN': { 'zh-CN': '简体中文', 'zh-TW': '简体中文', 'en': 'Simplified Chinese' },
+  'zh-TW': { 'zh-CN': '繁體中文', 'zh-TW': '繁體中文', 'en': 'Traditional Chinese' },
+  'en': { 'zh-CN': 'English', 'zh-TW': 'English', 'en': 'English' }
+};
+
+function normalizeLanguage(lang) {
+  if (lang === 'zh-HK' || lang === 'zh-MO') return 'zh-TW';
+  return SUPPORTED_LANGUAGES.includes(lang) ? lang : 'zh-CN';
+}
+
+function isChineseLanguage(lang = appState.language) {
+  return String(lang || '').startsWith('zh');
+}
+
+function getCurrentLocale() {
+  return appState.language === 'zh-TW' ? 'zh-TW' : (isChineseLanguage(appState.language) ? 'zh-CN' : 'en-US');
+}
+
+function getLanguageToggleLabel(lang = appState.language) {
+  const currentLang = normalizeLanguage(lang);
+  const nextLang = currentLang === 'en'
+    ? normalizeLanguage(appState.languageToggleChinese || localStorage.getItem('rai_language_chinese_variant') || 'zh-CN')
+    : 'en';
+  if (nextLang === 'zh-CN') return '中';
+  if (nextLang === 'zh-TW') return '繁';
+  return 'EN';
+}
+
 function i18nText(key, fallback = '') {
-  return i18n[appState.language]?.[key] || fallback;
+  const lang = normalizeLanguage(appState.language);
+  return i18n[lang]?.[key] || i18n['zh-CN']?.[key] || fallback;
+}
+
+function localizeTimelineContent(entry) {
+  const lang = normalizeLanguage(appState.language);
+  if (lang === 'en') return entry.en || entry.zh;
+  if (lang === 'zh-TW') {
+    const source = entry.zh || entry.en || {};
+    return {
+      summary: toTraditionalText(source.summary || ''),
+      details: (source.details || []).map((detail) => toTraditionalText(detail))
+    };
+  }
+  return entry.zh || entry.en || {};
+}
+
+function formatTimelineDate(dateValue) {
+  const lang = normalizeLanguage(appState.language);
+  const date = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateValue;
+
+  if (lang === 'en') {
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}.${month}.${day}`;
+}
+
+function renderSettingsTimeline() {
+  const list = document.getElementById('settingsTimelineList');
+  if (!list) return;
+
+  list.textContent = '';
+  const fragment = document.createDocumentFragment();
+  const detailsOpenLabel = i18nText('settings-timeline-details-open', 'View full update');
+  const detailsCloseLabel = i18nText('settings-timeline-details-close', 'Collapse full update');
+
+  RAI_UPDATE_TIMELINE.forEach((entry) => {
+    const content = localizeTimelineContent(entry);
+    const item = document.createElement('article');
+    item.className = 'settings-timeline-item';
+
+    const time = document.createElement('time');
+    time.className = 'settings-timeline-date';
+    time.dateTime = entry.date;
+    time.textContent = formatTimelineDate(entry.date);
+
+    const body = document.createElement('div');
+    body.className = 'settings-timeline-body';
+
+    const version = document.createElement('div');
+    version.className = 'settings-timeline-version';
+    version.textContent = entry.version;
+
+    const summary = document.createElement('p');
+    summary.textContent = content.summary || '';
+
+    body.append(version, summary);
+
+    if (content.details?.length) {
+      const details = document.createElement('details');
+      details.className = 'settings-timeline-details';
+
+      const detailsSummary = document.createElement('summary');
+      detailsSummary.textContent = detailsOpenLabel;
+      details.addEventListener('toggle', () => {
+        detailsSummary.textContent = details.open ? detailsCloseLabel : detailsOpenLabel;
+      });
+
+      const detailList = document.createElement('ul');
+      detailList.className = 'settings-timeline-detail-list';
+
+      content.details.forEach((detailText) => {
+        const detailItem = document.createElement('li');
+        detailItem.textContent = detailText;
+        detailList.appendChild(detailItem);
+      });
+
+      details.append(detailsSummary, detailList);
+      body.appendChild(details);
+    }
+
+    item.append(time, body);
+    fragment.appendChild(item);
+  });
+
+  list.appendChild(fragment);
+}
+
+function getUserDisplayName(user = appState.user) {
+  const email = String(user?.email || '').trim();
+  const username = String(user?.username || '').trim();
+  if (username) return username;
+  if (email) return email.split('@')[0];
+  return isChineseLanguage(appState.language) ? '用户' : 'User';
+}
+
+function getUserAvatarUrl(user = appState.user) {
+  return resolveRaiRemoteUrl(user?.avatar_url || user?.avatarUrl || '');
+}
+
+function getAvatarFallback(user = appState.user) {
+  const displayName = getUserDisplayName(user);
+  const email = String(user?.email || '').trim();
+  const seed = displayName || email || 'U';
+  return seed.charAt(0).toUpperCase();
+}
+
+function escapeCssUrl(url) {
+  return String(url || '').replace(/["\\]/g, '\\$&');
+}
+
+function setAvatarElement(element, avatarUrl, fallbackText) {
+  if (!element) return;
+
+  const hasAvatar = !!avatarUrl;
+  element.classList.toggle('has-image', hasAvatar);
+  element.style.backgroundImage = hasAvatar ? `url("${escapeCssUrl(avatarUrl)}")` : '';
+  element.textContent = hasAvatar ? '' : fallbackText;
+}
+
+function applyUserAvatarToElement(element, user = appState.user) {
+  setAvatarElement(element, getUserAvatarUrl(user), getAvatarFallback(user));
+}
+
+function updateUserIdentityUI() {
+  const realEmail = String(appState.user?.email || '').trim();
+  const displayName = getUserDisplayName(appState.user);
+  const avatarUrl = getUserAvatarUrl(appState.user);
+  const avatarFallback = getAvatarFallback(appState.user);
+
+  const userNameEl = document.getElementById('userName');
+  if (userNameEl) {
+    userNameEl.textContent = displayName;
+  }
+
+  const userAvatarEl = document.getElementById('userAvatar');
+  setAvatarElement(userAvatarEl, avatarUrl, avatarFallback);
+
+  const settingsMobileNameEl = document.getElementById('settingsMobileName');
+  if (settingsMobileNameEl) {
+    settingsMobileNameEl.textContent = displayName;
+  }
+
+  const settingsMobileAvatarEl = document.getElementById('settingsMobileAvatar');
+  setAvatarElement(settingsMobileAvatarEl, avatarUrl, avatarFallback);
+
+  const settingsAvatarPreviewEl = document.getElementById('settingsAvatarPreview');
+  setAvatarElement(settingsAvatarPreviewEl, avatarUrl, avatarFallback);
+
+  const usernameInput = document.getElementById('settingsUsernameInput');
+  if (usernameInput) {
+    usernameInput.value = String(appState.user?.username || '').trim();
+  }
+
+  const emailInput = document.getElementById('settingsEmailInput');
+  if (emailInput) {
+    emailInput.value = realEmail;
+  }
+}
+
+function normalizeResearchMode(value) {
+  return String(value || '').toLowerCase() === 'deep' ? 'deep' : 'fast';
+}
+
+function isResearchModeEnabled() {
+  return appState.researchModeEnabled === true;
+}
+
+function getEffectiveResearchMode() {
+  return isResearchModeEnabled() ? normalizeResearchMode(appState.researchMode) : 'off';
+}
+
+function researchModeToIndex(mode) {
+  return normalizeResearchMode(mode) === 'deep' ? 1 : 0;
+}
+
+function researchIndexToMode(index) {
+  return Number(index) >= 1 ? 'deep' : 'fast';
+}
+
+function setResearchModeFromSlider(indexValue) {
+  setResearchMode(researchIndexToMode(indexValue), { enable: true });
+}
+
+function setResearchMode(mode, options = {}) {
+  const normalized = normalizeResearchMode(mode);
+  if (options.enable !== false) {
+    appState.researchModeEnabled = true;
+  }
+  appState.researchMode = normalized;
+  appState.agentMode = false;
+
+  if (isResearchModeEnabled() && normalized === 'deep') {
+    appState.thinkingMode = true;
+    appState.reasoningProfile = 'high';
+  } else if (isResearchModeEnabled() && normalized === 'fast') {
+    appState.thinkingMode = false;
+    appState.reasoningProfile = 'low';
+  }
+
+  updateResearchModeControl();
+  updateReasoningProfileControl();
+  updateToolbarUI();
+  scheduleComposerMenuReposition(8);
+  preserveMobileInputFocus();
+}
+
+function toggleResearchModeFromMenu(event) {
+  event?.stopPropagation?.();
+  appState.researchModeEnabled = !isResearchModeEnabled();
+  appState.agentMode = false;
+
+  if (appState.researchModeEnabled) {
+    const normalized = normalizeResearchMode(appState.researchMode);
+    if (normalized === 'deep') {
+      appState.thinkingMode = true;
+      appState.reasoningProfile = 'high';
+    } else {
+      appState.thinkingMode = false;
+      appState.reasoningProfile = 'low';
+    }
+  } else {
+    appState.thinkingMode = false;
+  }
+
+  updateResearchModeControl();
+  updateReasoningProfileControl();
+  updateToolbarUI();
+  scheduleComposerMenuReposition(8);
+  preserveMobileInputFocus();
+}
+
+function updateResearchModeControl() {
+  const slider = document.getElementById('researchModeSlider');
+  const toggle = document.getElementById('researchModeToggle');
+  const switchBtn = document.getElementById('researchModeSwitch');
+  const item = document.querySelector('.research-mode-item');
+  const enabled = isResearchModeEnabled();
+
+  if (slider) {
+    const targetIndex = String(researchModeToIndex(appState.researchMode));
+    if (slider.value !== targetIndex) {
+      slider.value = targetIndex;
+    }
+    slider.disabled = !enabled;
+    slider.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    updateReasoningProfileSliderVisual(slider);
+  }
+
+  if (toggle) {
+    toggle.classList.toggle('active', enabled);
+  }
+
+  if (switchBtn) {
+    switchBtn.classList.toggle('active', enabled);
+    switchBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    switchBtn.title = enabled
+      ? (isChineseLanguage(appState.language) ? '关闭研究模式' : 'Turn off research mode')
+      : (isChineseLanguage(appState.language) ? '开启研究模式' : 'Turn on research mode');
+  }
+
+  if (item) {
+    item.classList.toggle('research-mode-off', !enabled);
+  }
+}
+
+function getRequestModelIdForCurrentMode() {
+  const selected = normalizeSelectedModelId(appState.selectedModel);
+  if (getEffectiveResearchMode() === 'deep' && appState.thinkingMode && selected === 'deepseek-v3') {
+    return 'deepseek-v3.2-speciale';
+  }
+  return selected;
+}
+
+function getRequestReasoningProfileForCurrentMode() {
+  if (getEffectiveResearchMode() === 'deep' && appState.thinkingMode) {
+    return 'mixed';
+  }
+  if (getEffectiveResearchMode() === 'fast') {
+    return 'low';
+  }
+  return normalizeReasoningProfile(appState.reasoningProfile);
+}
+
+function openAvatarPicker() {
+  if (!appState.token) {
+    showToast(isChineseLanguage(appState.language) ? '请先登录后再更换头像' : 'Please log in before changing your avatar');
+    return;
+  }
+
+  const avatarInput = document.getElementById('avatarInput');
+  if (!avatarInput) return;
+  avatarInput.value = '';
+  avatarInput.click();
+}
+
+async function handleAvatarSelected(event) {
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!allowedTypes.includes(file.type)) {
+    showToast(isChineseLanguage(appState.language) ? '请选择 JPG、PNG、WEBP 或 GIF 图片' : 'Choose a JPG, PNG, WEBP, or GIF image');
+    input.value = '';
+    return;
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    showToast(isChineseLanguage(appState.language) ? '头像不能超过 5MB' : 'Avatar must be under 5MB');
+    input.value = '';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('avatar', file);
+  showToast(i18nText('avatar-uploading', isChineseLanguage(appState.language) ? '头像上传中...' : 'Uploading avatar...'));
+
+  try {
+    const response = await fetch(`${API_BASE}/user/avatar`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`
+      },
+      body: formData
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data?.success || !data.avatar_url) {
+      throw new Error(data?.error || i18nText('avatar-upload-failed', isChineseLanguage(appState.language) ? '头像上传失败' : 'Avatar upload failed'));
+    }
+
+    appState.user = {
+      ...appState.user,
+      avatar_url: data.avatar_url
+    };
+    updateUserIdentityUI();
+    if (typeof renderMessages === 'function') {
+      renderMessages();
+    }
+    showToast(i18nText('avatar-upload-success', isChineseLanguage(appState.language) ? '头像已更新' : 'Avatar updated'));
+  } catch (error) {
+    console.error('头像上传失败:', error);
+    showToast(error.message || i18nText('avatar-upload-failed', isChineseLanguage(appState.language) ? '头像上传失败' : 'Avatar upload failed'));
+  } finally {
+    input.value = '';
+  }
+}
+
+function clearSettingsPasswordInputs() {
+  ['settingsCurrentPasswordInput', 'settingsNewPasswordInput', 'settingsConfirmPasswordInput']
+    .forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) input.value = '';
+    });
+}
+
+const SETTINGS_SECTION_TITLE_KEYS = {
+  language: 'settings-nav-language',
+  subscription: 'settings-nav-subscription',
+  account: 'settings-nav-account',
+  appearance: 'settings-nav-appearance',
+  custom: 'settings-nav-custom',
+  advanced: 'settings-nav-advanced',
+  desktop: 'settings-nav-desktop',
+  about: 'settings-nav-about'
+};
+
+function getSettingsSectionTitle(section) {
+  const key = SETTINGS_SECTION_TITLE_KEYS[section] || 'settings';
+  return i18nText(key, section || 'Settings');
+}
+
+function isSettingsMobileLayout() {
+  return window.matchMedia('(max-width: 860px)').matches;
+}
+
+function updateSettingsMobileMode(mode) {
+  const content = document.querySelector('.settings-content');
+  if (!content) return;
+
+  const nextMode = mode === 'detail' ? 'detail' : 'home';
+  appState.settingsMobileMode = nextMode;
+  content.classList.toggle('mobile-home', nextMode === 'home');
+  content.classList.toggle('mobile-detail', nextMode === 'detail');
+}
+
+function currentSettingsHistoryState() {
+  return window.history.state && window.history.state.raiSettings === true
+    ? window.history.state
+    : null;
+}
+
+function pushSettingsHistory(mode, section = appState.activeSettingsSection || 'language') {
+  if (!isSettingsMobileLayout()) return;
+
+  const currentState = currentSettingsHistoryState();
+  if (currentState?.settingsMode === mode && currentState?.settingsSection === section) {
+    return;
+  }
+
+  window.history.pushState({
+    raiSettings: true,
+    settingsMode: mode,
+    settingsSection: section
+  }, '', window.location.href);
+
+  appState.settingsHistoryDepth = Math.min((appState.settingsHistoryDepth || 0) + 1, 2);
+}
+
+function showSettingsMobileHome(options = {}) {
+  if (!isSettingsMobileLayout()) return;
+
+  if (!options.fromHistory && currentSettingsHistoryState()?.settingsMode === 'detail') {
+    window.history.back();
+    return;
+  }
+
+  updateSettingsMobileMode('home');
+  appState.settingsHistoryDepth = currentSettingsHistoryState() ? 1 : 0;
+  updateSettingsNavigationUI();
+}
+
+function syncSettingsResponsiveLayout() {
+  const content = document.querySelector('.settings-content');
+  if (!content) return;
+
+  if (isSettingsMobileLayout()) {
+    updateSettingsMobileMode(appState.settingsMobileMode || 'home');
+  } else {
+    content.classList.remove('mobile-home', 'mobile-detail');
+  }
+}
+
+function updateSettingsOptionButtons() {
+  document.querySelectorAll('[data-theme-option]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-theme-option') === (appState.themePreference || appState.theme));
+  });
+
+  document.querySelectorAll('[data-language-option]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-language-option') === appState.language);
+  });
+}
+
+function syncDesktopSettingsVisibility() {
+  document.querySelectorAll('.tauri-desktop-only').forEach((element) => {
+    element.classList.toggle('is-hidden', !RAI_IS_TAURI_DESKTOP);
+    if (RAI_IS_TAURI_DESKTOP) {
+      element.removeAttribute('aria-hidden');
+    } else {
+      element.setAttribute('aria-hidden', 'true');
+    }
+  });
+
+  if (!RAI_IS_TAURI_DESKTOP && appState.activeSettingsSection === 'desktop') {
+    switchSettingsSection('language', { keepMobileHome: true });
+  }
+}
+
+function getTauriInvoke() {
+  return window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke || null;
+}
+
+async function invokeDesktopCommand(commandName) {
+  if (!RAI_IS_TAURI_DESKTOP) return false;
+  const invoke = getTauriInvoke();
+  if (typeof invoke !== 'function') {
+    showToast(isChineseLanguage(appState.language) ? '桌面端控制暂不可用' : 'Desktop controls are not available');
+    return false;
+  }
+  try {
+    await invoke(commandName);
+    return true;
+  } catch (error) {
+    console.warn('桌面端命令失败:', commandName, error);
+    showToast(isChineseLanguage(appState.language) ? '桌面端控制失败' : 'Desktop control failed');
+    return false;
+  }
+}
+
+function openDesktopQuickWindow() {
+  invokeDesktopCommand('desktop_show_quick_window');
+}
+
+function openDesktopMainWindow() {
+  invokeDesktopCommand('desktop_show_main_window');
+}
+
+function hideDesktopWindows() {
+  invokeDesktopCommand('desktop_hide_windows');
+}
+
+function updateSettingsDirtyState() {
+  const usernameInput = document.getElementById('settingsUsernameInput');
+  const emailInput = document.getElementById('settingsEmailInput');
+  const currentPasswordInput = document.getElementById('settingsCurrentPasswordInput');
+  const newPasswordInput = document.getElementById('settingsNewPasswordInput');
+  const confirmPasswordInput = document.getElementById('settingsConfirmPasswordInput');
+  const accountSaveBtn = document.getElementById('settingsAccountSaveBtn');
+  const passwordSaveBtn = document.getElementById('settingsPasswordSaveBtn');
+
+  const nextUsername = String(usernameInput?.value || '').trim();
+  const nextEmail = String(emailInput?.value || '').trim();
+  const currentUsername = String(appState.user?.username || '').trim();
+  const currentEmail = String(appState.user?.email || '').trim();
+  const profileDirty = nextUsername !== currentUsername || nextEmail !== currentEmail;
+  const passwordDirty = [currentPasswordInput, newPasswordInput, confirmPasswordInput]
+    .some((input) => String(input?.value || '').length > 0);
+
+  if (accountSaveBtn) {
+    accountSaveBtn.classList.toggle('is-visible', profileDirty);
+    accountSaveBtn.disabled = !profileDirty;
+  }
+
+  if (passwordSaveBtn) {
+    passwordSaveBtn.classList.toggle('is-visible', passwordDirty);
+    passwordSaveBtn.disabled = !passwordDirty;
+  }
+}
+
+function updateSettingsNavigationUI() {
+  const section = appState.activeSettingsSection || 'language';
+  const titleKey = SETTINGS_SECTION_TITLE_KEYS[section] || 'settings';
+  const title = document.getElementById('settingsPanelTitle');
+
+  if (title) {
+    title.setAttribute('data-i18n', titleKey);
+    title.textContent = getSettingsSectionTitle(section);
+  }
+
+  document.querySelectorAll('.settings-nav-item').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-settings-section') === section);
+  });
+
+  updateSettingsOptionButtons();
+}
+
+function switchSettingsSection(section = 'language', options = {}) {
+  if (section === 'desktop' && !RAI_IS_TAURI_DESKTOP) return;
+  const nextPanel = document.querySelector(`[data-settings-panel="${section}"]`);
+  if (!nextPanel) return;
+
+  const currentPanel = document.querySelector('.settings-panel.active');
+  appState.activeSettingsSection = section;
+  updateSettingsNavigationUI();
+
+  if (currentPanel && currentPanel !== nextPanel) {
+    currentPanel.classList.add('leaving');
+    currentPanel.classList.remove('active');
+    setTimeout(() => {
+      currentPanel.classList.remove('leaving');
+    }, 360);
+  }
+
+  nextPanel.classList.remove('leaving');
+  nextPanel.classList.add('active');
+  if (isSettingsMobileLayout() && appState.settingsOpen && !options.keepMobileHome) {
+    updateSettingsMobileMode('detail');
+    if (!options.fromHistory) {
+      pushSettingsHistory('detail', section);
+    }
+  }
+  updateSettingsDirtyState();
+}
+
+function initSettingsInteractions() {
+  const watchedInputs = [
+    'settingsUsernameInput',
+    'settingsEmailInput',
+    'settingsCurrentPasswordInput',
+    'settingsNewPasswordInput',
+    'settingsConfirmPasswordInput'
+  ];
+
+  watchedInputs.forEach((id) => {
+    const input = document.getElementById(id);
+    if (input && !input.dataset.settingsDirtyBound) {
+      input.dataset.settingsDirtyBound = '1';
+      input.addEventListener('input', updateSettingsDirtyState);
+    }
+  });
+
+  updateSettingsNavigationUI();
+  updateSettingsDirtyState();
+}
+
+function setSettingsSaveButtonState(isSaving) {
+  const buttons = document.querySelectorAll('[data-settings-save-action], #saveSettingsBtn');
+  buttons.forEach((button) => {
+    const labelKey = button.getAttribute('data-label-key') || 'save-settings';
+    button.disabled = !!isSaving;
+    button.textContent = isSaving
+      ? i18nText('save-settings-pending', isChineseLanguage(appState.language) ? '保存中...' : 'Saving...')
+      : i18nText(labelKey, isChineseLanguage(appState.language) ? '保存设置' : 'Save Settings');
+  });
 }
 
 
@@ -2691,41 +5032,70 @@ function toggleTheme() {
   setTheme(newTheme);
 }
 
-function setTheme(theme) {
-  appState.theme = theme;
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('rai_theme', theme);
+function getSystemTheme() {
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function getEffectiveTheme(themePreference = appState.themePreference || appState.theme || 'dark') {
+  return themePreference === 'system' ? getSystemTheme() : (themePreference === 'light' ? 'light' : 'dark');
+}
+
+function setTheme(themePreference) {
+  const normalizedPreference = ['dark', 'light', 'system'].includes(themePreference) ? themePreference : 'dark';
+  const effectiveTheme = getEffectiveTheme(normalizedPreference);
+  appState.themePreference = normalizedPreference;
+  appState.theme = effectiveTheme;
+  document.documentElement.setAttribute('data-theme', effectiveTheme);
+  document.documentElement.setAttribute('data-theme-preference', normalizedPreference);
+  localStorage.setItem('rai_theme', normalizedPreference);
 
   // 更新移动端图标
   const mobileIcon = document.getElementById('mobileThemeIcon');
   if (mobileIcon) {
-    const newIconName = theme === 'dark' ? 'light_mode' : 'dark_mode';
+    const newIconName = effectiveTheme === 'dark' ? 'light_mode' : 'dark_mode';
     mobileIcon.outerHTML = getSvgIcon(newIconName, 'material-symbols-outlined', 24).replace('<svg', '<svg id="mobileThemeIcon"');
   }
 
   // 更新PC侧边栏图标
   const sidebarIcon = document.getElementById('sidebarThemeIcon');
   if (sidebarIcon) {
-    const newIconName = theme === 'dark' ? 'light_mode' : 'dark_mode';
+    const newIconName = effectiveTheme === 'dark' ? 'light_mode' : 'dark_mode';
     sidebarIcon.outerHTML = getSvgIcon(newIconName, 'material-symbols-outlined', 24).replace('<svg', '<svg id="sidebarThemeIcon"');
   }
 
   // 更新meta theme-color
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) {
-    metaTheme.content = theme === 'dark' ? '#0D0D0D' : '#FFFFFF';
+    metaTheme.content = effectiveTheme === 'dark' ? '#0D0D0D' : '#F4F4F1';
   }
+
+  updateSettingsOptionButtons();
 }
 
 // 语言切换
 function toggleLanguage() {
-  const newLang = appState.language === 'zh-CN' ? 'en' : 'zh-CN';
+  const currentLang = normalizeLanguage(appState.language);
+  const preferredChinese = normalizeLanguage(appState.languageToggleChinese || localStorage.getItem('rai_language_chinese_variant') || 'zh-CN');
+  const newLang = currentLang === 'en' ? (isChineseLanguage(preferredChinese) ? preferredChinese : 'zh-CN') : 'en';
   setLanguage(newLang);
 }
 
+function updateAuthLanguageButtons() {
+  document.querySelectorAll('.auth-lang-text-btn[data-lang]').forEach((button) => {
+    const active = normalizeLanguage(button.dataset.lang) === normalizeLanguage(appState.language);
+    button.classList.toggle('active-lang', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
 function setLanguage(lang) {
+  lang = normalizeLanguage(lang);
   appState.language = lang;
   localStorage.setItem('rai_language', lang);
+  if (isChineseLanguage(lang)) {
+    appState.languageToggleChinese = lang;
+    localStorage.setItem('rai_language_chinese_variant', lang);
+  }
 
   // 更新HTML lang属性
   document.documentElement.lang = lang;
@@ -2733,40 +5103,57 @@ function setLanguage(lang) {
   // 更新所有翻译文本
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
-    if (i18n[lang] && i18n[lang][key]) {
-      el.textContent = i18n[lang][key];
+    const translated = i18n[lang]?.[key] || i18n['zh-CN']?.[key];
+    if (translated) {
+      el.textContent = translated;
     }
   });
 
   // 更新placeholder
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
     const key = el.getAttribute('data-i18n-placeholder');
-    if (i18n[lang] && i18n[lang][key]) {
-      el.placeholder = i18n[lang][key];
+    const translated = i18n[lang]?.[key] || i18n['zh-CN']?.[key];
+    if (translated) {
+      el.placeholder = translated;
     }
+  });
+
+  document.querySelectorAll('[data-language-option]').forEach((button) => {
+    const option = button.getAttribute('data-language-option');
+    button.textContent = LANGUAGE_OPTION_LABELS[option]?.[lang] || option;
   });
 
   // 更新移动端语言按钮文本
   const mobileLangText = document.getElementById('mobileLangText');
   if (mobileLangText) {
-    mobileLangText.textContent = lang === 'zh-CN' ? 'EN' : '中';
+    mobileLangText.textContent = getLanguageToggleLabel(lang);
   }
 
   // 更新PC侧边栏语言按钮文本
   const sidebarLangText = document.getElementById('sidebarLangText');
   if (sidebarLangText) {
-    sidebarLangText.textContent = lang === 'zh-CN' ? 'EN' : '中';
+    sidebarLangText.textContent = getLanguageToggleLabel(lang);
   }
+  document.querySelectorAll('.language-toggle-btn').forEach((button) => {
+    button.setAttribute('aria-label', i18nText('language-label', 'Language'));
+    button.setAttribute('title', i18nText('language-label', 'Language'));
+  });
 
   // 更新登录页面语言按钮文本
   const authLangText = document.getElementById('authLangText');
   if (authLangText) {
-    authLangText.textContent = lang === 'zh-CN' ? 'EN' : '中';
+    authLangText.textContent = getLanguageToggleLabel(lang);
   }
+  updateAuthLanguageButtons();
 
   updateReasoningProfileControl();
+  updateResearchModeControl();
   updatePoeQuotaHint();
   updateSettingsMembership();
+  updateUserIdentityUI();
+  updateSettingsNavigationUI();
+  updatePwaInstallUI();
+  renderSettingsTimeline();
   updateScrollResumeButton();
   if (!appState.isStreaming) {
     renderMessages();
@@ -2780,19 +5167,29 @@ function initThemeAndLanguage() {
   setTheme(savedTheme);
 
   // 加载保存的语言
-  const savedLanguage = localStorage.getItem('rai_language') || 'zh-CN';
+  const savedLanguage = normalizeLanguage(localStorage.getItem('rai_language') || 'zh-CN');
+  appState.languageToggleChinese = normalizeLanguage(localStorage.getItem('rai_language_chinese_variant') || (isChineseLanguage(savedLanguage) ? savedLanguage : 'zh-CN'));
   setLanguage(savedLanguage);
 
   // 初始化PC侧边栏按钮状态
   const sidebarThemeIcon = document.getElementById('sidebarThemeIcon');
   if (sidebarThemeIcon) {
-    const newIconName = savedTheme === 'dark' ? 'light_mode' : 'dark_mode';
+    const newIconName = appState.theme === 'dark' ? 'light_mode' : 'dark_mode';
     sidebarThemeIcon.outerHTML = getSvgIcon(newIconName, 'material-symbols-outlined', 24).replace('<svg', '<svg id="sidebarThemeIcon"');
   }
 
   const sidebarLangText = document.getElementById('sidebarLangText');
   if (sidebarLangText) {
-    sidebarLangText.textContent = savedLanguage === 'zh-CN' ? 'EN' : '中';
+    sidebarLangText.textContent = getLanguageToggleLabel(savedLanguage);
+  }
+
+  const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: light)');
+  if (systemThemeQuery && !appState.systemThemeListenerBound) {
+    const syncSystemTheme = () => {
+      if (appState.themePreference === 'system') setTheme('system');
+    };
+    systemThemeQuery.addEventListener?.('change', syncSystemTheme);
+    appState.systemThemeListenerBound = true;
   }
 }
 
@@ -2976,6 +5373,15 @@ function focusMessageInputForNewChat(force = false) {
   }, shouldForceFocus ? 24 : 72);
 }
 
+function maybeAutoFocusMobileHomeInput() {
+  if (appState.mobileHomeAutoFocusUsed || window.innerWidth > 768) return;
+  const welcomeScreen = document.getElementById('welcomeScreen');
+  if (!welcomeScreen || welcomeScreen.classList.contains('hidden') || welcomeScreen.style.display === 'none') return;
+  appState.mobileHomeAutoFocusUsed = true;
+  appState.pendingMobileComposerFocus = true;
+  window.setTimeout(() => focusMessageInputForNewChat(true), 260);
+}
+
 // ==================== ZTX6D SSO 配置 ====================
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
@@ -3002,7 +5408,7 @@ function handleRaiTokenCallback() {
   }
 
   if (authError) {
-    const message = appState.language === 'zh-CN'
+    const message = isChineseLanguage(appState.language)
       ? `ZTX6D 登录失败: ${authError}`
       : `ZTX6D login failed: ${authError}`;
     const hasStoredToken = !!localStorage.getItem(RAI_TOKEN_KEY);
@@ -3020,6 +5426,77 @@ function handleRaiTokenCallback() {
   return null;
 }
 
+let tauriAuthSyncPending = false;
+
+async function syncTauriAuthStateFromStorage() {
+  if (!RAI_IS_TAURI_DESKTOP || tauriAuthSyncPending) return false;
+
+  let storedToken = '';
+  try {
+    storedToken = localStorage.getItem(RAI_TOKEN_KEY) || '';
+  } catch (error) {
+    return false;
+  }
+
+  if (!storedToken) {
+    if (appState.token || appState.user) {
+      appState.token = null;
+      appState.user = null;
+      appState.sessions = [];
+      appState.messages = [];
+      appState.currentSession = null;
+      showAuthScreen();
+    }
+    return false;
+  }
+
+  if (storedToken === appState.token && appState.user) {
+    await fetchUserMembership({ applyPolicy: true });
+    updateUserAreaWithMembership();
+    updateSettingsMembership();
+    return true;
+  }
+
+  tauriAuthSyncPending = true;
+  try {
+    appState.token = storedToken;
+    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+    const valid = await verifyToken();
+    if (!valid) {
+      showAuthScreen();
+      return false;
+    }
+    await fetchUserMembership({ applyPolicy: true });
+    updateUserAreaWithMembership();
+    updateSettingsMembership();
+    return true;
+  } finally {
+    tauriAuthSyncPending = false;
+  }
+}
+
+window.syncTauriAuthStateFromStorage = syncTauriAuthStateFromStorage;
+
+function initTauriDesktopAuthSync() {
+  if (!RAI_IS_TAURI_DESKTOP) return;
+
+  window.addEventListener('focus', () => {
+    syncTauriAuthStateFromStorage().catch((error) => console.warn('桌面端登录状态同步失败:', error));
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      syncTauriAuthStateFromStorage().catch((error) => console.warn('桌面端登录状态同步失败:', error));
+    }
+  });
+
+  window.addEventListener('storage', (event) => {
+    if (event.key === RAI_TOKEN_KEY || event.key === null) {
+      syncTauriAuthStateFromStorage().catch((error) => console.warn('桌面端登录状态同步失败:', error));
+    }
+  });
+}
+
 async function loadZtx6dSsoStatus() {
   try {
     const response = await fetch(`${API_BASE}/auth/ztx6d/status`, { cache: 'no-store' });
@@ -3032,7 +5509,7 @@ async function loadZtx6dSsoStatus() {
   } finally {
     const container = document.getElementById('ztx6dSsoContainer');
     if (container) {
-      container.style.display = appState.ztx6dSsoEnabled ? 'block' : 'none';
+      container.style.display = appState.ztx6dSsoEnabled ? 'grid' : 'none';
     }
     updateZtx6dBindingUI();
   }
@@ -3041,6 +5518,10 @@ async function loadZtx6dSsoStatus() {
 function startZtx6dLogin() {
   const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}` || '/';
   window.location.href = `${API_BASE}/auth/ztx6d/start?return=${encodeURIComponent(returnPath)}`;
+}
+
+function showRpassPending() {
+  showToast(i18nText('rpass-pending', isChineseLanguage(appState.language) ? 'rPass 登录待上线' : 'rPass login is coming soon'));
 }
 
 function updateZtx6dBindingUI() {
@@ -3076,12 +5557,12 @@ function updateZtx6dBindingUI() {
 
 async function bindZtx6dAccount() {
   if (!appState.token) {
-    showToast(appState.language === 'zh-CN' ? '请先登录' : 'Please log in first');
+    showToast(isChineseLanguage(appState.language) ? '请先登录' : 'Please log in first');
     return;
   }
 
   if (!appState.ztx6dSsoEnabled) {
-    showToast(appState.language === 'zh-CN' ? 'ZTX6D SSO 未配置' : 'ZTX6D SSO is not configured');
+    showToast(isChineseLanguage(appState.language) ? 'ZTX6D SSO 未配置' : 'ZTX6D SSO is not configured');
     return;
   }
 
@@ -3105,12 +5586,12 @@ async function bindZtx6dAccount() {
     window.location.href = data.redirectUrl;
   } catch (error) {
     if (bindBtn) bindBtn.disabled = false;
-    showToast(`${appState.language === 'zh-CN' ? '绑定失败' : 'Bind failed'}: ${error.message}`);
+    showToast(`${isChineseLanguage(appState.language) ? '绑定失败' : 'Bind failed'}: ${error.message}`);
   }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.7 初始化 (ZTX6D SSO / NewAPI)');
+  console.log(' RAI v0.10.9.16 初始化 (Transparent Icon / App Download / Tauri Desktop Sync)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -3120,6 +5601,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 初始化主题和语言
   initThemeAndLanguage();
+  initTauriDesktopAuthSync();
+  syncDesktopSettingsVisibility();
+  captureInviteRefFromUrl();
+  initPwaInstallSupport();
+  startAppVersionMonitor();
+  await fetchModelAvailability();
   await loadZtx6dSsoStatus();
 
   // ==================== 认证流程 ====================
@@ -3146,6 +5633,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   loadSettings();
+  initSettingsInteractions();
   updateModelControls();
   initSwipeGestures();
 
@@ -3345,7 +5833,6 @@ function toggleMoreMenu() {
     if (menu.classList.contains('active')) {
       const internetToggle = document.getElementById('internetToggle');
       const thinkingToggle = document.getElementById('thinkingToggle');
-      const agentToggle = document.getElementById('agentToggle');
 
       if (internetToggle) {
         internetToggle.classList.toggle('active', appState.internetMode);
@@ -3353,12 +5840,10 @@ function toggleMoreMenu() {
       if (thinkingToggle) {
         thinkingToggle.classList.toggle('active', appState.thinkingMode);
       }
-      if (agentToggle) {
-        agentToggle.classList.toggle('active', appState.agentMode);
-      }
 
       updateToolbarUI();
       updateReasoningProfileControl();
+      updateResearchModeControl();
       updatePoeQuotaHint();
       positionFloatingMenu(menu, document.getElementById('moreBtn'), 'left');
     }
@@ -3420,27 +5905,8 @@ function toggleThinkingFromMenu(event) {
 
 // 从菜单切换Agent模式
 function toggleAgentFromMenu(event) {
-  event.stopPropagation(); // 防止关闭菜单
-  if (!isMaxMembershipUser()) {
-    appState.agentMode = false;
-    updateToolbarUI();
-    showToast(appState.language === 'zh-CN' ? '4倍速深度研究仅 MAX 会员可用' : 'Research Turbo is only available for MAX members');
-    if (typeof openMembershipPlans === 'function') {
-      openMembershipPlans();
-    }
-    preserveMobileInputFocus();
-    return;
-  }
-
-  appState.agentMode = !appState.agentMode;
-
-  const toggle = document.getElementById('agentToggle');
-  if (toggle) {
-    toggle.classList.toggle('active', appState.agentMode);
-  }
-
-  console.log(` Agent模式: ${appState.agentMode ? '开启' : '关闭'}`);
-  preserveMobileInputFocus();
+  event?.stopPropagation?.();
+  setResearchMode(getEffectiveResearchMode() === 'deep' ? 'fast' : 'deep', { enable: true });
 }
 
 
@@ -3546,10 +6012,8 @@ function updateThinkingBudget(value) {
 function updateToolbarUI() {
   const internetToggle = document.getElementById('internetToggle');
   const thinkingToggle = document.getElementById('thinkingToggle');
-  const agentToggle = document.getElementById('agentToggle');
   const reasoningProfileItem = document.querySelector('.reasoning-profile-item');
   const thinkingMenuItem = thinkingToggle?.closest('.more-menu-item');
-  const agentMenuItem = agentToggle?.closest('.more-menu-item');
   const thinkingBtn = document.getElementById('thinkingBtn');
   const internetBtn = document.getElementById('internetBtn');
   const reasoningSelect = document.getElementById('reasoningProfileSelect');
@@ -3558,14 +6022,10 @@ function updateToolbarUI() {
   const supportsThinking = !!currentModel?.supportsThinking;
   const supportsReasoningProfile = supportsThinking && currentModel?.supportsReasoningProfile !== false;
   const forceDisableThinking = isFreePoeMode();
-  const forceDisableAgent = !isMaxMembershipUser();
+  appState.agentMode = false;
 
   if (forceDisableThinking) {
     appState.thinkingMode = false;
-  }
-
-  if (forceDisableAgent) {
-    appState.agentMode = false;
   }
 
   if (internetToggle) {
@@ -3580,18 +6040,6 @@ function updateToolbarUI() {
 
   if (thinkingMenuItem) {
     thinkingMenuItem.classList.toggle('is-disabled', forceDisableThinking);
-  }
-
-  if (agentToggle) {
-    agentToggle.classList.toggle('active', appState.agentMode);
-    agentToggle.classList.toggle('disabled', forceDisableAgent);
-  }
-
-  if (agentMenuItem) {
-    agentMenuItem.classList.toggle('is-disabled', forceDisableAgent);
-    agentMenuItem.title = forceDisableAgent
-      ? (appState.language === 'zh-CN' ? '仅 MAX 会员可用' : 'MAX members only')
-      : '';
   }
 
   if (thinkingBtn) {
@@ -3622,6 +6070,7 @@ function updateToolbarUI() {
       updateReasoningProfileControl();
     }
   }
+  updateResearchModeControl();
   updatePoeQuotaHint();
   if (document.getElementById('moreMenu')?.classList.contains('active')) {
     scheduleComposerMenuReposition(6);
@@ -3642,7 +6091,14 @@ function updateSliderValue(name, value) {
   if (spanId) {
     const element = document.getElementById(spanId);
     if (element) {
-      element.textContent = value;
+      const numericValue = Number(value);
+      if (name === 'topP' && Number.isFinite(numericValue)) {
+        element.textContent = numericValue.toFixed(2);
+      } else if ((name === 'frequency' || name === 'presence' || name === 'temperature') && Number.isFinite(numericValue)) {
+        element.textContent = numericValue.toFixed(1);
+      } else {
+        element.textContent = value;
+      }
     }
   }
 }
@@ -3672,7 +6128,12 @@ function updateSettingsUI() {
     systemPromptEl.value = appState.systemPrompt;
   }
 
+  updateUserIdentityUI();
+  clearSettingsPasswordInputs();
   updateZtx6dBindingUI();
+  updateSettingsNavigationUI();
+  renderSettingsTimeline();
+  updateSettingsDirtyState();
 }
 
 // 修复：改进updateModelControls函数，添加null检查
@@ -3770,7 +6231,7 @@ function parseThinkingPreview(rawContent) {
   }
 
   //  修复：返回默认文本而不是空字符串
-  return appState.language === 'zh-CN' ? 'AI 正在分析内容...' : 'AI is analyzing...';
+  return isChineseLanguage(appState.language) ? 'AI 正在分析内容...' : 'AI is analyzing...';
 }
 
 // 更新预览文本
@@ -3811,7 +6272,7 @@ function toggleThinkingUIMode(thinkingId) {
       toggleBtn.classList.add('expanded');
       toggleBtn.classList.remove('icon-only');
       toggleBtn.innerHTML = `
-            <span class="toggle-text">${appState.language === 'zh-CN' ? '收起思路' : 'Hide'}</span>
+            <span class="toggle-text">${isChineseLanguage(appState.language) ? '收起思路' : 'Hide'}</span>
             ${getSvgIcon('expand_less', 'toggle-icon', 16)}
           `;
     }
@@ -3956,7 +6417,7 @@ function toggleHistoryThinkingUI(thinkingId) {
       toggleBtn.classList.add('expanded');
       toggleBtn.classList.remove('icon-only');
       toggleBtn.innerHTML = `
-            <span class="toggle-text">${appState.language === 'zh-CN' ? '收起思路' : 'Hide'}</span>
+            <span class="toggle-text">${isChineseLanguage(appState.language) ? '收起思路' : 'Hide'}</span>
             ${getSvgIcon('expand_less', 'toggle-icon', 16)}
           `;
     }
@@ -4077,6 +6538,8 @@ function updateMenuSelection() {
   const items = document.querySelectorAll('.model-menu-item');
   items.forEach(item => {
     const modelValue = item.getAttribute('data-model');
+    const adminHidden = isModelDisabledByAdmin(modelValue);
+    item.classList.toggle('admin-model-hidden', adminHidden);
     if (modelValue === appState.selectedModel) {
       item.classList.add('selected');
     } else {
@@ -4089,6 +6552,8 @@ function updateMenuSelection() {
   });
 
   document.querySelectorAll('.model-card').forEach((card) => {
+    const modelValue = card.getAttribute('data-model');
+    card.classList.toggle('admin-model-hidden', isModelDisabledByAdmin(modelValue));
     const requiredMembership = String(card.getAttribute('data-required-membership') || '').trim().toLowerCase();
     const locked = requiredMembership === 'max' && !isMaxMembershipUser();
     card.classList.toggle('membership-locked', locked);
@@ -4097,8 +6562,13 @@ function updateMenuSelection() {
 
   ['claude-haiku', 'anthropic/claude-sonnet-4.6', 'anthropic/claude-3-haiku'].forEach((modelId) => {
     document.querySelectorAll(`#regenerateModelSelect option[value="${modelId}"]`).forEach((option) => {
-      option.disabled = !isMaxMembershipUser();
+      option.disabled = !isMaxMembershipUser() || isModelDisabledByAdmin(modelId);
     });
+  });
+
+  document.querySelectorAll('#regenerateModelSelect option').forEach((option) => {
+    option.hidden = isModelDisabledByAdmin(option.value);
+    if (isModelDisabledByAdmin(option.value)) option.disabled = true;
   });
 }
 
@@ -4143,7 +6613,7 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      theme: appState.theme,
+      theme: appState.themePreference || appState.theme,
       default_model: normalizeSelectedModelId(modelId),
       temperature: appState.temperature,
       top_p: appState.topP,
@@ -4166,6 +6636,14 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
 }
 
 function selectModelFromMenu(model, displayName, i18nKey) {
+  if (isModelDisabledByAdmin(model)) {
+    appState.selectedModel = 'auto';
+    updateSelectedModelText('auto');
+    updateModelControls();
+    updateMenuSelection();
+    closeModelModal();
+    return;
+  }
   if (isMembershipLockedModel(model)) {
     console.warn(' 该模型仅 MAX 会员可用');
     return;
@@ -4227,19 +6705,45 @@ function toggleAdvancedOptions() {
 function openSettings() {
   const settingsModal = document.getElementById('settingsModal');
   if (settingsModal) {
+    const isMobileSettings = isSettingsMobileLayout();
+    if (settingsModal._closeTimer) {
+      clearTimeout(settingsModal._closeTimer);
+      settingsModal._closeTimer = null;
+    }
+    settingsModal.classList.remove('closing');
     settingsModal.classList.add('active');
     appState.settingsOpen = true;
     updateSettingsUI();
+    updatePwaInstallUI();
+    appState.settingsMobileMode = isMobileSettings ? 'home' : 'detail';
+    switchSettingsSection(appState.activeSettingsSection || 'language', { keepMobileHome: isMobileSettings });
+    syncSettingsResponsiveLayout();
+    if (isMobileSettings) {
+      appState.settingsHistoryDepth = 0;
+      pushSettingsHistory('home', appState.activeSettingsSection || 'language');
+    }
     updateZtx6dBindingUI();
   }
 }
 
 // 修复：改进closeSettings函数
-function closeSettings() {
+function closeSettings(options = {}) {
   const settingsModal = document.getElementById('settingsModal');
   if (settingsModal) {
-    settingsModal.classList.remove('active');
+    if (!settingsModal.classList.contains('active')) return;
+    if (!options.fromHistory && !options.skipHistory && isSettingsMobileLayout() && appState.settingsOpen) {
+      const depth = appState.settingsHistoryDepth || (currentSettingsHistoryState() ? 1 : 0);
+      if (depth > 0) {
+        window.history.go(-depth);
+      }
+    }
+    settingsModal.classList.add('closing');
     appState.settingsOpen = false;
+    appState.settingsHistoryDepth = 0;
+    settingsModal._closeTimer = setTimeout(() => {
+      settingsModal.classList.remove('active', 'closing');
+      settingsModal._closeTimer = null;
+    }, 320);
   }
 }
 
@@ -4251,14 +6755,39 @@ document.addEventListener('click', (e) => {
   }
 });
 
+window.addEventListener('popstate', (event) => {
+  if (!appState.settingsOpen || !isSettingsMobileLayout()) return;
+
+  const state = event.state;
+  if (!state || state.raiSettings !== true) {
+    closeSettings({ fromHistory: true });
+    return;
+  }
+
+  if (state.settingsMode === 'detail') {
+    appState.settingsHistoryDepth = 2;
+    switchSettingsSection(state.settingsSection || appState.activeSettingsSection || 'language', { fromHistory: true });
+    updateSettingsMobileMode('detail');
+  } else {
+    appState.settingsHistoryDepth = 1;
+    showSettingsMobileHome({ fromHistory: true });
+  }
+});
+
 // 修复：改进saveSettings函数，添加null检查
-function saveSettings() {
+async function saveSettings(options = {}) {
+  const closeAfterSave = options?.closeAfterSave === true;
   const temperatureSlider = document.getElementById('temperatureSlider');
   const topPSlider = document.getElementById('topPSlider');
   const maxTokensSlider = document.getElementById('maxTokensSlider');
   const frequencySlider = document.getElementById('frequencySlider');
   const presenceSlider = document.getElementById('presenceSlider');
   const systemPromptEl = document.getElementById('systemPrompt');
+  const usernameInput = document.getElementById('settingsUsernameInput');
+  const emailInput = document.getElementById('settingsEmailInput');
+  const currentPasswordInput = document.getElementById('settingsCurrentPasswordInput');
+  const newPasswordInput = document.getElementById('settingsNewPasswordInput');
+  const confirmPasswordInput = document.getElementById('settingsConfirmPasswordInput');
 
   if (!temperatureSlider || !topPSlider || !maxTokensSlider) {
     console.error(' 设置表单元素未找到');
@@ -4272,10 +6801,61 @@ function saveSettings() {
   const presencePenalty = parseFloat(presenceSlider?.value || 0);
   //  修复：确保systemPrompt正确读取和处理，处理空字符串和null
   const systemPrompt = (systemPromptEl?.value || '').trim();
+  const nextUsername = (usernameInput?.value || '').trim();
+  const nextEmail = (emailInput?.value || '').trim();
+  const currentPassword = currentPasswordInput?.value || '';
+  const newPassword = newPasswordInput?.value || '';
+  const confirmPassword = confirmPasswordInput?.value || '';
+  const shouldUpdatePassword = [currentPassword, newPassword, confirmPassword].some((value) => String(value || '').length > 0);
 
   if (isNaN(temperature) || isNaN(topP) || isNaN(maxTokens)) {
     console.error(' 参数值无效');
     return;
+  }
+
+  if (!nextEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+    showToast(i18nText('invalid-email-error', isChineseLanguage(appState.language) ? '请输入有效的邮箱地址' : 'Please enter a valid email address'));
+    emailInput?.focus();
+    return;
+  }
+
+  if (nextUsername.length > 80) {
+    showToast(i18nText('username-too-long-error', isChineseLanguage(appState.language) ? '用户名不能超过 80 个字符' : 'Username must be 80 characters or fewer'));
+    usernameInput?.focus();
+    return;
+  }
+
+  if (shouldUpdatePassword) {
+    if (!currentPassword) {
+      showToast(i18nText('password-current-required-error', isChineseLanguage(appState.language) ? '修改密码时必须输入当前密码' : 'Current password is required to change password'));
+      currentPasswordInput?.focus();
+      return;
+    }
+    if (!newPassword) {
+      showToast(i18nText('password-new-required-error', isChineseLanguage(appState.language) ? '请输入新密码' : 'Please enter a new password'));
+      newPasswordInput?.focus();
+      return;
+    }
+    if (!confirmPassword) {
+      showToast(i18nText('password-confirm-required-error', isChineseLanguage(appState.language) ? '请再次输入新密码' : 'Please confirm the new password'));
+      confirmPasswordInput?.focus();
+      return;
+    }
+    if (newPassword.length < 6) {
+      showToast(i18nText('password-too-short-error', isChineseLanguage(appState.language) ? '新密码至少需要 6 位字符' : 'New password must be at least 6 characters'));
+      newPasswordInput?.focus();
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast(i18nText('password-confirm-mismatch-error', isChineseLanguage(appState.language) ? '两次输入的新密码不一致' : 'The new passwords do not match'));
+      confirmPasswordInput?.focus();
+      return;
+    }
+    if (newPassword === currentPassword) {
+      showToast(i18nText('password-same-as-current-error', isChineseLanguage(appState.language) ? '新密码不能与当前密码相同' : 'New password must be different from current password'));
+      newPasswordInput?.focus();
+      return;
+    }
   }
 
   appState.temperature = temperature;
@@ -4295,44 +6875,148 @@ function saveSettings() {
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
-  //  修复：同步保存到后端数据库
-  if (appState.token) {
-    console.log(` 正在将设置同步到云端...`);
-    console.log(`   系统提示词长度: ${systemPrompt.length}字符`);
+  let profileUpdated = false;
+  let passwordUpdated = false;
+  let configUpdated = !appState.token;
+  setSettingsSaveButtonState(true);
 
-    fetch(`${API_BASE}/user/config`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${appState.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        theme: appState.theme,
-        default_model: appState.selectedModel,
-        temperature,
-        top_p: topP,
-        max_tokens: maxTokens,
-        frequency_penalty: frequencyPenalty,
-        presence_penalty: presencePenalty,
-        system_prompt: systemPrompt,  //  确保发送正确的值
-        thinking_mode: appState.thinkingMode ? 1 : 0,
-        internet_mode: appState.internetMode ? 1 : 0
-      })
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          console.log(' 云端配置已同步');
-        } else {
-          console.warn(' 云端同步失败:', data.error);
+  try {
+    if (appState.token) {
+      const currentEmail = String(appState.user?.email || '').trim();
+      const currentUsername = String(appState.user?.username || '').trim();
+      const shouldUpdateProfile = nextEmail !== currentEmail || nextUsername !== currentUsername;
+
+      if (shouldUpdatePassword) {
+        const passwordResponse = await fetch(`${API_BASE}/user/password`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${appState.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            currentPassword,
+            newPassword
+          })
+        });
+
+        const passwordData = await passwordResponse.json();
+        if (!passwordResponse.ok || !passwordData?.success) {
+          throw new Error(passwordData?.error || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
         }
-      })
-      .catch(err => console.error(' 保存配置网络错误:', err));
+
+        passwordUpdated = true;
+        console.log(' 用户密码已更新');
+      }
+
+      if (shouldUpdateProfile) {
+        const profileResponse = await fetch(`${API_BASE}/user/profile`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${appState.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email: nextEmail,
+            username: nextUsername
+          })
+        });
+
+        const profileData = await profileResponse.json();
+        if (!profileResponse.ok || !profileData?.success) {
+          throw new Error(profileData?.error || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
+        }
+
+        if (profileData.token) {
+          appState.token = profileData.token;
+          localStorage.setItem(RAI_TOKEN_KEY, profileData.token);
+        }
+
+        if (profileData.user) {
+          appState.user = {
+            ...appState.user,
+            id: profileData.user.id || appState.user?.id || null,
+            username: String(profileData.user.username || nextUsername || nextEmail.split('@')[0] || '').trim(),
+            email: String(profileData.user.email || nextEmail).trim(),
+            avatar_url: profileData.user.avatar_url || appState.user?.avatar_url || null,
+            externalProvider: profileData.user.external_provider || appState.user?.externalProvider || null,
+            externalUid: profileData.user.external_uid || appState.user?.externalUid || null,
+            external_provider: profileData.user.external_provider || appState.user?.external_provider || null,
+            external_uid: profileData.user.external_uid || appState.user?.external_uid || null
+          };
+        }
+
+        profileUpdated = true;
+      }
+
+      console.log(` 正在将设置同步到云端...`);
+      console.log(`   系统提示词长度: ${systemPrompt.length}字符`);
+
+      const configResponse = await fetch(`${API_BASE}/user/config`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${appState.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          theme: appState.themePreference || appState.theme,
+          default_model: appState.selectedModel,
+          temperature,
+          top_p: topP,
+          max_tokens: maxTokens,
+          frequency_penalty: frequencyPenalty,
+          presence_penalty: presencePenalty,
+          system_prompt: systemPrompt,
+          thinking_mode: appState.thinkingMode ? 1 : 0,
+          internet_mode: appState.internetMode ? 1 : 0
+        })
+      });
+
+      const configData = await configResponse.json();
+      if (!configResponse.ok || !configData?.success) {
+        throw new Error(configData?.error || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
+      }
+
+      console.log(' 云端配置已同步');
+      configUpdated = true;
+    }
+
+    updateUserIdentityUI();
+    clearSettingsPasswordInputs();
+    updateSettingsUI();
+    if (closeAfterSave) {
+      closeSettings();
+    } else {
+      switchSettingsSection(appState.activeSettingsSection || 'language');
+      updateSettingsDirtyState();
+    }
+    let successKey = 'settings-save-success';
+    let successFallback = isChineseLanguage(appState.language) ? '设置已保存' : 'Settings saved';
+    if (profileUpdated && passwordUpdated) {
+      successKey = 'settings-save-success-full';
+      successFallback = isChineseLanguage(appState.language) ? '账号信息、密码和设置已保存' : 'Account, password, and settings saved';
+    } else if (profileUpdated) {
+      successKey = 'settings-save-success-profile';
+      successFallback = isChineseLanguage(appState.language) ? '账号信息和设置已保存' : 'Account and settings saved';
+    } else if (passwordUpdated) {
+      successKey = 'settings-save-success-password';
+      successFallback = isChineseLanguage(appState.language) ? '密码和设置已保存' : 'Password and settings saved';
+    }
+    showToast(i18nText(successKey, successFallback));
+    console.log(' 设置已保存本地并同步云端');
+  } catch (error) {
+    console.error(' 保存设置失败:', error);
+    if ((profileUpdated || passwordUpdated) && !configUpdated) {
+      showToast(i18nText(
+        'settings-save-partial',
+        isChineseLanguage(appState.language) ? '部分内容已保存，但配置同步失败' : 'Part of your changes were saved, but config sync failed'
+      ));
+      return;
+    }
+    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
+    return;
+  } finally {
+    setSettingsSaveButtonState(false);
   }
-
-  console.log(' 设置已保存本地并同步云端');
-
-  closeSettings();
 }
 
 // 修复事件处理器中inline onclick处理和事件委托问题，避免undefined引用
@@ -4378,12 +7062,510 @@ function renderMessages() {
   setTimeout(() => renderChatIndexTimeline(), 150);
 }
 
+function normalizeAskUserQuestion(rawQuestion) {
+  if (!rawQuestion || typeof rawQuestion !== 'object') return null;
+
+  const question = String(rawQuestion.question || rawQuestion.title || '').trim();
+  const rawOptions = Array.isArray(rawQuestion.options)
+    ? rawQuestion.options
+    : (Array.isArray(rawQuestion.choices) ? rawQuestion.choices : []);
+  const options = rawOptions
+    .map((option) => String(option || '').trim())
+    .filter(Boolean);
+  const placeholder = String(rawQuestion.placeholder || rawQuestion.inputPlaceholder || '').trim();
+
+  if (!question || (options.length === 0 && !placeholder)) return null;
+
+  return {
+    question,
+    options,
+    placeholder: placeholder || (isChineseLanguage(appState.language) ? '输入其他回答，按 Enter 记录' : 'Type another answer and press Enter to record')
+  };
+}
+
+function parseAskUserPayload(rawPayload, options = {}) {
+  const silent = Boolean(options.silent);
+  try {
+    const payload = String(rawPayload || '').trim();
+    if (!payload || payload[0] !== '{') return null;
+
+    const data = JSON.parse(payload);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+    const hasQuestionList = Array.isArray(data.questions);
+    const hasSingleQuestion = typeof data.question === 'string';
+    if (!hasQuestionList && !hasSingleQuestion) return null;
+
+    const rawQuestions = hasQuestionList ? data.questions : [data];
+    const questions = rawQuestions
+      .map((question) => normalizeAskUserQuestion(question))
+      .filter(Boolean);
+
+    if (questions.length === 0) return null;
+
+    return {
+      intro: hasQuestionList ? String(data.title || data.intro || '').trim() : '',
+      questions,
+      action: String(data.action || '').trim(),
+      meta: data.meta && typeof data.meta === 'object' ? data.meta : null
+    };
+  } catch (error) {
+    if (!silent) console.warn('询问用户工具解析失败:', error);
+    return null;
+  }
+}
+
+function isAskUserCodeLanguage(language = '') {
+  return /^(?:rai[_-]?ask[_-]?user|ask[_-]?user|询问用户)$/i.test(String(language || '').trim());
+}
+
+function isImplicitAskUserFenceLanguage(language = '') {
+  return /^(?:|json|javascript|js)$/i.test(String(language || '').trim());
+}
+
+function looksLikeAskUserPayloadPrefix(rawPayload = '') {
+  const payload = String(rawPayload || '').trim();
+  return payload.startsWith('{')
+    && /"(?:question|questions)"\s*:/.test(payload)
+    && /"(?:options|choices|placeholder|inputPlaceholder)"\s*:/.test(payload);
+}
+
+function findJsonObjectEnd(text, startIndex) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+      if (depth < 0) return -1;
+    }
+  }
+
+  return -1;
+}
+
+function getLineStartIndex(text, index) {
+  const prevNewline = text.lastIndexOf('\n', index);
+  return prevNewline === -1 ? 0 : prevNewline + 1;
+}
+
+function getLineEndIndex(text, index) {
+  const nextNewline = text.indexOf('\n', index);
+  return nextNewline === -1 ? text.length : nextNewline;
+}
+
+function getNextLineStart(text, lineEnd) {
+  if (lineEnd >= text.length) return text.length;
+  return lineEnd + 1;
+}
+
+function getPreviousLineBounds(text, lineStart) {
+  const previousEnd = Math.max(0, lineStart - 1);
+  const previousStart = getLineStartIndex(text, Math.max(0, previousEnd - 1));
+  return {
+    start: previousStart,
+    end: previousEnd
+  };
+}
+
+function extractAskUserFencedBlocks(content) {
+  const source = String(content || '');
+  const prompts = [];
+  const fenceStartRegex = /```([^\r\n`]*)\r?\n/g;
+  let output = '';
+  let cursor = 0;
+  let match;
+
+  while ((match = fenceStartRegex.exec(source)) !== null) {
+    const fenceStart = match.index;
+    const payloadStart = fenceStartRegex.lastIndex;
+    const closingRegex = /\r?\n```/g;
+    closingRegex.lastIndex = payloadStart;
+    const closingMatch = closingRegex.exec(source);
+
+    if (!closingMatch) break;
+
+    const language = String(match[1] || '').trim();
+    const rawPayload = source.slice(payloadStart, closingMatch.index);
+    const prompt = parseAskUserPayload(rawPayload, { silent: true });
+    const explicitAskUserFence = isAskUserCodeLanguage(language);
+    const implicitAskUserFence = isImplicitAskUserFenceLanguage(language) && prompt;
+
+    if (prompt && (explicitAskUserFence || implicitAskUserFence)) {
+      output += source.slice(cursor, fenceStart);
+      prompts.push(prompt);
+      cursor = closingMatch.index + closingMatch[0].length;
+    }
+
+    fenceStartRegex.lastIndex = closingMatch.index + closingMatch[0].length;
+  }
+
+  output += source.slice(cursor);
+  return { text: output, prompts };
+}
+
+function extractStandaloneAskUserJsonBlocks(content) {
+  const source = String(content || '');
+  const prompts = [];
+  let output = '';
+  let cursor = 0;
+  let searchIndex = 0;
+
+  while (searchIndex < source.length) {
+    const objectStart = source.indexOf('{', searchIndex);
+    if (objectStart === -1) break;
+
+    const lineStart = getLineStartIndex(source, objectStart);
+    if (source.slice(lineStart, objectStart).trim()) {
+      searchIndex = objectStart + 1;
+      continue;
+    }
+
+    const objectEnd = findJsonObjectEnd(source, objectStart);
+    if (objectEnd === -1) break;
+
+    const payload = source.slice(objectStart, objectEnd + 1);
+    const prompt = parseAskUserPayload(payload, { silent: true });
+    if (!prompt) {
+      searchIndex = objectStart + 1;
+      continue;
+    }
+
+    const lineEnd = getLineEndIndex(source, objectEnd + 1);
+    const trailingOnLine = source.slice(objectEnd + 1, lineEnd).trim();
+    if (trailingOnLine) {
+      searchIndex = objectStart + 1;
+      continue;
+    }
+
+    let removeEnd = lineEnd;
+    let removeStart = lineStart;
+    const prevLine = getPreviousLineBounds(source, lineStart);
+    const prevText = source.slice(prevLine.start, prevLine.end).trim();
+    if (/^```(?:\s*(?:json|javascript|js|rai[_-]?ask[_-]?user|ask[_-]?user|询问用户)?)?$/i.test(prevText)) {
+      removeStart = prevLine.start;
+    }
+    const nextLineStart = getNextLineStart(source, lineEnd);
+    const nextLineEnd = getLineEndIndex(source, nextLineStart);
+    if (source.slice(nextLineStart, nextLineEnd).trim() === '```') {
+      removeEnd = nextLineEnd;
+    }
+
+    output += source.slice(cursor, removeStart);
+    prompts.push(prompt);
+    cursor = removeEnd;
+    searchIndex = removeEnd;
+  }
+
+  output += source.slice(cursor);
+  return { text: output, prompts };
+}
+
+function stripIncompleteAskUserFence(content) {
+  const source = String(content || '');
+  const fenceStartRegex = /```([^\r\n`]*)\r?\n/g;
+  let match;
+  let lastOpenFence = null;
+
+  while ((match = fenceStartRegex.exec(source)) !== null) {
+    const closingRegex = /\r?\n```/g;
+    closingRegex.lastIndex = fenceStartRegex.lastIndex;
+    const closingMatch = closingRegex.exec(source);
+    if (!closingMatch) {
+      lastOpenFence = {
+        index: match.index,
+        payloadStart: fenceStartRegex.lastIndex,
+        language: String(match[1] || '').trim()
+      };
+      break;
+    }
+    fenceStartRegex.lastIndex = closingMatch.index + closingMatch[0].length;
+  }
+
+  if (!lastOpenFence) return source;
+
+  const payload = source.slice(lastOpenFence.payloadStart);
+  const shouldHide = isAskUserCodeLanguage(lastOpenFence.language)
+    || (isImplicitAskUserFenceLanguage(lastOpenFence.language) && looksLikeAskUserPayloadPrefix(payload));
+
+  return shouldHide ? source.slice(0, lastOpenFence.index) : source;
+}
+
+function extractAskUserBlocks(content) {
+  const fencedResult = extractAskUserFencedBlocks(content);
+  const standaloneResult = extractStandaloneAskUserJsonBlocks(fencedResult.text);
+  const prompts = [...fencedResult.prompts, ...standaloneResult.prompts];
+  const text = standaloneResult.text.trim();
+
+  return { text, prompts };
+}
+
+function stripAskUserBlocksForStreaming(content) {
+  const extracted = extractAskUserBlocks(content);
+  return stripIncompleteAskUserFence(extracted.text).trim();
+}
+
+const askUserCardState = new Map();
+
+function getAskUserStateKey(prompt) {
+  try {
+    return JSON.stringify({
+      action: prompt?.action || '',
+      questions: (prompt?.questions || []).map((question) => ({
+        question: question.question,
+        options: question.options,
+        placeholder: question.placeholder
+      }))
+    });
+  } catch (error) {
+    return `ask-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+function formatAskUserAnswers(prompt, answers) {
+  if (!prompt || !Array.isArray(prompt.questions)) return String(answers?.[0] || '').trim();
+  if (prompt.questions.length === 1) return String(answers?.[0] || '').trim();
+
+  return prompt.questions
+    .map((question, index) => {
+      const answer = String(answers?.[index] || '').trim();
+      return `${index + 1}. ${question.question}\n回答：${answer}`;
+    })
+    .join('\n\n');
+}
+
+function createAskUserCard(prompt, renderOptions = {}) {
+  const card = document.createElement('div');
+  card.className = 'ask-user-card';
+  if (prompt.questions.length > 1) {
+    card.classList.add('multi-question');
+  }
+  card.dataset.askAction = prompt.action || '';
+  const stateKey = renderOptions.stateKey || getAskUserStateKey(prompt);
+  card.dataset.askStateKey = stateKey;
+  const existingState = askUserCardState.get(stateKey) || {};
+  const answers = Array.isArray(existingState.answers)
+    ? [...existingState.answers]
+    : new Array(prompt.questions.length).fill('');
+  while (answers.length < prompt.questions.length) answers.push('');
+  const answered = existingState.submitted === true;
+
+  const persistState = (submitted = false) => {
+    askUserCardState.set(stateKey, {
+      answers: [...answers],
+      submitted: submitted || askUserCardState.get(stateKey)?.submitted === true
+    });
+  };
+
+  if (prompt.intro) {
+    const intro = document.createElement('div');
+    intro.className = 'ask-user-intro';
+    intro.textContent = prompt.intro;
+    card.appendChild(intro);
+  }
+
+  const progress = document.createElement('div');
+  progress.className = 'ask-user-progress';
+
+  const footer = document.createElement('div');
+  footer.className = 'ask-user-footer';
+
+  const sendAllBtn = document.createElement('button');
+  sendAllBtn.type = 'button';
+  sendAllBtn.className = 'ask-user-send-all';
+  sendAllBtn.textContent = isChineseLanguage(appState.language) ? '发送选择' : 'Send choices';
+
+  const updateFooter = () => {
+    const answeredCount = answers.filter(Boolean).length;
+    const total = prompt.questions.length;
+    progress.textContent = isChineseLanguage(appState.language)
+      ? `已选择 ${answeredCount}/${total}`
+      : `${answeredCount}/${total} selected`;
+    sendAllBtn.disabled = answered || answeredCount < total || card.dataset.submitting === '1';
+  };
+
+  prompt.questions.forEach((questionData, questionIndex) => {
+    const block = document.createElement('div');
+    block.className = 'ask-user-question-block';
+
+    const question = document.createElement('div');
+    question.className = 'ask-user-question';
+    question.textContent = prompt.questions.length > 1
+      ? `${questionIndex + 1}. ${questionData.question}`
+      : questionData.question;
+    block.appendChild(question);
+
+    const options = document.createElement('div');
+    options.className = 'ask-user-options';
+
+    const setAnswer = (answer, selectedButton = null) => {
+      const normalized = String(answer || '').trim();
+      if (!normalized || card.dataset.submitting === '1') return;
+
+      answers[questionIndex] = normalized;
+      persistState(false);
+      block.dataset.answered = '1';
+      block.querySelectorAll('.ask-user-option').forEach((button) => {
+        button.classList.toggle('selected', button === selectedButton || button.dataset.optionValue === normalized);
+      });
+      input.value = selectedButton ? '' : normalized;
+
+      const status = block.querySelector('.ask-user-question-status') || document.createElement('div');
+      status.className = 'ask-user-question-status';
+      status.textContent = normalized;
+      if (!status.parentElement) block.appendChild(status);
+
+      updateFooter();
+    };
+
+    questionData.options.forEach((option, optionIndex) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ask-user-option';
+      button.dataset.optionValue = option;
+      if (answers[questionIndex] === option) {
+        button.classList.add('selected');
+      }
+
+      const number = document.createElement('span');
+      number.className = 'ask-user-option-number';
+      number.textContent = String(optionIndex + 1);
+
+      const label = document.createElement('span');
+      label.className = 'ask-user-option-label';
+      label.textContent = option;
+
+      button.append(number, label);
+      button.addEventListener('click', () => setAnswer(option, button));
+      options.appendChild(button);
+    });
+    block.appendChild(options);
+
+    const customRow = document.createElement('div');
+    customRow.className = 'ask-user-custom';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'ask-user-input';
+    input.placeholder = questionData.placeholder;
+    input.autocomplete = 'off';
+    if (answers[questionIndex] && !questionData.options.includes(answers[questionIndex])) {
+      input.value = answers[questionIndex];
+    }
+
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'button';
+    submitBtn.className = 'ask-user-submit';
+    submitBtn.title = isChineseLanguage(appState.language) ? '发送' : 'Send';
+    submitBtn.setAttribute('aria-label', submitBtn.title);
+    submitBtn.innerHTML = getSvgIcon('arrow_upward', 'material-symbols-outlined', 18);
+
+    const submitCustom = () => {
+      const answer = input.value.trim();
+      if (answer) setAnswer(answer);
+    };
+
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submitCustom();
+      }
+    });
+    submitBtn.addEventListener('click', submitCustom);
+
+    customRow.append(input, submitBtn);
+    block.appendChild(customRow);
+    if (answers[questionIndex]) {
+      const status = document.createElement('div');
+      status.className = 'ask-user-question-status';
+      status.textContent = answers[questionIndex];
+      block.dataset.answered = '1';
+      block.appendChild(status);
+    }
+    card.appendChild(block);
+  });
+
+  sendAllBtn.addEventListener('click', () => {
+    if (answers.every(Boolean)) {
+      persistState(true);
+      submitAskUserResponse(formatAskUserAnswers(prompt, answers), prompt, card, stateKey);
+    }
+  });
+
+  footer.append(progress, sendAllBtn);
+  card.appendChild(footer);
+  if (answered) {
+    card.classList.add('answered');
+    card.querySelectorAll('button, input').forEach((element) => {
+      element.disabled = true;
+    });
+    const status = document.createElement('div');
+    status.className = 'ask-user-status';
+    status.textContent = formatAskUserAnswers(prompt, answers);
+    card.appendChild(status);
+  }
+  updateFooter();
+  return card;
+}
+
+async function submitAskUserResponse(answer, prompt, card, stateKey = '') {
+  const normalizedAnswer = String(answer || '').trim();
+  if (!normalizedAnswer || card?.dataset.submitting === '1') return;
+
+  if (card) {
+    card.dataset.submitting = '1';
+    card.classList.add('answered');
+    card.querySelectorAll('button, input').forEach((element) => {
+      element.disabled = true;
+    });
+    if (stateKey) {
+      const state = askUserCardState.get(stateKey) || {};
+      askUserCardState.set(stateKey, { ...state, submitted: true });
+    }
+
+    const status = document.createElement('div');
+    status.className = 'ask-user-status';
+    status.textContent = normalizedAnswer;
+    card.appendChild(status);
+  }
+
+  if (prompt?.action === 'set_language') {
+    handleOnboardingLanguageChoice(normalizedAnswer);
+    return;
+  }
+
+  const input = document.getElementById('messageInput');
+  if (!input) return;
+  input.value = normalizedAnswer;
+  autoResizeInput();
+  await sendMessage();
+}
+
 function createMessageFeedbackButton(message, rating) {
   const button = document.createElement('button');
   const isPositive = rating === 'up';
   button.className = `action-btn feedback-btn feedback-${rating}-btn`;
   button.type = 'button';
-  button.title = appState.language === 'zh-CN'
+  button.title = isChineseLanguage(appState.language)
     ? (isPositive ? '点赞这条回复' : '倒赞这条回复')
     : (isPositive ? 'Like this answer' : 'Dislike this answer');
   button.dataset.feedbackRating = rating;
@@ -4413,8 +7595,8 @@ function ensureFeedbackModal() {
       <p id="feedbackModalHint" class="feedback-modal-hint"></p>
       <textarea id="feedbackCommentInput" class="feedback-textarea" maxlength="1000"></textarea>
       <div class="feedback-modal-actions">
-        <button class="feedback-cancel-btn" type="button">${appState.language === 'zh-CN' ? '取消' : 'Cancel'}</button>
-        <button class="feedback-submit-btn" id="feedbackSubmitBtn" type="button">${appState.language === 'zh-CN' ? '提交反馈' : 'Submit feedback'}</button>
+        <button class="feedback-cancel-btn" type="button">${isChineseLanguage(appState.language) ? '取消' : 'Cancel'}</button>
+        <button class="feedback-submit-btn" id="feedbackSubmitBtn" type="button">${isChineseLanguage(appState.language) ? '提交反馈' : 'Submit feedback'}</button>
       </div>
     </div>
   `;
@@ -4431,7 +7613,7 @@ function ensureFeedbackModal() {
 
 function openFeedbackModal(message, rating) {
   if (!appState.token) {
-    showToast(appState.language === 'zh-CN' ? '请先登录后反馈' : 'Please log in to send feedback');
+    showToast(isChineseLanguage(appState.language) ? '请先登录后反馈' : 'Please log in to send feedback');
     return;
   }
 
@@ -4442,14 +7624,14 @@ function openFeedbackModal(message, rating) {
   const modal = ensureFeedbackModal();
   const isPositive = rating === 'up';
   modal.querySelector('#feedbackModalIcon').innerHTML = getSvgIcon(isPositive ? 'thumb_up' : 'thumb_down', 'material-symbols-outlined', 24);
-  modal.querySelector('#feedbackModalTitle').textContent = appState.language === 'zh-CN'
+  modal.querySelector('#feedbackModalTitle').textContent = isChineseLanguage(appState.language)
     ? (isPositive ? '这条回复哪里好？' : '这条回复哪里不好？')
     : (isPositive ? 'What worked well?' : 'What should be improved?');
-  modal.querySelector('#feedbackModalHint').textContent = appState.language === 'zh-CN'
+  modal.querySelector('#feedbackModalHint').textContent = isChineseLanguage(appState.language)
     ? (isPositive ? '可以写下有帮助、准确或表达好的地方。' : '可以写下不准确、不完整或体验不好的地方。')
     : (isPositive ? 'Tell us what was helpful, accurate, or clear.' : 'Tell us what was inaccurate, incomplete, or confusing.');
   const textarea = modal.querySelector('#feedbackCommentInput');
-  textarea.placeholder = appState.language === 'zh-CN'
+  textarea.placeholder = isChineseLanguage(appState.language)
     ? '选填，最多1000字'
     : 'Optional, up to 1000 characters';
   textarea.value = message?.feedback_comment || '';
@@ -4505,13 +7687,13 @@ async function submitMessageFeedback() {
     feedbackModalState.isSubmitting = true;
     if (submitBtn) {
       submitBtn.disabled = true;
-      submitBtn.textContent = appState.language === 'zh-CN' ? '提交中...' : 'Submitting...';
+      submitBtn.textContent = isChineseLanguage(appState.language) ? '提交中...' : 'Submitting...';
     }
 
     const hadMessageId = !!message?.id;
     const messageId = await resolveFeedbackMessageId(message);
     if (!messageId) {
-      showToast(appState.language === 'zh-CN' ? '消息保存后才能反馈，请稍后再试' : 'Please try again after the message is saved');
+      showToast(isChineseLanguage(appState.language) ? '消息保存后才能反馈，请稍后再试' : 'Please try again after the message is saved');
       return;
     }
 
@@ -4541,18 +7723,86 @@ async function submitMessageFeedback() {
     } else {
       renderMessages();
     }
-    showToast(appState.language === 'zh-CN' ? '反馈已提交' : 'Feedback submitted');
+    showToast(isChineseLanguage(appState.language) ? '反馈已提交' : 'Feedback submitted');
     closeFeedbackModal();
   } catch (error) {
     console.error('提交反馈失败:', error);
-    showToast(error.message || (appState.language === 'zh-CN' ? '反馈提交失败' : 'Feedback failed'));
+    showToast(error.message || (isChineseLanguage(appState.language) ? '反馈提交失败' : 'Feedback failed'));
   } finally {
     feedbackModalState.isSubmitting = false;
     if (submitBtn) {
       submitBtn.disabled = false;
-      submitBtn.textContent = appState.language === 'zh-CN' ? '提交反馈' : 'Submit feedback';
+      submitBtn.textContent = isChineseLanguage(appState.language) ? '提交反馈' : 'Submit feedback';
     }
   }
+}
+
+function formatResearchAgentLabel(role = '') {
+  const labelMap = {
+    gemma: 'Gemma',
+    kimi: 'Kimi K2.5',
+    gpt55: 'GPT-5.5',
+    deepseek: 'DeepSeek V4 Pro'
+  };
+  return labelMap[String(role || '').toLowerCase()] || formatAgentRole(role || 'agent');
+}
+
+function cleanResearchSpeechText(text = '') {
+  const lines = String(text || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/<\/?think>/gi, '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => !/^(结论状态|状态|status)\s*[：:]/i.test(line))
+    .map(line => line.replace(/^(发言|观点|结论|speech)\s*[：:]\s*/i, '').trim())
+    .filter(Boolean);
+  const compact = (lines.join(' ') || String(text || '')).replace(/\s+/g, ' ').trim();
+  return compact || (isChineseLanguage(appState.language) ? '正在输入...' : 'Typing...');
+}
+
+function getResearchReasoningText(draft = {}) {
+  return sanitizeReasoningText(
+    draft.reasoningContent ||
+    draft.reasoning_content ||
+    draft.reasoning ||
+    ''
+  ).trim();
+}
+
+function createResearchThinkingHtml(reasoningText = '', targetId = '') {
+  const reasoning = String(reasoningText || '').trim();
+  if (!reasoning || !targetId) return '';
+  const label = isChineseLanguage(appState.language) ? '查看 thinking' : 'View thinking';
+  const safeTargetId = escapeHtml(targetId);
+  return `
+    <div class="research-agent-thinking">
+      <button class="research-agent-thinking-toggle" type="button" data-target="${safeTargetId}">
+        <span>${label}</span>
+        <span class="toggle-icon">▼</span>
+      </button>
+      <div class="research-agent-thinking-content" id="${safeTargetId}">${escapeHtml(reasoning)}</div>
+    </div>
+  `;
+}
+
+function bindResearchThinkingToggles(root = document) {
+  root.querySelectorAll?.('.research-agent-thinking-toggle[data-target]').forEach((button) => {
+    if (button.dataset.bound === '1') return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', () => {
+      const targetId = button.getAttribute('data-target');
+      const escapedTargetId = (window.CSS && typeof CSS.escape === 'function')
+        ? CSS.escape(targetId || '')
+        : String(targetId || '').replace(/["\\#.;?+*~':!^$[\]()=>|/@]/g, '\\$&');
+      const content = targetId
+        ? root.querySelector(`#${escapedTargetId}`) || document.getElementById(targetId)
+        : null;
+      if (!content) return;
+      const expanded = content.classList.toggle('expanded');
+      button.classList.toggle('expanded', expanded);
+    });
+  });
 }
 
 // 修复：改进createMessageElement，添加安全的事件处理
@@ -4569,8 +7819,7 @@ function createMessageElement(message) {
   avatar.className = 'message-avatar';
 
   if (message.role === 'user') {
-    const name = appState.user?.username || appState.user?.email || 'U';
-    avatar.textContent = name ? name[0].toUpperCase() : 'U';
+    applyUserAvatarToElement(avatar);
   } else {
     avatar.innerHTML = getSvgIcon('rai_logo_colored', 'material-symbols-outlined ai-avatar', 24);
   }
@@ -4601,10 +7850,18 @@ function createMessageElement(message) {
       (Array.isArray(processTrace.drafts) && processTrace.drafts.length > 0)
     )
   );
+  const isResearchTrace = !!(
+    processTrace &&
+    (
+      processTrace.mode === 'research_debate' ||
+      processTrace.mode === 'research_chat_debate' ||
+      processTrace.plan?.mode === 'research_chat_debate'
+    )
+  );
 
   if (message.role === 'assistant' && (hasReasoning || hasInternet || hasAgentProcessTrace)) {
     const timelineDiv = document.createElement('div');
-    timelineDiv.className = 'thinking-timeline';
+    timelineDiv.className = isResearchTrace ? 'thinking-timeline research-chat-timeline' : 'thinking-timeline';
     const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     // 解析sources获取搜索信息
@@ -4617,8 +7874,8 @@ function createMessageElement(message) {
 
     // 工具决策详情文本
     const toolDetail = hasInternet && sources.length > 0
-      ? (appState.language === 'zh-CN' ? `联网搜索 → ${sources.length}条来源` : `Web search → ${sources.length} sources`)
-      : (appState.language === 'zh-CN' ? '已完成' : 'Completed');
+      ? (isChineseLanguage(appState.language) ? `联网搜索 → ${sources.length}条来源` : `Web search → ${sources.length} sources`)
+      : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
 
     // 构建时间轴HTML
     let timelineHtml = `
@@ -4626,7 +7883,7 @@ function createMessageElement(message) {
           <div class="thinking-step" data-status="done">
             <div class="thinking-step-node"></div>
             <div class="thinking-step-content">
-              <div class="thinking-step-title">${appState.language === 'zh-CN' ? 'RAI分析' : 'RAI Analysis'}</div>
+              <div class="thinking-step-title">${isChineseLanguage(appState.language) ? 'RAI分析' : 'RAI Analysis'}</div>
               <div class="thinking-step-detail">${toolDetail}</div>
             </div>
           </div>
@@ -4635,8 +7892,8 @@ function createMessageElement(message) {
           <div class="thinking-step" data-status="done">
             <div class="thinking-step-node"></div>
             <div class="thinking-step-content">
-              <div class="thinking-step-title">${appState.language === 'zh-CN' ? '生成回答' : 'Generating Response'}</div>
-              <div class="thinking-step-detail">${appState.language === 'zh-CN' ? '已完成' : 'Completed'}</div>
+              <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
+              <div class="thinking-step-detail">${isChineseLanguage(appState.language) ? '已完成' : 'Completed'}</div>
             </div>
           </div>
         `;
@@ -4649,7 +7906,7 @@ function createMessageElement(message) {
               <div class="thinking-step-node"></div>
               <div class="thinking-step-content">
                 <button class="deep-thinking-toggle" id="${thinkingId}-toggle">
-                  <span>${appState.language === 'zh-CN' ? '深度思考' : 'Deep Thinking'}</span>
+                  <span>${isChineseLanguage(appState.language) ? '深度思考' : 'Deep Thinking'}</span>
                   <span class="toggle-icon">▼</span>
                 </button>
                 <div class="deep-thinking-content" id="${thinkingId}-content"></div>
@@ -4701,8 +7958,38 @@ function createMessageElement(message) {
         `;
       }).join('');
 
-      const drafts = Array.isArray(processTrace.drafts) ? processTrace.drafts.slice(0, 8) : [];
+      const drafts = Array.isArray(processTrace.drafts) ? processTrace.drafts.slice(0, 20) : [];
       const draftHtml = drafts.map((draft, idx) => {
+        if (isResearchTrace && !(draft.speech || draft.round || draft.voteOk !== undefined)) {
+          return '';
+        }
+        if (isResearchTrace) {
+          const rawRole = String(draft.role || 'agent');
+          const safeRole = escapeHtml(rawRole.replace(/[^a-z0-9_-]/gi, ''));
+          const roleLabel = escapeHtml(formatResearchAgentLabel(rawRole));
+          const round = draft.round || draft.debateRound || '';
+          const status = draft.voteOk === true ? 'ok' : (draft.voteOk === false ? 'issue' : 'talking');
+          const bodyText = cleanResearchSpeechText(draft.content || draft.summary || '');
+          const body = escapeHtml(bodyText || (isChineseLanguage(appState.language) ? '本轮没有可显示发言' : 'No visible speech'));
+          const thinkingIdForDraft = `${thinkingId}-research-thinking-${idx}`;
+          const thinkingHtml = createResearchThinkingHtml(getResearchReasoningText(draft), thinkingIdForDraft);
+          return `
+          <div class="research-agent-bubble role-${safeRole}" data-status="${status}">
+            <span class="research-agent-avatar">${roleLabel.slice(0, 1)}</span>
+            <div class="research-agent-card">
+              <div class="research-agent-head">
+                <div class="research-agent-meta">
+                  <div class="research-agent-name">${roleLabel}</div>
+                  <div class="research-agent-round">${round ? (isChineseLanguage(appState.language) ? `第 ${round} 轮` : `Round ${round}`) : ''}</div>
+                </div>
+              </div>
+              <div class="research-agent-text">${body}</div>
+              ${thinkingHtml}
+            </div>
+          </div>
+        `;
+        }
+
         const draftId = `${thinkingId}-draft-${idx}`;
         const role = escapeHtml(String(draft.role || 'agent'));
         const taskId = Number(draft.taskId || idx + 1);
@@ -4723,19 +8010,19 @@ function createMessageElement(message) {
       const traceToggleId = `${thinkingId}-trace-toggle`;
       const traceListId = `${thinkingId}-trace-list`;
       timelineHtml += `
-        <div class="thinking-step" data-status="done">
+        <div class="thinking-step research-history-process" data-status="done">
           <div class="thinking-step-node"></div>
           <div class="thinking-step-content">
-            <div class="thinking-step-title">${appState.language === 'zh-CN' ? '4倍速深度研究' : 'Research Turbo (4x)'}</div>
+            <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '研究过程' : 'Research Process'}</div>
             <div class="agent-task-list">${taskHtml}</div>
             ${logRows.length > 0 ? `
               <button class="process-trace-toggle" id="${traceToggleId}">
-                <span>${appState.language === 'zh-CN' ? '过程轨迹' : 'Process Trace'}</span>
+                <span>${isChineseLanguage(appState.language) ? '过程轨迹' : 'Process Trace'}</span>
                 <span class="toggle-icon">▼</span>
               </button>
               <div class="process-trace-list" id="${traceListId}">${logHtml}</div>
             ` : ''}
-            ${drafts.length > 0 ? `<div class="agent-draft-list">${draftHtml}</div>` : ''}
+            ${drafts.length > 0 ? `<div class="agent-draft-list ${isResearchTrace ? 'research-chat-list' : ''}">${draftHtml}</div>` : ''}
           </div>
         </div>
       `;
@@ -4744,7 +8031,7 @@ function createMessageElement(message) {
     timelineDiv.innerHTML = timelineHtml;
 
     // 填充深度思考内容
-    if (hasReasoning) {
+    if (hasReasoning && !isResearchTrace) {
       const deepContent = timelineDiv.querySelector(`#${thinkingId}-content`);
       const formattedText = sanitizeReasoningText(message.reasoning_content);
       if (deepContent) {
@@ -4805,6 +8092,8 @@ function createMessageElement(message) {
             }
           });
         });
+
+        bindResearchThinkingToggles(timelineDiv);
       }, 0);
     }
 
@@ -4839,7 +8128,7 @@ function createMessageElement(message) {
                 <circle cx="8.5" cy="8.5" r="1.5"/>
                 <path d="M21 15l-5-5L5 21"/>
               </svg>
-              <span>${appState.language === 'zh-CN' ? '点击加载附件' : 'Click to load attachments'}</span>
+              <span>${isChineseLanguage(appState.language) ? '点击加载附件' : 'Click to load attachments'}</span>
             </div>
           `;
       content.appendChild(lazyDiv);
@@ -4872,7 +8161,7 @@ function createMessageElement(message) {
           itemDiv.innerHTML = `
                 <span class="media-icon"></span>
                 <div class="media-info">
-                  <div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div>
+                  <div class="media-type">${isChineseLanguage(appState.language) ? '视频' : 'Video'}</div>
             <div class="media-name">${escapeHtml(att.fileName || '')}</div>
                 </div>
               `;
@@ -4881,7 +8170,7 @@ function createMessageElement(message) {
           itemDiv.innerHTML = `
                 <span class="media-icon"></span>
                 <div class="media-info">
-                  <div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div>
+                  <div class="media-type">${isChineseLanguage(appState.language) ? '音频' : 'Audio'}</div>
             <div class="media-name">${escapeHtml(att.fileName || '')}</div>
                 </div>
               `;
@@ -4890,7 +8179,7 @@ function createMessageElement(message) {
           itemDiv.innerHTML = `
                 <span class="media-icon"></span>
                 <div class="media-info">
-                  <div class="media-type">${appState.language === 'zh-CN' ? '文档' : 'Document'}</div>
+                  <div class="media-type">${isChineseLanguage(appState.language) ? '文档' : 'Document'}</div>
             <div class="media-name">${escapeHtml(att.fileName || '')}</div>
                 </div>
               `;
@@ -4911,8 +8200,11 @@ function createMessageElement(message) {
   textDiv.className = 'message-text';
   //  移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
   const cleanContent = stripTrailingTitleMarker(message.content || '');
+  const askUserResult = message.role === 'assistant'
+    ? extractAskUserBlocks(cleanContent)
+    : { text: cleanContent, prompts: [] };
   // 使用renderMarkdownWithMath渲染Markdown和数学公式
-  let renderedContent = renderMarkdownWithMath(cleanContent);
+  let renderedContent = renderMarkdownWithMath(askUserResult.text);
 
   // 解析 sources：可能是 JSON 字符串（从数据库加载）或数组对象（流式响应）
   let sources = message.sources;
@@ -4931,7 +8223,15 @@ function createMessageElement(message) {
   }
 
   textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
-  content.appendChild(textDiv);
+  if (textDiv.innerHTML.trim()) {
+    content.appendChild(textDiv);
+  }
+
+  if (message.role === 'assistant' && askUserResult.prompts.length > 0) {
+    askUserResult.prompts.forEach((prompt) => {
+      content.appendChild(createAskUserCard(prompt));
+    });
+  }
 
 
   // 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
@@ -4975,7 +8275,7 @@ function createMessageElement(message) {
       internetBadge.className = 'meta-badge';
       internetBadge.innerHTML = `
             ${getSvgIcon('language', 'material-symbols-outlined', 24)}
-            <span>${appState.language === 'zh-CN' ? '联网' : 'Web'}</span>
+            <span>${isChineseLanguage(appState.language) ? '联网' : 'Web'}</span>
           `;
       metaDiv.appendChild(internetBadge);
     }
@@ -4986,7 +8286,7 @@ function createMessageElement(message) {
       thinkingBadge.className = 'meta-badge';
       thinkingBadge.innerHTML = `
             ${getSvgIcon('psychology', 'material-symbols-outlined', 24)}
-            <span>${appState.language === 'zh-CN' ? '思考' : 'Thinking'}</span>
+            <span>${isChineseLanguage(appState.language) ? '思考' : 'Thinking'}</span>
           `;
       metaDiv.appendChild(thinkingBadge);
     }
@@ -4994,7 +8294,7 @@ function createMessageElement(message) {
     // 添加复制按钮
     const copyBtn = document.createElement('button');
     copyBtn.className = 'copy-btn';
-    copyBtn.title = appState.language === 'zh-CN' ? '复制消息' : 'Copy message';
+    copyBtn.title = isChineseLanguage(appState.language) ? '复制消息' : 'Copy message';
     copyBtn.innerHTML = `
           ${getSvgIcon('content_copy', 'material-symbols-outlined', 24)}
         `;
@@ -5035,7 +8335,7 @@ function createMessageElement(message) {
         }, 2000);
       } catch (err) {
         console.error(' 复制失败:', err);
-        alert(appState.language === 'zh-CN' ? '复制失败' : 'Copy failed');
+        alert(isChineseLanguage(appState.language) ? '复制失败' : 'Copy failed');
       }
     });
 
@@ -5046,7 +8346,7 @@ function createMessageElement(message) {
     // 添加编辑按钮
     const editBtn = document.createElement('button');
     editBtn.className = 'action-btn edit-btn';
-    editBtn.title = appState.language === 'zh-CN' ? '编辑' : 'Edit';
+    editBtn.title = isChineseLanguage(appState.language) ? '编辑' : 'Edit';
     editBtn.innerHTML = getSvgIcon('edit', 'material-symbols-outlined', 16);
     editBtn.addEventListener('click', () => startEditMessage(message, div));
     metaDiv.appendChild(editBtn);
@@ -5054,7 +8354,7 @@ function createMessageElement(message) {
     // 添加重新生成按钮
     const regenerateBtn = document.createElement('button');
     regenerateBtn.className = 'action-btn regenerate-btn';
-    regenerateBtn.title = appState.language === 'zh-CN' ? '重新生成' : 'Regenerate';
+    regenerateBtn.title = isChineseLanguage(appState.language) ? '重新生成' : 'Regenerate';
     regenerateBtn.innerHTML = getSvgIcon('refresh', 'material-symbols-outlined', 16);
     regenerateBtn.addEventListener('click', () => openRegenerateModal(message));
     metaDiv.appendChild(regenerateBtn);
@@ -5062,7 +8362,7 @@ function createMessageElement(message) {
     // 添加删除按钮
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'action-btn delete-btn';
-    deleteBtn.title = appState.language === 'zh-CN' ? '删除' : 'Delete';
+    deleteBtn.title = isChineseLanguage(appState.language) ? '删除' : 'Delete';
     deleteBtn.innerHTML = getSvgIcon('delete', 'material-symbols-outlined', 16);
     deleteBtn.addEventListener('click', () => deleteMessage(message));
     metaDiv.appendChild(deleteBtn);
@@ -5070,7 +8370,7 @@ function createMessageElement(message) {
     // 添加引用按钮
     const quoteBtn = document.createElement('button');
     quoteBtn.className = 'action-btn quote-btn';
-    quoteBtn.title = appState.language === 'zh-CN' ? '引用' : 'Quote';
+    quoteBtn.title = isChineseLanguage(appState.language) ? '引用' : 'Quote';
     quoteBtn.innerHTML = getSvgIcon('format_quote', 'material-symbols-outlined', 16);
     quoteBtn.addEventListener('click', () => quoteMessage(message));
     metaDiv.appendChild(quoteBtn);
@@ -5086,7 +8386,7 @@ function createMessageElement(message) {
     // 编辑按钮
     const editBtn = document.createElement('button');
     editBtn.className = 'action-btn edit-btn';
-    editBtn.title = appState.language === 'zh-CN' ? '编辑' : 'Edit';
+    editBtn.title = isChineseLanguage(appState.language) ? '编辑' : 'Edit';
     editBtn.innerHTML = getSvgIcon('edit', 'material-symbols-outlined', 16);
     editBtn.addEventListener('click', () => startEditMessage(message, div));
     userMetaDiv.appendChild(editBtn);
@@ -5094,7 +8394,7 @@ function createMessageElement(message) {
     // 删除按钮
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'action-btn delete-btn';
-    deleteBtn.title = appState.language === 'zh-CN' ? '删除' : 'Delete';
+    deleteBtn.title = isChineseLanguage(appState.language) ? '删除' : 'Delete';
     deleteBtn.innerHTML = getSvgIcon('delete', 'material-symbols-outlined', 16);
     deleteBtn.addEventListener('click', () => deleteMessage(message));
     userMetaDiv.appendChild(deleteBtn);
@@ -5102,7 +8402,7 @@ function createMessageElement(message) {
     // 引用按钮
     const quoteBtn = document.createElement('button');
     quoteBtn.className = 'action-btn quote-btn';
-    quoteBtn.title = appState.language === 'zh-CN' ? '引用' : 'Quote';
+    quoteBtn.title = isChineseLanguage(appState.language) ? '引用' : 'Quote';
     quoteBtn.innerHTML = getSvgIcon('format_quote', 'material-symbols-outlined', 16);
     quoteBtn.addEventListener('click', () => quoteMessage(message));
     userMetaDiv.appendChild(quoteBtn);
@@ -5127,7 +8427,7 @@ async function loadMessageAttachments(messageId, containerElement) {
             <circle cx="12" cy="12" r="10" opacity="0.3"/>
             <path d="M12 2a10 10 0 0 1 10 10"/>
           </svg>
-          <span>${appState.language === 'zh-CN' ? '加载中...' : 'Loading...'}</span>
+          <span>${isChineseLanguage(appState.language) ? '加载中...' : 'Loading...'}</span>
         </div>
       `;
 
@@ -5164,10 +8464,10 @@ async function loadMessageAttachments(messageId, containerElement) {
         itemDiv.appendChild(img);
       } else if (att.type === 'video') {
         itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '视频' : 'Video'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
+        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${isChineseLanguage(appState.language) ? '视频' : 'Video'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
       } else if (att.type === 'audio') {
         itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${appState.language === 'zh-CN' ? '音频' : 'Audio'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
+        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${isChineseLanguage(appState.language) ? '音频' : 'Audio'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
       }
 
       if (itemDiv.innerHTML) containerElement.appendChild(itemDiv);
@@ -5177,7 +8477,7 @@ async function loadMessageAttachments(messageId, containerElement) {
     console.error(' 加载附件失败:', error);
     containerElement.innerHTML = `
           <div class="lazy-attachment-placeholder error" onclick="loadMessageAttachments(${messageId}, this.parentElement)">
-            <span>${appState.language === 'zh-CN' ? '加载失败，点击重试' : 'Failed, click to retry'}</span>
+            <span>${isChineseLanguage(appState.language) ? '加载失败，点击重试' : 'Failed, click to retry'}</span>
           </div>
         `;
   }
@@ -5241,7 +8541,7 @@ async function deleteSession(event, sessionId) {
 
   event.stopPropagation();
 
-  const confirmMsg = appState.language === 'zh-CN' ? '确定要删除这个对话吗?' : 'Delete this conversation?';
+  const confirmMsg = isChineseLanguage(appState.language) ? '确定要删除这个对话吗?' : 'Delete this conversation?';
   if (!confirm(confirmMsg)) return;
 
   try {
@@ -5263,7 +8563,7 @@ async function deleteSession(event, sessionId) {
     await loadSessions();
   } catch (error) {
     console.error(' 删除会话失败:', error);
-    alert(appState.language === 'zh-CN' ? '删除失败' : 'Delete failed');
+    alert(isChineseLanguage(appState.language) ? '删除失败' : 'Delete failed');
   }
 }
 
@@ -5290,8 +8590,8 @@ function startEditMessage(message, messageDiv) {
   editContainer.innerHTML = `
         <textarea class="message-edit-textarea">${escapeHtml(originalContent)}</textarea>
         <div class="message-edit-actions">
-          <button class="edit-cancel-btn" data-i18n="cancel">${appState.language === 'zh-CN' ? '取消' : 'Cancel'}</button>
-          <button class="edit-save-btn" data-i18n="save">${appState.language === 'zh-CN' ? '保存' : 'Save'}</button>
+          <button class="edit-cancel-btn" data-i18n="cancel">${isChineseLanguage(appState.language) ? '取消' : 'Cancel'}</button>
+          <button class="edit-save-btn" data-i18n="save">${isChineseLanguage(appState.language) ? '保存' : 'Save'}</button>
         </div>
       `;
 
@@ -5314,7 +8614,7 @@ function startEditMessage(message, messageDiv) {
   editContainer.querySelector('.edit-save-btn').addEventListener('click', async () => {
     const newContent = textarea.value.trim();
     if (!newContent) {
-      alert(appState.language === 'zh-CN' ? '内容不能为空' : 'Content cannot be empty');
+      alert(isChineseLanguage(appState.language) ? '内容不能为空' : 'Content cannot be empty');
       return;
     }
 
@@ -5326,7 +8626,7 @@ function startEditMessage(message, messageDiv) {
 async function saveEditMessage(message, newContent, messageDiv, editContainer, textDiv) {
   if (!appState.currentSession) {
     console.error(' 无法保存：缺少会话');
-    alert(appState.language === 'zh-CN' ? '请先刷新页面' : 'Please refresh the page first');
+    alert(isChineseLanguage(appState.language) ? '请先刷新页面' : 'Please refresh the page first');
     return;
   }
 
@@ -5349,13 +8649,13 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
           console.log(` 已获取消息ID: ${message.id}`);
         } else {
           console.error(' 无法找到消息ID');
-          alert(appState.language === 'zh-CN' ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
+          alert(isChineseLanguage(appState.language) ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
           return;
         }
       }
     } catch (error) {
       console.error(' 重新加载消息失败:', error);
-      alert(appState.language === 'zh-CN' ? '加载失败，请重试' : 'Load failed, please retry');
+      alert(isChineseLanguage(appState.language) ? '加载失败，请重试' : 'Load failed, please retry');
       return;
     }
   }
@@ -5398,7 +8698,7 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
 
   } catch (error) {
     console.error(' 更新消息失败:', error);
-    alert(appState.language === 'zh-CN' ? '更新失败' : 'Update failed');
+    alert(isChineseLanguage(appState.language) ? '更新失败' : 'Update failed');
   }
 }
 
@@ -5503,13 +8803,13 @@ async function deleteMessageFromDB(message) {
 
 // 删除消息
 async function deleteMessage(message) {
-  const confirmMsg = appState.language === 'zh-CN' ? '确定要删除这条消息吗?' : 'Delete this message?';
+  const confirmMsg = isChineseLanguage(appState.language) ? '确定要删除这条消息吗?' : 'Delete this message?';
   if (!confirm(confirmMsg)) return;
 
   // 确保消息有ID
   const msgWithId = await ensureMessageHasId(message);
   if (!msgWithId) {
-    alert(appState.language === 'zh-CN' ? '无法获取消息信息，请刷新页面后重试' : 'Cannot get message info, please refresh and retry');
+    alert(isChineseLanguage(appState.language) ? '无法获取消息信息，请刷新页面后重试' : 'Cannot get message info, please refresh and retry');
     return;
   }
 
@@ -5528,7 +8828,7 @@ async function deleteMessage(message) {
       renderMessages();
     }
   } else {
-    alert(appState.language === 'zh-CN' ? '删除失败' : 'Delete failed');
+    alert(isChineseLanguage(appState.language) ? '删除失败' : 'Delete failed');
   }
 }
 
@@ -5602,7 +8902,7 @@ function updateQuoteUI() {
           </div>
           <div class="quote-preview-text">${contentPreview}</div>
         </div>
-        <button class="quote-preview-remove" onclick="removeQuote()" title="${appState.language === 'zh-CN' ? '取消引用' : 'Remove quote'}">
+        <button class="quote-preview-remove" onclick="removeQuote()" title="${isChineseLanguage(appState.language) ? '取消引用' : 'Remove quote'}">
           ${getSvgIcon('close', 'remove-icon', 16)}
         </button>
       `;
@@ -5885,13 +9185,14 @@ async function streamAIResponse(messages, aiMsg) {
       },
       body: JSON.stringify({
         messages,
-        model: normalizeSelectedModelId(appState.selectedModel),
+        model: getRequestModelIdForCurrentMode(),
         sessionId,
         requestId,
         internetMode: appState.internetMode,
+        researchMode: getEffectiveResearchMode(),
         thinkingMode: appState.thinkingMode,
-        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
-        agentMode: appState.agentMode ? 'on' : 'off',
+        reasoningProfile: getRequestReasoningProfileForCurrentMode(),
+        agentMode: 'off',
         agentPolicy: appState.agentPolicy,
         qualityProfile: appState.qualityProfile,
         temperature: appState.temperature,
@@ -5930,10 +9231,15 @@ async function streamAIResponse(messages, aiMsg) {
         try {
           const parsed = JSON.parse(data);
 
-          if (parsed.type === 'quota_info') {
-            applyQuotaInfoEvent(parsed);
-            continue;
-          }
+	          if (parsed.type === 'points_info') {
+	            handlePointsInfoEvent(parsed);
+	            continue;
+	          }
+
+	          if (parsed.type === 'quota_info') {
+	            applyQuotaInfoEvent(parsed);
+	            continue;
+	          }
 
           if (parsed.type === 'model_info') {
             if (parsed.model) {
@@ -5996,7 +9302,7 @@ async function streamAIResponse(messages, aiMsg) {
 
   } catch (error) {
     console.error(' 流式请求失败:', error);
-    aiMsg.content = appState.language === 'zh-CN' ? '生成失败，请重试' : 'Generation failed, please retry';
+    aiMsg.content = isChineseLanguage(appState.language) ? '生成失败，请重试' : 'Generation failed, please retry';
   } finally {
     appState.isStreaming = false;
 
@@ -6097,7 +9403,7 @@ function renderSessions() {
       container.innerHTML = `<div class="sessions-loader"><div class="loader-spinner"></div></div>`;
       return;
     }
-    const msg = appState.language === 'zh-CN'
+    const msg = isChineseLanguage(appState.language)
       ? '暂无历史对话<br>点击"新对话"开始聊天'
       : 'No conversations<br>Click "New Chat" to start';
     container.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 13px;">${msg}</div>`;
@@ -6109,7 +9415,7 @@ function renderSessions() {
     div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}`;
     div.setAttribute('data-session-id', session.id);
     const displayTitle = getSessionDisplayTitle(session);
-    const previewText = stripTrailingTitleMarker(session.last_message || '').replace(/\s+/g, ' ').trim();
+    const previewText = stripAskUserBlocksForStreaming(stripTrailingTitleMarker(session.last_message || '')).replace(/\s+/g, ' ').trim();
 
     // 解析附件并生成预览HTML
     const attachments = parseSessionAttachments(session);
@@ -6197,6 +9503,60 @@ function setupSessionsLoaderObserver() {
 
 // 修复：改进sendMessage，添加更多的错误处理
 // 支持多模态：图片、音频、视频附件
+async function submitStreamingInterjection(messageText) {
+  const content = String(messageText || '').trim();
+  if (!content || !appState.currentRequestId || !appState.currentSession) return false;
+
+  const input = document.getElementById('messageInput');
+  if (input) {
+    input.value = '';
+    autoResizeInput();
+  }
+
+  const userMsg = {
+    role: 'user',
+    content,
+    created_at: new Date().toISOString(),
+    isStreamingInterjection: true
+  };
+  appState.messages.push(userMsg);
+
+  const messagesList = document.getElementById('messagesList');
+  const streamingAssistant = document.getElementById('streamingContent')?.closest('.message.assistant');
+  const userEl = createMessageElement(userMsg);
+  if (messagesList && userEl) {
+    if (streamingAssistant && streamingAssistant.parentElement === messagesList) {
+      messagesList.insertBefore(userEl, streamingAssistant);
+    } else {
+      messagesList.appendChild(userEl);
+    }
+    scrollToBottom();
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/chat/interject`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requestId: appState.currentRequestId,
+        message: content
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    showToast(isChineseLanguage(appState.language) ? '已加入当前讨论' : 'Added to current discussion');
+    return true;
+  } catch (error) {
+    console.error(' 讨论插话失败:', error);
+    showToast(isChineseLanguage(appState.language) ? '插话发送失败，请稍后重试' : 'Failed to add message to the discussion');
+    return false;
+  }
+}
+
 async function sendMessage(message = null) {
   // 如果在 ChatFlow iframe 模式下，发送前先请求最新的画布上下文
   if (isChatFlowIframeMode) {
@@ -6216,15 +9576,21 @@ async function sendMessage(message = null) {
     return;
   }
 
-  const messageText = input.value.trim();
+  const providedMessage = message !== null && message !== undefined ? String(message).trim() : '';
+  const messageText = providedMessage || input.value.trim();
 
   // 允许只发送附件（无文字内容）
   if (!messageText && !currentAttachment) return;
-  if (appState.isStreaming) return;
+  if (appState.isStreaming) {
+    if (messageText && !currentAttachment) {
+      await submitStreamingInterjection(messageText);
+    }
+    return;
+  }
 
   if (!appState.currentSession) {
-    await createNewSession();
-    return;
+    const created = await createNewSession({ focus: false });
+    if (!created || !appState.currentSession) return;
   }
 
   input.value = '';
@@ -6234,8 +9600,8 @@ async function sendMessage(message = null) {
   let finalMessageContent = messageText || message || '请分析这个文件';
   if (appState.currentQuote) {
     const quoteLabel = appState.currentQuote.role === 'user'
-      ? (appState.language === 'zh-CN' ? '引用用户' : 'Quoting User')
-      : (appState.language === 'zh-CN' ? '引用AI' : 'Quoting AI');
+      ? (isChineseLanguage(appState.language) ? '引用用户' : 'Quoting User')
+      : (isChineseLanguage(appState.language) ? '引用AI' : 'Quoting AI');
     // 截取引用内容（最多200字符）
     const quotedContent = (appState.currentQuote.content || '').slice(0, 200) +
       (appState.currentQuote.content.length > 200 ? '...' : '');
@@ -6268,10 +9634,12 @@ async function sendMessage(message = null) {
   renderMessages();
 
   // 构建发送给服务器的消息数组（包含附件信息）
-  const messages = appState.messages.map(m => {
+  const messages = appState.messages.map((m, index, arr) => {
     const msgObj = {
       role: m.role,
-      content: m.content
+      content: m.role === 'user' && index === arr.length - 1
+        ? appendUserTimeHintForPrompt(m.content)
+        : m.content
     };
     // 如果有附件，也传递给服务器
     //  增强防御性检查：确保 attachments 是数组
@@ -6312,7 +9680,10 @@ async function sendMessage(message = null) {
   const sendBtn = document.getElementById('sendBtn');
   const stopBtn = document.getElementById('stopBtn');
 
-  if (sendBtn) sendBtn.style.display = 'none';
+  if (sendBtn) {
+    sendBtn.style.display = 'flex';
+    sendBtn.title = isChineseLanguage(appState.language) ? '发送到当前讨论' : 'Send into current discussion';
+  }
   if (stopBtn) stopBtn.style.display = 'flex';
 
   appState.isStreaming = true;
@@ -6323,24 +9694,26 @@ async function sendMessage(message = null) {
 
   // 根据当前模式确定初始加载状态文本
   const initialStatusText = appState.internetMode
-    ? (appState.language === 'zh-CN' ? '联网搜索中...' : 'Searching...')
+    ? (isChineseLanguage(appState.language) ? '联网搜索中...' : 'Searching...')
     : (appState.thinkingMode
-      ? (appState.language === 'zh-CN' ? '推理中...' : 'Reasoning...')
-      : (appState.language === 'zh-CN' ? '思考中...' : 'Thinking...'));
-  const enableProcessTrace = appState.agentMode === true;
+      ? (isChineseLanguage(appState.language) ? '推理中...' : 'Reasoning...')
+      : (isChineseLanguage(appState.language) ? '思考中...' : 'Thinking...'));
+  const currentResearchMode = getEffectiveResearchMode();
+  const enableProcessTrace = currentResearchMode === 'fast' || currentResearchMode === 'deep';
+  const isResearchModeActive = enableProcessTrace;
   const processTraceStepHtml = enableProcessTrace ? `
-            <!-- 步骤3: 过程轨迹 -->
-            <div class="thinking-step" id="stepProcessTrace" data-status="running">
+            <!-- 步骤2: AI 实时讨论 -->
+            <div class="thinking-step" id="stepProcessTrace" data-status="pending">
               <div class="thinking-step-node"></div>
               <div class="thinking-step-content">
                 <button class="process-trace-toggle" id="processTraceToggle">
-                  <span>${appState.language === 'zh-CN' ? '过程轨迹' : 'Process Trace'}</span>
+                  <span>${isChineseLanguage(appState.language) ? 'AI 实时讨论' : 'Live AI Discussion'}</span>
                   <span class="toggle-icon">▼</span>
                 </button>
-                <div class="thinking-step-detail" id="processTraceDetail">${appState.language === 'zh-CN' ? '实时记录中（默认折叠）' : 'Tracing (collapsed by default)'}</div>
+                <div class="thinking-step-detail" id="processTraceDetail">${isChineseLanguage(appState.language) ? '等待模型输出...' : 'Waiting for model output...'}</div>
                 <div class="agent-trace-toolbar" id="agentTraceToolbar" style="display: none;">
-                  <button class="agent-trace-btn" id="agentExpandAllBtn">${appState.language === 'zh-CN' ? '展开全部' : 'Expand All'}</button>
-                  <button class="agent-trace-btn" id="agentCollapseAllBtn">${appState.language === 'zh-CN' ? '折叠全部' : 'Collapse All'}</button>
+                  <button class="agent-trace-btn" id="agentExpandAllBtn">${isChineseLanguage(appState.language) ? '展开全部' : 'Expand All'}</button>
+                  <button class="agent-trace-btn" id="agentCollapseAllBtn">${isChineseLanguage(appState.language) ? '折叠全部' : 'Collapse All'}</button>
                 </div>
                 <div class="agent-task-list" id="agentTaskList"></div>
                 <div class="agent-draft-list" id="agentDraftList"></div>
@@ -6366,33 +9739,35 @@ async function sendMessage(message = null) {
             <span id="searchStatusText">正在分析问题...</span>
           </div>
           
-          <!-- 新版时间轴思考UI -->
-          <div class="thinking-timeline" id="thinkingTimeline" style="display: none;">
+          <!-- 思考 / 研究过程 UI -->
+          <div class="thinking-timeline ${isResearchModeActive ? 'research-chat-timeline' : ''}" id="thinkingTimeline" style="display: none;">
             <!-- 步骤1: 分析问题 -->
             <div class="thinking-step" id="stepToolDecision" data-status="pending">
               <div class="thinking-step-node"></div>
               <div class="thinking-step-content">
-                <div class="thinking-step-title">${appState.language === 'zh-CN' ? 'RAI正在分析问题' : 'RAI Analyzing'}</div>
+                <div class="thinking-step-title">${isResearchModeActive
+                  ? (isChineseLanguage(appState.language) ? '多模型讨论' : 'Multi-model Discussion')
+                  : (isChineseLanguage(appState.language) ? 'RAI正在分析问题' : 'RAI Analyzing')}</div>
                 <div class="thinking-step-detail" id="toolDecisionDetail"></div>
               </div>
             </div>
-            
+            ${processTraceStepHtml}
+
             <!-- 步骤2: 生成回答 -->
             <div class="thinking-step" id="stepGenerating" data-status="pending">
               <div class="thinking-step-node"></div>
               <div class="thinking-step-content">
-                <div class="thinking-step-title">${appState.language === 'zh-CN' ? '生成回答' : 'Generating Response'}</div>
+                <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
                 <div class="thinking-step-detail" id="generatingDetail"></div>
               </div>
             </div>
-            ${processTraceStepHtml}
-            
-            <!-- 步骤4: 深度思考 (仅在思考模式下显示) -->
+
+            <!-- 深度思考 (仅在思考模式下显示) -->
             <div class="thinking-step" id="stepDeepThinking" data-status="pending" style="${appState.thinkingMode ? '' : 'display: none;'}">
               <div class="thinking-step-node"></div>
               <div class="thinking-step-content">
                 <button class="deep-thinking-toggle" id="deepThinkingToggle">
-                  <span>${appState.language === 'zh-CN' ? '深度思考' : 'Deep Thinking'}</span>
+                  <span>${isChineseLanguage(appState.language) ? '深度思考' : 'Deep Thinking'}</span>
                   <span class="toggle-icon">▼</span>
                 </button>
                 <div class="deep-thinking-content" id="deepThinkingContent"></div>
@@ -6504,7 +9879,9 @@ async function sendMessage(message = null) {
 
       const title = document.createElement('div');
       title.className = 'agent-task-title';
-      title.textContent = `${task.roleLabel || task.role || 'agent'} · ${task.stepId}`;
+      title.textContent = task.detail
+        ? `${task.roleLabel || task.role || 'agent'}`
+        : `${task.roleLabel || task.role || 'agent'} · ${task.stepId}`;
 
       const detail = document.createElement('div');
       detail.className = 'agent-task-detail';
@@ -6541,6 +9918,20 @@ async function sendMessage(message = null) {
     renderAgentTaskList();
   }
 
+  function cleanResearchSpeechText(text = '') {
+    const lines = String(text || '')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/<\/?think>/gi, '')
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .filter(line => !/^(结论状态|状态|status)\s*[：:]/i.test(line))
+      .map(line => line.replace(/^(发言|观点|结论|speech)\s*[：:]\s*/i, '').trim())
+      .filter(Boolean);
+    const compact = (lines.join(' ') || String(text || '')).replace(/\s+/g, ' ').trim();
+    return compact || (isChineseLanguage(appState.language) ? '正在输入...' : 'Typing...');
+  }
+
   function renderAgentDrafts() {
     if (!agentDraftList) return;
     const ordered = Array.from(agentRunState.drafts.values()).sort((a, b) => Number(a.taskId || 0) - Number(b.taskId || 0));
@@ -6550,7 +9941,65 @@ async function sendMessage(message = null) {
     }
 
     agentDraftList.innerHTML = '';
+    agentDraftList.classList.toggle('research-chat-list', !!isResearchModeActive);
     for (const draft of ordered) {
+      if (isResearchModeActive) {
+        const bubble = document.createElement('div');
+        bubble.className = `research-agent-bubble role-${String(draft.role || 'agent').replace(/[^a-z0-9_-]/gi, '')}`;
+        bubble.dataset.status = draft.voteOk === true ? 'ok' : (draft.voteOk === false ? 'issue' : 'talking');
+
+        const avatar = document.createElement('span');
+        avatar.className = 'research-agent-avatar';
+        avatar.textContent = formatResearchAgentLabel(draft.role).slice(0, 1).toUpperCase();
+
+        const card = document.createElement('div');
+        card.className = 'research-agent-card';
+
+        const head = document.createElement('div');
+        head.className = 'research-agent-head';
+
+        const meta = document.createElement('div');
+        meta.className = 'research-agent-meta';
+
+        const name = document.createElement('div');
+        name.className = 'research-agent-name';
+        name.textContent = formatResearchAgentLabel(draft.role);
+
+        const sub = document.createElement('div');
+        sub.className = 'research-agent-round';
+        sub.textContent = draft.round
+          ? (isChineseLanguage(appState.language) ? `第 ${draft.round} 轮` : `Round ${draft.round}`)
+          : (draft.task || '');
+
+        meta.appendChild(name);
+        meta.appendChild(sub);
+        head.appendChild(meta);
+
+        const text = document.createElement('div');
+        text.className = 'research-agent-text';
+        text.textContent = cleanResearchSpeechText(draft.content || draft.summary || (isChineseLanguage(appState.language) ? '正在输入...' : 'Typing...'));
+
+        card.appendChild(head);
+        card.appendChild(text);
+
+        const reasoning = getResearchReasoningText(draft);
+        if (reasoning) {
+          const thinkingId = `live-research-thinking-${draft.taskId || Math.random().toString(36).slice(2)}`;
+          const wrapper = document.createElement('div');
+          wrapper.innerHTML = createResearchThinkingHtml(reasoning, thinkingId).trim();
+          const thinkingNode = wrapper.firstElementChild;
+          if (thinkingNode) {
+            card.appendChild(thinkingNode);
+          }
+        }
+
+        bubble.appendChild(avatar);
+        bubble.appendChild(card);
+        agentDraftList.appendChild(bubble);
+        bindResearchThinkingToggles(bubble);
+        continue;
+      }
+
       const item = document.createElement('div');
       item.className = 'agent-draft-item';
       item.dataset.taskId = String(draft.taskId || '');
@@ -6566,7 +10015,10 @@ async function sendMessage(message = null) {
       const right = document.createElement('span');
       right.className = 'agent-draft-meta';
       const totalTokens = Number(draft.usage?.total_tokens || 0);
-      right.textContent = `${appState.language === 'zh-CN' ? 'tokens' : 'tokens'} ${totalTokens} · search ${draft.searchCount || 0}`;
+      const contentLength = String(draft.content || '').length;
+      right.textContent = totalTokens > 0
+        ? `tokens ${totalTokens}`
+        : (isChineseLanguage(appState.language) ? `${contentLength} 字` : `${contentLength} chars`);
 
       const icon = document.createElement('span');
       icon.className = 'agent-draft-toggle';
@@ -6582,7 +10034,7 @@ async function sendMessage(message = null) {
 
       const body = document.createElement('pre');
       body.className = `agent-draft-content ${draft.expanded ? 'expanded' : ''}`;
-      body.textContent = draft.content || (appState.language === 'zh-CN' ? '（草稿生成中或暂无正文）' : '(Draft is streaming or empty)');
+      body.textContent = draft.content || (isChineseLanguage(appState.language) ? '（草稿生成中或暂无正文）' : '(Draft is streaming or empty)');
 
       header.addEventListener('click', () => {
         const prev = agentRunState.drafts.get(draft.taskId);
@@ -6610,11 +10062,18 @@ async function sendMessage(message = null) {
       content: '',
       usage: {},
       searchCount: 0,
+      round: parsed.round || null,
+      voteOk: null,
+      statusLine: '',
+      speech: parsed.speech === true,
+      rawContent: '',
+      reasoningContent: '',
       expanded: true
     };
 
     if (parsed.reset) {
       prev.content = '';
+      prev.reasoningContent = '';
     }
     const delta = String(parsed.delta || '');
     if (delta) {
@@ -6622,8 +10081,20 @@ async function sendMessage(message = null) {
       const compact = prev.content.replace(/\s+/g, ' ').trim();
       prev.summary = compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
     }
+    const reasoningDelta = String(parsed.reasoningDelta || parsed.reasoning_delta || '');
+    if (reasoningDelta) {
+      prev.reasoningContent = `${prev.reasoningContent || ''}${reasoningDelta}`;
+    }
+    if (parsed.reasoningContent || parsed.reasoning_content) {
+      prev.reasoningContent = parsed.reasoningContent || parsed.reasoning_content || prev.reasoningContent || '';
+    }
     prev.role = parsed.role || prev.role;
     prev.task = parsed.task || prev.task;
+    prev.round = parsed.round || prev.round || null;
+    if (parsed.voteOk !== undefined) prev.voteOk = parsed.voteOk === true;
+    prev.statusLine = parsed.statusLine || prev.statusLine || '';
+    prev.speech = parsed.speech === true || prev.speech === true;
+    prev.rawContent = parsed.rawContent || prev.rawContent || '';
     if (prev.expanded !== false) {
       prev.expanded = true;
     }
@@ -6720,7 +10191,7 @@ async function sendMessage(message = null) {
 
     const meta = document.createElement('span');
     meta.className = 'process-dot-meta';
-    const labelMap = appState.language === 'zh-CN'
+    const labelMap = isChineseLanguage(appState.language)
       ? {
         framework: '框架',
         agent: 'Agent',
@@ -6758,17 +10229,17 @@ async function sendMessage(message = null) {
       .map(line => line.trim())
       .filter(Boolean);
 
-    addProcessTraceItem('framework', appState.language === 'zh-CN' ? '开始展示框架要求' : 'Framework requirements begin');
+    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '开始展示框架要求' : 'Framework requirements begin');
     lines.forEach(line => addProcessTraceItem('framework', line));
-    addProcessTraceItem('framework', appState.language === 'zh-CN' ? '框架要求展示完成' : 'Framework requirements end');
+    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '框架要求展示完成' : 'Framework requirements end');
   }
 
   let agentSelectedRoles = [];
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
-    const roleMap = appState.language === 'zh-CN'
-      ? { master: '主控', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '校验' }
-      : { master: 'Master', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Verifier' };
+    const roleMap = isChineseLanguage(appState.language)
+      ? { master: '主控', judge: '主控校验', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '校验', gemma: 'Gemma', kimi: 'Kimi K2.5', gpt55: 'GPT-5.5', deepseek: 'DeepSeek V4 Pro' }
+      : { master: 'Master', judge: 'Judge', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Verifier', gemma: 'Gemma', kimi: 'Kimi K2.5', gpt55: 'GPT-5.5', deepseek: 'DeepSeek V4 Pro' };
     return roleMap[role] || role;
   };
 
@@ -6844,12 +10315,13 @@ async function sendMessage(message = null) {
       body: JSON.stringify({
         sessionId: appState.currentSession.id,
         messages: messages,
-        model: normalizeSelectedModelId(appState.selectedModel),
+        model: getRequestModelIdForCurrentMode(),
         thinkingMode: appState.thinkingMode,
         thinkingBudget: appState.thinkingBudget,
-        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
+        reasoningProfile: getRequestReasoningProfileForCurrentMode(),
         internetMode: appState.internetMode,
-        agentMode: appState.agentMode ? 'on' : 'off',
+        researchMode: currentResearchMode,
+        agentMode: 'off',
         agentPolicy: appState.agentPolicy,
         qualityProfile: appState.qualityProfile,
         temperature: appState.temperature,
@@ -6913,16 +10385,18 @@ async function sendMessage(message = null) {
     // 显示时间轴并初始化状态
     if (thinkingTimeline) {
       thinkingTimeline.style.display = 'block';
-      updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN' ? '正在判断...' : 'Deciding...');
+      updateStepStatus(stepToolDecision, 'active', isResearchModeActive
+        ? (isChineseLanguage(appState.language) ? '等待多模型编排...' : 'Waiting for model plan...')
+        : (isChineseLanguage(appState.language) ? '正在判断...' : 'Deciding...'));
       if (enableProcessTrace) {
-        updateStepStatus(stepProcessTrace, 'active', appState.language === 'zh-CN' ? '实时记录中...' : 'Tracing...');
+        updateStepStatus(stepProcessTrace, 'pending', isChineseLanguage(appState.language) ? '等待模型输出...' : 'Waiting for model output...');
       }
     }
 
     if (enableProcessTrace) {
-      addProcessTraceItem('info', appState.language === 'zh-CN' ? '开始流式请求' : 'Streaming request started');
+      addProcessTraceItem('info', isChineseLanguage(appState.language) ? '开始流式请求' : 'Streaming request started');
       appendFrameworkRequirements(effectiveSystemPrompt);
-      addProcessTraceItem('info', appState.language === 'zh-CN'
+      addProcessTraceItem('info', isChineseLanguage(appState.language)
         ? `模型: ${modelUsed || appState.selectedModel}`
         : `Model: ${modelUsed || appState.selectedModel}`);
     }
@@ -6960,7 +10434,8 @@ async function sendMessage(message = null) {
     function renderStreamingContent() {
       if (!streamingEl || !displayedContent) return;
 
-      const contentToDisplay = stripTrailingTitleMarker(displayedContent);
+      const streamingAskUserResult = extractAskUserBlocks(stripTrailingTitleMarker(displayedContent));
+      const contentToDisplay = stripIncompleteAskUserFence(streamingAskUserResult.text).trim();
       let html = renderMarkdownWithMath(contentToDisplay, true);
 
       // 处理 citations（如果有 sources）
@@ -7004,6 +10479,11 @@ async function sendMessage(message = null) {
       );
 
       streamingEl.innerHTML = html;
+      if (streamingAskUserResult.prompts.length > 0) {
+        streamingAskUserResult.prompts.forEach((prompt) => {
+          streamingEl.appendChild(createAskUserCard(prompt));
+        });
+      }
       hydrateStreamingMermaidCache();
       applyCharAnimations(streamingEl);
 
@@ -7191,7 +10671,7 @@ async function sendMessage(message = null) {
               if (thinkingTimeline) thinkingTimeline.style.display = 'block';
 
               // 更新步骤状态：工具决策完成，深度思考进行中
-              updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '已完成判断' : 'Completed');
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language) ? '已完成判断' : 'Completed');
               updateStepStatus(stepDeepThinking, 'thinking', '');
 
               // 显示深度思考步骤（如果之前隐藏了）
@@ -7200,7 +10680,7 @@ async function sendMessage(message = null) {
               // 更新加载状态文本
               const loadingStatusText = document.getElementById('loadingStatusText');
               if (loadingStatusText) {
-                loadingStatusText.textContent = appState.language === 'zh-CN' ? '深度思考中...' : 'Deep Thinking...';
+                loadingStatusText.textContent = isChineseLanguage(appState.language) ? '深度思考中...' : 'Deep Thinking...';
               }
 
               // 添加AI头像闪烁效果
@@ -7218,7 +10698,7 @@ async function sendMessage(message = null) {
             traceReasoningChars += (parsed.content || '').length;
             addProcessTraceItem('reasoning', parsed.content || '');
             if (processTraceDetail) {
-              processTraceDetail.textContent = appState.language === 'zh-CN'
+              processTraceDetail.textContent = isChineseLanguage(appState.language)
                 ? `已记录 ${traceItems} 条 · 推理 ${traceReasoningChars} 字符`
                 : `${traceItems} trace items · reasoning ${traceReasoningChars} chars`;
             }
@@ -7255,12 +10735,12 @@ async function sendMessage(message = null) {
 
               // 非思考模式：直接更新步骤状态
               if (stepToolDecision.getAttribute('data-status') !== 'done') {
-                updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '已完成判断' : 'Completed');
+                updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language) ? '已完成判断' : 'Completed');
                 // 隐藏深度思考步骤（非思考模式）
                 if (stepDeepThinking && !appState.thinkingMode) {
                   stepDeepThinking.style.display = 'none';
                 }
-                updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在生成...' : 'Generating...');
+                updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               }
             }
 
@@ -7278,8 +10758,8 @@ async function sendMessage(message = null) {
               }
 
               // 更新步骤状态：深度思考完成，生成回答进行中
-              updateStepStatus(stepDeepThinking, 'done', appState.language === 'zh-CN' ? '思考完成' : 'Completed');
-              updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在组织语言...' : 'Organizing response...');
+              updateStepStatus(stepDeepThinking, 'done', isChineseLanguage(appState.language) ? '思考完成' : 'Completed');
+              updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在组织语言...' : 'Organizing response...');
 
               // 停止AI头像闪烁
               if (aiAvatar) aiAvatar.classList.remove('thinking');
@@ -7328,7 +10808,7 @@ async function sendMessage(message = null) {
             appState.lastRoutingReason = parsed.reason || '';
             console.log(` 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
             console.log(`   路由原因: ${parsed.reason || '用户选择'}`);
-            addProcessTraceItem('info', appState.language === 'zh-CN'
+            addProcessTraceItem('info', isChineseLanguage(appState.language)
               ? `模型路由: ${parsed.model} (${parsed.actualModel})`
               : `Model route: ${parsed.model} (${parsed.actualModel})`);
 
@@ -7337,13 +10817,16 @@ async function sendMessage(message = null) {
               showModelRoutingInfo(parsed.model, parsed.reason);
             }
           }
-          else if (parsed.type === 'quota_info') {
-            applyQuotaInfoEvent(parsed);
-            const quotaText = parsed.provider === 'newapi_gpt55'
-              ? (appState.language === 'zh-CN'
+	          else if (parsed.type === 'points_info') {
+	            handlePointsInfoEvent(parsed);
+	          }
+	          else if (parsed.type === 'quota_info') {
+	            applyQuotaInfoEvent(parsed);
+	            const quotaText = parsed.provider === 'newapi_gpt55'
+              ? (isChineseLanguage(appState.language)
                 ? `GPT-5.5限免: 剩余 ${userMembershipState.gpt55Remaining}/${userMembershipState.gpt55DailyLimit}`
                 : `GPT-5.5 free quota: ${userMembershipState.gpt55Remaining}/${userMembershipState.gpt55DailyLimit} remaining`)
-              : (appState.language === 'zh-CN'
+              : (isChineseLanguage(appState.language)
                 ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
                 : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`);
             addProcessTraceItem('info', quotaText);
@@ -7354,7 +10837,7 @@ async function sendMessage(message = null) {
               currentSources = mergeAndReindexSources(currentSources, parsed.sources);
               aiMsg.sources = currentSources;
               console.log(` 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
-              addProcessTraceItem('search', appState.language === 'zh-CN'
+              addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `来源更新: ${currentSources.length} 条`
                 : `Sources updated: ${currentSources.length}`);
             }
@@ -7364,17 +10847,17 @@ async function sendMessage(message = null) {
             if (thinkingTimeline) thinkingTimeline.style.display = 'block';
             ensureAgentPanelVisible();
             const rolesText = agentSelectedRoles.map(formatAgentRole).join('、');
-            updateStepStatus(stepToolDecision, 'running', appState.language === 'zh-CN'
-              ? `Research Turbo 编排: ${rolesText || '已启用'}`
-              : `Research Turbo plan: ${rolesText || 'enabled'}`);
-            addProcessTraceItem('agent', appState.language === 'zh-CN'
+            updateStepStatus(stepToolDecision, 'running', isChineseLanguage(appState.language)
+              ? `研究编排: ${rolesText || '已启用'}`
+              : `Research plan: ${rolesText || 'enabled'}`);
+            addProcessTraceItem('agent', isChineseLanguage(appState.language)
               ? `编排完成: ${rolesText || '已启用'}`
               : `Plan ready: ${rolesText || 'enabled'}`);
 
             if (Array.isArray(parsed.tasks)) {
               parsed.tasks.forEach((task, idx) => {
                 const taskId = Number(task.agent_id || idx + 1);
-                const stepId = `task-${taskId}`;
+                const stepId = task.stepId || `task-${taskId}`;
                 setTaskState({
                   taskId,
                   stepId,
@@ -7392,9 +10875,30 @@ async function sendMessage(message = null) {
             addProcessTraceItem('agent', `${roleName} -> ${parsed.status}${detail ? ` (${detail})` : ''}`);
 
             const mappedStatus = mapNodeStatus(parsed.status);
-            const isTaskScope = parsed.scope === 'task' || parsed.taskId != null || String(parsed.stepId || '').startsWith('task-');
+            const isMasterStage = parsed.role === 'master'
+              || String(parsed.stepId || '').includes('master')
+              || Number(parsed.taskId || 0) === 999;
+            const isTaskScope = !isMasterStage
+              && (parsed.scope === 'task' || parsed.taskId != null || String(parsed.stepId || '').startsWith('task-') || String(parsed.stepId || '').startsWith('research-'));
 
-            if (isTaskScope) {
+            if (isMasterStage) {
+              ensureAgentPanelVisible();
+              setTaskState({
+                taskId: parsed.taskId,
+                stepId: parsed.stepId || 'research-master',
+                role: parsed.role || 'master',
+                status: mappedStatus,
+                detail,
+                durationMs: parsed.durationMs
+              });
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language) ? '讨论完成' : 'Discussion completed');
+              updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
+                ? `讨论记录完成 · ${traceItems}条`
+                : `Discussion logged · ${traceItems} items`);
+              updateStepStatus(stepGenerating, mappedStatus, detail || (mappedStatus === 'done'
+                ? (isChineseLanguage(appState.language) ? '生成完成' : 'Completed')
+                : (isChineseLanguage(appState.language) ? '最终回答生成中...' : 'Final answer streaming...')));
+            } else if (isTaskScope) {
               ensureAgentPanelVisible();
               setTaskState({
                 taskId: parsed.taskId,
@@ -7405,14 +10909,15 @@ async function sendMessage(message = null) {
                 durationMs: parsed.durationMs
               });
               if (mappedStatus === 'running') {
-                updateStepStatus(stepToolDecision, 'running', appState.language === 'zh-CN' ? '子AI并行执行中...' : 'Sub-agents running...');
+                updateStepStatus(stepToolDecision, 'running', isChineseLanguage(appState.language) ? '子AI正在讨论...' : 'Models are discussing...');
+                updateStepStatus(stepProcessTrace, 'running', isChineseLanguage(appState.language) ? '实时展示模型输出...' : 'Showing model output live...');
               }
             } else {
               const stageStepId = String(parsed.stepId || '');
               const targetStep = (stageStepId === 'synthesis' || stageStepId === 'quality')
                 ? stepGenerating
                 : (stageStepId === 'master' ? stepProcessTrace : stepToolDecision);
-              const fallbackText = detail || (appState.language === 'zh-CN' ? `${roleName}处理中` : `${roleName} running`);
+              const fallbackText = detail || (isChineseLanguage(appState.language) ? `${roleName}处理中` : `${roleName} running`);
               updateStepStatus(targetStep, mappedStatus, fallbackText);
             }
           }
@@ -7430,6 +10935,12 @@ async function sendMessage(message = null) {
               content: parsed.content || prevDraft?.content || '',
               usage: parsed.usage || prevDraft?.usage || {},
               searchCount: Number(parsed.searchCount || prevDraft?.searchCount || 0),
+              round: parsed.round || parsed.debateRound || prevDraft?.round || null,
+              voteOk: parsed.voteOk !== undefined ? parsed.voteOk === true : (prevDraft?.voteOk ?? null),
+              statusLine: parsed.statusLine || prevDraft?.statusLine || '',
+              speech: parsed.speech === true || prevDraft?.speech === true,
+              rawContent: parsed.rawContent || prevDraft?.rawContent || '',
+              reasoningContent: parsed.reasoningContent || parsed.reasoning_content || prevDraft?.reasoningContent || prevDraft?.reasoning_content || '',
               expanded: prevDraft?.expanded ?? true
             };
             agentRunState.drafts.set(taskId, draft);
@@ -7442,7 +10953,7 @@ async function sendMessage(message = null) {
               status: 'done',
               detail: draft.summary || draft.task
             });
-            addProcessTraceItem('agent', appState.language === 'zh-CN'
+            addProcessTraceItem('agent', isChineseLanguage(appState.language)
               ? `收到草稿 task-${taskId} (${formatAgentRole(draft.role)})`
               : `Draft received task-${taskId} (${formatAgentRole(draft.role)})`);
           }
@@ -7450,38 +10961,73 @@ async function sendMessage(message = null) {
             appendDraftDelta(parsed);
             if (parsed.taskId != null) {
               const taskId = Number(parsed.taskId || 0);
+              const isMasterDelta = parsed.role === 'master'
+                || String(parsed.stepId || '').includes('master')
+                || taskId === 999;
               setTaskState({
                 taskId,
                 stepId: parsed.stepId || `task-${taskId}`,
                 role: parsed.role || 'custom',
                 status: 'running',
-                detail: parsed.task || (appState.language === 'zh-CN' ? '草稿实时生成中...' : 'Draft streaming...')
+                detail: parsed.task || (isChineseLanguage(appState.language) ? '草稿实时生成中...' : 'Draft streaming...')
               });
+              if (isMasterDelta) {
+                updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language) ? '讨论完成' : 'Discussion completed');
+                updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
+                  ? `讨论记录完成 · ${traceItems}条`
+                  : `Discussion logged · ${traceItems} items`);
+                updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '最终回答实时生成中...' : 'Final answer streaming...');
+              } else {
+                updateStepStatus(stepToolDecision, 'running', isChineseLanguage(appState.language) ? '子AI正在讨论...' : 'Models are discussing...');
+                updateStepStatus(stepProcessTrace, 'running', isChineseLanguage(appState.language) ? '实时展示模型输出...' : 'Showing model output live...');
+              }
+            }
+          }
+          else if (parsed.type === 'agent_interjection') {
+            addProcessTraceItem('agent', parsed.detail || (isChineseLanguage(appState.language) ? '用户插话已进入讨论上下文' : 'User message added to discussion context'));
+            if (stepProcessTrace) {
+              updateStepStatus(stepProcessTrace, 'running', isChineseLanguage(appState.language)
+                ? '用户新消息已给下一个模型'
+                : 'User message will be seen by the next model');
             }
           }
           else if (parsed.type === 'agent_metrics') {
             agentRunState.metrics = parsed;
             updateAgentMetrics(parsed);
-            addProcessTraceItem('agent', appState.language === 'zh-CN'
+            addProcessTraceItem('agent', isChineseLanguage(appState.language)
               ? `阶段耗时已汇总，tokens=${Number(parsed?.tokenUsageTotal?.total_tokens || 0)}`
               : `Metrics ready, tokens=${Number(parsed?.tokenUsageTotal?.total_tokens || 0)}`);
           }
           else if (parsed.type === 'agent_quality') {
             const coverage = parsed.metrics?.claimCoverage ?? '-';
             const contradictions = parsed.metrics?.contradictionCount ?? '-';
-            updateStepStatus(stepGenerating, parsed.pass ? 'done' : 'running', appState.language === 'zh-CN'
-              ? `质量${parsed.pass ? '通过' : '待改进'} · 覆盖率 ${coverage} · 冲突 ${contradictions}`
-              : `Quality ${parsed.pass ? 'pass' : 'pending'} · coverage ${coverage} · contradictions ${contradictions}`);
-            addProcessTraceItem('agent', appState.language === 'zh-CN'
+            const stopRule = parsed.metrics?.stopRule || '';
+            if (stopRule === 'master_decides') {
+              updateStepStatus(stepToolDecision, parsed.pass ? 'done' : 'running', parsed.detail || (isChineseLanguage(appState.language)
+                ? (parsed.pass ? '主控判断无需继续讨论' : '主控判断继续讨论')
+                : (parsed.pass ? 'Master decided to answer' : 'Master requested another round')));
+              updateStepStatus(stepProcessTrace, parsed.pass ? 'done' : 'running', isChineseLanguage(appState.language)
+                ? `已完成 ${coverage} 个模型发言`
+                : `${coverage} model turns completed`);
+              addProcessTraceItem('agent', parsed.detail || (isChineseLanguage(appState.language) ? '主控完成研究判定' : 'Master made research decision'));
+              continue;
+            }
+            updateStepStatus(stepToolDecision, parsed.pass ? 'done' : 'running', isChineseLanguage(appState.language)
+              ? (parsed.pass ? '主控质量检查通过' : '主控要求继续讨论')
+              : (parsed.pass ? 'Master quality check passed' : 'Master requested more discussion'));
+            updateStepStatus(stepProcessTrace, parsed.pass ? 'done' : 'running', isChineseLanguage(appState.language)
+              ? `覆盖 ${coverage}，冲突 ${contradictions}`
+              : `Coverage ${coverage}, contradictions ${contradictions}`);
+            addProcessTraceItem('agent', isChineseLanguage(appState.language)
               ? `质量门控: ${parsed.pass ? '通过' : '待改进'} (coverage=${coverage}, contradictions=${contradictions})`
               : `Quality gate: ${parsed.pass ? 'pass' : 'pending'} (coverage=${coverage}, contradictions=${contradictions})`);
           }
           else if (parsed.type === 'agent_retry') {
             agentRetryCount = parsed.round || (agentRetryCount + 1);
-            updateStepStatus(stepGenerating, 'running', appState.language === 'zh-CN'
+            updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language)
               ? `返工第${agentRetryCount}轮: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
-            addProcessTraceItem('agent', appState.language === 'zh-CN'
+            addProcessTraceItem('agent', isChineseLanguage(appState.language)
               ? `返工#${agentRetryCount}: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
@@ -7489,40 +11035,40 @@ async function sendMessage(message = null) {
           else if (parsed.type === 'search_status') {
             if (parsed.status === 'analyzing') {
               // 正在分析是否需要搜索
-              updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN' ? '正在分析问题...' : 'Analyzing...');
+              updateStepStatus(stepToolDecision, 'active', isChineseLanguage(appState.language) ? '正在分析问题...' : 'Analyzing...');
             } else if (parsed.status === 'searching') {
               // 保存搜索词供后续使用
               currentSearchQuery = parsed.query || '';
               // 决定使用搜索工具，显示搜索词
-              updateStepStatus(stepToolDecision, 'active', appState.language === 'zh-CN'
+              updateStepStatus(stepToolDecision, 'active', isChineseLanguage(appState.language)
                 ? `联网搜索: "${currentSearchQuery}"`
                 : `Web search: "${currentSearchQuery}"`);
-              addProcessTraceItem('search', appState.language === 'zh-CN'
+              addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `开始搜索: ${currentSearchQuery}`
                 : `Search start: ${currentSearchQuery}`);
             } else if (parsed.status === 'complete') {
               const resultCount = parsed.resultCount || 0;
               currentSearchQuery = parsed.query || currentSearchQuery || '';
               // 搜索完成
-              updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN'
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → ${resultCount}条结果`
                 : `Search done → ${resultCount} results`);
               // 开始生成回答
-              updateStepStatus(stepGenerating, 'active', appState.language === 'zh-CN' ? '正在生成...' : 'Generating...');
-              addProcessTraceItem('search', appState.language === 'zh-CN'
+              updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
+              addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `搜索完成: ${resultCount} 条`
                 : `Search complete: ${resultCount}`);
             } else if (parsed.status === 'no_search') {
               // 不需要搜索
-              updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN' ? '不需要联网' : 'No search needed');
-              addProcessTraceItem('search', appState.language === 'zh-CN' ? '无需联网搜索' : 'No web search needed');
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language) ? '不需要联网' : 'No search needed');
+              addProcessTraceItem('search', isChineseLanguage(appState.language) ? '无需联网搜索' : 'No web search needed');
             } else if (parsed.status === 'no_results') {
               currentSearchQuery = parsed.query || currentSearchQuery || '';
               // 搜索无结果
-              updateStepStatus(stepToolDecision, 'done', appState.language === 'zh-CN'
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → 无结果`
                 : `Search done → No results`);
-              addProcessTraceItem('search', appState.language === 'zh-CN' ? '搜索无结果' : 'No search results');
+              addProcessTraceItem('search', isChineseLanguage(appState.language) ? '搜索无结果' : 'No search results');
             }
             scrollToBottom();
           }
@@ -7533,11 +11079,11 @@ async function sendMessage(message = null) {
             stopCharRender();
 
             // 更新步骤状态：生成回答完成
-            updateStepStatus(stepGenerating, 'done', appState.language === 'zh-CN' ? '生成完成' : 'Completed');
-            updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN'
+            updateStepStatus(stepGenerating, 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
+            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
               ? `过程完成 · ${traceItems}条记录`
               : `Done · ${traceItems} trace items`);
-            addProcessTraceItem('info', appState.language === 'zh-CN' ? '流式响应完成' : 'Streaming completed');
+            addProcessTraceItem('info', isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed');
 
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
@@ -7545,19 +11091,19 @@ async function sendMessage(message = null) {
           else if (parsed.type === 'cancelled') {
             console.log(' 响应已取消');
             stopCharRender();  // 停止字符渲染
-            updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN' ? '过程已取消' : 'Trace cancelled');
-            addProcessTraceItem('info', appState.language === 'zh-CN' ? '请求已取消' : 'Request cancelled');
+            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程已取消' : 'Trace cancelled');
+            addProcessTraceItem('info', isChineseLanguage(appState.language) ? '请求已取消' : 'Request cancelled');
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
             break;
           }
           else if (parsed.type === 'error') {
             stopCharRender();  // 停止字符渲染
-            updateStepStatus(stepProcessTrace, 'done', appState.language === 'zh-CN' ? '过程异常中断' : 'Trace interrupted by error');
-            addProcessTraceItem('info', `${appState.language === 'zh-CN' ? '错误' : 'Error'}: ${parsed.error || ''}`);
+            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
+            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${parsed.error || ''}`);
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
-            alert((appState.language === 'zh-CN' ? 'AI服务错误: ' : 'AI Service Error: ') + (parsed.error || '未知错误'));
+            alert((isChineseLanguage(appState.language) ? 'AI服务错误: ' : 'AI Service Error: ') + (parsed.error || '未知错误'));
             break;
           }
         } catch (e) {
@@ -7593,13 +11139,22 @@ async function sendMessage(message = null) {
       summary: d.summary || '',
       content: d.content || '',
       usage: d.usage || {},
-      searchCount: Number(d.searchCount || 0)
+      searchCount: Number(d.searchCount || 0),
+      round: d.round || null,
+      voteOk: d.voteOk,
+      statusLine: d.statusLine || '',
+      speech: d.speech === true,
+      rawContent: d.rawContent || '',
+      reasoningContent: d.reasoningContent || d.reasoning_content || ''
     }));
     let serializedProcessTrace = null;
     if (enableProcessTrace) {
       const processTraceSnapshot = {
         version: 1,
-        mode: appState.agentMode ? 'agent' : 'single',
+        mode: (currentResearchMode === 'deep' || currentResearchMode === 'fast')
+          ? 'research_debate'
+          : (appState.agentMode ? 'agent' : 'single'),
+        researchMode: currentResearchMode,
         tasks: taskSnapshot,
         drafts: draftSnapshot,
         metrics: agentRunState.metrics || null,
@@ -7631,7 +11186,7 @@ async function sendMessage(message = null) {
 
   } catch (error) {
     console.error(' 发送消息错误:', error);
-    const message = error?.message || (appState.language === 'zh-CN'
+    const message = error?.message || (isChineseLanguage(appState.language)
       ? '发送失败,请检查网络连接'
       : 'Send failed, check network');
     alert(message);
@@ -7639,7 +11194,10 @@ async function sendMessage(message = null) {
     const aiAvatar = document.querySelector('.message.assistant:last-child .ai-avatar');
     if (aiAvatar) aiAvatar.classList.remove('thinking');
   } finally {
-    if (sendBtn) sendBtn.style.display = 'flex';
+    if (sendBtn) {
+      sendBtn.style.display = 'flex';
+      sendBtn.title = isChineseLanguage(appState.language) ? '发送' : 'Send';
+    }
     if (stopBtn) stopBtn.style.display = 'none';
     appState.isStreaming = false;
     appState.currentRequestId = null;
@@ -7758,7 +11316,7 @@ function handleFileUpload() {
   }
 
   // 显示提示
-  const tooltipText = appState.language === 'zh-CN' ? '附件' : 'Attach';
+  const tooltipText = isChineseLanguage(appState.language) ? '附件' : 'Attach';
   showButtonTooltip(attachBtn, tooltipText);
 
   // 清除之前的值，确保可以重复选择同一文件
@@ -7772,7 +11330,7 @@ function toggleInternet() {
   updateToolbarUI();
 
   const internetBtn = document.getElementById('internetBtn');
-  const tooltipText = appState.language === 'zh-CN' ? '联网' : 'Internet';
+  const tooltipText = isChineseLanguage(appState.language) ? '联网' : 'Internet';
   showButtonTooltip(internetBtn, tooltipText);
 
   console.log(` 联网模式: ${appState.internetMode ? '开启' : '关闭'}`);
@@ -7782,7 +11340,7 @@ function toggleInternet() {
 function toggleThinking() {
   const modelConfig = MODELS[appState.selectedModel];
   if (!modelConfig || !modelConfig.supportsThinking) {
-    const msg = appState.language === 'zh-CN'
+    const msg = isChineseLanguage(appState.language)
       ? '当前模型不支持推理模式'
       : 'Current model does not support thinking mode';
     alert(msg);
@@ -7793,7 +11351,7 @@ function toggleThinking() {
   updateToolbarUI();
 
   const thinkingBtn = document.getElementById('thinkingBtn');
-  const tooltipText = appState.language === 'zh-CN' ? '推理' : 'Reasoning';
+  const tooltipText = isChineseLanguage(appState.language) ? '推理' : 'Reasoning';
   showButtonTooltip(thinkingBtn, tooltipText);
 
   console.log(` 推理模式: ${appState.thinkingMode ? '开启' : '关闭'}`);
@@ -7818,7 +11376,7 @@ function handleFileSelected(event) {
   // 文件类型验证
   const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
   if (!allowedTypes.includes(file.type)) {
-    const msg = appState.language === 'zh-CN'
+    const msg = isChineseLanguage(appState.language)
       ? `不支持的文件类型: ${file.type}\n支持的类型: 图片(JPG, PNG, GIF, WebP), PDF, 文本文件`
       : `Unsupported file type: ${file.type}\nSupported: Images (JPG, PNG, GIF, WebP), PDF, Text`;
     alert(msg);
@@ -7828,7 +11386,7 @@ function handleFileSelected(event) {
   // 文件大小验证 (最大10MB)
   const maxSize = 10 * 1024 * 1024;
   if (file.size > maxSize) {
-    const msg = appState.language === 'zh-CN'
+    const msg = isChineseLanguage(appState.language)
       ? `文件过大: ${(file.size / 1024 / 1024).toFixed(2)} MB\n最大支持: 10 MB`
       : `File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB\nMax size: 10 MB`;
     alert(msg);
@@ -7841,7 +11399,7 @@ function handleFileSelected(event) {
   console.log(' 文件已准备，等待上传实现');
 
   // 临时提示用户
-  const msg = appState.language === 'zh-CN'
+  const msg = isChineseLanguage(appState.language)
     ? `文件 "${file.name}" 已选择\n注意: 文件上传功能尚未完全实现`
     : `File "${file.name}" selected\nNote: File upload not fully implemented yet`;
   alert(msg);
@@ -7867,6 +11425,116 @@ async function handleLogin(event) {
   await handleAuthSubmit();
 }
 
+function getOnboardingStorageKey(user = appState.user) {
+  const identity = user?.id || user?.email || '';
+  return identity ? `rai_onboarding_done:${identity}` : 'rai_onboarding_done';
+}
+
+function hasCompletedOnboarding(user = appState.user) {
+  return localStorage.getItem(getOnboardingStorageKey(user)) === '1';
+}
+
+function setOnboardingCompleted(done = true, user = appState.user) {
+  const accountKey = getOnboardingStorageKey(user);
+  if (done) {
+    localStorage.setItem(accountKey, '1');
+    localStorage.setItem('rai_onboarding_done', '1');
+    return;
+  }
+  localStorage.removeItem(accountKey);
+  localStorage.removeItem('rai_onboarding_done');
+}
+
+async function enterAuthenticatedApp(data) {
+  appState.token = data.token;
+  appState.user = data.user;
+  localStorage.setItem(RAI_TOKEN_KEY, data.token);
+
+  showApp();
+  await loadUserData();
+
+  if (data.isNewUser && !hasCompletedOnboarding(data.user)) {
+    showOnboarding(() => {
+      setOnboardingCompleted(true, data.user);
+      showNewUserLanguagePrompt();
+    });
+  }
+  if (data.isNewUser) {
+    clearStoredInviteReferrerId();
+  }
+}
+
+function getOnboardingLanguageQuestionText(lang = appState.language) {
+  const normalized = normalizeLanguage(lang);
+  if (normalized === 'en') return 'Welcome to RAI.\n\nWhat language would you like to use?';
+  if (normalized === 'zh-TW') return '歡迎來到 RAI。\n\n您的語言是？';
+  return '欢迎来到 RAI。\n\n您的语言是？';
+}
+
+function getOnboardingStartText(lang = appState.language) {
+  const normalized = normalizeLanguage(lang);
+  if (normalized === 'en') return "Great. Let's get started.";
+  if (normalized === 'zh-TW') return '太棒了，讓我們開始吧。';
+  return '太棒了，让我们开始吧。';
+}
+
+function showNewUserLanguagePrompt() {
+  const askPayload = {
+    question: isChineseLanguage(appState.language) ? '您的语言是？' : 'What language would you like to use?',
+    options: ['简体中文', '繁體中文', 'English'],
+    placeholder: isChineseLanguage(appState.language) ? '输入其他语言，按 Enter 记录' : 'Type another language and press Enter to record',
+    action: 'set_language'
+  };
+
+  appState.currentSession = null;
+  appState.messages = [{
+    role: 'assistant',
+    content: `${getOnboardingLanguageQuestionText()}\n\n\`\`\`rai_ask_user\n${JSON.stringify(askPayload)}\n\`\`\``,
+    created_at: new Date().toISOString(),
+    model: 'auto',
+    localOnboardingLanguagePrompt: true
+  }];
+  renderMessages();
+  focusMessageInputForNewChat(false);
+}
+
+function resolveOnboardingLanguage(answer) {
+  const value = String(answer || '').trim().toLowerCase();
+  if (!value) return appState.language;
+  if (value.includes('english') || value === 'en' || value.includes('英文')) return 'en';
+  if (value.includes('繁') || value.includes('traditional') || value.includes('tw')) return 'zh-TW';
+  if (value.includes('简') || value.includes('簡') || value.includes('simplified') || value.includes('cn')) return 'zh-CN';
+  return appState.language;
+}
+
+function handleOnboardingLanguageChoice(answer) {
+  const selectedLanguage = resolveOnboardingLanguage(answer);
+  setLanguage(selectedLanguage);
+
+  const promptMessage = appState.messages.find((message) => message.localOnboardingLanguagePrompt);
+  if (promptMessage) {
+    promptMessage.content = getOnboardingLanguageQuestionText(selectedLanguage);
+    delete promptMessage.localOnboardingLanguagePrompt;
+  }
+
+  appState.messages.push(
+    {
+      role: 'user',
+      content: String(answer || '').trim(),
+      created_at: new Date().toISOString()
+    },
+    {
+      role: 'assistant',
+      content: getOnboardingStartText(selectedLanguage),
+      created_at: new Date().toISOString(),
+      model: 'auto'
+    }
+  );
+
+  renderMessages();
+  focusMessageInputForNewChat(false);
+}
+
 async function handleRegister(event) {
   event.preventDefault();
 
@@ -7877,34 +11545,29 @@ async function handleRegister(event) {
   const errorEl = document.getElementById('registerError');
 
   registerBtn.disabled = true;
-  registerBtn.innerHTML = '<span class="loading"></span> ' + (appState.language === 'zh-CN' ? '注册中...' : 'Registering...');
+  registerBtn.innerHTML = '<span class="loading"></span> ' + (isChineseLanguage(appState.language) ? '注册中...' : 'Registering...');
   errorEl.classList.remove('show');
 
   try {
-    const response = await fetch(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, username })
-    });
+	    const response = await fetch(`${API_BASE}/auth/register`, {
+	      method: 'POST',
+	      headers: { 'Content-Type': 'application/json' },
+	      body: JSON.stringify({ email, password, username, referrerId: getStoredInviteReferrerId() || undefined })
+	    });
 
     const data = await response.json();
 
     if (data.success) {
-      appState.token = data.token;
-      appState.user = data.user;
-      localStorage.setItem('rai_token', data.token);
-
-      showApp();
-      await loadUserData();
+      await enterAuthenticatedApp(data);
     } else {
-      showError(errorEl, data.error || (appState.language === 'zh-CN' ? '注册失败' : 'Registration failed'));
+      showError(errorEl, data.error || (isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed'));
     }
   } catch (error) {
-    showError(errorEl, appState.language === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error');
+    showError(errorEl, isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error');
     console.error(' 注册错误:', error);
   } finally {
     registerBtn.disabled = false;
-    registerBtn.textContent = appState.language === 'zh-CN' ? '注册' : 'Register';
+    registerBtn.textContent = isChineseLanguage(appState.language) ? '注册' : 'Register';
   }
 }
 
@@ -7935,17 +11598,23 @@ async function verifyToken() {
 }
 
 function handleLogout() {
-  const confirmMsg = appState.language === 'zh-CN' ? '确定要退出登录吗?' : 'Are you sure you want to logout?';
+  const confirmMsg = isChineseLanguage(appState.language) ? '确定要登出吗?' : 'Are you sure you want to log out?';
   if (confirm(confirmMsg)) {
+    if (typeof closeSettings === 'function') {
+      closeSettings({ skipHistory: true });
+    }
     // 清除所有认证 token
     localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
     localStorage.removeItem(RAI_TOKEN_KEY);
     appState.token = null;
     appState.user = null;
     appState.sessions = [];
+    appState.messages = [];
     appState.currentSession = null;
 
-    showAuthScreen();
+    const url = new URL(window.location.href);
+    url.searchParams.set('rai_logout', String(Date.now()));
+    window.location.replace(url.toString());
   }
 }
 
@@ -7967,12 +11636,24 @@ appState.authMode = 'login';
 // 邮箱是否已验证（显示了密码框）
 appState.authEmailValidated = false;
 
+function isValidAuthEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+}
+
+function isEmailReadyForAutoAdvance(email) {
+  const value = String(email || '').trim();
+  if (!isValidAuthEmail(value)) return false;
+  const domain = value.split('@')[1] || '';
+  const tld = domain.split('.').filter(Boolean).pop() || '';
+  return tld.length >= 3;
+}
+
 // 邮箱输入处理 - 检测有效邮箱后显示密码框
 function handleEmailInput(input) {
   const email = input.value.trim();
-  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const shouldAdvance = isEmailReadyForAutoAdvance(email);
 
-  if (isValidEmail && !appState.authEmailValidated) {
+  if (shouldAdvance && !appState.authEmailValidated) {
     // 显示密码框和提交按钮
     showAuthStep('passwordStep');
     showAuthStep('submitStep');
@@ -7987,7 +11668,7 @@ function handleEmailInput(input) {
     setTimeout(() => {
       document.getElementById('authPassword')?.focus();
     }, 300);
-  } else if (!isValidEmail && appState.authEmailValidated) {
+  } else if (!shouldAdvance && appState.authEmailValidated) {
     // 邮箱变为无效，隐藏后续步骤
     hideAuthStep('passwordStep');
     hideAuthStep('usernameStep');
@@ -8002,18 +11683,24 @@ function handleEmailKeydown(event) {
     event.preventDefault();
     const input = document.getElementById('authEmail');
     const email = input.value.trim();
-    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    const isValidEmail = isValidAuthEmail(email);
 
     if (isValidEmail) {
       if (!appState.authEmailValidated) {
-        handleEmailInput(input);
+        showAuthStep('passwordStep');
+        showAuthStep('submitStep');
+        appState.authEmailValidated = true;
+        if (appState.authMode === 'register') {
+          showAuthStep('usernameStep');
+        }
+        document.getElementById('authPassword')?.focus();
       } else {
         // 已经显示了密码框，聚焦到密码框
         document.getElementById('authPassword')?.focus();
       }
     } else {
       // 显示邮箱格式错误
-      showAuthError(appState.language === 'zh-CN' ? '请输入有效的邮箱地址' : 'Please enter a valid email');
+      showAuthError(isChineseLanguage(appState.language) ? '请输入有效的邮箱地址' : 'Please enter a valid email');
     }
   }
 }
@@ -8140,13 +11827,13 @@ async function handleAuthSubmit() {
   const errorEl = document.getElementById('authError');
 
   // 基本验证
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    showAuthError(appState.language === 'zh-CN' ? '请输入有效的邮箱地址' : 'Please enter a valid email');
+  if (!email || !isValidAuthEmail(email)) {
+    showAuthError(isChineseLanguage(appState.language) ? '请输入有效的邮箱地址' : 'Please enter a valid email');
     return;
   }
 
   if (!password || password.length < 6) {
-    showAuthError(appState.language === 'zh-CN' ? '密码至少6位字符' : 'Password must be at least 6 characters');
+    showAuthError(isChineseLanguage(appState.language) ? '密码至少6位字符' : 'Password must be at least 6 characters');
     return;
   }
 
@@ -8156,16 +11843,16 @@ async function handleAuthSubmit() {
   if (submitBtn) {
     submitBtn.disabled = true;
     const loadingText = appState.authMode === 'login'
-      ? (appState.language === 'zh-CN' ? '登录中...' : 'Logging in...')
-      : (appState.language === 'zh-CN' ? '注册中...' : 'Registering...');
+      ? (isChineseLanguage(appState.language) ? '登录中...' : 'Logging in...')
+      : (isChineseLanguage(appState.language) ? '注册中...' : 'Registering...');
     submitBtn.innerHTML = '<span class="loading"></span> ' + loadingText;
   }
 
-  try {
-    const endpoint = appState.authMode === 'login' ? 'login' : 'register';
-    const body = appState.authMode === 'login'
-      ? { email, password }
-      : { email, password, username };
+	  try {
+	    const endpoint = appState.authMode === 'login' ? 'login' : 'register';
+	    const body = appState.authMode === 'login'
+	      ? { email, password }
+	      : { email, password, username, referrerId: getStoredInviteReferrerId() || undefined };
 
     const response = await fetch(`${API_BASE}/auth/${endpoint}`, {
       method: 'POST',
@@ -8176,25 +11863,20 @@ async function handleAuthSubmit() {
     const data = await response.json();
 
     if (data.success) {
-      appState.token = data.token;
-      appState.user = data.user;
-      localStorage.setItem('rai_token', data.token);
-
-      showApp();
-      await loadUserData();
+      await enterAuthenticatedApp(data);
     } else {
-      showAuthError(data.error || (appState.language === 'zh-CN' ? '操作失败' : 'Operation failed'));
+      showAuthError(data.error || (isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
   } catch (error) {
-    showAuthError(appState.language === 'zh-CN' ? '网络错误,请检查服务器连接' : 'Network error');
+    showAuthError(isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error');
     console.error(' 认证错误:', error);
   } finally {
     // 恢复按钮状态
     if (submitBtn) {
       submitBtn.disabled = false;
       const btnText = appState.authMode === 'login'
-        ? (appState.language === 'zh-CN' ? '登录' : 'Login')
-        : (appState.language === 'zh-CN' ? '注册' : 'Register');
+        ? (isChineseLanguage(appState.language) ? '登录' : 'Login')
+        : (isChineseLanguage(appState.language) ? '注册' : 'Register');
       submitBtn.textContent = btnText;
     }
   }
@@ -8210,6 +11892,75 @@ function showApp() {
     initChatIndexListener(); // 初始化对话索引导航器监听
     updateToolbarUI();
   }, 100);
+}
+
+// ==================== 新用户引导 ====================
+function showOnboarding(onDone) {
+  const overlay = document.getElementById('onboardingOverlay');
+  const card = overlay?.querySelector('.onboarding-card');
+  const steps = document.querySelectorAll('.onboarding-step');
+  const dots = document.querySelectorAll('.onboarding-dot');
+  const skipBtn = document.getElementById('onboardingSkipBtn');
+  const nextBtn = document.getElementById('onboardingNextBtn');
+  const startBtn = document.getElementById('onboardingStartBtn');
+  let currentStep = 0;
+  const totalSteps = steps.length;
+
+  function goToStep(n) {
+    steps.forEach((s, i) => s.classList.toggle('active', i === n));
+    dots.forEach((d, i) => d.classList.toggle('active', i === n));
+    if (card) {
+      card.dataset.step = String(n);
+    }
+
+    if (n === totalSteps - 1) {
+      nextBtn.style.display = 'none';
+      skipBtn.style.display = 'none';
+      startBtn.style.display = 'inline-block';
+    } else {
+      nextBtn.style.display = 'inline-block';
+      skipBtn.style.display = 'inline-block';
+      startBtn.style.display = 'none';
+    }
+    currentStep = n;
+  }
+
+  function finish() {
+    overlay.style.display = 'none';
+    document.body.style.overflow = '';
+    if (onDone) onDone();
+  }
+
+  skipBtn.onclick = finish;
+  startBtn.onclick = finish;
+
+  nextBtn.onclick = () => {
+    if (currentStep < totalSteps - 1) {
+      goToStep(currentStep + 1);
+    }
+  };
+
+  // 点击步骤指示器可直接跳转
+  dots.forEach(dot => {
+    dot.onclick = () => {
+      const step = parseInt(dot.dataset.step);
+      goToStep(step);
+    };
+  });
+
+  overlay.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  goToStep(0);
+}
+
+// 从设置页重新观看引导（清除标记后触发）
+function replayOnboarding() {
+  setOnboardingCompleted(false);
+  // 关闭设置面板
+  if (typeof closeSettings === 'function') closeSettings();
+  showOnboarding(() => {
+    setOnboardingCompleted(true);
+  });
 }
 
 function showError(element, message) {
@@ -8231,30 +11982,28 @@ async function loadUserData() {
 
     const profile = await profileResponse.json();
 
-    const realEmail = appState.user?.email || profile.email || '';
-    const displayName = appState.user?.username || profile.username || (realEmail ? realEmail.split('@')[0] : '用户');
+    const realEmail = profile.email || appState.user?.email || '';
+    const displayName = profile.username || appState.user?.username || (realEmail ? realEmail.split('@')[0] : (isChineseLanguage(appState.language) ? '用户' : 'User'));
 
     console.log(' 显示邮箱:', realEmail);
 
-    document.getElementById('userName').textContent = displayName;
-    // userEmail 元素已移除，不再显示邮箱在侧边栏
-    document.getElementById('userAvatar').textContent = realEmail ? realEmail[0].toUpperCase() : 'U';
-
     appState.user = {
       id: profile.id || appState.user?.id || null,
-      username: displayName,
-      email: realEmail,
+      username: profile.username || displayName,
+      email: profile.email || realEmail,
+      avatar_url: profile.avatar_url || appState.user?.avatar_url || null,
       externalProvider: profile.external_provider || appState.user?.external_provider || null,
       externalUid: profile.external_uid || appState.user?.external_uid || null,
       external_provider: profile.external_provider || appState.user?.external_provider || null,
       external_uid: profile.external_uid || appState.user?.external_uid || null
     };
+    updateUserIdentityUI();
 
     //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
       if (profile.default_model !== undefined) {
         const rememberedModel = normalizeSelectedModelId(profile.default_model || 'auto');
-        appState.profileDefaultModel = MODELS[rememberedModel] ? rememberedModel : 'auto';
+        appState.profileDefaultModel = MODELS[rememberedModel] && !isModelDisabledByAdmin(rememberedModel) ? rememberedModel : 'auto';
         appState.selectedModel = appState.profileDefaultModel;
       }
       if (profile.temperature !== undefined) appState.temperature = parseFloat(profile.temperature) || 0.7;
@@ -8307,7 +12056,7 @@ async function loadUserData() {
       console.warn(' 用户配置加载失败,使用默认配置继续');
       showWelcome();
     } else {
-      alert((appState.language === 'zh-CN' ? '加载失败: ' : 'Load failed: ') + error.message);
+      alert((isChineseLanguage(appState.language) ? '加载失败: ' : 'Load failed: ') + error.message);
     }
   }
 }
@@ -8729,7 +12478,7 @@ function isChatFlowMobileViewport() {
 }
 
 function getChatFlowPatchModeLabel(mode = chatFlowState.patchApplyMode) {
-  if (appState.language === 'zh-CN') {
+  if (isChineseLanguage(appState.language)) {
     return mode === 'direct' ? '直接应用' : '审核后应用';
   }
   return mode === 'direct' ? 'Apply Directly' : 'Review First';
@@ -8746,8 +12495,8 @@ function updateChatFlowHeaderMeta() {
   const meta = document.getElementById('chatflowHeaderMeta');
   if (!meta) return;
   const modeText = chatFlowState.patchApplyMode === 'direct'
-    ? (appState.language === 'zh-CN' ? 'AI改图: 直接应用' : 'AI edits: direct')
-    : (appState.language === 'zh-CN' ? 'AI改图: 审核后应用' : 'AI edits: review');
+    ? (isChineseLanguage(appState.language) ? 'AI改图: 直接应用' : 'AI edits: direct')
+    : (isChineseLanguage(appState.language) ? 'AI改图: 审核后应用' : 'AI edits: review');
   meta.textContent = chatFlowState.sessionId
     ? `${modeText} · Session ${chatFlowState.sessionId.slice(-6)}`
     : modeText;
@@ -8856,7 +12605,7 @@ function pushChatFlowCanvasHistory() {
 function summarizeCanvasPatch(patch) {
   const operations = Array.isArray(patch?.operations) ? patch.operations : [];
   if (!operations.length) {
-    return appState.language === 'zh-CN' ? '没有可应用的画布变更。' : 'No canvas changes to apply.';
+    return isChineseLanguage(appState.language) ? '没有可应用的画布变更。' : 'No canvas changes to apply.';
   }
 
   const counts = operations.reduce((acc, operation) => {
@@ -8866,13 +12615,13 @@ function summarizeCanvasPatch(patch) {
   }, {});
 
   const labels = {
-    add_node: appState.language === 'zh-CN' ? '新增节点' : 'Add node',
-    update_node: appState.language === 'zh-CN' ? '修改节点' : 'Update node',
-    delete_node: appState.language === 'zh-CN' ? '删除节点' : 'Delete node',
-    add_edge: appState.language === 'zh-CN' ? '新增连线' : 'Add edge',
-    update_edge: appState.language === 'zh-CN' ? '修改连线' : 'Update edge',
-    delete_edge: appState.language === 'zh-CN' ? '删除连线' : 'Delete edge',
-    auto_layout: appState.language === 'zh-CN' ? '自动布局' : 'Auto layout'
+    add_node: isChineseLanguage(appState.language) ? '新增节点' : 'Add node',
+    update_node: isChineseLanguage(appState.language) ? '修改节点' : 'Update node',
+    delete_node: isChineseLanguage(appState.language) ? '删除节点' : 'Delete node',
+    add_edge: isChineseLanguage(appState.language) ? '新增连线' : 'Add edge',
+    update_edge: isChineseLanguage(appState.language) ? '修改连线' : 'Update edge',
+    delete_edge: isChineseLanguage(appState.language) ? '删除连线' : 'Delete edge',
+    auto_layout: isChineseLanguage(appState.language) ? '自动布局' : 'Auto layout'
   };
 
   return Object.entries(counts)
@@ -8896,10 +12645,10 @@ function clearChatFlowActivityNotice() {
 function getChatFlowWorkingSummary() {
   const parts = [];
   if (chatFlowState.internetMode) {
-    parts.push(appState.language === 'zh-CN' ? '正在准备联网搜索' : 'Preparing web search');
+    parts.push(isChineseLanguage(appState.language) ? '正在准备联网搜索' : 'Preparing web search');
   }
-  parts.push(appState.language === 'zh-CN' ? '正在读取当前画布上下文' : 'Reading canvas context');
-  parts.push(appState.language === 'zh-CN' ? '正在生成回复和画布建议' : 'Generating reply and canvas suggestions');
+  parts.push(isChineseLanguage(appState.language) ? '正在读取当前画布上下文' : 'Reading canvas context');
+  parts.push(isChineseLanguage(appState.language) ? '正在生成回复和画布建议' : 'Generating reply and canvas suggestions');
   return parts.join(' · ');
 }
 
@@ -8917,7 +12666,7 @@ function renderChatFlowPatchBanner() {
 
   if (chatFlowState.pendingCanvasPatch) {
     banner.style.display = 'block';
-    titleEl.textContent = appState.language === 'zh-CN' ? 'AI 画布建议已准备' : 'AI canvas patch ready';
+    titleEl.textContent = isChineseLanguage(appState.language) ? 'AI 画布建议已准备' : 'AI canvas patch ready';
     summaryEl.textContent = `${summarizeCanvasPatch(chatFlowState.pendingCanvasPatch.patch)}${chatFlowState.pendingCanvasPatch.error ? `\n${chatFlowState.pendingCanvasPatch.error}` : ''}`;
     applyBtn.style.display = chatFlowState.pendingCanvasPatch.valid ? 'inline-flex' : 'none';
     dismissBtn.style.display = 'inline-flex';
@@ -8951,7 +12700,7 @@ function renderChatFlowPatchBanner() {
 
 function setChatFlowAppliedPatchNotice(summary) {
   chatFlowState.lastPatchNotice = {
-    title: appState.language === 'zh-CN' ? 'AI 已修改画布' : 'AI patch applied',
+    title: isChineseLanguage(appState.language) ? 'AI 已修改画布' : 'AI patch applied',
     summary
   };
   renderChatFlowPatchBanner();
@@ -8985,7 +12734,7 @@ function validateCanvasPatch(rawPatch) {
     return {
       valid: false,
       patch: null,
-      error: appState.language === 'zh-CN' ? 'AI 返回的画布变更不可解析。' : 'The AI canvas patch could not be parsed.'
+      error: isChineseLanguage(appState.language) ? 'AI 返回的画布变更不可解析。' : 'The AI canvas patch could not be parsed.'
     };
   }
 
@@ -8995,7 +12744,7 @@ function validateCanvasPatch(rawPatch) {
       return {
         valid: false,
         patch,
-        error: appState.language === 'zh-CN' ? `目标节点不存在: ${operation.id || operation.nodeId}` : `Unknown node: ${operation.id || operation.nodeId}`
+        error: isChineseLanguage(appState.language) ? `目标节点不存在: ${operation.id || operation.nodeId}` : `Unknown node: ${operation.id || operation.nodeId}`
       };
     }
 
@@ -9003,7 +12752,7 @@ function validateCanvasPatch(rawPatch) {
       return {
         valid: false,
         patch,
-        error: appState.language === 'zh-CN' ? `连线起点不存在: ${operation.from}` : `Unknown edge source: ${operation.from}`
+        error: isChineseLanguage(appState.language) ? `连线起点不存在: ${operation.from}` : `Unknown edge source: ${operation.from}`
       };
     }
 
@@ -9011,7 +12760,7 @@ function validateCanvasPatch(rawPatch) {
       return {
         valid: false,
         patch,
-        error: appState.language === 'zh-CN' ? `连线终点不存在: ${operation.to}` : `Unknown edge target: ${operation.to}`
+        error: isChineseLanguage(appState.language) ? `连线终点不存在: ${operation.to}` : `Unknown edge target: ${operation.to}`
       };
     }
   }
@@ -9078,7 +12827,7 @@ async function loadFlowsList() {
 }
 
 function getFlowLastMessagePreview(flow) {
-  const fallback = appState.language === 'zh-CN' ? '暂无对话总结' : 'No conversation summary yet';
+  const fallback = isChineseLanguage(appState.language) ? '暂无对话总结' : 'No conversation summary yet';
   const text = stripTrailingTitleMarker(flow?.last_message || '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -9092,7 +12841,7 @@ function renderFlowsList(flows) {
   if (!container) return;
 
   if (flows.length === 0) {
-    const emptyHint = appState.language === 'zh-CN' ? '暂无 ChatFlow' : 'No ChatFlow';
+    const emptyHint = isChineseLanguage(appState.language) ? '暂无 ChatFlow' : 'No ChatFlow';
     container.innerHTML = `<div class="flow-empty-hint">${emptyHint}</div>`;
     return;
   }
@@ -9105,7 +12854,7 @@ function renderFlowsList(flows) {
             <div class="flow-item-title">${escapeHtml(flow.title)}</div>
             <div class="flow-item-preview">${escapeHtml(getFlowLastMessagePreview(flow))}</div>
           </div>
-          <button class="flow-item-delete" onclick="event.stopPropagation(); deleteFlow('${flow.id}')" title="${appState.language === 'zh-CN' ? '删除' : 'Delete'}">
+          <button class="flow-item-delete" onclick="event.stopPropagation(); deleteFlow('${flow.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
             </svg>
@@ -9117,7 +12866,7 @@ function renderFlowsList(flows) {
 // 创建新 Flow
 async function createNewFlow() {
   try {
-    const defaultTitle = appState.language === 'zh-CN' ? '新 ChatFlow' : 'New ChatFlow';
+    const defaultTitle = isChineseLanguage(appState.language) ? '新 ChatFlow' : 'New ChatFlow';
     const response = await fetch('/api/flows', {
       method: 'POST',
       headers: {
@@ -9136,7 +12885,7 @@ async function createNewFlow() {
     await openFlow(flow.id);
   } catch (error) {
     console.error(' 创建 ChatFlow 失败:', error);
-    alert(appState.language === 'zh-CN' ? '创建 ChatFlow 失败，请重试' : 'Failed to create ChatFlow, please retry');
+    alert(isChineseLanguage(appState.language) ? '创建 ChatFlow 失败，请重试' : 'Failed to create ChatFlow, please retry');
   }
 }
 
@@ -9205,7 +12954,7 @@ async function openFlow(flowId) {
     console.log(' 打开 ChatFlow:', flowId);
   } catch (error) {
     console.error(' 打开 ChatFlow 失败:', error);
-    alert(appState.language === 'zh-CN' ? '打开 ChatFlow 失败，请重试' : 'Failed to open ChatFlow, please retry');
+    alert(isChineseLanguage(appState.language) ? '打开 ChatFlow 失败，请重试' : 'Failed to open ChatFlow, please retry');
   }
 }
 
@@ -9223,7 +12972,7 @@ function closeChatFlow() {
 
 // 删除 Flow
 async function deleteFlow(flowId) {
-  const confirmMsg = appState.language === 'zh-CN' ? '确定要删除这个 ChatFlow 吗？' : 'Are you sure you want to delete this ChatFlow?';
+  const confirmMsg = isChineseLanguage(appState.language) ? '确定要删除这个 ChatFlow 吗？' : 'Are you sure you want to delete this ChatFlow?';
   if (!confirm(confirmMsg)) return;
 
   try {
@@ -9242,7 +12991,7 @@ async function deleteFlow(flowId) {
     console.log(' 删除 ChatFlow 成功:', flowId);
   } catch (error) {
     console.error(' 删除 ChatFlow 失败:', error);
-    alert(appState.language === 'zh-CN' ? '删除 ChatFlow 失败，请重试' : 'Failed to delete ChatFlow, please retry');
+    alert(isChineseLanguage(appState.language) ? '删除 ChatFlow 失败，请重试' : 'Failed to delete ChatFlow, please retry');
   }
 }
 
@@ -9277,7 +13026,7 @@ async function saveFlowState() {
 function createChatFlowDragHandle() {
   const handle = document.createElement('div');
   handle.className = 'chatflow-message-drag-handle';
-  handle.title = appState.language === 'zh-CN' ? '拖拽到画布' : 'Drag to canvas';
+  handle.title = isChineseLanguage(appState.language) ? '拖拽到画布' : 'Drag to canvas';
   handle.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="16" height="16" fill="currentColor">
       <path d="M360-160q-33 0-56.5-23.5T280-240q0-33 23.5-56.5T360-320q33 0 56.5 23.5T440-240q0 33-23.5 56.5T360-160Zm240 0q-33 0-56.5-23.5T520-240q0-33 23.5-56.5T600-320q33 0 56.5 23.5T680-240q0 33-23.5 56.5T600-160ZM360-400q-33 0-56.5-23.5T280-480q0-33 23.5-56.5T360-560q33 0 56.5 23.5T440-480q0 33-23.5 56.5T360-400Zm240 0q-33 0-56.5-23.5T520-480q0-33 23.5-56.5T600-560q33 0 56.5 23.5T680-480q0 33-23.5 56.5T600-400ZM360-640q-33 0-56.5-23.5T280-720q0-33 23.5-56.5T360-800q33 0 56.5 23.5T440-720q0 33-23.5 56.5T360-640Zm240 0q-33 0-56.5-23.5T520-720q0-33 23.5-56.5T600-800q33 0 56.5 23.5T680-720q0 33-23.5 56.5T600-640Z"/>
@@ -9299,8 +13048,7 @@ function createChatFlowMessageElement(message, index) {
   const avatar = document.createElement('div');
   avatar.className = 'message-avatar';
   if (role === 'user') {
-    const name = appState.user?.username || appState.user?.email || 'U';
-    avatar.textContent = name ? name[0].toUpperCase() : 'U';
+    applyUserAvatarToElement(avatar);
   } else {
     avatar.innerHTML = getSvgIcon('rai_logo_colored', 'material-symbols-outlined ai-avatar', 24);
   }
@@ -9312,7 +13060,10 @@ function createChatFlowMessageElement(message, index) {
   const textDiv = document.createElement('div');
   textDiv.className = 'message-text';
   const cleanContent = stripTrailingTitleMarker(message?.content || '');
-  let renderedContent = renderMarkdownWithMath(cleanContent);
+  const askUserResult = role === 'assistant'
+    ? extractAskUserBlocks(cleanContent)
+    : { text: cleanContent, prompts: [] };
+  let renderedContent = renderMarkdownWithMath(askUserResult.text);
 
   let sources = message?.sources;
   if (typeof sources === 'string' && sources.trim()) {
@@ -9327,7 +13078,15 @@ function createChatFlowMessageElement(message, index) {
   }
 
   textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
-  content.appendChild(textDiv);
+  if (textDiv.innerHTML.trim()) {
+    content.appendChild(textDiv);
+  }
+
+  if (role === 'assistant' && askUserResult.prompts.length > 0) {
+    askUserResult.prompts.forEach((prompt) => {
+      content.appendChild(createAskUserCard(prompt));
+    });
+  }
 
   if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
     const sourcesDiv = document.createElement('div');
@@ -9345,7 +13104,7 @@ function renderChatFlowMessages() {
   if (!container) return;
 
   if (chatFlowState.messages.length === 0) {
-    const emptyMsg = appState.language === 'zh-CN' ? '开始对话，然后拖拽消息到画布' : 'Start chatting, then drag messages to canvas';
+    const emptyMsg = isChineseLanguage(appState.language) ? '开始对话，然后拖拽消息到画布' : 'Start chatting, then drag messages to canvas';
     container.innerHTML = `
           <div class="chatflow-empty-state">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="48" height="48" fill="currentColor">
@@ -9499,24 +13258,24 @@ function showCanvasContextMenu(e) {
   const menuItems = [
     {
       icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="18" height="18" fill="currentColor"><path d="M200-120v-640q0-33 23.5-56.5T280-840h400q33 0 56.5 23.5T760-760v640L480-240 200-120Z"/></svg>',
-      text: appState.language === 'zh-CN' ? '新建便签' : 'New Sticky Note',
+      text: isChineseLanguage(appState.language) ? '新建便签' : 'New Sticky Note',
       action: () => addStickyNoteAt(canvasX, canvasY)
     },
     {
       icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="18" height="18" fill="currentColor"><path d="M440-280h80v-160h160v-80H520v-160h-80v160H280v80h160v160ZM200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Z"/></svg>',
-      text: appState.language === 'zh-CN' ? '新建文本节点' : 'New Text Node',
+      text: isChineseLanguage(appState.language) ? '新建文本节点' : 'New Text Node',
       action: () => addTextNodeAt(canvasX, canvasY)
     },
     { type: 'divider' },
     {
       icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="18" height="18" fill="currentColor"><path d="M212-140v-80h136v-120H200q-33 0-56.5-23.5T120-420v-320q0-33 23.5-56.5T200-820h560q33 0 56.5 23.5T840-740v320q0 33-23.5 56.5T760-340H612v120h136v80H212Z"/></svg>',
-      text: appState.language === 'zh-CN' ? '粘贴剪贴板内容' : 'Paste from Clipboard',
+      text: isChineseLanguage(appState.language) ? '粘贴剪贴板内容' : 'Paste from Clipboard',
       action: () => pasteClipboardAsNode(canvasX, canvasY)
     },
     { type: 'divider' },
     {
       icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="18" height="18" fill="currentColor"><path d="M480-320q75 0 127.5-52.5T660-500q0-75-52.5-127.5T480-680q-75 0-127.5 52.5T300-500q0 75 52.5 127.5T480-320Zm0-72q-45 0-76.5-31.5T372-500q0-45 31.5-76.5T480-608q45 0 76.5 31.5T588-500q0 45-31.5 76.5T480-392Zm0 192q-146 0-266-81.5T40-500q54-137 174-218.5T480-800q146 0 266 81.5T920-500q-54 137-174 218.5T480-200Z"/></svg>',
-      text: appState.language === 'zh-CN' ? '重置视图' : 'Reset View',
+      text: isChineseLanguage(appState.language) ? '重置视图' : 'Reset View',
       action: () => canvasResetView()
     },
   ];
@@ -9583,7 +13342,7 @@ function addStickyNoteAt(x, y) {
   const node = {
     id: nodeId,
     type: 'sticky',
-    content: appState.language === 'zh-CN' ? '双击编辑便签...' : 'Double click to edit...',
+    content: isChineseLanguage(appState.language) ? '双击编辑便签...' : 'Double click to edit...',
     fullContent: '',
     x: x,
     y: y,
@@ -9631,7 +13390,7 @@ async function pasteClipboardAsNode(x, y) {
   try {
     const text = await navigator.clipboard.readText();
     if (!text || !text.trim()) {
-      showToast(appState.language === 'zh-CN' ? '剪贴板为空' : 'Clipboard is empty');
+      showToast(isChineseLanguage(appState.language) ? '剪贴板为空' : 'Clipboard is empty');
       return;
     }
 
@@ -9651,11 +13410,11 @@ async function pasteClipboardAsNode(x, y) {
     renderCanvasNodes();
     renderEdges();
     saveFlowState();
-    showToast(appState.language === 'zh-CN' ? '已粘贴到画布' : 'Pasted to canvas');
+    showToast(isChineseLanguage(appState.language) ? '已粘贴到画布' : 'Pasted to canvas');
     console.log(' 从剪贴板粘贴节点:', x, y);
   } catch (err) {
     console.error('读取剪贴板失败:', err);
-    showToast(appState.language === 'zh-CN' ? '无法读取剪贴板' : 'Cannot read clipboard');
+    showToast(isChineseLanguage(appState.language) ? '无法读取剪贴板' : 'Cannot read clipboard');
   }
 }
 
@@ -9759,6 +13518,12 @@ function toggleChatFlowModelMenu() {
 
 // 选择模型
 function selectChatFlowModel(modelId, modelName) {
+  if (isModelDisabledByAdmin(modelId)) {
+    chatFlowState.selectedModel = 'auto';
+    updateChatFlowControlStates();
+    toggleChatFlowModelMenu();
+    return;
+  }
   if (isMembershipLockedModel(modelId)) {
     console.warn(' 该模型仅 MAX 会员可用');
     return;
@@ -9868,12 +13633,12 @@ function buildChatFlowCanvasContext() {
 
 function buildChatFlowSystemPrompt() {
   const mobileCompactHint = isChatFlowMobileViewport()
-    ? (appState.language === 'zh-CN'
+    ? (isChineseLanguage(appState.language)
       ? '\n5. 当前是移动端画布浮窗，请尽量简短回答，除非用户明确要长文。'
       : '\n5. This is the mobile canvas sheet. Keep answers concise unless the user asks for depth.')
     : '';
 
-  if (appState.language === 'zh-CN') {
+  if (isChineseLanguage(appState.language)) {
     return `你是 RAI 的 ChatFlow 画布助手，职责是帮助用户梳理问题、改写节点、补充结构、整理连线。
 
 注意事项：
@@ -10028,7 +13793,7 @@ function applyValidatedCanvasPatch(patch) {
       case 'add_node': {
         const baseNode = operation.node && typeof operation.node === 'object' ? operation.node : operation;
         const textPayload = getCanvasNodeTextPayload(baseNode);
-        const fallbackContent = appState.language === 'zh-CN' ? '未命名节点' : 'Untitled node';
+        const fallbackContent = isChineseLanguage(appState.language) ? '未命名节点' : 'Untitled node';
         const autoPosition = getAutoCanvasNodePosition(chatFlowState.nodes.length + addedNodeCount);
         const x = Number(baseNode.x);
         const y = Number(baseNode.y);
@@ -10219,7 +13984,7 @@ async function sendChatFlowMessage() {
   chatFlowState.isStreaming = true;
   chatFlowState.pendingCanvasPatch = null;
   setChatFlowActivityNotice(
-    appState.language === 'zh-CN' ? 'RAI 正在处理' : 'RAI is working',
+    isChineseLanguage(appState.language) ? 'RAI 正在处理' : 'RAI is working',
     getChatFlowWorkingSummary()
   );
 
@@ -10285,33 +14050,38 @@ async function sendChatFlowMessage() {
 
         try {
           const parsed = JSON.parse(data);
-          if (parsed.type === 'quota_info') {
-            applyQuotaInfoEvent(parsed);
-            continue;
-          }
+	          if (parsed.type === 'points_info') {
+	            handlePointsInfoEvent(parsed);
+	            continue;
+	          }
+
+	          if (parsed.type === 'quota_info') {
+	            applyQuotaInfoEvent(parsed);
+	            continue;
+	          }
 
           if (parsed.type === 'search_status') {
             if (parsed.status === 'searching') {
               const queryText = parsed.query ? `: ${parsed.query}` : '';
               setChatFlowActivityNotice(
-                appState.language === 'zh-CN' ? 'RAI 正在联网搜索' : 'RAI is searching the web',
-                appState.language === 'zh-CN' ? `正在搜索${queryText}` : `Searching${queryText}`
+                isChineseLanguage(appState.language) ? 'RAI 正在联网搜索' : 'RAI is searching the web',
+                isChineseLanguage(appState.language) ? `正在搜索${queryText}` : `Searching${queryText}`
               );
             } else if (parsed.status === 'done') {
               const count = Number(parsed.count || parsed.resultCount || 0);
               setChatFlowActivityNotice(
-                appState.language === 'zh-CN' ? '联网搜索已完成' : 'Web search complete',
-                appState.language === 'zh-CN' ? `已找到 ${count} 条来源，正在整理回答和画布建议` : `${count} sources found. Preparing reply and canvas suggestions.`
+                isChineseLanguage(appState.language) ? '联网搜索已完成' : 'Web search complete',
+                isChineseLanguage(appState.language) ? `已找到 ${count} 条来源，正在整理回答和画布建议` : `${count} sources found. Preparing reply and canvas suggestions.`
               );
             } else if (parsed.status === 'analyzing') {
               setChatFlowActivityNotice(
-                appState.language === 'zh-CN' ? 'RAI 正在分析问题' : 'RAI is analyzing',
+                isChineseLanguage(appState.language) ? 'RAI 正在分析问题' : 'RAI is analyzing',
                 getChatFlowWorkingSummary()
               );
             } else if (parsed.status === 'no_search') {
               setChatFlowActivityNotice(
-                appState.language === 'zh-CN' ? 'RAI 正在处理画布' : 'RAI is working on the canvas',
-                appState.language === 'zh-CN' ? '无需联网，正在生成回复和画布建议' : 'No web search needed. Generating reply and canvas suggestions.'
+                isChineseLanguage(appState.language) ? 'RAI 正在处理画布' : 'RAI is working on the canvas',
+                isChineseLanguage(appState.language) ? '无需联网，正在生成回复和画布建议' : 'No web search needed. Generating reply and canvas suggestions.'
               );
             }
             continue;
@@ -10321,8 +14091,8 @@ async function sendChatFlowMessage() {
             currentSources = mergeAndReindexSources(currentSources, parsed.sources);
             if (aiMessage) aiMessage.sources = currentSources;
             setChatFlowActivityNotice(
-              appState.language === 'zh-CN' ? '来源已更新' : 'Sources updated',
-              appState.language === 'zh-CN' ? `收到 ${currentSources.length} 条来源，正在继续生成` : `${currentSources.length} sources received. Continuing generation.`
+              isChineseLanguage(appState.language) ? '来源已更新' : 'Sources updated',
+              isChineseLanguage(appState.language) ? `收到 ${currentSources.length} 条来源，正在继续生成` : `${currentSources.length} sources received. Continuing generation.`
             );
             continue;
           }
@@ -10344,8 +14114,8 @@ async function sendChatFlowMessage() {
 
           if (parsed.type === 'canvas_patch') {
             setChatFlowActivityNotice(
-              appState.language === 'zh-CN' ? 'RAI 正在整理画布' : 'RAI is updating the canvas',
-              appState.language === 'zh-CN' ? '已收到画布修改建议，正在校验并渲染' : 'Canvas changes received. Validating and rendering.'
+              isChineseLanguage(appState.language) ? 'RAI 正在整理画布' : 'RAI is updating the canvas',
+              isChineseLanguage(appState.language) ? '已收到画布修改建议，正在校验并渲染' : 'Canvas changes received. Validating and rendering.'
             );
             handleIncomingCanvasPatchEvent(parsed);
             continue;
@@ -10354,7 +14124,7 @@ async function sendChatFlowMessage() {
           if (parsed.type === 'cancelled') {
             streamWasCancelled = true;
             if (aiMessage && !aiMessage.content) {
-              aiMessage.content = appState.language === 'zh-CN' ? '(已停止生成)' : '(Generation stopped)';
+              aiMessage.content = isChineseLanguage(appState.language) ? '(已停止生成)' : '(Generation stopped)';
             }
             continue;
           }
@@ -10667,7 +14437,7 @@ function renderCanvasNodes() {
       ? '#333333'
       : (rootStyle.getPropertyValue('--text-primary').trim() || '#ECECEC');
     div.style.cssText = `height: 100%; font-size: 12px; line-height: 1.38; color: ${textColor}; overflow: hidden; white-space: pre-wrap; word-break: break-word;`;
-    div.textContent = getCanvasNodeDisplayText(node) || (appState.language === 'zh-CN' ? '双击编辑节点' : 'Double click to edit');
+    div.textContent = getCanvasNodeDisplayText(node) || (isChineseLanguage(appState.language) ? '双击编辑节点' : 'Double click to edit');
     fo.appendChild(div);
     g.appendChild(fo);
 
@@ -11219,7 +14989,7 @@ function showEdgeContextMenu(e, edgeId) {
 
   const deleteItem = document.createElement('div');
   deleteItem.style.cssText = 'padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--text-secondary);';
-  deleteItem.textContent = appState.language === 'zh-CN' ? '删除连线' : 'Delete Connection';
+  deleteItem.textContent = isChineseLanguage(appState.language) ? '删除连线' : 'Delete Connection';
   deleteItem.addEventListener('mouseenter', () => {
     deleteItem.style.background = 'var(--bg-hover)';
     deleteItem.style.color = 'var(--text-primary)';
@@ -11255,7 +15025,7 @@ function addStickyNote() {
   const node = {
     id: nodeId,
     type: 'sticky',
-    content: appState.language === 'zh-CN' ? '双击编辑便签...' : 'Double click to edit...',
+    content: isChineseLanguage(appState.language) ? '双击编辑便签...' : 'Double click to edit...',
     fullContent: '',
     x: 100 - chatFlowState.canvas.translateX / chatFlowState.canvas.scale,
     y: 100 - chatFlowState.canvas.translateY / chatFlowState.canvas.scale,
@@ -11282,11 +15052,11 @@ function deleteSelectedNodes() {
   );
 
   if (selected.length === 0) {
-    alert(appState.language === 'zh-CN' ? '请先选择要删除的节点' : 'Please select nodes to delete');
+    alert(isChineseLanguage(appState.language) ? '请先选择要删除的节点' : 'Please select nodes to delete');
     return;
   }
 
-  const confirmMsg = appState.language === 'zh-CN'
+  const confirmMsg = isChineseLanguage(appState.language)
     ? `确定删除 ${selected.length} 个节点？`
     : `Delete ${selected.length} nodes?`;
 
@@ -11307,7 +15077,7 @@ function deleteSelectedNodes() {
 async function aiDecomposeSelected() {
   const selected = document.querySelector('.canvas-node.selected');
   if (!selected) {
-    alert(appState.language === 'zh-CN' ? '请先选择一个节点进行拆解' : 'Please select a node to decompose');
+    alert(isChineseLanguage(appState.language) ? '请先选择一个节点进行拆解' : 'Please select a node to decompose');
     return;
   }
 
@@ -11361,7 +15131,7 @@ async function aiDecomposeSelected() {
 
   } catch (error) {
     console.error('AI 拆解失败:', error);
-    alert(appState.language === 'zh-CN' ? 'AI 拆解失败，请重试' : 'AI decomposition failed, please retry');
+    alert(isChineseLanguage(appState.language) ? 'AI 拆解失败，请重试' : 'AI decomposition failed, please retry');
   }
 }
 
@@ -11473,7 +15243,7 @@ function exportAsMermaid() {
 
   // 也复制到剪贴板
   navigator.clipboard.writeText(mermaid).then(() => {
-    showToast(appState.language === 'zh-CN' ? 'Mermaid 代码已复制到剪贴板' : 'Mermaid code copied to clipboard');
+    showToast(isChineseLanguage(appState.language) ? 'Mermaid 代码已复制到剪贴板' : 'Mermaid code copied to clipboard');
   });
 }
 
@@ -11569,9 +15339,9 @@ function editNodeInline(nodeId) {
   title.style.cssText = 'font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;';
 
   if (node.type === 'sticky') {
-    title.textContent = appState.language === 'zh-CN' ? '编辑便签' : 'Edit Sticky Note';
+    title.textContent = isChineseLanguage(appState.language) ? '编辑便签' : 'Edit Sticky Note';
   } else {
-    title.textContent = appState.language === 'zh-CN' ? '编辑节点' : 'Edit Node';
+    title.textContent = isChineseLanguage(appState.language) ? '编辑节点' : 'Edit Node';
   }
 
   modal.appendChild(title);
@@ -11595,8 +15365,8 @@ function editNodeInline(nodeId) {
   `;
   textarea.value = node.fullContent || node.content || '';
   textarea.placeholder = node.type === 'sticky'
-    ? (appState.language === 'zh-CN' ? '输入便签内容...' : 'Enter note content...')
-    : (appState.language === 'zh-CN' ? '输入节点内容...' : 'Enter node content...');
+    ? (isChineseLanguage(appState.language) ? '输入便签内容...' : 'Enter note content...')
+    : (isChineseLanguage(appState.language) ? '输入节点内容...' : 'Enter node content...');
   modal.appendChild(textarea);
 
   // 按钮容器
@@ -11615,7 +15385,7 @@ function editNodeInline(nodeId) {
     cursor: pointer;
     transition: all 0.2s;
   `;
-  cancelBtn.textContent = appState.language === 'zh-CN' ? '取消' : 'Cancel';
+  cancelBtn.textContent = isChineseLanguage(appState.language) ? '取消' : 'Cancel';
   cancelBtn.addEventListener('click', () => modal.remove());
   cancelBtn.addEventListener('mouseenter', () => cancelBtn.style.background = 'var(--bg-hover)');
   cancelBtn.addEventListener('mouseleave', () => cancelBtn.style.background = 'transparent');
@@ -11707,9 +15477,9 @@ function showNodeContextMenu(e, nodeId) {
       `;
 
   const menuItems = [
-    { text: appState.language === 'zh-CN' ? '编辑内容' : 'Edit Content', action: () => editNodeContent(nodeId) },
-    { text: appState.language === 'zh-CN' ? '添加注释' : 'Add Annotation', action: () => addAnnotationToNode(nodeId) },
-    { text: appState.language === 'zh-CN' ? '删除节点' : 'Delete Node', action: () => deleteNode(nodeId) }
+    { text: isChineseLanguage(appState.language) ? '编辑内容' : 'Edit Content', action: () => editNodeContent(nodeId) },
+    { text: isChineseLanguage(appState.language) ? '添加注释' : 'Add Annotation', action: () => addAnnotationToNode(nodeId) },
+    { text: isChineseLanguage(appState.language) ? '删除节点' : 'Delete Node', action: () => deleteNode(nodeId) }
   ];
 
   menuItems.forEach(item => {
@@ -11748,7 +15518,7 @@ function addAnnotationToNode(targetNodeId) {
   const targetNode = chatFlowState.nodes.find(n => n.id === targetNodeId);
   if (!targetNode) return;
 
-  const promptMsg = appState.language === 'zh-CN' ? '输入注释内容:' : 'Enter annotation:';
+  const promptMsg = isChineseLanguage(appState.language) ? '输入注释内容:' : 'Enter annotation:';
   const annotationText = prompt(promptMsg);
   if (!annotationText || !annotationText.trim()) return;
 
@@ -11775,7 +15545,7 @@ function addAnnotationToNode(targetNodeId) {
 
 // 删除单个节点
 function deleteNode(nodeId) {
-  const confirmMsg = appState.language === 'zh-CN' ? '确定删除此节点？' : 'Delete this node?';
+  const confirmMsg = isChineseLanguage(appState.language) ? '确定删除此节点？' : 'Delete this node?';
   if (!confirm(confirmMsg)) return;
   chatFlowState.nodes = chatFlowState.nodes.filter(n => n.id !== nodeId);
   chatFlowState.edges = chatFlowState.edges.filter(e => e.from !== nodeId && e.to !== nodeId);
@@ -11805,7 +15575,7 @@ function showEdgeLabelMenu(edgeId, x, y) {
         z-index: 1000;
       `;
 
-  const presetLabels = appState.language === 'zh-CN'
+  const presetLabels = isChineseLanguage(appState.language)
     ? ['导致', '包含', '反驳', '举例', '下一步', '自定义...']
     : ['Caused by', 'Includes', 'Refutes', 'Example', 'Next Step', 'Custom...'];
 
@@ -11823,8 +15593,8 @@ function showEdgeLabelMenu(edgeId, x, y) {
     });
     item.addEventListener('click', () => {
       let finalLabel = label;
-      const customLabel = appState.language === 'zh-CN' ? '自定义...' : 'Custom...';
-      const promptMsg = appState.language === 'zh-CN' ? '输入连线标签:' : 'Enter edge label:';
+      const customLabel = isChineseLanguage(appState.language) ? '自定义...' : 'Custom...';
+      const promptMsg = isChineseLanguage(appState.language) ? '输入连线标签:' : 'Enter edge label:';
 
       if (label === customLabel) {
         finalLabel = prompt(promptMsg) || '';
@@ -11986,6 +15756,7 @@ async function loadSessions(reset = true) {
   }
 
   appState.sessionsPagination.isLoading = true;
+  let shouldFocusAfterRender = false;
 
   try {
     const { offset, limit } = appState.sessionsPagination;
@@ -12006,9 +15777,8 @@ async function loadSessions(reset = true) {
     appState.sessionsPagination.offset += data.sessions.length;
 
     console.log(` 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
-    renderSessions();
     if (appState.messages.length === 0) {
-      focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
+      shouldFocusAfterRender = true;
     }
 
   } catch (error) {
@@ -12016,9 +15786,12 @@ async function loadSessions(reset = true) {
     if (reset) {
       appState.sessions = [];
     }
-    renderSessions();
   } finally {
     appState.sessionsPagination.isLoading = false;
+    renderSessions();
+    if (shouldFocusAfterRender) {
+      focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
+    }
   }
 }
 
@@ -12044,6 +15817,7 @@ function showWelcome() {
     navigator.classList.add('hidden');
   }
 
+  maybeAutoFocusMobileHomeInput();
   focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
 }
 
@@ -12064,7 +15838,7 @@ function setScrollFollowMode(mode = 'following') {
 }
 
 function getScrollResumeButtonText() {
-  return appState.language === 'zh-CN' ? '回到底部' : 'Jump to latest';
+  return isChineseLanguage(appState.language) ? '回到底部' : 'Jump to latest';
 }
 
 function ensureScrollResumeButton() {
@@ -12215,9 +15989,10 @@ function initRippleEffect() {
   });
 }
 
-async function createNewSession() {
+async function createNewSession(options = {}) {
   try {
-    appState.pendingMobileComposerFocus = window.innerWidth <= 768;
+    const shouldFocus = options.focus !== false;
+    appState.pendingMobileComposerFocus = shouldFocus && window.innerWidth <= 768;
     const response = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
       headers: {
@@ -12225,7 +16000,7 @@ async function createNewSession() {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        title: appState.language === 'zh-CN' ? '新对话' : 'New Chat',
+        title: isChineseLanguage(appState.language) ? '新对话' : 'New Chat',
         model: appState.selectedModel || 'auto'  // 默认为auto或当前选择的模型
       })
     });
@@ -12235,16 +16010,21 @@ async function createNewSession() {
     if (data.success) {
       await loadSessions();
       await loadSession(data.sessionId);
-      focusMessageInputForNewChat(true);
+      if (shouldFocus) {
+        focusMessageInputForNewChat(true);
+      }
 
       // 移除移动端自动弹出侧边栏
       // if (window.innerWidth <= 768) {
       //   toggleSidebar();
       // }
+      return true;
     }
+    return false;
   } catch (error) {
     console.error(' 创建会话失败:', error);
-    alert(appState.language === 'zh-CN' ? '创建对话失败' : 'Failed to create chat');
+    alert(isChineseLanguage(appState.language) ? '创建对话失败' : 'Failed to create chat');
+    return false;
   }
 }
 
@@ -12280,7 +16060,7 @@ async function loadSession(sessionId) {
 
   } catch (error) {
     console.error(' 加载消息失败:', error);
-    alert(appState.language === 'zh-CN' ? '加载对话失败' : 'Failed to load chat');
+    alert(isChineseLanguage(appState.language) ? '加载对话失败' : 'Failed to load chat');
   }
 }
 
@@ -12732,7 +16512,7 @@ class MobileKeyboardHandler {
   shouldPreserveInputFocus(target) {
     if (!target || !(target instanceof Element)) return false;
     if (target.closest('textarea, input[type="text"], input[type="email"], input[type="password"], select')) return false;
-    if (target.closest('input[type="range"], .reasoning-profile-slider, .thinking-budget-slider')) return false;
+    if (target.closest('input[type="range"], .reasoning-profile-slider, .research-mode-slider, .thinking-budget-slider')) return false;
 
     return Boolean(
       target.closest('.send-btn, .stop-btn')
@@ -12810,6 +16590,110 @@ class MobileKeyboardHandler {
 let currentAttachment = null;
 const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
 
+let appVersionMonitorTimer = null;
+let appUpdatePromptVisible = false;
+
+function compareVersionStrings(current, latest) {
+  const currentParts = String(current || '').split('.').map((part) => parseInt(part, 10) || 0);
+  const latestParts = String(latest || '').split('.').map((part) => parseInt(part, 10) || 0);
+  const length = Math.max(currentParts.length, latestParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const left = currentParts[index] || 0;
+    const right = latestParts[index] || 0;
+    if (right > left) return 1;
+    if (right < left) return -1;
+  }
+
+  return 0;
+}
+
+function showAppUpdatePrompt(latestVersion) {
+  if (appUpdatePromptVisible) return;
+  appUpdatePromptVisible = true;
+
+  let prompt = document.getElementById('appUpdatePrompt');
+  if (!prompt) {
+    prompt = document.createElement('div');
+    prompt.id = 'appUpdatePrompt';
+    prompt.className = 'app-update-prompt';
+    document.body.appendChild(prompt);
+  }
+
+  prompt.innerHTML = '';
+
+  const text = document.createElement('div');
+  text.className = 'app-update-text';
+
+  const title = document.createElement('div');
+  title.className = 'app-update-title';
+  title.textContent = i18nText('app-update-title', isChineseLanguage(appState.language) ? 'RAI 已更新' : 'RAI has been updated');
+
+  const desc = document.createElement('div');
+  desc.className = 'app-update-desc';
+  desc.textContent = i18nText('app-update-desc', isChineseLanguage(appState.language) ? '当前网页仍是旧版本，刷新后即可使用最新版。' : 'This page is still running an older version. Refresh to use the latest release.');
+
+  text.append(title, desc);
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'app-update-btn';
+  button.textContent = i18nText('app-update-button', isChineseLanguage(appState.language) ? '刷新更新' : 'Refresh');
+  button.addEventListener('click', () => refreshToLatestAppVersion(latestVersion));
+
+  prompt.append(text, button);
+  requestAnimationFrame(() => prompt.classList.add('show'));
+}
+
+async function refreshToLatestAppVersion(latestVersion) {
+  try {
+    if (window.caches?.keys) {
+      const keys = await window.caches.keys();
+      await Promise.all(keys.map((key) => window.caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn('清理缓存失败，将继续刷新:', error);
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('rai_refresh', String(Date.now()));
+  if (latestVersion) {
+    url.searchParams.set('rai_version', String(latestVersion));
+  }
+  window.location.replace(url.toString());
+}
+
+async function checkForAppUpdate() {
+  try {
+    const response = await fetch(`${API_BASE}/version?current=${encodeURIComponent(RAI_APP_VERSION)}&build=${encodeURIComponent(RAI_BUILD_ID)}&t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (!response.ok) return;
+
+    const data = await response.json();
+    const latestVersion = String(data?.version || '').trim();
+    if (latestVersion && compareVersionStrings(RAI_APP_VERSION, latestVersion) > 0) {
+      showAppUpdatePrompt(latestVersion);
+    }
+  } catch (error) {
+    console.warn('检查 RAI 版本失败:', error.message);
+  }
+}
+
+function startAppVersionMonitor() {
+  if (appVersionMonitorTimer) return;
+
+  window.setTimeout(checkForAppUpdate, 8000);
+  appVersionMonitorTimer = window.setInterval(checkForAppUpdate, 3 * 60 * 1000);
+  window.addEventListener('focus', checkForAppUpdate);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      checkForAppUpdate();
+    }
+  });
+}
+
 // Toast 通知函数
 function showToast(message, duration = 3000) {
   let toast = document.getElementById('toastNotification');
@@ -12844,13 +16728,13 @@ function checkAndConvertLongInput() {
       updateAttachmentUI();
 
       // 清空输入框，显示提示
-      input.value = appState.language === 'zh-CN'
+      input.value = isChineseLanguage(appState.language)
         ? '请分析这个文档'
         : 'Please analyze this document';
       autoResizeInput();
 
       // 显示提示
-      showToast(appState.language === 'zh-CN'
+      showToast(isChineseLanguage(appState.language)
         ? '输入内容过长，已自动转换为文本文件附件'
         : 'Input too long, converted to text file attachment');
     };
@@ -12892,7 +16776,7 @@ function handleFileUpload() {
 async function processUploadedFile(file) {
   const maxSize = 50 * 1024 * 1024; // 50MB
   if (file.size > maxSize) {
-    alert(appState.language === 'zh-CN' ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
+    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
     return;
   }
 
@@ -12947,7 +16831,7 @@ async function processUploadedFile(file) {
       updateAttachmentUI();
     } catch (error) {
       console.error(' 文档上传失败:', error);
-      alert(appState.language === 'zh-CN' ? '文档上传失败' : 'Document upload failed');
+      alert(isChineseLanguage(appState.language) ? '文档上传失败' : 'Document upload failed');
     }
   }
 }
@@ -12990,27 +16874,27 @@ function updateAttachmentUI() {
   switch (currentAttachment.type) {
     case 'image':
       iconSvg = getSvgIcon('image', 'attachment-icon', 20);
-      typeLabel = appState.language === 'zh-CN' ? '图片' : 'Image';
+      typeLabel = isChineseLanguage(appState.language) ? '图片' : 'Image';
       break;
     case 'audio':
       iconSvg = getSvgIcon('headphones', 'attachment-icon', 20);
-      typeLabel = appState.language === 'zh-CN' ? '音频' : 'Audio';
+      typeLabel = isChineseLanguage(appState.language) ? '音频' : 'Audio';
       break;
     case 'video':
       iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
-      typeLabel = appState.language === 'zh-CN' ? '视频' : 'Video';
+      typeLabel = isChineseLanguage(appState.language) ? '视频' : 'Video';
       break;
     case 'text':
       iconSvg = getSvgIcon('article', 'attachment-icon', 20);
-      typeLabel = appState.language === 'zh-CN' ? '文本' : 'Text';
+      typeLabel = isChineseLanguage(appState.language) ? '文本' : 'Text';
       break;
     case 'code':
       iconSvg = getSvgIcon('code', 'attachment-icon', 20);
-      typeLabel = appState.language === 'zh-CN' ? '代码' : 'Code';
+      typeLabel = isChineseLanguage(appState.language) ? '代码' : 'Code';
       break;
     default:
       iconSvg = getSvgIcon('description', 'attachment-icon', 20);
-      typeLabel = appState.language === 'zh-CN' ? '文档' : 'Document';
+      typeLabel = isChineseLanguage(appState.language) ? '文档' : 'Document';
   }
 
   attachmentPreview.innerHTML = `
@@ -13019,7 +16903,7 @@ function updateAttachmentUI() {
           <span class="attachment-type">${typeLabel}</span>
           <span class="attachment-name">${currentAttachment.fileName}</span>
         </div>
-        <button class="attachment-remove" onclick="removeAttachment()" title="${appState.language === 'zh-CN' ? '移除' : 'Remove'}">
+        <button class="attachment-remove" onclick="removeAttachment()" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
           ${getSvgIcon('close', 'remove-icon', 16)}
         </button>
       `;
@@ -13051,7 +16935,7 @@ function initDragAndDrop() {
             <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
             </svg>
-            <span>${appState.language === 'zh-CN' ? '释放以上传文件' : 'Drop to upload file'}</span>
+            <span>${isChineseLanguage(appState.language) ? '释放以上传文件' : 'Drop to upload file'}</span>
           </div>
         `;
     document.body.appendChild(dropOverlay);
@@ -13201,7 +17085,7 @@ function renderChatIndexTimeline() {
       }
     } else {
       // AI回复：格式为 "RAI回复：\n内容"，最多50字
-      const label = appState.language === 'zh-CN' ? 'RAI回复：' : 'RAI Response:';
+      const label = isChineseLanguage(appState.language) ? 'RAI回复：' : 'RAI Response:';
       let content = item.content.replace(/\n/g, ' ').trim();
       if (content.length > 50) {
         content = content.substring(0, 50) + '...';
@@ -13319,8 +17203,8 @@ function showNavTooltip(event, direction) {
   if (!tooltip) return;
 
   const text = direction === 'prev'
-    ? (appState.language === 'zh-CN' ? '上一个响应' : 'Previous response')
-    : (appState.language === 'zh-CN' ? '下一个响应' : 'Next response');
+    ? (isChineseLanguage(appState.language) ? '上一个响应' : 'Previous response')
+    : (isChineseLanguage(appState.language) ? '下一个响应' : 'Next response');
 
   tooltip.textContent = text;
 
@@ -13382,8 +17266,8 @@ function showBoundaryTooltip(position) {
   if (!tooltip) return;
 
   const text = position === 'top'
-    ? (appState.language === 'zh-CN' ? '已经到顶了' : 'Already at top')
-    : (appState.language === 'zh-CN' ? '已经到底了' : 'Already at bottom');
+    ? (isChineseLanguage(appState.language) ? '已经到顶了' : 'Already at top')
+    : (isChineseLanguage(appState.language) ? '已经到底了' : 'Already at bottom');
 
   tooltip.textContent = text;
 
@@ -13549,6 +17433,8 @@ function initChatIndexListener() {
 window.addEventListener('resize', repositionComposerMenus);
 window.addEventListener('orientationchange', repositionComposerMenus);
 window.visualViewport?.addEventListener('resize', repositionComposerMenus);
+window.addEventListener('resize', syncSettingsResponsiveLayout);
+window.addEventListener('orientationchange', syncSettingsResponsiveLayout);
 
 // 移动端触摸滑动导航
 function initMobileTouchNavigation() {
@@ -13585,7 +17471,7 @@ function initMobileTouchNavigation() {
         tooltipText = tooltipText.substring(0, 50) + '...';
       }
     } else {
-      const label = appState.language === 'zh-CN' ? 'RAI回复：' : 'RAI Response:';
+      const label = isChineseLanguage(appState.language) ? 'RAI回复：' : 'RAI Response:';
       let displayContent = content.replace(/\n/g, ' ').trim();
       if (displayContent.length > 50) {
         displayContent = displayContent.substring(0, 50) + '...';
@@ -13699,17 +17585,63 @@ let userMembershipState = {
   gpt55DailyLimit: 10,
   gpt55UsedToday: 0,
   gpt55Remaining: 10,
-  gpt55ResetAt: null
+  gpt55ResetAt: null,
+  tasks: {
+    pwaInstall: { completed: false, rewardPoints: PWA_INSTALL_REWARD_POINTS },
+    inviteUser: { completed: false, rewardPoints: INVITE_REWARD_POINTS, completedCount: 0, totalRewardPoints: 0 }
+  }
 };
 
+const MEMBERSHIP_DAILY_CHECKIN_POINTS = 20;
+const MEMBERSHIP_MONTH_CHECKIN_DAYS = 28;
+
 const MEMBERSHIP_REDEEM_OPTIONS = {
-  Pro: { pointsCost: 600, durationDays: 30 },
+  Pro: { pointsCost: MEMBERSHIP_DAILY_CHECKIN_POINTS * MEMBERSHIP_MONTH_CHECKIN_DAYS, durationDays: 30, earnDays: MEMBERSHIP_MONTH_CHECKIN_DAYS },
   MAX: { pointsCost: 6000, durationDays: 30 }
 };
 
 let membershipRedeemPendingTier = null;
 
 let membershipModelPolicyInitialized = false;
+
+function normalizeMembershipTasks(tasks = {}) {
+  return {
+    pwaInstall: {
+      completed: Boolean(tasks?.pwaInstall?.completed),
+      rewardPoints: Number(tasks?.pwaInstall?.rewardPoints || PWA_INSTALL_REWARD_POINTS),
+      completedAt: tasks?.pwaInstall?.completedAt || null
+    },
+    inviteUser: {
+      completed: Boolean(tasks?.inviteUser?.completed),
+      rewardPoints: Number(tasks?.inviteUser?.rewardPoints || INVITE_REWARD_POINTS),
+      completedAt: tasks?.inviteUser?.completedAt || null,
+      completedCount: Number(tasks?.inviteUser?.completedCount || 0),
+      totalRewardPoints: Number(tasks?.inviteUser?.totalRewardPoints || 0)
+    }
+  };
+}
+
+function applyUserMembershipData(data = {}) {
+  userMembershipState = {
+    membership: data.membership || 'free',
+    membershipEnd: data.membershipEnd,
+    points: data.points || 0,
+    purchasedPoints: data.purchasedPoints || 0,
+    totalPoints: data.totalPoints || 0,
+    canCheckin: data.canCheckin,
+    createdAt: data.createdAt,
+    poeDailyLimit: Number(data.poeDailyLimit || 3),
+    poeUsedToday: Number(data.poeUsedToday || 0),
+    poeRemaining: Number(data.poeRemaining || 0),
+    poeResetAt: data.poeResetAt || null,
+    gpt55DailyLimit: Number(data.gpt55DailyLimit || 10),
+    gpt55UsedToday: Number(data.gpt55UsedToday || 0),
+    gpt55Remaining: Number(data.gpt55Remaining || 0),
+    gpt55ResetAt: data.gpt55ResetAt || null,
+    tasks: normalizeMembershipTasks(data.tasks)
+  };
+  return userMembershipState;
+}
 
 function applyMembershipModelPolicy({ initial = false, previousMembership = null } = {}) {
   const currentMembership = String(userMembershipState?.membership || 'free');
@@ -13730,7 +17662,7 @@ function applyMembershipModelPolicy({ initial = false, previousMembership = null
   // Pro/MAX：记住上次模型（首次加载或刚从free升级时应用）
   if (initial || prev === 'free' || !membershipModelPolicyInitialized) {
     const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'kimi-k2.5');
-    const targetModel = MODELS[remembered] ? remembered : 'kimi-k2.5';
+    const targetModel = MODELS[remembered] && !isModelDisabledByAdmin(remembered) ? remembered : 'auto';
     appState.selectedModel = targetModel;
     updateSelectedModelText(targetModel);
     updateModelControls();
@@ -13752,30 +17684,14 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
     });
     if (res.ok) {
       const data = await res.json();
-      userMembershipState = {
-        membership: data.membership || 'free',
-        membershipEnd: data.membershipEnd,
-        points: data.points || 0,
-        purchasedPoints: data.purchasedPoints || 0,
-        totalPoints: data.totalPoints || 0,
-        canCheckin: data.canCheckin,
-        createdAt: data.createdAt,
-        poeDailyLimit: Number(data.poeDailyLimit || 3),
-        poeUsedToday: Number(data.poeUsedToday || 0),
-        poeRemaining: Number(data.poeRemaining || 0),
-        poeResetAt: data.poeResetAt || null,
-        gpt55DailyLimit: Number(data.gpt55DailyLimit || 10),
-        gpt55UsedToday: Number(data.gpt55UsedToday || 0),
-        gpt55Remaining: Number(data.gpt55Remaining || 0),
-        gpt55ResetAt: data.gpt55ResetAt || null
-      };
+      applyUserMembershipData(data);
       console.log(' 会员状态更新:', userMembershipState);
-      if (isMembershipLockedModel(appState.selectedModel)) {
+      if (isMembershipLockedModel(appState.selectedModel) || isModelDisabledByAdmin(appState.selectedModel)) {
         appState.selectedModel = 'auto';
         updateSelectedModelText('auto');
         updateModelControls();
       }
-      if (isMembershipLockedModel(chatFlowState?.selectedModel)) {
+      if (isMembershipLockedModel(chatFlowState?.selectedModel) || isModelDisabledByAdmin(chatFlowState?.selectedModel)) {
         chatFlowState.selectedModel = 'auto';
         updateChatFlowControlStates();
       }
@@ -13785,6 +17701,9 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
       updatePoeQuotaHint();
       updateMenuSelection();
       updateToolbarUI();
+      updateUserAreaWithMembership();
+      updateSettingsMembership();
+      maybeShowPwaRewardPrompt();
     }
   } catch (e) {
     console.log('获取会员状态失败');
@@ -13829,8 +17748,7 @@ async function userCheckin() {
 }
 
 function formatMembershipPoints(points) {
-  const locale = appState.language === 'zh-CN' ? 'zh-CN' : 'en-US';
-  return Number(points || 0).toLocaleString(locale);
+  return Number(points || 0).toLocaleString(getCurrentLocale());
 }
 
 function isMembershipTierActive(tier) {
@@ -13851,17 +17769,17 @@ function getMembershipExpiryText() {
   const endDate = new Date(userMembershipState.membershipEnd);
   if (Number.isNaN(endDate.getTime())) return '';
 
-  const locale = appState.language === 'zh-CN' ? 'zh-CN' : 'en-US';
-  const prefix = appState.language === 'zh-CN' ? '当前到期' : 'Current expiry';
+  const locale = getCurrentLocale();
+  const prefix = isChineseLanguage(appState.language) ? '当前到期' : 'Current expiry';
   return `${prefix}: ${endDate.toLocaleDateString(locale)}`;
 }
 
 function getMembershipPlanFeatures(tier) {
-  const isZh = appState.language === 'zh-CN';
+  const isZh = isChineseLanguage(appState.language);
   if (tier === 'Pro') {
     return isZh
-      ? ['优先使用点数兑换会员', '支持续期或升级 MAX', '适合日常高频使用']
-      : ['Priority points redemption tier', 'Can renew or upgrade to MAX', 'For frequent everyday use'];
+      ? ['更高的模型使用额度', '支持续期或升级 MAX', '适合日常高频使用']
+      : ['Higher model usage quota', 'Can renew or upgrade to MAX', 'For frequent everyday use'];
   }
 
   return isZh
@@ -13870,7 +17788,7 @@ function getMembershipPlanFeatures(tier) {
 }
 
 function getMembershipActionState(tier) {
-  const isZh = appState.language === 'zh-CN';
+  const isZh = isChineseLanguage(appState.language);
   const option = MEMBERSHIP_REDEEM_OPTIONS[tier];
   const currentTier = String(userMembershipState.membership || 'free');
   const activeCurrentTier = currentTier !== 'free' && isMembershipTierActive(currentTier);
@@ -13916,19 +17834,26 @@ function renderMembershipPlanCard(tier) {
   const features = getMembershipPlanFeatures(tier);
   const isCurrent = isMembershipTierActive(tier);
   const isPending = membershipRedeemPendingTier === tier;
-  const isZh = appState.language === 'zh-CN';
-  const subline = isZh
-    ? `${formatMembershipPoints(option.pointsCost)} 点 / ${option.durationDays} 天`
-    : `${formatMembershipPoints(option.pointsCost)} points / ${option.durationDays} days`;
+  const isZh = isChineseLanguage(appState.language);
+  const subline = option.earnDays
+    ? (isZh
+      ? `${formatMembershipPoints(option.pointsCost)} 点 / ${option.durationDays} 天，约 ${option.earnDays} 天签到可兑换`
+      : `${formatMembershipPoints(option.pointsCost)} points / ${option.durationDays} days, about ${option.earnDays} check-ins`)
+    : (isZh
+      ? `${formatMembershipPoints(option.pointsCost)} 点 / ${option.durationDays} 天`
+      : `${formatMembershipPoints(option.pointsCost)} points / ${option.durationDays} days`);
 
   return `
     <div class="membership-plan-card ${tier.toLowerCase()} ${isCurrent ? 'current' : ''}">
-      <div class="membership-plan-name">${tier}</div>
-      <div class="membership-plan-price membership-plan-price-points">${formatMembershipPoints(option.pointsCost)} ${isZh ? '点' : 'pts'}</div>
-      <div class="membership-plan-points">${subline}</div>
-      <div class="membership-plan-features">
-        ${features.join('<br>')}
+      <div class="membership-plan-topline">
+        <div class="membership-plan-name">${tier}</div>
+        ${isCurrent ? `<span class="membership-current-pill">${isZh ? '当前套餐' : 'Current'}</span>` : ''}
       </div>
+      <div class="membership-plan-price membership-plan-price-points">
+        <span>${formatMembershipPoints(option.pointsCost)}</span>
+        <small>${isZh ? '点数' : 'points'}</small>
+      </div>
+      <div class="membership-plan-points">${subline}</div>
       <button
         class="membership-plan-action"
         onclick="redeemMembership('${tier}')"
@@ -13938,12 +17863,97 @@ function renderMembershipPlanCard(tier) {
           ? (isZh ? '处理中...' : 'Processing...')
           : action.label}
       </button>
+      <div class="membership-plan-features">
+        ${features.map((feature) => `
+          <div class="membership-plan-feature">
+            <span class="membership-feature-icon" aria-hidden="true">+</span>
+            <span>${feature}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function startPwaInstallTask() {
+  pwaRewardPromptDismissedThisSession = false;
+  handlePwaRewardInstallAction();
+}
+
+function claimPwaInstallTask() {
+  pwaRewardPromptDismissedThisSession = false;
+  claimAlreadyInstalledPwaReward();
+}
+
+async function copyInviteLink() {
+  const link = getInviteLink();
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(link);
+    } else {
+      const input = document.createElement('input');
+      input.value = link;
+      input.setAttribute('readonly', 'readonly');
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    showToast(isChineseLanguage(appState.language) ? '邀请链接已复制' : 'Invite link copied');
+  } catch (error) {
+    window.prompt(isChineseLanguage(appState.language) ? '复制邀请链接' : 'Copy invite link', link);
+  }
+}
+
+function renderMembershipTasksSection({ compact = false } = {}) {
+  const isZh = isChineseLanguage(appState.language);
+  const tasks = normalizeMembershipTasks(userMembershipState.tasks);
+  const inviteCount = Number(tasks.inviteUser.completedCount || 0);
+  const taskClass = compact ? 'settings-task-section' : 'membership-task-section';
+  const pwaDone = Boolean(tasks.pwaInstall.completed);
+  const inviteDone = inviteCount > 0;
+  const inviteLink = getInviteLink();
+
+  return `
+    <div class="${taskClass}">
+      <div class="membership-task-heading">
+        <h3>${isZh ? '任务' : 'Tasks'}</h3>
+        <span>${isZh ? '完成任务增加积分' : 'Earn points by completing tasks'}</span>
+      </div>
+      <div class="membership-task-list">
+        <div class="membership-task-item ${pwaDone ? 'completed' : ''}">
+          <div class="membership-task-main">
+            <strong>${isZh ? '把 RAI 放到桌面' : 'Add RAI to desktop'}</strong>
+            <span>${isZh ? `积分 +${tasks.pwaInstall.rewardPoints}` : `+${tasks.pwaInstall.rewardPoints} points`}</span>
+          </div>
+          <div class="membership-task-actions">
+            <button type="button" class="membership-task-action" onclick="startPwaInstallTask()" ${pwaDone ? 'disabled' : ''}>
+              ${pwaDone ? (isZh ? '已完成' : 'Done') : (isZh ? '去添加' : 'Add')}
+            </button>
+            ${pwaDone ? '' : `<button type="button" class="membership-task-action secondary" onclick="claimPwaInstallTask()">${isZh ? '已添加，领取' : 'Already added'}</button>`}
+          </div>
+        </div>
+        <div class="membership-task-item ${inviteDone ? 'completed' : ''}">
+          <div class="membership-task-main">
+            <strong>${isZh ? '邀请一位用户' : 'Invite one user'}</strong>
+            <span>${isZh ? `积分 +${tasks.inviteUser.rewardPoints}${inviteCount ? ` · 已邀请 ${inviteCount} 位` : ''}` : `+${tasks.inviteUser.rewardPoints} points${inviteCount ? ` · ${inviteCount} invited` : ''}`}</span>
+            <small>${escapeHtml(inviteLink)}</small>
+          </div>
+          <div class="membership-task-actions">
+            <button type="button" class="membership-task-action" onclick="copyInviteLink()">
+              ${isZh ? '复制链接' : 'Copy link'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
 
 function renderMembershipPlansModalContent() {
-  const isZh = appState.language === 'zh-CN';
+  const isZh = isChineseLanguage(appState.language);
   const currentPointsLabel = isZh ? '当前点数' : 'Current points';
   const currentTierLabel = isZh ? '当前会员' : 'Current tier';
   const expiryText = getMembershipExpiryText();
@@ -13959,32 +17969,40 @@ function renderMembershipPlansModalContent() {
         </button>
       </div>
       <div class="membership-plans-content">
+        <div class="membership-plans-summary">
+          <div>
+            <span>${currentPointsLabel}</span>
+            <strong>${formatMembershipPoints(userMembershipState.totalPoints)}</strong>
+          </div>
+          <div>
+            <span>${currentTierLabel}</span>
+            <strong>${String(userMembershipState.membership || 'free')}</strong>
+          </div>
+          ${expiryText ? `<p>${expiryText}</p>` : ''}
+        </div>
         <div class="membership-plans-grid">
           <div class="membership-plan-card free ${String(userMembershipState.membership || 'free') === 'free' ? 'current' : ''}">
-            <div class="membership-plan-name">free</div>
+            <div class="membership-plan-topline">
+              <div class="membership-plan-name">free</div>
+              ${String(userMembershipState.membership || 'free') === 'free' ? `<span class="membership-current-pill">${isZh ? '当前套餐' : 'Current'}</span>` : ''}
+            </div>
             <div class="membership-plan-price">${isZh ? '每日签到' : 'Daily check-in'}</div>
-            <div class="membership-plan-points">${isZh ? '每日签到 +20 点数' : 'Daily check-in +20 points'}</div>
+            <div class="membership-plan-points">${isZh ? `每日签到 +${MEMBERSHIP_DAILY_CHECKIN_POINTS} 点数` : `Daily check-in +${MEMBERSHIP_DAILY_CHECKIN_POINTS} points`}</div>
+            <button class="membership-plan-action" disabled>${isZh ? '基础套餐' : 'Base plan'}</button>
             <div class="membership-plan-features">
               ${isZh
-                ? '点数长期累积<br>可兑换 Pro 或 MAX'
-                : 'Points accumulate over time<br>Can redeem Pro or MAX'}
+                ? '<div class="membership-plan-feature"><span class="membership-feature-icon">+</span><span>点数长期累积</span></div><div class="membership-plan-feature"><span class="membership-feature-icon">+</span><span>可兑换 Pro 或 MAX</span></div>'
+                : '<div class="membership-plan-feature"><span class="membership-feature-icon">+</span><span>Points accumulate over time</span></div><div class="membership-plan-feature"><span class="membership-feature-icon">+</span><span>Can redeem Pro or MAX</span></div>'}
             </div>
           </div>
           ${renderMembershipPlanCard('Pro')}
           ${renderMembershipPlanCard('MAX')}
         </div>
 
-        <div class="membership-divider"></div>
-
-        <div class="membership-extra-section">
-          <h3>${isZh ? '点数与会员说明' : 'Points and Membership'}</h3>
-          <p>${currentPointsLabel}: <strong>${formatMembershipPoints(userMembershipState.totalPoints)}</strong></p>
-          <p class="membership-status-note">${currentTierLabel}: ${String(userMembershipState.membership || 'free')}</p>
-          ${expiryText ? `<p class="membership-status-note">${expiryText}</p>` : ''}
-        </div>
+        ${renderMembershipTasksSection()}
 
         <div class="membership-contact">
-          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:rick080402@gmail.com">rick080402@gmail.com</a></p>
+          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:rick080402+raisupport@gmail.com">rick080402+raisupport@gmail.com</a></p>
           <p class="membership-status-note">${isZh ? '如遇点数、签到或会员状态问题，可通过邮箱联系。' : 'If you run into points, check-in, or membership issues, contact us by email.'}</p>
         </div>
       </div>
@@ -14003,7 +18021,7 @@ async function redeemMembership(tier) {
 
   const token = appState.token;
   if (!token) {
-    showToast(appState.language === 'zh-CN' ? '请先登录' : 'Please log in first');
+    showToast(isChineseLanguage(appState.language) ? '请先登录' : 'Please log in first');
     return;
   }
 
@@ -14026,7 +18044,7 @@ async function redeemMembership(tier) {
 
     const data = await res.json();
     if (!res.ok) {
-      showToast(data.error || (appState.language === 'zh-CN' ? '兑换失败' : 'Redeem failed'));
+      showToast(data.error || (isChineseLanguage(appState.language) ? '兑换失败' : 'Redeem failed'));
       return;
     }
 
@@ -14036,15 +18054,15 @@ async function redeemMembership(tier) {
     refreshMembershipPlansModal();
 
     const successMessage = wasActiveTier
-      ? (appState.language === 'zh-CN'
+      ? (isChineseLanguage(appState.language)
         ? `已续期 ${tier} ${option.durationDays} 天`
         : `${tier} renewed for ${option.durationDays} days`)
-      : (appState.language === 'zh-CN'
+      : (isChineseLanguage(appState.language)
         ? `兑换成功，已开通 ${tier}`
         : `${tier} activated successfully`);
     showToast(successMessage);
   } catch (error) {
-    showToast(appState.language === 'zh-CN' ? '网络错误' : 'Network error');
+    showToast(isChineseLanguage(appState.language) ? '网络错误' : 'Network error');
   } finally {
     membershipRedeemPendingTier = null;
     refreshMembershipPlansModal();
@@ -14091,20 +18109,7 @@ function updateUserAreaWithMembership() {
   if (m.canCheckin) {
     checkinContainer.style.display = 'block';
     checkinContainer.innerHTML = `
-          <button onclick="sidebarCheckin()" style="
-            background: linear-gradient(135deg, #f5d547 0%, #e6a824 100%);
-            color: #1a1a1a;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            margin-top: 6px;
-            box-shadow: 0 2px 8px rgba(245, 213, 71, 0.3);
-            transition: transform 0.2s, box-shadow 0.2s;
-          " onmouseover="this.style.transform='scale(1.02)';this.style.boxShadow='0 4px 12px rgba(245, 213, 71, 0.4)';"
-             onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 8px rgba(245, 213, 71, 0.3)';">
+          <button type="button" class="sidebar-checkin-btn" onclick="sidebarCheckin()">
             ${i18nText('checkin-bonus', '签到 +20 ')}
           </button>
         `;
@@ -14183,14 +18188,19 @@ function updateSettingsMembership() {
   }
 
   // 更新创建时间
-  const created = document.getElementById('settingsCreatedAt');
-  if (created && m.createdAt) {
-    const date = new Date(m.createdAt);
-    const locale = appState.language === 'zh-CN' ? 'zh-CN' : 'en-US';
-    created.textContent = `${i18nText('created-at-prefix', '创建于')}: ${date.toLocaleDateString(locale)}`;
-  }
+	  const created = document.getElementById('settingsCreatedAt');
+	  if (created && m.createdAt) {
+	    const date = new Date(m.createdAt);
+	    const locale = getCurrentLocale();
+	    created.textContent = `${i18nText('created-at-prefix', '创建于')}: ${date.toLocaleDateString(locale)}`;
+	  }
 
-  // 升级/续期入口始终可见，方便续期和升级
+	  const taskSection = document.getElementById('settingsTaskSection');
+	  if (taskSection) {
+	    taskSection.innerHTML = renderMembershipTasksSection({ compact: true });
+	  }
+
+	  // 升级/续期入口始终可见，方便续期和升级
   const upgradeLink = document.querySelector('#settingsMembershipSection .settings-upgrade-link');
   if (upgradeLink) {
     upgradeLink.style.display = 'inline';
@@ -14201,13 +18211,17 @@ function updateSettingsMembership() {
 
 // 每60秒刷新一次会员状态
 setInterval(() => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem(RAI_TOKEN_KEY);
   if (token) {
     fetchUserMembership({ applyPolicy: true }).then(() => {
       updateUserAreaWithMembership();
       updateSettingsMembership();
     });
   }
+}, 60000);
+
+setInterval(() => {
+  fetchModelAvailability();
 }, 60000);
 
 // 页面加载后获取会员状态
@@ -14383,6 +18397,10 @@ function createAdminPanel() {
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 8h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2c0-1.1-.9-2-2-2zM1 9h4v12H1z"/></svg>
               <span>用户反馈</span>
             </button>
+            <button class="admin-tab" data-tab="models" onclick="switchAdminTab('models')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 2 7l10 5 10-5-10-5Zm0 7.8L6.47 7 12 4.2 17.53 7 12 9.8ZM4 10.27l8 4 8-4V13l-8 4-8-4v-2.73Zm0 5 8 4 8-4V18l-8 4-8-4v-2.73Z"/></svg>
+              <span>模型开关</span>
+            </button>
             <button class="admin-tab" data-tab="sessions" onclick="switchAdminTab('sessions')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
               <span>会话管理</span>
@@ -14438,6 +18456,10 @@ function createAdminPanel() {
               <div id="adminFeedbackTable" class="admin-table-container"></div>
             </div>
 
+            <div id="adminModelsTab" class="admin-tab-content">
+              <div id="adminModelsPanel" class="admin-table-container"></div>
+            </div>
+
             <div id="adminSessionsTab" class="admin-tab-content">
               <div id="adminSessionsTable" class="admin-table-container"></div>
             </div>
@@ -14466,6 +18488,7 @@ function switchAdminTab(tab) {
   else if (tab === 'users') loadAdminUsers();
   else if (tab === 'messages') loadAdminMessages();
   else if (tab === 'feedback') loadAdminFeedback();
+  else if (tab === 'models') loadAdminModels();
   else if (tab === 'sessions') loadAdminSessions();
 }
 
@@ -14912,6 +18935,65 @@ async function loadAdminFeedback() {
   }
 }
 
+async function loadAdminModels() {
+  const container = document.getElementById('adminModelsPanel');
+  if (!container) return;
+  container.innerHTML = '<div class="admin-loading">加载模型开关中...</div>';
+
+  try {
+    const res = await fetch('/api/admin/models', {
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '加载失败');
+
+    const models = data.models || [];
+    container.innerHTML = `
+      <div class="admin-model-switch-list">
+        <div class="admin-model-switch-note">关闭后普通用户的模型列表会隐藏该模型；如果用户当前已选中该模型，前端会自动切回智能模型。</div>
+        ${models.map((model) => `
+          <div class="admin-model-switch-item">
+            <div>
+              <div class="admin-model-switch-name">${escapeHtml(model.name || model.id)}</div>
+              <div class="admin-model-switch-meta">${escapeHtml(model.id)} · ${escapeHtml(model.group || '模型')}</div>
+            </div>
+            <label class="admin-switch">
+              <input type="checkbox" ${model.enabled ? 'checked' : ''} onchange="toggleAdminModel('${escapeHtml(model.id)}', this.checked, this)">
+              <span></span>
+            </label>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="admin-error">加载模型开关失败：${escapeHtml(err.message || 'unknown')}</div>`;
+  }
+}
+
+async function toggleAdminModel(modelId, enabled, inputEl) {
+  if (inputEl) inputEl.disabled = true;
+  try {
+    const res = await fetch(`/api/admin/models/${encodeURIComponent(modelId)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': adminState.token
+      },
+      body: JSON.stringify({ enabled })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '更新失败');
+    await fetchModelAvailability();
+    loadAdminModels();
+  } catch (err) {
+    if (inputEl) {
+      inputEl.checked = !enabled;
+      inputEl.disabled = false;
+    }
+    alert('更新模型开关失败: ' + (err.message || '未知错误'));
+  }
+}
+
 async function deleteMessage(messageId) {
   if (!confirm('确定要删除这条消息吗？')) return;
 
@@ -14995,12 +19077,18 @@ async function deleteAdminSession(sessionId) {
 function formatDate(dateStr) {
   if (!dateStr) return '-';
   const d = new Date(dateStr);
-  return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  const locale = getCurrentLocale();
+  return d.toLocaleDateString(locale) + ' ' + d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
-// 键盘快捷键: Ctrl+Shift+A 打开管理员入口
+// 键盘快捷键: Windows/Linux Ctrl+Shift+A；macOS Control+Option+A 打开管理员入口
 document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+  const key = String(e.key || '').toLowerCase();
+  const adminShortcutPressed = key === 'a' && (
+    (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) ||
+    (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey)
+  );
+  if (adminShortcutPressed) {
     e.preventDefault();
     console.log(' 管理员快捷键触发');
     if (adminState.isLoggedIn) {

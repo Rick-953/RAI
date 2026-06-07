@@ -1,0 +1,702 @@
+﻿RAI 项目运维与部署说明（统一环境变量版）
+
+更新时间：2026-06-04
+
+========================================
+会话基线（RAI 开发 / 运维压缩上下文）
+更新时间：2026-03-06
+========================================
+1. 项目范围
+- 当前对话仅聚焦 RAI 的开发、部署、运维、模型路由、前端交互、GitHub/VPS 同步。
+
+2. 关键本地路径
+- 项目目录：c:\Users\liuru\OneDrive\Project\镜像\rick\apps\rai\
+- 主要文件：
+  server.js
+  public/app.js
+  public/index.html
+  public/styles.css
+  agent/engine.js
+  agent/plan-parser.js
+  agent/prompts.js
+
+3. 关键线上环境
+- VPS：82.158.88.216
+- SSH端口：20408
+- 部署目录：/rick/apps/rai
+- PM2 进程名：rai
+- 严禁覆盖：ai_data.db
+
+4. 当前模型策略
+- auto / 智能模型：默认走 kimi-k2.5
+- DeepSeek：前端显示 DeepSeek V4，后端路由模型为 deepseek-v4-flash；旧 deepseek-chat / deepseek-reasoner 仅保留兼容别名
+- 免费回退模型：qwen2.5-7b
+- OpenRouter 限免模型：ChatGPT(openai/gpt-oss-120b:free)
+- Grok 4.2：前端显示 Grok 4.2，后端与 GPT-5.5 共用 NewAPI 通道，模型 ID 为 `grok-4.2`，密钥走 `NEWAPI_API_KEY`；前端按 `限免` 展示；当前 custom 通道实际返回 `grok-420-fast`，会把 `<think>...</think>` 直接混在正文中，服务端已拆分为 reasoning / content；若返回 `No available channel for model grok-4.2 under group ...`，说明当前令牌分组没有可用 Grok 渠道，需要在 NewAPI 后台补通道或切换分组
+- GPT-5.5（NewAPI）：限免模型，free 用户每日 10 次，Pro/MAX 不受该 free 限额约束；若出现 `No available channel ... under group vip`，需在 NewAPI 后台调整令牌分组到有 gpt-5.5 可用通道的分组（当前 `main` 已验证可用）
+- 统一运行期备用链：任意主模型上游失败、模型不可用、网络/超时失败时，后端按 `chatgpt-gpt-oss-120b -> gemma -> qwen2.5-7b` 顺序自动重试；如果主模型本身在备用链中，会跳过自身继续尝试其他备用模型。GPT-5.5 限免额度用完或配额检查失败时也按该备用链回退
+- Gemma：优先使用 Google 官方 Generative Language API，模型 gemma-4-31b-it，256K 上下文，输出上限 8K；生产改为经美国机 Google relay 访问，主 VPS 配 `GOOGLE_GEMINI_BASE_URL` 指向 relay，`GOOGLE_GEMINI_API_KEY` 填 relay token，真实 Google key 只放美国机；Gemma 4 31B 官方接口会返回 thought parts，但当前不支持 `thinkingBudget` / `reasoning_effort` 调节
+- Claude：前端模型列表同时展示 anthropic/claude-sonnet-4.6 与 anthropic/claude-3-haiku（均为 MAX 专用，free/Pro 灰显不可用，MAX 显示黑金标识）；服务端白名单已纳入这两个模型，避免误判回退到 Qwen；历史别名 claude-haiku 现已纠正为映射到 anthropic/claude-3-haiku；当前主 VPS 出口对 OpenRouter Claude 会触发 region blocked，因此 Claude 相关 OpenRouter 请求改为经美国 relay 转发，主 VPS 仅持有 relay token，真实 OpenRouter key 放在美国 relay 上
+- Poe 模型：当前前端已隐藏，不作为主线能力
+- 研究模式：快速研究和深度研究都会启用聊天气泡式多模型讨论。Gemma、Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 按顺序轮流发言，每次只输出一两句精华；每个模型都能看到前序模型发言和用户实时插话；子模型只质疑其他模型，不质疑用户问题；至少 3/4 子模型认为无重大问题后才允许主控输出最终正文。快速研究关闭 thinking、使用低推理强度并缩短轮次；深度研究开启 thinking，且每个子模型气泡内可折叠查看自己的 thinking。
+- 会员兑换：每日签到 +20 点，Pro 兑换成本按 28 天签到计算为 560 点，会员时长仍为 30 天；MAX 仍为 6000 点 / 30 天。任务积分：把 RAI 放到桌面 +300；邀请一位用户 +600。
+- 首页欢迎卡片：写作 / 财务 / 代码 / 翻译
+- 财务模式：domainMode=finance，默认开启联网并优先使用 finance_quote 工具
+- 管理员模型开关：v0.10.9 起后台新增“模型开关”；关闭后该模型会从普通用户主模型菜单、移动模型菜单、ChatFlow 菜单和重新生成模型下拉中隐藏，已选中该模型的前端会自动切回 auto / 智能模型；后端会兜底把直接提交的关闭模型改按 auto 处理。开关状态保存在 SQLite 表 `model_visibility`，上线时禁止覆盖 `ai_data.db`。
+
+5. 当前前端状态
+- 推理强度控件已改为滑块
+- 仅在开启推理模式时显示“推理时间”
+- 中文档位：短 / 中 / 长 / 自适应
+- regenerate 弹窗中的专家模型已改为 kimi-k2.5
+- 模型列表供应商图标：DeepSeek 蓝色鲸鱼、Kimi/Qwen PNG、OpenAI/Gemini/Grok SVG；全部模型列表只展示品牌短名（DeepSeek V4 / Kimi / Qwen / ChatGPT / Grok 4.2 / Gemma）；极速/专家入口保持抽象图标，不暴露供应商
+- 模型菜单：选中态不再使用对勾；菜单固定窄宽并隐藏滚动条占位，展开“全部模型”不应改变整体宽度；图标和名称左对齐、标签靠右；Claude 的 MAX 徽标按会员状态显示黑金渐变
+- 重新生成链路：允许本地未完成入库的助手消息继续重新生成；主聊天和重新生成请求都使用后端参数名 top_p / max_tokens / frequency_penalty / presence_penalty；流式 HTTP 错误会先转成可读报错，不再按 SSE 继续解析
+- Mermaid 图表：流式阶段使用独立 `.mermaid-inline-wrapper`，不再依赖普通 Markdown 代码块二次改写；最终渲染与流式渲染共用安全渲染入口；`xychart-beta` 会自动修复未加引号的 title / x-axis / y-axis 常见输出
+- 横屏平板/电脑首页输入框宽度：主内容区域（总宽度减侧边栏）约三分之二；移动竖屏不套用该规则
+- v0.10.9：管理员后台新增模型开关标签页，前端每 60 秒刷新一次模型可见性，管理员修改后会立即刷新当前管理端页面。
+- v0.10.9.11：设置 → 关于新增“添加到桌面”入口；Chrome / Edge 支持 `beforeinstallprompt` 原生安装弹窗；Safari / iPhone / iPad / macOS 会显示对应手动步骤；已补齐 Web App Manifest、Service Worker、192/512 PNG 安装图标与 Apple touch icon。
+- v0.10.9.12：新增服务端 `user_task_rewards` 任务奖励表；未完成“把 RAI 放到桌面”任务的登录用户每次打开 Web 版都会看到“添加RAI到app获得积分300！”弹窗；已完成任务或曾从安装好的 RAI App 打开并上报后不再弹。订阅设置和点数兑换弹窗均展示“把 RAI 放到桌面 +300 / 邀请一位用户 +600”；邀请链接格式为 `?ref=<userId>`，新用户注册后给邀请人加 600 点；点数不足时提示做任务或签到增加积分；研究模式讨论气泡改为左上小圆角、其余三角大圆角。
+- v0.10.9.13：桌面 App 图标继续只保留土星图形，SVG 内也移除 `RAI` 文本/辅助标签；已经在更新前添加过 RAI 到桌面的用户可在弹窗或任务列表点击“已添加，领取积分”直接完成“把 RAI 放到桌面”任务，无需删除并重新安装；任务列表容器背景移除，仅保留单条任务背景，与设置/订阅页设计语言一致。
+- v0.10.9.14：新增 Tauri v2 桌面客户端基础版；macOS 菜单栏 / Windows 系统托盘图标可打开快速对话窗口或完整窗口；桌面客户端内置现有 `public/` 静态前端、业务 API 固定连接线上 `https://rai.rick.quest`，不打包 Chromium；Tauri 环境不注册 Service Worker、不显示 PWA 安装弹窗，登录后通过 `tauri-desktop` 上报“把 RAI 放到桌面”任务且仍只奖励一次；服务端 CORS 白名单新增 Tauri 本地 origin；Tauri/Cargo 内部包版本使用合法 semver `0.10.9+14`，用户侧版本显示仍为 `v0.10.9.14`。
+- v0.10.9.15：修复 Tauri 桌面小窗登录同步；macOS 顶栏快速小窗不再随应用启动提前创建，而是在点击时创建并触发 `syncTauriAuthStateFromStorage`，窗口获得焦点、变为可见或收到 storage 变化时会从 `rai_token` 重新验证登录；会员/积分/签到/任务状态获取成功后立即刷新设置页，定时刷新也改为读取 `rai_token`；设置页新增仅 Tauri 桌面端可见的“桌面端”入口，网页版不显示，可打开快速小窗、完整窗口或隐藏窗口；图标重新生成，保持无文字土星标识，使用不透明深色底和连续圆角矩形，避免四角露白；Tauri/Cargo 内部包版本使用合法 semver `0.10.9+15`，用户侧版本显示 `v0.10.9.15`。
+- v0.10.9.16：修复 RAI 图标“圆角外黑底”问题；`rai-app-icon.svg` 保持真正矢量图，只保留土星圆角矩形主体，不再绘制 512x512 全画布黑色背景；Web Manifest 优先声明 SVG 图标，192/512 PNG、Tauri PNG/ICNS/ICO 由该透明底图标重新生成；本地像素抽样确认 PNG 四角 alpha=0、圆角主体 alpha=255，图标内仍不包含 RAI 文字；设置关于页“添加到桌面”卡片新增 macOS 桌面版 DMG 下载入口；桌面端设置状态行移除绿色圆点装饰，保持设置页设计语言统一。
+- PWA 安装检测边界：可可靠检测“当前是否从安装好的 RAI App 打开”（`display-mode: standalone/window-controls-overlay` 与 iOS `navigator.standalone`）；不可跨浏览器可靠检测“用户以前是否安装过”。当前用服务端 `user_task_rewards` 记录账号级奖励完成状态；`appinstalled`、独立 App 模式打开、本浏览器本地弱标记 `rai_pwa_installed_hint`，以及用户主动点击“已添加，领取积分”都会尝试上报完成任务。App 图标只保留土星图形，不在图标内写 RAI，避免与系统图标下方名称重复。
+
+6. 当前 Git / 部署状态
+- GitHub 仓库：https://github.com/Rick-953/RAI
+- 已推送提交：40f8979 Update RAI UI and agent pipeline files
+- 本地 v0.10.9.14 开发备份目录：`_local_backup_20260602_142032_before_tauri_desktop_v010914/`；本地已安装 Rust stable，`npm run check` 与 `npm run desktop:check` 通过；macOS 本地 `npm run desktop:build` 已生成 `src-tauri/target/release/bundle/macos/RAI.app` 和 `src-tauri/target/release/bundle/dmg/RAI_0.10.9+14_aarch64.dmg`，并验证 `.app` 可启动后退出。`src-tauri/target/` 已由 `src-tauri/.gitignore` 排除，禁止同步到 VPS / GitHub。
+- 本地 v0.10.9.15 修复备份目录：`_local_backup_20260602_144329_before_tauri_sync_icon_desktop_settings_v010915/`；本地 `npm run check` 与 `npm run desktop:check` 通过；macOS 本地 `npm run desktop:build` 已生成 `src-tauri/target/release/bundle/macos/RAI.app` 和 `src-tauri/target/release/bundle/dmg/RAI_0.10.9+15_aarch64.dmg`，并验证 `.app` 可启动后退出，Info.plist 为 `CFBundleName=RAI`、`CFBundleIdentifier=quest.rick.rai`、`CFBundleShortVersionString=0.10.9+15`。
+- 本地 v0.10.9.16 图标修复备份目录：`_local_backup_20260604_160540_before_transparent_vector_icon_v010916/`；App 下载入口追加备份目录：`_local_backup_20260604_161319_before_app_download_link_v010916/`；本地 `npm run check` 与 `npm run desktop:check` 通过；本地像素抽样确认 `public/icons/rai-app-icon-512.png`、`public/icons/rai-app-icon-192.png`、`src-tauri/icons/icon.png` 的左上角/右下角 alpha 均为 0；macOS 本地 `npm run desktop:build` 已生成 `src-tauri/target/release/bundle/macos/RAI.app` 和 `src-tauri/target/release/bundle/dmg/RAI_0.10.9+16_aarch64.dmg`，并验证新构建 `.app` 可启动后退出，Info.plist 为 `CFBundleName=RAI`、`CFBundleIdentifier=quest.rick.rai`、`CFBundleShortVersionString=0.10.9+16`；公开下载链接为 `https://rai.rick.quest/downloads/RAI-macOS-arm64-0.10.9.16.dmg`，文件 SHA256=`ddca6de3c66cab397ae162b880f89668a8bcc9435d991d0d2473a0eeda5b01f7`；构建时已避免把 DMG 递归打入 `.app`，Service Worker 跳过 `/downloads/`，避免缓存 DMG。
+- VPS 当前已同步 v0.10.9.16：透明矢量图标、App 下载入口、桌面端状态行去绿色圆点、缓存号 `20260604-transparent-icon-download-v010916` 已上线；PM2 `rai` 已 `restart --update-env` 并 `pm2 save`；远端备份目录：`/rick/apps/rai/_remote_backup_20260604_rai_v0.10.9.16_transparent_icon_download`；严禁覆盖的 `ai_data.db` 未上传，主库 SHA256 上线前后均为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+- 本次校验：本地 `npm run check` 通过；本地 `npm run desktop:check` 通过；本地 macOS `npm run desktop:build` 通过并生成 `RAI.app` / `RAI_0.10.9+16_aarch64.dmg`；本地新构建 `.app` 启动进程 `rai_desktop` 后可退出，Info.plist 确认 `CFBundleShortVersionString=0.10.9+16`；本地 PNG 像素抽样确认 512/192/Tauri 图标四角 alpha=0；VPS `npm run check` 通过；`pm2 jlist` 校验 `rai` status=`online`、pid=`2725671`、version=`0.10.9.16`；VPS 本机 `/api/version` 返回 `0.10.9.16`；VPS 侧访问公网 `https://rai.rick.quest/api/version` 返回 `0.10.9.16`；公网首页确认 `v0.10.9.16`、下载链接 `https://rai.rick.quest/downloads/RAI-macOS-arm64-0.10.9.16.dmg`、缓存号 `20260604-transparent-icon-download-v010916` 生效且不含 `settings-desktop-dot`；公网 `app.js` 确认 `settings-install-download-macos` 和 v0.10.9.16 更新时间线生效；公网 `styles.css` 确认不含 `.settings-desktop-dot`；公网 `sw.js` 确认跳过 `/downloads/` 且版本为 `0.10.9.16-20260604-transparent-icon-download`；公网下载 DMG `Content-Length=5860700`，SHA256=`ddca6de3c66cab397ae162b880f89668a8bcc9435d991d0d2473a0eeda5b01f7`；远端 `src-tauri/target` 确认不存在；远端 SVG 图标确认不含 `RAI` / `<text>` / `aria-label` / 全画布黑底 rect，远端 512 PNG SHA256 与本地一致。
+- GitHub 状态：已从远端仓库重新克隆到 `/tmp/rai-github-v010916`，同步 v0.10.9.16 已上线代码（不包含 `ai_data.db` / `.env` / node_modules / Tauri target / `.DS_Store`，README 未覆盖），clone 内 `npm run check` 与 `npm run desktop:check` 均通过，密钥扫描只命中运维文档占位符；已生成本地提交 `Update RAI to v0.10.9.16`；执行 `git push origin main` 仍被本机 GitHub HTTPS 凭据拦截：`fatal: could not read Username for 'https://github.com': Device not configured`，尚未推送到 GitHub 远端。
+- 追加处理 macOS “文件已损坏”提示：本地验证原 DMG 的 `hdiutil verify` 通过，说明文件未损坏；但 `.app` 是未公证 ad-hoc 包，且初版 bundle 签名结构不完整，其他 Mac 下载后会被 Gatekeeper 误报为损坏。本机钥匙串检查 `security find-identity -v -p codesigning` 返回 `0 valid identities found`，当前无法做 Developer ID 签名和 Apple notarization。已先将 `.app` 复制到 `/tmp/rai-resign-v010916/RAI.app`，清理扩展属性，执行 `codesign --force --deep --sign - --options runtime --timestamp=none` 重新 ad-hoc 签名；重新生成 DMG 后 `codesign --verify --deep --strict` 与 `hdiutil verify` 均通过，线上下载文件已替换，SHA256=`794b8d8c290ccde5fee801b09e46c90958e015fb1fe52014a0af166c54375968`；但 `spctl` 仍拒绝该包，原因是缺少 Apple Developer ID 签名/公证，正式对外分发仍需 Apple Developer 证书与 notarization。
+- VPS 当前已同步 v0.10.9.14：Tauri v2 桌面客户端源码、线上 API 改写、Tauri CORS 白名单、桌面客户端任务上报、缓存号 `20260602-tauri-desktop-v010914` 已上线；PM2 `rai` 已 `restart --update-env` 并 `pm2 save`；远端备份目录：`/rick/apps/rai/_remote_backup_20260602_rai_v0.10.9.14_tauri_desktop`；严禁覆盖的 `ai_data.db` 未上传，主库 SHA256 上线前后均为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+- VPS 当前已同步 v0.10.9.15：桌面小窗登录同步、桌面端会员/积分设置刷新、桌面端专属设置入口和无白角图标已上线；PM2 `rai` 已 `restart --update-env` 并 `pm2 save`；远端备份目录：`/rick/apps/rai/_remote_backup_20260602_rai_v0.10.9.15_tauri_sync_icon`；严禁覆盖的 `ai_data.db` 未上传，主库 SHA256 上线前后均为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+- 本次校验：本地 `npm run check` 通过；本地 `npm run desktop:check` 通过；本地 macOS `npm run desktop:build` 通过并生成 `RAI.app` / `RAI_0.10.9+15_aarch64.dmg`；本地 `.app` 启动进程 `rai_desktop` 后可退出，Info.plist 确认 `CFBundleName=RAI`、`CFBundleIdentifier=quest.rick.rai`、`CFBundleShortVersionString=0.10.9+15`；本地查看 `public/icons/rai-app-icon-512.png` 确认无文字、无白角；VPS `npm run check` 通过；`pm2 jlist` 校验 `rai` status=`online`、pid=`2449740`、version=`0.10.9.15`；VPS 本机 `/api/version` 返回 `0.10.9.15`；公网 `https://rai.rick.quest/api/version` 返回 `0.10.9.15`；公网首页确认 `v0.10.9.15`、`settingsPanel-desktop` 和缓存号 `20260602-tauri-sync-icon-v010915` 生效；公网 `app.js` 确认 `syncTauriAuthStateFromStorage`、`localStorage.getItem(RAI_TOKEN_KEY)`、`settings-nav-desktop`、`desktop_show_quick_window`、会员设置刷新逻辑生效；公网 `sw.js` 确认新缓存版本；Tauri Origin `tauri://localhost` 的 `/api/version` CORS 响应含 `Access-Control-Allow-Origin: tauri://localhost`；远端 `src-tauri/target` 确认不存在；公网 SVG 图标确认不含 `RAI` / `<text>` / `aria-label`，公网 512 PNG 为 512x512 RGBA。
+- GitHub 状态：已在干净 clone `/tmp/rai-github-v010914` 中同步 v0.10.9.15 部署代码（不包含 `ai_data.db` / `.env` / node_modules / Tauri target / 运维备份），clone 内 `npm run check` 与 `npm run desktop:check` 均通过，密钥扫描只命中占位符；已生成本地提交 `f1884a4 Add RAI Tauri desktop client` 和 `565c51c Update RAI desktop ops log`；执行 `git push origin main` 仍被本机 GitHub HTTPS 凭据拦截：`fatal: could not read Username for 'https://github.com': Device not configured`，尚未推送到 GitHub 远端。
+- 本次校验：本地 `npm run check` 通过；本地 `npm run desktop:check` 通过；本地 macOS `npm run desktop:build` 通过并生成 `RAI.app` / `RAI_0.10.9+14_aarch64.dmg`；本地 `.app` 启动进程 `rai_desktop` 后可退出，Info.plist 确认 `CFBundleName=RAI`、`CFBundleIdentifier=quest.rick.rai`；VPS `npm run check` 通过；`pm2 jlist` 校验 `rai` status=`online`、pid=`2447380`、version=`0.10.9.14`；VPS 本机 `/api/version` 返回 `0.10.9.14`；公网 `https://rai.rick.quest/api/version` 返回 `0.10.9.14`；公网首页确认 `v0.10.9.14` 与缓存号 `20260602-tauri-desktop-v010914` 生效；公网 `app.js` 确认 `RAI_IS_TAURI_DESKTOP`、`RAI_PRODUCTION_ORIGIN`、`tauri-desktop` 上报逻辑生效；公网 `sw.js` 确认新缓存版本；Tauri Origin `tauri://localhost` 的 `/api/version` CORS 响应含 `Access-Control-Allow-Origin: tauri://localhost`；远端 `src-tauri/target` 确认不存在；公网 SVG 图标确认不含 `RAI` / `<text>` / `aria-label`。
+- VPS 当前已同步 v0.10.9.13：已添加桌面 App 的老用户可直接领取 300 积分、桌面图标不含 RAI 字样、任务列表容器去背景已上线；PM2 `rai` 已 `restart --update-env` 并 `pm2 save`。
+- 本次上线版本：v0.10.9.13，变更文件包括 server.js、public/app.js、public/styles.css、public/index.html、public/sw.js、public/site.webmanifest、public/icons/rai-app-icon.svg、package.json、package-lock.json、更新运维.txt；本地备份目录：`_local_backup_20260601_0024_before_pwa_claim_task_style/`；VPS 备份目录：`/rick/apps/rai/_remote_backup_20260601_rai_v0.10.9.13_pwa_claim_task_style`；严禁覆盖的 `ai_data.db` 未上传，主库 SHA256 仍为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`，线上临时账号测试写入后已清理，SQLite WAL SHA256 为 `6980d0d0d14ddeb0661c79f56a65ea4eea5385625eedc9dc69b6247c2e676c54`。
+- 本次校验：本地 `npm run check` 通过；本地临时服务 `PORT=3021` 验证 `/api/version=0.10.9.13`、PWA 任务 `already-installed-claim` 首次 +300 且重复上报不加分；本地 Chrome headless 验证网页登录弹窗含“已添加，领取积分”、任务按钮含“去添加 / 已添加，领取”、任务列表容器背景透明且单条任务背景保留；VPS `npm run check` 通过；`pm2 jlist` 校验 `rai` status=`online`、pid=`2336245`、version=`0.10.9.13`；公网 `https://rai.rick.quest/api/version` 与 `http://82.158.88.216:3009/api/version` 均返回 `0.10.9.13`；公网首页确认 `v0.10.9.13`、缓存号 `20260601-pwa-claim-task-style-v010913` 生效；公网 `app.js` 确认 `PWA_INSTALL_CLAIM_SOURCE`、`claimAlreadyInstalledPwaReward` 和“已添加，领取积分”文案生效；公网 `styles.css` 确认 `.membership-task-section` 透明、`.membership-task-item` 背景保留、`.membership-task-actions` 生效；VPS SVG 图标确认不含 `RAI` / `<text>` / `aria-label`；公网临时测试账号验证“已添加，领取”+300 后已从生产库删除，剩余测试账号数 0。
+- GitHub 状态：已在干净 clone `/tmp/rai-github-v010912` 中同步 v0.10.9.13 部署代码（不包含 `ai_data.db` / `.env` / node_modules / 运维备份），`npm run check` 通过并生成提交 `7e32756 Update RAI to v0.10.9.13`；执行 `git push origin main` 仍被本机 GitHub HTTPS 凭据拦截：`fatal: could not read Username for 'https://github.com': Device not configured`，尚未推送到 GitHub 远端。
+- 本次上线版本：v0.10.9.12，变更文件包括 server.js、public/app.js、public/styles.css、public/index.html、public/sw.js、package.json、package-lock.json、更新运维.txt；本地备份目录：`_local_backup_20260531_215821_before_points_tasks_pwa_reward_v010912/`；VPS 备份目录：`/rick/apps/rai/_remote_backup_20260601_rai_v0.10.9.12_points_tasks`；严禁覆盖的 `ai_data.db` 未上传，主库 SHA256 仍为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`，新增表变更进入 SQLite WAL。
+- 本次校验：本地 `npm run check` 通过；本地临时服务 `PORT=3020` 验证 `/api/version=0.10.9.12`、邀请注册给邀请人 +600、PWA 任务首次 +300 且重复上报不加分；本地 Chrome headless 验证登录 Web 版弹出“添加RAI到app获得积分300！”、订阅设置展示“把 RAI 放到桌面 / 邀请一位用户”和 `?ref=` 邀请链接；VPS `npm run check` 通过；`pm2 jlist` 校验 `rai` status=`online`、pid=`2232149`、version=`0.10.9.12`；远端 SQLite 确认 `user_task_rewards` 表存在；公网 `https://rai.rick.quest/api/version` 与 `http://82.158.88.216:3009/api/version` 均返回 `0.10.9.12`；公网首页确认 `v0.10.9.12`、缓存号 `20260531-points-tasks-v010912` 和 `settingsTaskSection` 生效；公网 `app.js` 确认 `pwa-install/complete`、`points_info`、任务文案生效；公网 `styles.css` 确认 `.pwa-reward-overlay`、`.membership-task-section` 和研究气泡 `border-radius: 6px 18px 18px 18px` 生效；公网临时测试账号验证邀请 +600 与桌面 App +300 后已从生产库删除，剩余测试账号数 0。
+- GitHub 状态：已从远端仓库重新克隆到 `/tmp/rai-github-v010912`，同步 v0.10.9.12 部署代码（不包含 `ai_data.db` / `.env` / node_modules / 运维备份），`npm run check` 通过并生成提交 `373af22 Update RAI to v0.10.9.12`；执行 `git push origin main` 被本机 GitHub HTTPS 凭据拦截：`fatal: could not read Username for 'https://github.com': Device not configured`，尚未推送到 GitHub 远端。
+- 本次上线版本：v0.10.9.11，变更文件包括 server.js、public/app.js、public/styles.css、public/index.html、public/site.webmanifest、public/sw.js、public/icons/rai-app-icon.svg、public/icons/rai-app-icon-192.png、public/icons/rai-app-icon-512.png、package.json、package-lock.json、更新运维.txt；本地备份目录：_local_backup_20260531_212110_before_pwa_install_v010911/；VPS 备份目录：`/rick/apps/rai/_remote_backup_20260531_rai_v0.10.9.11_pwa_install`；上线前后 `ai_data.db` SHA256 均为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+- 本次校验：本地 `npm run check` 通过；本地临时服务 `PORT=3019` 验证 `/api/version=0.10.9.11`、`/site.webmanifest` JSON 正常、`/sw.js` 带 `Service-Worker-Allowed: /`；VPS `npm run check` 通过；`pm2 jlist` 校验 `rai` status=`online`、pid=`2218838`、version=`0.10.9.11`；公网 `https://rai.rick.quest/api/version` 与 `http://82.158.88.216:3009/api/version` 均返回 `0.10.9.11`；公网首页确认 `v0.10.9.11`、缓存号 `20260531-pwa-install-v010911`、`settingsInstallCard`、Manifest 与 Service Worker 生效；公网 `app.js` 确认 `rai_pwa_installed_hint`、`beforeinstallprompt`、`appinstalled` 生效；公网图标 SVG 确认不含 `<text>` / `>RAI<`。
+- GitHub 状态：v0.10.9.10 已在干净 clone `/tmp/rai-github-v010910` 中追加 README 说明并生成提交 `62fb4ba Update RAI to v0.10.9.10`；已执行 `npm run check` 和密钥扫描，未包含 `ai_data.db` / `.env`；`git push origin main` 被 GitHub HTTPS 凭据拦截：`could not read Username for 'https://github.com': Device not configured`，尚未推送到远端。
+- 追加核查：最终审查发现兼容旧 agentMode 的失败提示仍残留“4倍速深度研究”文案，已改为“高级研究仅 MAX 会员可用”；本地补丁备份目录：_local_backup_20260528_141538_before_final_audit_patch/。
+- README 发布规则：默认不同步本地旧 README 到 GitHub；只有明确编辑 README 时才单独提交 README
+
+7. 安全约束
+- API Key 只放环境变量，不写入代码
+- GitHub 提交中不包含 ai_data.db / .db / .env
+- 涉及敏感信息变更时，先确认再推送主线
+- 代码同步 / GitHub 推送时，README 必须显式确认后再覆盖，禁止默认镜像本地 README
+- 若启用美国 relay，主 VPS 的 OPENROUTER_API_KEY 应配置为 relay token，不直接暴露真实 OpenRouter key
+- 若启用 Google relay，主 VPS 的 GOOGLE_GEMINI_API_KEY 应配置为 relay token，不直接暴露真实 Google key
+- 版本发布规则：因历史版本已存在 `0.10.x`，自 2026-05-22 起每次上线默认在 `0.10` 前缀内递增一个小版本号（例如 `0.10.8`、`0.10.9`、`0.10.9.1`）；除非 Rick 主动要求改变大版本，否则不要再回退到 `0.9` 前缀，也不要擅自升到更高大版本。
+
+========================================
+一、服务器信息
+========================================
+IP: 82.158.88.216
+SSH端口: 20408
+用户: root
+
+服务器目录：
+/rick/apps/rai/
+├── server.js
+├── ai_data.db                  # SQLite 数据库（禁止覆盖）
+├── public/
+│   ├── index.html
+│   ├── styles.css
+│   ├── app.js
+│   ├── site.webmanifest
+│   ├── sw.js
+│   └── lib/marked.min.js
+└── agent/
+    ├── engine.js
+    ├── prompts.js
+    └── plan-parser.js
+
+本地目录：
+c:\Users\liuru\OneDrive\Project\镜像\rick\apps\rai\
+
+========================================
+二、统一环境变量命名（必须一致）
+========================================
+以下变量名在本地与 VPS 必须完全一致：
+
+1. TAVILY_API_KEY
+2. ALIYUN_API_KEY
+3. DEEPSEEK_API_KEY
+4. SILICONFLOW_API_KEY
+5. POE_API_KEY
+6. OPENROUTER_API_KEY
+7. GOOGLE_GEMINI_API_KEY
+8. JWT_SECRET
+9. NEWAPI_API_KEY          # NewAPI / Lightcone AI key，用于 gpt-5.5
+
+可选变量：
+10. NEWAPI_BASE_URL       # 默认 https://api.18363221.xyz/v1/chat/completions
+11. ZTX6D_APP_ID          # ZTX6D 管理后台分配的 appid
+12. ZTX6D_APP_KEY         # ZTX6D 管理后台分配的 appkey，只允许服务端使用
+13. ZTX6D_CALLBACK_URL    # 默认按当前域名生成；生产建议 https://rai.rick.quest/api/auth/ztx6d/callback
+14. PUBLIC_BASE_URL       # 生产建议 https://rai.rick.quest，用于 SSO 回跳地址生成
+15. TRUST_PROXY           # 反代场景建议设置为 1
+16. AGENT_HARD_DISABLE    # 1=禁用Agent模式，0或不设=启用
+17. AGENT_DEBUG           # 1=输出Agent调试日志
+18. OPENROUTER_BASE_URL   # 可选；默认官方 OpenRouter 地址，出口受限时可指向美国 relay
+19. GOOGLE_GEMINI_BASE_URL # 可选；默认 Google 官方 models 地址，出口受限时可指向美国 relay
+
+注意：
+- 不再允许在代码里硬编码 API Key。
+- 变量名不要混用别名，不要改大小写。
+- ZTX6D_APP_KEY / NEWAPI_API_KEY 不要暴露给前端或写入 Git。
+
+========================================
+三、更新代码到服务器（不覆盖数据库）
+========================================
+PowerShell：
+
+cd "c:\Users\liuru\OneDrive\Project\镜像\rick\apps\rai"
+scp -P 20408 -o StrictHostKeyChecking=no \
+  server.js package.json package-lock.json 更新运维.txt \
+  root@82.158.88.216:/rick/apps/rai/
+
+scp -P 20408 -o StrictHostKeyChecking=no \
+  public/app.js public/styles.css public/index.html public/site.webmanifest public/sw.js \
+  root@82.158.88.216:/rick/apps/rai/public/
+
+scp -P 20408 -o StrictHostKeyChecking=no \
+  public/icons/OpenAI.svg public/icons/GoogleGemini.svg public/icons/Grok.svg \
+  public/icons/rai-app-icon.svg public/icons/rai-app-icon-192.png public/icons/rai-app-icon-512.png \
+  root@82.158.88.216:/rick/apps/rai/public/icons/
+
+scp -P 20408 -o StrictHostKeyChecking=no \
+  agent/engine.js agent/prompts.js agent/plan-parser.js \
+  root@82.158.88.216:/rick/apps/rai/agent/
+
+说明：
+- 不要上传 ai_data.db
+- 不要执行任何覆盖数据库的命令
+
+========================================
+四、在 VPS 覆盖环境变量并重启
+========================================
+登录：
+ssh -p 20408 root@82.158.88.216
+
+若本次不改环境变量，只更新代码，优先执行：
+cd /rick/apps/rai
+pm2 restart rai
+pm2 save
+
+执行（将尖括号替换为真实值）：
+cd /rick/apps/rai
+TAVILY_API_KEY='<YOUR_TAVILY_API_KEY>' \
+ALIYUN_API_KEY='<YOUR_ALIYUN_API_KEY>' \
+DEEPSEEK_API_KEY='<YOUR_DEEPSEEK_API_KEY>' \
+SILICONFLOW_API_KEY='<YOUR_SILICONFLOW_API_KEY>' \
+POE_API_KEY='<YOUR_POE_API_KEY>' \
+OPENROUTER_API_KEY='<YOUR_OPENROUTER_API_KEY_OR_RELAY_TOKEN>' \
+OPENROUTER_BASE_URL='<YOUR_OPENROUTER_BASE_URL>' \
+GOOGLE_GEMINI_API_KEY='<YOUR_GOOGLE_GEMINI_API_KEY_OR_RELAY_TOKEN>' \
+GOOGLE_GEMINI_BASE_URL='<YOUR_GOOGLE_GEMINI_BASE_URL>' \
+NEWAPI_API_KEY='<YOUR_NEWAPI_API_KEY>' \
+NEWAPI_BASE_URL='https://api.18363221.xyz/v1/chat/completions' \
+ZTX6D_APP_ID='<YOUR_ZTX6D_APP_ID>' \
+ZTX6D_APP_KEY='<YOUR_ZTX6D_APP_KEY>' \
+ZTX6D_CALLBACK_URL='https://rai.rick.quest/api/auth/ztx6d/callback' \
+PUBLIC_BASE_URL='https://rai.rick.quest' \
+JWT_SECRET='<YOUR_JWT_SECRET>' \
+TRUST_PROXY=1 \
+pm2 restart rai --update-env
+
+持久化 PM2 进程环境：
+pm2 save
+
+========================================
+五、上线后校验
+========================================
+1) 进程状态
+pm2 status
+
+2) 数据库未被覆盖
+ls -l /rick/apps/rai/ai_data.db
+
+3) 关键环境变量已注入（只看是否存在，不回显明文）
+pm2 jlist | grep -E "TAVILY_API_KEY|ALIYUN_API_KEY|DEEPSEEK_API_KEY|SILICONFLOW_API_KEY|POE_API_KEY|OPENROUTER_API_KEY|GOOGLE_GEMINI_API_KEY|NEWAPI_API_KEY|ZTX6D_APP_ID|ZTX6D_APP_KEY|JWT_SECRET"
+
+说明：
+- 若未使用 relay，可不设置 OPENROUTER_BASE_URL，默认仍走 `https://openrouter.ai/api/v1/chat/completions`
+- 若启用 Google relay，可设置 `GOOGLE_GEMINI_BASE_URL` 指向美国机 relay，例如 `http://107.175.224.233:18081/v1beta/models`
+- 当前可用 relay 方案：美国机 `107.175.224.233` 上运行 `/opt/rai-openrouter-relay/openrouter-relay.js` 与 `/opt/rai-google-gemini-relay/google-gemini-relay.js`
+
+========================================
+六、当前后端关键策略（已生效）
+========================================
+1) Tavily 搜索：
+- 每次请求 max_results 固定为 5
+- 禁用 advanced
+- thinking 模式使用 basic
+
+2) 规则注入引擎：
+- 写在 server.js（首版）
+- 仅检测当前用户消息
+- 命中后注入高优先级规则提示
+- 支持单模型链路与并行Agent链路
+
+3) Poe OpenAI-compatible 接入：
+- Provider: https://api.poe.com/v1/chat/completions
+- 模型同步: 启动时 + 每 6 小时拉取 /v1/models（失败不影响主链路）
+- 关键日志:
+  - poe_model_sync
+  - poe_quota_consume
+  - poe_fallback
+  - auto_route_decision
+
+========================================
+七、财务模式与 Yahoo Finance 代理
+========================================
+1) 数据源与接入方式
+- 使用 Yahoo Finance Chart API：
+  https://query1.finance.yahoo.com/v8/finance/chart/:symbol
+- 无需 API Key
+- 必须由服务端代理，不走浏览器直连
+- 由 RAI 服务端提供统一接口：
+  GET /api/quote/:symbol?range=...&interval=...
+
+2) 默认参数与限制
+- 默认 range：1mo
+- 默认 interval：1d
+- 允许的 range：
+  1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
+- 允许的 interval：
+  1m, 2m, 5m, 15m, 30m, 60m, 90m, 1d, 1wk, 1mo, 3mo
+
+3) 符号兼容规则
+- 已带后缀时直接使用：.SS / .SZ / .HK
+- 自动补全：
+  6xxxxx -> .SS
+  0xxxxx / 3xxxxx -> .SZ
+  4~5位纯数字 -> .HK
+
+4) 缓存与时效
+- 内存缓存 TTL：60 秒
+- cache key：symbol + range + interval
+- 相同请求 60 秒内优先命中缓存
+
+5) 数据时效声明
+- Yahoo Finance 免费数据中的 A 股 / 港股通常为延迟行情
+- 不应视为逐笔实时成交数据
+- 适合参考、分析、展示，不适合作为高频交易执行依据
+
+6) 对 AI 的工具暴露
+- 工具名：finance_quote
+- 适用场景：
+  证券代码、价格、涨跌幅、区间走势、历史 K 线、成交量
+- 使用优先级：
+  先 finance_quote
+  再 web_search（新闻、公告、研报、背景信息）
+
+7) 示例
+- /api/quote/600519.SS?range=1y&interval=1d
+- /api/quote/0700.HK?range=6mo&interval=1d
+
+8) 排障思路
+- 400：symbol / range / interval 非法
+- 502：Yahoo 上游不可达、状态异常或返回数据无法解析
+- 若浏览器直接调 Yahoo 报 CORS，这是预期；必须走 RAI 服务端代理
+
+========================================
+八、ZTX6D 登录与绑定流程（当前生效）
+========================================
+前置条件：
+- 已配置 `ZTX6D_APP_ID`、`ZTX6D_APP_KEY`
+- 建议配置 `PUBLIC_BASE_URL='https://rai.rick.quest'`
+- 生产建议配置 `ZTX6D_CALLBACK_URL='https://rai.rick.quest/api/auth/ztx6d/callback'`
+
+1) 状态检查（是否启用）
+- 接口：`GET /api/auth/ztx6d/status`
+- 返回 `enabled=true` 代表已可用；`enabled=false` 代表缺少 appid/appkey
+
+2) 游客 / 新用户使用 ZTX6D 登录
+- 前端按钮：登录页 `ZTX6D 登录`
+- 后端入口：`GET /api/auth/ztx6d/start?return=/`
+- 服务端流程：
+  a. 调 ZTX6D `create_rt`（`once=1`）获取 `rt`
+  b. 本地记录 `rt`（10 分钟有效）
+  c. 302 跳转到 `https://passport.ztx6d.com/?rt=<rt>`
+- 授权回调：`GET /api/auth/ztx6d/callback?rt=<rt>`
+- 回调处理：
+  a. 服务端调 `get_rt` 换取 `uid`
+  b. 将 `ztx6d:<uid>` 映射/创建为本地 RAI 用户
+  c. 签发 RAI JWT，并回跳 `return` 地址，附带 `rai_token`
+
+3) 老用户绑定 ZTX6D（先登录 RAI）
+- 前端入口：`设置 -> 账号绑定 -> 绑定 ZTX6D`
+- 后端入口：`POST /api/auth/ztx6d/bind/start`（需携带当前登录 JWT）
+- 返回：`redirectUrl`，前端跳转到 ZTX6D 授权页
+- 回调后：把该 `ztx6d uid` 绑定到当前 RAI 用户；后续可直接用 ZTX6D 登录这个老账号
+
+4) 常见回调错误
+- `ztx6d_missing_rt`：回调里没有 rt
+- `ztx6d_invalid_or_expired_rt`：rt 已过期/已消费/不存在
+- `ztx6d_not_authorized`：用户尚未完成授权
+
+5) 安全约束
+- `ZTX6D_APP_KEY` 仅允许在服务端使用，禁止写入前端和 Git
+- 同一个 `rt` 只可换取一次
+
+========================================
+九、GPT-5.5（NewAPI）接入参数
+========================================
+- 模型名称（model）：`gpt-5.5`
+- Base URL：`https://api.18363221.xyz`
+- Chat Completions 完整地址（`NEWAPI_BASE_URL`）：
+  `https://api.18363221.xyz/v1/chat/completions`
+- 请求方式：`POST /v1/chat/completions`，`Authorization: Bearer <NEWAPI_API_KEY>`
+- 当前策略：RAI 内为 `限免`，free 用户每日 10 次；Pro/MAX 不受该 free 限额约束
+- 若报错 `No available channel ... under group vip`：到 NewAPI 后台把令牌分组切到有 `gpt-5.5` 可用通道的分组（当前 `main` 已验证可用）
+- thinking 参数策略：GPT 系列按 OpenAI 官方 Chat Completions reasoning_effort 边界映射；GPT-5.1 关闭 thinking 传 `none`，GPT-5 旧系列关闭 thinking 传 `minimal`，GPT-5.2+ 自适应档位可传 `xhigh`，GPT-5 Pro 固定 `high`；NewAPI 流式返回中的 `reasoning_content`、`reasoning_summary*`、Responses 风格 reasoning 事件都会转成 RAI 的 `reasoning` SSE 事件。
+- OpenRouter 例外：`openai/gpt-oss-120b:free` 仍按 OpenRouter `reasoning.exclude` 控制；关闭 thinking 时只隐藏/排除 reasoning，不假设上游完全停止内部 reasoning。
+
+========================================
+十、变更记录
+========================================
+2026-05-25
+- 版本号更新为 RAI v0.10.9.1：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 管理员后台快捷键适配 macOS：macOS 使用 `Control + Option + A`，避免与 Chrome 的 `Command + Shift + A` 冲突；Windows / Linux 继续使用 `Ctrl + Shift + A`。
+- 本地已创建改前备份目录：`_local_backup_20260525_222637_before_mac_admin_shortcut`。
+- VPS 已创建上线前备份目录：`/rick/apps/rai/_remote_backup_20260525_223035_before_v0.10.9.1_mac_admin_shortcut`。
+- VPS 已同步上线并重启 `pm2 rai`；`PACKAGE_VERSION=0.10.9.1`，`pm2 save` 已保存进程列表。
+- 上线后校验：公网首页确认 `v0.10.9.1` 与缓存号 `20260525-mac-admin-shortcut-v01091` 生效；`ai_data.db` 哈希保持 `72be186f4ae4a1d866f918cfdf685a046cdbb44d08e42e08e3675e442d4c11c5`，未覆盖线上数据库。
+
+2026-05-25
+- 版本号更新为 RAI v0.10.9：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 管理员面板新增“模型开关”标签页，可逐个开启 / 关闭用户可见模型。
+- 新增 SQLite 表 `model_visibility` 保存模型开关状态；上线同步代码时继续禁止覆盖 `ai_data.db`。
+- 前端新增 `/api/model-availability` 拉取模型可见性；关闭后的模型会从主模型菜单、移动模型菜单、ChatFlow 菜单和重新生成模型下拉中隐藏。
+- 如果用户当前已选择被关闭模型，前端会自动切换回 auto / 智能模型；后端收到关闭模型的直接请求时也会兜底改按 auto 处理。
+- 本地已创建改前备份目录：`_local_backup_20260525_220323_before_admin_model_switch`。
+- 本地校验：`/Applications/Codex.app/Contents/Resources/node --check server.js public/app.js agent/engine.js agent/prompts.js agent/plan-parser.js` 通过。
+- VPS 已创建上线前备份目录：`/rick/apps/rai/_remote_backup_20260525_221534_before_v0.10.9_admin_model_switch`。
+- VPS 已同步上线并重启 `pm2 rai`；`pm2 status rai` 显示版本 `0.10.9` 且 online，`pm2 save` 已保存进程列表。
+- 上线后校验：`/api/model-availability` 返回 9 个模型且默认全 enabled；`/api/test` 返回成功；公网首页确认 `v0.10.9` 与缓存号 `20260525-admin-model-switch-v0109` 生效。
+- 上线过程已校验 `ai_data.db` 哈希保持 `72be186f4ae4a1d866f918cfdf685a046cdbb44d08e42e08e3675e442d4c11c5`，未覆盖线上数据库。
+
+2026-05-22
+- 版本号更新为 RAI v0.10.8：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 设置「关于」顶部图标改为 RAI 主页同款土星 SVG Logo；更新记录标题改为「更新记录」，日期显示完整年份，版本说明改为面向用户介绍每版 RAI 更新内容。
+- 设置「关于」保留 GitHub 仓库 `https://github.com/Rick-953/RAI`、作者 Rick、支持邮箱 `rick080402+raisupport@gmail.com` 和欢迎随时聊天讨论说明；简体中文 / 繁體中文 / English 三语言同步适配。
+- 设置主页移除独立退出入口；「退出」改为「登出」并移动到账号二级菜单内；账号页用户名 / 邮箱两列在 PC 端对齐，删除“留空则不修改密码”提示。
+- 外观设置新增「跟随系统」；设置浅色主题背景、卡片、选中态和 SVG 图标反色继续细调，移动端和 PC 保持一致。
+- 侧边栏修复搜索框右边界对齐；ChatFlow 增加「测试 / Beta」标识；移动端侧边栏滑出时增加右侧圆角；语言切换按钮改为语言 SVG 图标，并按简体/繁体中文与 English 之间切换。
+- 移动端设置二级页返回箭头放大；从二级页返回设置主页时不保留明显选中块；每次刷新后只在 RAI 主页自动聚焦输入框一次，避免反复弹键盘。
+- 点数兑换会员页面改为更接近套餐卡的布局；点数兑换会员和关于页邮箱统一为 `rick080402+raisupport@gmail.com`。
+- RAI 主页 `+` 菜单圆角与模型菜单统一，两个浮层菜单阴影统一减轻；设置进出弹窗动画改为更柔和的非线性过渡。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260522-settings-sidebar-membership-v0108-1`。
+- 本地已创建改前备份目录：`_local_backup_20260522_014433_before_v0.10.8_settings_sidebar_membership`。
+- 本地校验：`node --check public/app.js`、`node --check server.js`、`node --check public/lib/marked.min.js` 通过；CSS 大括号平衡为 0；关键 DOM / 多语言 / 版本 / 邮箱 / 登出位置 / 侧边栏 / 会员卡片断言通过；Chrome 已抽查桌面与移动端设置、侧边栏、点数兑换会员和浮层菜单。
+- VPS 已创建上线前备份目录：`/rick/apps/rai/_remote_backup_20260522_0223_before_v0.10.8_settings_sidebar_membership`。
+- VPS 已同步上线并重启 `pm2 rai`；`pm2 status rai` 显示版本 `0.10.8` 且 online，`/api/test` 返回成功，公网首页、app.js、styles.css 已确认新版本号、缓存号、GitHub、支持邮箱、跟随系统、ChatFlow 测试标识、语言图标和会员卡片样式生效。
+- 上线过程已校验 `ai_data.db` 哈希未变化，未覆盖线上数据库。
+
+2026-05-21
+- 版本号更新为 RAI v0.9.4：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 完整补齐设置浅色模式：设置弹窗、移动端设置主页、二级详情页、分组卡片、输入框、按钮、头像区、时间线和图标颜色均跟随浅色/深色主题。
+- 设置 SVG 图标规则统一为浅色主题显示深色图标、深色主题显示浅色图标；移动端和 PC 保持一致，不再用移动端黑底规则覆盖浅色主题。
+- 设置「关于」时间线改为数据驱动渲染，纳入本机历史版本目录、当前更新运维.txt、历史 release manifest 和 GitHub README，可展开查看完整更新点。
+- 设置「关于」新增 GitHub 仓库、作者 Rick、联系邮箱 rick080402@gmail.com 和欢迎随时聊天讨论说明；简体中文 / 繁體中文 / English 三语言同步适配。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-settings-light-full-timeline-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_225308_before_v0.9.4_light_settings_full_timeline`。
+- VPS 已创建上线前备份目录：`/rick/apps/rai/_remote_backup_20260521_231142_before_v0.9.4_light_settings_full_timeline`。
+- VPS 已同步上线并重启 `pm2 rai`；`pm2 status rai` 显示版本 `0.9.4` 且 online，`/api/test` 返回成功，公网首页、app.js、styles.css 已确认新版本号和缓存号生效。
+- 上线过程已校验 `ai_data.db` 哈希未变化，未覆盖线上数据库。
+- 版本号更新为 RAI v0.9.3：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 修复本地 `public/lib/marked.min.js` 语法损坏问题，避免首屏加载 Markdown 渲染库时报错后再依赖 CDN fallback。
+- 设置「关于」时间线新增 5月21日 v0.9.3 记录，最新版本展示为 v0.9.3。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-light-icons-zh-tw-about-marked-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_183022_before_v0.9.3_marked_local_fix`。
+- 版本号更新为 RAI v0.9.2：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 修复浅色模式设置 SVG 图标不反色：PC 浅色主题下设置入口、关闭和分类图标反色为深色；移动端黑底设置页保持浅色图标。
+- 设置语言扩展为简体中文 / 繁體中文 / English 三语言；静态 i18n 增加繁体中文覆盖与简中兜底，语言切换按钮改为三段循环。
+- 设置「关于」新增更新运维时间线，按日期和版本展示 5月21日 v0.9.2 / v0.9.1 / v0.9.0 与 5月14日 v0.10.4 的主要变更。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-light-icons-zh-tw-about-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_181818_before_v0.9.2_light_icons_zh_tw_about_timeline`。
+- 版本号更新为 RAI v0.9.1：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志统一更新。
+- 新增发布规则：每次上线必须递增 `0.9` 前缀小版本号，除非 Rick 主动要求，不得超过 `0.9`。
+- 移动端设置继续收窄：整体字号、头像、按钮高度、卡片圆角和间距下调，减少 Android 手机上的压迫感。
+- 移动端设置动画改为非线性过渡：主页与二级页使用淡入、滑移、轻微缩放和模糊衰减，不再硬切。
+- 适配 Android 系统返回：二级设置页返回到设置主页，设置主页返回 RAI 主界面，不再直接跳到浏览器上一个网页。
+- 新增自定义用户头像：设置主页头像和账号二级页支持上传头像，头像会同步显示在侧边栏、设置页和用户消息头像中。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-settings-avatar-back-anim-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_134000_before_avatar_back_anim_shrink_final`。
+- 版本号更新为 RAI v0.9：package.json / package-lock.json 使用合法 semver `0.9.0`，前端侧边栏、前端初始化日志、服务端启动日志统一显示 `v0.9`。
+- 本地已创建改前备份目录：`_local_backup_20260521_124529_before_v0.9`。
+- 本地已创建版本备份目录：`../RAI v0.9`。
+- VPS 同步范围仍按运维约定执行，禁止覆盖 `ai_data.db`；同步后重启 `pm2 rai` 并执行 `pm2 save`。
+- 修复侧边栏签到按钮过宽：从整行宽度改为按内容收缩，保留最大不超过用户信息区宽度。
+- 重做移动端设置面板交互：移动端打开设置先进入主页列表，点击语言 / 订阅 / 账号 / 外观 / 自定义 / 高级 / 关于后进入二级详情页；详情页提供返回按钮回到设置主页，PC 端保留原左右两栏逻辑。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-mobile-settings-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_125733_before_mobile_settings_sidebar_checkin`。
+- 设置面板补充 SVG 图标：移动端 / PC 端设置分类按钮在文字前显示对应图标，关闭按钮与侧边栏设置按钮也改用下载的 SVG 资源；图标统一放在 `public/icons/settings/`。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-settings-icons-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_131135_before_settings_icons`。
+- 移动端设置主页改为全屏黑底设置页：不再使用右侧抽屉、不再露出聊天侧栏；新增顶部用户头像/名称区，分类改为分组卡片列表样式，二级详情页同样全屏展示。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均改为 `20260521-mobile-settings-fullscreen-1`。
+- 本地已创建改前备份目录：`_local_backup_20260521_131720_before_mobile_settings_fullscreen`。
+
+2026-05-14
+- 修复聊天接口会员等级读取：改用现有 `getUserMembershipSnapshot`，避免 GPT-5.5/Claude/Agent 路由中 Pro/MAX 被误按 free 处理。
+- 修复 GPT thinking 流式显示：服务端统一解析 `reasoning_content`、summary/details、Responses 风格 reasoning 事件，并按官方 GPT reasoning_effort 支持范围分别映射关闭/低/中/高/自适应档位。
+- 修复关闭 thinking 的 GPT 参数：GPT-5.5/NewAPI 关闭时传 `none`，旧 GPT-5/Poe GPT 关闭时传 `minimal`，OpenRouter gpt-oss 保持 `reasoning.exclude=true` 例外逻辑。
+- 修复 Mermaid 统计图渲染：兼容 GPT 输出的未加引号 `xychart-beta` 标题/坐标轴，避免柱状图、折线图刷新后报 Lexical error。
+- 修复流式 Mermaid 链路：流式阶段直接生成图表容器，避免先走普通 Markdown code block 再二次替换；流式和最终渲染统一使用带临时 host 清理的安全渲染 helper。
+- 更新前端缓存版本：`app.js` 与 `styles.css` 均已加入 20260514 Mermaid 修复版本号。
+
+2026-05-06
+- 运维文档更新到当天状态：顶部更新时间同步为 2026-05-06，并补充 GPT-5.5 限免策略说明（free 每日 10 次）。
+- NewAPI 令牌分组已切换为 `main` 后恢复 gpt-5.5 可用性，直连 `POST /v1/chat/completions` 返回 200，RAI 端可正常流式调用。
+- 新增独立运维章节：ZTX6D 登录/绑定流程与 GPT-5.5 接入参数（模型名、Base URL、完整请求地址）。
+- 服务端新增统一运行期备用链：主模型失败时依次尝试 `chatgpt-gpt-oss-120b`、`gemma`、`qwen2.5-7b`；GPT-5.5 不可用或限免额度用完时不再直接报错，自动转入备用链。
+
+2026-05-05
+- 版本号更新为 RAI v0.10.4：修复 Claude Sonnet 4.6 模型菜单截断；GPT-5.5 改为限免策略，free 用户每日 10 次，Pro/MAX 不限。
+- NewAPI gpt-5.5 可用性取决于令牌分组；若出现 `No available channel ... under group vip`，需在 NewAPI 后台把令牌分组切到有 gpt-5.5 channel 的分组（当前 main 已验证可用）。
+- 版本号更新为 RAI v0.10.3：package.json / package-lock.json / 服务端启动日志 / 前端初始化日志。
+- 新增 ZTX6D 服务端 SSO 接入：/api/auth/ztx6d/status、/api/auth/ztx6d/start、/api/auth/ztx6d/callback；使用 once=1 的 rt 换取 uid，本地映射为 RAI 用户并签发 RAI JWT。
+- 新增老用户绑定 ZTX6D：已登录用户可在设置 -> 账号绑定中点击“绑定 ZTX6D”，后端通过 /api/auth/ztx6d/bind/start 申请绑定 rt，回调后把 ztx6d uid 绑定到当前 RAI 用户。
+- 前端登录页新增 ZTX6D 登录按钮；移除生产环境中会指向 localhost:3011 的旧 RAuth 自动跳转逻辑，本地邮箱密码登录保留为兜底。
+- 新增 NewAPI / Lightcone AI provider：NEWAPI_API_KEY、NEWAPI_BASE_URL；新增 MAX 专用模型 gpt-5.5，桌面菜单、移动模型弹窗、重新生成弹窗、ChatFlow 菜单已同步。
+- 注意：当前提供的 NewAPI key 直连 gpt-5.5 返回 model_not_found，需要在 NewAPI 后台确认该 key/group 已开放 gpt-5.5 后才能实际生成。
+
+2026-04-30
+- 版本号统一更新为 RAI v0.10.0：package.json / package-lock.json / 前端侧边栏版本文案 / 服务端启动日志 / 前端初始化日志
+- DeepSeek 模型接口升级：后端主路由改为 deepseek-v4-flash；思考模式通过 thinking.enabled + reasoning_effort 控制，非思考模式通过 thinking.disabled 控制；旧 deepseek-chat / deepseek-reasoner 保留为兼容别名
+- DeepSeek 前端展示改为 DeepSeek V4，供应商图标改为蓝色鲸鱼标识，颜色固定为 #4D6BFE
+- OpenRouter 模型扩展：新增 ChatGPT openai/gpt-oss-120b:free；Gemma 已切换到 Google 官方 Generative Language API 的 gemma-4-31b-it，并在 VPS 出口地区限制时自动兜底到 openrouter/free -> openai/gpt-oss-120b:free
+- 模型选择菜单视觉调整：缩窄桌面菜单宽度，去掉双侧 scrollbar-gutter 预留；免费/限免徽章改为纯色，不使用渐变
+- 模型入口信息隔离：极速模型 / 专家模型恢复抽象图标；仅“全部模型”列表展示具体供应商图标
+- 桌面与横屏平板首页输入框宽度改为主内容区域约三分之二；侧栏搜索框桌面端限制为 220px
+- VPS 已同步 server.js、public/index.html、public/styles.css、public/app.js 与 public/icons/DeepSeekIcon.svg；PM2 进程 rai 已重启，ai_data.db 未覆盖
+- 本地 Win11 已创建变更前备份目录：_local_backup_20260430_134407_before_version_ops_update
+
+2026-04-03
+- 移动端顶栏布局重排：左侧固定为侧边栏按钮 + RAI，中间为独立居中的模型选择器，右侧保留主题与语言按钮；模型选择器箭头改为绝对定位，避免箭头把文字视觉中心带偏
+- PC 端模型选择菜单翻新：下拉改为缩放淡入淡出动画，新增 transform-origin 与视口边界钳制；桌面端以上方锚点的 bottom 定位展开，展开/收起不再出现位置漂移
+- PC 端启用“回到底部”按钮：按钮挂到输入框容器上方，改为圆形无描边的深色向下箭头，仅在桌面端用户手动上滑暂停自动跟随后显示
+- 移动端新对话与空会话场景新增输入框聚焦：进入欢迎态或创建空白会话后会尝试自动 focus 输入框，优先唤起输入法键盘
+- 聊天请求补充每次提问的 prompt 时间上下文：前端每次请求重新生成时间/时区/时段并随请求发送；服务端将该上下文写入 assistant 消息的 process_trace，管理员面板可展开查看 Prompt 时间注入详情，普通前端用户不可见
+- 移动端新增顶部模型入口：模型选择器从输入区移动到顶部 RAI 标识旁，输入区模型选择器仅在桌面端保留
+- 移动端顶部模型选择器改为左侧下箭头样式，并与原有模型菜单共用同一套选中状态与切换逻辑
+- 移动端侧边栏滑动交互改为按手指位移实时跟手开合，遮罩透明度随滑动进度同步变化，不再只在松手后突然打开/关闭
+- 移动端顶部模型入口视觉细化：品牌区居中，默认透明底，仅在悬浮/按下/展开时显示胶囊背景，去掉描边以保持原有设计语言
+- 移动端侧边栏唤起手势放宽到正文中心区域：不再限制左边缘起手；仅在横向位移明显强于纵向滚动时锁定为开侧边栏，降低与上下滑动冲突
+
+2026-03-17
+- 对话索引导航再次修复：统一按真实滚动容器跟踪正文滚动，侧边索引线条会随用户手动滑动自动切换高亮；同时恢复上/下箭头的全局点击入口，并把跳转滚动改为对齐焦点位置，避免“点击无反应”
+- 对话索引导航修复自动跟随：正文滚动时当前横条会自动高亮并同步滚动到时间线可视区域，不再只在点击跳转后更新
+- 对话滚动区与对话内可滚动正文块补充上下留白：主消息列表、过程追踪、草稿正文、深度思考内容滚动时不再贴边
+- 移动端 Markdown 表格改为优先按设备宽度压缩显示：表格使用 fixed layout，单元格内容允许换行，减少横向滚动
+- Mermaid 渲染失败链路收敛：保留上层“图表渲染失败”友好卡片，移除 Mermaid 原始错误 SVG/炸弹组件
+- public/app.js 新增 Mermaid 临时渲染宿主与失败清理逻辑，避免 mermaid.render() 失败时把 error SVG 残留到 body 底部
+- public/styles.css 增加兜底隐藏规则：body > div[id^=\"dmermaid-\"] 与 body > svg[id^=\"mermaid-\"][aria-roledescription=\"error\"] 不再显示
+
+2026-03-15
+- 新增 finance 领域模式：首页欢迎动作卡片“搜索”替换为“财务 / Finance”
+- finance 模式点击后自动开启联网，并注入财务领域提示词
+- server.js 新增 Yahoo Finance 代理接口：GET /api/quote/:symbol
+- 新增 AI 工具 finance_quote，返回标准化行情与历史 K 线 JSON
+- README 恢复策略改为以 GitHub 历史版本为基线维护，不再默认使用本地旧 README 覆盖
+- 运维文档新增财务代理、缓存、非实时说明与排障规则
+- 自动滚动改为双模式：用户上滑后稳定退出自动跟随，支持手动“回到底部”恢复
+- 前端来源结构扩展：网页来源与 Yahoo Finance 数据源分开标记
+- 正文角标支持双体系：网页来源使用数字角标，[1][2]；Yahoo Finance 使用字母角标，[A][B]
+- Mermaid 渲染链路调整为“先提取 Mermaid，再做 Markdown/KaTeX”，避免公式 HTML 污染图表源码
+- Mermaid 增加安全规范化：清理 HTML 标签、兼容部分旧 bar 写法转 xychart-beta、修复部分 axis 箭头写法
+- 移动端表格移除 display:block，改为表格容器横向滚动，减少正文和表格右侧溢出
+
+2026-03-06
+- GitHub 已同步主线 main，提交：40f8979 Update RAI UI and agent pipeline files
+- 智能模型（auto）统一默认走 kimi-k2.5
+- 点数或配额不足时统一回退 qwen2.5-7b
+- 前端模型分层文案调整为：智能模型 / 极速模型 / 专家模型
+- regenerate 弹窗中的“专家模型”已改为 kimi-k2.5
+- Agent 模式文案更新为：4倍速深度研究 / Research Turbo (4x)
+- 推理强度控件改为滑块，并更名为“推理时间”
+- 推理时间仅在开启推理模式时显示
+- 中文推理时间档位更新为：短 / 中 / 长 / 自适应
+- 前端已隐藏 Poe 模型入口；后端仍保留 Poe provider、/v1/models 同步与 free 配额逻辑
+- agent/engine.js、agent/plan-parser.js、agent/prompts.js 已修复语法错误并纳入当前主线
+
+2026-03-04
+- 新增 agent/ 目录，拆分并行 Agent 编排逻辑：engine.js / prompts.js / plan-parser.js
+- SSE 增强支持 Agent 过程事件、阶段状态、草稿与指标回传
+- 前端时间轴支持展示 Agent 协作过程与草稿内容
+- 新增 free 用户 Poe 每日配额字段：poe_usage_date / poe_usage_count
+- ChatFlow 与主聊天共用同一套模型路由与文案映射逻辑
+
+2026-02-28
+- trust proxy 改为安全默认：本地默认 false，反向代理部署通过 TRUST_PROXY 显式开启
+- 联网工具调用链路改为流式多轮工具循环，支持“先输出，再搜索，再续传，再次搜索”
+- 增强工具调用文本解析与清洗，避免 <|tool...|>、functions.web_search 等标记泄漏到前端正文
+- 入库前增加工具标记清洗，避免工具调用残留被保存进消息数据库
+- API Key 全部迁移到环境变量（统一命名）
+- server.js 增加缺失环境变量告警与错误提示
+- Tavily 检索策略更新为低成本配置（5条/basic）
+- 新增关键词规则注入引擎（洗车逻辑、爸妈结婚逻辑）
+
+2026-05-27
+- 【已上线】询问用户多问题与主控研究讨论 v0.10.9.9：
+  - 版本号统一更新为 `0.10.9.9`：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志均同步。
+  - 询问用户工具重做：`rai_ask_user` 支持任意数量问题和任意数量选项；用户选择或输入每个问题后，底部统一显示 `已选择 x/y`，只有全部完成后 `发送选择` 才可点击。
+  - 修复询问用户工具流式显示：主消息区不再暴露原始 `rai_ask_user` fence / JSON；完整工具块一生成就渲染为卡片，避免等到整条回复结束才出现。
+  - 研究模式改为 Gemma、Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 四个讨论者顺序发言，发言之间互相可见，并且会吸收用户在生成过程中的实时插话。
+  - 研究停止逻辑从 3/4 投票改为主控模型判定：主控只判断是否需要继续讨论；足够后再由 GPT-5.5 或 DeepSeek V4 Pro 主控综合最终正文，防止无限循环。
+  - 快速研究确认走同一套多模型讨论流程并关闭 thinking；深度研究开启 thinking 并使用更完整讨论轮次。
+  - 时间提示从静态系统提示词移到每次用户消息末尾的短时间上下文，服务端入库前会剥离该提示，减少缓存命中损失且不污染历史消息。
+  - 研究 UI 继续使用聊天软件式气泡，隐藏旧时间线节点和 3/4 投票文案；历史记录中 Gemma / Kimi K2.5 / GPT-5.5 / DeepSeek V4 Pro 名称正常显示。
+  - 缓存版本号：`20260527-askuser-research-live-v01099b`。
+  - 本地已创建改前备份目录：`_local_backup_20260527_223218_before_research_askuser_interject_v01099`。
+  - 本地验证：`npm run check` 通过；CSS 大括号平衡为 0；本地 `PORT=3029` 临时服务 `/api/version` 返回 `0.10.9.9`；`/api/test` 返回成功。
+  - Chrome 验证：询问用户三问题卡片主消息区无原始 JSON；`发送选择` 初始禁用，选择 1/3、2/3 时仍禁用，3/3 后启用；截图保存在 `/tmp/rai-v01099-ask-user-chrome.png`。
+  - Chrome 验证：研究历史显示 4 个模型气泡 `Gemma / Kimi K2.5 / GPT-5.5 / DeepSeek V4 Pro`；旧时间线节点隐藏；主消息区不含“投票 / 3/4 / 票”文案；截图保存在 `/tmp/rai-v01099-research-bubbles-chrome.png`。
+  - 本地浏览器验证创建的 `codex-askuser-%@example.com` 与 `codex-verify-%@example.com` 测试用户已从本地 `ai_data.db` 清理，清理后计数为 0。
+  - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260527_rai_v0.10.9.9_askuser_research_master`。
+  - 已 SCP 上传上述变更文件，未上传 / 未覆盖 `ai_data.db`。
+  - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+  - `pm2 describe rai` 校验：`rai` version=`0.10.9.9`，status=`online`，script path=`/rick/apps/rai/server.js`。
+  - 线上数据库哈希上传前、上传后及重启后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+  - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.9`，响应头含 `Cache-Control: no-store`；公网首页确认 `v0.10.9.9` 与缓存号 `20260527-askuser-research-live-v01099b` 生效；公网 `app.js` 确认 `RAI_APP_VERSION=0.10.9.9`、`RAI_BUILD_ID=20260527-askuser-research-live-v01099b`、`appendUserTimeHintForPrompt`、`ask-user-send-all` 与 `master_decides` 已上线。
+  - GitHub：已在临时干净 clone `/tmp/rai-github-v01099` 追加 README 新版说明并生成提交 `4195a63 Update RAI to v0.10.9.9`；推送被 GitHub 凭据拦截（无 SSH key / HTTPS token），未推送到远端。
+
+- 【已上线】研究模式聊天气泡 UI 与 3/4 投票流程 v0.10.9.8：
+  - 后端研究流程抛弃旧“并行初稿 + 并行互评”模式，改为 Kimi K2.5 → GPT-5.5 → DeepSeek V4 Pro → 主控校验按顺序轮流发言。
+  - 每个发言席位只允许输出一到两句精华短发言，并必须给出 `结论状态：无重大问题` 或 `结论状态：仍有问题`。
+  - 每轮按 4 票统计，达到 3/4 认可才允许主控进入最终正文输出；未达标时继续下一轮，轮次耗尽仍未达标则主控优先询问用户缺失信息，不输出伪确定正文。
+  - 前端研究过程 UI 抛弃旧竖向时间线，改为聊天软件式气泡：显示模型名、轮次、认可 / 需修正状态和短发言；最终正文仍在主消息区域流式输出。
+  - thinking 展示改为更轻的折叠块，去掉紫色套层感；时间线圆点和子任务圆点去掉发光阴影。
+  - 缓存版本号：`20260527-research-chat-v01098`。
+  - 本地已创建改前备份目录：`_local_backup_20260527_213823_before_research_stream_ui`。
+  - 本地验证：`npm run check` 通过；`node --check server.js` 与 `node --check public/app.js` 通过；CSS 大括号平衡为 0；静态确认 `runResearchDebateMode` 内不再使用 `Promise.all` 并包含 `research_chat_debate`、`passThreshold=3`、`approvalVotes`。
+  - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260527_rai_v0.10.9.8_research_chat`。
+  - 已 SCP 上传变更文件，未上传 / 未覆盖 `ai_data.db`。
+  - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+  - `pm2 describe rai` 校验：`rai` version=`0.10.9.8`，status=`online`，script path=`/rick/apps/rai/server.js`。
+  - 线上数据库哈希上传前后及重启后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+  - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.8`；公网首页确认 `v0.10.9.8` 与缓存号 `20260527-research-chat-v01098` 生效。
+
+- 【已上线】研究模式多模型讨论修复 v0.10.9.7：
+  - 修复核心问题：快速研究不再等同普通模式；`researchMode=fast` 和 `researchMode=deep` 都会进入 Kimi K2.5 / GPT-5.5 / DeepSeek V4 Pro 多模型讨论流程。
+  - 快速研究：关闭 thinking，最多 2 轮讨论，缩短 token 与超时预算，用于快速但仍有模型互相质疑的研究。
+  - 深度研究：开启 thinking，最多 3 轮讨论，保留更高 token 与超时预算，用于更完整的多模型质疑和修正。
+  - 讨论流程：各模型先形成初始结论；随后每轮共享当前结论，各模型必须输出 `结论状态：无重大问题` 或 `结论状态：仍有问题`，并质疑/修正其他模型和自己；无重大问题时提前结束讨论。
+  - 最终回答：只在讨论结束后由 GPT-5.5 或 DeepSeek V4 Pro 主控生成；主控必须吸收成立质疑，若仍有未解决重大问题则保守回答并明确不确定前提。
+  - 过程记录：`process_trace` 增加 `researchMode`、`discussionRounds`、`consensusReached` 和每轮 `agent_quality` 信息，方便回看是否真的发生讨论。
+  - 缓存版本号：`20260527-research-debate-v01097`。
+  - 本地已创建改前备份目录：`_local_backup_20260527_before_research_debate_v01097`。
+  - 本地验证：`npm run check` 通过；研究状态解析回归测试 6 项通过；静态断言确认 fast/deep 都进入 `runResearchDebateMode`；流程级 mock 测试确认 fast 的子模型和主控调用均 `thinking=false`，deep 均 `thinking=true`，且无重大问题时会提前停止讨论。
+  - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260527_rai_v0.10.9.7_research_debate`。
+  - 已 SCP 上传变更文件，未上传 / 未覆盖 `ai_data.db`。
+  - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+  - `pm2 jlist` 校验：`rai` version=`0.10.9.7`，status=`online`。
+  - 线上数据库哈希上传前后及重启后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+  - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.7`；公网首页确认 `v0.10.9.7` 与缓存号 `20260527-research-debate-v01097` 生效。
+
+- 【已上线】模型列表商用图标移除与补丁版本校正 v0.10.9.5：
+  - 修正状态：上一轮本地已完成“删除全部模型展开区商用模型图标”的代码改动，但当时**没有真正同步到 VPS**；本次已补同步并完成校验。
+  - 版本号统一更新为 `0.10.9.5`：`package.json` / `package-lock.json` / 前端侧边栏版本文字 / 前端初始化日志 / 服务端启动日志均同步。
+  - 模型列表展开区：移除 DeepSeek、Kimi、Qwen、ChatGPT、GPT-5.5、Grok、Claude、Gemma 图标，只保留文字与徽章。
+  - 模型弹窗：同步移除同类商用模型卡片图标，避免界面残留品牌图形。
+  - 保留图标范围：`智能模型`、`极速模式`、`专家模式`、`全部模型` 入口图标保留；`本地模型` 不受影响。
+  - 纯文字布局：补齐无图标条目的样式，展开列表不会留下左侧空白占位。
+  - 缓存版本号：`20260527-model-icons-v01095`。
+  - 本地已创建改前备份目录：`_local_backup_20260527_115159_before_model_icon_deploy`。
+  - 本地验证：
+    - `npm run check` 通过（server.js、public/app.js、agent/engine.js、agent/prompts.js、agent/plan-parser.js）。
+    - 本地 `public/index.html` 内已无 `deepseek-provider-icon` / `openai-provider-icon` / `grok-provider-icon` / `Anthropic` / `GoogleGemini` / `icons/kimi` / `icons/Qwen` 引用。
+  - VPS 上线：
+    - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260527_rai_v0.10.9.5_model_icons`。
+    - 已 SCP 上传 `server.js`、`package.json`、`package-lock.json`、`public/index.html`、`public/app.js`、`public/styles.css`，未上传 / 未覆盖 `ai_data.db`。
+    - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+    - `pm2 jlist` 校验：`rai` version=`0.10.9.5`，status=`online`，pid=`1613390`。
+    - 线上数据库哈希上传前后及重启后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+    - VPS 本机 `http://127.0.0.1:3009/api/version` 返回 `0.10.9.5`；`/api/test` 返回成功。
+    - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.5`。
+    - 公网首页确认 `v0.10.9.5` 与缓存号 `20260527-model-icons-v01095` 生效；公网 `app.js` 确认 `RAI_APP_VERSION=0.10.9.5`、`RAI_BUILD_ID=20260527-model-icons-v01095` 已上线。
+
+2026-05-26
+- 【已上线】主页新版设计语言与询问用户工具修复 v0.10.9.4：
+  - 版本号统一更新为 `0.10.9.4`：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志均同步。
+  - 主页视觉翻新：侧边栏、新对话按钮、选中对话、输入框、模型菜单、加号按钮和加号菜单统一为设置页同款灰度层级，去掉主要硬边框。
+  - 新用户引导：第一页图片占卡片一半；第二、三页保持原三分之一比例；移除重复的 X 关闭按钮；底部顺序改为“跳过 / 步骤点 / 下一步”。
+  - 引导第二页重做为能力卡片，补齐多模型协作、研究模式、实时信息、文件理解和专业输出标题；第三页结构保留。
+  - 研究模式新增总开关：关闭时不影响普通推理；开启快速研究会关闭 thinking；开启深度研究才进入 Kimi K2.5 / GPT-5.5 / DeepSeek V4 Pro 多模型互评。
+  - 修复 `RAI_ASK_USER` 被渲染成代码块的问题：流式阶段隐藏工具块，最终消息渲染为可点击选项和自定义输入框；兼容大小写、下划线 / 连字符写法。
+  - 缓存版本号：`20260526-home-refresh-v01094`。
+  - 本地已创建改前备份目录：`_local_backup_20260526_191137_before_home_refresh_ask_user_fix`。
+  - 本地验证：`npm run check` 通过；CSS 大括号平衡为 0；本地 `PORT=3028` 临时服务 `/api/version` 返回 `0.10.9.4`；`/api/test` 返回成功；`RAI_ASK_USER` 解析样例确认不会残留原始 fence。
+  - 浏览器验证：新注册测试用户会弹出引导；第一页图片比例 50%；第二页能力卡片存在 5 项标题；第三页图片比例 33.3%；没有 `.onboarding-close`；页脚 DOM 顺序为 left/center/right；完成引导后语言选择显示为 `.ask-user-card` 且页面不含原始 `RAI_ASK_USER` 文本；研究模式总开关可开启 / 关闭并正确禁用滑块；主页新对话、选中对话、输入框、加号、模型菜单和加号菜单均为 `border: none`。
+  - 本地浏览器验证创建的 `codex-home-%@example.com` 测试用户已从本地 `ai_data.db` 清理，清理后计数为 0。
+  - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260526_rai_v0.10.9.4_home_refresh`。
+  - 已 SCP 上传上述变更文件，未上传 / 未覆盖 `ai_data.db`。
+  - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+  - `pm2 jlist` 校验：`rai` version=`0.10.9.4`，status=`online`，pid=`1521861`。
+  - 线上数据库哈希上传前后及重启后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+  - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.4`，响应头含 `Cache-Control: no-store`；`/api/test` 返回成功。
+  - 公网直连首页确认 `v0.10.9.4`、缓存号 `20260526-home-refresh-v01094`、`researchModeSwitch` 和 `images/onboarding-saturn.png` 生效；公网 `app.js` 确认 `RAI_APP_VERSION=0.10.9.4`、`RAI_BUILD_ID=20260526-home-refresh-v01094`、`researchModeEnabled` 与 `getAskUserFenceRegex` 已上线。
+
+- 【已上线】研究模式、登录页与引导视觉修复 v0.10.9.3：
+  - 版本号统一更新为 `0.10.9.3`：package.json / package-lock.json / 前端侧边栏 / 前端初始化日志 / 服务端启动日志均同步。
+  - 设置语言逻辑修复：切换到繁体中文后，简体中文按钮仍显示为“简体中文”，不再被繁体化成“簡體中文”。
+  - 登录 / 注册页语言按钮改为与侧边栏签到按钮一致的土星黄选中态，去掉阴影和渐变。
+  - 登录 / 注册页 ZTX6D 登录按钮缩为半宽，旁边新增 rPass 登录占位按钮；点击或悬浮提示“待上线”。
+  - 邮箱渐进式登录修复：输入到 `.co` 不再自动跳到密码框，完整 `.com` 后才自动聚焦密码；未显示密码框时不再预留空白。
+  - 退出登录修复：登出会先关闭设置面板、清除登录状态，再带 `rai_logout` 参数强制刷新页面。
+  - 研究模式重做：旧“4倍速研究”入口改为“快速研究 / 深度研究”滑块；快速研究服务端强制关闭 thinking；深度研究由 Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 先独立分析、再互相质疑，最终由 GPT-5.5 或 DeepSeek V4 Pro 主控流式回答。
+  - 深度研究过程继续复用前端研究过程时间线，保存 `process_trace.mode=research_debate`，可查看各模型独立草稿、互评质疑和主控综合过程。
+  - 新用户引导视觉更新：新增 `public/images/onboarding-saturn.png`，引导卡片上三分之一只展示土星图，不叠文字；下三分之二区域展示 RAI 标识、介绍、步骤和按钮。
+  - 缓存版本号：`20260526-research-auth-v01093`。
+  - 本地已创建改前备份目录：`_local_backup_20260526_181421_before_research_auth_fixes`。
+  - 本地验证：`npm run check` 通过；CSS 大括号平衡为 0；本地 `PORT=3027` 临时服务 `/api/version` 返回 `0.10.9.3` 且 `Cache-Control: no-store`；`/api/test` 返回成功。
+  - 浏览器验证：登录语言按钮繁体状态下简体按钮仍为“简体中文”，选中态为 `rgb(255, 193, 7)` 且无阴影；邮箱 `.co` 不展开密码、`.com` 自动聚焦密码；新用户引导注册后弹出，图片 `images/onboarding-saturn.png` 加载为 2172x724，图片区域无文字且高度约为卡片 33.2%。
+  - 本地浏览器验证创建的 `codex-onboarding-%@example.com` 测试用户已从本地 `ai_data.db` 清理。
+  - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260526_rai_v0.10.9.3_research_auth`。
+  - 已 SCP 上传上述变更文件和新增引导图片，未上传 / 未覆盖 `ai_data.db`。
+  - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+  - `pm2 jlist` 校验：`rai` version=`0.10.9.3`，status=`online`，pid=`1516363`。
+  - 线上数据库哈希上传前后及重启后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+  - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.3`，响应头含 `Cache-Control: no-store`；`/api/test` 返回成功。
+  - 公网直连首页确认 `v0.10.9.3`、缓存号 `20260526-research-auth-v01093` 和 `images/onboarding-saturn.png` 生效；新增图片公网哈希为 `981dea881628e6bab037a739228448ba75d953d47b10fbd4d127b9f842cbaecd`。
+
+- 【待上线】新用户引导重做与旧版本刷新提示 v0.10.9.2：
+  - 后端：`/api/auth/register` 返回 `isNewUser: true`；`/api/auth/login` 根据 sessions 数量判定新用户；新增 `GET /api/version`，返回当前 `package.json` 版本并设置 `Cache-Control: no-store`。
+  - 新用户引导：完成标记改为账号级 `rai_onboarding_done:<userId/email>`，避免同一浏览器注册新账号被旧标记跳过；弹窗重做为 Codex 风格深色卡片、18px 圆角、顶部视觉区 + 下方说明区。
+  - 新用户空会话：修复 `loadSessions()` 空列表时一直显示 loading 的问题；新用户完成引导后在主页显示 RAI 语言选择消息，选项为 `简体中文 / 繁體中文 / English`，选择后回复“太棒了，让我们开始吧。”。
+  - 设置→关于：`重新观看欢迎引导` 入口移入关于页操作卡片区，移除更新时间线内部的突兀按钮。
+  - 登录页语言：底部改为三段式语言按钮，当前语言金色高亮，移除 `English · 简体中文 · 繁體中文` 文字点分隔样式。
+  - AI 提示词新增 `询问用户` 工具：支持 `rai_ask_user` 代码块；可一次问任意数量问题（`questions` 数组无上限），每题最多 3 个快捷选项 + 一个自定义输入框，用户选择 / 输入后传回 AI。
+  - 旧版本网页刷新：前端定时检查 `/api/version`；当线上版本高于当前前端 `RAI_APP_VERSION` 时显示“RAI 已更新”提示，点击按钮会清理 CacheStorage 并带 `rai_refresh` 参数刷新到最新版。
+- 变更文件：server.js、public/index.html、public/app.js、public/styles.css、package.json、package-lock.json、更新运维.txt。
+- 缓存版本号：`20260526-onboarding-rework-v01092`。
+- 本地已创建改前备份目录：`_local_backup_20260526_171224_before_onboarding_rework`；上一版 AI 备份目录仍保留：`_local_backup_20260526_before_onboarding`。
+- 本地验证：
+  - `npm run check` 通过（server.js、public/app.js、agent/engine.js、agent/prompts.js、agent/plan-parser.js）。
+  - CSS 括号平衡 diff=0。
+  - 本地临时服务 `PORT=3019` 验证 `/api/version` 返回 `0.10.9.2` 且响应头含 `Cache-Control: no-store`。
+  - 本地临时服务 `/api/test` 返回成功。
+  - 浏览器加载本地登录页，确认 `app.js/styles.css` 新缓存号生效，三语言按钮当前语言高亮。
+- VPS 上线：
+  - VPS 备份目录：`/rick/apps/rai/_remote_backup_20260526_rai_v0.10.9.2_onboarding_rework`。
+  - 已 SCP 上传上述变更文件，未上传 / 未覆盖 `ai_data.db`。
+  - VPS `npm run check` 通过；`pm2 restart rai --update-env` 与 `pm2 save` 已完成。
+  - `pm2 jlist` 校验：`rai` version=`0.10.9.2`，status=`online`，pid=`1509247`。
+  - 线上数据库哈希保持 `72be186f4ae4a1d866f918cfdf685a046cdbb44d08e42e08e3675e442d4c11c5`。
+  - 公网直连 `http://82.158.88.216:3009/api/version` 返回 `0.10.9.2`，响应头含 `Cache-Control: no-store`。
+  - 公网直连首页确认 `v0.10.9.2` 与缓存号 `20260526-onboarding-rework-v01092` 生效；`/api/test` 返回成功。

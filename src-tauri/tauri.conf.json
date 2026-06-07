@@ -1,0 +1,47 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "RAI",
+  "version": "0.10.9+16",
+  "identifier": "quest.rick.rai",
+  "build": {
+    "frontendDist": "../public",
+    "devUrl": "http://localhost:3009"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "RAI",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 390,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Rick",
+    "category": "Productivity",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}
