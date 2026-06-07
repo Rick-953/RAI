@@ -1,11 +1,14 @@
 {
   "name": "rai",
-  "version": "0.10.7",
+  "version": "0.10.9.16",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check agent/engine.js && node --check agent/prompts.js && node --check agent/plan-parser.js"
+    "check": "node --check server.js && node --check public/app.js && node --check agent/engine.js && node --check agent/prompts.js && node --check agent/plan-parser.js",
+    "desktop:dev": "tauri dev",
+    "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "desktop:build": "tauri build"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
@@ -15,5 +18,8 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2"
   }
 }

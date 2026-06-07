@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');  // 用于网页搜索
+const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
 
 const app = express();
@@ -28,6 +29,7 @@ if (trustProxyEnv) {
 }
 app.set('trust proxy', trustProxySetting);
 const PORT = process.env.PORT || 3009;
+const PACKAGE_VERSION = packageInfo.version || '0.0.0';
 
 function requireSecretEnv(name, minLength = 32) {
     const value = String(process.env[name] || '').trim();
@@ -80,6 +82,24 @@ const POE_ALIAS_HINTS = {
 const POE_MODEL_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const POE_DAILY_LIMIT_FREE = 3;
 const GPT55_DAILY_LIMIT_FREE = 10;
+
+const ADMIN_MODEL_CATALOG = [
+    { id: 'deepseek-v3', name: 'DeepSeek V4', group: '全部模型' },
+    { id: 'kimi-k2.5', name: 'Kimi / 专家模式', group: '快捷与全部模型' },
+    { id: 'qwen2.5-7b', name: 'Qwen / 极速模式', group: '快捷与全部模型' },
+    { id: 'chatgpt-gpt-oss-120b', name: 'ChatGPT', group: '全部模型' },
+    { id: 'gpt-5.5', name: 'GPT-5.5', group: '全部模型' },
+    { id: 'grok-4.2', name: 'Grok 4.2', group: '全部模型' },
+    { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6', group: 'MAX 模型' },
+    { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku', group: 'MAX 模型' },
+    { id: 'gemma', name: 'Gemma', group: '全部模型' }
+];
+
+const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
+const AUTO_MODEL_PREFERENCE = ['kimi-k2.5', 'deepseek-v3', 'chatgpt-gpt-oss-120b', 'gemma', 'qwen2.5-7b'];
+const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['kimi-k2.5', 'gemma'];
+const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
+let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
 const poeModelRegistry = {
     hasSuccessfulSync: false,
@@ -1203,6 +1223,115 @@ function normalizeReasoningProfile(value = 'low') {
     return 'low';
 }
 
+function normalizeResearchMode(value = 'off') {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'deep') return 'deep';
+    if (normalized === 'fast') return 'fast';
+    return 'off';
+}
+
+const REASONING_TEXT_KEYS = [
+    'reasoning_content',
+    'reasoning',
+    'reasoning_text',
+    'reasoningSummary',
+    'reasoning_summary',
+    'reasoning_summary_text',
+    'thinking',
+    'thought',
+    'thoughts'
+];
+
+const REASONING_NESTED_KEYS = [
+    'reasoning_details',
+    'reasoningDetails',
+    'summary',
+    'summaries',
+    'parts',
+    'items'
+];
+
+function stringifyReasoningValue(value, seen = new Set()) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+        return value.map((item) => stringifyReasoningValue(item, seen)).filter(Boolean).join('');
+    }
+    if (typeof value !== 'object') return '';
+    if (seen.has(value)) return '';
+    seen.add(value);
+
+    const type = String(value.type || '').toLowerCase();
+    if (type.includes('encrypted')) return '';
+
+    const pieces = [];
+    for (const key of ['text', 'content', 'delta', 'value']) {
+        if (typeof value[key] === 'string') {
+            pieces.push(value[key]);
+        }
+    }
+    for (const key of REASONING_TEXT_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+            pieces.push(stringifyReasoningValue(value[key], seen));
+        }
+    }
+    for (const key of REASONING_NESTED_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+            pieces.push(stringifyReasoningValue(value[key], seen));
+        }
+    }
+
+    return pieces.filter(Boolean).join('');
+}
+
+function extractReasoningTextFromPayload(...payloads) {
+    const pieces = [];
+    for (const payload of payloads) {
+        if (!payload || typeof payload !== 'object') continue;
+
+        for (const key of REASONING_TEXT_KEYS) {
+            if (Object.prototype.hasOwnProperty.call(payload, key)) {
+                pieces.push(stringifyReasoningValue(payload[key]));
+            }
+        }
+
+        for (const key of REASONING_NESTED_KEYS) {
+            if (Object.prototype.hasOwnProperty.call(payload, key)) {
+                pieces.push(stringifyReasoningValue(payload[key]));
+            }
+        }
+    }
+    return pieces.filter(Boolean).join('');
+}
+
+function extractReasoningTextFromResponseEvent(event = {}) {
+    const type = String(event?.type || '').toLowerCase();
+    const itemType = String(event?.item?.type || event?.part?.type || event?.delta?.type || '').toLowerCase();
+    if (!type.includes('reasoning') && !itemType.includes('reasoning')) return '';
+    return (
+        stringifyReasoningValue(event.delta) ||
+        stringifyReasoningValue(event.text) ||
+        stringifyReasoningValue(event.content) ||
+        stringifyReasoningValue(event.summary) ||
+        stringifyReasoningValue(event.part) ||
+        stringifyReasoningValue(event.item) ||
+        stringifyReasoningValue(event.output) ||
+        extractReasoningTextFromPayload(event)
+    );
+}
+
+function extractOutputTextFromResponseEvent(event = {}) {
+    const type = String(event?.type || '').toLowerCase();
+    if (!type.includes('output_text') && !type.includes('message.delta')) return '';
+    return (
+        (typeof event.delta === 'string' && event.delta) ||
+        (typeof event.text === 'string' && event.text) ||
+        (typeof event.content === 'string' && event.content) ||
+        ''
+    );
+}
+
 function isPoeModelAlias(modelName = '') {
     return Object.prototype.hasOwnProperty.call(POE_STATIC_MODEL_MAP, String(modelName || '').trim());
 }
@@ -1254,17 +1383,22 @@ function resolvePoeModelAlias(alias = '') {
     };
 }
 
-function buildPoeExtraBody(modelAlias, reasoningProfile = 'low') {
+function buildPoeExtraBody(modelAlias, reasoningProfile = 'low', thinkingMode = false) {
     const alias = String(modelAlias || '').trim();
     const profile = normalizeReasoningProfile(reasoningProfile);
 
     if (alias === 'poe-gpt') {
         return {
-            reasoning_effort: profile === 'mixed' ? 'medium' : profile
+            reasoning_effort: resolveOpenAIChatReasoningEffort(
+                POE_STATIC_MODEL_MAP[alias] || 'gpt-5-nano',
+                !!thinkingMode,
+                profile
+            )
         };
     }
 
     if (alias === 'poe-gemini') {
+        if (!thinkingMode) return null;
         if (profile === 'mixed') return null;
         const geminiThinkingMap = {
             low: 'minimal',
@@ -1277,6 +1411,7 @@ function buildPoeExtraBody(modelAlias, reasoningProfile = 'low') {
     }
 
     if (alias === 'poe-claude') {
+        if (!thinkingMode) return null;
         const claudeBudgetMap = {
             low: 1024,
             medium: 4096,
@@ -1402,16 +1537,48 @@ function resolveOpenAIReasoningEffort(reasoningProfile = 'low') {
     return 'low';
 }
 
-function resolveNewApiReasoningEffort(modelName = '', thinkingMode = false, reasoningProfile = 'low') {
+function resolveOpenAIChatReasoningEffort(modelName = '', thinkingMode = false, reasoningProfile = 'low') {
     const profile = normalizeReasoningProfile(reasoningProfile);
     const normalizedModel = String(modelName || '').trim().toLowerCase();
 
-    if (normalizedModel === 'gpt-5.5') {
+    if (normalizedModel.includes('gpt-5-pro')) {
+        return 'high';
+    }
+
+    if (/^gpt-5\.1(?:$|-)/.test(normalizedModel)) {
+        if (!thinkingMode) return 'none';
+        if (profile === 'mixed') return 'high';
+        if (profile === 'high') return 'high';
+        if (profile === 'medium') return 'medium';
+        return 'low';
+    }
+
+    if (/^gpt-(?:5\.[2-9]|[6-9](?:\.|$))/.test(normalizedModel)) {
         if (!thinkingMode) return 'none';
         if (profile === 'mixed') return 'xhigh';
         if (profile === 'high') return 'high';
         if (profile === 'medium') return 'medium';
         return 'low';
+    }
+
+    if (/^gpt-5(?:$|-)/.test(normalizedModel)) {
+        if (!thinkingMode) return 'minimal';
+        if (profile === 'mixed') return 'high';
+        if (profile === 'high') return 'high';
+        if (profile === 'medium') return 'medium';
+        return 'low';
+    }
+
+    if (!thinkingMode) return null;
+    return resolveOpenAIReasoningEffort(profile);
+}
+
+function resolveNewApiReasoningEffort(modelName = '', thinkingMode = false, reasoningProfile = 'low') {
+    const profile = normalizeReasoningProfile(reasoningProfile);
+    const normalizedModel = String(modelName || '').trim().toLowerCase();
+
+    if (normalizedModel.startsWith('gpt-')) {
+        return resolveOpenAIChatReasoningEffort(normalizedModel, thinkingMode, profile);
     }
 
     if (normalizedModel.includes('grok')) {
@@ -2685,13 +2852,7 @@ async function callK2p5NonStream({
         const choice = result.choices?.[0] || {};
         const message = choice.message || {};
         const finishReason = choice.finish_reason || 'stop';
-        const roundReasoningContent = (
-            (typeof message.reasoning_content === 'string' && message.reasoning_content) ||
-            (typeof message.reasoning === 'string' && message.reasoning) ||
-            (typeof choice.reasoning_content === 'string' && choice.reasoning_content) ||
-            (typeof choice.reasoning === 'string' && choice.reasoning) ||
-            ''
-        );
+        const roundReasoningContent = extractReasoningTextFromPayload(message, choice);
 
         const currentUsage = normalizeUsage(result.usage);
         totalUsage.prompt_tokens += currentUsage.prompt_tokens;
@@ -2895,8 +3056,8 @@ async function callK2p5Stream({
                 if (choice.finish_reason) finishReason = choice.finish_reason;
                 const delta = choice.delta || {};
 
-                if (delta.reasoning_content || delta.reasoning) {
-                    const reasoningChunk = delta.reasoning_content || delta.reasoning;
+                const reasoningChunk = extractReasoningTextFromPayload(delta);
+                if (reasoningChunk) {
                     reasoningContent += reasoningChunk;
                     roundReasoningContent += reasoningChunk;
                     if (onReasoning) onReasoning(reasoningChunk);
@@ -2997,11 +3158,1027 @@ async function callK2p5Stream({
     };
 }
 
+function researchModelLabel(modelId = '') {
+    const labels = {
+        'gemma': 'Gemma',
+        'kimi-k2.5': 'Kimi K2.5',
+        'gpt-5.5': 'GPT-5.5',
+        'deepseek-v3.2-speciale': 'DeepSeek V4 Pro'
+    };
+    return labels[modelId] || modelId || 'Research Model';
+}
+
+function researchRoleFromModel(modelId = '') {
+    if (modelId === 'gemma') return 'gemma';
+    if (modelId === 'kimi-k2.5') return 'kimi';
+    if (modelId === 'gpt-5.5') return 'gpt55';
+    if (modelId === 'deepseek-v3.2-speciale') return 'deepseek';
+    return 'researcher';
+}
+
+function truncateResearchText(text = '', maxLength = 8000) {
+    const value = String(text || '').trim();
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength)}\n\n[内容已截断，保留前 ${maxLength} 字符]`;
+}
+
+function normalizeResearchMessageContent(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content.map((part) => {
+            if (typeof part === 'string') return part;
+            if (typeof part?.text === 'string') return part.text;
+            if (typeof part?.content === 'string') return part.content;
+            if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+            return '';
+        }).join('');
+    }
+    if (content === null || content === undefined) return '';
+    return String(content);
+}
+
+function buildGeminiResearchPayload({ messages = [], actualModel, maxTokens = 2000 }) {
+    const contents = [];
+    let systemInstructionText = '';
+
+    for (const msg of messages) {
+        const role = msg.role === 'assistant' ? 'model' : 'user';
+        const text = normalizeResearchMessageContent(msg.content);
+        if (!text) continue;
+
+        if (msg.role === 'system') {
+            systemInstructionText = systemInstructionText
+                ? `${systemInstructionText}\n\n${text}`
+                : text;
+            continue;
+        }
+
+        contents.push({
+            role,
+            parts: [{ text }]
+        });
+    }
+
+    const body = {
+        contents,
+        generationConfig: {
+            temperature: 0.35,
+            topP: 0.9,
+            maxOutputTokens: Math.max(512, Math.min(parseInt(maxTokens, 10) || 2000, 8000))
+        }
+    };
+
+    if (systemInstructionText) {
+        body.systemInstruction = {
+            parts: [{ text: systemInstructionText }]
+        };
+    }
+
+    return {
+        apiUrl: `${API_PROVIDERS.google_gemini.baseURL}/${actualModel}:streamGenerateContent?key=${API_PROVIDERS.google_gemini.apiKey}&alt=sse`,
+        headers: { 'Content-Type': 'application/json' },
+        body
+    };
+}
+
+function buildResearchRequest({ modelId, messages, stream = false, thinkingMode = true, reasoningProfile = 'mixed', maxTokens = 2000 }) {
+    const routing = MODEL_ROUTING[modelId];
+    if (!routing) throw new Error(`深度研究模型路由缺失: ${modelId}`);
+
+    const providerConfig = API_PROVIDERS[routing.provider];
+    if (!providerConfig?.apiKey) {
+        throw new Error(`深度研究模型缺少环境变量: ${providerConfig?.envKey || routing.provider || modelId}`);
+    }
+
+    let actualModel = routing.model;
+    if (routing.provider === 'deepseek' && thinkingMode && routing.thinkingModel) {
+        actualModel = routing.thinkingModel;
+    }
+    if (modelId === 'deepseek-v3.2-speciale') {
+        actualModel = routing.thinkingModel || 'deepseek-v4-pro';
+    }
+    if ((modelId === 'kimi-k2.5' || modelId === 'kimi-k2') && thinkingMode && routing.thinkingModel) {
+        actualModel = routing.thinkingModel;
+    }
+
+    if (routing.provider === 'google_gemini' || routing.isGemini || providerConfig.isGemini) {
+        const geminiPayload = buildGeminiResearchPayload({ messages, actualModel, maxTokens });
+        return {
+            routing,
+            providerConfig,
+            actualModel,
+            body: geminiPayload.body,
+            apiUrl: geminiPayload.apiUrl,
+            headers: geminiPayload.headers,
+            isGeminiAPI: true
+        };
+    }
+
+    const body = {
+        model: actualModel,
+        messages,
+        max_tokens: Math.max(512, Math.min(parseInt(maxTokens, 10) || 2000, 8000)),
+        stream: !!stream
+    };
+
+    if (routing.provider === 'siliconflow' && isKimiK25ActualModel(actualModel)) {
+        body.enable_thinking = !!thinkingMode;
+    } else {
+        body.temperature = 0.35;
+        body.top_p = 0.9;
+    }
+
+    if (routing.provider === 'deepseek') {
+        applyDeepSeekV4ModeParams(body, !!thinkingMode, reasoningProfile);
+    }
+    if (routing.provider === 'newapi') {
+        applyNewApiModelParams(body, actualModel, !!thinkingMode, reasoningProfile);
+    }
+    if (routing.provider === 'openrouter') {
+        applyOpenRouterReasoningParams(body, actualModel, !!thinkingMode, reasoningProfile);
+    }
+    if (routing.provider === 'poe') {
+        const poeExtraBody = buildPoeExtraBody(modelId, reasoningProfile, !!thinkingMode);
+        if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
+            body.extra_body = poeExtraBody;
+        }
+    }
+
+    return {
+        routing,
+        providerConfig,
+        actualModel,
+        body,
+        apiUrl: providerConfig.baseURL,
+        headers: {
+            Authorization: `Bearer ${providerConfig.apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        isGeminiAPI: false
+    };
+}
+
+async function callResearchModelNonStream({
+    modelId,
+    messages,
+    thinkingMode = true,
+    reasoningProfile = 'mixed',
+    maxTokens = 1800,
+    timeoutMs = 55000
+}) {
+    const request = buildResearchRequest({
+        modelId,
+        messages,
+        stream: false,
+        thinkingMode,
+        reasoningProfile,
+        maxTokens
+    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response;
+    try {
+        response = await fetch(request.apiUrl || request.providerConfig.baseURL, {
+            method: 'POST',
+            headers: request.headers,
+            body: JSON.stringify(request.body),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error(`${researchModelLabel(modelId)} 深度研究调用超时(${timeoutMs}ms)`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`${researchModelLabel(modelId)} 深度研究调用失败 ${response.status}: ${errorText.substring(0, 260)}`);
+    }
+
+    const payload = await response.json();
+    const choice = payload?.choices?.[0] || {};
+    const message = choice.message || {};
+    const rawContent = normalizeResearchMessageContent(message.content || choice.text || '');
+
+    return {
+        modelId,
+        actualModel: request.actualModel,
+        provider: request.routing.provider,
+        content: rawContent.trim(),
+        reasoningContent: extractReasoningTextFromPayload(message, choice, payload),
+        usage: normalizeUsage(payload.usage)
+    };
+}
+
+async function callResearchModelStream({
+    modelId,
+    messages,
+    thinkingMode = true,
+    reasoningProfile = 'mixed',
+    maxTokens = 2400,
+    timeoutMs = 120000,
+    onContent,
+    onReasoning
+}) {
+    const request = buildResearchRequest({
+        modelId,
+        messages,
+        stream: true,
+        thinkingMode,
+        reasoningProfile,
+        maxTokens
+    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response;
+    try {
+        response = await fetch(request.apiUrl || request.providerConfig.baseURL, {
+            method: 'POST',
+            headers: request.headers,
+            body: JSON.stringify(request.body),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error(`${researchModelLabel(modelId)} 主控生成超时(${timeoutMs}ms)`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok || !response.body) {
+        const errorText = await response.text();
+        throw new Error(`${researchModelLabel(modelId)} 主控生成失败 ${response.status}: ${errorText.substring(0, 260)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let content = '';
+    let reasoningContent = '';
+    let thinkCarry = '';
+    let inThink = false;
+    const THINK_START = '<think>';
+    const THINK_END = '</think>';
+
+    const splitThink = (chunk = '') => {
+        let text = thinkCarry + String(chunk || '');
+        thinkCarry = '';
+        let visible = '';
+        let reasoning = '';
+
+        while (text.length > 0) {
+            if (inThink) {
+                const endIdx = text.indexOf(THINK_END);
+                if (endIdx === -1) {
+                    const safeLen = Math.max(0, text.length - (THINK_END.length - 1));
+                    reasoning += text.slice(0, safeLen);
+                    thinkCarry = text.slice(safeLen);
+                    return { visible, reasoning };
+                }
+                reasoning += text.slice(0, endIdx);
+                text = text.slice(endIdx + THINK_END.length);
+                inThink = false;
+                continue;
+            }
+
+            const startIdx = text.indexOf(THINK_START);
+            if (startIdx === -1) {
+                const partialIdx = text.lastIndexOf('<');
+                if (partialIdx !== -1 && THINK_START.startsWith(text.slice(partialIdx))) {
+                    visible += text.slice(0, partialIdx);
+                    thinkCarry = text.slice(partialIdx);
+                    return { visible, reasoning };
+                }
+                visible += text;
+                text = '';
+                continue;
+            }
+
+            visible += text.slice(0, startIdx);
+            text = text.slice(startIdx + THINK_START.length);
+            inThink = true;
+        }
+
+        return { visible, reasoning };
+    };
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+            const flushed = buffer + decoder.decode();
+            buffer = flushed ? `${flushed}\n` : '';
+        } else {
+            buffer += decoder.decode(value, { stream: true });
+        }
+
+        const lines = buffer.split(/\r?\n/);
+        buffer = done ? '' : (lines.pop() || '');
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'data: [DONE]') continue;
+            if (!trimmed.startsWith('data: ')) continue;
+
+            let parsed;
+            try {
+                parsed = JSON.parse(trimmed.slice(6));
+            } catch (error) {
+                continue;
+            }
+
+            if (parsed?.error) {
+                const errMessage = typeof parsed.error === 'string'
+                    ? parsed.error
+                    : (parsed.error.message || JSON.stringify(parsed.error));
+                throw new Error(`${researchModelLabel(modelId)} 主控流式事件错误: ${errMessage}`);
+            }
+
+            const eventReasoning = extractReasoningTextFromResponseEvent(parsed);
+            if (eventReasoning) {
+                reasoningContent += eventReasoning;
+                if (onReasoning) onReasoning(eventReasoning);
+                continue;
+            }
+
+            if (request.isGeminiAPI) {
+                const candidate = parsed.candidates?.[0];
+                const parts = candidate?.content?.parts || [];
+                for (const part of parts) {
+                    if (!part?.text) continue;
+                    if (part.thought) {
+                        const reasoningDelta = extractIncrementalChunk(reasoningContent, part.text);
+                        if (reasoningDelta) {
+                            reasoningContent += reasoningDelta;
+                            if (onReasoning) onReasoning(reasoningDelta);
+                        }
+                    } else {
+                        const visibleDelta = extractIncrementalChunk(content, part.text);
+                        if (visibleDelta) {
+                            content += visibleDelta;
+                            if (onContent) onContent(visibleDelta);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            const eventContent = extractOutputTextFromResponseEvent(parsed);
+            const choice = parsed.choices?.[0] || {};
+            const delta = choice.delta || {};
+            const reasoning = extractReasoningTextFromPayload(delta);
+            const contentChunk = eventContent || normalizeResearchMessageContent(delta.content || '');
+
+            if (reasoning) {
+                reasoningContent += reasoning;
+                if (onReasoning) onReasoning(reasoning);
+            }
+
+            if (contentChunk) {
+                const split = splitThink(contentChunk);
+                if (split.reasoning) {
+                    reasoningContent += split.reasoning;
+                    if (onReasoning) onReasoning(split.reasoning);
+                }
+                if (split.visible) {
+                    content += split.visible;
+                    if (onContent) onContent(split.visible);
+                }
+            }
+        }
+
+        if (done) break;
+    }
+
+    return {
+        modelId,
+        actualModel: request.actualModel,
+        provider: request.routing.provider,
+        content,
+        reasoningContent
+    };
+}
+
+function extractResearchDebateStatus(content = '') {
+    const text = String(content || '').trim();
+    const statusMatch = text.match(/(?:结论状态|状态|status)\s*[：:]\s*([^\n\r]+)/i);
+    const statusLine = statusMatch ? statusMatch[1].trim() : '';
+    const noIssuePattern = /无重大问题|没有重大问题|无需继续质疑|达成一致|consensus|no\s+(?:blocking|major)\s+issues?/i;
+    const hasIssuePattern = /仍有问题|有重大问题|需要修正|未达成一致|blocking\s+issues?|major\s+issues?|needs?\s+revision/i;
+
+    if (statusLine) {
+        if (noIssuePattern.test(statusLine)) {
+            return { hasBlockingIssue: false, statusLine };
+        }
+        if (hasIssuePattern.test(statusLine)) {
+            return { hasBlockingIssue: true, statusLine };
+        }
+    }
+
+    if (noIssuePattern.test(text)) {
+        return { hasBlockingIssue: false, statusLine: '无重大问题' };
+    }
+
+    return { hasBlockingIssue: true, statusLine: statusLine || '未明确' };
+}
+
+function buildResearchDiscussionBrief(items = [], maxLengthPerItem = 3200) {
+    return items
+        .filter((item) => item && item.content)
+        .map((item) => `### ${item.label || item.role || '模型'}\n${truncateResearchText(item.content, maxLengthPerItem)}`)
+        .join('\n\n');
+}
+
+function compactResearchSpeech(content = '', maxChars = 220) {
+    const rawText = String(content || '')
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/<\/?think>/gi, '')
+        .trim();
+    const usefulLines = rawText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((line) => !/^(?:结论状态|状态|status)\s*[：:]/i.test(line))
+        .map((line) => line.replace(/^(?:发言|观点|结论|speech)\s*[：:]\s*/i, '').trim())
+        .filter(Boolean);
+    let text = usefulLines.join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) text = rawText.replace(/\s+/g, ' ').trim();
+
+    const sentenceMatches = text.match(/[^。！？!?\.]+[。！？!?\.]?/g);
+    if (sentenceMatches && sentenceMatches.length > 0) {
+        text = sentenceMatches.slice(0, 2).join('').trim();
+    }
+    if (text.length > maxChars) {
+        text = `${text.slice(0, maxChars).trim()}...`;
+    }
+    return text || '我需要更多信息才能判断。';
+}
+
+function buildResearchChatTranscript(speeches = [], maxChars = 4200, interjections = []) {
+    const speechLines = speeches
+        .map((speech) => {
+            const status = speech.voteOk ? '无重大问题' : '仍有问题';
+            return `第${speech.round}轮 ${speech.label}（${status}）：${speech.speech}`;
+        });
+    const interjectionLines = interjections
+        .map((item) => `用户插话（${item.createdAt || '实时'}）：${item.content}`)
+        .filter(Boolean);
+    const text = [...speechLines, ...interjectionLines].join('\n');
+    return truncateResearchText(text || '(暂无发言)', maxChars);
+}
+
+async function runResearchDebateMode({
+    res,
+    requestId,
+    messages,
+    userMessage,
+    masterModelId,
+    researchMode = 'deep',
+    debateThinkingMode = true,
+    maxDebateRounds = 3,
+    reasoningProfile = 'mixed',
+    maxTokens = 2400,
+    onContent,
+    onReasoning,
+    onAgentEvent = null
+}) {
+    const startedAt = Date.now();
+    const masterId = (masterModelId === 'deepseek-v3' || masterModelId === 'deepseek-v3.2-speciale')
+        ? 'deepseek-v3.2-speciale'
+        : 'gpt-5.5';
+    const debateMode = normalizeResearchMode(researchMode) === 'fast' ? 'fast' : 'deep';
+    const useThinking = debateMode === 'deep' && debateThinkingMode !== false;
+    const roundLimit = Math.max(1, Math.min(parseInt(maxDebateRounds, 10) || (debateMode === 'deep' ? 3 : 2), debateMode === 'deep' ? 4 : 3));
+    const speechTokenLimit = debateMode === 'deep' ? 520 : 360;
+    const totalSpeakers = 4;
+    const requiredOkVotes = Math.ceil(totalSpeakers * 0.75);
+
+    const emitResearchEvent = (payload) => {
+        emitAgentEvent(res, payload);
+        if (typeof onAgentEvent === 'function') {
+            try {
+                onAgentEvent(payload);
+            } catch (error) {
+                console.warn(` 记录深度研究事件失败: ${error.message}`);
+            }
+        }
+    };
+
+    const speakers = [
+        { agent_id: 1, role: 'gemma', modelId: 'gemma', label: 'Gemma', task: '从常识、表达和边界条件给出判断' },
+        { agent_id: 2, role: 'kimi', modelId: 'kimi-k2.5', label: 'Kimi K2.5', task: '提出核心判断或质疑前序发言' },
+        { agent_id: 3, role: 'gpt55', modelId: 'gpt-5.5', label: 'GPT-5.5', task: '检查逻辑漏洞并修正结论' },
+        { agent_id: 4, role: 'deepseek', modelId: 'deepseek-v3.2-speciale', label: 'DeepSeek V4 Pro', task: '检查事实、前提和反例' }
+    ];
+
+    emitResearchEvent({
+        type: 'agent_plan',
+        mode: 'research_chat_debate',
+        researchMode: debateMode,
+        discussionRounds: roundLimit,
+        stopRule: 'master_decides',
+        totalSpeakers,
+        masterModel: masterId,
+        selectedAgents: speakers.map((speaker) => speaker.role),
+        tasks: [
+            ...speakers.map((speaker) => ({
+            agent_id: speaker.agent_id,
+            stepId: `research-${speaker.role}`,
+            role: speaker.role,
+            task: speaker.task
+            })),
+            {
+                agent_id: 999,
+                stepId: 'research-master',
+                role: 'master',
+                task: `${researchModelLabel(masterId)} 判断是否继续讨论并输出最终正文`
+            }
+        ]
+    });
+
+    const appendInstruction = (baseMessages, instruction) => [
+        ...baseMessages,
+        {
+            role: 'user',
+            content: instruction
+        }
+    ];
+
+    const speeches = [];
+    const debateRounds = [];
+    const userInterjections = [];
+    let masterReadyToAnswer = false;
+    let masterDecisionReason = '';
+
+    const collectLiveUserInterjections = (round, beforeRole) => {
+        const items = collectRequestInterjections(requestId);
+        if (!items.length) return;
+        for (const item of items) {
+            const record = {
+                ...item,
+                round,
+                beforeRole
+            };
+            userInterjections.push(record);
+            emitResearchEvent({
+                type: 'agent_interjection',
+                role: 'user',
+                round,
+                beforeRole,
+                detail: `用户插话: ${record.content.slice(0, 120)}`,
+                content: record.content,
+                createdAt: record.createdAt
+            });
+        }
+    };
+
+    const parseMasterDecision = (raw = '', isLastRound = false) => {
+        const text = String(raw || '').trim();
+        let payload = null;
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                payload = JSON.parse(jsonMatch[0]);
+            } catch (error) {
+                payload = null;
+            }
+        }
+        const decisionText = String(payload?.decision || payload?.action || text).toLowerCase();
+        const ready = /final|answer|generate|stop|无需|不需要|可以回答|生成正文|最终回答/.test(decisionText)
+            && !/continue|继续|more|更多/.test(decisionText);
+        const continueMore = /continue|继续|more|更多|再讨论|需要继续/.test(decisionText);
+        return {
+            ready: ready || (isLastRound && !continueMore),
+            reason: String(payload?.reason || payload?.rationale || text || '').replace(/\s+/g, ' ').trim().slice(0, 240)
+        };
+    };
+
+    for (let round = 1; round <= roundLimit; round += 1) {
+        const roundResults = [];
+
+        for (const [index, speaker] of speakers.entries()) {
+            const stepId = `research-r${round}-${speaker.role}`;
+            const taskId = (round - 1) * totalSpeakers + index + 1;
+            const stepStartedAt = Date.now();
+            collectLiveUserInterjections(round, speaker.role);
+
+            emitResearchEvent({
+                type: 'agent_status',
+                role: speaker.role,
+                scope: 'task',
+                stepId,
+                taskId,
+                status: 'running',
+                detail: `${speaker.label} 第${round}轮发言中`
+            });
+
+            try {
+                let streamedSpeech = '';
+                let streamedReasoning = '';
+                const speechTask = `第${round}轮发言`;
+                emitResearchEvent({
+                    type: 'agent_draft_delta',
+                    taskId,
+                    stepId,
+                    role: speaker.role,
+                    task: speechTask,
+                    speech: true,
+                    round,
+                    reset: true,
+                    delta: ''
+                });
+
+                const transcript = buildResearchChatTranscript(speeches, debateMode === 'deep' ? 5200 : 3000, userInterjections);
+                const result = await callResearchModelStream({
+                    modelId: speaker.modelId,
+                    messages: appendInstruction(messages, [
+                        `[研究聊天第${round}轮：${speaker.label}]`,
+                        `当前研究模式：${debateMode === 'deep' ? '深度研究' : '快速研究'}。`,
+                        '你正在一个聊天软件气泡式讨论中发言。你只发言一次，必须短、准、在点上。',
+                        '输出必须只有两行：',
+                        '第一行必须从下面二选一：结论状态：无重大问题 / 结论状态：仍有问题',
+                        '第二行必须写：发言：一句或两句，最多120个中文字符或80个英文单词。',
+                        '开放性问题不要用“信息不足”逃避；除非确实缺少关键事实，否则必须基于已知上下文给出有用判断。',
+                        '质疑对象只能是此前模型发言，不要质疑用户的问题或用户的新插话。',
+                        '如果前面模型有漏洞，要尖锐指出最关键漏洞和修正方向；如果认可，也必须说明还有哪些边界需要收紧，不要空泛附和。',
+                        '不要输出给用户的最终正文，不要长篇分点，不要代码块。',
+                        '',
+                        '用户原问题：',
+                        userMessage,
+                        '',
+                        '此前发言：',
+                        transcript
+                    ].join('\n')),
+                    thinkingMode: useThinking,
+                    reasoningProfile,
+                    maxTokens: speechTokenLimit,
+                    timeoutMs: debateMode === 'deep' ? 65000 : 45000,
+                    onContent: (chunk) => {
+                        if (!chunk) return;
+                        streamedSpeech += chunk;
+                        emitResearchEvent({
+                            type: 'agent_draft_delta',
+                            taskId,
+                            stepId,
+                            role: speaker.role,
+                            task: speechTask,
+                            speech: true,
+                            round,
+                            delta: chunk
+                        });
+                    },
+                    onReasoning: (chunk) => {
+                        if (!chunk) return;
+                        streamedReasoning += chunk;
+                        emitResearchEvent({
+                            type: 'agent_draft_delta',
+                            taskId,
+                            stepId,
+                            role: speaker.role,
+                            task: speechTask,
+                            speech: true,
+                            round,
+                            reasoningDelta: chunk
+                        });
+                    }
+                });
+
+                const rawContent = truncateResearchText(result.content || streamedSpeech, 1200);
+                const reasoningForBubble = truncateResearchText(result.reasoningContent || streamedReasoning, 3000);
+                const debateStatus = extractResearchDebateStatus(rawContent);
+                const speech = compactResearchSpeech(rawContent, debateMode === 'deep' ? 240 : 180);
+                const voteOk = !debateStatus.hasBlockingIssue;
+                const speechRecord = {
+                    ok: true,
+                    modelId: speaker.modelId,
+                    role: speaker.role,
+                    label: speaker.label,
+                    stepId,
+                    taskId,
+                    round,
+                    content: rawContent,
+                    speech,
+                    voteOk,
+                    statusLine: debateStatus.statusLine,
+                    reasoningContent: reasoningForBubble,
+                    actualModel: result.actualModel,
+                    provider: result.provider
+                };
+                speeches.push(speechRecord);
+                roundResults.push(speechRecord);
+
+                emitResearchEvent({
+                    type: 'agent_draft',
+                    taskId,
+                    stepId,
+                    role: speaker.role,
+                    task: speechTask,
+                    speech: true,
+                    round,
+                    voteOk,
+                    statusLine: debateStatus.statusLine,
+                    summary: speech,
+                    content: speech,
+                    rawContent,
+                    reasoningContent: reasoningForBubble,
+                    usage: result.usage || null,
+                    debateRound: round,
+                    hasBlockingIssue: debateStatus.hasBlockingIssue
+                });
+                emitResearchEvent({
+                    type: 'agent_status',
+                    role: speaker.role,
+                    scope: 'task',
+                    stepId,
+                    taskId,
+                    status: 'done',
+                    detail: `${speaker.label} ${voteOk ? '完成本轮判断' : '提出需要修正的问题'}`,
+                    durationMs: Date.now() - stepStartedAt
+                });
+            } catch (error) {
+                emitResearchEvent({
+                    type: 'agent_status',
+                    role: speaker.role,
+                    scope: 'task',
+                    stepId,
+                    taskId,
+                    status: 'failed',
+                    detail: `${speaker.label} 第${round}轮失败: ${error.message}`,
+                    durationMs: Date.now() - stepStartedAt
+                });
+                const failedRecord = {
+                    ok: false,
+                    modelId: speaker.modelId,
+                    role: speaker.role,
+                    label: speaker.label,
+                    stepId,
+                    taskId,
+                    content: '',
+                    speech: `本轮调用失败：${error.message}`,
+                    round,
+                    debateRound: round,
+                    hasBlockingIssue: true,
+                    voteOk: false,
+                    error: error.message
+                };
+                emitResearchEvent({
+                    type: 'agent_draft',
+                    taskId,
+                    stepId,
+                    role: speaker.role,
+                    task: `第${round}轮发言`,
+                    speech: true,
+                    round,
+                    voteOk: false,
+                    statusLine: '结论状态：仍有问题',
+                    summary: failedRecord.speech,
+                    content: failedRecord.speech,
+                    rawContent: failedRecord.speech,
+                    debateRound: round,
+                    hasBlockingIssue: true
+                });
+                roundResults.push(failedRecord);
+            }
+        }
+
+        const successfulRound = roundResults.filter((item) => item.ok && item.speech);
+        const okVotes = roundResults.filter((item) => item.ok && item.voteOk !== false && item.hasBlockingIssue !== true).length;
+        collectLiveUserInterjections(round, 'master');
+        const decisionStartedAt = Date.now();
+        let decisionResult = { ready: round >= roundLimit, reason: round >= roundLimit ? '达到讨论轮次上限，进入最终综合。' : '' };
+        try {
+            emitResearchEvent({
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: `research-r${round}-master-check`,
+                taskId: 900 + round,
+                status: 'running',
+                detail: `${researchModelLabel(masterId)} 判断是否还需要继续讨论`
+            });
+            const decisionPrompt = [
+                `[研究主控判定第${round}轮]`,
+                '你只判断是否还需要更多讨论，不输出给用户的正文。',
+                `如果当前 Gemma、Kimi、GPT、DeepSeek 中至少 ${requiredOkVotes}/${totalSpeakers} 个模型认为没有重大问题，且讨论已经足够回答用户，就 decision=final。`,
+                '如果存在会明显影响答案的关键漏洞、事实缺口或用户刚插话需要下一位模型吸收，就 decision=continue。',
+                '输出严格 JSON：{"decision":"final|continue","reason":"一句话原因"}',
+                '',
+                '用户原问题：',
+                userMessage,
+                '',
+                '实时讨论记录（含用户插话）：',
+                buildResearchChatTranscript(speeches, debateMode === 'deep' ? 7600 : 4400, userInterjections)
+            ].join('\n');
+            const decisionRaw = await callResearchModelNonStream({
+                modelId: masterId,
+                messages: appendInstruction(messages, decisionPrompt),
+                thinkingMode: false,
+                reasoningProfile: 'low',
+                maxTokens: 420,
+                timeoutMs: debateMode === 'deep' ? 45000 : 30000
+            });
+            decisionResult = parseMasterDecision(decisionRaw.content, round >= roundLimit);
+            emitResearchEvent({
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: `research-r${round}-master-check`,
+                taskId: 900 + round,
+                status: 'done',
+                detail: decisionResult.ready
+                    ? `主控判断无需继续讨论: ${decisionResult.reason}`
+                    : `主控判断继续讨论: ${decisionResult.reason}`,
+                durationMs: Date.now() - decisionStartedAt
+            });
+        } catch (error) {
+            decisionResult = {
+                ready: round >= roundLimit,
+                reason: round >= roundLimit
+                    ? `主控判定失败且达到上限: ${error.message}`
+                    : `主控判定失败，保守继续一轮: ${error.message}`
+            };
+            emitResearchEvent({
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: `research-r${round}-master-check`,
+                taskId: 900 + round,
+                status: decisionResult.ready ? 'done' : 'running',
+                detail: decisionResult.reason,
+                durationMs: Date.now() - decisionStartedAt
+            });
+        }
+
+        if (okVotes < requiredOkVotes && round < roundLimit) {
+            decisionResult = {
+                ready: false,
+                reason: `${okVotes}/${totalSpeakers} 个模型认为无重大问题，未达到 ${requiredOkVotes}/${totalSpeakers} 停止条件，继续讨论。`
+            };
+            emitResearchEvent({
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: `research-r${round}-vote-check`,
+                taskId: 950 + round,
+                status: 'running',
+                detail: decisionResult.reason
+            });
+        } else if (okVotes < requiredOkVotes && round >= roundLimit) {
+            decisionResult = {
+                ready: true,
+                reason: `${okVotes}/${totalSpeakers} 个模型认为无重大问题；已达到轮次上限，最终回答需保留关键边界。`
+            };
+        }
+
+        masterReadyToAnswer = decisionResult.ready;
+        masterDecisionReason = decisionResult.reason;
+        debateRounds.push({
+            round,
+            results: roundResults,
+            okVotes,
+            requiredOkVotes,
+            masterReadyToAnswer,
+            masterDecisionReason
+        });
+
+        emitResearchEvent({
+            type: 'agent_quality',
+            round,
+            pass: masterReadyToAnswer,
+            metrics: {
+                claimCoverage: okVotes,
+                totalSpeakers,
+                requiredOkVotes,
+                stopRule: 'master_decides'
+            },
+            detail: masterReadyToAnswer
+                ? `第${round}轮主控判断无需继续讨论，进入最终回答`
+                : `第${round}轮主控判断继续讨论`
+        });
+
+        if (masterReadyToAnswer) {
+            break;
+        }
+    }
+
+    if (speeches.length === 0) {
+        throw new Error('研究讨论没有任何可用发言，无法继续');
+    }
+
+    const critiqueResults = speeches;
+    collectLiveUserInterjections(debateRounds.length || roundLimit, 'final');
+    const critiqueBrief = buildResearchChatTranscript(speeches, debateMode === 'deep' ? 9000 : 5200, userInterjections);
+
+    const masterStepStartedAt = Date.now();
+    emitResearchEvent({
+        type: 'agent_status',
+        role: 'master',
+        scope: 'stage',
+        stepId: 'research-master',
+        taskId: 999,
+        status: 'running',
+        detail: `${researchModelLabel(masterId)} 正在根据讨论输出最终回答`
+    });
+
+    const masterPrompt = [
+        `[深度研究主控: ${researchModelLabel(masterId)}]`,
+        `当前研究模式：${debateMode === 'deep' ? '深度研究' : '快速研究'}。`,
+        `主控停止原因：${masterReadyToAnswer ? (masterDecisionReason || '主控判断无需继续讨论。') : '已达到讨论轮次上限，需要基于现有讨论保守综合。'}。`,
+        '你将基于 Gemma、Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 的聊天式讨论和用户实时插话处理用户问题。',
+        '要求：',
+        '- 直接回答用户，不要复述“模型A/模型B说了什么”，也不要输出内部判定过程。',
+        '- 必须吸收讨论中成立的质疑，修正过度确定、遗漏前提或逻辑跳步。',
+        '- 最终主控不要再质疑用户，也不要用质疑口吻；请正经陈述修正后的答案。',
+        '- 如果用户的问题信息不足，需要用独立的 rai_ask_user 代码块询问用户；questions 数组没有数量上限。',
+        '- 如果使用 rai_ask_user，多问题必须等待用户把所有问题选完并点击发送后再继续。',
+        '- 询问用户工具第一行必须精确使用 ```rai_ask_user，不要用 ```json、无语言代码块或普通文本 JSON 代替。',
+        '- 使用用户当前语言；保持结构清楚、可执行、不过度冗长。',
+        '',
+        '用户原问题：',
+        userMessage,
+        '',
+        '聊天式讨论记录：',
+        critiqueBrief
+    ].join('\n');
+
+    const masterResult = await callResearchModelStream({
+        modelId: masterId,
+        messages: appendInstruction(messages, masterPrompt),
+        thinkingMode: useThinking,
+        reasoningProfile,
+        maxTokens: debateMode === 'deep'
+            ? Math.max(parseInt(maxTokens, 10) || 2400, 1800)
+            : Math.max(Math.min(parseInt(maxTokens, 10) || 1800, 2600), 1200),
+        timeoutMs: debateMode === 'deep' ? 140000 : 90000,
+        onContent: (chunk) => {
+            if (onContent) onContent(chunk);
+        },
+        onReasoning
+    });
+
+    emitResearchEvent({
+        type: 'agent_status',
+        role: 'master',
+        scope: 'stage',
+        stepId: 'research-master',
+        taskId: 999,
+        status: 'done',
+        detail: '深度研究主控综合完成',
+        durationMs: Date.now() - masterStepStartedAt
+    });
+    emitResearchEvent({
+        type: 'agent_metrics',
+        mode: 'research_debate',
+        researchMode: debateMode,
+        durationMs: Date.now() - startedAt,
+        successfulAgents: new Set(speeches.filter((item) => item.ok).map((item) => item.role)).size,
+        critiqueCount: critiqueResults.filter((item) => item.ok && item.content).length,
+        discussionRounds: debateRounds.length,
+        stopRule: 'master_decides',
+        masterReadyToAnswer,
+        masterDecisionReason,
+        interjectionCount: userInterjections.length,
+        masterModel: masterId
+    });
+
+    return {
+        content: masterResult.content,
+        reasoningContent: [
+            ...speeches.map((item) => item.reasoningContent).filter(Boolean),
+            masterResult.reasoningContent || ''
+        ].join('\n'),
+        finalModel: masterId,
+        actualModel: masterResult.actualModel,
+        provider: masterResult.provider,
+        trace: {
+            initialResults: speeches.filter((item) => item.round === 1),
+            critiqueResults,
+            userInterjections,
+            debateRounds,
+            consensusReached: masterReadyToAnswer,
+            stopRule: 'master_decides',
+            masterDecisionReason,
+            master: {
+                modelId: masterId,
+                actualModel: masterResult.actualModel,
+                provider: masterResult.provider
+            }
+        }
+    };
+}
+
 async function runTrueParallelAgentMode({
     res,
     messages,
     userMessage,
     systemPrompt,
+    userIdentityInstruction = '',
     domainInstruction = '',
     ruleInstruction = '',
     ruleMeta = null,
@@ -3024,6 +4201,7 @@ async function runTrueParallelAgentMode({
     const actualModel = routing.model;
     const searchBudget = createSearchBudget(8, 2);
     const historyContext = buildHistoryContext(messages, 6);
+    const activeUserIdentityInstruction = String(userIdentityInstruction || '').trim();
     const activeDomainInstruction = String(domainInstruction || '').trim();
     const activeRuleInstruction = String(ruleInstruction || '').trim();
     const mergePromptSections = (...sections) => sections
@@ -3078,6 +4256,7 @@ async function runTrueParallelAgentMode({
         callPlanner: async ({ plannerPrompt, userMessage: inputMessage }) => {
             const plannerSystemPrompt = mergePromptSections(
                 plannerPrompt,
+                activeUserIdentityInstruction,
                 activeDomainInstruction,
                 activeRuleInstruction
             );
@@ -3166,6 +4345,7 @@ async function runTrueParallelAgentMode({
             let streamedDraft = '';
             const subAgentSystemPrompt = mergePromptSections(
                 subPrompt,
+                activeUserIdentityInstruction,
                 activeDomainInstruction,
                 activeRuleInstruction
             );
@@ -3221,6 +4401,7 @@ async function runTrueParallelAgentMode({
             let masterDraftDeltaStarted = false;
             const mergedSystemPrompt = mergePromptSections(
                 systemPrompt,
+                activeUserIdentityInstruction,
                 activeDomainInstruction,
                 activeRuleInstruction
             );
@@ -3939,6 +5120,23 @@ db.serialize(() => {
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS model_visibility (
+    model_id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS user_task_rewards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    task_key TEXT NOT NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT,
+    completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, task_key),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
     console.log(' 所有数据表就绪');
 
     //  数据库迁移：添加缺失的列（如果表已存在且列不存在）
@@ -4113,6 +5311,14 @@ db.serialize(() => {
             }
         });
 
+        db.run(`CREATE INDEX IF NOT EXISTS idx_user_task_rewards_user ON user_task_rewards(user_id, completed_at DESC)`, (err) => {
+            if (err) {
+                console.warn(` 创建user_task_rewards用户索引失败:`, err.message);
+            } else {
+                console.log(' user_task_rewards用户索引就绪');
+            }
+        });
+
         // ==================== VIP会员系统字段 ====================
         // 会员等级: free / Pro / MAX
         db.run(`ALTER TABLE users ADD COLUMN membership TEXT DEFAULT 'free'`, (err) => {
@@ -4211,7 +5417,10 @@ function buildAllowedCorsOrigins() {
         'http://localhost:3009',
         'http://127.0.0.1:3009',
         'http://localhost:3010',
-        'http://127.0.0.1:3010'
+        'http://127.0.0.1:3010',
+        'tauri://localhost',
+        'http://tauri.localhost',
+        'https://tauri.localhost'
     ]);
 
     for (const raw of [PUBLIC_BASE_URL, process.env.CORS_ORIGINS]) {
@@ -4270,6 +5479,20 @@ app.use('/avatars', (req, res, next) => {
     }
     next();
 }, express.static(path.join(__dirname, 'avatars'), avatarStaticOptions));
+
+app.get('/sw.js', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Service-Worker-Allowed', '/');
+    res.type('application/javascript');
+    res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
+app.get('/site.webmanifest', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.type('application/manifest+json');
+    res.sendFile(path.join(__dirname, 'public', 'site.webmanifest'));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), staticCacheOptions));
 
 // 限流配置
@@ -4401,6 +5624,15 @@ app.get('/api/test', (req, res) => {
         message: 'RAI API v3.2 正常运行',
         timestamp: new Date().toISOString(),
         providers: Object.keys(API_PROVIDERS)
+    });
+});
+
+app.get('/api/version', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.json({
+        success: true,
+        version: PACKAGE_VERSION,
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -4768,7 +6000,8 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
 // ==================== 认证路由 ====================
 app.post('/api/auth/register', authLimiter, async (req, res) => {
     try {
-        const { email, password, username } = req.body;
+        const { email, password, username, referrerId, referralCode, ref } = req.body;
+        const normalizedReferrerId = normalizeReferralUserId(referrerId || referralCode || ref);
 
         if (!email || !password) {
             return res.status(400).json({ success: false, error: '邮箱和密码不能为空' });
@@ -4799,7 +6032,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
                 db.run(
                     'INSERT INTO users (email, password_hash, username) VALUES (?, ?, ?)',
                     [email, passwordHash, finalUsername],
-                    function (err) {
+                    async function (err) {
                         if (err) {
                             return res.status(500).json({ success: false, error: '注册失败,请重试' });
                         }
@@ -4809,11 +6042,25 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
                         db.run('INSERT INTO user_configs (user_id) VALUES (?)', [userId]);
 
+                        let inviteReward = null;
+                        if (normalizedReferrerId) {
+                            try {
+                                inviteReward = await awardInviteReferralIfValid(normalizedReferrerId, userId, req);
+                                if (inviteReward?.awarded) {
+                                    console.log(` 邀请奖励成功: referrer=${normalizedReferrerId}, invited=${userId}, points=${inviteReward.pointsGained}`);
+                                }
+                            } catch (inviteError) {
+                                console.warn(` 邀请奖励失败 referrer=${normalizedReferrerId}, invited=${userId}:`, inviteError.message);
+                            }
+                        }
+
                         const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '30d' });
 
                         res.json({
                             success: true,
                             token,
+                            isNewUser: true,
+                            inviteReward,
                             user: { id: userId, email, username: finalUsername }
                         });
                     }
@@ -4863,15 +6110,22 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
                 const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
 
                 console.log(' 登录成功, 用户ID:', user.id);
-                res.json({
-                    success: true,
-                    token,
-                    user: {
-                        id: user.id,
-                        email: user.email,
-                        username: user.username,
-                        avatar_url: user.avatar_url
-                    }
+
+                // 检查是否为新用户（无对话记录）
+                db.get('SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ?', [user.id], (sessionErr, sessionRow) => {
+                    const isNewUser = !sessionErr && (!sessionRow || sessionRow.cnt === 0);
+
+                    res.json({
+                        success: true,
+                        token,
+                        isNewUser,
+                        user: {
+                            id: user.id,
+                            email: user.email,
+                            username: user.username,
+                            avatar_url: user.avatar_url
+                        }
+                    });
                 });
             } catch (compareError) {
                 return res.status(500).json({ success: false, error: '服务器错误' });
@@ -4992,6 +6246,122 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
             res.json(profile);
         }
     );
+});
+
+app.put('/api/user/profile', authenticateToken, async (req, res) => {
+    try {
+        const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+        const rawUsername = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!rawEmail) {
+            return res.status(400).json({ success: false, error: '邮箱不能为空' });
+        }
+
+        if (!emailRegex.test(rawEmail)) {
+            return res.status(400).json({ success: false, error: '邮件格式不正确' });
+        }
+
+        if (rawEmail.length > 255) {
+            return res.status(400).json({ success: false, error: '邮箱长度不能超过255个字符' });
+        }
+
+        if (rawUsername.length > 80) {
+            return res.status(400).json({ success: false, error: '用户名不能超过80个字符' });
+        }
+
+        const finalUsername = rawUsername || rawEmail.split('@')[0];
+        const duplicateUser = await dbGetAsync(
+            'SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?',
+            [rawEmail, req.user.userId]
+        );
+
+        if (duplicateUser) {
+            return res.status(409).json({ success: false, error: '该邮箱已被其他账号使用' });
+        }
+
+        await dbRunAsync(
+            'UPDATE users SET email = ?, username = ? WHERE id = ?',
+            [rawEmail, finalUsername, req.user.userId]
+        );
+
+        const updatedUser = await dbGetAsync(
+            'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
+            [req.user.userId]
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+
+        const refreshedToken = jwt.sign(
+            { userId: updatedUser.id, email: updatedUser.email },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        console.log(` 用户资料已更新: userId=${updatedUser.id}, email=${updatedUser.email}, username=${updatedUser.username}`);
+        res.json({
+            success: true,
+            token: refreshedToken,
+            user: {
+                id: updatedUser.id,
+                email: updatedUser.email,
+                username: updatedUser.username,
+                avatar_url: updatedUser.avatar_url || null,
+                external_provider: updatedUser.external_provider || null,
+                external_uid: updatedUser.external_uid || null
+            }
+        });
+    } catch (error) {
+        console.error(' 更新用户资料失败:', error);
+        res.status(500).json({ success: false, error: '更新用户资料失败' });
+    }
+});
+
+app.put('/api/user/password', authenticateToken, async (req, res) => {
+    try {
+        const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+        const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+        if (!currentPassword) {
+            return res.status(400).json({ success: false, error: '当前密码不能为空' });
+        }
+
+        if (!newPassword || newPassword.length < 6) {
+            return res.status(400).json({ success: false, error: '新密码至少需要6位' });
+        }
+
+        if (newPassword === currentPassword) {
+            return res.status(400).json({ success: false, error: '新密码不能与当前密码相同' });
+        }
+
+        const user = await dbGetAsync(
+            'SELECT id, email, password_hash FROM users WHERE id = ?',
+            [req.user.userId]
+        );
+
+        if (!user) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+
+        const passwordMatched = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!passwordMatched) {
+            return res.status(400).json({ success: false, error: '当前密码错误' });
+        }
+
+        const nextPasswordHash = await bcrypt.hash(newPassword, 10);
+        await dbRunAsync(
+            'UPDATE users SET password_hash = ? WHERE id = ?',
+            [nextPasswordHash, user.id]
+        );
+
+        console.log(` 用户密码已更新: userId=${user.id}, email=${user.email}`);
+        res.json({ success: true });
+    } catch (error) {
+        console.error(' 更新用户密码失败:', error);
+        res.status(500).json({ success: false, error: '更新密码失败' });
+    }
 });
 
 app.put('/api/user/config', authenticateToken, (req, res) => {
@@ -5941,6 +7311,37 @@ app.get('/api/uploads/:filename', authenticateToken, (req, res) => {
     });
 });
 
+const activeRequestInterjections = new Map();
+
+function normalizeStreamingInterjection(value = '') {
+    return String(value || '')
+        .replace(/\r\n/g, '\n')
+        .trim()
+        .slice(0, 1200);
+}
+
+function pushRequestInterjection(requestId, text, userId) {
+    const content = normalizeStreamingInterjection(text);
+    if (!requestId || !content) return null;
+    const item = {
+        userId,
+        content,
+        createdAt: new Date().toISOString()
+    };
+    const list = activeRequestInterjections.get(requestId) || [];
+    list.push(item);
+    activeRequestInterjections.set(requestId, list.slice(-20));
+    return item;
+}
+
+function collectRequestInterjections(requestId) {
+    const list = activeRequestInterjections.get(requestId) || [];
+    if (list.length > 0) {
+        activeRequestInterjections.set(requestId, []);
+    }
+    return list;
+}
+
 //  修复：流式聊天路由
 app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => {
     console.log(' 收到聊天请求');
@@ -5961,6 +7362,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             qualityProfile = AGENT_DEFAULT_QUALITY,
             agentTraceLevel = 'full',
             reasoningProfile = 'low',
+            researchMode = 'off',
             temperature = 0.7,
             top_p = 0.9,
             max_tokens = 2000,
@@ -5977,11 +7379,19 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let sessionId = requestedSessionId;
         let flowRecord = null;
         let thinkingMode = !!thinkingModeInput;
-        const model = normalizeIncomingModelId(requestedModel);
-        const normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
+        let model = normalizeIncomingModelId(requestedModel);
+        let normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
+        const normalizedResearchMode = normalizeResearchMode(researchMode);
         const normalizedPromptTimeContext = normalizePromptTimeContext(promptTimeContext);
 
-        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
+        if (normalizedResearchMode === 'fast') {
+            thinkingMode = false;
+        } else if (normalizedResearchMode === 'deep') {
+            thinkingMode = true;
+            normalizedReasoningProfile = 'mixed';
+        }
+
+        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, researchMode=${normalizedResearchMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
         if (requestedModel !== model) {
             console.log(` 已将旧模型ID ${requestedModel} 归一化为 ${model}`);
         }
@@ -6022,6 +7432,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
+        let promptUserProfile = null;
+        try {
+            promptUserProfile = await getPromptUserProfile(req.user.userId, req.user.email);
+        } catch (promptUserProfileError) {
+            console.warn(` 获取Prompt用户信息失败，使用令牌回退: ${promptUserProfileError.message}`);
+            promptUserProfile = await getPromptUserProfile(null, req.user.email);
+        }
+        const userIdentityInstruction = buildUserIdentityPrompt(promptUserProfile);
+        if (userIdentityInstruction) {
+            console.log(` 已注入当前用户信息到Prompt: userId=${req.user.userId}, hasUsername=${!!promptUserProfile?.username}, hasEmail=${!!promptUserProfile?.email}`);
+        }
+
         if (
             model === 'claude-haiku' ||
             model === 'anthropic/claude-sonnet-4.6' ||
@@ -6032,6 +7454,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (membershipTier !== 'max') {
                 return res.status(403).json({ error: '该模型仅 MAX 会员可用' });
             }
+        }
+
+        if (model !== 'auto' && await isPublicModelDisabled(model)) {
+            console.warn(` 模型 ${model} 已被管理员关闭，回退到智能模型`);
+            model = 'auto';
         }
 
         // 生成请求ID
@@ -6061,9 +7488,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         //  预设答案快速通道：在所有路由逻辑之前检查，确保所有模式都能生效
         const lastUserMsg = messages[messages.length - 1];
-        const userContent = typeof lastUserMsg.content === 'string'
+        const rawUserContent = typeof lastUserMsg.content === 'string'
             ? lastUserMsg.content
             : JSON.stringify(lastUserMsg.content);
+        const userContent = stripInlinePromptTimeHint(rawUserContent);
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
 
         console.log(` 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
@@ -6181,7 +7609,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         let userMembershipTier = 'free';
         try {
-            const membershipStatus = await getUserMembershipStatus(req.user.userId);
+            const membershipStatus = await getUserMembershipSnapshot(req.user.userId);
             userMembershipTier = String(membershipStatus?.membership || 'free');
         } catch (tierErr) {
             console.warn(` 读取会员等级失败，按free处理: ${tierErr.message}`);
@@ -6203,7 +7631,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 scope: 'stage',
                 stepId: 'master',
                 status: 'failed',
-                detail: '4倍速深度研究仅 MAX 会员可用，已自动回退单模型'
+                detail: '高级研究仅 MAX 会员可用，已自动回退单模型'
             });
             console.warn(` 用户 ${req.user.userId} 非MAX会员，跳过Agent模式`);
         }
@@ -6215,6 +7643,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 if (agentPoints?.useFreeModel) {
                     forceFreeModelByQuota = true;
                     effectiveAgentMode = 'off';
+                    res.write(`data: ${JSON.stringify({
+                        type: 'points_info',
+                        remainingPoints: 0,
+                        message: agentPoints.message || '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
+                    })}\n\n`);
                     emitAgentEvent(res, {
                         type: 'agent_status',
                         role: 'master',
@@ -6389,6 +7822,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         messages,
                         userMessage: userContent,
                         systemPrompt,
+                        userIdentityInstruction,
                         domainInstruction: activeDomainInstruction,
                         ruleInstruction: activeRuleInstruction,
                         ruleMeta: resolvedPromptRule
@@ -6594,7 +8028,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
             const multimodalTypesText = getMultimodalTypeDescription(currentMessageMultimodal.types);
-            const defaultMultimodalModel = model === 'auto' ? 'kimi-k2.5' : model;
+            const defaultMultimodalModel = model === 'auto' ? await resolveVisibleAutoMultimodalModel() : model;
             const requestedRouting = MODEL_ROUTING[defaultMultimodalModel];
             const supportsNativeMultimodal = model === 'auto' || !!requestedRouting?.multimodal;
 
@@ -6611,8 +8045,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         } else if (model === 'auto') {
             // 智能模型策略：free/pro/max 全部默认 K2.5
-            finalModel = 'kimi-k2.5';
-            autoRoutingReason = `${userMembershipTier} 用户智能模型默认使用 Kimi K2.5`;
+            finalModel = await resolveVisibleAutoModel();
+            autoRoutingReason = `${userMembershipTier} 用户智能模型默认使用 ${finalModel}`;
             console.log(` auto_route_decision: ${autoRoutingReason}`);
         }
 
@@ -6620,6 +8054,55 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         // Auto + 联网：优先保证可用性，DeepSeek 下回退到硅基免费 Qwen2.5-7B
         if (model === 'auto' && internetMode) {
             console.log(` Auto+联网模式: 使用 ${finalModel}（支持联网）`);
+        }
+
+        let enableResearchDebate = (normalizedResearchMode === 'fast' || normalizedResearchMode === 'deep') && !isMultimodalRequest;
+        if ((normalizedResearchMode === 'fast' || normalizedResearchMode === 'deep') && isMultimodalRequest) {
+            emitAgentEvent(res, {
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: 'research-master',
+                status: 'failed',
+                detail: '当前消息包含图片/多模态内容，研究讨论已自动降级为单模型处理'
+            });
+            console.warn(' 研究讨论暂不处理多模态当前消息，回退单模型处理');
+        }
+
+        if (enableResearchDebate) {
+            const preferredMaster = (finalModel === 'deepseek-v3' || finalModel === 'deepseek-v3.2-speciale')
+                ? 'deepseek-v3.2-speciale'
+                : 'gpt-5.5';
+            const gpt55Routing = MODEL_ROUTING['gpt-5.5'];
+            const dsv4Routing = MODEL_ROUTING['deepseek-v3.2-speciale'];
+            const gpt55Available = !!API_PROVIDERS[gpt55Routing?.provider]?.apiKey && !(await isPublicModelDisabled('gpt-5.5'));
+            const dsv4Available = !!API_PROVIDERS[dsv4Routing?.provider]?.apiKey && !(await isPublicModelDisabled('deepseek-v3.2-speciale'));
+
+            if (preferredMaster === 'deepseek-v3.2-speciale' && dsv4Available) {
+                finalModel = 'deepseek-v3.2-speciale';
+            } else if (preferredMaster === 'gpt-5.5' && gpt55Available) {
+                finalModel = 'gpt-5.5';
+            } else if (gpt55Available) {
+                finalModel = 'gpt-5.5';
+            } else if (dsv4Available) {
+                finalModel = 'deepseek-v3.2-speciale';
+            } else {
+                enableResearchDebate = false;
+                emitAgentEvent(res, {
+                    type: 'agent_status',
+                    role: 'master',
+                    scope: 'stage',
+                    stepId: 'research-master',
+                    status: 'failed',
+                    detail: '深度研究主控模型不可用，已自动降级为单模型深度思考'
+                });
+                console.warn(' 深度研究互评主控模型不可用，回退单模型');
+            }
+
+            if (enableResearchDebate) {
+                autoRoutingReason = `${normalizedResearchMode === 'deep' ? '深度研究' : '快速研究'}讨论: Gemma + Kimi K2.5 + GPT-5.5 + DeepSeek V4 Pro 轮流质疑，由 ${researchModelLabel(finalModel)} 主控判断停止并回答`;
+                console.log(` research_debate enabled mode=${normalizedResearchMode} master=${finalModel}`);
+            }
         }
 
         //  关键修复：添加白名单验证（防御性编程）
@@ -6646,11 +8129,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         // 注意：多模态检测已在上面执行，这里不再重复
 
-        if (!VALID_MODELS.includes(finalModel)) {
+        if (!VALID_MODELS.includes(finalModel) || await isPublicModelDisabled(finalModel)) {
             const fallbackModel = resolveFreeFallbackModelId(finalModel);
-            console.warn(` 无效模型 ${finalModel},回退到 ${fallbackModel}`);
-            finalModel = fallbackModel;
-            autoRoutingReason = `无效模型,按备用链自动回退到 ${fallbackModel}`;
+            const visibleFallbackModel = await isPublicModelDisabled(fallbackModel)
+                ? await resolveVisibleAutoModel()
+                : fallbackModel;
+            console.warn(` 无效或已关闭模型 ${finalModel},回退到 ${visibleFallbackModel}`);
+            finalModel = visibleFallbackModel;
+            autoRoutingReason = `无效或已关闭模型,按备用链自动回退到 ${visibleFallbackModel}`;
         }
 
         // Poe 路由策略：先做 free 配额与 thinking 强制，再做模型可用性校验
@@ -6737,8 +8223,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const fallbackModel = resolveFreeFallbackModelId(finalModel);
             finalModel = fallbackModel;
             autoRoutingReason = autoRoutingReason
-                ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}`
-                : `点数不足按备用链自动切换到 ${fallbackModel}`;
+                ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`
+                : `点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`;
             console.log(` 点数不足强制免费模型: user=${req.user.userId}`);
         } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted) {
             try {
@@ -6746,9 +8232,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 if (pointsResult?.useFreeModel && finalModel !== 'qwen2.5-7b') {
                     const fallbackModel = resolveFreeFallbackModelId(finalModel);
                     finalModel = fallbackModel;
+                    res.write(`data: ${JSON.stringify({
+                        type: 'points_info',
+                        remainingPoints: 0,
+                        message: pointsResult.message || '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
+                    })}\n\n`);
                     autoRoutingReason = autoRoutingReason
-                        ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}`
-                        : `点数不足按备用链自动切换到 ${fallbackModel}`;
+                        ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`
+                        : `点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`;
                     console.log(` 点数不足自动切换免费模型: user=${req.user.userId}`);
                 } else if (Number(pointsResult?.pointsDeducted || 0) > 0) {
                     pointsAlreadyDeducted = true;
@@ -6861,11 +8352,54 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let searchSources = [];
         let useStreamingTools = false;  // 标记是否启用流式工具调用
 
-        if (internetMode && routing.provider !== 'aliyun' && routing.supportsWebSearch !== false) {
+        if (enableResearchDebate && internetMode) {
+            try {
+                res.write(`data: ${JSON.stringify({
+                    type: 'search_status',
+                    status: 'searching',
+                    query: userContent,
+                    message: `正在搜索: "${userContent.slice(0, 80)}"`
+                })}\n\n`);
+                const researchSearchData = await performWebSearch(userContent, 5, getTavilySearchDepth(actualModel, true));
+                const researchSearchResults = researchSearchData?.results || researchSearchData || [];
+                if (Array.isArray(researchSearchResults) && researchSearchResults.length > 0) {
+                    searchContext = formatSearchResults(researchSearchData, userContent);
+                    const currentSources = extractSourcesForSSE(researchSearchResults);
+                    const sourceAppendResult = appendAnnotatedSources(searchSources, currentSources);
+                    searchSources = sourceAppendResult.merged;
+                    emitSourcesEvent(res, sourceAppendResult.newlyAdded);
+                    res.write(`data: ${JSON.stringify({
+                        type: 'search_status',
+                        status: 'complete',
+                        query: userContent,
+                        resultCount: researchSearchResults.length,
+                        message: `找到 ${researchSearchResults.length} 条结果`
+                    })}\n\n`);
+                    console.log(` 深度研究预检索完成: ${researchSearchResults.length} 条结果`);
+                } else {
+                    res.write(`data: ${JSON.stringify({
+                        type: 'search_status',
+                        status: 'no_results',
+                        query: userContent,
+                        message: '未找到相关结果'
+                    })}\n\n`);
+                }
+            } catch (searchError) {
+                console.warn(` 深度研究预检索失败，继续无联网上下文: ${searchError.message}`);
+                res.write(`data: ${JSON.stringify({
+                    type: 'search_status',
+                    status: 'no_results',
+                    query: userContent,
+                    message: '搜索暂不可用，已继续深度研究'
+                })}\n\n`);
+            }
+        }
+
+        if (!enableResearchDebate && internetMode && routing.provider !== 'aliyun' && routing.supportsWebSearch !== false) {
             console.log(` 联网模式: 启用流式工具调用 (Streaming Function Calling)`);
             useStreamingTools = true;
             // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
-        } else if (internetMode && finalModel === 'deepseek-v3.2-speciale') {
+        } else if (!enableResearchDebate && internetMode && finalModel === 'deepseek-v3.2-speciale') {
             console.log(` DeepSeek-V3.2-Speciale 是高级思考模型，无需额外联网搜索`);
         }
 
@@ -6889,6 +8423,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const toolHint = `\n\n[系统提示] 当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”，请至少调用一次 web_search 再回答；涉及天气、新闻、股价、时效数据时也应按需调用，并可在必要时再次调用。`;
             systemContent = systemContent ? `${systemContent}${toolHint}` : toolHint.trim();
             console.log(` 已添加工具提示到系统提示词`);
+        }
+
+        if (userIdentityInstruction) {
+            systemContent = systemContent
+                ? `${systemContent}\n\n${userIdentityInstruction}`
+                : userIdentityInstruction;
+            console.log(` 已注入当前用户信息到系统提示词`);
         }
 
         if (activeDomainInstruction) {
@@ -6966,7 +8507,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         if (routing.provider === 'poe') {
-            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile);
+            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile, !!thinkingMode);
             if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
                 requestBody.extra_body = poeExtraBody;
                 console.log(` Poe extra_body 已注入: ${JSON.stringify(poeExtraBody)}`);
@@ -7097,7 +8638,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         //  修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        let timeoutId = setTimeout(() => controller.abort(), 120000);
 
         //  关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
@@ -7133,6 +8674,261 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             return visibleDelta;
         };
+
+        if (enableResearchDebate) {
+            clearTimeout(timeoutId);
+            const researchTraceState = {
+                version: 1,
+                mode: 'research_debate',
+                researchMode: normalizedResearchMode,
+                plan: null,
+                tasks: {},
+                statuses: [],
+                drafts: [],
+                metrics: null,
+                trace: [],
+                savedAt: null
+            };
+            const recordResearchTraceEvent = (payload) => {
+                const event = payload && typeof payload === 'object' ? payload : null;
+                if (!event || !event.type) return;
+                const traceText = event.detail || event.summary || event.task || event.mode || '';
+                researchTraceState.trace.push({
+                    kind: event.type,
+                    text: String(traceText || '').slice(0, 240),
+                    ts: Date.now()
+                });
+                if (researchTraceState.trace.length > 300) {
+                    researchTraceState.trace = researchTraceState.trace.slice(-300);
+                }
+
+                if (event.type === 'agent_plan') {
+                    researchTraceState.plan = event;
+                    if (Array.isArray(event.tasks)) {
+                        for (const task of event.tasks) {
+                            const taskId = Number(task.agent_id || task.taskId || 0);
+                            if (!taskId) continue;
+                            const stepId = task.role === 'master' ? 'research-master' : `research-${task.role || taskId}`;
+                            researchTraceState.tasks[stepId] = {
+                                stepId,
+                                taskId,
+                                role: task.role || 'researcher',
+                                status: 'pending',
+                                detail: task.task || '',
+                                durationMs: null
+                            };
+                        }
+                    }
+                    return;
+                }
+
+                if (event.type === 'agent_status') {
+                    const stepId = event.stepId || (event.role === 'master' ? 'research-master' : `research-${event.role || 'agent'}`);
+                    const statusEvent = {
+                        type: event.type,
+                        scope: event.scope || 'stage',
+                        stepId,
+                        taskId: event.taskId || null,
+                        role: event.role || 'agent',
+                        status: event.status || 'pending',
+                        detail: event.detail || '',
+                        durationMs: event.durationMs || null,
+                        ts: Date.now()
+                    };
+                    researchTraceState.statuses.push(statusEvent);
+                    if (researchTraceState.statuses.length > 300) {
+                        researchTraceState.statuses = researchTraceState.statuses.slice(-300);
+                    }
+                    const previous = researchTraceState.tasks[stepId] || {};
+                    researchTraceState.tasks[stepId] = {
+                        ...previous,
+                        stepId,
+                        taskId: event.taskId || previous.taskId || null,
+                        role: event.role || previous.role || 'agent',
+                        status: event.status || previous.status || 'pending',
+                        detail: event.detail || previous.detail || '',
+                        durationMs: event.durationMs != null ? event.durationMs : (previous.durationMs || null)
+                    };
+                    return;
+                }
+
+                if (event.type === 'agent_draft') {
+                    researchTraceState.drafts.push(event);
+                    if (researchTraceState.drafts.length > 16) {
+                        researchTraceState.drafts = researchTraceState.drafts.slice(-16);
+                    }
+                    return;
+                }
+
+                if (event.type === 'agent_metrics') {
+                    researchTraceState.metrics = event;
+                }
+            };
+
+            try {
+                console.log(`\n 启用${normalizedResearchMode === 'deep' ? '深度研究' : '快速研究'}讨论模式 (Gemma + Kimi K2.5 + GPT-5.5 + DeepSeek V4 Pro)\n`);
+                const researchResult = await runResearchDebateMode({
+                    res,
+                    requestId,
+                    messages: finalMessages,
+                    userMessage: userContent,
+                    masterModelId: finalModel,
+                    researchMode: normalizedResearchMode,
+                    debateThinkingMode: normalizedResearchMode === 'deep',
+                    maxDebateRounds: normalizedResearchMode === 'deep' ? 3 : 2,
+                    reasoningProfile: normalizedReasoningProfile,
+                    maxTokens: max_tokens,
+                    onContent: emitStructuredAssistantChunk,
+                    onReasoning: (chunk) => {
+                        if (!chunk) return;
+                        reasoningContent += chunk;
+                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: chunk })}\n\n`);
+                    },
+                    onAgentEvent: recordResearchTraceEvent
+                });
+
+                finalModel = researchResult.finalModel || finalModel;
+                actualModel = researchResult.actualModel || actualModel;
+                routing = MODEL_ROUTING[finalModel] || routing;
+                if (routing?.provider && API_PROVIDERS[routing.provider]) {
+                    providerConfig = API_PROVIDERS[routing.provider];
+                }
+
+                if (sessionId) {
+                    console.log('\n 保存深度研究结果到数据库');
+
+                    const lastUserMessage = messages[messages.length - 1];
+                    if (lastUserMessage && lastUserMessage.role === 'user') {
+                        const lastUserContent = typeof lastUserMessage.content === 'string'
+                            ? stripInlinePromptTimeHint(lastUserMessage.content)
+                            : JSON.stringify(lastUserMessage.content);
+
+                        let attachmentsJson = null;
+                        if (Array.isArray(lastUserMessage.attachments) && lastUserMessage.attachments.length > 0) {
+                            const previewAttachments = lastUserMessage.attachments.map(att => {
+                                if (att.type === 'image' && att.data) {
+                                    return {
+                                        type: 'image',
+                                        fileName: att.fileName,
+                                        data: att.data
+                                    };
+                                }
+                                return {
+                                    type: att.type,
+                                    fileName: att.fileName
+                                };
+                            });
+                            attachmentsJson = JSON.stringify(previewAttachments);
+                        }
+
+                        await dbRunAsync(
+                            'INSERT INTO messages (session_id, role, content, attachments, created_at) VALUES (?, ?, ?, ?, ?)',
+                            [sessionId, 'user', lastUserContent, attachmentsJson, new Date().toISOString()]
+                        );
+                    }
+
+                    let contentToSave = fullContent || researchResult.content || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
+                    contentToSave = contentToSave
+                        .replace(/<\|[^|]+\|>/g, '')
+                        .replace(/functions\.\w+:\d+/g, '')
+                        .trim();
+                    const structuredResearchOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer || contentToSave);
+                    const extractedTitle = structuredResearchOutput.extractedTitle || null;
+                    contentToSave = (structuredResearchOutput.visibleContent || contentToSave).trim();
+                    if (!contentToSave) {
+                        contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
+                    }
+
+                    researchTraceState.savedAt = new Date().toISOString();
+                    researchTraceState.drafts.push({
+                        taskId: 999,
+                        role: 'master',
+                        task: '深度研究最终回答',
+                        summary: contentToSave.replace(/\s+/g, ' ').slice(0, 120),
+                        content: truncateResearchText(contentToSave, 8000)
+                    });
+                    const processTraceJson = JSON.stringify({
+                        version: researchTraceState.version,
+                        mode: researchTraceState.mode,
+                        researchMode: researchTraceState.researchMode,
+                        plan: researchTraceState.plan,
+                        tasks: Object.values(researchTraceState.tasks || {}).sort((a, b) => Number(a.taskId || 0) - Number(b.taskId || 0)),
+                        statuses: researchTraceState.statuses,
+                        drafts: researchTraceState.drafts,
+                        metrics: researchTraceState.metrics,
+                        trace: researchTraceState.trace,
+                        savedAt: researchTraceState.savedAt,
+                        prompt_context: promptContextTrace?.prompt_context || null
+                    });
+
+                    await dbRunAsync(
+                        'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [
+                            sessionId,
+                            'assistant',
+                            contentToSave,
+                            (reasoningContent || researchResult.reasoningContent || '').trim() || null,
+                            finalModel,
+                            internetMode ? 1 : 0,
+                            normalizedResearchMode === 'deep' ? 1 : 0,
+                            internetMode ? 1 : 0,
+                            searchSources && searchSources.length > 0 ? JSON.stringify(searchSources) : null,
+                            processTraceJson,
+                            new Date().toISOString()
+                        ]
+                    );
+
+                    if (extractedTitle) {
+                        if (flowId) {
+                            await syncFlowTitle(flowId, req.user.userId, extractedTitle);
+                        } else {
+                            await dbRunAsync(
+                                'UPDATE sessions SET title = ? WHERE id = ?',
+                                [extractedTitle, sessionId]
+                            );
+                        }
+                        res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
+                    }
+
+                    if (flowId && structuredResearchOutput.canvasPatchRaw) {
+                        res.write(`data: ${JSON.stringify({
+                            type: 'canvas_patch',
+                            patch: structuredResearchOutput.canvasPatch,
+                            raw: structuredResearchOutput.canvasPatchRaw,
+                            valid: !structuredResearchOutput.canvasPatchParseError,
+                            error: structuredResearchOutput.canvasPatchParseError || null
+                        })}\n\n`);
+                    }
+
+                    await dbRunAsync(
+                        'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [sessionId]
+                    );
+                }
+
+                res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+                res.end();
+                console.log(`\n ${normalizedResearchMode === 'deep' ? '深度研究' : '快速研究'}讨论处理完成\n`);
+                return;
+            } catch (researchError) {
+                console.error(' 研究讨论失败:', researchError.message);
+                emitAgentEvent(res, {
+                    type: 'agent_status',
+                    role: 'master',
+                    scope: 'stage',
+                    stepId: 'research-master',
+                    status: 'failed',
+                    detail: '研究讨论异常，已回退单模型流程'
+                });
+                enableResearchDebate = false;
+                if (String(fullContent || '').trim()) {
+                    res.write(`data: ${JSON.stringify({ type: 'error', error: `研究模式中断: ${researchError.message}` })}\n\n`);
+                    res.end();
+                    return;
+                }
+                timeoutId = setTimeout(() => controller.abort(), 120000);
+            }
+        }
 
         //  Gemini API 特殊处理
         let isGeminiAPI = providerConfig.isGemini || routing.isGemini;
@@ -7952,6 +9748,37 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 continue;
                             }
 
+                            const responseEventReasoning = extractReasoningTextFromResponseEvent(parsed);
+                            if (responseEventReasoning) {
+                                if (thinkingMode) {
+                                    const reasoningDelta = extractIncrementalChunk(reasoningContent, responseEventReasoning);
+                                    if (reasoningDelta) {
+                                        reasoningContent += reasoningDelta;
+                                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                    }
+                                }
+                                continue;
+                            }
+
+                            const responseEventContent = extractOutputTextFromResponseEvent(parsed);
+                            if (responseEventContent) {
+                                rawToolContent += responseEventContent;
+                                const filteredContent = sanitizeStreamingContent(responseEventContent);
+                                const splitThinkContent = splitEmbeddedThinkContent(filteredContent, !!thinkingMode);
+                                if (splitThinkContent.reasoning) {
+                                    const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
+                                    if (reasoningDelta) {
+                                        reasoningContent += reasoningDelta;
+                                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                    }
+                                }
+                                const incrementalContent = extractIncrementalChunk(fullContent, splitThinkContent.visible);
+                                if (incrementalContent.length > 0) {
+                                    emitStructuredAssistantChunk(incrementalContent);
+                                }
+                                continue;
+                            }
+
                             if (isGeminiAPI) {
                                 // ============ Gemini 响应格式解析 ============
                                 // Gemini 响应结构: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
@@ -7983,7 +9810,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                                 //  修复：处理推理内容（支持 DeepSeek 和 Qwen）
                                 const delta = choice?.delta || {};
-                                const reasoning = delta.reasoning_content || delta.reasoning;
+                                const reasoning = extractReasoningTextFromPayload(delta);
                                 const content = delta.content;
 
                                 if (reasoning && thinkingMode) {
@@ -8173,9 +10000,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     emitStructuredAssistantChunk(splitFallbackContent.visible);
                 }
 
-                const fallbackReasoning = fallbackJson?.choices?.[0]?.message?.reasoning_content
-                    || fallbackJson?.choices?.[0]?.message?.reasoning
-                    || '';
+                const fallbackChoice = fallbackJson?.choices?.[0] || {};
+                const fallbackReasoning = extractReasoningTextFromPayload(fallbackChoice.message || {}, fallbackChoice, fallbackJson);
                 if (splitFallbackContent.reasoning && thinkingMode) {
                     reasoningContent += String(splitFallbackContent.reasoning);
                     res.write(`data: ${JSON.stringify({ type: 'reasoning', content: String(splitFallbackContent.reasoning) })}\n\n`);
@@ -8547,7 +10373,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             applyOpenRouterReasoningParams(continueRequestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
                         }
                         if (routing.provider === 'poe') {
-                            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile);
+                            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile, !!thinkingMode);
                             if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
                                 continueRequestBody.extra_body = poeExtraBody;
                             }
@@ -8600,6 +10426,38 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                                 try {
                                     const continueParsed = JSON.parse(continueTrimmed.slice(6));
+                                    const continueEventReasoning = extractReasoningTextFromResponseEvent(continueParsed);
+                                    if (continueEventReasoning) {
+                                        if (thinkingMode) {
+                                            const reasoningDelta = extractIncrementalChunk(reasoningContent, continueEventReasoning);
+                                            if (reasoningDelta) {
+                                                reasoningContent += reasoningDelta;
+                                                res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    const continueEventContent = extractOutputTextFromResponseEvent(continueParsed);
+                                    if (continueEventContent) {
+                                        continueRawToolContent += continueEventContent;
+                                        rawToolContent += continueEventContent;
+                                        const filteredContinueContent = sanitizeStreamingContent(continueEventContent);
+                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, !!thinkingMode);
+                                        if (splitContinueThink.reasoning) {
+                                            const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
+                                            if (reasoningDelta) {
+                                                reasoningContent += reasoningDelta;
+                                                res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                            }
+                                        }
+                                        const incrementalContinueContent = extractIncrementalChunk(fullContent, splitContinueThink.visible);
+                                        if (incrementalContinueContent.length > 0) {
+                                            emitStructuredAssistantChunk(incrementalContinueContent);
+                                        }
+                                        continue;
+                                    }
+
                                     const continueChoice = continueParsed.choices?.[0];
                                     const continueDelta = continueChoice?.delta || {};
 
@@ -8607,8 +10465,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         continueStreamFinishReason = continueChoice.finish_reason;
                                     }
 
-                                    if ((continueDelta.reasoning_content || continueDelta.reasoning) && thinkingMode) {
-                                        const reasoning = continueDelta.reasoning_content || continueDelta.reasoning;
+                                    const reasoning = extractReasoningTextFromPayload(continueDelta);
+                                    if (reasoning && thinkingMode) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
@@ -8824,7 +10682,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const lastUserMsg = messages[messages.length - 1];
             if (lastUserMsg && lastUserMsg.role === 'user') {
                 const userContent = typeof lastUserMsg.content === 'string'
-                    ? lastUserMsg.content
+                    ? stripInlinePromptTimeHint(lastUserMsg.content)
                     : JSON.stringify(lastUserMsg.content);
 
                 // 提取附件信息用于保存（仅保存预览所需的精简数据）
@@ -8997,6 +10855,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
     } finally {
         //  关键修复：添加null检查
         if (requestId) {
+            activeRequestInterjections.delete(requestId);
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
         }
     }
@@ -9036,13 +10895,65 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
     );
 });
 
+app.post('/api/chat/interject', authenticateToken, (req, res) => {
+    const { requestId, message } = req.body || {};
+    const content = normalizeStreamingInterjection(message);
+
+    if (!requestId) {
+        return res.status(400).json({ error: '缺少requestId' });
+    }
+    if (!content) {
+        return res.status(400).json({ error: '插话内容不能为空' });
+    }
+
+    db.get(
+        'SELECT user_id, session_id FROM active_requests WHERE id = ?',
+        [requestId],
+        (err, row) => {
+            if (err || !row) {
+                return res.status(404).json({ error: '请求不存在或已结束' });
+            }
+
+            if (row.user_id !== req.user.userId) {
+                return res.status(403).json({ error: '无权向此请求插话' });
+            }
+
+            const item = pushRequestInterjection(requestId, content, req.user.userId);
+            const sessionId = row.session_id && row.session_id !== 'anonymous' ? row.session_id : null;
+            if (!sessionId) {
+                return res.json({ success: true, item });
+            }
+
+            db.run(
+                'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
+                [sessionId, 'user', content, item.createdAt],
+                (insertErr) => {
+                    if (insertErr) {
+                        console.warn(` 保存讨论插话失败，但已进入当前研究上下文: ${insertErr.message}`);
+                    }
+                    db.run('UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [sessionId]);
+                    res.json({ success: true, item, persisted: !insertErr });
+                }
+            );
+        }
+    );
+});
+
 // ==================== VIP 会员系统 ====================
 
 // 会员配置
+const DAILY_CHECKIN_POINTS = 20;
+const MONTHLY_REDEEM_CHECKIN_DAYS = 28;
+
 const MEMBERSHIP_CONFIG = {
-    free: { checkinPoints: 20 },
-    Pro: { redeemCost: 600, durationDays: 30 },
+    free: { checkinPoints: DAILY_CHECKIN_POINTS },
+    Pro: { redeemCost: DAILY_CHECKIN_POINTS * MONTHLY_REDEEM_CHECKIN_DAYS, durationDays: 30 },
     MAX: { redeemCost: 6000, durationDays: 30 }
+};
+
+const USER_TASK_REWARDS = {
+    pwaInstall: { key: 'pwa_install', points: 300 },
+    inviteUser: { keyPrefix: 'invite_user:', points: 600 }
 };
 
 function dbGetAsync(query, params = []) {
@@ -9070,6 +10981,152 @@ function dbRunAsync(query, params = []) {
             else resolve(this);
         });
     });
+}
+
+function buildTaskMetadata(req, metadata = {}) {
+    return JSON.stringify({
+        ...metadata,
+        userAgent: String(req?.headers?.['user-agent'] || '').slice(0, 300),
+        ip: String(req?.ip || req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 80)
+    });
+}
+
+function normalizeReferralUserId(value) {
+    const text = String(value || '').trim();
+    if (!/^\d{1,12}$/.test(text)) return null;
+    const id = Number.parseInt(text, 10);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+async function getUserTaskSnapshot(userId) {
+    const rows = await dbAllAsync(
+        'SELECT task_key, points, completed_at, metadata FROM user_task_rewards WHERE user_id = ? ORDER BY completed_at ASC',
+        [userId]
+    );
+    const pwaInstall = rows.find((row) => row.task_key === USER_TASK_REWARDS.pwaInstall.key);
+    const inviteRows = rows.filter((row) => String(row.task_key || '').startsWith(USER_TASK_REWARDS.inviteUser.keyPrefix));
+    const invitePoints = inviteRows.reduce((sum, row) => sum + Number(row.points || 0), 0);
+
+    return {
+        pwaInstall: {
+            key: USER_TASK_REWARDS.pwaInstall.key,
+            rewardPoints: USER_TASK_REWARDS.pwaInstall.points,
+            completed: Boolean(pwaInstall),
+            completedAt: pwaInstall?.completed_at || null
+        },
+        inviteUser: {
+            key: 'invite_user',
+            rewardPoints: USER_TASK_REWARDS.inviteUser.points,
+            completed: inviteRows.length > 0,
+            completedAt: inviteRows[0]?.completed_at || null,
+            completedCount: inviteRows.length,
+            totalRewardPoints: invitePoints
+        }
+    };
+}
+
+async function awardUserTaskPoints({ userId, taskKey, points, metadata = null }) {
+    let inTransaction = false;
+    try {
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        inTransaction = true;
+
+        const insertResult = await dbRunAsync(
+            `INSERT OR IGNORE INTO user_task_rewards (user_id, task_key, points, metadata)
+             VALUES (?, ?, ?, ?)`,
+            [userId, taskKey, points, metadata]
+        );
+        const awarded = Number(insertResult?.changes || 0) > 0;
+
+        if (awarded) {
+            await dbRunAsync(
+                'UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?',
+                [points, userId]
+            );
+        }
+
+        await dbRunAsync('COMMIT');
+        inTransaction = false;
+        return { awarded, pointsGained: awarded ? points : 0 };
+    } catch (error) {
+        if (inTransaction) {
+            try {
+                await dbRunAsync('ROLLBACK');
+            } catch (rollbackError) {
+                console.error(' 任务积分回滚失败:', rollbackError);
+            }
+        }
+        throw error;
+    }
+}
+
+async function awardInviteReferralIfValid(referrerId, invitedUserId, req) {
+    const normalizedReferrerId = normalizeReferralUserId(referrerId);
+    if (!normalizedReferrerId || normalizedReferrerId === invitedUserId) {
+        return { awarded: false, pointsGained: 0, reason: 'invalid_referrer' };
+    }
+
+    const referrer = await dbGetAsync('SELECT id FROM users WHERE id = ?', [normalizedReferrerId]);
+    if (!referrer) {
+        return { awarded: false, pointsGained: 0, reason: 'referrer_not_found' };
+    }
+
+    return awardUserTaskPoints({
+        userId: normalizedReferrerId,
+        taskKey: `${USER_TASK_REWARDS.inviteUser.keyPrefix}${invitedUserId}`,
+        points: USER_TASK_REWARDS.inviteUser.points,
+        metadata: buildTaskMetadata(req, {
+            invitedUserId,
+            source: 'register_referral'
+        })
+    });
+}
+
+function normalizeAdminModelId(modelId) {
+    const normalized = normalizeIncomingModelId(modelId);
+    return PUBLIC_MODEL_IDS.includes(normalized) ? normalized : '';
+}
+
+async function getDisabledModelSet({ forceRefresh = false } = {}) {
+    const now = Date.now();
+    if (!forceRefresh && modelAvailabilityCache.loadedAt && now - modelAvailabilityCache.loadedAt < MODEL_DISABLED_CACHE_TTL_MS) {
+        return modelAvailabilityCache.disabled;
+    }
+
+    const rows = await dbAllAsync(
+        'SELECT model_id FROM model_visibility WHERE enabled = 0'
+    );
+    modelAvailabilityCache = {
+        loadedAt: now,
+        disabled: new Set(rows.map((row) => normalizeAdminModelId(row.model_id)).filter(Boolean))
+    };
+    return modelAvailabilityCache.disabled;
+}
+
+async function isPublicModelDisabled(modelId) {
+    const normalized = normalizeAdminModelId(modelId);
+    if (!normalized) return false;
+    const disabled = await getDisabledModelSet();
+    return disabled.has(normalized);
+}
+
+async function resolveVisibleAutoModel() {
+    const disabled = await getDisabledModelSet();
+    return AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId)) || 'qwen2.5-7b';
+}
+
+async function resolveVisibleAutoMultimodalModel() {
+    const disabled = await getDisabledModelSet();
+    return AUTO_MULTIMODAL_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId))
+        || await resolveVisibleAutoModel();
+}
+
+async function getModelVisibilityPayload({ forceRefresh = false } = {}) {
+    const disabled = await getDisabledModelSet({ forceRefresh });
+    return ADMIN_MODEL_CATALOG.map((model) => ({
+        ...model,
+        enabled: !disabled.has(model.id)
+    }));
 }
 
 app.post('/api/messages/:messageId/feedback', authenticateToken, async (req, res) => {
@@ -9125,6 +11182,19 @@ app.post('/api/messages/:messageId/feedback', authenticateToken, async (req, res
     } catch (error) {
         console.error('保存消息反馈失败:', error);
         res.status(500).json({ error: '保存反馈失败' });
+    }
+});
+
+app.get('/api/model-availability', async (req, res) => {
+    try {
+        const models = await getModelVisibilityPayload();
+        res.json({
+            models,
+            disabledModels: models.filter((model) => !model.enabled).map((model) => model.id)
+        });
+    } catch (error) {
+        console.error(' 获取模型可见性失败:', error);
+        res.status(500).json({ error: '获取模型可见性失败' });
     }
 });
 
@@ -9208,6 +11278,12 @@ function normalizePromptTimeContext(raw) {
     };
 }
 
+function stripInlinePromptTimeHint(content = '') {
+    return String(content || '')
+        .replace(/\n{0,2}\[(?:当前时间|Current time)[^\]]*(?:不要把回答中心放在时间上|do not center the answer on time)[。.]?\]/i, '')
+        .trim();
+}
+
 function buildPromptContextTrace(promptTimeContext) {
     if (!promptTimeContext) return null;
 
@@ -9218,6 +11294,46 @@ function buildPromptContextTrace(promptTimeContext) {
             requestTimeContext: promptTimeContext
         }
     };
+}
+
+function sanitizePromptUserField(value) {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+}
+
+async function getPromptUserProfile(userId, fallbackEmail = '') {
+    const user = userId
+        ? await dbGetAsync('SELECT email, username FROM users WHERE id = ?', [userId])
+        : null;
+    const email = sanitizePromptUserField(user?.email || fallbackEmail);
+    const username = sanitizePromptUserField(
+        user?.username || (email.includes('@') ? email.split('@')[0] : '')
+    );
+
+    return {
+        email,
+        username
+    };
+}
+
+function buildUserIdentityPrompt(profile) {
+    if (!profile || typeof profile !== 'object') return '';
+
+    const username = sanitizePromptUserField(profile.username);
+    const email = sanitizePromptUserField(profile.email);
+    const lines = [];
+
+    if (username) lines.push(`- 用户名: ${username}`);
+    if (email) lines.push(`- 邮箱: ${email}`);
+    if (lines.length === 0) return '';
+
+    return [
+        '[当前登录用户信息]',
+        ...lines,
+        '以上信息来自当前已登录账号，可用于帮助你理解用户背景并提供更贴合的回答；除非用户明确要求，否则不要主动复述或暴露这些信息。'
+    ].join('\n');
 }
 
 function buildMembershipEndISO(currentEnd, durationDays) {
@@ -9287,6 +11403,7 @@ async function getUserMembershipSnapshot(userId) {
     const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
     const gpt55UsedToday = user.gpt55_usage_date === today ? Number(user.gpt55_usage_count || 0) : 0;
     const gpt55Remaining = Math.max(0, GPT55_DAILY_LIMIT_FREE - gpt55UsedToday);
+    const tasks = await getUserTaskSnapshot(user.id);
 
     return {
         membership,
@@ -9306,7 +11423,8 @@ async function getUserMembershipSnapshot(userId) {
         gpt55DailyLimit: GPT55_DAILY_LIMIT_FREE,
         gpt55UsedToday,
         gpt55Remaining,
-        gpt55ResetAt: buildPoeResetAtISO()
+        gpt55ResetAt: buildPoeResetAtISO(),
+        tasks
     };
 }
 
@@ -9362,6 +11480,37 @@ app.post('/api/user/checkin', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(' 签到失败:', error);
         res.status(500).json({ error: '签到失败' });
+    }
+});
+
+app.post('/api/user/tasks/pwa-install/complete', authenticateToken, async (req, res) => {
+    try {
+        const user = await dbGetAsync('SELECT id FROM users WHERE id = ?', [req.user.userId]);
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        const source = String(req.body?.source || 'unknown').slice(0, 80);
+        const reward = await awardUserTaskPoints({
+            userId: user.id,
+            taskKey: USER_TASK_REWARDS.pwaInstall.key,
+            points: USER_TASK_REWARDS.pwaInstall.points,
+            metadata: buildTaskMetadata(req, { source })
+        });
+        const snapshot = await getUserMembershipSnapshot(user.id);
+
+        if (reward.awarded) {
+            console.log(` 用户 ${user.id} 完成桌面App任务，获得 ${reward.pointsGained} 点数`);
+        }
+
+        res.json({
+            success: true,
+            ...reward,
+            ...snapshot
+        });
+    } catch (error) {
+        console.error(' 完成桌面App任务失败:', error);
+        res.status(500).json({ error: '完成任务失败' });
     }
 });
 
@@ -9428,7 +11577,7 @@ app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
         if (totalPoints < config.redeemCost) {
             await dbRunAsync('ROLLBACK');
             inTransaction = false;
-            return res.status(400).json({ error: '点数不足，请先签到累积点数' });
+            return res.status(400).json({ error: '点数不足，请完成任务或签到增加积分' });
         }
 
         let remainingCost = config.redeemCost;
@@ -9702,7 +11851,7 @@ async function checkAndDeductPoints(userId, modelUsed) {
                     pointsDeducted: 0,
                     remainingPoints: 0,
                     useFreeModel: true,
-                    message: '点数不足，自动切换到免费模型'
+                    message: '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
                 });
             }
 
@@ -9777,6 +11926,41 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
 // 验证管理员Token
 app.get('/api/admin/verify', authenticateAdmin, (req, res) => {
     res.json({ success: true, isAdmin: true });
+});
+
+app.get('/api/admin/models', authenticateAdmin, async (req, res) => {
+    try {
+        const models = await getModelVisibilityPayload({ forceRefresh: true });
+        res.json({ models });
+    } catch (error) {
+        console.error(' 管理员获取模型开关失败:', error);
+        res.status(500).json({ error: '获取模型开关失败' });
+    }
+});
+
+app.put('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
+    try {
+        const modelId = normalizeAdminModelId(req.params.modelId);
+        if (!modelId) {
+            return res.status(400).json({ error: '无效的模型ID' });
+        }
+
+        const enabled = req.body?.enabled === true || req.body?.enabled === 1 || req.body?.enabled === '1';
+        await dbRunAsync(`
+            INSERT INTO model_visibility (model_id, enabled, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(model_id) DO UPDATE SET
+                enabled = excluded.enabled,
+                updated_at = CURRENT_TIMESTAMP
+        `, [modelId, enabled ? 1 : 0]);
+        modelAvailabilityCache.loadedAt = 0;
+
+        const models = await getModelVisibilityPayload({ forceRefresh: true });
+        res.json({ success: true, modelId, enabled, models });
+    } catch (error) {
+        console.error(' 管理员更新模型开关失败:', error);
+        res.status(500).json({ error: '更新模型开关失败' });
+    }
 });
 
 // 获取数据统计
@@ -10354,7 +12538,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║             RAI v0.10.7 已启动                         ║
+║             RAI v0.10.9.16 已启动                      ║
 ║                                                          ║
 ║   服务地址: http://0.0.0.0:${PORT}                     ║
 ║   数据库: ${dbPath}                                    ║
