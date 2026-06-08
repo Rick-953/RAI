@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.10.9.18",
+  "version": "0.10.9.19",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

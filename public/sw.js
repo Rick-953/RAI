@@ -1,12 +1,12 @@
-const RAI_SW_VERSION = '0.10.9.18-20260608-autofocus-input';
+const RAI_SW_VERSION = '0.10.9.19-20260608-english-focus';
 const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = '/index.html';
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260608-autofocus-input-v010918',
-  '/styles.css?v=20260608-autofocus-input-v010918',
-  '/site.webmanifest?v=20260608-autofocus-input-v010918',
+  '/app.js?v=20260608-english-focus-v010919',
+  '/styles.css?v=20260608-english-focus-v010919',
+  '/site.webmanifest?v=20260608-english-focus-v010919',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',

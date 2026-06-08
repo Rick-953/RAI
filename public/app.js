@@ -1352,18 +1352,18 @@ function createMermaidFullscreenModal() {
   modal.innerHTML = `
         <div class="mermaid-fullscreen-toolbar">
           <div class="mermaid-fullscreen-toolbar-left">
-            <button class="mermaid-fullscreen-btn" id="mermaidViewCodeBtn" title="查看代码">
+            <button class="mermaid-fullscreen-btn" id="mermaidViewCodeBtn" data-i18n-title="mermaid-view-code" title="${i18nText('mermaid-view-code', 'View code')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>
               </svg>
             </button>
-            <button class="mermaid-fullscreen-btn" id="mermaidCopyBtn" title="复制代码">
+            <button class="mermaid-fullscreen-btn" id="mermaidCopyBtn" data-i18n-title="mermaid-copy-code" title="${i18nText('mermaid-copy-code', 'Copy code')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2"/>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
             </button>
-            <button class="mermaid-fullscreen-btn" id="mermaidDownloadBtn" title="下载SVG">
+            <button class="mermaid-fullscreen-btn" id="mermaidDownloadBtn" data-i18n-title="mermaid-download-svg" title="${i18nText('mermaid-download-svg', 'Download SVG')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
@@ -1372,26 +1372,26 @@ function createMermaidFullscreenModal() {
             </button>
           </div>
           <div class="mermaid-fullscreen-toolbar-center">
-            <button class="mermaid-fullscreen-btn" id="mermaidZoomOutBtn" title="缩小">
+            <button class="mermaid-fullscreen-btn" id="mermaidZoomOutBtn" data-i18n-title="canvas-zoom-out" title="${i18nText('canvas-zoom-out', 'Zoom out')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                 <line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </button>
             <span class="mermaid-fullscreen-zoom-level" id="mermaidZoomLevel">100%</span>
-            <button class="mermaid-fullscreen-btn" id="mermaidZoomInBtn" title="放大">
+            <button class="mermaid-fullscreen-btn" id="mermaidZoomInBtn" data-i18n-title="canvas-zoom-in" title="${i18nText('canvas-zoom-in', 'Zoom in')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                 <line x1="12" y1="5" x2="12" y2="19"/>
                 <line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </button>
-            <button class="mermaid-fullscreen-btn" id="mermaidResetBtn" title="重置视图">
+            <button class="mermaid-fullscreen-btn" id="mermaidResetBtn" data-i18n-title="canvas-reset-view" title="${i18nText('canvas-reset-view', 'Reset view')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
               </svg>
             </button>
           </div>
           <div class="mermaid-fullscreen-toolbar-right">
-            <button class="mermaid-fullscreen-btn" id="mermaidCloseBtn" title="关闭 (Esc)">
+            <button class="mermaid-fullscreen-btn" id="mermaidCloseBtn" data-i18n-title="mermaid-close" title="${i18nText('mermaid-close', 'Close (Esc)')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"/>
                 <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1911,8 +1911,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.18';
-const RAI_BUILD_ID = '20260608-autofocus-input-v010918';
+const RAI_APP_VERSION = '0.10.9.19';
+const RAI_BUILD_ID = '20260608-english-focus-v010919';
 
 function resolveRaiRemoteUrl(value) {
   const raw = String(value || '').trim();
@@ -2163,6 +2163,10 @@ function maybeShowPwaRewardPrompt({ force = false } = {}) {
     return;
   }
   if (hasCompletedPwaInstallTask()) {
+    closePwaRewardPrompt();
+    return;
+  }
+  if (!force) {
     closePwaRewardPrompt();
     return;
   }
@@ -3066,6 +3070,9 @@ const i18n = {
     'username-placeholder': '您的昵称',
     'login-btn': '登录',
     'register-btn': '注册',
+    'auth-ztx6d-login': 'ZTX6D 登录',
+    'auth-rpass-login': 'rPass 登录',
+    'auth-coming-soon': '待上线',
     'no-account': '还没有账号?',
     'has-account': '已有账号?',
     'register-link': '立即注册',
@@ -3159,6 +3166,8 @@ const i18n = {
     'settings-install-accepted': '安装已开始',
     'settings-install-dismissed': '已取消安装',
     'settings-install-see-steps': '请按下方步骤添加到桌面',
+    'settings-install-detecting': '检测安装方式...',
+    'settings-nav-aria': '设置分类',
     'app-update-title': 'RAI 已更新',
     'app-update-desc': '当前网页仍是旧版本，刷新后即可使用最新版。',
     'app-update-button': '刷新更新',
@@ -3187,6 +3196,66 @@ const i18n = {
     'onb-next': '下一步',
     'onb-start': '开始使用',
     'sidebar-flows-beta': '测试',
+    'model-badge-free': '免费',
+    'model-badge-limited-free': '限免',
+    'theme-toggle-label': '切换主题',
+    'language-toggle-label': '切换语言',
+    'settings-open-label': '打开设置',
+    'settings-close-label': '关闭设置',
+    'settings-back-label': '返回设置主页',
+    'avatar-change-label': '更换头像',
+    'ztx6d-unbound': '未绑定',
+    'ztx6d-bind': '绑定 ZTX6D',
+    'ztx6d-bound': '已绑定',
+    'ztx6d-bound-with-uid': '已绑定 ZTX6D UID {uid}',
+    'ztx6d-disabled': 'ZTX6D SSO 未配置',
+    'ztx6d-unbound-desc': '未绑定，绑定后可直接使用 ZTX6D 登录当前 RAI 账号',
+    'model-modal-title': '选择模型',
+    'model-modal-close-label': '关闭模型选择',
+    'model-route-smart': '智能路由',
+    'model-desc-fast': '快速响应',
+    'model-desc-expert': '复杂任务',
+    'model-desc-openrouter-limited': 'OpenRouter 限免',
+    'model-desc-free-daily': '限免：free 每日 10 次',
+    'model-desc-limited': '限免模型',
+    'model-desc-max-only': '仅 MAX 可用',
+    'model-desc-google-limited': 'Google API 限免',
+    'model-local': '本地模型',
+    'mermaid-view-code': '查看代码',
+    'mermaid-copy-code': '复制代码',
+    'mermaid-download-svg': '下载 SVG',
+    'mermaid-close': '关闭 (Esc)',
+    'canvas-added': '已添加到画布',
+    'node-edit-save': '保存',
+    'regenerate-gpt55-limited': 'GPT-5.5 (限免10次/天)',
+    'regenerate-grok-limited': 'Grok 4.2 (限免)',
+    'chatflow-title-default': '新 ChatFlow',
+    'chatflow-session': 'ChatFlow 会话',
+    'chatflow-patch-ready': 'AI 画布建议已准备',
+    'chatflow-patch-apply': '应用',
+    'chatflow-patch-dismiss': '忽略',
+    'chatflow-patch-undo': '撤回上一次 AI 修改',
+    'chatflow-input-placeholder': '输入消息，让 AI 帮你梳理并修改画布',
+    'chatflow-web-title': '联网',
+    'chatflow-reasoning-title': '推理',
+    'chatflow-review-mode': '审核后应用',
+    'chatflow-direct-mode': '直接应用',
+    'chatflow-canvas-hint': '从左侧拖拽消息到画布，开始构建 ChatFlow',
+    'canvas-zoom-in': '放大',
+    'canvas-zoom-out': '缩小',
+    'canvas-reset-view': '重置视图',
+    'canvas-tool-select': '选择',
+    'canvas-tool-connect': '连线',
+    'canvas-tool-sticky': '添加便签',
+    'canvas-tool-ai-decompose': 'AI 拆解',
+    'canvas-tool-delete': '删除选中',
+    'canvas-tool-auto-layout': '自动布局',
+    'canvas-tool-export': '导出',
+    'canvas-export-png': '导出 PNG',
+    'canvas-export-svg': '导出 SVG',
+    'canvas-export-mermaid': '导出 Mermaid',
+    'canvas-export-json': '导出 JSON',
+    'canvas-drop-create-node': '释放以创建节点',
     'avatar-settings-title': '头像',
     'avatar-settings-desc': '上传自定义头像，用于侧边栏、设置页和聊天消息',
     'change-avatar': '更换头像',
@@ -3279,6 +3348,9 @@ const i18n = {
     'username-placeholder': 'Your nickname',
     'login-btn': 'Login',
     'register-btn': 'Register',
+    'auth-ztx6d-login': 'Log in with ZTX6D',
+    'auth-rpass-login': 'Log in with rPass',
+    'auth-coming-soon': 'Coming soon',
     'no-account': "Don't have an account?",
     'has-account': 'Already have an account?',
     'register-link': 'Sign up now',
@@ -3372,6 +3444,8 @@ const i18n = {
     'settings-install-accepted': 'Install started',
     'settings-install-dismissed': 'Install canceled',
     'settings-install-see-steps': 'Follow the steps below to add RAI to your desktop',
+    'settings-install-detecting': 'Detecting install method...',
+    'settings-nav-aria': 'Settings categories',
     'app-update-title': 'RAI has been updated',
     'app-update-desc': 'This page is still running an older version. Refresh to use the latest release.',
     'app-update-button': 'Refresh',
@@ -3400,6 +3474,66 @@ const i18n = {
     'onb-next': 'Next',
     'onb-start': 'Get started',
     'sidebar-flows-beta': 'Beta',
+    'model-badge-free': 'Free',
+    'model-badge-limited-free': 'Limited free',
+    'theme-toggle-label': 'Toggle theme',
+    'language-toggle-label': 'Change language',
+    'settings-open-label': 'Open settings',
+    'settings-close-label': 'Close settings',
+    'settings-back-label': 'Back to settings',
+    'avatar-change-label': 'Change avatar',
+    'ztx6d-unbound': 'Not connected',
+    'ztx6d-bind': 'Connect ZTX6D',
+    'ztx6d-bound': 'Connected',
+    'ztx6d-bound-with-uid': 'Connected to ZTX6D UID {uid}',
+    'ztx6d-disabled': 'ZTX6D SSO is not configured',
+    'ztx6d-unbound-desc': 'Not connected. Connect ZTX6D to log in to this RAI account directly.',
+    'model-modal-title': 'Choose a model',
+    'model-modal-close-label': 'Close model selector',
+    'model-route-smart': 'Smart routing',
+    'model-desc-fast': 'Fast response',
+    'model-desc-expert': 'Complex tasks',
+    'model-desc-openrouter-limited': 'OpenRouter limited free',
+    'model-desc-free-daily': 'Limited free: free users get 10/day',
+    'model-desc-limited': 'Limited free model',
+    'model-desc-max-only': 'MAX only',
+    'model-desc-google-limited': 'Google API limited free',
+    'model-local': 'Local model',
+    'mermaid-view-code': 'View code',
+    'mermaid-copy-code': 'Copy code',
+    'mermaid-download-svg': 'Download SVG',
+    'mermaid-close': 'Close (Esc)',
+    'canvas-added': 'Added to canvas',
+    'node-edit-save': 'Save',
+    'regenerate-gpt55-limited': 'GPT-5.5 (limited free: 10/day)',
+    'regenerate-grok-limited': 'Grok 4.2 (limited free)',
+    'chatflow-title-default': 'New ChatFlow',
+    'chatflow-session': 'ChatFlow session',
+    'chatflow-patch-ready': 'AI canvas suggestion is ready',
+    'chatflow-patch-apply': 'Apply',
+    'chatflow-patch-dismiss': 'Ignore',
+    'chatflow-patch-undo': 'Undo last AI edit',
+    'chatflow-input-placeholder': 'Type a message and let AI organize or edit the canvas',
+    'chatflow-web-title': 'Web search',
+    'chatflow-reasoning-title': 'Reasoning',
+    'chatflow-review-mode': 'Review before applying',
+    'chatflow-direct-mode': 'Apply directly',
+    'chatflow-canvas-hint': 'Drag messages from the left panel onto the canvas to build a ChatFlow',
+    'canvas-zoom-in': 'Zoom in',
+    'canvas-zoom-out': 'Zoom out',
+    'canvas-reset-view': 'Reset view',
+    'canvas-tool-select': 'Select',
+    'canvas-tool-connect': 'Connect',
+    'canvas-tool-sticky': 'Add sticky note',
+    'canvas-tool-ai-decompose': 'AI decompose',
+    'canvas-tool-delete': 'Delete selected',
+    'canvas-tool-auto-layout': 'Auto layout',
+    'canvas-tool-export': 'Export',
+    'canvas-export-png': 'Export PNG',
+    'canvas-export-svg': 'Export SVG',
+    'canvas-export-mermaid': 'Export Mermaid',
+    'canvas-export-json': 'Export JSON',
+    'canvas-drop-create-node': 'Drop to create a node',
     'avatar-settings-title': 'Avatar',
     'avatar-settings-desc': 'Upload a custom avatar for the sidebar, settings, and chat messages.',
     'change-avatar': 'Change Avatar',
@@ -3580,7 +3714,87 @@ Object.assign(i18n['zh-TW'], {
   'sidebar-flows-beta': '測試'
 });
 
+const EN_SERVER_ERROR_MESSAGES = {
+  '邮箱和密码不能为空': 'Email and password are required.',
+  '邮件格式不正确': 'Please enter a valid email address.',
+  '邮箱或密码错误': 'Incorrect email or password.',
+  '该邮箱已被注册': 'This email is already registered.',
+  '密码至少需要6位': 'Password must be at least 6 characters.',
+  '密码至少6位字符': 'Password must be at least 6 characters.',
+  '注册失败,请重试': 'Registration failed. Please try again.',
+  '注册失败，请重试': 'Registration failed. Please try again.',
+  '登录尝试过多,请15分钟后再试': 'Too many login attempts. Please try again in 15 minutes.',
+  '未提供认证令牌': 'Authentication token is missing.',
+  '令牌无效或已过期': 'Your session has expired. Please log in again.',
+  '用户不存在': 'User not found.',
+  '数据库错误': 'Database error.',
+  '服务器错误': 'Server error.',
+  '网络错误': 'Network error.',
+  '保存失败': 'Save failed.',
+  '更新用户资料失败': 'Failed to update profile.',
+  '当前密码不能为空': 'Current password is required.',
+  '新密码至少需要6位': 'New password must be at least 6 characters.',
+  '新密码不能与当前密码相同': 'New password must be different from current password.',
+  '当前密码错误': 'Current password is incorrect.',
+  '更新密码失败': 'Failed to update password.',
+  '今日已签到': 'You have already checked in today.',
+  '签到失败': 'Check-in failed.',
+  '点数不足，请完成任务或签到增加积分': 'Not enough points. Complete tasks or check in to earn more.',
+  '兑换会员失败': 'Failed to redeem membership.',
+  '兑换失败': 'Redemption failed.',
+  '完成任务失败': 'Failed to complete the task.',
+  '无效的会员档位': 'Invalid membership tier.',
+  '该模型仅 MAX 会员可用': 'This model is available to MAX members only.',
+  '消息不能为空': 'Message cannot be empty.',
+  '无权访问此会话': 'You do not have access to this conversation.',
+  '文件上传失败': 'File upload failed.',
+  '文件大小超过限制': 'File size exceeds the limit.',
+  '没有文件上传': 'No file was uploaded.',
+  '不支持的文件类型': 'Unsupported file type.',
+  '头像仅支持 jpg/png/webp/gif 图片': 'Avatar supports JPG, PNG, WebP, or GIF images only.',
+  '头像 MIME 类型不合法': 'Invalid avatar MIME type.',
+  '更新头像失败': 'Failed to update avatar.',
+  '获取会员状态失败': 'Failed to load membership status.',
+  '获取模型可见性失败': 'Failed to load model availability.',
+  '管理员凭据无效': 'Invalid admin credentials.',
+  '需要管理员令牌': 'Admin token is required.',
+  '管理员令牌已过期或无效': 'Admin token is expired or invalid.',
+  '路由未找到': 'Route not found.'
+};
+
+function localizeServerError(message, fallback = 'Operation failed') {
+  const raw = String(message || '').trim();
+  const fallbackText = String(fallback || 'Operation failed');
+  if (isChineseLanguage(appState.language)) return raw || fallbackText;
+  if (!raw) return fallbackText;
+  if (EN_SERVER_ERROR_MESSAGES[raw]) return EN_SERVER_ERROR_MESSAGES[raw];
+  if (/[\u4e00-\u9fff]/.test(raw)) return fallbackText;
+  return raw;
+}
+
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-06-08',
+    version: 'v0.10.9.19',
+    zh: {
+      summary: '完善 English 界面语言覆盖。',
+      details: [
+        '补齐 ChatFlow 工作区、画布工具栏、导出菜单、模型徽标、SSO 登录和设置按钮的英文文案。',
+        '语言切换现在同步 title 和 aria-label，按钮悬浮提示与无障碍标签不会继续停留中文。',
+        '英文界面对常见服务端中文错误做本地化映射，登录、注册、签到、兑换等失败提示会显示英文。',
+        'PWA 积分弹窗不再自动抢占页面焦点，桌面和移动端进入页面后会优先聚焦消息输入框。'
+      ]
+    },
+    en: {
+      summary: 'Expanded English UI coverage.',
+      details: [
+        'Added English copy for ChatFlow, canvas tools, export menu, model badges, SSO login, and settings controls.',
+        'Language switching now updates title and aria-label attributes, so tooltips and accessibility labels no longer stay in Chinese.',
+        'Common server-side Chinese errors are localized on the client, including login, registration, check-in, and redemption failures.',
+        'The PWA reward prompt no longer steals focus automatically; desktop and mobile entries prioritize the message composer.'
+      ]
+    }
+  },
   {
     date: '2026-06-08',
     version: 'v0.10.9.18',
@@ -5171,6 +5385,22 @@ function setLanguage(lang) {
     }
   });
 
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    const translated = i18n[lang]?.[key] || i18n['zh-CN']?.[key];
+    if (translated) {
+      el.setAttribute('title', translated);
+    }
+  });
+
+  document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+    const key = el.getAttribute('data-i18n-aria-label');
+    const translated = i18n[lang]?.[key] || i18n['zh-CN']?.[key];
+    if (translated) {
+      el.setAttribute('aria-label', translated);
+    }
+  });
+
   document.querySelectorAll('[data-language-option]').forEach((button) => {
     const option = button.getAttribute('data-language-option');
     button.textContent = LANGUAGE_OPTION_LABELS[option]?.[lang] || option;
@@ -5188,8 +5418,8 @@ function setLanguage(lang) {
     sidebarLangText.textContent = getLanguageToggleLabel(lang);
   }
   document.querySelectorAll('.language-toggle-btn').forEach((button) => {
-    button.setAttribute('aria-label', i18nText('language-label', 'Language'));
-    button.setAttribute('title', i18nText('language-label', 'Language'));
+    button.setAttribute('aria-label', i18nText('language-toggle-label', 'Language'));
+    button.setAttribute('title', i18nText('language-toggle-label', 'Language'));
   });
 
   // 更新登录页面语言按钮文本
@@ -5208,6 +5438,9 @@ function setLanguage(lang) {
   updatePwaInstallUI();
   renderSettingsTimeline();
   updateScrollResumeButton();
+  updateZtx6dBindingUI();
+  if (typeof updateChatFlowPatchModeButton === 'function') updateChatFlowPatchModeButton();
+  if (typeof updateChatFlowHeaderMeta === 'function') updateChatFlowHeaderMeta();
   if (!appState.isStreaming) {
     renderMessages();
   }
@@ -5456,7 +5689,7 @@ function isTextEntryElement(element) {
 
 function hasBlockingTextEntryOverlay() {
   const onboardingOverlay = document.getElementById('onboardingOverlay');
-  if (onboardingOverlay && onboardingOverlay.style.display !== 'none') return true;
+  if (onboardingOverlay && isVisibleElement(onboardingOverlay)) return true;
 
   const activeOverlay = document.querySelector([
     '.settings-modal.active',
@@ -5747,21 +5980,21 @@ function updateZtx6dBindingUI() {
   section.style.display = (appState.ztx6dSsoEnabled || isBound) ? 'block' : 'none';
 
   if (isBound) {
-    statusEl.textContent = `已绑定 ZTX6D UID ${externalUid}`;
-    bindBtn.textContent = '已绑定';
+    statusEl.textContent = i18nText('ztx6d-bound-with-uid', 'Connected to ZTX6D UID {uid}').replace('{uid}', externalUid);
+    bindBtn.textContent = i18nText('ztx6d-bound', 'Connected');
     bindBtn.disabled = true;
     return;
   }
 
   if (!appState.ztx6dSsoEnabled) {
-    statusEl.textContent = 'ZTX6D SSO 未配置';
-    bindBtn.textContent = '绑定 ZTX6D';
+    statusEl.textContent = i18nText('ztx6d-disabled', 'ZTX6D SSO is not configured');
+    bindBtn.textContent = i18nText('ztx6d-bind', 'Connect ZTX6D');
     bindBtn.disabled = true;
     return;
   }
 
-  statusEl.textContent = '未绑定，绑定后可直接使用 ZTX6D 登录当前 RAI 账号';
-  bindBtn.textContent = '绑定 ZTX6D';
+  statusEl.textContent = i18nText('ztx6d-unbound-desc', 'Not connected. Connect ZTX6D to log in to this RAI account directly.');
+  bindBtn.textContent = i18nText('ztx6d-bind', 'Connect ZTX6D');
   bindBtn.disabled = false;
 }
 
@@ -5801,7 +6034,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.18 初始化 (Autofocus Input / Mobile Keyboard)');
+  console.log(' RAI v0.10.9.19 初始化 (English Language Polish)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -9377,7 +9610,7 @@ async function streamAIResponse(messages, aiMsg) {
           };
           img.onerror = function () {
             container.classList.add('error');
-            container.innerHTML = '<span class="image-error">图片有版权等原因不能加载，见谅 ＞﹏＜ </span>';
+            container.innerHTML = `<span class="image-error">${isChineseLanguage(appState.language) ? '图片有版权等原因不能加载，见谅 ＞﹏＜' : 'This image could not be loaded, possibly because of copyright restrictions.'}</span>`;
           };
         }
       }
@@ -11772,7 +12005,7 @@ async function handleRegister(event) {
     if (data.success) {
       await enterAuthenticatedApp(data);
     } else {
-      showError(errorEl, data.error || (isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed'));
+      showError(errorEl, localizeServerError(data.error, isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed'));
     }
   } catch (error) {
     showError(errorEl, isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error');
@@ -12077,7 +12310,7 @@ async function handleAuthSubmit() {
     if (data.success) {
       await enterAuthenticatedApp(data);
     } else {
-      showAuthError(data.error || (isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
+      showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
   } catch (error) {
     showAuthError(isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error');
@@ -12321,7 +12554,7 @@ async function loadSpaces() {
     if (!spacesList) return;
 
     if (spaces.length === 0) {
-      spacesList.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 20px;">暂无空间，点击上方创建</div>';
+      spacesList.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 20px;">${isChineseLanguage(appState.language) ? '暂无空间，点击上方创建' : 'No spaces yet. Create one above.'}</div>`;
       return;
     }
 
@@ -12331,10 +12564,10 @@ async function loadSpaces() {
             <div class="space-icon">${space.icon}</div>
             <div class="space-info">
               <div class="space-name">${space.name}</div>
-              <div class="space-doc-count">${space.document_count || 0} 个文档</div>
+              <div class="space-doc-count">${space.document_count || 0} ${isChineseLanguage(appState.language) ? '个文档' : 'docs'}</div>
             </div>
             <div class="space-actions" onclick="event.stopPropagation()">
-              <button class="space-action-icon delete" onclick="deleteSpace('${space.id}')" title="删除">
+              <button class="space-action-icon delete" onclick="deleteSpace('${space.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
                 ${getSvgIcon('delete', 'material-symbols-outlined', 24)}
               </button>
             </div>
@@ -12347,10 +12580,10 @@ async function loadSpaces() {
 
 // 创建新空间
 async function createNewSpace() {
-  const name = prompt('请输入空间名称:');
+  const name = prompt(isChineseLanguage(appState.language) ? '请输入空间名称:' : 'Enter a space name:');
   if (!name || !name.trim()) return;
 
-  const icon = prompt('请输入图标 emoji (可选):', '');
+  const icon = prompt(isChineseLanguage(appState.language) ? '请输入图标 emoji (可选):' : 'Enter an icon emoji (optional):', '');
 
   try {
     const response = await fetch(`${API_BASE}/spaces`, {
@@ -12375,7 +12608,7 @@ async function createNewSpace() {
     await loadSpaces();
   } catch (error) {
     console.error('创建空间失败:', error);
-    alert('创建空间失败: ' + error.message);
+    alert((isChineseLanguage(appState.language) ? '创建空间失败: ' : 'Create space failed: ') + error.message);
   }
 }
 
@@ -12423,7 +12656,7 @@ async function loadDocuments(spaceId) {
     if (!documentList) return;
 
     if (documents.length === 0) {
-      documentList.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 20px;">暂无文档</div>';
+      documentList.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 20px;">${isChineseLanguage(appState.language) ? '暂无文档' : 'No documents'}</div>`;
       return;
     }
 
@@ -12431,9 +12664,9 @@ async function loadDocuments(spaceId) {
           <div class="document-item">
             <div class="document-info">
               <div class="document-name" title="${doc.original_name}">${doc.original_name}</div>
-              <div class="document-meta">${formatFileSize(doc.file_size)} • ${doc.embedding_status === 'completed' ? '✓ 已索引' : '处理中'}</div>
+              <div class="document-meta">${formatFileSize(doc.file_size)} • ${doc.embedding_status === 'completed' ? (isChineseLanguage(appState.language) ? '✓ 已索引' : '✓ Indexed') : (isChineseLanguage(appState.language) ? '处理中' : 'Processing')}</div>
             </div>
-            <button class="document-delete" onclick="deleteDocument('${spaceId}', '${doc.id}')" title="删除">
+            <button class="document-delete" onclick="deleteDocument('${spaceId}', '${doc.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
               ${getSvgIcon('delete', 'material-symbols-outlined', 24)}
             </button>
           </div>
@@ -12446,7 +12679,7 @@ async function loadDocuments(spaceId) {
 // 上传文档
 function uploadDocument() {
   if (!appState.currentSpaceId) {
-    alert('请先选择一个空间');
+    alert(isChineseLanguage(appState.language) ? '请先选择一个空间' : 'Please select a space first');
     return;
   }
 
@@ -12478,10 +12711,12 @@ function uploadDocument() {
       await loadDocuments(appState.currentSpaceId);
       await loadSpaces();
 
-      alert(`文件上传成功！\n状态: ${result.document.embedding_status === 'completed' ? '已索引' : '处理中'}`);
+      alert(isChineseLanguage(appState.language)
+        ? `文件上传成功！\n状态: ${result.document.embedding_status === 'completed' ? '已索引' : '处理中'}`
+        : `File uploaded.\nStatus: ${result.document.embedding_status === 'completed' ? 'Indexed' : 'Processing'}`);
     } catch (error) {
       console.error('上传文件失败:', error);
-      alert('上传失败: ' + error.message);
+      alert((isChineseLanguage(appState.language) ? '上传失败: ' : 'Upload failed: ') + error.message);
     }
   };
 
@@ -12490,7 +12725,7 @@ function uploadDocument() {
 
 // 删除文档
 async function deleteDocument(spaceId, docId) {
-  if (!confirm('确认删除此文档吗？')) return;
+  if (!confirm(isChineseLanguage(appState.language) ? '确认删除此文档吗？' : 'Delete this document?')) return;
 
   try {
     const response = await fetch(`${API_BASE}/spaces/${spaceId}/documents/${docId}`, {
@@ -12509,13 +12744,13 @@ async function deleteDocument(spaceId, docId) {
     await loadSpaces();
   } catch (error) {
     console.error('删除文档失败:', error);
-    alert('删除失败: ' + error.message);
+    alert((isChineseLanguage(appState.language) ? '删除失败: ' : 'Delete failed: ') + error.message);
   }
 }
 
 // 删除空间
 async function deleteSpace(spaceId) {
-  if (!confirm('确认删除此空间吗？空间中的所有文档也会被删除！')) return;
+  if (!confirm(isChineseLanguage(appState.language) ? '确认删除此空间吗？空间中的所有文档也会被删除！' : 'Delete this space? All documents inside it will also be deleted.')) return;
 
   try {
     const response = await fetch(`${API_BASE}/spaces/${spaceId}`, {
@@ -12539,7 +12774,7 @@ async function deleteSpace(spaceId) {
     await loadSpaces();
   } catch (error) {
     console.error('删除空间失败:', error);
-    alert('删除失败: ' + error.message);
+    alert((isChineseLanguage(appState.language) ? '删除失败: ' : 'Delete failed: ') + error.message);
   }
 }
 
@@ -14578,7 +14813,7 @@ function createTextNode(text, x, y) {
   saveFlowState();
 
   console.log(' 从选中文本创建节点:', nodeId);
-  showToast('已添加到画布');
+  showToast(i18nText('canvas-added', isChineseLanguage(appState.language) ? '已添加到画布' : 'Added to canvas'));
 }
 
 // 渲染画布节点
@@ -15620,7 +15855,7 @@ function editNodeInline(nodeId) {
     cursor: pointer;
     transition: all 0.2s;
   `;
-  saveBtn.textContent = '保存';
+  saveBtn.textContent = i18nText('node-edit-save', isChineseLanguage(appState.language) ? '保存' : 'Save');
   saveBtn.addEventListener('click', () => {
     const newContent = textarea.value.trim();
     if (newContent) {
@@ -17955,7 +18190,7 @@ async function userCheckin() {
       updateUserAreaWithMembership();
       refreshMembershipPlansModal();
     } else {
-      alert(data.error || '签到失败');
+      alert(localizeServerError(data.error, isChineseLanguage(appState.language) ? '签到失败' : 'Check-in failed'));
     }
   } catch (e) {
     console.error(' 签到错误:', e);
@@ -18260,7 +18495,7 @@ async function redeemMembership(tier) {
 
     const data = await res.json();
     if (!res.ok) {
-      showToast(data.error || (isChineseLanguage(appState.language) ? '兑换失败' : 'Redeem failed'));
+      showToast(localizeServerError(data.error, isChineseLanguage(appState.language) ? '兑换失败' : 'Redeem failed'));
       return;
     }
 
@@ -18367,7 +18602,7 @@ async function sidebarCheckin() {
       const successTpl = i18nText('checkin-success', '签到成功！获得 {points} 点数 ');
       showToast(successTpl.replace('{points}', data.pointsGained));
     } else {
-      showToast(data.error || '签到失败', 'error');
+      showToast(localizeServerError(data.error, isChineseLanguage(appState.language) ? '签到失败' : 'Check-in failed'), 'error');
     }
   } catch (e) {
     showToast(i18nText('network-error', '网络错误'), 'error');
@@ -18494,6 +18729,19 @@ function openAdminLogin() {
 function createAdminLoginModal() {
   if (document.getElementById('adminLoginModal')) return;
 
+  const adminLoginLabels = isChineseLanguage(appState.language)
+    ? {
+        title: '管理员登录',
+        username: '用户名',
+        password: '密码',
+        submit: '登录管理后台'
+      }
+    : {
+        title: 'Admin Login',
+        username: 'Username',
+        password: 'Password',
+        submit: 'Log in to Admin'
+      };
   const modal = document.createElement('div');
   modal.id = 'adminLoginModal';
   modal.className = 'admin-modal-overlay';
@@ -18503,19 +18751,19 @@ function createAdminLoginModal() {
             <svg width="32" height="32" viewBox="0 0 24 24" fill="var(--color-saturn-yellow)">
               <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
             </svg>
-            <h2>管理员登录</h2>
+            <h2>${adminLoginLabels.title}</h2>
           </div>
           <form id="adminLoginForm" onsubmit="handleAdminLogin(event)">
             <div class="admin-input-group">
-              <label>用户名</label>
+              <label>${adminLoginLabels.username}</label>
               <input type="text" id="adminUsername" placeholder="admin" autocomplete="username" required>
             </div>
             <div class="admin-input-group">
-              <label>密码</label>
+              <label>${adminLoginLabels.password}</label>
               <input type="password" id="adminPassword" placeholder="••••••••" autocomplete="current-password" required>
             </div>
             <div id="adminLoginError" class="admin-login-error"></div>
-            <button type="submit" class="admin-login-btn">登录管理后台</button>
+            <button type="submit" class="admin-login-btn">${adminLoginLabels.submit}</button>
           </form>
           <button class="admin-close-btn" onclick="closeAdminLogin()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -18555,10 +18803,10 @@ async function handleAdminLogin(e) {
       closeAdminLogin();
       openAdminPanel();
     } else {
-      errorEl.textContent = data.error || '登录失败';
+      errorEl.textContent = localizeServerError(data.error, isChineseLanguage(appState.language) ? '登录失败' : 'Login failed');
     }
   } catch (err) {
-    errorEl.textContent = '网络错误，请重试';
+    errorEl.textContent = i18nText('network-error', isChineseLanguage(appState.language) ? '网络错误，请重试' : 'Network error, please try again');
   }
 }
 
@@ -18774,7 +19022,7 @@ async function loadAdminStats() {
 function renderDailyChart(dailyStats) {
   const container = document.getElementById('adminDailyChart');
   if (!dailyStats.length) {
-    container.innerHTML = '<div class="admin-no-data">暂无数据</div>';
+    container.innerHTML = `<div class="admin-no-data">${isChineseLanguage(appState.language) ? '暂无数据' : 'No data'}</div>`;
     return;
   }
 
@@ -18785,7 +19033,7 @@ function renderDailyChart(dailyStats) {
     const date = day.date.slice(5); // MM-DD
     html += `
           <div class="admin-bar-item">
-            <div class="admin-bar" style="height: ${height}%" title="${day.date}: ${day.messages}条"></div>
+            <div class="admin-bar" style="height: ${height}%" title="${day.date}: ${day.messages} ${isChineseLanguage(appState.language) ? '条' : 'messages'}"></div>
             <span class="admin-bar-label">${date}</span>
           </div>
         `;
@@ -18798,7 +19046,7 @@ function renderDailyChart(dailyStats) {
 function renderModelChart(modelUsage) {
   const container = document.getElementById('adminModelChart');
   if (!modelUsage.length) {
-    container.innerHTML = '<div class="admin-no-data">暂无数据</div>';
+    container.innerHTML = `<div class="admin-no-data">${isChineseLanguage(appState.language) ? '暂无数据' : 'No data'}</div>`;
     return;
   }
 
@@ -18814,7 +19062,7 @@ function renderModelChart(modelUsage) {
             <div class="admin-model-bar-bg">
               <div class="admin-model-bar" style="width: ${percent}%; background: ${color}"></div>
             </div>
-            <span class="admin-model-name">${escapeHtml(model.model || '未知')}</span>
+            <span class="admin-model-name">${escapeHtml(model.model || (isChineseLanguage(appState.language) ? '未知' : 'Unknown'))}</span>
             <span class="admin-model-count">${model.count} (${percent}%)</span>
           </div>
         `;
@@ -18827,7 +19075,7 @@ function renderModelChart(modelUsage) {
 function renderTopUsersChart(topUsers) {
   const container = document.getElementById('adminTopUsersChart');
   if (!topUsers.length) {
-    container.innerHTML = '<div class="admin-no-data">暂无数据</div>';
+    container.innerHTML = `<div class="admin-no-data">${isChineseLanguage(appState.language) ? '暂无数据' : 'No data'}</div>`;
     return;
   }
 
@@ -18941,10 +19189,10 @@ async function setUserMembership(userId, membership, months) {
       loadAdminUsers();
     } else {
       const err = await res.json();
-      alert('设置失败: ' + (err.error || '未知错误'));
+      alert((isChineseLanguage(appState.language) ? '设置失败: ' : 'Update failed: ') + localizeServerError(err.error, isChineseLanguage(appState.language) ? '未知错误' : 'Unknown error'));
     }
   } catch (e) {
-    alert('网络错误');
+    alert(i18nText('network-error', isChineseLanguage(appState.language) ? '网络错误' : 'Network error'));
   }
 }
 
@@ -18953,7 +19201,9 @@ function openPointsEditor(userId) {
   const points = parseInt(prompt(`给用户 #${userId} 添加点数:\n\n输入正数添加，负数扣减`, '100'));
   if (isNaN(points)) return;
 
-  const type = confirm('是购买点数(2年有效)？\n\n确定 = 购买点数\n取消 = 每日点数') ? 'purchased' : 'daily';
+  const type = confirm(isChineseLanguage(appState.language)
+    ? '是购买点数(2年有效)？\n\n确定 = 购买点数\n取消 = 每日点数'
+    : 'Use purchased points with a 2-year validity?\n\nOK = purchased points\nCancel = daily points') ? 'purchased' : 'daily';
 
   addUserPoints(userId, points, type);
 }
@@ -18974,10 +19224,10 @@ async function addUserPoints(userId, points, type) {
       loadAdminUsers();
     } else {
       const err = await res.json();
-      alert('添加失败: ' + (err.error || '未知错误'));
+      alert((isChineseLanguage(appState.language) ? '添加失败: ' : 'Add failed: ') + localizeServerError(err.error, isChineseLanguage(appState.language) ? '未知错误' : 'Unknown error'));
     }
   } catch (e) {
-    alert('网络错误');
+    alert(i18nText('network-error', isChineseLanguage(appState.language) ? '网络错误' : 'Network error'));
   }
 }
 
@@ -19025,10 +19275,10 @@ async function deleteUser(userId) {
     if (res.ok) {
       loadAdminUsers();
     } else {
-      alert('删除失败');
+      alert(isChineseLanguage(appState.language) ? '删除失败' : 'Delete failed');
     }
   } catch (err) {
-    alert('网络错误');
+    alert(i18nText('network-error', isChineseLanguage(appState.language) ? '网络错误' : 'Network error'));
   }
 }
 
@@ -19088,7 +19338,7 @@ async function loadAdminFeedback() {
   if (!table) return;
 
   try {
-    table.innerHTML = '<div class="admin-loading">加载反馈中...</div>';
+    table.innerHTML = `<div class="admin-loading">${isChineseLanguage(appState.language) ? '加载反馈中...' : 'Loading feedback...'}</div>`;
     const params = new URLSearchParams();
     if (rating) params.set('rating', rating);
     if (search) params.set('search', search);
@@ -19103,7 +19353,7 @@ async function loadAdminFeedback() {
 
     const rows = data.feedback || [];
     if (!rows.length) {
-      table.innerHTML = '<div class="admin-empty-state">暂无用户反馈</div>';
+      table.innerHTML = `<div class="admin-empty-state">${isChineseLanguage(appState.language) ? '暂无用户反馈' : 'No user feedback'}</div>`;
       return;
     }
 
@@ -19132,7 +19382,7 @@ async function loadAdminFeedback() {
       html += `
         <tr>
           <td>${item.id}</td>
-          <td><span class="feedback-rating-badge ${isPositive ? 'positive' : 'negative'}">${isPositive ? '点赞' : '倒赞'}</span></td>
+          <td><span class="feedback-rating-badge ${isPositive ? 'positive' : 'negative'}">${isPositive ? (isChineseLanguage(appState.language) ? '点赞' : 'Positive') : (isChineseLanguage(appState.language) ? '倒赞' : 'Negative')}</span></td>
           <td>${escapeHtml(item.username || item.user_email || `#${item.user_id}`)}</td>
           <td class="admin-feedback-comment">${escapeHtml(comment)}</td>
           <td class="admin-msg-content">${escapeHtml(messagePreview)}</td>
@@ -19147,14 +19397,14 @@ async function loadAdminFeedback() {
     table.innerHTML = html;
   } catch (err) {
     console.error('加载用户反馈失败:', err);
-    table.innerHTML = `<div class="admin-error">加载反馈失败：${escapeHtml(err.message || 'unknown')}</div>`;
+    table.innerHTML = `<div class="admin-error">${isChineseLanguage(appState.language) ? '加载反馈失败：' : 'Failed to load feedback: '}${escapeHtml(err.message || 'unknown')}</div>`;
   }
 }
 
 async function loadAdminModels() {
   const container = document.getElementById('adminModelsPanel');
   if (!container) return;
-  container.innerHTML = '<div class="admin-loading">加载模型开关中...</div>';
+  container.innerHTML = `<div class="admin-loading">${isChineseLanguage(appState.language) ? '加载模型开关中...' : 'Loading model switches...'}</div>`;
 
   try {
     const res = await fetch('/api/admin/models', {
@@ -19206,12 +19456,12 @@ async function toggleAdminModel(modelId, enabled, inputEl) {
       inputEl.checked = !enabled;
       inputEl.disabled = false;
     }
-    alert('更新模型开关失败: ' + (err.message || '未知错误'));
+    alert((isChineseLanguage(appState.language) ? '更新模型开关失败: ' : 'Model switch update failed: ') + (err.message || (isChineseLanguage(appState.language) ? '未知错误' : 'Unknown error')));
   }
 }
 
 async function deleteMessage(messageId) {
-  if (!confirm('确定要删除这条消息吗？')) return;
+  if (!confirm(isChineseLanguage(appState.language) ? '确定要删除这条消息吗？' : 'Delete this message?')) return;
 
   try {
     const res = await fetch(`/api/admin/messages/${messageId}`, {
@@ -19274,7 +19524,7 @@ async function loadAdminSessions() {
 
 // 删除会话
 async function deleteAdminSession(sessionId) {
-  if (!confirm('确定要删除这个会话及其所有消息吗？')) return;
+  if (!confirm(isChineseLanguage(appState.language) ? '确定要删除这个会话及其所有消息吗？' : 'Delete this session and all of its messages?')) return;
 
   try {
     const res = await fetch(`/api/admin/sessions/${sessionId}`, {
@@ -19472,7 +19722,7 @@ async function loadSessionMessages(sessionId) {
   });
 
   const messagesArea = document.getElementById('userMessagesArea');
-  messagesArea.innerHTML = '<div class="ud-messages-loading">加载消息中...</div>';
+  messagesArea.innerHTML = `<div class="ud-messages-loading">${isChineseLanguage(appState.language) ? '加载消息中...' : 'Loading messages...'}</div>`;
 
   try {
     const res = await fetch(`/api/admin/sessions/${sessionId}/messages?limit=200`, {
@@ -19481,7 +19731,7 @@ async function loadSessionMessages(sessionId) {
     const data = await res.json();
 
     if (!res.ok) {
-      throw new Error(data.error || '获取消息失败');
+      throw new Error(data.error || (isChineseLanguage(appState.language) ? '获取消息失败' : 'Failed to get messages'));
     }
 
     renderSessionMessages(data.session, data.messages, data.totalCount);
@@ -19531,14 +19781,14 @@ function renderSessionMessages(session, messages, totalCount) {
   const messagesArea = document.getElementById('userMessagesArea');
 
   if (messages.length === 0) {
-    messagesArea.innerHTML = '<div class="ud-messages-placeholder"><p>该对话暂无消息</p></div>';
+    messagesArea.innerHTML = `<div class="ud-messages-placeholder"><p>${isChineseLanguage(appState.language) ? '该对话暂无消息' : 'No messages in this conversation'}</p></div>`;
     return;
   }
 
   let html = `
     <div class="ud-messages-header">
-      <h4>${escapeHtml(session.title || '对话详情')}</h4>
-      <span class="ud-messages-count">共 ${totalCount} 条消息</span>
+      <h4>${escapeHtml(session.title || (isChineseLanguage(appState.language) ? '对话详情' : 'Conversation Details'))}</h4>
+      <span class="ud-messages-count">${isChineseLanguage(appState.language) ? `共 ${totalCount} 条消息` : `${totalCount} messages`}</span>
     </div>
     <div class="ud-messages-list">
   `;
