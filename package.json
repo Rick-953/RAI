@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.10.9.16",
+  "version": "0.10.9.18",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,13 +11,13 @@
     "desktop:build": "tauri build"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
-    "cors": "^2.8.5",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
     "express": "^4.22.2",
     "express-rate-limit": "^7.1.5",
-    "jsonwebtoken": "^9.0.2",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^1.4.5-lts.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^6.0.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2"

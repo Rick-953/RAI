@@ -6,6 +6,27 @@ const isChatFlowIframeMode = new URLSearchParams(window.location.search).get('mo
 let chatFlowCanvasContext = '';
 let pendingCanvasCallback = null;
 
+function getTrustedChatFlowParentOrigins() {
+  return new Set([
+    window.location.origin,
+    'https://rai.rick.quest'
+  ]);
+}
+
+function isTrustedChatFlowParentOrigin(origin) {
+  return getTrustedChatFlowParentOrigins().has(String(origin || ''));
+}
+
+function getChatFlowParentTargetOrigin() {
+  try {
+    const referrerOrigin = new URL(document.referrer).origin;
+    if (isTrustedChatFlowParentOrigin(referrerOrigin)) return referrerOrigin;
+  } catch (error) {
+    // No trusted referrer is available; same-origin parent is the safe fallback.
+  }
+  return window.location.origin;
+}
+
 // ChatFlow iframe 模式初始化
 if (isChatFlowIframeMode) {
   document.addEventListener('DOMContentLoaded', () => {
@@ -20,9 +41,12 @@ if (isChatFlowIframeMode) {
 
     // 监听来自父窗口的消息
     window.addEventListener('message', (e) => {
+      if (!isTrustedChatFlowParentOrigin(e.origin)) return;
+      if (!e.data || typeof e.data !== 'object') return;
+
       // 接收画布数据
       if (e.data.action === 'canvas-data') {
-        chatFlowCanvasContext = e.data.canvas || '';
+        chatFlowCanvasContext = String(e.data.canvas || '').slice(0, 20000);
         console.log(' 收到画布上下文:', chatFlowCanvasContext.substring(0, 100) + '...');
 
         // 如果有等待的回调，执行它
@@ -61,7 +85,7 @@ function requestCanvasContext(callback) {
   }
 
   pendingCanvasCallback = callback;
-  window.parent.postMessage({ action: 'request-canvas' }, '*');
+  window.parent.postMessage({ action: 'request-canvas' }, getChatFlowParentTargetOrigin());
 
   // 超时处理（500ms 后如果没收到回复，使用空上下文）
   setTimeout(() => {
@@ -75,28 +99,13 @@ function requestCanvasContext(callback) {
 
 
 // ==================== 渲染工具函数 (Markdown/KaTeX/Mermaid) ====================
-// Robust loading with CDN fallback
+// Robust loading without remote script fallback
 window.addEventListener('load', function () {
   if (typeof marked === 'undefined' && !window.marked) {
-    console.warn(' Local marked.js failed to load. Attempting CDN fallback...');
-    var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
-    script.onload = function () {
-      console.log(' Marked.js loaded from CDN');
-      configureMarkedSecurity();
-      if (typeof renderMessages === 'function') {
-        console.log(' Re-rendering messages...');
-        renderMessages();
-      }
+    console.warn(' Local marked.js failed to load; remote CDN fallback is disabled for security.');
+    window.marked = {
+      parse: function (text) { return text; }
     };
-    script.onerror = function () {
-      console.error(' Critical: Marked.js failed to load from both local and CDN');
-      // Define a simple fallback
-      window.marked = {
-        parse: function (text) { return text; }
-      };
-    };
-    document.head.appendChild(script);
   } else {
     console.log(' Marked.js loaded successfully (Local)');
   }
@@ -1902,8 +1911,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.16';
-const RAI_BUILD_ID = '20260604-transparent-icon-download-v010916';
+const RAI_APP_VERSION = '0.10.9.18';
+const RAI_BUILD_ID = '20260608-autofocus-input-v010918';
 
 function resolveRaiRemoteUrl(value) {
   const raw = String(value || '').trim();
@@ -2003,6 +2012,8 @@ const appState = {
   scrollBottomThreshold: 160,
   pendingScrollTimer: null,
   mobileComposerFocusTimer: null,
+  entryAutofocusTimer: null,
+  entryAutofocusBound: false,
   pendingMobileComposerFocus: false,
   mobileHomeAutoFocusUsed: false,
   isProgrammaticScroll: false,
@@ -3570,6 +3581,48 @@ Object.assign(i18n['zh-TW'], {
 });
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-06-08',
+    version: 'v0.10.9.18',
+    zh: {
+      summary: '进入 RAI 后自动聚焦输入框。',
+      details: [
+        '打开 RAI 网页后会自动聚焦当前主输入区域，登录页聚焦邮箱，已登录状态聚焦聊天输入框。',
+        '移动端也会尝试自动聚焦聊天输入框，让系统输入法在浏览器允许时直接弹出。',
+        '自动聚焦会避开设置页、模型弹窗、反馈弹窗、管理员弹窗和正在编辑的其他输入框，避免打断当前操作。'
+      ]
+    },
+    en: {
+      summary: 'Automatically focuses the input field when entering RAI.',
+      details: [
+        'Opening RAI now focuses the primary text entry area: email on the login screen and the chat composer after login.',
+        'Mobile also attempts to focus the chat composer so the system keyboard opens when the browser allows it.',
+        'Autofocus avoids Settings, model dialogs, feedback dialogs, admin dialogs, and other active text fields so it does not interrupt current work.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-08',
+    version: 'v0.10.9.17',
+    zh: {
+      summary: '完成安全审查修复和依赖漏洞升级。',
+      details: [
+        'ZTX6D 登录回调改为一次性 auth_code 交换，URL 不再携带长期 RAI token。',
+        'ChatFlow iframe 消息增加 origin 校验，并移除 postMessage 的通配目标。',
+        '聊天流、用户配置、行情代理、错误处理和积分/限额扣减路径完成安全加固。',
+        '移除未固定版本的远程 Markdown CDN fallback，KaTeX/Mermaid/highlight.js 改为本地资源，并升级存在安全公告的依赖链。'
+      ]
+    },
+    en: {
+      summary: 'Completed security review fixes and dependency vulnerability upgrades.',
+      details: [
+        'ZTX6D login callbacks now use one-time auth_code exchange, so long-lived RAI tokens are no longer placed in URLs.',
+        'ChatFlow iframe messages now validate origin and no longer use wildcard postMessage targets.',
+        'Chat streaming, user config, finance proxy, error handling, and points/quota deduction paths were hardened.',
+        'Removed the unpinned remote Markdown CDN fallback, vendored KaTeX/Mermaid/highlight.js locally, and upgraded dependency chains with security advisories.'
+      ]
+    }
+  },
   {
     date: '2026-06-04',
     version: 'v0.10.9.16',
@@ -5382,6 +5435,121 @@ function maybeAutoFocusMobileHomeInput() {
   window.setTimeout(() => focusMessageInputForNewChat(true), 260);
 }
 
+function isVisibleElement(element) {
+  if (!element) return false;
+  if (element.hidden) return false;
+  const style = window.getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function isTextEntryElement(element) {
+  if (!element || element === document.body || element === document.documentElement) return false;
+  if (element.isContentEditable) return true;
+  const tagName = String(element.tagName || '').toLowerCase();
+  if (tagName === 'textarea') return true;
+  if (tagName !== 'input') return false;
+  const type = String(element.getAttribute('type') || 'text').toLowerCase();
+  return ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(type);
+}
+
+function hasBlockingTextEntryOverlay() {
+  const onboardingOverlay = document.getElementById('onboardingOverlay');
+  if (onboardingOverlay && onboardingOverlay.style.display !== 'none') return true;
+
+  const activeOverlay = document.querySelector([
+    '.settings-modal.active',
+    '.model-modal.active',
+    '.regenerate-modal.active',
+    '.feedback-modal-overlay.active',
+    '.membership-plans-overlay.active',
+    '.admin-modal-overlay.active',
+    '.admin-panel-overlay.active',
+    '.pwa-reward-overlay.active',
+    '.mermaid-fullscreen-modal.active',
+    '.node-edit-modal'
+  ].join(','));
+  return Boolean(activeOverlay);
+}
+
+function resolveEntryAutofocusTarget() {
+  const authContainer = document.getElementById('authContainer');
+  if (authContainer?.classList.contains('active')) {
+    const emailInput = document.getElementById('authEmail');
+    if (emailInput && !emailInput.value) return emailInput;
+    if (appState.authEmailValidated) return document.getElementById('authPassword') || emailInput;
+    return emailInput;
+  }
+
+  const appContainer = document.getElementById('appContainer');
+  if (!appContainer || appContainer.style.display === 'none') return null;
+
+  const chatFlowWorkspace = document.getElementById('chatFlowWorkspace');
+  if (chatFlowWorkspace && chatFlowWorkspace.style.display !== 'none') {
+    return document.getElementById('chatflowMessageInput');
+  }
+
+  return document.getElementById('messageInput');
+}
+
+function focusEntryTextInput(reason = 'entry', options = {}) {
+  const delay = Number.isFinite(options.delay) ? options.delay : 80;
+
+  if (appState.entryAutofocusTimer) {
+    clearTimeout(appState.entryAutofocusTimer);
+  }
+
+  appState.entryAutofocusTimer = window.setTimeout(() => {
+    appState.entryAutofocusTimer = null;
+
+    if (document.visibilityState && document.visibilityState !== 'visible') return;
+
+    const target = resolveEntryAutofocusTarget();
+    if (!target || target.disabled || target.readOnly || !isVisibleElement(target)) return;
+
+    const isAuthTarget = target.id === 'authEmail' || target.id === 'authPassword';
+    if (!isAuthTarget && (appState.settingsOpen || hasBlockingTextEntryOverlay())) return;
+
+    const activeElement = document.activeElement;
+    if (isTextEntryElement(activeElement) && activeElement !== target) return;
+
+    try {
+      target.focus({ preventScroll: true });
+    } catch (error) {
+      target.focus();
+    }
+
+    const end = String(target.value || '').length;
+    if (typeof target.setSelectionRange === 'function') {
+      try {
+        target.setSelectionRange(end, end);
+      } catch (error) {
+        console.debug('Skip entry autofocus selection restore:', reason, error);
+      }
+    }
+
+    if (target.id === 'messageInput') {
+      autoResizeInput();
+    }
+  }, delay);
+}
+
+function initEntryAutofocus() {
+  if (appState.entryAutofocusBound) return;
+  appState.entryAutofocusBound = true;
+
+  window.addEventListener('focus', () => {
+    focusEntryTextInput('window-focus', { delay: 120 });
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      focusEntryTextInput('visibility', { delay: 160 });
+    }
+  });
+}
+
 // ==================== ZTX6D SSO 配置 ====================
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
@@ -5389,15 +5557,30 @@ const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
 function showAuthScreen() {
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
+  focusEntryTextInput('auth-screen', { delay: 120 });
 }
 
-function handleRaiTokenCallback() {
+async function exchangeZtx6dAuthCode(authCode) {
+  const response = await fetch(`${API_BASE}/auth/ztx6d/exchange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auth_code: authCode })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.success || !data?.token) {
+    throw new Error(data?.error || `HTTP ${response.status}`);
+  }
+  return data.token;
+}
+
+async function handleRaiTokenCallback() {
   const url = new URL(window.location.href);
   const tokenFromUrl = url.searchParams.get('rai_token') || url.searchParams.get('token');
+  const authCode = url.searchParams.get('auth_code');
   const authError = url.searchParams.get('auth_error');
 
   if (tokenFromUrl) {
-    console.log(' 从 SSO 回调获取到 RAI token');
+    console.log(' 从旧版 SSO 回调获取到 RAI token');
     localStorage.setItem(RAI_TOKEN_KEY, tokenFromUrl);
     localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
     url.searchParams.delete('rai_token');
@@ -5405,6 +5588,33 @@ function handleRaiTokenCallback() {
     url.searchParams.delete('auth_provider');
     window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
     return tokenFromUrl;
+  }
+
+  if (authCode) {
+    url.searchParams.delete('auth_code');
+    url.searchParams.delete('auth_provider');
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+
+    try {
+      const token = await exchangeZtx6dAuthCode(authCode);
+      console.log(' 已通过 SSO auth_code 换取 RAI token');
+      localStorage.setItem(RAI_TOKEN_KEY, token);
+      localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+      return token;
+    } catch (error) {
+      const message = isChineseLanguage(appState.language)
+        ? `ZTX6D 登录失败: ${error.message}`
+        : `ZTX6D login failed: ${error.message}`;
+      const hasStoredToken = !!localStorage.getItem(RAI_TOKEN_KEY);
+      setTimeout(() => {
+        if (hasStoredToken) {
+          showToast(message);
+        } else {
+          showAuthError(message);
+        }
+      }, 0);
+      return null;
+    }
   }
 
   if (authError) {
@@ -5591,7 +5801,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.16 初始化 (Transparent Icon / App Download / Tauri Desktop Sync)');
+  console.log(' RAI v0.10.9.18 初始化 (Autofocus Input / Mobile Keyboard)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -5601,6 +5811,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 初始化主题和语言
   initThemeAndLanguage();
+  initEntryAutofocus();
   initTauriDesktopAuthSync();
   syncDesktopSettingsVisibility();
   captureInviteRefFromUrl();
@@ -5610,8 +5821,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadZtx6dSsoStatus();
 
   // ==================== 认证流程 ====================
-  // 1. 检测 URL 中是否有服务端 SSO 回调返回的 RAI token
-  let token = handleRaiTokenCallback();
+  // 1. 检测 URL 中是否有服务端 SSO 回调返回的一次性 auth_code 或旧 token
+  let token = await handleRaiTokenCallback();
 
   // 2. 如果 URL 中没有 token，检查 localStorage
   if (!token) {
@@ -10798,7 +11009,7 @@ async function sendMessage(message = null) {
                 window.parent.postMessage({
                   action: 'update-flow-title',
                   title: parsed.title
-                }, '*');
+                }, getChatFlowParentTargetOrigin());
               }
             }
           }
@@ -11496,6 +11707,7 @@ function showNewUserLanguagePrompt() {
   }];
   renderMessages();
   focusMessageInputForNewChat(false);
+  focusEntryTextInput('new-user-language-prompt', { delay: 120 });
 }
 
 function resolveOnboardingLanguage(answer) {
@@ -11885,12 +12097,14 @@ async function handleAuthSubmit() {
 function showApp() {
   document.getElementById('authContainer').classList.remove('active');
   document.getElementById('appContainer').style.display = 'flex';
+  focusEntryTextInput('app-screen', { delay: 80 });
 
   // 延迟初始化滚动监听器，确保 chatContainer 已存在
   setTimeout(() => {
     initChatScrollListener();
     initChatIndexListener(); // 初始化对话索引导航器监听
     updateToolbarUI();
+    focusEntryTextInput('app-ready', { delay: 0 });
   }, 100);
 }
 
@@ -11929,6 +12143,7 @@ function showOnboarding(onDone) {
     overlay.style.display = 'none';
     document.body.style.overflow = '';
     if (onDone) onDone();
+    focusEntryTextInput('onboarding-finished', { delay: 160 });
   }
 
   skipBtn.onclick = finish;
@@ -12050,6 +12265,7 @@ async function loadUserData() {
     //  获取并显示会员状态 + 应用模型策略
     await fetchUserMembership({ applyPolicy: true, initial: true });
     updateUserAreaWithMembership();
+    focusEntryTextInput('user-data-loaded', { delay: 120 });
   } catch (error) {
     console.error(' 加载用户数据失败:', error);
     if (error.message.includes('500')) {
