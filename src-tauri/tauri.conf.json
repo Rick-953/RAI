@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "RAI",
-  "version": "0.10.9+16",
+  "version": "0.10.9+17",
   "identifier": "quest.rick.rai",
   "build": {
     "frontendDist": "../public",

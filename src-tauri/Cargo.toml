@@ -1,6 +1,6 @@
 [package]
 name = "rai_desktop"
-version = "0.10.9+16"
+version = "0.10.9+17"
 description = "RAI desktop client"
 authors = ["Rick"]
 license = ""

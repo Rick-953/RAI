@@ -54,6 +54,7 @@ const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || 'admin').trim();
 const ADMIN_PASSWORD_HASH = requireSecretEnv('ADMIN_PASSWORD_HASH', 50);
 const ADMIN_JWT_SECRET = requireSecretEnv('ADMIN_JWT_SECRET', 32);
 const ZTX6D_RT_TTL_MS = 10 * 60 * 1000;
+const ZTX6D_AUTH_CODE_TTL_MS = 2 * 60 * 1000;
 const ENV_API_KEYS = {
     TAVILY_API_KEY: (process.env.TAVILY_API_KEY || '').trim(),
     ALIYUN_API_KEY: (process.env.ALIYUN_API_KEY || '').trim(),
@@ -5105,6 +5106,18 @@ db.serialize(() => {
     bind_user_id INTEGER
   )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS auth_ztx6d_codes (
+    code TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    email TEXT NOT NULL,
+    provider TEXT DEFAULT 'ztx6d',
+    return_path TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
     db.run(`CREATE TABLE IF NOT EXISTS message_feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL,
@@ -5292,6 +5305,14 @@ db.serialize(() => {
                 console.warn(` 创建ZTX6D rt索引失败:`, err.message);
             } else {
                 console.log(' ZTX6D rt索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_auth_ztx6d_codes_expires ON auth_ztx6d_codes(expires_at)`, (err) => {
+            if (err) {
+                console.warn(` 创建ZTX6D auth_code索引失败:`, err.message);
+            } else {
+                console.log(' ZTX6D auth_code索引就绪');
             }
         });
 
@@ -5508,6 +5529,12 @@ const apiLimiter = rateLimit({
     message: { error: '请求过于频繁,请稍后再试' }
 });
 
+const financeQuoteLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 30,
+    message: { error: '行情请求过于频繁,请稍后再试' }
+});
+
 const adminLoginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 8,
@@ -5636,7 +5663,7 @@ app.get('/api/version', (req, res) => {
     });
 });
 
-app.get('/api/quote/:symbol', async (req, res) => {
+app.get('/api/quote/:symbol', financeQuoteLimiter, async (req, res) => {
     try {
         const quote = await fetchYahooFinanceQuote({
             symbol: req.params.symbol,
@@ -5748,6 +5775,68 @@ async function cleanupExpiredZtx6dRt() {
         );
     } catch (error) {
         console.warn(` ZTX6D rt清理失败: ${error.message}`);
+    }
+}
+
+async function cleanupExpiredZtx6dAuthCodes() {
+    try {
+        await dbRunAsync(
+            'DELETE FROM auth_ztx6d_codes WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
+            [Date.now(), Date.now() - 24 * 60 * 60 * 1000]
+        );
+    } catch (error) {
+        console.warn(` ZTX6D auth_code清理失败: ${error.message}`);
+    }
+}
+
+async function createZtx6dAuthCode(user, returnPath = '/') {
+    const userId = Number(user?.id || 0);
+    const email = String(user?.email || '').trim();
+    if (!Number.isInteger(userId) || userId <= 0 || !email) {
+        throw new Error('invalid_ztx6d_auth_code_user');
+    }
+
+    await cleanupExpiredZtx6dAuthCodes();
+    const code = crypto.randomBytes(32).toString('base64url');
+    await dbRunAsync(
+        `INSERT INTO auth_ztx6d_codes
+         (code, user_id, email, provider, return_path, created_at, expires_at, consumed_at)
+         VALUES (?, ?, ?, 'ztx6d', ?, ?, ?, NULL)`,
+        [code, userId, email, normalizeReturnPath(returnPath), Date.now(), Date.now() + ZTX6D_AUTH_CODE_TTL_MS]
+    );
+    return code;
+}
+
+async function consumeZtx6dAuthCode(code) {
+    const authCode = String(code || '').trim();
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(authCode)) return null;
+
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        const row = await dbGetAsync(
+            'SELECT * FROM auth_ztx6d_codes WHERE code = ?',
+            [authCode]
+        );
+
+        if (!row || row.consumed_at || Number(row.expires_at || 0) < Date.now()) {
+            await dbRunAsync('COMMIT');
+            return null;
+        }
+
+        const result = await dbRunAsync(
+            'UPDATE auth_ztx6d_codes SET consumed_at = ? WHERE code = ? AND consumed_at IS NULL',
+            [Date.now(), authCode]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            await dbRunAsync('ROLLBACK');
+            return null;
+        }
+
+        await dbRunAsync('COMMIT');
+        return row;
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
     }
 }
 
@@ -5981,19 +6070,44 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
         const user = bindUserId > 0
             ? await bindZtx6dUser(bindUserId, uid)
             : await findOrCreateZtx6dUser(uid);
-        const token = jwt.sign(
-            { userId: user.id, email: user.email, provider: 'ztx6d' },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-        );
+        const authCode = await createZtx6dAuthCode(user, returnPath);
 
         res.redirect(buildClientAuthRedirect(req, returnPath, {
-            rai_token: token,
+            auth_code: authCode,
             auth_provider: 'ztx6d'
         }));
     } catch (error) {
         console.error(` ZTX6D callback失败: ${error.message}`);
         res.redirect(redirectZtx6dError(req, returnPath, error.code || 'callback_failed'));
+    }
+});
+
+app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
+    const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
+    if (!authCode) {
+        return res.status(400).json({ success: false, error: 'missing_auth_code' });
+    }
+
+    try {
+        const codeRecord = await consumeZtx6dAuthCode(authCode);
+        if (!codeRecord) {
+            return res.status(400).json({ success: false, error: 'invalid_or_expired_auth_code' });
+        }
+
+        const token = jwt.sign(
+            { userId: codeRecord.user_id, email: codeRecord.email, provider: codeRecord.provider || 'ztx6d' },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        res.json({
+            success: true,
+            token,
+            auth_provider: codeRecord.provider || 'ztx6d'
+        });
+    } catch (error) {
+        console.error(` ZTX6D auth_code交换失败: ${error.message}`);
+        res.status(500).json({ success: false, error: 'auth_code_exchange_failed' });
     }
 });
 
@@ -6364,15 +6478,41 @@ app.put('/api/user/password', authenticateToken, async (req, res) => {
     }
 });
 
-app.put('/api/user/config', authenticateToken, (req, res) => {
-    const {
-        theme, default_model, temperature, top_p, max_tokens,
-        frequency_penalty, presence_penalty, system_prompt,
-        thinking_mode, internet_mode
-    } = req.body;
+function clampNumber(value, min, max, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.min(Math.max(numeric, min), max);
+}
 
-    //  防御性检查：确保system_prompt被正确处理
-    const finalSystemPrompt = system_prompt === null ? '' : (system_prompt || '');
+function clampInteger(value, min, max, fallback) {
+    return Math.round(clampNumber(value, min, max, fallback));
+}
+
+function sanitizeUserConfigPayload(payload = {}) {
+    const theme = ['light', 'dark', 'system'].includes(String(payload.theme || '').trim())
+        ? String(payload.theme).trim()
+        : 'dark';
+    const defaultModel = normalizeIncomingModelId(payload.default_model || 'auto');
+    const safeDefaultModel = defaultModel === 'auto' || PUBLIC_MODEL_IDS.includes(defaultModel) || MODEL_ROUTING[defaultModel]
+        ? defaultModel
+        : 'auto';
+
+    return {
+        theme,
+        default_model: safeDefaultModel,
+        temperature: clampNumber(payload.temperature, 0, 2, 0.7),
+        top_p: clampNumber(payload.top_p, 0, 1, 0.9),
+        max_tokens: clampInteger(payload.max_tokens, 256, 128000, 2000),
+        frequency_penalty: clampNumber(payload.frequency_penalty, -2, 2, 0),
+        presence_penalty: clampNumber(payload.presence_penalty, -2, 2, 0),
+        system_prompt: String(payload.system_prompt ?? '').slice(0, 12000),
+        thinking_mode: payload.thinking_mode ? 1 : 0,
+        internet_mode: payload.internet_mode ? 1 : 0
+    };
+}
+
+app.put('/api/user/config', authenticateToken, (req, res) => {
+    const safeConfig = sanitizeUserConfigPayload(req.body);
 
     db.run(
         `INSERT INTO user_configs (
@@ -6392,17 +6532,17 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
       thinking_mode = excluded.thinking_mode,
       internet_mode = excluded.internet_mode`,
         [
-            req.user.userId, theme || 'dark', default_model || 'auto',
-            temperature || 0.7, top_p || 0.9, max_tokens || 2000,
-            frequency_penalty || 0, presence_penalty || 0, finalSystemPrompt,
-            thinking_mode ? 1 : 0, internet_mode ? 1 : 0
+            req.user.userId, safeConfig.theme, safeConfig.default_model,
+            safeConfig.temperature, safeConfig.top_p, safeConfig.max_tokens,
+            safeConfig.frequency_penalty, safeConfig.presence_penalty, safeConfig.system_prompt,
+            safeConfig.thinking_mode, safeConfig.internet_mode
         ],
         (err) => {
             if (err) {
                 console.error(' 保存配置失败:', err);
-                return res.status(500).json({ error: '保存失败', details: err.message });
+                return res.status(500).json({ error: '保存失败' });
             }
-            console.log(` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${finalSystemPrompt.length}`);
+            console.log(` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${safeConfig.system_prompt.length}`);
             res.json({ success: true });
         }
     );
@@ -6955,7 +7095,7 @@ app.get('/api/flows', authenticateToken, async (req, res) => {
             (err, rows) => {
                 if (err) {
                     console.error(' 获取Flow列表失败:', err);
-                    return res.status(500).json({ error: err.message });
+                    return res.status(500).json({ error: '获取Flow列表失败' });
                 }
                 res.json(rows);
             }
@@ -7384,6 +7524,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const normalizedResearchMode = normalizeResearchMode(researchMode);
         const normalizedPromptTimeContext = normalizePromptTimeContext(promptTimeContext);
 
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return res.status(400).json({ error: '消息不能为空' });
+        }
+
         if (normalizedResearchMode === 'fast') {
             thinkingMode = false;
         } else if (normalizedResearchMode === 'deep') {
@@ -7399,16 +7543,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         //  调试：打印收到的消息结构
         console.log(` 收到 ${messages.length} 条消息:`);
         messages.forEach((m, i) => {
-            const hasValidAttachments = m.attachments && Array.isArray(m.attachments);
-            console.log(`   [${i}] role=${m.role}, hasAttachments=${hasValidAttachments}, attachmentsCount=${hasValidAttachments ? m.attachments.length : 0}`);
-            if (hasValidAttachments && m.attachments.length > 0) {
-                console.log(`       附件详情:`, m.attachments.map(a => ({ type: a.type, fileName: a.fileName, hasData: !!a.data })));
+            const messageItem = m || {};
+            const hasValidAttachments = Array.isArray(messageItem.attachments);
+            console.log(`   [${i}] role=${messageItem.role}, hasAttachments=${hasValidAttachments}, attachmentsCount=${hasValidAttachments ? messageItem.attachments.length : 0}`);
+            if (hasValidAttachments && messageItem.attachments.length > 0) {
+                console.log(`       附件详情:`, messageItem.attachments.map(a => ({ type: a.type, fileName: a.fileName, hasData: !!a.data })));
             }
         });
-
-        if (!messages || !Array.isArray(messages) || messages.length === 0) {
-            return res.status(400).json({ error: '消息不能为空' });
-        }
 
         if (flowId) {
             flowRecord = await ensureFlowRecord(flowId, req.user.userId);
@@ -11636,23 +11777,26 @@ app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
         res.status(500).json({ error: '兑换会员失败' });
     }
 });
+const FREE_MODEL_IDENTIFIERS = new Set([
+    'qwen2.5-7b',
+    'qwen3-8b',
+    'qwen-flash',
+    'qwen-plus',
+    'qwen-max',
+    'chatgpt-gpt-oss-120b',
+    'grok-4.2',
+    'gpt-5.5',
+    'gemma',
+    'gemma-4-31b-it',
+    'openai/gpt-oss-120b:free',
+    'google/gemma-4-31b-it:free'
+]);
 
 function isFreeModelIdentifier(modelUsed = '') {
     const modelText = String(modelUsed || '').trim().toLowerCase();
     if (!modelText) return false;
 
-    return modelText === 'qwen2.5-7b' ||
-        modelText === 'qwen3-8b' ||
-        modelText === 'qwen-flash' ||
-        modelText === 'qwen-plus' ||
-        modelText === 'qwen-max' ||
-        modelText === 'chatgpt-gpt-oss-120b' ||
-        modelText === 'grok-4.2' ||
-        modelText === 'gpt-5.5' ||
-        modelText === 'gemma' ||
-        modelText === 'gemma-4-31b-it' ||
-        modelText === 'openai/gpt-oss-120b:free' ||
-        modelText === 'google/gemma-4-31b-it:free' ||
+    return FREE_MODEL_IDENTIFIERS.has(modelText) ||
         modelText.includes('qwen2.5-7b-instruct') ||
         modelText.includes('qwen/qwen2.5-7b-instruct');
 }
@@ -11681,48 +11825,52 @@ async function checkAndConsumePoeQuota(userId, membership) {
     }
 
     const today = new Date().toISOString().split('T')[0];
-    return await new Promise((resolve, reject) => {
-        db.get(
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        const row = await dbGetAsync(
             'SELECT poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count FROM users WHERE id = ?',
-            [userId],
-            (err, row) => {
-                if (err) return reject(err);
-                if (!row) return reject(new Error('用户不存在'));
-
-                const sameDay = row.poe_usage_date === today;
-                const currentUsed = sameDay ? Number(row.poe_usage_count || 0) : 0;
-
-                if (currentUsed >= limit) {
-                    console.warn(` poe_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
-                    return resolve({
-                        allowed: false,
-                        limit,
-                        used: currentUsed,
-                        remaining: 0,
-                        resetAt
-                    });
-                }
-
-                const nextUsed = currentUsed + 1;
-                db.run(
-                    'UPDATE users SET poe_usage_date = ?, poe_usage_count = ? WHERE id = ?',
-                    [today, nextUsed, userId],
-                    (updateErr) => {
-                        if (updateErr) return reject(updateErr);
-                        const remaining = Math.max(0, limit - nextUsed);
-                        console.log(` poe_quota_consume user=${userId} used=${nextUsed}/${limit} remaining=${remaining}`);
-                        resolve({
-                            allowed: true,
-                            limit,
-                            used: nextUsed,
-                            remaining,
-                            resetAt
-                        });
-                    }
-                );
-            }
+            [userId]
         );
-    });
+        if (!row) throw new Error('用户不存在');
+
+        const sameDay = row.poe_usage_date === today;
+        const currentUsed = sameDay ? Number(row.poe_usage_count || 0) : 0;
+
+        if (currentUsed >= limit) {
+            await dbRunAsync('COMMIT');
+            console.warn(` poe_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
+            return {
+                allowed: false,
+                limit,
+                used: currentUsed,
+                remaining: 0,
+                resetAt
+            };
+        }
+
+        const nextUsed = currentUsed + 1;
+        const result = await dbRunAsync(
+            'UPDATE users SET poe_usage_date = ?, poe_usage_count = ? WHERE id = ?',
+            [today, nextUsed, userId]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            throw new Error('poe_quota_update_failed');
+        }
+
+        await dbRunAsync('COMMIT');
+        const remaining = Math.max(0, limit - nextUsed);
+        console.log(` poe_quota_consume user=${userId} used=${nextUsed}/${limit} remaining=${remaining}`);
+        return {
+            allowed: true,
+            limit,
+            used: nextUsed,
+            remaining,
+            resetAt
+        };
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
+    }
 }
 
 // free 用户 GPT-5.5 每24小时最多10次
@@ -11742,47 +11890,50 @@ async function checkAndConsumeGpt55Quota(userId, membership) {
     }
 
     const today = getTodayDateString();
-    return await new Promise((resolve, reject) => {
-        db.get(
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        const row = await dbGetAsync(
             'SELECT gpt55_usage_date, COALESCE(gpt55_usage_count, 0) AS gpt55_usage_count FROM users WHERE id = ?',
-            [userId],
-            (err, row) => {
-                if (err) return reject(err);
-                if (!row) return reject(new Error('用户不存在'));
-
-                const sameDay = row.gpt55_usage_date === today;
-                const currentUsed = sameDay ? Number(row.gpt55_usage_count || 0) : 0;
-
-                if (currentUsed >= limit) {
-                    console.warn(` gpt55_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
-                    return resolve({
-                        allowed: false,
-                        limit,
-                        used: currentUsed,
-                        remaining: 0,
-                        resetAt
-                    });
-                }
-
-                const nextUsed = currentUsed + 1;
-                db.run(
-                    'UPDATE users SET gpt55_usage_date = ?, gpt55_usage_count = ? WHERE id = ?',
-                    [today, nextUsed, userId],
-                    (updateErr) => {
-                        if (updateErr) return reject(updateErr);
-                        const remaining = Math.max(0, limit - nextUsed);
-                        resolve({
-                            allowed: true,
-                            limit,
-                            used: nextUsed,
-                            remaining,
-                            resetAt
-                        });
-                    }
-                );
-            }
+            [userId]
         );
-    });
+        if (!row) throw new Error('用户不存在');
+
+        const sameDay = row.gpt55_usage_date === today;
+        const currentUsed = sameDay ? Number(row.gpt55_usage_count || 0) : 0;
+
+        if (currentUsed >= limit) {
+            await dbRunAsync('COMMIT');
+            console.warn(` gpt55_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
+            return {
+                allowed: false,
+                limit,
+                used: currentUsed,
+                remaining: 0,
+                resetAt
+            };
+        }
+
+        const nextUsed = currentUsed + 1;
+        const result = await dbRunAsync(
+            'UPDATE users SET gpt55_usage_date = ?, gpt55_usage_count = ? WHERE id = ?',
+            [today, nextUsed, userId]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            throw new Error('gpt55_quota_update_failed');
+        }
+
+        await dbRunAsync('COMMIT');
+        return {
+            allowed: true,
+            limit,
+            used: nextUsed,
+            remaining: Math.max(0, limit - nextUsed),
+            resetAt
+        };
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
+    }
 }
 
 async function refundGpt55Quota(userId) {
@@ -11812,72 +11963,76 @@ async function refundGpt55Quota(userId) {
 
 // 辅助函数：检查并扣减点数
 async function checkAndDeductPoints(userId, modelUsed) {
-    return new Promise((resolve, reject) => {
-        db.get(`
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        const user = await dbGetAsync(`
             SELECT id, membership, points, purchased_points, purchased_points_expire
             FROM users WHERE id = ?
-        `, [userId], (err, user) => {
-            if (err) return reject(err);
-            if (!user) return reject(new Error('用户不存在'));
+        `, [userId]);
+        if (!user) throw new Error('用户不存在');
 
-            let points = user.points || 0;
-            let purchasedPoints = user.purchased_points || 0;
+        let points = Number(user.points || 0);
+        let purchasedPoints = Number(user.purchased_points || 0);
 
-            // 检查购买点数是否过期
-            if (purchasedPoints > 0 && user.purchased_points_expire) {
-                const expireDate = new Date(user.purchased_points_expire);
-                if (expireDate < new Date()) {
-                    purchasedPoints = 0;
-                    db.run('UPDATE users SET purchased_points = 0 WHERE id = ?', [userId]);
-                }
+        if (purchasedPoints > 0 && user.purchased_points_expire) {
+            const expireDate = new Date(user.purchased_points_expire);
+            if (Number.isFinite(expireDate.getTime()) && expireDate < new Date()) {
+                purchasedPoints = 0;
+                await dbRunAsync('UPDATE users SET purchased_points = 0 WHERE id = ?', [userId]);
             }
+        }
 
-            const totalPoints = points + purchasedPoints;
+        const totalPoints = points + purchasedPoints;
 
-            // 免费模型不扣点
-            if (isFreeModelIdentifier(modelUsed)) {
-                return resolve({
-                    allowed: true,
-                    pointsDeducted: 0,
-                    remainingPoints: totalPoints,
-                    useFreeModel: false
-                });
-            }
+        if (isFreeModelIdentifier(modelUsed)) {
+            await dbRunAsync('COMMIT');
+            return {
+                allowed: true,
+                pointsDeducted: 0,
+                remainingPoints: totalPoints,
+                useFreeModel: false
+            };
+        }
 
-            // 点数不足，需要切换到免费模型
-            if (totalPoints <= 0) {
-                return resolve({
-                    allowed: true,
-                    pointsDeducted: 0,
-                    remainingPoints: 0,
-                    useFreeModel: true,
-                    message: '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
-                });
-            }
+        if (totalPoints <= 0) {
+            await dbRunAsync('COMMIT');
+            return {
+                allowed: true,
+                pointsDeducted: 0,
+                remainingPoints: 0,
+                useFreeModel: true,
+                message: '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
+            };
+        }
 
-            // 扣减1点
-            let newPoints = points;
-            let newPurchasedPoints = purchasedPoints;
+        let newPoints = points;
+        let newPurchasedPoints = purchasedPoints;
 
-            // 优先使用每日点数
-            if (points > 0) {
-                newPoints = points - 1;
-            } else {
-                newPurchasedPoints = purchasedPoints - 1;
-            }
+        if (points > 0) {
+            newPoints = points - 1;
+        } else {
+            newPurchasedPoints = purchasedPoints - 1;
+        }
 
-            db.run('UPDATE users SET points = ?, purchased_points = ? WHERE id = ?',
-                [newPoints, newPurchasedPoints, userId], (err) => {
-                    if (err) return reject(err);
-                    resolve({
-                        allowed: true,
-                        pointsDeducted: 1,
-                        remainingPoints: newPoints + newPurchasedPoints,
-                        useFreeModel: false
-                    });
-                });
-        });
-    });
+        const result = await dbRunAsync(
+            'UPDATE users SET points = ?, purchased_points = ? WHERE id = ?',
+            [newPoints, newPurchasedPoints, userId]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            throw new Error('points_update_failed');
+        }
+
+        await dbRunAsync('COMMIT');
+        return {
+            allowed: true,
+            pointsDeducted: 1,
+            remainingPoints: newPoints + newPurchasedPoints,
+            useFreeModel: false
+        };
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
+    }
 }
 
 // ==================== 管理员后台系统 ====================
@@ -12527,10 +12682,15 @@ app.use((req, res) => {
 // ==================== 错误处理 ====================
 app.use((err, req, res, next) => {
     console.error(' 服务器错误:', err);
-    res.status(500).json({
+    const isProd = process.env.NODE_ENV === 'production';
+    const payload = {
         error: '服务器内部错误',
-        message: err.message
-    });
+        requestId: req.headers['x-request-id'] || null
+    };
+    if (!isProd) {
+        payload.message = err.message;
+    }
+    res.status(500).json(payload);
 });
 
 // ==================== 启动服务器 ====================
@@ -12538,7 +12698,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║             RAI v0.10.9.16 已启动                      ║
+║             RAI v${PACKAGE_VERSION} 已启动                      ║
 ║                                                          ║
 ║   服务地址: http://0.0.0.0:${PORT}                     ║
 ║   数据库: ${dbPath}                                    ║

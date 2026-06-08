@@ -1,17 +1,23 @@
-const RAI_SW_VERSION = '0.10.9.16-20260604-transparent-icon-download';
+const RAI_SW_VERSION = '0.10.9.18-20260608-autofocus-input';
 const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = '/index.html';
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260604-transparent-icon-download-v010916',
-  '/styles.css?v=20260604-transparent-icon-download-v010916',
-  '/site.webmanifest?v=20260604-transparent-icon-download-v010916',
+  '/app.js?v=20260608-autofocus-input-v010918',
+  '/styles.css?v=20260608-autofocus-input-v010918',
+  '/site.webmanifest?v=20260608-autofocus-input-v010918',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
   '/lib/marked.min.js',
-  '/lib/purify.min.js'
+  '/lib/purify.min.js',
+  '/lib/katex/katex.min.css',
+  '/lib/katex/katex.min.js',
+  '/lib/katex/contrib/auto-render.min.js',
+  '/lib/mermaid/mermaid.min.js',
+  '/lib/highlight/styles/github-dark.min.css',
+  '/lib/highlight/highlight.min.js'
 ];
 
 self.addEventListener('install', (event) => {
