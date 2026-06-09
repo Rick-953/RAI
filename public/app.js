@@ -9,7 +9,8 @@ let pendingCanvasCallback = null;
 function getTrustedChatFlowParentOrigins() {
   return new Set([
     window.location.origin,
-    'https://rai.rick.quest'
+    'https://rai.rick.quest',
+    'https://rai.000339.xyz'
   ]);
 }
 
@@ -1894,7 +1895,7 @@ function getSvgIcon(name, className = '', size = 24) {
   return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${size}" height="${size}" fill="${fill}">${content}</svg>`;
 }
 
-const RAI_PRODUCTION_ORIGIN = 'https://rai.rick.quest';
+const RAI_PRODUCTION_ORIGIN = 'https://rai.000339.xyz';
 
 function isTauriDesktopRuntime() {
   return Boolean(
@@ -1911,8 +1912,12 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.19';
-const RAI_BUILD_ID = '20260608-english-focus-v010919';
+const RAI_APP_VERSION = '0.10.9.20';
+const RAI_BUILD_ID = '20260609-migration-notifications-v010920';
+const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
+const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
+const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
+const RAI_DOMAIN_MIGRATION_NOTICE_ID = 'domain-migration-20260609';
 
 function resolveRaiRemoteUrl(value) {
   const raw = String(value || '').trim();
@@ -1976,6 +1981,7 @@ const appState = {
   activeSettingsSection: 'language',
   settingsMobileMode: 'home',
   settingsHistoryDepth: 0,
+  onboardingActive: false,
   touchStartX: 0,
   touchStartY: 0,
   touchMoveX: 0,
@@ -2147,6 +2153,11 @@ function renderPwaRewardPrompt() {
 
 function maybeShowPwaRewardPrompt({ force = false } = {}) {
   if (!appState.token || isChatFlowIframeMode) return;
+  const onboardingOverlay = document.getElementById('onboardingOverlay');
+  if (appState.onboardingActive || (onboardingOverlay && isVisibleElement(onboardingOverlay))) {
+    closePwaRewardPrompt();
+    return;
+  }
   if (RAI_IS_TAURI_DESKTOP) {
     closePwaRewardPrompt();
     reportPwaInstallTask('tauri-desktop');
@@ -3132,6 +3143,7 @@ const i18n = {
     'settings-nav-custom': '自定义',
     'settings-nav-advanced': '高级',
     'settings-nav-desktop': '桌面端',
+    'settings-nav-notifications': '通知',
     'settings-nav-about': '关于',
     'settings-mobile-section-rai': '我的 RAI',
     'settings-mobile-section-account': '账户',
@@ -3145,6 +3157,20 @@ const i18n = {
     'settings-desktop-open-quick': '打开快速小窗',
     'settings-desktop-open-main': '打开完整窗口',
     'settings-desktop-hide': '隐藏窗口',
+    'settings-notifications-title': '通知',
+    'settings-notifications-desc': '查看 RAI 公告、迁移提示和重要产品更新。',
+    'notifications-open-label': '打开通知',
+    'notifications-announcement-kicker': '公告',
+    'notifications-domain-title': 'RAI 域名即将更换',
+    'notifications-domain-body': 'RAI 即将迁移到新域名 https://rai.000339.xyz/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。',
+    'notifications-open-new-domain': '打开新域名',
+    'notifications-mark-read': '标记已读',
+    'notifications-pause': '暂停红点',
+    'notifications-resume': '恢复红点',
+    'notifications-paused': '通知红点已暂停',
+    'notifications-unread-count': '{count} 条未读通知',
+    'notifications-all-read': '暂无未读通知',
+    'notifications-domain-meta': '2026-06-09 发布 · 迁移公告',
     'settings-about-title': '关于RAI',
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
     'settings-about-github-label': 'GitHub',
@@ -3410,6 +3436,7 @@ const i18n = {
     'settings-nav-custom': 'Custom',
     'settings-nav-advanced': 'Advanced',
     'settings-nav-desktop': 'Desktop',
+    'settings-nav-notifications': 'Notifications',
     'settings-nav-about': 'About',
     'settings-mobile-section-rai': 'My RAI',
     'settings-mobile-section-account': 'Account',
@@ -3423,6 +3450,20 @@ const i18n = {
     'settings-desktop-open-quick': 'Open quick window',
     'settings-desktop-open-main': 'Open full window',
     'settings-desktop-hide': 'Hide windows',
+    'settings-notifications-title': 'Notifications',
+    'settings-notifications-desc': 'View RAI announcements, migration notices, and important product updates.',
+    'notifications-open-label': 'Open notifications',
+    'notifications-announcement-kicker': 'Announcement',
+    'notifications-domain-title': 'RAI domain is changing soon',
+    'notifications-domain-body': 'RAI is moving to https://rai.000339.xyz/. The old domain will stay available during the transition, but please bookmark the new address first.',
+    'notifications-open-new-domain': 'Open new domain',
+    'notifications-mark-read': 'Mark as read',
+    'notifications-pause': 'Pause red dot',
+    'notifications-resume': 'Resume red dot',
+    'notifications-paused': 'Notification red dot is paused',
+    'notifications-unread-count': '{count} unread notification(s)',
+    'notifications-all-read': 'No unread notifications',
+    'notifications-domain-meta': 'Published 2026-06-09 · Migration notice',
     'settings-about-title': 'About RAI',
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
     'settings-about-github-label': 'GitHub',
@@ -3773,6 +3814,28 @@ function localizeServerError(message, fallback = 'Operation failed') {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-06-09',
+    version: 'v0.10.9.20',
+    zh: {
+      summary: '新增域名迁移公告和通知入口。',
+      details: [
+        '侧边栏底部新增通知按钮，有未读公告时显示红点，并可从设置页查看通知。',
+        '设置中新增通知页面，发布 RAI 域名即将更换为 https://rai.000339.xyz/ 的公告。',
+        '新用户注册后的欢迎引导期间会阻止 PWA 安装积分弹窗叠加，先完成开始引导再继续使用。',
+        'Tauri 桌面端线上 API 默认域名切换到新 RAI 域名，为服务器和域名迁移做准备。'
+      ]
+    },
+    en: {
+      summary: 'Added domain migration announcement and notifications.',
+      details: [
+        'The sidebar footer now includes a notifications button with a red unread dot for new announcements.',
+        'Settings now has a Notifications page announcing the upcoming move to https://rai.000339.xyz/.',
+        'The PWA install reward prompt is blocked while new-user onboarding is active, so onboarding appears first.',
+        'The Tauri desktop runtime now targets the new RAI production domain by default for the migration.'
+      ]
+    }
+  },
   {
     date: '2026-06-08',
     version: 'v0.10.9.19',
@@ -4690,6 +4753,146 @@ function i18nText(key, fallback = '') {
   return i18n[lang]?.[key] || i18n['zh-CN']?.[key] || fallback;
 }
 
+function getRaiNotifications() {
+  return [
+    {
+      id: RAI_DOMAIN_MIGRATION_NOTICE_ID,
+      icon: 'icons/settings/notifications_unread.svg',
+      title: i18nText('notifications-domain-title', 'RAI 域名即将更换'),
+      body: i18nText('notifications-domain-body', `RAI 即将迁移到新域名 ${RAI_NEW_PUBLIC_ORIGIN}/。`),
+      meta: i18nText('notifications-domain-meta', '2026-06-09 发布 · 迁移公告')
+    }
+  ];
+}
+
+function getReadNotificationIds() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RAI_NOTIFICATION_READ_KEY) || '[]');
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch (error) {
+    return new Set();
+  }
+}
+
+function setReadNotificationIds(ids) {
+  try {
+    localStorage.setItem(RAI_NOTIFICATION_READ_KEY, JSON.stringify(Array.from(ids).map(String)));
+  } catch (error) {
+    console.warn('无法保存通知已读状态:', error);
+  }
+}
+
+function areNotificationsPaused() {
+  try {
+    return localStorage.getItem(RAI_NOTIFICATION_PAUSED_KEY) === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function setNotificationsPaused(paused) {
+  try {
+    if (paused) {
+      localStorage.setItem(RAI_NOTIFICATION_PAUSED_KEY, '1');
+    } else {
+      localStorage.removeItem(RAI_NOTIFICATION_PAUSED_KEY);
+    }
+  } catch (error) {
+    console.warn('无法保存通知暂停状态:', error);
+  }
+}
+
+function getUnreadNotificationCount() {
+  const readIds = getReadNotificationIds();
+  return getRaiNotifications().filter((notice) => !readIds.has(notice.id)).length;
+}
+
+function updateNotificationButton() {
+  const button = document.getElementById('sidebarNotificationBtn');
+  const icon = document.getElementById('sidebarNotificationIcon');
+  const unreadCount = getUnreadNotificationCount();
+  const paused = areNotificationsPaused();
+  const hasVisibleUnread = unreadCount > 0 && !paused;
+  const label = paused
+    ? i18nText('notifications-paused', '通知红点已暂停')
+    : (unreadCount > 0
+      ? i18nText('notifications-unread-count', '{count} 条未读通知').replace('{count}', String(unreadCount))
+      : i18nText('notifications-all-read', '暂无未读通知'));
+
+  if (button) {
+    button.classList.toggle('has-unread', hasVisibleUnread);
+    button.setAttribute('title', label);
+    button.setAttribute('aria-label', label);
+  }
+
+  if (icon) {
+    icon.src = paused
+      ? 'icons/settings/notifications_paused.svg'
+      : (unreadCount > 0 ? 'icons/settings/notifications_unread.svg' : 'icons/settings/notifications.svg');
+  }
+}
+
+function renderNotificationsPanel() {
+  const list = document.getElementById('settingsNotificationList');
+  const pauseBtn = document.getElementById('notificationPauseBtn');
+  const readIds = getReadNotificationIds();
+  const paused = areNotificationsPaused();
+
+  if (pauseBtn) {
+    pauseBtn.textContent = paused
+      ? i18nText('notifications-resume', '恢复红点')
+      : i18nText('notifications-pause', '暂停红点');
+  }
+
+  if (list) {
+    list.innerHTML = getRaiNotifications().map((notice) => {
+      const isUnread = !readIds.has(notice.id);
+      const icon = isUnread ? 'icons/settings/notifications_unread.svg' : 'icons/settings/notifications.svg';
+      return `
+        <div class="settings-notification-item ${isUnread ? 'is-unread' : ''}">
+          <div class="settings-notification-item-icon" aria-hidden="true">
+            <img src="${icon}" alt="">
+          </div>
+          <div>
+            <strong>${escapeHtml(notice.title)}</strong>
+            <span>${escapeHtml(notice.body)}</span>
+            <div class="settings-notification-meta">${escapeHtml(notice.meta)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  updateNotificationButton();
+}
+
+function markRaiNotificationsRead({ silent = false } = {}) {
+  const ids = getReadNotificationIds();
+  getRaiNotifications().forEach((notice) => ids.add(notice.id));
+  setReadNotificationIds(ids);
+  renderNotificationsPanel();
+  if (!silent) {
+    showToast(i18nText('notifications-mark-read', '标记已读'));
+  }
+}
+
+function toggleNotificationsPaused() {
+  const nextPaused = !areNotificationsPaused();
+  setNotificationsPaused(nextPaused);
+  renderNotificationsPanel();
+  showToast(nextPaused
+    ? i18nText('notifications-paused', '通知红点已暂停')
+    : i18nText('notifications-resume', '恢复红点'));
+}
+
+function openNotificationsFromSidebar() {
+  if (typeof openSettings === 'function') openSettings();
+  if (typeof switchSettingsSection === 'function') {
+    switchSettingsSection('notifications');
+  }
+  markRaiNotificationsRead({ silent: true });
+}
+
 function localizeTimelineContent(entry) {
   const lang = normalizeLanguage(appState.language);
   if (lang === 'en') return entry.en || entry.zh;
@@ -5060,6 +5263,7 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   custom: 'settings-nav-custom',
   advanced: 'settings-nav-advanced',
   desktop: 'settings-nav-desktop',
+  notifications: 'settings-nav-notifications',
   about: 'settings-nav-about'
 };
 
@@ -5251,6 +5455,9 @@ function switchSettingsSection(section = 'language', options = {}) {
 
   nextPanel.classList.remove('leaving');
   nextPanel.classList.add('active');
+  if (section === 'notifications') {
+    renderNotificationsPanel();
+  }
   if (isSettingsMobileLayout() && appState.settingsOpen && !options.keepMobileHome) {
     updateSettingsMobileMode('detail');
     if (!options.fromHistory) {
@@ -5436,6 +5643,8 @@ function setLanguage(lang) {
   updateUserIdentityUI();
   updateSettingsNavigationUI();
   updatePwaInstallUI();
+  updateNotificationButton();
+  renderNotificationsPanel();
   renderSettingsTimeline();
   updateScrollResumeButton();
   updateZtx6dBindingUI();
@@ -6034,7 +6243,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.19 初始化 (English Language Polish)');
+  console.log(' RAI v0.10.9.20 初始化 (Migration Notifications)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -12352,6 +12561,8 @@ function showOnboarding(onDone) {
   const startBtn = document.getElementById('onboardingStartBtn');
   let currentStep = 0;
   const totalSteps = steps.length;
+  appState.onboardingActive = true;
+  closePwaRewardPrompt();
 
   function goToStep(n) {
     steps.forEach((s, i) => s.classList.toggle('active', i === n));
@@ -12373,6 +12584,7 @@ function showOnboarding(onDone) {
   }
 
   function finish() {
+    appState.onboardingActive = false;
     overlay.style.display = 'none';
     document.body.style.overflow = '';
     if (onDone) onDone();

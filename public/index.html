@@ -15,7 +15,7 @@
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260608-english-focus-v010919">
+  <link rel="manifest" href="site.webmanifest?v=20260609-migration-notifications-v010920">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
@@ -35,7 +35,7 @@
   <script src="lib/highlight/highlight.min.js"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260608-english-focus-v010919">
+  <link rel="stylesheet" href="styles.css?v=20260609-migration-notifications-v010920">
 </head>
 
 <body>
@@ -280,7 +280,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick · v0.10.9.19</div>
+              <div class="logo-subtitle">by Rick · v0.10.9.20</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -416,9 +416,18 @@
           <div class="user-info-group">
             <div class="user-info-top">
               <div class="user-name" id="userName">用户</div>
-              <button class="settings-btn-inline" onclick="openSettings()" data-i18n-title="settings-open-label" title="设置">
-                <img class="settings-inline-icon" src="icons/settings/settings.svg" alt="" aria-hidden="true">
-              </button>
+              <div class="sidebar-user-actions">
+                <button class="settings-btn-inline notification-btn-inline" id="sidebarNotificationBtn"
+                  onclick="openNotificationsFromSidebar()" data-i18n-title="notifications-open-label"
+                  data-i18n-aria-label="notifications-open-label" title="通知" aria-label="通知">
+                  <img class="settings-inline-icon notification-inline-icon" id="sidebarNotificationIcon"
+                    src="icons/settings/notifications.svg" alt="" aria-hidden="true">
+                  <span class="notification-unread-dot" id="sidebarNotificationDot" aria-hidden="true"></span>
+                </button>
+                <button class="settings-btn-inline" onclick="openSettings()" data-i18n-title="settings-open-label" title="设置">
+                  <img class="settings-inline-icon" src="icons/settings/settings.svg" alt="" aria-hidden="true">
+                </button>
+              </div>
             </div>
             <!-- 签到按钮容器 - 只在可签到时显示 -->
             <div id="sidebarCheckinContainer" style="display:none;"></div>
@@ -1183,6 +1192,11 @@
               <img class="settings-nav-icon" src="icons/settings/settings.svg" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-desktop">桌面端</span>
             </button>
+            <button type="button" class="settings-nav-item" data-settings-section="notifications"
+              onclick="switchSettingsSection('notifications')">
+              <img class="settings-nav-icon" src="icons/settings/notification_settings.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-notifications">通知</span>
+            </button>
             <button type="button" class="settings-nav-item" data-settings-section="advanced"
               onclick="switchSettingsSection('advanced')">
               <img class="settings-nav-icon" src="icons/settings/advanced.svg" alt="" aria-hidden="true">
@@ -1393,6 +1407,34 @@
             </div>
           </section>
 
+          <section class="settings-panel" id="settingsPanel-notifications" data-settings-panel="notifications">
+            <div class="settings-section-row">
+              <div class="settings-section-intro">
+                <h3 data-i18n="settings-notifications-title">通知</h3>
+                <p data-i18n="settings-notifications-desc">查看 RAI 公告、迁移提示和重要产品更新。</p>
+              </div>
+              <button type="button" class="settings-inline-save secondary" id="notificationPauseBtn"
+                onclick="toggleNotificationsPaused()" data-i18n="notifications-pause">暂停红点</button>
+            </div>
+            <div class="settings-notice-hero">
+              <div class="settings-notice-icon" aria-hidden="true">
+                <img src="icons/settings/notifications_unread.svg" alt="">
+              </div>
+              <div>
+                <div class="settings-notice-kicker" data-i18n="notifications-announcement-kicker">公告</div>
+                <h4 data-i18n="notifications-domain-title">RAI 域名即将更换</h4>
+                <p data-i18n="notifications-domain-body">RAI 即将迁移到新域名 https://rai.000339.xyz/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。</p>
+              </div>
+            </div>
+            <div class="settings-notification-actions">
+              <a class="settings-install-download" href="https://rai.000339.xyz/" target="_blank" rel="noopener noreferrer"
+                data-i18n="notifications-open-new-domain">打开新域名</a>
+              <button type="button" class="settings-install-btn" onclick="markRaiNotificationsRead()"
+                data-i18n="notifications-mark-read">标记已读</button>
+            </div>
+            <div class="settings-notification-list" id="settingsNotificationList"></div>
+          </section>
+
           <section class="settings-panel" id="settingsPanel-advanced" data-settings-panel="advanced">
             <div class="settings-section-row">
               <div class="settings-section-intro">
@@ -1512,7 +1554,7 @@
                 <div class="settings-install-actions">
                   <button type="button" class="settings-install-btn" id="pwaInstallBtn" onclick="handlePwaInstallClick()"
                     data-i18n="settings-install-action">安装 RAI</button>
-                  <a class="settings-install-download" href="https://rai.rick.quest/downloads/RAI-macOS-arm64-0.10.9.17.dmg"
+                  <a class="settings-install-download" href="/downloads/RAI-macOS-arm64-0.10.9.17.dmg"
                     data-i18n="settings-install-download-macos">下载 macOS 桌面版</a>
                 </div>
               </div>
@@ -1680,7 +1722,7 @@
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script src="app.js?v=20260608-english-focus-v010919"></script>
+  <script src="app.js?v=20260609-migration-notifications-v010920"></script>
 </body>
 
 </html>
