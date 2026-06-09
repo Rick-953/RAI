@@ -5690,7 +5690,7 @@ function isZtx6dEnabled() {
 function resolvePublicBaseUrl(req) {
     if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL.replace(/\/+$/, '');
     const protocol = req.protocol || 'https';
-    const host = req.get('host') || 'rai.rick.quest';
+    const host = req.get('host') || 'rai.000339.xyz';
     return `${protocol}://${host}`;
 }
 
