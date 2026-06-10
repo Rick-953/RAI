@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/License-MIT-F59E0B?style=flat-square)](LICENSE)
 
 
-**Live Demo:** [https://rai.rick.quest](https://rai.rick.quest)
+**Try now:** [https://rai.rick.quest](https://rai.rick.quest)
 
 ## 官网：rai.rick.quest  
 
@@ -338,58 +338,98 @@ rai/
 
 # English
 
-## RAI - Intelligent AI Chat Assistant
+<div align="center">
+
+# English
+
+## RAI — Intelligent AI Chat Assistant
 
 A smart AI chat assistant with **Intelligent Model Routing** that automatically selects the best model based on query complexity.
 
-**RAI v0.85+** introduces the brand new **Chat Flow** feature, combining conversations with visual canvas to build your mind maps!
+**RAI v0.10.9.7** brings a brand new Settings UI/UX, user onboarding flow, and built-in AI ask-user tool!
+
+**Live Demo:** [https://rai.rick.quest](https://rai.rick.quest)
+
+[Features](#-key-features) | [Feature List](#-feature-list) | [Quick Start](#-quick-start) | [Model Routing](#-intelligent-model-routing) | [Online Demo](#-online-demo)
 
 </div>
 
 ---
 
-## 🎨 Chat Flow (v0.85+ Major Update)
+# Latest Updates
 
-Seamlessly combine AI conversations with visual canvas to create your own mind maps:
+## May 14, 2026 — RAI v0.10.9.7
+New Settings UI/UX redesign
+<img width="1234" height="850" alt="image" src="https://github.com/user-attachments/assets/3a4366e1-f46a-4db8-b96c-68970e4e6b71" />
+New user onboarding guide — can be reviewed again from Settings > About
+<img width="1248" height="900" alt="image" src="https://github.com/user-attachments/assets/14f0f928-d993-4cd0-aae7-9f1e7846145c" />
+<img width="1111" height="850" alt="image" src="https://github.com/user-attachments/assets/9e5212de-669e-49c1-b1f8-6d1cd2de68d4" />
+<img width="1078" height="850" alt="image" src="https://github.com/user-attachments/assets/97724c28-d0fd-4d0b-8920-06c5cec66768" />
+AI can now ask the user for clarification (new built-in tool)
+<img width="606" height="828" alt="image" src="https://github.com/user-attachments/assets/43e7a75b-fd9b-416e-afb3-1ab7d481f2df" />
 
-- **Infinite Canvas**: Drag conversation content to canvas, freely organize your thoughts
+## May 14, 2026 — RAI v0.10.7 Hotfix
+
+- **ZTX6D Login**: Added server-side SSO login and legacy user account binding. `appkey` is used only in server environment variables; the frontend only receives JWTs issued by RAI itself.
+- **GPT-5.5**: Integrated the world's most expensive consumer-available large model.
+- **Free Tier & Fallback Routing**: GPT-5.5 is limited to 10 calls/day for free users. On model failure, auto-fallback follows `GPT-OSS-120B → Gemma → Qwen2.5-7B` to prevent single upstream failure from breaking chat.
+- **Mermaid Real-time Charts**: Fixed conflicts between streaming output of statistical charts, pie charts, flowcharts and Markdown/KaTeX/code blocks. `xychart-beta` auto-fixes common unquoted syntax; final re-render keeps charts stable.
+- **Grok/Gemma/Claude Routing**: Retained Grok 4.2 free quota, Gemma official/relay/fallback routing, and Claude relay compatibility. Main VPS does not expose upstream API keys directly.
+
+## March 15, 2026 — Model & Finance Mode Update
+
+- **Smart Model Update**: `auto` mode now defaults to **Kimi K2.5**; free fallback model is **Qwen2.5-7B**
+- **Agent Label Update**: Agent mode is now displayed as **Research Turbo (4x) / 4倍速深度研究**
+- **New Finance Mode**: The "Search" quick action card on the welcome screen has been replaced with **"Finance"**
+- **Yahoo Finance Server Proxy**: New `/api/quote/:symbol` endpoint and AI tool `finance_quote` for stock tickers, prices, change %, range trends, and historical K-line data
+- **GitHub Sync Rule Fix**: README is now maintained with the GitHub history as the baseline; local old versions will no longer override it by default
+
+## Feb 27, 2026 — Major TTFT Optimization & Multi-turn Tool Calls
+
+---
+
+## 🎨 Chat Flow (v0.85+ Major Feature)
+
+Seamlessly combine AI conversations with a visual canvas to build your own mind maps:
+
+- **Infinite Canvas**: Drag conversation content to the canvas, freely organize your thoughts
 - **Smart Connections**: Create semantic connections between nodes with labels
 - **AI Decompose**: Select a node and let AI automatically break it into sub-topics
-- **Multiple Exports**: Support PNG, SVG, Mermaid, JSON export
-- **Auto Layout**: One-click to organize canvas nodes
+- **Multiple Exports**: PNG, SVG, Mermaid, JSON
+- **Auto Layout**: One-click node arrangement
 
-<img width="2790" height="1716" alt="Chat Flow Interface" src="https://github.com/user-attachments/assets/96b0a2c4-b42a-4644-817f-b3d1c94a76ff" /> 
+<img width="2790" height="1716" alt="Chat Flow Interface" src="https://github.com/user-attachments/assets/96b0a2c4-b42a-4644-817f-b3d1c94a76ff" />
 <img width="682" height="832" alt="Chat Flow Mobile" src="https://github.com/user-attachments/assets/7270482c-9b3d-4be4-84a9-d20b3726d411" />
 
 ---
 
-### <img src="https://api.iconify.design/material-symbols/star-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Key Features
+## <img src="https://api.iconify.design/material-symbols/star-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Key Features
 
-#### <img src="https://api.iconify.design/material-symbols/robot-2-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Multi-Model Support
+### <img src="https://api.iconify.design/material-symbols/robot-2-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Multi-Model Support
 - **Alibaba Cloud Qwen**: Qwen-Flash / Qwen-Plus / Qwen-Max / Qwen3 8B (Free) / Qwen3 Omni Flash
 - **DeepSeek**: DeepSeek-V3.2
 - **Moonshot**: Kimi K2
 - **Local Deployment**: LMStudio local models
 
-#### <img src="https://api.iconify.design/material-symbols/psychology.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Intelligent Model Routing (Core Feature)
+### <img src="https://api.iconify.design/material-symbols/psychology.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Intelligent Model Routing (Core Feature)
 - **Auto Mode**: Automatically select the best model based on query complexity
 - **5-Dimension Analysis**: Input length, code detection, math formulas, reasoning complexity, language mix
 - **Keyword Triggers**: Emotion words, professional terms, complexity indicators
-- **Preset Answers**: Instant responses for common greetings, zero cost & latency
+- **Preset Answers**: Instant responses for common greetings — zero cost, zero latency
 
-#### <img src="https://api.iconify.design/material-symbols/language.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Web Search
+### <img src="https://api.iconify.design/material-symbols/language.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Web Search
 - Tavily API real-time search integration
 - Alibaba Cloud native search support
 - AI intelligently decides when to search
 - Search results auto-injected into conversation context
 
-#### <img src="https://api.iconify.design/material-symbols/thinking-problem-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Thinking Mode (Chain of Thought)
+### <img src="https://api.iconify.design/material-symbols/thinking-problem-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Thinking Mode (Chain of Thought)
 - DeepSeek Reasoner deep reasoning
 - Alibaba Cloud Qwen thinking mode
 - Visualized thinking process
-- Adjustable thinking budget (1-32768 tokens)
+- Adjustable thinking budget (1–32768 tokens)
 
-#### <img src="https://api.iconify.design/material-symbols/devices.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Modern UI
+### <img src="https://api.iconify.design/material-symbols/devices.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Modern UI
 - Responsive design, perfect for PC / Mobile
 - Dark / Light theme switching
 - Streaming output with typewriter effect
@@ -397,42 +437,42 @@ Seamlessly combine AI conversations with visual canvas to create your own mind m
 - Mermaid charts (fullscreen, zoom, export)
 - Beautiful animations
 
-#### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Multimodal Capabilities
-- Image understanding (Qwen VL Max / Qwen3 Omni Flash)
+### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Multimodal Capabilities
+- Image understanding & description (Qwen VL Max / Qwen3 Omni Flash)
 - Video understanding (Qwen VL Max Latest)
 - Document upload & parsing (PDF, DOCX, TXT)
 - AI responses with embedded images
 
-#### <img src="https://api.iconify.design/material-symbols/format-quote.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Quote Reply
+### <img src="https://api.iconify.design/material-symbols/format-quote.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Quote Reply
 - Reply to specific messages
 - Quick preview of quoted context
 - Edit or delete quotes
 
-#### <img src="https://api.iconify.design/material-symbols/edit-note.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Edit Messages
+### <img src="https://api.iconify.design/material-symbols/edit-note.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Edit Messages
 - Modify sent messages
-- Regenerate AI response after edit
+- Regenerate AI response after editing
 - Preserve edit history
 
-#### <img src="https://api.iconify.design/material-symbols/card-membership.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Membership System
+### <img src="https://api.iconify.design/material-symbols/card-membership.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Membership System
 - Daily check-in for 20 points
 - Transparent point consumption records
 - VIP membership levels & benefits
 
-#### <img src="https://api.iconify.design/material-symbols/lock-outline.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Security
+### <img src="https://api.iconify.design/material-symbols/lock-outline.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Security
 - JWT token authentication
 - API rate limiting
 - Encrypted password storage
 
-#### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> Rich Media (v0.8)
-- AI can insert multiple images in responses
+### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> Rich Media (v0.8+)
+- AI can insert multiple images directly into responses
 - <img width="1108" height="1703" alt="Screenshot 2025-12-13" src="https://github.com/user-attachments/assets/f8b414a7-2316-47fa-a5cb-72184beff4b1" />
-- Support flowcharts, statistical charts, mind maps and various diagrams!
+- Support flowcharts, statistical charts, mind maps and all chart types
 - <img width="2744" height="1684" alt="image" src="https://github.com/user-attachments/assets/9a0d3c91-c4c1-4261-ac67-64d90f90c85b" />
-- Rich text, images and charts in one response!
+- Rich text, images, and charts all in one response!
 
 ---
 
-### <img src="https://api.iconify.design/material-symbols/list-alt-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Feature List
+## <img src="https://api.iconify.design/material-symbols/list-alt-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Feature List
 
 | Category | Feature | Description |
 |:---|:---|:---|
@@ -443,8 +483,8 @@ Seamlessly combine AI conversations with visual canvas to create your own mind m
 | | Mermaid Charts | Flowcharts, sequence diagrams, mind maps with fullscreen |
 | | Copy Message | One-click copy AI response |
 | | Stop Generation | Interrupt AI output anytime |
-| | **Rich Media** | AI responses with images |
-| | **Quote Reply** | Precise replies with context |
+| | **Rich Media** | AI responses with embedded images |
+| | **Quote Reply** | Precise replies with message context |
 | | **Edit Messages** | Modify sent messages |
 | **Chat Flow** | Mind Map Canvas | Drag conversations to infinite canvas |
 | | Node Connections | Create semantic edges with labels |
@@ -454,183 +494,70 @@ Seamlessly combine AI conversations with visual canvas to create your own mind m
 | **Model Capabilities** | Multi-model Switch | Qwen / DeepSeek / Kimi K2 / Local |
 | | **Smart Routing** | Auto-select optimal model (Auto mode) |
 | | Web Search | AI decides when to search, real-time results |
-| | Thinking Mode | Visualized reasoning, collapsible animation |
-| | Preset Answers | Instant response for greetings, zero tokens |
+| | Thinking Mode | Visualized reasoning, collapsible with animation |
+| | Preset Answers | Instant greetings response, zero tokens |
 | | **Multimodal** | Image/video understanding, document parsing |
 | **Session Management** | Session List | Manage all conversations in sidebar |
-| | Auto Title | Generate suitable titles from content |
+| | Auto Title | Generate titles from conversation content |
 | | Create/Delete | Start new topics or clear old records |
 | | Session Search | Quick search conversation history |
 | **User System** | Register/Login | Email + password, JWT authentication |
 | | Avatar Management | Upload custom avatars |
 | | Personalization | Temperature, Top-P, max length settings |
 | | System Prompt | Global AI persona customization |
-| | **Daily Check-in** | Earn 20 points daily |
-| **Interface** | Responsive Design | Desktop, tablet, mobile |
+| | **Daily Check-in** | Earn 20 points per day |
+| **Interface** | Responsive Design | Desktop, tablet, and mobile |
 | | Theme Switch | Dark and light modes |
 | | Multi-language | Chinese / English |
-| | Animations | Saturn floating, metallic title, slide-in |
-| | Quick Actions | Welcome page shortcuts |
+| | Animations | Saturn float, metallic title, slide-in messages |
+| | Quick Actions | Welcome page feature shortcuts |
 
 ---
 
-### <img src="https://api.iconify.design/material-symbols/hub.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Intelligent Model Routing System
+## <img src="https://api.iconify.design/material-symbols/rocket-launch-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Quick Start
 
-<div align="center">
-<img width="800" alt="RAI Intelligent Model Routing System" src="https://github.com/user-attachments/assets/944d7b69-8838-4a94-bd18-7a682d44070a" />
-</div>
-
-#### Routing Strategy
-
-| Complexity Score | Selected Model | Use Case |
-|:---:|:---:|:---|
-| < 0.40 | Qwen-Flash | Simple Q&A, daily chat |
-| 0.40 - 0.80 | Qwen-Plus | Medium complexity |
-| ≥ 0.80 | Qwen-Max | Professional, deep analysis |
-
-#### 5-Dimension Evaluation
-
-```
-📏 Input Length     ████████░░  Weight: 15%
-💻 Code Detection   ████████░░  Weight: 30%
-📐 Math Formula     ████████░░  Weight: 25%
-🧠 Reasoning        ████████░░  Weight: 25%
-🌍 Language Mix     ██░░░░░░░░  Weight: 5%
-```
-
-#### Special Trigger Words
-
-- **Force Max**: Emotion words, emphasis words, important punctuation
-- **Professional Upgrade**: Technical terms, programming concepts, math vocabulary
-
----
-
-### <img src="https://api.iconify.design/material-symbols/rocket-launch-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Quick Start
-
-#### Requirements
+### Requirements
 
 - Node.js 18+
 - npm or yarn
 
-#### Installation
+### Installation
 
 ```bash
+# Clone the repository
 git clone https://github.com/Rick-953/RAI.git
 cd RAI/rai
+
+# Install dependencies
 npm install
+
+# Start the server
 npm start
 # or development mode
 npm run dev
 ```
 
-Visit `http://localhost:3009` in your browser.
+### Access the App
+
+Open your browser and visit: `http://localhost:3009`
 
 ---
 
-### <img src="https://api.iconify.design/material-symbols/menu-book-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> API Documentation
+## <img src="https://api.iconify.design/material-symbols/hub.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Intelligent Model Routing
 
-#### Authentication
-
-| Endpoint | Method | Description |
-|:---|:---:|:---|
-| `/api/auth/register` | POST | User registration |
-| `/api/auth/login` | POST | User login |
-| `/api/auth/verify` | GET | Verify token |
-
-#### User
-
-| Endpoint | Method | Description |
-|:---|:---:|:---|
-| `/api/user/profile` | GET | Get user info |
-| `/api/user/config` | PUT | Update user config |
-| `/api/user/avatar` | POST | Upload avatar |
-| `/api/user/membership` | GET | Get membership status |
-| `/api/user/checkin` | POST | Daily check-in |
-
-#### Sessions
-
-| Endpoint | Method | Description |
-|:---|:---:|:---|
-| `/api/sessions` | GET | Get session list |
-| `/api/sessions` | POST | Create new session |
-| `/api/sessions/:id` | PUT | Update session |
-| `/api/sessions/:id` | DELETE | Delete session |
-
-#### Chat
-
-| Endpoint | Method | Description |
-|:---|:---:|:---|
-| `/api/chat/stream` | POST | Streaming chat (SSE) |
-| `/api/chat/stop` | POST | Stop generation |
-| `/api/upload` | POST | Upload file |
-
----
-
-### <img src="https://api.iconify.design/material-symbols/build-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Tech Stack
+The core feature of RAI is the **Intelligent Model Routing System**, which automatically analyzes user input and selects the most appropriate AI model.
 
 <div align="center">
-
-| Frontend | Backend | Database | AI Services |
-|:---:|:---:|:---:|:---:|
-| HTML5 | Node.js | SQLite | Alibaba Cloud |
-| CSS3 | Express | - | DeepSeek |
-| JavaScript | JWT | - | Moonshot (Kimi) |
-| KaTeX | bcrypt | - | Tavily |
-| Mermaid | multer | - | SiliconFlow |
-| Highlight.js | - | - | - |
-
+<img width="800" alt="RAI Model Routing" src="https://github.com/user-attachments/assets/b4726c1b-cba3-4ade-b6d9-68225ab29082" />
 </div>
 
----
+### Routing Strategy
 
-### <img src="https://api.iconify.design/material-symbols/folder-open-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Project Structure
+| Complexity Score | Selected Model | Use Case |
+|:---:|:---:|:---|
+| < 0.40 | Qwen-Flash | Simple Q&A, casual chat |
+| 0.40 – 0.80 | Qwen-Plus | Medium complexity |
+| ≥ 0.80 | Qwen-Max | Professional tasks, deep analysis |
 
-```
-rai/
-├── public/
-│   ├── index.html          # Frontend HTML structure
-│   ├── app.js              # Frontend core logic
-│   ├── styles.css          # Stylesheet
-│   └── lib/                # Third-party libraries
-├── server.js               # Backend (Express + Smart Routing Engine)
-├── textExtractor.js        # Document text extraction tool
-├── ai_data.db              # SQLite database
-├── uploads/                # Uploaded files
-├── avatars/                # User avatars
-├── package.json            # Dependencies
-└── README.md               # Documentation
-```
+### 5-Dimension Evaluation
 
----
-
-### <img src="https://api.iconify.design/material-symbols/play-circle-outline.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> Online Demo
-
-- **Live Demo**: [https://rai.rick.quest](https://rai.rick.quest)
-- **Try it out**: Visit [rick.quest](https://rick.quest) and select **RAI**.
-- **Introduction**: Watch how it works at [Introduction Page](https://rick.rth2.xyz/ai/main.html#how-it-works)
-
-### Maintainer Status
-
-This repository is maintained by [Rick-953](https://github.com/Rick-953), the GitHub account for Rick, the project maintainer.
-
-### Roadmap
-
-- Security audit
-- Test coverage
-- CI
-- Model routing evaluation
-- Release automation
-
-### <img src="https://api.iconify.design/material-symbols/license.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> License
-
-This project is licensed under the [MIT License](LICENSE).
-
-For commercial support, deployment help, or partnership discussions, please contact: [rick080402@gmail.com](mailto:rick080402@gmail.com)
-
----
-
-<div align="center">
-
-Made with <img src="https://api.iconify.design/material-symbols/favorite.svg?color=%23F59E0B&width=16&height=16" valign="middle" /> by RAI Team
-
-</div>
