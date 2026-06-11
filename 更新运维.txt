@@ -14,6 +14,7 @@ RAI 项目运维与部署说明（统一环境变量版）
 - VPS 上线：新主力 VPS `45.207.157.205:/rick/apps/rai` 已同步 v0.10.9.21；未上传 / 未覆盖 `ai_data.db`、`.env`、`node_modules` 或备份目录；`npm install --omit=dev`、`npm run check`、`npm audit --omit=dev` 和线上 `npm run security:smoke` 均通过；`pm2 restart 1` 后 `pm2 save` 已完成，PM2 中 `rai` 为 online 且版本 `0.10.9.21`。
 - 线上验证：VPS 本机 `http://127.0.0.1:3009/api/version`、Nginx Host `rai.000339.xyz` / `rai.rick.quest`、Cloudflare HTTPS `https://rai.000339.xyz/api/version` 与 `https://rai.rick.quest/api/version` 均返回 `0.10.9.21`；首页包含 `v0.10.9.21` 和缓存号；非法 Origin 返回 403；生产库 SHA256 上线前后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
 - 部署面加固：新主力 VPS 已通过 iptables / netfilter-persistent 添加持久化规则，公网 DROP `3009,3010,3011,7242,7243`，Nginx 本机 loopback 反代不受影响；`rai` 当前只监听 `127.0.0.1:3009`。`rai-beta` / `rauth` / `rchat` / `tchat` 进程仍显示公网监听，但被该防火墙规则拦截公网直连。
+- GitHub：已在干净 clone `/tmp/rai-github-v010921` 中同步 v0.10.9.21 代码；未包含 `.env`、数据库、node_modules 或备份目录；clean clone 内 `npm run check`、`node --check scripts/security-smoke.js`、`npm audit --omit=dev`、`npm run security:smoke` 均通过；主代码提交已推送到 `main`，commit `87c8f0f Harden RAI security audit fixes v0.10.9.21`。
 - 当前边界：旧备用 VPS `82.158.88.216` 仍按运维文档记录为备用，本轮使用当前提供密码登录返回 `Permission denied`，未对旧备用机执行同步；本机 shell 直连 Cloudflare 80/443 仍有网络路径异常，但 VPS 侧访问 Cloudflare HTTPS 与本机 Nginx Host 验证均正常。
 
 2026-06-11 管理员登录凭据处理
