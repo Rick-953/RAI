@@ -1,6 +1,26 @@
 RAI 项目运维与部署说明（统一环境变量版）
 
-更新时间：2026-06-09
+更新时间：2026-06-11
+
+2026-06-11 v0.10.9.21 安全审计 / 渗透测试加固上线
+- 本地改动前已备份到 `_local_backup_20260611_173623_before_security_pentest/`；新主力 VPS 改动前已备份到 `/rick/apps/rai/_remote_backup_20260611_1001_before_v010921_security/`，备份内记录生产库 hash。
+- 版本升级到 `0.10.9.21`，缓存号为 `20260611-security-pentest-v010921`；变更文件包括 `server.js`、`scripts/security-smoke.js`、`public/app.js`、`public/index.html`、`public/sw.js`、`package.json`、`package-lock.json` 和本文件。
+- 服务端加固：Express 关闭 `X-Powered-By`；默认绑定 `127.0.0.1`，避免 RAI 应用端口公网直连；新增统一安全响应头（CSP、nosniff、Referrer-Policy、Permissions-Policy、COOP、HTTPS 下 HSTS）；非法 CORS Origin 从 500 改为 403 并保留安全头。
+- 认证与输入加固：密码长度下限按 Rick 要求继续保留 6 位，同时新增 128 位上限；注册/登录 email 规范化并限制长度；登录、改密、管理员登录均避免超长密码进入 bcrypt；注册重复 email 改为大小写不敏感检查。
+- 上传/下载加固：新增 `file_uploads` 表记录上传归属；`/api/uploads/:filename` 必须登录且只能下载本人文件，旧文件只允许通过本人历史消息附件引用回退访问；下载路径做 `path.resolve` 根目录校验；上传拒绝 SVG/HTML/JS/Shell/PHP/EXE 等危险扩展、双扩展伪装、图片 MIME 欺骗和主动 HTML/SVG 内容伪装，失败会删除落盘文件。
+- 自动化安全用例：新增 `npm run security:smoke`，覆盖 `/api/version` 安全头、未登录 401、6 位密码下限、超长密码、session IDOR、上传归属、路径穿越、SVG/双扩展/HTML/头像 MIME 欺骗、PWA 奖励重复、管理员 token 边界和测试数据清理。
+- 本地验证：`npm run check` 通过；`npm audit --omit=dev` 为 0 漏洞；`RAI_SECURITY_BASE_URL=http://127.0.0.1:3029 ... npm run security:smoke` 通过；非法 Origin `https://evil.example` 返回 403 且包含安全头；测试用户、`file_uploads` 测试记录、测试上传文件清理后均为 0。
+- 浏览器验证：本轮服务端加固前已用 in-app Browser 验证 v0.10.9.21 本地页面加载、未登录入口可直接输入、恶意会话标题作为纯文本显示且未触发 XSS、console error 为 0；本轮最后一次 Browser 插件会话管道中断，未发现页面错误，且最后补丁只影响服务端上传/CORS。
+- VPS 上线：新主力 VPS `45.207.157.205:/rick/apps/rai` 已同步 v0.10.9.21；未上传 / 未覆盖 `ai_data.db`、`.env`、`node_modules` 或备份目录；`npm install --omit=dev`、`npm run check`、`npm audit --omit=dev` 和线上 `npm run security:smoke` 均通过；`pm2 restart 1` 后 `pm2 save` 已完成，PM2 中 `rai` 为 online 且版本 `0.10.9.21`。
+- 线上验证：VPS 本机 `http://127.0.0.1:3009/api/version`、Nginx Host `rai.000339.xyz` / `rai.rick.quest`、Cloudflare HTTPS `https://rai.000339.xyz/api/version` 与 `https://rai.rick.quest/api/version` 均返回 `0.10.9.21`；首页包含 `v0.10.9.21` 和缓存号；非法 Origin 返回 403；生产库 SHA256 上线前后保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。
+- 部署面加固：新主力 VPS 已通过 iptables / netfilter-persistent 添加持久化规则，公网 DROP `3009,3010,3011,7242,7243`，Nginx 本机 loopback 反代不受影响；`rai` 当前只监听 `127.0.0.1:3009`。`rai-beta` / `rauth` / `rchat` / `tchat` 进程仍显示公网监听，但被该防火墙规则拦截公网直连。
+- 当前边界：旧备用 VPS `82.158.88.216` 仍按运维文档记录为备用，本轮使用当前提供密码登录返回 `Permission denied`，未对旧备用机执行同步；本机 shell 直连 Cloudflare 80/443 仍有网络路径异常，但 VPS 侧访问 Cloudflare HTTPS 与本机 Nginx Host 验证均正常。
+
+2026-06-11 管理员登录凭据处理
+- 已创建本地备份目录：`_local_backup_20260611_before_admin_reset_note/`。
+- 生产 RAI 管理员用户名确认来自运行环境，当前为 `admin`。
+- 生产环境仅保存 `ADMIN_PASSWORD_HASH`（bcrypt 哈希），无法从现有配置反推出原明文密码。
+- 已在新 VPS 旋转管理员密码并通过 `/api/admin/login` 验证；明文密码只在本次会话中交付，不写入仓库或运维文档。
 
 ========================================
 会话基线（RAI 开发 / 运维压缩上下文）
@@ -20,11 +40,15 @@ RAI 项目运维与部署说明（统一环境变量版）
   agent/plan-parser.js
   agent/prompts.js
 
-3. 关键线上环境
-- VPS：82.158.88.216
-- SSH端口：20408
-- 部署目录：/rick/apps/rai
-- PM2 进程名：rai
+3. 关键线上环境（双 VPS）
+- 新 VPS（主力）：45.207.157.205，部署目录 /rick/apps/rai，PM2 进程名 rai
+  - SSH 端口 20408（✅ 2026-06-10 已恢复）
+  - HTTP 80 / RAI 3009 端口正常，HTTPS 443 未配置（SSL 由 Cloudflare 边缘终结）
+  - Hostname: hkg23-20260415004744a8cafb，1GB RAM / 10GB 磁盘（已用 35%）
+  - 跳板方式（备用）：先 SSH 到旧 VPS，再内网 ssh root@45.207.157.205
+- 旧 VPS（备用）：82.158.88.216，SSH 端口 20408
+  - 部署目录 /rick/apps/rai，RAI v0.10.9.18，OpenResty 管理 80/443
+  - 可从旧 VPS 内网访问新 VPS 80 端口
 - 严禁覆盖：ai_data.db
 
 4. 当前模型策略
@@ -84,8 +108,18 @@ RAI 项目运维与部署说明（统一环境变量版）
 - 新服务器 PM2 状态：`rai` online 端口 `3009` version `0.10.9.20`，`rai-beta` online 端口 `3010`，`rchat` online 端口 `7242`，`rauth` online 端口 `3011`，`tchat` online 端口 `7243`；watching 均为 disabled；`rnews` 在旧服务器原本就是 stopped 且与 `rai-beta` 共用 `3010`，新机仅迁移目录和依赖，暂不启动以避免端口冲突。新机 `cd /rick/apps/rai && npm run check` 通过；`curl http://127.0.0.1:3009/api/version` 返回 `0.10.9.20`；首页含 `v0.10.9.20`、`20260609-migration-notifications-v010920`、`sidebarNotificationBtn`、`settingsPanel-notifications` 和 `rai.000339.xyz`。
 - 新服务器 Nginx 状态：已配置 `/etc/nginx/sites-available/rai-migration.conf` 并启用，HTTP 80 反代 `rai.000339.xyz` / `rai.rick.quest` 到 RAI `3009`，`/beta/` 到 `3010`，`/tchat/` 到 `7243`；独立域名 `tchat.000339.xyz` / `tchat.rick.quest` 到 `7243`，`rchat.000339.xyz` / `rchat.rick.quest` 到 `7242`，`rauth.000339.xyz` / `rauth.rick.quest` 到 `3011`；`nginx -t` 通过。用旧服务器作为外部客户端访问新 IP + Host 头验证：`rai.000339.xyz/api/version` 和 `rai.rick.quest/api/version` 均返回 `0.10.9.20`，首页标识齐全，`/beta/`、`tchat.000339.xyz`、`rchat.000339.xyz`、`rauth.000339.xyz` 均返回 HTTP 200。
 - GitHub v0.10.9.20 状态：已在干净 clone `/tmp/rai-github-v010917` 中同步本次代码与运维记录（不包含 `ai_data.db` / `.env` / `node_modules` / `src-tauri/target` / 本地备份 / `.DS_Store`，README 未覆盖），clone 内 `npm run check` 通过、`npm audit --json` 漏洞数 0、`git diff --check` 无输出、密钥扫描未发现真实密码；已推送到 GitHub `main`，本次代码提交包括 `1cb6746 Update RAI to v0.10.9.20` 与后续运维/文件模式校准提交，最终远端以 `git ls-remote origin refs/heads/main` 为准。
-- Cloudflare 待 Rick 操作：将 `rai.000339.xyz` 的 A 记录指向 `45.207.157.205`，建议先 Proxied（橙云）并让 Cloudflare 访问源站 HTTP/80；若继续保留旧域名过渡，将 `rai.rick.quest` A 记录也改到 `45.207.157.205`；如启用对应子域，则添加或改 `tchat.000339.xyz`、`rchat.000339.xyz`、`rauth.000339.xyz` 的 A 记录到 `45.207.157.205`。如果 Cloudflare SSL/TLS 当前是 Full (strict)，新域名在源站没有证书前会失败；临时使用 Proxied + Flexible 或 Full（非 strict），或在 Cloudflare 生成 Origin Certificate 后交给服务器安装，再切回 Full (strict)。
-- 旧服务器停用状态：旧服务器 `82.158.88.216` 暂未停用 PM2/OpenResty，因为 Cloudflare 尚未由 Rick 切换到新 IP；此时直接停旧机会导致当前公开域名用户中断。待 Rick 完成 Cloudflare 记录切换并确认 `https://rai.000339.xyz/api/version` 返回 `0.10.9.20` 后，再执行旧服务器停用：`pm2 stop rai rai-beta rchat rauth tchat`、保留数据备份、按需停 OpenResty/1Panel 站点或整机服务。
+- Cloudflare DNS 已完成（Rick 操作）：
+  - `rai.000339.xyz` A 记录 → `45.207.157.205`，Proxied（橙云）
+  - `rai.rick.quest` A 记录 → `45.207.157.205`，Proxied（橙云），旧域名过渡
+  - SSL/TLS 模式：Flexible（浏览器↔CF 加密，CF↔源站 HTTP:80）
+  - 验证结果（2026-06-10）：两个域名 HTTPS 均返回 200，首页含 RAI v0.10.9.20 ✅
+  - 新 VPS 源站 443 仍未监听，SSL 由 Cloudflare 边缘终结，对外透明
+- 旧服务器状态：`82.158.88.216` 仍在运行，PM2 全部 online（rai v0.10.9.18、rai-beta、rchat、rauth、tchat），OpenResty 443 正常
+  - rai.rick.quest 的 Let's Encrypt 证书有效期至 2026-07-21，SAN 含 blog/rai/rick/www.rick.quest，不含 000339.xyz
+  - 可作为紧急回滚目标，暂不停止
+- 已知问题：
+  - 新 VPS 无 HTTPS 证书，443 端口未监听 → 当前 Flexible 模式可工作，若需 Full (strict) 需先配证书（建议 Cloudflare Origin Certificate）
+  - 旧 VPS cert 不含 000339.xyz，不能直接复用到新机
 - VPS 当前已同步 v0.10.9.17：远端备份目录为 `/rick/apps/rai/_remote_backup_20260608_rai_v0.10.9.17_security_audit`；已上传 `server.js`、`package.json`、`package-lock.json`、`public/app.js`、`public/styles.css`、`public/index.html`、`public/site.webmanifest`、`public/sw.js`、`public/lib/katex/`、`public/lib/mermaid/`、`public/lib/highlight/`、`public/downloads/RAI-macOS-arm64-0.10.9.17.dmg`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `更新运维.txt`；未上传 / 未覆盖 `ai_data.db`、`node_modules`、`src-tauri/target`。VPS `npm install --omit=dev`、`npm run check`、`npm audit --omit=dev` 通过且漏洞数 0；Debian 12 glibc=2.36 与 `sqlite3@6` 预编译包不兼容，首次重启报 `GLIBC_2.38 not found`，已执行 `npm rebuild sqlite3 --build-from-source` 后 `require('sqlite3')` 正常，再重启 `rai` 并 `pm2 save`。后续如重建远端 `node_modules`，生产安装后必须先执行 `npm rebuild sqlite3 --build-from-source` 再重启 PM2，避免再次加载不兼容预编译包。
 - 本次 v0.10.9.17 上线校验：`pm2 jlist` 校验 `rai` status=`online`、version=`0.10.9.17`、pid=`3193464`、node=`24.3.0`、env=`production`、cwd=`/rick/apps/rai`；VPS 本机 `http://127.0.0.1:3009/api/version` 返回 `0.10.9.17`；VPS 经域名反代 `https://rai.rick.quest/api/version` 返回 `0.10.9.17`；VPS 本机与域名反代均确认 KaTeX / Mermaid / highlight.js 本地资源返回 200；线上首页含 `v0.10.9.17`、缓存号 `20260608-security-audit-v010917`、DMG 链接和本地 `lib/...` 资源引用；线上 DMG 头返回 200，`Content-Length=13193154`，远端文件 SHA256=`15ae6f784cead8575f4b6223b0478c62e258acb9f710201ad1b7e631c62eee35`；in-app Browser 打开线上 HTTPS 页面确认 `v0.10.9.17`、无 CDN 引用、无控制台错误；Chrome 打开线上 HTTPS 页面确认 `v0.10.9.17`、缓存号存在、无 CDN 引用、无控制台错误；远端 `src-tauri/target` 确认不存在；主库 SHA256 上线前、依赖安装后、PM2 重启后均保持 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。本机 shell `curl https://rai.rick.quest` 当前仍连接 443 失败，但 Browser / Chrome 与 VPS 域名反代验证均正常，判定为本机 shell 网络路径差异，不影响本轮 PM2 上线结果。
 - VPS 当前已同步 v0.10.9.16：透明矢量图标、App 下载入口、桌面端状态行去绿色圆点、缓存号 `20260604-transparent-icon-download-v010916` 已上线；PM2 `rai` 已 `restart --update-env` 并 `pm2 save`；远端备份目录：`/rick/apps/rai/_remote_backup_20260604_rai_v0.10.9.16_transparent_icon_download`；严禁覆盖的 `ai_data.db` 未上传，主库 SHA256 上线前后均为 `4b7e2ad92f5038640456c8761a28dc8baa886317905b4ab2d7d3520388240205`。

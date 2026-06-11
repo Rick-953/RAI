@@ -13,6 +13,7 @@ const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
 
 const app = express();
+app.disable('x-powered-by');
 // 安全默认：本地直连时不信任代理头。反向代理部署时可通过 TRUST_PROXY 显式开启。
 const trustProxyEnv = process.env.TRUST_PROXY;
 let trustProxySetting = false;
@@ -29,7 +30,22 @@ if (trustProxyEnv) {
 }
 app.set('trust proxy', trustProxySetting);
 const PORT = process.env.PORT || 3009;
+const HOST = (process.env.HOST || process.env.BIND_HOST || '127.0.0.1').trim();
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
+const PASSWORD_MIN_LENGTH = 6;
+const PASSWORD_MAX_LENGTH = 128;
+const EMAIL_MAX_LENGTH = 255;
+const USERNAME_MAX_LENGTH = 80;
+
+function validatePasswordLength(password, fieldLabel = '密码') {
+    if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+        return `${fieldLabel}至少需要${PASSWORD_MIN_LENGTH}位`;
+    }
+    if (password.length > PASSWORD_MAX_LENGTH) {
+        return `${fieldLabel}不能超过${PASSWORD_MAX_LENGTH}位`;
+    }
+    return '';
+}
 
 function requireSecretEnv(name, minLength = 32) {
     const value = String(process.env[name] || '').trim();
@@ -5150,6 +5166,17 @@ db.serialize(() => {
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS file_uploads (
+    filename TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    original_name TEXT,
+    mime_type TEXT,
+    size INTEGER,
+    upload_kind TEXT NOT NULL DEFAULT 'attachment',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
     console.log(' 所有数据表就绪');
 
     //  数据库迁移：添加缺失的列（如果表已存在且列不存在）
@@ -5340,6 +5367,14 @@ db.serialize(() => {
             }
         });
 
+        db.run(`CREATE INDEX IF NOT EXISTS idx_file_uploads_user ON file_uploads(user_id, created_at DESC)`, (err) => {
+            if (err) {
+                console.warn(` 创建file_uploads用户索引失败:`, err.message);
+            } else {
+                console.log(' file_uploads用户索引就绪');
+            }
+        });
+
         // ==================== VIP会员系统字段 ====================
         // 会员等级: free / Pro / MAX
         db.run(`ALTER TABLE users ADD COLUMN membership TEXT DEFAULT 'free'`, (err) => {
@@ -5464,7 +5499,39 @@ const allowedCorsOrigins = buildAllowedCorsOrigins();
 const jsonParser = express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' });
 const chatJsonParser = express.json({ limit: process.env.CHAT_JSON_BODY_LIMIT || '4mb' });
 
+function setSecurityHeaders(req, res) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('Content-Security-Policy', [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+        "frame-ancestors 'self' https://rai.rick.quest https://rai.000339.xyz",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: https:",
+        "font-src 'self' data:",
+        "connect-src 'self' https: http://127.0.0.1:* http://localhost:*",
+        "media-src 'self' data: blob: https:",
+        "worker-src 'self' blob:",
+        "manifest-src 'self'",
+        "frame-src 'self'"
+    ].join('; '));
+
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
+    if (req.secure || forwardedProto === 'https') {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    }
+}
+
 // 中间件配置
+app.use((req, res, next) => {
+    setSecurityHeaders(req, res);
+    next();
+});
+
 app.use(cors({
     origin(origin, callback) {
         if (!origin || allowedCorsOrigins.has(origin)) return callback(null, true);
@@ -5479,6 +5546,11 @@ app.use((req, res, next) => {
     return jsonParser(req, res, next);
 });
 app.use(express.urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT || '1mb' }));
+
+app.use((req, res, next) => {
+    setSecurityHeaders(req, res);
+    next();
+});
 // 静态资源缓存配置（1天 = 86400秒）
 const staticCacheOptions = {
     maxAge: '1d',
@@ -5599,9 +5671,15 @@ function getUploadExtension(file) {
     return path.extname(file.originalname || '').toLowerCase().slice(1);
 }
 
+function filenameHasBlockedExtension(file) {
+    const parts = path.basename(String(file?.originalname || '')).toLowerCase().split('.').filter(Boolean);
+    if (parts.length <= 1) return false;
+    return parts.slice(0, -1).some((part) => BLOCKED_UPLOAD_EXTENSIONS.has(part));
+}
+
 function validateAvatarUpload(req, file, cb) {
     const ext = getUploadExtension(file);
-    if (!AVATAR_EXTENSIONS.has(ext)) {
+    if (filenameHasBlockedExtension(file) || !AVATAR_EXTENSIONS.has(ext)) {
         return cb(new Error('头像仅支持 jpg/png/webp/gif 图片'));
     }
     if (!/^image\/(jpeg|png|gif|webp)$/i.test(file.mimetype || '')) {
@@ -5612,7 +5690,7 @@ function validateAvatarUpload(req, file, cb) {
 
 function validateAttachmentUpload(req, file, cb) {
     const ext = getUploadExtension(file);
-    if (!ext || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext)) {
+    if (!ext || filenameHasBlockedExtension(file) || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext)) {
         return cb(new Error('不支持的文件类型'));
     }
     if (/html|javascript|svg|x-sh|x-msdownload/i.test(file.mimetype || '')) {
@@ -5630,6 +5708,107 @@ function runUpload(middleware, req, res, next) {
         }
         return res.status(400).json({ error: err.message || '文件上传失败' });
     });
+}
+
+function hasImageMagic(buffer, ext) {
+    const value = String(ext || '').toLowerCase();
+    if (value === 'jpg' || value === 'jpeg') {
+        return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    }
+    if (value === 'png') {
+        return buffer.length >= 8 && buffer.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    }
+    if (value === 'gif') {
+        const signature = buffer.slice(0, 6).toString('ascii');
+        return signature === 'GIF87a' || signature === 'GIF89a';
+    }
+    if (value === 'webp') {
+        return buffer.length >= 12
+            && buffer.slice(0, 4).toString('ascii') === 'RIFF'
+            && buffer.slice(8, 12).toString('ascii') === 'WEBP';
+    }
+    return true;
+}
+
+async function readFilePrefix(filePath, maxBytes = 4096) {
+    const handle = await fs.promises.open(filePath, 'r');
+    try {
+        const buffer = Buffer.alloc(maxBytes);
+        const result = await handle.read(buffer, 0, maxBytes, 0);
+        return buffer.slice(0, result.bytesRead);
+    } finally {
+        await handle.close();
+    }
+}
+
+function looksLikeActiveWebContent(buffer) {
+    const text = buffer.toString('utf8').replace(/\0/g, '').trimStart();
+    return /^(?:<!doctype\s+html\b|<html\b|<head\b|<body\b|<script\b|<svg\b|<iframe\b|<object\b|<embed\b|<form\b|<\?php\b)/i.test(text);
+}
+
+async function validateUploadedFileContent(file, uploadKind) {
+    const ext = getUploadExtension(file);
+    const prefix = await readFilePrefix(file.path);
+
+    if (uploadKind === 'avatar' && !hasImageMagic(prefix, ext)) {
+        const error = new Error('头像文件内容与类型不匹配');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext) && !hasImageMagic(prefix, ext)) {
+        const error = new Error('文件内容与扩展名不匹配');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (looksLikeActiveWebContent(prefix)) {
+        const error = new Error('不支持的文件类型');
+        error.statusCode = 400;
+        throw error;
+    }
+}
+
+function normalizeForwardedPrefix(req) {
+    const raw = String(req.headers['x-forwarded-prefix'] || '').trim().replace(/\/+$/, '');
+    if (!raw) return '';
+    if (!/^\/[A-Za-z0-9/_-]{1,80}$/.test(raw) || raw.includes('..')) return '';
+    return raw;
+}
+
+async function recordUploadedFile(req, file, uploadKind = 'attachment') {
+    await dbRunAsync(
+        `INSERT OR REPLACE INTO file_uploads
+         (filename, user_id, original_name, mime_type, size, upload_kind, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+            file.filename,
+            req.user.userId,
+            String(file.originalname || '').slice(0, 255),
+            String(file.mimetype || '').slice(0, 120),
+            Number(file.size || 0),
+            uploadKind
+        ]
+    );
+}
+
+async function userCanAccessUploadedFile(filename, userId) {
+    const owner = await dbGetAsync(
+        'SELECT user_id FROM file_uploads WHERE filename = ?',
+        [filename]
+    );
+    if (owner) return Number(owner.user_id) === Number(userId);
+
+    // Legacy fallback for files uploaded before file_uploads existed.
+    const referenced = await dbGetAsync(
+        `SELECT 1 AS ok
+         FROM messages m
+         JOIN sessions s ON m.session_id = s.id
+         WHERE s.user_id = ? AND instr(COALESCE(m.attachments, ''), ?) > 0
+         LIMIT 1`,
+        [userId, filename]
+    );
+    return Boolean(referenced);
 }
 
 const avatarUpload = multer({
@@ -6116,21 +6295,32 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     try {
         const { email, password, username, referrerId, referralCode, ref } = req.body;
         const normalizedReferrerId = normalizeReferralUserId(referrerId || referralCode || ref);
+        const normalizedEmail = typeof email === 'string' ? email.trim() : '';
+        const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+        const passwordError = validatePasswordLength(password);
 
-        if (!email || !password) {
+        if (!normalizedEmail || !password) {
             return res.status(400).json({ success: false, error: '邮箱和密码不能为空' });
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        if (!emailRegex.test(normalizedEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
         }
 
-        if (password.length < 6) {
-            return res.status(400).json({ success: false, error: '密码至少需要6位' });
+        if (normalizedEmail.length > EMAIL_MAX_LENGTH) {
+            return res.status(400).json({ success: false, error: `邮箱长度不能超过${EMAIL_MAX_LENGTH}个字符` });
         }
 
-        db.get('SELECT id FROM users WHERE email = ?', [email], async (err, row) => {
+        if (normalizedUsername.length > USERNAME_MAX_LENGTH) {
+            return res.status(400).json({ success: false, error: `用户名不能超过${USERNAME_MAX_LENGTH}个字符` });
+        }
+
+        if (passwordError) {
+            return res.status(400).json({ success: false, error: passwordError });
+        }
+
+        db.get('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail], async (err, row) => {
             if (err) {
                 return res.status(500).json({ success: false, error: '数据库错误' });
             }
@@ -6141,11 +6331,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
             try {
                 const passwordHash = await bcrypt.hash(password, 10);
-                const finalUsername = username || email.split('@')[0];
+                const finalUsername = normalizedUsername || normalizedEmail.split('@')[0];
 
                 db.run(
                     'INSERT INTO users (email, password_hash, username) VALUES (?, ?, ?)',
-                    [email, passwordHash, finalUsername],
+                    [normalizedEmail, passwordHash, finalUsername],
                     async function (err) {
                         if (err) {
                             return res.status(500).json({ success: false, error: '注册失败,请重试' });
@@ -6168,14 +6358,14 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
                             }
                         }
 
-                        const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '30d' });
+                        const token = jwt.sign({ userId, email: normalizedEmail }, JWT_SECRET, { expiresIn: '30d' });
 
                         res.json({
                             success: true,
                             token,
                             isNewUser: true,
                             inviteReward,
-                            user: { id: userId, email, username: finalUsername }
+                            user: { id: userId, email: normalizedEmail, username: finalUsername }
                         });
                     }
                 );
@@ -6192,12 +6382,17 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 app.post('/api/auth/login', authLimiter, async (req, res) => {
     try {
         const { email, password, fingerprint } = req.body;
+        const normalizedEmail = typeof email === 'string' ? email.trim() : '';
 
-        if (!email || !password) {
+        if (!normalizedEmail || !password) {
             return res.status(400).json({ success: false, error: '邮箱和密码不能为空' });
         }
 
-        db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+        if (normalizedEmail.length > EMAIL_MAX_LENGTH || validatePasswordLength(password)) {
+            return res.status(401).json({ success: false, error: '邮箱或密码错误' });
+        }
+
+        db.get('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail], async (err, user) => {
             if (err) {
                 return res.status(500).json({ success: false, error: '数据库错误' });
             }
@@ -6442,8 +6637,15 @@ app.put('/api/user/password', authenticateToken, async (req, res) => {
             return res.status(400).json({ success: false, error: '当前密码不能为空' });
         }
 
-        if (!newPassword || newPassword.length < 6) {
-            return res.status(400).json({ success: false, error: '新密码至少需要6位' });
+        const currentPasswordError = validatePasswordLength(currentPassword, '当前密码');
+        const newPasswordError = validatePasswordLength(newPassword, '新密码');
+
+        if (currentPasswordError) {
+            return res.status(400).json({ success: false, error: currentPasswordError });
+        }
+
+        if (newPasswordError) {
+            return res.status(400).json({ success: false, error: newPasswordError });
         }
 
         if (newPassword === currentPassword) {
@@ -6548,8 +6750,15 @@ app.put('/api/user/config', authenticateToken, (req, res) => {
     );
 });
 
-app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), (req, res) => {
+app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+
+    try {
+        await validateUploadedFileContent(req.file, 'avatar');
+    } catch (error) {
+        fs.unlink(req.file.path, () => null);
+        return res.status(error.statusCode || 400).json({ error: error.message || '头像上传失败' });
+    }
 
     const avatarUrl = `/avatars/${req.file.filename}`;
     db.run('UPDATE users SET avatar_url = ? WHERE id = ?', [avatarUrl, req.user.userId], (err) => {
@@ -7410,24 +7619,32 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
 
 // ==================== AI聊天路由 ====================
 
-app.post('/api/upload', authenticateToken, (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next), (req, res) => {
+app.post('/api/upload', authenticateToken, (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
 
-    const forwardedPrefix = String(req.headers['x-forwarded-prefix'] || '').replace(/\/+$/, '');
-    console.log(' 文件上传成功:', req.file.filename);
-    res.json({
-        success: true,
-        file: {
-            filename: req.file.filename,
-            originalName: req.file.originalname,
-            filePath: `${forwardedPrefix}/api/uploads/${req.file.filename}`,
-            fileType: req.file.mimetype,
-            size: req.file.size
-        }
-    });
+    try {
+        await validateUploadedFileContent(req.file, 'attachment');
+        await recordUploadedFile(req, req.file, 'attachment');
+        const forwardedPrefix = normalizeForwardedPrefix(req);
+        console.log(' 文件上传成功:', req.file.filename);
+        res.json({
+            success: true,
+            file: {
+                filename: req.file.filename,
+                originalName: req.file.originalname,
+                filePath: `${forwardedPrefix}/api/uploads/${req.file.filename}`,
+                fileType: req.file.mimetype,
+                size: req.file.size
+            }
+        });
+    } catch (error) {
+        fs.unlink(req.file.path, () => null);
+        console.error(' 记录上传文件归属失败:', error.message);
+        res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : '文件上传失败' });
+    }
 });
 
-app.get('/api/uploads/:filename', authenticateToken, (req, res) => {
+app.get('/api/uploads/:filename', authenticateToken, async (req, res) => {
     const filename = path.basename(req.params.filename || '');
     if (!filename || filename !== req.params.filename || filename.includes('..')) {
         return res.status(400).json({ error: '无效文件名' });
@@ -7438,17 +7655,28 @@ app.get('/api/uploads/:filename', authenticateToken, (req, res) => {
         return res.status(404).json({ error: '文件不存在' });
     }
 
-    const filePath = path.join(__dirname, 'uploads', filename);
-    if (!filePath.startsWith(path.join(__dirname, 'uploads'))) {
+    const uploadRoot = path.resolve(__dirname, 'uploads');
+    const filePath = path.resolve(uploadRoot, filename);
+    if (!(filePath === uploadRoot || filePath.startsWith(`${uploadRoot}${path.sep}`))) {
         return res.status(400).json({ error: '无效文件名' });
     }
 
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.download(filePath, filename, (err) => {
-        if (err && !res.headersSent) {
-            res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: '文件下载失败' });
+    try {
+        const allowed = await userCanAccessUploadedFile(filename, req.user.userId);
+        if (!allowed) {
+            return res.status(404).json({ error: '文件不存在' });
         }
-    });
+
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.download(filePath, filename, (err) => {
+            if (err && !res.headersSent) {
+                res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: '文件下载失败' });
+            }
+        });
+    } catch (error) {
+        console.error(' 校验上传文件归属失败:', error.message);
+        res.status(500).json({ error: '文件下载失败' });
+    }
 });
 
 const activeRequestInterjections = new Map();
@@ -12062,7 +12290,10 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
 
     try {
         const usernameOk = String(username || '').trim() === ADMIN_USERNAME;
-        const passwordOk = usernameOk && await bcrypt.compare(String(password || ''), ADMIN_PASSWORD_HASH);
+        const passwordInput = typeof password === 'string' ? password : '';
+        const passwordOk = usernameOk
+            && !validatePasswordLength(passwordInput)
+            && await bcrypt.compare(passwordInput, ADMIN_PASSWORD_HASH);
 
         if (passwordOk) {
             const token = jwt.sign({ isAdmin: true, username: ADMIN_USERNAME, loginTime: Date.now() }, ADMIN_JWT_SECRET, { expiresIn: '8h' });
@@ -12681,6 +12912,13 @@ app.use((req, res) => {
 
 // ==================== 错误处理 ====================
 app.use((err, req, res, next) => {
+    if (err && err.message === 'CORS origin not allowed') {
+        return res.status(403).json({
+            error: 'CORS origin not allowed',
+            requestId: req.headers['x-request-id'] || null
+        });
+    }
+
     console.error(' 服务器错误:', err);
     const isProd = process.env.NODE_ENV === 'production';
     const payload = {
@@ -12694,13 +12932,13 @@ app.use((err, req, res, next) => {
 });
 
 // ==================== 启动服务器 ====================
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, HOST, () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
 ║             RAI v${PACKAGE_VERSION} 已启动                      ║
 ║                                                          ║
-║   服务地址: http://0.0.0.0:${PORT}                     ║
+║   服务地址: http://${HOST}:${PORT}                     ║
 ║   数据库: ${dbPath}                                    ║
 ║   JWT认证:                                          ║
 ║   AI提供商: Tavily + 流动硅基                           ║
