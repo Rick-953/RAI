@@ -1,12 +1,12 @@
-const RAI_SW_VERSION = '0.10.9.20-20260609-migration-notifications';
+const RAI_SW_VERSION = '0.10.9.21-20260611-security-pentest';
 const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = '/index.html';
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260609-migration-notifications-v010920',
-  '/styles.css?v=20260609-migration-notifications-v010920',
-  '/site.webmanifest?v=20260609-migration-notifications-v010920',
+  '/app.js?v=20260611-security-pentest-v010921',
+  '/styles.css?v=20260611-security-pentest-v010921',
+  '/site.webmanifest?v=20260611-security-pentest-v010921',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',

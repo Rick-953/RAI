@@ -1912,8 +1912,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.20';
-const RAI_BUILD_ID = '20260609-migration-notifications-v010920';
+const RAI_APP_VERSION = '0.10.9.21';
+const RAI_BUILD_ID = '20260611-security-pentest-v010921';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -3814,6 +3814,28 @@ function localizeServerError(message, fallback = 'Operation failed') {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-06-11',
+    version: 'v0.10.9.21',
+    zh: {
+      summary: '完成 RAI 安全审计加固。',
+      details: [
+        '生产服务默认只绑定本机回环地址，减少绕过 Nginx/Cloudflare 直接访问 Node 端口的风险。',
+        '新增核心安全响应头，限制嵌入来源、对象加载、权限策略和内容类型嗅探。',
+        '上传文件记录用户归属，下载接口会校验归属或旧消息引用，避免知道文件名后跨账号下载。',
+        '登录、注册、改密和管理员登录增加后端长度边界，密码最短仍保持 6 位。'
+      ]
+    },
+    en: {
+      summary: 'Completed RAI security audit hardening.',
+      details: [
+        'The production service now binds to loopback by default, reducing direct Node-port exposure outside Nginx/Cloudflare.',
+        'Core security headers now constrain embedding origins, object loading, browser permissions, and content sniffing.',
+        'Uploaded files are tied to the uploading user, and downloads verify ownership or legacy message references.',
+        'Login, registration, password change, and admin login now enforce backend length bounds while keeping the 6-character minimum password policy.'
+      ]
+    }
+  },
   {
     date: '2026-06-09',
     version: 'v0.10.9.20',
@@ -6243,7 +6265,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.20 初始化 (Migration Notifications)');
+  console.log(' RAI v0.10.9.21 初始化 (Security Pentest Hardening)');
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
