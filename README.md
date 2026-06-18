@@ -360,11 +360,12 @@ A smart AI chat assistant with **Intelligent Model Routing** that automatically 
 
 ## May 14, 2026 — RAI v0.10.9.7
 New Settings UI/UX redesign
-<img width="1234" height="850" alt="image" src="https://github.com/user-attachments/assets/3a4366e1-f46a-4db8-b96c-68970e4e6b71" />
+<img width="1199" height="852" alt="image" src="https://github.com/user-attachments/assets/67cb5975-5042-4049-bab6-e9f73e347b72" />
 New user onboarding guide — can be reviewed again from Settings > About
-<img width="1248" height="900" alt="image" src="https://github.com/user-attachments/assets/14f0f928-d993-4cd0-aae7-9f1e7846145c" />
-<img width="1111" height="850" alt="image" src="https://github.com/user-attachments/assets/9e5212de-669e-49c1-b1f8-6d1cd2de68d4" />
-<img width="1078" height="850" alt="image" src="https://github.com/user-attachments/assets/97724c28-d0fd-4d0b-8920-06c5cec66768" />
+<img width="1200" height="852" alt="image" src="https://github.com/user-attachments/assets/de0e52fb-47d1-435b-a920-31510a17f3ce" />
+<img width="1197" height="851" alt="image" src="https://github.com/user-attachments/assets/1918143e-946b-4271-8955-fc1b42039c22" />
+<img width="1200" height="852" alt="image" src="https://github.com/user-attachments/assets/61a505b6-4d16-489c-a827-4006dec5792a" />
+
 AI can now ask the user for clarification (new built-in tool)
 <img width="606" height="828" alt="image" src="https://github.com/user-attachments/assets/43e7a75b-fd9b-416e-afb3-1ab7d481f2df" />
 
