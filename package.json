@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.10.9.21",
+  "version": "0.10.9.62",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -17,7 +17,10 @@
     "express": "^4.22.2",
     "express-rate-limit": "^7.1.5",
     "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "qrcode": "^1.5.4",
     "sqlite3": "^6.0.1"
   },
   "devDependencies": {

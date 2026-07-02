@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -33,6 +34,38 @@ function authHeaders(token, extra = {}) {
     ...extra,
     Authorization: `Bearer ${token}`
   };
+}
+
+const TOTP_BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function decodeBase32Secret(secret) {
+  const normalized = String(secret || '').replace(/[\s=:-]/g, '').toUpperCase();
+  let bits = '';
+  for (const char of normalized) {
+    const value = TOTP_BASE32_ALPHABET.indexOf(char);
+    assert.ok(value >= 0, `invalid TOTP secret char: ${char}`);
+    bits += value.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+function currentTotp(secret) {
+  const key = decodeBase32Secret(secret);
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const buffer = Buffer.alloc(8);
+  buffer.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+  buffer.writeUInt32BE(counter >>> 0, 4);
+  const hmac = crypto.createHmac('sha1', key).update(buffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binary = ((hmac[offset] & 0x7f) << 24)
+    | ((hmac[offset + 1] & 0xff) << 16)
+    | ((hmac[offset + 2] & 0xff) << 8)
+    | (hmac[offset + 3] & 0xff);
+  return String(binary % 1000000).padStart(6, '0');
 }
 
 async function registerUser(label) {
@@ -89,6 +122,10 @@ async function main() {
     assert.ok(version.response.headers.get('content-security-policy'), 'content-security-policy should be present');
     assert.ok(version.response.headers.get('permissions-policy'), 'permissions-policy should be present');
 
+    const testProbe = await request('/api/test');
+    assert.strictEqual(testProbe.response.status, 200, '/api/test should stay public for health probes');
+    assert.strictEqual(testProbe.body?.providers, undefined, '/api/test should not enumerate configured providers');
+
     const noAuth = await request('/api/sessions');
     assert.strictEqual(noAuth.response.status, 401, 'protected routes should reject missing token');
 
@@ -109,6 +146,53 @@ async function main() {
     const userA = await registerUser('a');
     const userB = await registerUser('b');
 
+    const twoFactorSetup = await request('/api/user/2fa/setup', {
+      method: 'POST',
+      headers: authHeaders(userA.token, { 'Content-Type': 'application/json' })
+    });
+    assert.strictEqual(twoFactorSetup.response.status, 200, '2FA setup should start for logged-in user');
+    assert.ok(twoFactorSetup.body?.secret, '2FA setup should return manual secret');
+    assert.ok(twoFactorSetup.body?.setupToken, '2FA setup should return setup token');
+
+    const enable2fa = await request('/api/user/2fa/enable', {
+      method: 'POST',
+      headers: authHeaders(userA.token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        setupToken: twoFactorSetup.body.setupToken,
+        code: currentTotp(twoFactorSetup.body.secret)
+      })
+    });
+    assert.strictEqual(enable2fa.response.status, 200, '2FA enable should accept valid TOTP');
+    assert.strictEqual(enable2fa.body?.two_factor_enabled, true, '2FA enable should report enabled');
+
+    const loginNeeds2fa = await request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: userA.email, password: userA.password })
+    });
+    assert.strictEqual(loginNeeds2fa.response.status, 200, '2FA password step should use challenge response');
+    assert.strictEqual(loginNeeds2fa.body?.requiresTwoFactor, true, '2FA login should require Authenticator code');
+    assert.ok(loginNeeds2fa.body?.twoFactorToken, '2FA login should return short-lived challenge token');
+
+    const loginWith2fa = await request('/api/auth/login/2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        twoFactorToken: loginNeeds2fa.body.twoFactorToken,
+        code: currentTotp(twoFactorSetup.body.secret)
+      })
+    });
+    assert.strictEqual(loginWith2fa.response.status, 200, '2FA challenge should accept valid TOTP');
+    assert.ok(loginWith2fa.body?.token, '2FA challenge should return app token');
+
+    const disable2fa = await request('/api/user/2fa/disable', {
+      method: 'POST',
+      headers: authHeaders(loginWith2fa.body.token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ code: currentTotp(twoFactorSetup.body.secret) })
+    });
+    assert.strictEqual(disable2fa.response.status, 200, '2FA disable should accept current TOTP');
+    assert.strictEqual(disable2fa.body?.two_factor_enabled, false, '2FA disable should report disabled');
+
     const session = await request('/api/sessions', {
       method: 'POST',
       headers: authHeaders(userA.token, { 'Content-Type': 'application/json' }),
@@ -116,6 +200,18 @@ async function main() {
     });
     assert.strictEqual(session.response.status, 200, 'user A can create session');
     assert.ok(session.body?.sessionId, 'session id should be returned');
+
+    const streamNoAuth = await request(`/api/sessions/${encodeURIComponent(session.body.sessionId)}/stream-events`);
+    assert.strictEqual(streamNoAuth.response.status, 401, 'stream sync should reject missing token');
+
+    const streamController = new AbortController();
+    const streamResponse = await fetch(url(`/api/sessions/${encodeURIComponent(session.body.sessionId)}/stream-events`), {
+      headers: authHeaders(userA.token, { Accept: 'text/event-stream' }),
+      signal: streamController.signal
+    });
+    assert.strictEqual(streamResponse.status, 200, 'stream sync should accept Authorization header');
+    assert.strictEqual(streamResponse.url.includes('token='), false, 'stream sync smoke should not put app token in the URL');
+    streamController.abort();
 
     const bReadsA = await request(`/api/sessions/${encodeURIComponent(session.body.sessionId)}/messages`, {
       headers: authHeaders(userB.token)
@@ -163,13 +259,14 @@ async function main() {
     assert.strictEqual(doubleExtUpload.response.status, 400, 'double-extension active upload should be rejected');
 
     const htmlTextForm = new FormData();
-    htmlTextForm.append('file', new Blob(['<!doctype html><script>alert(1)</script>'], { type: 'text/plain' }), `xss-${RUN_ID}.txt`);
+    htmlTextForm.append('file', new Blob(['<!doctype html><script>alert(1)</script>'], { type: 'text/html' }), `sample-${RUN_ID}.html`);
     const htmlTextUpload = await request('/api/upload', {
       method: 'POST',
       headers: authHeaders(userA.token),
       body: htmlTextForm
     });
-    assert.strictEqual(htmlTextUpload.response.status, 400, 'active HTML content disguised as text should be rejected');
+    assert.strictEqual(htmlTextUpload.response.status, 200, 'html/code attachment should be allowed as inert text');
+    if (htmlTextUpload.body?.file?.filename) uploadedFiles.push(htmlTextUpload.body.file.filename);
 
     const spoofedAvatarForm = new FormData();
     spoofedAvatarForm.append('avatar', new Blob(['<svg onload=alert(1)>'], { type: 'image/png' }), `avatar-${RUN_ID}.png`);

@@ -13,7 +13,7 @@
 
 **Try now:** [https://rai.rick.quest](https://rai.rick.quest)
 
-## 官网：rai.rick.quest  
+## 官网：rai.rick.quest
 
 [English](#english) | [功能特性](#-功能特性) | [功能列表](#-功能列表) | [快速开始](#-快速开始) | [模型路由](#-智能模型路由) | [在线体验](#-在线体验)
 
@@ -21,7 +21,7 @@
 
 ---
 
-# 最新更新内容  
+# 最新更新内容
 
 ## 2026年5月14日 RAI v0.10.9.7
 新设置UI UX风格
@@ -53,19 +53,19 @@ ai可以询问用户（新内置工具）
 - **Yahoo Finance 服务端代理**: 新增 `/api/quote/:symbol` 与 AI 工具 `finance_quote`，用于证券代码、价格、涨跌幅、区间走势与历史 K 线场景
 - **GitHub 同步规则修正**: README 以 GitHub 历史版本为基线维护，不再默认使用本地旧版 README 覆盖
 
-## 2026年2月27日大幅优化首字延时支持多轮工具调用  
+## 2026年2月27日大幅优化首字延时支持多轮工具调用
 
 ## 🎨 Chat Flow 思维流 (v0.85+ 重磅新增)
 
 将 AI 对话与可视化画布完美结合，打造属于你的思维图谱：
 
 - **无限画布**: 拖拽对话内容到画布，自由组织你的思维
-- **智能连线**: 为节点创建语义化连接，添加标签说明关系  
+- **智能连线**: 为节点创建语义化连接，添加标签说明关系
 - **AI 拆解**: 选中节点后，AI 自动分解为子话题
 - **多种导出**: 支持 PNG、SVG、Mermaid、JSON 导出
 - **自动布局**: 一键整理画布节点
 
-<img width="2790" height="1716" alt="Chat Flow 界面" src="https://github.com/user-attachments/assets/96b0a2c4-b42a-4644-817f-b3d1c94a76ff" /> 
+<img width="2790" height="1716" alt="Chat Flow 界面" src="https://github.com/user-attachments/assets/96b0a2c4-b42a-4644-817f-b3d1c94a76ff" />
 <img width="682" height="832" alt="Chat Flow 移动端" src="https://github.com/user-attachments/assets/7270482c-9b3d-4be4-84a9-d20b3726d411" />
 
 ---
@@ -131,11 +131,11 @@ ai可以询问用户（新内置工具）
 - 密码加密存储
 
 ### <img src="https://api.iconify.design/material-symbols/image.svg?color=%23F59E0B&width=20&height=20" valign="middle" /> 图文并茂 (v0.8 新增)
-- 支持ai回复过程中插入多张图片到回答里。  
+- 支持ai回复过程中插入多张图片到回答里。
 - <img width="1108" height="1703" alt="屏幕截图 2025-12-13 143709" src="https://github.com/user-attachments/assets/f8b414a7-2316-47fa-a5cb-72184beff4b1" />
-- 支持画流程图，统计图，思维导图等各种类型的图表！  
+- 支持画流程图，统计图，思维导图等各种类型的图表！
 - <img width="2744" height="1684" alt="image" src="https://github.com/user-attachments/assets/9a0d3c91-c4c1-4261-ac67-64d90f90c85b" />
-- 一次回答图文表并茂！  
+- 一次回答图文表并茂！
 
 ---
 
@@ -330,7 +330,7 @@ rai/
 
 **个人用户免费支持分支**。
 
-如需**商业用途**，请联系：[rick080402@gmail.com](mailto:rick080402@gmail.com)
+如需**商业用途**，请使用项目中配置的公开支持邮箱联系维护者。
 
 ---
 
@@ -561,4 +561,3 @@ The core feature of RAI is the **Intelligent Model Routing System**, which autom
 | ≥ 0.80 | Qwen-Max | Professional tasks, deep analysis |
 
 ### 5-Dimension Evaluation
-

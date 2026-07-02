@@ -11,11 +11,22 @@
   <meta name="apple-mobile-web-app-title" content="RAI">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
+  <script src="/runtime-config.js"></script>
+  <script>
+    (function () {
+      const cfg = window.__RAI_RUNTIME_CONFIG || {};
+      const brandName = String(cfg.brandName || 'RAI').trim() || 'RAI';
+      const brandTitle = String(cfg.brandTitle || '').trim() || brandName;
+      document.title = brandTitle;
+      const appleTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (appleTitleMeta) appleTitleMeta.setAttribute('content', brandTitle);
+    })();
+  </script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260611-security-pentest-v010921">
+  <link rel="manifest" href="site.webmanifest?v=20260702-security-review-v010962a">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
@@ -35,7 +46,7 @@
   <script src="lib/highlight/highlight.min.js"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260611-security-pentest-v010921">
+  <link rel="stylesheet" href="styles.css?v=20260702-security-review-v010962a">
 </head>
 
 <body>
@@ -61,11 +72,44 @@
               oninput="handleEmailInput(this)" onkeydown="handleEmailKeydown(event)" required autocomplete="email">
           </div>
 
+          <div class="auth-step-hidden" id="authLoginMethodStep">
+            <div class="auth-method-toggle" role="group" aria-label="登录方式">
+              <button type="button" class="auth-method-btn active" id="authPasswordMethodBtn"
+                onclick="setAuthLoginMethod('password')" data-i18n="auth-password-login">密码登录</button>
+              <button type="button" class="auth-method-btn" id="authEmailCodeMethodBtn"
+                onclick="setAuthLoginMethod('email-code')" data-i18n="auth-email-code-login">邮箱验证码</button>
+            </div>
+          </div>
+
           <!-- 密码区域 - 初始隐藏 -->
           <div class="form-group auth-step-hidden" id="passwordStep">
             <label class="form-label" data-i18n="password-label">密码</label>
             <input type="password" class="form-input" id="authPassword" data-i18n-placeholder="password-placeholder"
               placeholder="至少6位字符" onkeydown="handlePasswordKeydown(event)" autocomplete="current-password">
+            <div class="auth-forgot-row" id="forgotPasswordRow">
+              <button type="button" class="auth-forgot-btn" onclick="showForgotPasswordHelp()"
+                data-i18n="forgot-password">忘记密码？</button>
+            </div>
+          </div>
+
+          <div class="form-group auth-step-hidden" id="twoFactorStep">
+            <label class="form-label" data-i18n="two-factor-label">Authenticator 验证码</label>
+            <input type="text" class="form-input" id="authTwoFactorCode" data-i18n-placeholder="two-factor-placeholder"
+              placeholder="6 位验证码" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+              onkeydown="handleTwoFactorKeydown(event)" autocomplete="one-time-code">
+            <p class="auth-two-factor-hint" data-i18n="two-factor-login-hint">打开 Authenticator 输入当前 6 位验证码。</p>
+          </div>
+
+          <div class="form-group auth-step-hidden" id="emailCodeStep">
+            <label class="form-label" for="authEmailCode" data-i18n="email-code-label">邮箱验证码</label>
+            <div class="auth-code-row">
+              <input type="text" class="form-input" id="authEmailCode" data-i18n-placeholder="email-code-placeholder"
+                placeholder="10-16 位验证码" inputmode="text" maxlength="16"
+                onkeydown="handleEmailCodeKeydown(event)" autocomplete="one-time-code">
+              <button type="button" class="auth-inline-action" id="authEmailCodeResendBtn"
+                onclick="resendAuthEmailCode()" data-i18n="email-code-resend">重发</button>
+            </div>
+            <p class="auth-two-factor-hint" id="emailCodeHint" data-i18n="email-code-hint">验证码会发送到当前邮箱。</p>
           </div>
 
           <!-- 用户名区域 - 仅注册时显示 -->
@@ -126,7 +170,7 @@
               <span class="onboarding-feature-mark">01</span>
               <div class="onboarding-feature-copy">
                 <strong data-i18n="onb-feat-models-title">多模型协作</strong>
-                <span data-i18n="onb-feat-models">多模型自由切换（DeepSeek / Kimi / GPT / Claude / Grok / Gemma）</span>
+                <span data-i18n="onb-feat-models">多模型自由切换（DeepSeek / Kimi / GPT / Claude / Gemma）</span>
               </div>
             </div>
             <div class="onboarding-feature-item">
@@ -177,7 +221,7 @@
               </div>
               <div>
                 <strong data-i18n="onb-usage-model-title">模型切换</strong>
-                <p data-i18n="onb-usage-model-desc">点击顶部模型选择器，可切换智能模型 / 极速模式 / 专家模式或全部模型。</p>
+                <p data-i18n="onb-usage-model-desc">点击顶部模型选择器，可切换智能模型 / 专家模式或全部模型。</p>
               </div>
             </div>
             <div class="onboarding-usage-item">
@@ -222,6 +266,14 @@
           <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
             height="24" fill="currentColor">
             <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
+          </svg>
+        </button>
+        <button class="control-btn temp-chat-top-btn mobile-temp-chat-btn" onclick="handleTemporaryChatClick()"
+          data-i18n-title="temporary-chat" data-i18n-aria-label="temporary-chat" title="临时对话" aria-label="临时对话">
+          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+            width="24" height="24" fill="currentColor">
+            <path
+              d="M360-120q-33 0-56.5-23.5T280-200v-80H160q-33 0-56.5-23.5T80-360v-360q0-33 23.5-56.5T160-800h520q33 0 56.5 23.5T760-720v120h40q33 0 56.5 23.5T880-520v320q0 33-23.5 56.5T800-120H360ZM160-360h120q33 0 56.5 23.5T360-280v80h440v-320H360q-33 0-56.5-23.5T280-600v-120H160v360Zm200-240h320v-120H360v120Z" />
           </svg>
         </button>
         <div class="mobile-logo">RAI</div>
@@ -280,10 +332,18 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick · v0.10.9.21</div>
+              <div class="logo-subtitle">by Rick · v0.10.9.62</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
+            <button class="sidebar-control-btn temp-chat-top-btn" onclick="handleTemporaryChatClick()" data-i18n-title="temporary-chat"
+              data-i18n-aria-label="temporary-chat" title="临时对话" aria-label="临时对话">
+              <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                width="22" height="22" fill="currentColor">
+                <path
+                  d="M360-120q-33 0-56.5-23.5T280-200v-80H160q-33 0-56.5-23.5T80-360v-360q0-33 23.5-56.5T160-800h520q33 0 56.5 23.5T760-720v120h40q33 0 56.5 23.5T880-520v320q0 33-23.5 56.5T800-120H360ZM160-360h120q33 0 56.5 23.5T360-280v80h440v-320H360q-33 0-56.5-23.5T280-600v-120H160v360Zm200-240h320v-120H360v120Z" />
+              </svg>
+            </button>
             <button class="sidebar-control-btn" onclick="toggleTheme()" data-i18n-title="theme-toggle-label" title="切换主题">
               <svg class="material-symbols-outlined" id="sidebarThemeIcon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -309,7 +369,7 @@
             oninput="handleSearch(this.value)">
         </div>
 
-        <button class="new-chat-btn" onclick="createNewSession()">
+        <button class="new-chat-btn" onclick="handleNewChatClick()">
           <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
             height="24" fill="currentColor">
             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
@@ -513,10 +573,13 @@
         <div class="input-wrapper">
           <div class="input-container" id="inputContainer">
             <!-- 顶部输入行 -->
-            <div class="input-row">
-              <textarea class="message-input" id="messageInput" data-i18n-placeholder="input-placeholder" autofocus
-                placeholder="询问问题..." rows="1" inputmode="text" autocomplete="off" autocorrect="off"
-                autocapitalize="sentences" onkeydown="handleInputKeydown(event)" oninput="autoResizeInput()"></textarea>
+              <div class="input-row">
+                <textarea class="message-input" id="messageInput" data-i18n-placeholder="input-placeholder" autofocus
+                  placeholder="询问问题..." rows="1" inputmode="text" autocomplete="off" autocorrect="off"
+                  autocapitalize="sentences" onkeydown="handleInputKeydown(event)"
+                  oncompositionstart="handleTextInputCompositionStart(event)"
+                  oncompositionend="handleTextInputCompositionEnd(event)"
+                  oninput="autoResizeInput()"></textarea>
             </div>
 
             <!-- 底部工具栏 -->
@@ -624,6 +687,12 @@
                         <span data-i18n="research-deep">深度研究</span>
                       </div>
                     </div>
+                    <div class="research-model-config">
+                      <div class="research-model-config-label" data-i18n="research-agent-models">子 agent 模型</div>
+                      <div class="research-model-chip-list" id="researchAgentModelList"></div>
+                      <div class="research-model-config-label" data-i18n="research-master-model">主控模型</div>
+                      <select class="research-master-select" id="researchMasterModelSelect" onchange="setResearchMasterModel(this.value, event)" onclick="event.stopPropagation()"></select>
+                    </div>
                   </div>
 
                   <div class="more-menu-hint" id="poeQuotaHint" style="display: none;"></div>
@@ -674,7 +743,7 @@
                   </svg>
                 </div>
 
-                <!-- Grok风格下拉菜单 -->
+                <!-- 模型下拉菜单 -->
                 <div class="model-dropdown-menu" id="modelDropdownMenu">
                   <!-- 智能模型 -->
                   <div class="model-menu-item" data-model="auto"
@@ -691,24 +760,21 @@
 
                   <div class="model-menu-divider"></div>
 
-                  <!-- 极速模式 -->
-                  <div class="model-menu-item" data-model="qwen2.5-7b"
-                    onclick="selectModelFromMenu('qwen2.5-7b', '极速模式', 'model-fast')">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
-                      viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                      <path
-                        d="m226-559 78 33q14-28 29-54t33-52l-56-11-84 84Zm142 83 114 113q42-16 90-49t90-75q70-70 109.5-155.5T806-800q-72-5-158 34.5T492-656q-42 42-75 90t-49 90Zm178-65q-23-23-23-56.5t23-56.5q23-23 57-23t57 23q23 23 23 56.5T660-541q-23 23-57 23t-57-23Zm19 321 84-84-11-56q-26 18-52 32.5T532-299l33 79Zm313-653q19 121-23.5 235.5T708-419l20 99q4 20-2 39t-20 33L538-80l-84-197-171-171-197-84 167-168q14-14 33.5-20t39.5-2l99 20q104-104 218-147t235-24ZM157-321q35-35 85.5-35.5T328-322q35 35 34.5 85.5T327-151q-25 25-83.5 43T82-76q14-103 32-161.5t43-83.5Zm57 56q-10 10-20 36.5T180-175q27-4 53.5-13.5T270-208q12-12 13-29t-11-29q-12-12-29-11.5T214-265Z" />
+                  <div class="model-menu-item" data-model="research-mode"
+                    onclick="selectModelFromMenu('research-mode', '研究模式', 'research-mode')">
+                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
+                      <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h338q16 0 30.5 6t25.5 17l129 129q11 11 17 25.5t6 30.5v104q-18-7-38-9.5t-42-.5v-80H520v-142H200v560h246q7 22 20 42t30 38H200Zm80-160h166q4-21 12-40t21-40H280v80Zm0-160h320v-80H280v80Zm386 360q-79 0-134.5-55.5T476-270q0-79 55.5-134.5T666-460q79 0 134.5 55.5T856-270q0 79-55.5 134.5T666-80Zm-40-130 140-140-42-42-98 98-40-40-42 42 82 82Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-fast">极速模式</div>
+                      <div class="model-menu-title" data-i18n="research-mode">研究模式</div>
                     </div>
                   </div>
 
                   <div class="model-menu-divider"></div>
 
                   <!-- 专家模式 -->
-                  <div class="model-menu-item" data-model="kimi-k2.5"
-                    onclick="selectModelFromMenu('kimi-k2.5', '专家模式', 'model-expert')">
+                  <div class="model-menu-item" data-model="deepseek-pro"
+                    onclick="selectModelFromMenu('deepseek-pro', '专家模式', 'model-expert')">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
@@ -716,6 +782,18 @@
                     </svg>
                     <div class="model-menu-content">
                       <div class="model-menu-title" data-i18n="model-expert">专家模式</div>
+                    </div>
+                  </div>
+
+                  <div class="model-menu-divider"></div>
+
+                  <div class="model-menu-item" data-model="deepseek-flash"
+                    onclick="selectModelFromMenu('deepseek-flash', '极速模型', 'model-fast')">
+                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="24px" height="24px" fill="currentColor" aria-hidden="true">
+                      <path d="M418-80 520-360H320l220-520h100L538-520h222L518-80H418Z" />
+                    </svg>
+                    <div class="model-menu-content">
+                      <div class="model-menu-title" data-i18n="model-fast">极速模型</div>
                     </div>
                   </div>
 
@@ -741,35 +819,36 @@
                   <div class="all-models-section" id="allModelsSection" style="display: none;">
                     <div class="model-menu-divider"></div>
 
-                    <div class="model-menu-item" data-model="deepseek-v3"
-                      onclick="selectModelFromMenu('deepseek-v3', 'DeepSeek V4')">
+                    <div class="model-menu-item" data-model="deepseek-pro"
+                      onclick="selectModelFromMenu('deepseek-pro', 'DeepSeek Pro')">
                       <div class="model-menu-content">
-                        <div class="model-menu-title">DeepSeek V4</div>
+                        <div class="model-menu-title">DeepSeek Pro</div>
                       </div>
                     </div>
 
-                    <!-- DeepSeek Speciale 已隐藏 (临时模型已过期) -->
-
-                    <div class="model-menu-divider"></div>
-
-                    <!-- Kimi -->
-                    <div class="model-menu-item" data-model="kimi-k2.5"
-                      onclick="selectModelFromMenu('kimi-k2.5', 'Kimi')">
+                    <div class="model-menu-item" data-model="deepseek-flash"
+                      onclick="selectModelFromMenu('deepseek-flash', 'DeepSeek Flash')">
                       <div class="model-menu-content">
-                        <div class="model-menu-title">Kimi</div>
+                        <div class="model-menu-title">DeepSeek Flash</div>
                       </div>
                     </div>
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Qwen 免费模型 -->
-                    <div class="model-menu-item" data-model="qwen2.5-7b"
-                      onclick="selectModelFromMenu('qwen2.5-7b', 'Qwen')">
+                    <!-- Qwen / Kimi -->
+                    <div class="model-menu-item" data-model="qwen3.6-35b-a3b"
+                      onclick="selectModelFromMenu('qwen3.6-35b-a3b', 'Qwen 3.6')">
                       <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">Qwen</span><span class="model-badge free" data-i18n="model-badge-free">免费</span></div>
+                        <div class="model-menu-title">Qwen 3.6</div>
                       </div>
                     </div>
 
+                    <div class="model-menu-item" data-model="kimi-k2.6"
+                      onclick="selectModelFromMenu('kimi-k2.6', 'Kimi K2.6')">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title">Kimi K2.6</div>
+                      </div>
+                    </div>
 
                     <div class="model-menu-divider"></div>
 
@@ -781,17 +860,17 @@
                       </div>
                     </div>
 
-                    <div class="model-menu-item" data-model="gpt-5.5"
-                      onclick="selectModelFromMenu('gpt-5.5', 'GPT-5.5')">
+                    <div class="model-menu-item" data-model="north-mini-code"
+                      onclick="selectModelFromMenu('north-mini-code', 'Mimo Code')">
                       <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">GPT-5.5</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
+                        <div class="model-menu-title"><span class="model-menu-name">Mimo Code</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
                       </div>
                     </div>
 
-                    <div class="model-menu-item" data-model="grok-4.2"
-                      onclick="selectModelFromMenu('grok-4.2', 'Grok 4.2')">
+                    <div class="model-menu-item" data-model="nemotron-3-ultra"
+                      onclick="selectModelFromMenu('nemotron-3-ultra', 'Nemotron 3 Ultra')">
                       <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">Grok 4.2</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
+                        <div class="model-menu-title"><span class="model-menu-name">Nemotron 3 Ultra</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
                       </div>
                     </div>
 
@@ -815,7 +894,7 @@
 
                     <div class="model-menu-divider"></div>
 
-                    <!-- Gemma Google API 限免模型 -->
+                    <!-- Gemma OpenRouter 限免模型 -->
                     <div class="model-menu-item" data-model="gemma"
                       onclick="selectModelFromMenu('gemma', 'Gemma')">
                       <div class="model-menu-content">
@@ -908,7 +987,9 @@
             <div class="chatflow-input-row">
               <textarea id="chatflowMessageInput" class="chatflow-message-input" rows="1"
                 data-i18n-placeholder="chatflow-input-placeholder" placeholder="输入消息，让 AI 帮你梳理并修改画布" oninput="autoResizeChatFlowInput()"
-                onkeydown="handleChatFlowInputKeydown(event)"></textarea>
+                onkeydown="handleChatFlowInputKeydown(event)"
+                oncompositionstart="handleTextInputCompositionStart(event)"
+                oncompositionend="handleTextInputCompositionEnd(event)"></textarea>
             </div>
             <div class="chatflow-input-toolbar">
               <button type="button" class="chatflow-toolbar-btn" id="chatflowInternetToggle"
@@ -935,12 +1016,14 @@
                   </svg>
                 </button>
                 <div class="chatflow-model-menu" id="chatflowModelMenu">
-                  <div class="model-menu-item" data-model="auto" onclick="selectChatFlowModel('auto', 'Auto')">Auto</div>
-                  <div class="model-menu-item" data-model="kimi-k2.5" onclick="selectChatFlowModel('kimi-k2.5', 'Kimi')">Kimi</div>
-                  <div class="model-menu-item" data-model="qwen2.5-7b" onclick="selectChatFlowModel('qwen2.5-7b', 'Qwen')">Qwen</div>
-                  <div class="model-menu-item" data-model="chatgpt-gpt-oss-120b" onclick="selectChatFlowModel('chatgpt-gpt-oss-120b', 'ChatGPT')">ChatGPT</div>
-                  <div class="model-menu-item" data-model="gpt-5.5" onclick="selectChatFlowModel('gpt-5.5', 'GPT-5.5')">GPT-5.5</div>
-                  <div class="model-menu-item" data-model="grok-4.2" onclick="selectChatFlowModel('grok-4.2', 'Grok 4.2')">Grok 4.2</div>
+	                  <div class="model-menu-item" data-model="auto" onclick="selectChatFlowModel('auto', 'Auto')">Auto</div>
+		                  <div class="model-menu-item" data-model="qwen3.6-35b-a3b" onclick="selectChatFlowModel('qwen3.6-35b-a3b', 'Qwen 3.6')">Qwen 3.6</div>
+		                  <div class="model-menu-item" data-model="kimi-k2.6" onclick="selectChatFlowModel('kimi-k2.6', 'Kimi K2.6')">Kimi K2.6</div>
+	                  <div class="model-menu-item" data-model="deepseek-flash" onclick="selectChatFlowModel('deepseek-flash', 'DeepSeek Flash')">DeepSeek Flash</div>
+	                  <div class="model-menu-item" data-model="deepseek-pro" onclick="selectChatFlowModel('deepseek-pro', 'DeepSeek Pro')">DeepSeek Pro</div>
+	                  <div class="model-menu-item" data-model="chatgpt-gpt-oss-120b" onclick="selectChatFlowModel('chatgpt-gpt-oss-120b', 'ChatGPT')">ChatGPT</div>
+	                  <div class="model-menu-item" data-model="north-mini-code" onclick="selectChatFlowModel('north-mini-code', 'Mimo Code')">Mimo Code</div>
+	                  <div class="model-menu-item" data-model="nemotron-3-ultra" onclick="selectChatFlowModel('nemotron-3-ultra', 'Nemotron 3 Ultra')">Nemotron 3 Ultra</div>
                   <div class="model-menu-item" data-model="anthropic/claude-sonnet-4.6" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">Claude Sonnet 4.6</div>
                   <div class="model-menu-item" data-model="anthropic/claude-3-haiku" data-required-membership="MAX" onclick="selectChatFlowModel('anthropic/claude-3-haiku', 'Claude 3 Haiku')">Claude 3 Haiku</div>
                   <div class="model-menu-item" data-model="gemma" onclick="selectChatFlowModel('gemma', 'Gemma')">Gemma</div>
@@ -1338,6 +1421,47 @@
                 </div>
               </div>
 
+              <div class="settings-subsection">
+                <div class="settings-section-row settings-subsection-row">
+                  <div>
+                    <div class="settings-subsection-title" data-i18n="security-settings-title">安全</div>
+                    <p class="setting-description" data-i18n="settings-security-desc">二步验证和账号安全设置</p>
+                  </div>
+                </div>
+                <div class="settings-two-factor-card" id="settingsTwoFactorCard"></div>
+              </div>
+
+              <div class="settings-subsection settings-danger-zone" id="settingsAccountDeleteSection">
+                <div class="settings-section-row settings-subsection-row">
+                  <div>
+                    <div class="settings-subsection-title" data-i18n="account-delete-title">注销账号</div>
+                    <p class="setting-description" data-i18n="account-delete-desc">永久删除账号、对话、记忆、上传文件和设置，无法恢复。</p>
+                  </div>
+                </div>
+                <div class="settings-form-grid settings-account-delete-grid">
+                  <div class="setting-item">
+                    <label class="setting-label" for="accountDeletePasswordInput" data-i18n="account-delete-password-label">当前密码</label>
+                    <input type="password" class="setting-input" id="accountDeletePasswordInput" maxlength="128"
+                      autocomplete="current-password" data-i18n-placeholder="password-current-placeholder"
+                      placeholder="输入当前密码">
+                  </div>
+                  <div class="setting-item">
+                    <label class="setting-label" for="accountDeleteConfirmInput" data-i18n="account-delete-confirm-label">确认词</label>
+                    <input type="text" class="setting-input" id="accountDeleteConfirmInput" maxlength="24"
+                      autocomplete="off" data-i18n-placeholder="account-delete-confirm-placeholder"
+                      placeholder="输入 注销账号">
+                  </div>
+                  <div class="setting-item settings-account-delete-2fa" id="accountDeleteTwoFactorItem" hidden>
+                    <label class="setting-label" for="accountDeleteTwoFactorInput" data-i18n="account-delete-2fa-label">Authenticator 验证码</label>
+                    <input type="text" class="setting-input" id="accountDeleteTwoFactorInput" inputmode="numeric"
+                      maxlength="6" autocomplete="one-time-code" data-i18n-placeholder="two-factor-placeholder"
+                      placeholder="6 位验证码">
+                  </div>
+                </div>
+                <button type="button" class="settings-inline-save settings-danger-action" id="settingsAccountDeleteBtn"
+                  onclick="deleteCurrentAccount()" data-i18n="account-delete-button">注销账号</button>
+              </div>
+
               <div class="settings-account-logout-row">
                 <button type="button" class="settings-logout-link" onclick="handleLogout()" data-i18n="logout">登出</button>
               </div>
@@ -1384,6 +1508,83 @@
             </div>
             <textarea class="system-prompt-input" id="systemPrompt" rows="8"
               data-i18n-placeholder="preferences-placeholder" placeholder="例如: 我希望获得简短回复..."></textarea>
+            <div class="settings-subsection settings-temp-chat-section">
+              <div class="settings-section-row settings-subsection-row">
+                <div>
+                  <div class="settings-subsection-title" data-i18n="temp-chat-settings-title">临时对话模式</div>
+                  <p class="setting-description" data-i18n="temp-chat-settings-desc">控制点击临时对话按钮时默认进入保存临时或传统临时。</p>
+                </div>
+              </div>
+              <div class="settings-choice-row temp-chat-choice-row">
+                <button type="button" class="settings-choice-btn" data-temp-chat-mode="ask"
+                  onclick="setNewChatDefaultModeFromSettings('ask')" data-i18n="temp-chat-mode-ask">每次询问</button>
+                <button type="button" class="settings-choice-btn" data-temp-chat-mode="saved-temp"
+                  onclick="setNewChatDefaultModeFromSettings('saved-temp')" data-i18n="temp-chat-mode-saved">保存临时</button>
+                <button type="button" class="settings-choice-btn" data-temp-chat-mode="classic-temp"
+                  onclick="setNewChatDefaultModeFromSettings('classic-temp')" data-i18n="temp-chat-mode-classic">传统临时</button>
+              </div>
+            </div>
+            <div class="settings-subsection settings-tab-title-section">
+              <div class="settings-section-row settings-subsection-row">
+                <div>
+                  <div class="settings-subsection-title" data-i18n="tab-title-settings-title">标签页动画</div>
+                  <p class="setting-description" data-i18n="tab-title-settings-desc">控制浏览器标签页标题的显示方式。</p>
+                </div>
+              </div>
+              <select id="tabTitleModeSelect" class="setting-input tab-title-select" onchange="setTabTitleModeFromSettings(this.value)">
+                <option value="marquee" data-i18n="tab-title-mode-marquee">品牌跑马灯</option>
+                <option value="static" data-i18n="tab-title-mode-static">关闭（静态 RAI）</option>
+                <option value="greeting" data-i18n="tab-title-mode-greeting">问候语</option>
+                <option value="title" data-i18n="tab-title-mode-title">对话标题</option>
+                <option value="custom" data-i18n="tab-title-mode-custom">自定义</option>
+              </select>
+              <div class="memory-add-row" id="tabTitleCustomRow" style="display: none;">
+                <input type="text" class="setting-input" id="tabTitleCustomInput" maxlength="80"
+                  data-i18n-placeholder="tab-title-custom-placeholder" placeholder="RAI 后面要显示的文字"
+                  oninput="setTabTitleCustomTextFromSettings(this.value)">
+              </div>
+              <p class="setting-description" data-i18n="tab-title-custom-hint">仅在“自定义”模式下生效，显示为 RAI + 你的文字。</p>
+            </div>
+            <div class="settings-subsection settings-browser-notify-section">
+              <div class="memory-toggle-row">
+                <div>
+                  <div class="setting-label" data-i18n="browser-notify-settings-title">回复浏览器通知</div>
+                  <p class="setting-description" data-i18n="browser-notify-settings-desc">当 RAI 回复好而你未查看页面时，浏览器弹出系统通知提醒你。</p>
+                </div>
+                <button type="button" class="more-menu-switch browser-notify-switch" id="browserNotifySwitch"
+                  onclick="toggleBrowserNotifySetting()" aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="browserNotifyToggle"></span>
+                </button>
+              </div>
+              <p class="setting-description" id="browserNotifyHint"></p>
+            </div>
+            <div class="settings-subsection settings-memory-section">
+              <div class="settings-section-row settings-subsection-row">
+                <div>
+                  <div class="settings-subsection-title" data-i18n="memory-settings-title">记忆</div>
+                  <p class="setting-description" data-i18n="memory-settings-desc">普通对话会使用长期记忆和最近 10 条对话标题；临时对话完全隔离。</p>
+                </div>
+                <button type="button" class="settings-inline-save secondary" onclick="clearAllUserMemories()"
+                  data-i18n="memory-clear-btn">清空记忆</button>
+              </div>
+              <div class="memory-toggle-row">
+                <div>
+                  <div class="setting-label" data-i18n="memory-enabled-label">长期记忆</div>
+                  <p class="setting-description" data-i18n="memory-enabled-desc">开启后，RAI 会自动记住稳定的个人信息和偏好。</p>
+                </div>
+                <button type="button" class="more-menu-switch memory-switch" id="memoryEnabledSwitch"
+                  onclick="toggleLongMemorySetting()" aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="memoryEnabledToggle"></span>
+                </button>
+              </div>
+              <div class="memory-add-row">
+                <input type="text" class="setting-input memory-add-input" id="memoryAddInput" maxlength="360"
+                  data-i18n-placeholder="memory-add-placeholder" placeholder="添加一条你希望 RAI 长期记住的信息">
+                <button type="button" class="settings-inline-save" onclick="addManualMemory()"
+                  data-i18n="memory-add-btn">添加记忆</button>
+              </div>
+              <div class="memory-list" id="settingsMemoryList"></div>
+            </div>
           </section>
 
           <section class="settings-panel tauri-desktop-only is-hidden" id="settingsPanel-desktop" data-settings-panel="desktop"
@@ -1416,7 +1617,7 @@
               <button type="button" class="settings-inline-save secondary" id="notificationPauseBtn"
                 onclick="toggleNotificationsPaused()" data-i18n="notifications-pause">暂停红点</button>
             </div>
-            <div class="settings-notice-hero">
+            <div class="settings-notice-hero" id="defaultNotificationHero">
               <div class="settings-notice-icon" aria-hidden="true">
                 <img src="icons/settings/notifications_unread.svg" alt="">
               </div>
@@ -1427,7 +1628,7 @@
               </div>
             </div>
             <div class="settings-notification-actions">
-              <a class="settings-install-download" href="https://rai.000339.xyz/" target="_blank" rel="noopener noreferrer"
+              <a class="settings-install-download" id="defaultNotificationLink" href="https://rai.000339.xyz/" target="_blank" rel="noopener noreferrer"
                 data-i18n="notifications-open-new-domain">打开新域名</a>
               <button type="button" class="settings-install-btn" onclick="markRaiNotificationsRead()"
                 data-i18n="notifications-mark-read">标记已读</button>
@@ -1530,9 +1731,9 @@
                 <span data-i18n="settings-about-github-label">GitHub</span>
                 <span>github.com/Rick-953/RAI</span>
               </a>
-              <a class="settings-about-link" href="mailto:rick080402+raisupport@gmail.com">
+              <a class="settings-about-link" href="mailto:support@example.com">
                 <span data-i18n="settings-about-author-label">作者 Rick</span>
-                <span>rick080402+raisupport@gmail.com</span>
+                <span>support@example.com</span>
               </a>
               <button type="button" class="settings-about-link settings-about-action" onclick="replayOnboarding()">
                 <span data-i18n="settings-replay-onboarding">重新观看欢迎引导</span>
@@ -1554,14 +1755,13 @@
                 <div class="settings-install-actions">
                   <button type="button" class="settings-install-btn" id="pwaInstallBtn" onclick="handlePwaInstallClick()"
                     data-i18n="settings-install-action">安装 RAI</button>
-                  <a class="settings-install-download" href="/downloads/RAI-macOS-arm64-0.10.9.17.dmg"
-                    data-i18n="settings-install-download-macos">下载 macOS 桌面版</a>
                 </div>
               </div>
               <ol class="settings-install-steps" id="pwaInstallSteps"></ol>
             </div>
             <div class="settings-about-timeline" aria-label="RAI update timeline">
-              <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">更新记录</div>
+              <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">RAI 的成长故事</div>
+              <p class="settings-about-timeline-intro" data-i18n="settings-update-timeline-intro">从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。</p>
               <div class="settings-timeline-list" id="settingsTimelineList"></div>
               <p class="settings-about-timeline-source" data-i18n="settings-update-timeline-source">来源：本机历史版本目录、运维记录、历史 release manifest、GitHub README。</p>
             </div>
@@ -1594,17 +1794,8 @@
           <div class="model-description" data-i18n="model-route-smart">智能路由</div>
         </div>
 
-        <!-- 极速模式 -->
-        <div class="model-card" data-model="qwen2.5-7b" onclick="selectModelFromModal('qwen2.5-7b', '极速模式')">
-          <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-            <path d="m280-80 160-300-320-40 480-460h80L520-580l320 40L360-80h-80Z" />
-          </svg>
-          <div class="model-label" data-i18n="model-fast">极速模式</div>
-          <div class="model-description" data-i18n="model-desc-fast">快速响应</div>
-        </div>
-
         <!-- 专家模式 -->
-        <div class="model-card" data-model="kimi-k2.5" onclick="selectModelFromModal('kimi-k2.5', '专家模式')">
+        <div class="model-card" data-model="deepseek-pro" onclick="selectModelFromModal('deepseek-pro', '专家模式')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
             <path
               d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
@@ -1613,13 +1804,25 @@
           <div class="model-description" data-i18n="model-desc-expert">复杂任务</div>
         </div>
 
-        <!-- DeepSeek V4 -->
-        <div class="model-card" data-model="deepseek-v3" onclick="selectModelFromModal('deepseek-v3', 'DeepSeek V4')">
-          <div class="model-label">DeepSeek V4</div>
-          <div class="model-description">1M / Thinking</div>
+        <div class="model-card" data-model="research-mode" onclick="selectModelFromModal('research-mode', '研究模式')">
+          <div class="model-label" data-i18n="research-mode">研究模式</div>
+          <div class="model-description" data-i18n="research-mode-desc">多模型讨论</div>
         </div>
 
-        <!-- DeepSeek Speciale 已隐藏 (临时模型已过期) -->
+        <div class="model-card" data-model="deepseek-flash" onclick="selectModelFromModal('deepseek-flash', 'DeepSeek Flash')">
+          <div class="model-label">DeepSeek Flash</div>
+          <div class="model-description" data-i18n="model-desc-fast">快速响应</div>
+        </div>
+
+        <div class="model-card" data-model="qwen3.6-35b-a3b" onclick="selectModelFromModal('qwen3.6-35b-a3b', 'Qwen 3.6')">
+          <div class="model-label">Qwen 3.6</div>
+          <div class="model-description">35B A3B</div>
+        </div>
+
+        <div class="model-card" data-model="kimi-k2.6" onclick="selectModelFromModal('kimi-k2.6', 'Kimi K2.6')">
+          <div class="model-label">Kimi K2.6</div>
+          <div class="model-description">K2.6</div>
+        </div>
 
         <!-- ChatGPT OpenRouter -->
         <div class="model-card" data-model="chatgpt-gpt-oss-120b" onclick="selectModelFromModal('chatgpt-gpt-oss-120b', 'ChatGPT')">
@@ -1627,16 +1830,14 @@
           <div class="model-description" data-i18n="model-desc-openrouter-limited">OpenRouter 限免</div>
         </div>
 
-        <!-- GPT-5.5 NewAPI -->
-        <div class="model-card" data-model="gpt-5.5" onclick="selectModelFromModal('gpt-5.5', 'GPT-5.5')">
-          <div class="model-label">GPT-5.5</div>
-          <div class="model-description" data-i18n="model-desc-free-daily">限免：free 每日 10 次</div>
+        <div class="model-card" data-model="north-mini-code" onclick="selectModelFromModal('north-mini-code', 'Mimo Code')">
+          <div class="model-label">Mimo Code</div>
+          <div class="model-description" data-i18n="model-desc-openrouter-limited">OpenRouter 限免</div>
         </div>
 
-        <!-- Grok OpenRouter -->
-        <div class="model-card" data-model="grok-4.2" onclick="selectModelFromModal('grok-4.2', 'Grok 4.2')">
-          <div class="model-label">Grok 4.2</div>
-          <div class="model-description" data-i18n="model-desc-limited">限免模型</div>
+        <div class="model-card" data-model="nemotron-3-ultra" onclick="selectModelFromModal('nemotron-3-ultra', 'Nemotron 3 Ultra')">
+          <div class="model-label">Nemotron 3 Ultra</div>
+          <div class="model-description" data-i18n="model-desc-openrouter-limited">OpenRouter 限免</div>
         </div>
 
         <!-- Claude Sonnet -->
@@ -1651,10 +1852,10 @@
           <div class="model-description" data-i18n="model-desc-max-only">仅 MAX 可用</div>
         </div>
 
-        <!-- Gemma Google API -->
+        <!-- Gemma OpenRouter -->
         <div class="model-card" data-model="gemma" onclick="selectModelFromModal('gemma', 'Gemma')">
           <div class="model-label">Gemma</div>
-          <div class="model-description" data-i18n="model-desc-google-limited">Google API 限免</div>
+          <div class="model-description" data-i18n="model-desc-openrouter-limited">OpenRouter 限免</div>
         </div>
 
         <!-- LMStudio Local -->
@@ -1679,11 +1880,13 @@
         <label data-i18n="selectModel">选择模型</label>
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
-          <option value="qwen2.5-7b" data-i18n="fastMode">极速</option>
-          <option value="kimi-k2.5" data-i18n="expertMode">专家</option>
+          <option value="deepseek-pro" data-i18n="expertMode">专家</option>
+          <option value="deepseek-flash" data-i18n="model-fast">极速模型</option>
+          <option value="qwen3.6-35b-a3b">Qwen 3.6</option>
+          <option value="kimi-k2.6">Kimi K2.6</option>
           <option value="chatgpt-gpt-oss-120b">ChatGPT</option>
-          <option value="gpt-5.5" data-i18n="regenerate-gpt55-limited">GPT-5.5 (限免10次/天)</option>
-          <option value="grok-4.2" data-i18n="regenerate-grok-limited">Grok 4.2 (限免)</option>
+          <option value="north-mini-code">Mimo Code</option>
+          <option value="nemotron-3-ultra">Nemotron 3 Ultra</option>
           <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6 (MAX)</option>
           <option value="anthropic/claude-3-haiku">Claude 3 Haiku (MAX)</option>
           <option value="gemma">Gemma</option>
@@ -1713,7 +1916,9 @@
     </div>
   </div>
 
-  <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelected(event)">
+  <input type="file" id="fileInput"
+    accept="image/*,video/*,audio/*,.txt,.md,.json,.xml,.csv,.log,.yaml,.yml,.ini,.conf,.js,.ts,.jsx,.tsx,.py,.java,.c,.cpp,.h,.hpp,.css,.scss,.less,.html,.vue,.svelte,.swift,.kt,.go,.rs,.rb,.php,.sh,.bash,.zsh,.sql,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+    style="display: none;" onchange="handleFileSelected(event)">
   <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display: none;"
     onchange="handleAvatarSelected(event)">
 
@@ -1722,9 +1927,7 @@
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script src="app.js?v=20260611-security-pentest-v010921"></script>
+  <script src="app.js?v=20260702-security-review-v010962a"></script>
 </body>
 
 </html>
-
-

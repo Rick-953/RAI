@@ -1,17 +1,65 @@
 // ==================== ChatFlow iframe 模式检测 ====================
 // 检测是否在 ChatFlow iframe 模式下运行
 const isChatFlowIframeMode = new URLSearchParams(window.location.search).get('mode') === 'chatflow';
+const RAI_RUNTIME_CONFIG = window.__RAI_RUNTIME_CONFIG || {};
+const BRAND_NAME = String(RAI_RUNTIME_CONFIG.brandName || 'RAI').trim() || 'RAI';
+const BRAND_SHORT_NAME = String(RAI_RUNTIME_CONFIG.brandShortName || BRAND_NAME).trim() || BRAND_NAME;
+const BRAND_BADGE = String(RAI_RUNTIME_CONFIG.brandBadge || '').trim();
+const BRAND_TITLE = String(RAI_RUNTIME_CONFIG.brandTitle || '').trim() || [BRAND_NAME, BRAND_BADGE].filter(Boolean).join(' ') || BRAND_NAME;
+const RUNTIME_PUBLIC_BASE_URL = String(RAI_RUNTIME_CONFIG.publicBaseUrl || '').trim();
+const RAI_SUPPORT_EMAIL = String(RAI_RUNTIME_CONFIG.supportEmail || 'support@example.com').trim() || 'support@example.com';
+const RAI_STAR_REWARD_EMAIL = String(RAI_RUNTIME_CONFIG.starRewardEmail || RAI_SUPPORT_EMAIL).trim() || RAI_SUPPORT_EMAIL;
+const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnabled !== false;
+const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.000339.xyz/').trim() || 'https://rai.000339.xyz/';
 
 // 存储从父窗口接收的画布上下文
 let chatFlowCanvasContext = '';
 let pendingCanvasCallback = null;
 
+function getRuntimeOrigin(value) {
+  try {
+    return new URL(String(value || '')).origin;
+  } catch (error) {
+    return '';
+  }
+}
+
+function formatRuntimeText(value) {
+  let text = String(value || '');
+  if (!text) return '';
+  text = text.replaceAll('{{brandName}}', BRAND_NAME);
+  text = text.replaceAll('{{brandShortName}}', BRAND_SHORT_NAME);
+  text = text.replaceAll('{{brandTitle}}', BRAND_TITLE);
+  text = text.replaceAll('{{brandBadge}}', BRAND_BADGE);
+  text = text.replaceAll('{{defaultDomainNoticeUrl}}', DEFAULT_DOMAIN_NOTICE_URL);
+  if (DEFAULT_DOMAIN_NOTICE_URL !== 'https://rai.000339.xyz/') {
+    text = text.replaceAll('https://rai.000339.xyz/', DEFAULT_DOMAIN_NOTICE_URL);
+  }
+  return text;
+}
+
+function applyBrandLabelWithBadge(element, label = BRAND_SHORT_NAME) {
+  if (!element) return;
+  element.textContent = label;
+  element.classList.add('brand-with-badge');
+  const existingBadge = element.querySelector('.brand-badge-chip');
+  if (existingBadge) existingBadge.remove();
+  if (!BRAND_BADGE) return;
+  const badge = document.createElement('span');
+  badge.className = 'brand-badge-chip';
+  badge.textContent = BRAND_BADGE;
+  element.appendChild(badge);
+}
+
 function getTrustedChatFlowParentOrigins() {
-  return new Set([
+  const origins = new Set([
     window.location.origin,
     'https://rai.rick.quest',
     'https://rai.000339.xyz'
   ]);
+  const runtimeOrigin = getRuntimeOrigin(RUNTIME_PUBLIC_BASE_URL);
+  if (runtimeOrigin) origins.add(runtimeOrigin);
+  return origins;
 }
 
 function isTrustedChatFlowParentOrigin(origin) {
@@ -177,6 +225,90 @@ function sanitizeReasoningText(text) {
   return escaped;
 }
 
+const INTERNAL_ASSISTANT_DISPLAY_TITLES = new Set([
+  '分析用户意图',
+  '用户意图分析',
+  '搜索最新信息',
+  '搜索资料',
+  '安全判断',
+  '安全检查',
+  '工具调用',
+  '调用工具',
+  '搜索策略'
+]);
+
+function normalizeAssistantDisplayHeading(line = '') {
+  return String(line || '')
+    .trim()
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^[-*+]\s+/, '')
+    .replace(/^\*{1,3}/, '')
+    .replace(/\*{1,3}$/, '')
+    .replace(/[：:]\s*$/, '')
+    .trim();
+}
+
+function isInternalAssistantDisplayHeading(line = '') {
+  return INTERNAL_ASSISTANT_DISPLAY_TITLES.has(normalizeAssistantDisplayHeading(line));
+}
+
+function isAssistantDisplayBoundary(line = '') {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return false;
+  if (/^#{1,6}\s+\S/.test(trimmed)) return true;
+  if (/^\*{1,3}[^*\n]{1,60}\*{1,3}\s*[：:]?$/.test(trimmed)) return true;
+  if (/^(?:[一二三四五六七八九十]+|[0-9]+)[、.]\s*\S/.test(trimmed)) return true;
+  return /^(?:核心|结论|回答|答案|要点|简单说|总体|根据|DeepSeek|DSV4P|DSv4P|Dsv4p)\b/i.test(trimmed);
+}
+
+function removeInternalAssistantDisplaySections(text = '') {
+  const lines = String(text || '').split(/\r?\n/);
+  const kept = [];
+  let skipping = false;
+
+  for (const line of lines) {
+    if (isInternalAssistantDisplayHeading(line)) {
+      skipping = true;
+      continue;
+    }
+    if (skipping) {
+      if (isAssistantDisplayBoundary(line) && !isInternalAssistantDisplayHeading(line)) {
+        skipping = false;
+        kept.push(line);
+      }
+      continue;
+    }
+    kept.push(line);
+  }
+
+  return kept.join('\n');
+}
+
+function sanitizeAssistantDisplayText(text = '') {
+  let output = String(text || '');
+  output = output
+    .replace(/\bDeepSek\b/g, 'DeepSeek')
+    .replace(/\bDeepsek\b/g, 'DeepSeek')
+    .replace(/\[object Object\]/g, '')
+    .replace(/```(?:xml|html)?\s*<function_calls\b[\s\S]*?<\/function_calls>\s*```/gi, '')
+    .replace(/<ds_safety\b[^>]*>[\s\S]*?(?:<\/ds_safety>|$)/gi, '')
+    .replace(/<function_calls\b[^>]*>[\s\S]*?(?:<\/function_calls>|$)/gi, '')
+    .replace(/<invoke\b[^>]*>[\s\S]*?(?:<\/invoke>|$)/gi, '')
+    .replace(/<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi, '')
+    .replace(/<\|[^|]+\|>/g, '')
+    .replace(/functions\.\w+:\d+/g, '')
+    .replace(/(?:^|\n)\s*用户(?:询问的是|想了解|问的是)[^\n]*(?:政治敏感|正常技术问题)[^\n]*(?=\n|$)/g, '\n')
+    .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
+
+  output = removeInternalAssistantDisplaySections(output);
+
+  if (/^\s*(?:\{[\s\S]*"(?:query|name|arguments)"[\s\S]*\}|\[[\s\S]*"(?:query|name|arguments)"[\s\S]*\])\s*$/.test(output)) {
+    return '';
+  }
+
+  return output.replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
 function renderMarkdownWithMath(text, isStreaming = false) {
   if (!text) return '';
 
@@ -283,6 +415,61 @@ function renderMarkdownWithMath(text, isStreaming = false) {
   html = wrapTablesInHtml(html);
 
   return sanitizeRenderedHtml(html);
+}
+
+function removeGeneratedImageElement(img) {
+  if (!img) return;
+  const parent = img.parentElement;
+  img.remove();
+  if (
+    parent &&
+    parent.tagName === 'P' &&
+    parent.textContent.trim() === '' &&
+    parent.querySelectorAll('img').length === 0
+  ) {
+    parent.remove();
+  }
+}
+
+function hydrateRenderedImages(container) {
+  if (!container) return;
+  const seenGenerated = new Set();
+  container.querySelectorAll('img').forEach((img) => {
+    const src = img.getAttribute('src') || '';
+    const isGeneratedImage = src.startsWith('/generated-images/') || src.includes('/generated-images/');
+    if (isGeneratedImage) {
+      if (seenGenerated.has(src)) {
+        removeGeneratedImageElement(img);
+        return;
+      }
+      seenGenerated.add(src);
+    }
+
+    const handleImageError = () => {
+      if (isGeneratedImage) {
+        removeGeneratedImageElement(img);
+        return;
+      }
+      img.style.display = 'none';
+      if (!img.nextElementSibling?.classList?.contains('image-error')) {
+        const error = document.createElement('span');
+        error.className = 'image-error';
+        error.textContent = isChineseLanguage(appState.language)
+          ? '图片暂时不能加载'
+          : 'This image could not be loaded.';
+        img.insertAdjacentElement('afterend', error);
+      }
+    };
+
+    img.addEventListener('error', handleImageError, { once: true });
+    const verify = () => {
+      if (img.isConnected && img.complete && img.naturalWidth === 0) {
+        handleImageError();
+      }
+    };
+    verify();
+    setTimeout(verify, 250);
+  });
 }
 
 function looksLikeMarkdownTableRow(line) {
@@ -645,12 +832,44 @@ function convertLegacyBarChart(code) {
 
 // HTML转义辅助函数
 function escapeHtml(str) {
-  return str
+  return String(str ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function normalizeSafeLinkUrl(value, fallback = '#') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  if (raw.startsWith('#')) return raw.slice(0, 200);
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return url.href;
+    if (url.origin === window.location.origin && url.pathname.startsWith('/')) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+  } catch (error) {
+    return fallback;
+  }
+  return fallback;
+}
+
+function normalizeSafeImageUrl(value, fallback = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  if (/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(raw)) return raw;
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+    if (url.origin === window.location.origin && url.pathname.startsWith('/')) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+  } catch (error) {
+    return fallback;
+  }
+  return fallback;
 }
 
 // 兼容旧代码的空函数
@@ -668,7 +887,10 @@ function renderCitations(html, sources) {
     const normalizedMarker = String(markerText || '').toUpperCase();
     const source = annotatedSources.find((item) => String(item.marker || '').toUpperCase() === normalizedMarker);
     if (source && source.url) {
-      return `<a href="${source.url}" target="_blank" rel="noopener" class="citation-badge citation-badge-${source.markerType || 'numeric'}" title="${source.title || '来源'}">[${normalizedMarker}]</a>`;
+      const safeUrl = escapeHtml(normalizeSafeLinkUrl(source.url));
+      const safeTitle = escapeHtml(source.title || '来源');
+      const safeMarkerType = escapeHtml(String(source.markerType || 'numeric').replace(/[^a-z0-9_-]/gi, ''));
+      return `<a href="${safeUrl}" target="_blank" rel="noopener" class="citation-badge citation-badge-${safeMarkerType}" title="${safeTitle}">[${escapeHtml(normalizedMarker)}]</a>`;
     }
     return match;
   });
@@ -688,22 +910,20 @@ function renderSourcesList(sources, language) {
   let html = `
         <div class="sources-list is-collapsed">
           <div class="sources-header">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-            </svg>
+            <span class="sources-header-icon" aria-hidden="true">🔎</span>
             <span>${headerText}</span>
-            <button
-              type="button"
+            <span
+              role="button"
+              tabindex="0"
               class="sources-toggle-btn"
               data-count="${sourceCount}"
               data-label-expand="${expandText}"
               data-label-collapse="${collapseText}"
               data-expanded="false"
-              onclick="toggleSourcesList(this)"
             >
               <span class="sources-toggle-text">${expandText} (${sourceCount})</span>
               <span class="sources-toggle-icon"></span>
-            </button>
+            </span>
           </div>
       `;
 
@@ -717,16 +937,25 @@ function renderSourcesList(sources, language) {
         `;
 
     group.sources.forEach((source) => {
-      const domain = source.site_name || (source.url ? new URL(source.url).hostname.replace('www.', '') : '');
-      const faviconHtml = source.favicon
-        ? `<img class="source-favicon" src="${source.favicon}" alt="" onerror="this.style.display='none'">`
+      const safeSourceUrl = normalizeSafeLinkUrl(source.url || '#');
+      let domain = source.site_name || '';
+      if (!domain && safeSourceUrl && safeSourceUrl !== '#') {
+        try {
+          domain = new URL(safeSourceUrl, window.location.origin).hostname.replace('www.', '');
+        } catch (error) {
+          domain = '';
+        }
+      }
+      const safeFaviconUrl = normalizeSafeImageUrl(source.favicon || '');
+      const faviconHtml = safeFaviconUrl
+        ? `<img class="source-favicon" src="${escapeHtml(safeFaviconUrl)}" alt="" onerror="this.style.display='none'">`
         : `<div class="source-favicon-placeholder"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></div>`;
       const metaLine = group.kind === 'finance'
         ? `${escapeHtml(source.label || 'Yahoo Finance')} · ${escapeHtml(source.symbol || '')} · ${escapeHtml(source.range || '')}/${escapeHtml(source.interval || '')}`
         : escapeHtml(domain);
 
       html += `
-            <a href="${source.url || '#'}" target="_blank" rel="noopener" class="source-card source-card-${group.kind}">
+            <a href="${escapeHtml(safeSourceUrl)}" target="_blank" rel="noopener" class="source-card source-card-${escapeHtml(group.kind)}">
               <span class="source-index">${escapeHtml(source.marker || '')}</span>
               ${faviconHtml}
               <div class="source-info">
@@ -773,6 +1002,25 @@ function toggleSourcesList(button) {
   }
   button.setAttribute('data-expanded', nextExpanded ? 'true' : 'false');
 }
+
+(function initSourcesToggleDelegation() {
+  if (window.__raiSourcesToggleReady) return;
+  window.__raiSourcesToggleReady = true;
+  document.addEventListener('click', (e) => {
+    const target = e.target;
+    const btn = target && typeof target.closest === 'function' ? target.closest('.sources-toggle-btn') : null;
+    if (btn) toggleSourcesList(btn);
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList && e.target.classList.contains('sources-toggle-btn')) {
+      e.preventDefault();
+      toggleSourcesList(e.target);
+    }
+  });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {});
+  }
+})();
 
 function mergeAndReindexSources(existingSources = [], incomingSources = []) {
   const merged = [];
@@ -1848,8 +2096,14 @@ const ICON_PATHS = {
   // 图片图标 - 用于附件预览
   'image': '<path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5zM8 8.5c0-.83.67-1.5 1.5-1.5S11 7.67 11 8.5 10.33 10 9.5 10 8 9.33 8 8.5z"/>',
 
-  // 对勾/完成图标 - 用于复制成功后的反馈提示
+  // 对勾/完成图标 - 用于复制成功后的反馈提示、询问用户卡片提交按钮
   'check': '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
+
+  // 左箭头图标 - 用于询问用户卡片问题切换
+  'chevron_left': '<path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>',
+
+  // 右箭头图标 - 用于询问用户卡片问题切换
+  'chevron_right': '<path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>',
 
   // 删除/垃圾桶图标 - 用于删除对话、删除空间、删除文档等
   'delete': '<path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>',
@@ -1912,8 +2166,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.21';
-const RAI_BUILD_ID = '20260611-security-pentest-v010921';
+const RAI_APP_VERSION = '0.10.9.62';
+const RAI_BUILD_ID = '20260702-security-review-v010962a';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -1957,6 +2211,7 @@ const appState = {
   currentRequestId: null,
   isStreaming: false,
   selectedModel: 'auto',  // 默认智能模型
+  lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
   thinkingMode: false,  // 默认关闭推理模式
   reasoningProfile: 'low',
@@ -1966,6 +2221,8 @@ const appState = {
   qualityProfile: 'high',
   researchModeEnabled: false,
   researchMode: 'fast',
+  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'],
+  researchMasterModel: 'deepseek-pro',
   inputExpanded: false,  // 输入框展开状态
   thinkingBudget: 1024,
   thinkingBudgetOpen: false,
@@ -1975,12 +2232,23 @@ const appState = {
   frequencyPenalty: 0,
   presencePenalty: 0,
   systemPrompt: '',  // 用户的个人偏好，将附加到内置提示词后
+  longMemoryEnabled: false,
+  userMemories: [],
+  userMemoriesLoaded: false,
+  shortTermMemoryTitles: [],
+  newChatDefaultMode: 'ask',
+  tabTitleMode: 'marquee',
+  tabTitleCustomText: '',
+  browserNotifyEnabled: false,
+  currentSessionMemoryMode: 'normal',
   pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
   sidebarOpen: false,
   settingsOpen: false,
   activeSettingsSection: 'language',
   settingsMobileMode: 'home',
   settingsHistoryDepth: 0,
+  pendingTwoFactorToken: '',
+  twoFactorSetup: null,
   onboardingActive: false,
   touchStartX: 0,
   touchStartY: 0,
@@ -2023,6 +2291,13 @@ const appState = {
   pendingMobileComposerFocus: false,
   mobileHomeAutoFocusUsed: false,
   isProgrammaticScroll: false,
+  syncPollTimer: null,
+  syncInFlight: false,
+  lastSyncAt: 0,
+  sessionStreamSource: null,
+  sessionStreamSessionId: null,
+  sessionStreamRetryTimer: null,
+  liveStreamRenderTimer: null,
   // 引用功能状态
   currentQuote: null,  // 当前引用的消息 { role: 'user'|'assistant', content: string }
   // 会话列表分页状态
@@ -2040,6 +2315,7 @@ const RAI_PWA_INSTALLED_HINT_KEY = 'rai_pwa_installed_hint';
 const RAI_INVITE_REF_KEY = 'rai_invite_referrer_id';
 const PWA_INSTALL_REWARD_POINTS = 300;
 const INVITE_REWARD_POINTS = 600;
+const BOOKMARK_DOMAIN_REWARD_POINTS = 100;
 const PWA_INSTALL_CLAIM_SOURCE = 'already-installed-claim';
 let pwaInstallTaskReportPending = false;
 let pwaRewardPromptDismissedThisSession = false;
@@ -2497,23 +2773,29 @@ const MODELS = {
     provider: "auto",
     supportsThinking: true
   },
-  'deepseek-v3': {
-    name: 'DeepSeek V4',
+  'deepseek-flash': {
+    name: 'DeepSeek Flash',
     provider: 'deepseek',
-    supportsThinking: true,
+    supportsThinking: false,
     contextWindow: 1000000
   },
-  'deepseek-v3.2-speciale': {
-    name: 'DeepSeek V4 Pro',
-    provider: 'deepseek_v3_2_speciale',
+  'deepseek-pro': {
+    name: 'DeepSeek Pro',
+    provider: 'deepseek',
     supportsThinking: true,
-    thinkingOnly: true,  // 只支持思考模式
-    maxTokens: 128000,   // 128K 上下文
-    expiresAt: '2025-12-15T23:59:00+08:00'  // 截止时间
+    maxTokens: 128000
   },
-  // Kimi K2.5 - 月之暗面高性能模型
-  'kimi-k2.5': {
-    name: 'Kimi',
+  'qwen3.6-35b-a3b': {
+    name: 'Qwen 3.6',
+    provider: 'siliconflow',
+    supportsThinking: false,
+    supportsVision: true,
+    supportsTools: false,
+    contextWindow: 128000
+  },
+  // Kimi K2.6 - 月之暗面高性能模型
+  'kimi-k2.6': {
+    name: 'Kimi K2.6',
     provider: 'siliconflow',
     supportsThinking: true,
     supportsVision: true,
@@ -2521,25 +2803,11 @@ const MODELS = {
     supportsPrefix: true,
     contextWindow: 256000
   },
-  // 兼容旧配置：kimi-k2 自动视作 kimi-k2.5
+  // 兼容旧配置：kimi-k2 自动视作 kimi-k2.6
   'kimi-k2': {
-    name: 'Kimi',
+    name: 'Kimi K2.6',
     provider: 'siliconflow',
     supportsThinking: true
-  },
-  // Qwen2.5-7B 免费模型
-  'qwen2.5-7b': {
-    name: 'Qwen',
-    provider: 'siliconflow',
-    supportsThinking: false,
-    isFree: true  // 标记为免费模型
-  },
-  // 兼容旧ID
-  'qwen3-8b': {
-    name: 'Qwen',
-    provider: 'siliconflow',
-    supportsThinking: false,
-    isFree: true
   },
   'chatgpt-gpt-oss-120b': {
     name: 'ChatGPT',
@@ -2548,18 +2816,19 @@ const MODELS = {
     supportsReasoningProfile: true,
     isFree: true
   },
-  'grok-4.2': {
-    name: 'Grok 4.2',
-    provider: 'newapi',
-    supportsThinking: true,
+  'north-mini-code': {
+    name: 'Mimo Code',
+    provider: 'openrouter',
+    supportsThinking: false,
     supportsReasoningProfile: false,
     isFree: true
   },
-  'gpt-5.5': {
-    name: 'GPT-5.5',
-    provider: 'newapi',
+  'nemotron-3-ultra': {
+    name: 'Nemotron 3 Ultra',
+    provider: 'openrouter',
     supportsThinking: true,
-    supportsReasoningProfile: true
+    supportsReasoningProfile: true,
+    isFree: true
   },
   'claude-haiku': {
     name: 'Claude 3 Haiku',
@@ -2581,12 +2850,19 @@ const MODELS = {
   },
   'gemma': {
     name: 'Gemma',
-    provider: 'google_gemini',
+    provider: 'openrouter',
     supportsThinking: true,
-    supportsReasoningProfile: false,
+    supportsReasoningProfile: true,
     isFree: true,
-    supportsVision: true,
+    supportsVision: false,
     contextWindow: 256000
+  },
+  'openrouter-free': {
+    name: 'OpenRouter Free',
+    provider: 'openrouter',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    isFree: true
   },
   'poe-claude': {
     name: 'Claude (Poe)',
@@ -2595,11 +2871,6 @@ const MODELS = {
   },
   'poe-gpt': {
     name: 'ChatGPT (Poe)',
-    provider: 'poe',
-    supportsThinking: true
-  },
-  'poe-grok': {
-    name: 'Grok (Poe)',
     provider: 'poe',
     supportsThinking: true
   },
@@ -2623,19 +2894,35 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
-  'qwen3-vl': 'kimi-k2.5',
-  'qwen3-8b': 'qwen2.5-7b',
-  'qwen-flash': 'qwen2.5-7b',
-  'qwen-plus': 'qwen2.5-7b',
-  'qwen-max': 'qwen2.5-7b',
-  'deepseek-chat': 'deepseek-v3',
-  'deepseek-reasoner': 'deepseek-v3',
-  'deepseek-v4-flash': 'deepseek-v3',
+  'qwen3-vl': 'qwen3.6-35b-a3b',
+  'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
+  'Qwen/Qwen3.6-35B-A3B': 'qwen3.6-35b-a3b',
+  'qwen/qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
+  'qwen3-8b': 'auto',
+  'qwen-flash': 'auto',
+  'qwen-plus': 'auto',
+  'qwen-max': 'auto',
+  'qwen2.5-7b': 'auto',
+  'grok-4.2': 'auto',
+  'poe-grok': 'auto',
+  'gpt-5.5': 'auto',
+  'deepseek-chat': 'deepseek-pro',
+  'deepseek-reasoner': 'deepseek-pro',
+  'deepseek-v3': 'deepseek-pro',
+  'deepseek-v3.2-speciale': 'deepseek-pro',
+  'deepseek-v4-pro': 'deepseek-pro',
+  'deepseek-v4-flash': 'deepseek-flash',
+  'kimi-k2.5': 'kimi-k2.6',
+  'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
+  'Pro/moonshotai/Kimi-K2.6': 'kimi-k2.6',
   'openai/gpt-oss-120b:free': 'chatgpt-gpt-oss-120b',
+  'cohere/north-mini-code:free': 'north-mini-code',
+  'nvidia/nemotron-3-ultra-550b-a55b:free': 'nemotron-3-ultra',
   'claude-haiku': 'anthropic/claude-3-haiku',
   'anthropic/claude-3-haiku:beta': 'anthropic/claude-3-haiku',
   'gemma-4-31b-it': 'gemma',
-  'google/gemma-4-31b-it:free': 'gemma'
+  'google/gemma-4-31b-it:free': 'gemma',
+  'openrouter/free': 'openrouter-free'
 };
 
 const HIDDEN_MODEL_PREFIXES = ['poe-'];
@@ -2654,7 +2941,7 @@ function isHiddenModelId(modelId) {
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
   const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
-  if (String(normalized).startsWith('x-ai/grok-4.20')) return 'grok-4.2';
+  if (String(normalized).startsWith('x-ai/grok-4.20')) return 'auto';
   if (!normalized) return normalized;
   return isHiddenModelId(normalized) ? 'auto' : normalized;
 }
@@ -2884,18 +3171,6 @@ function applyFreePoeThinkingPolicy() {
 }
 
 function applyQuotaInfoEvent(payload = {}) {
-  if (payload.provider === 'newapi_gpt55') {
-    const limit = Number(payload.gpt55Limit ?? userMembershipState.gpt55DailyLimit ?? 10);
-    const used = Number(payload.gpt55Used ?? userMembershipState.gpt55UsedToday ?? 0);
-    const remaining = Number(payload.gpt55Remaining ?? Math.max(0, limit - used));
-
-    userMembershipState.gpt55DailyLimit = Number.isFinite(limit) ? limit : 10;
-    userMembershipState.gpt55UsedToday = Number.isFinite(used) ? used : 0;
-    userMembershipState.gpt55Remaining = Number.isFinite(remaining) ? remaining : 0;
-    userMembershipState.gpt55ResetAt = payload.resetAt || userMembershipState.gpt55ResetAt || null;
-    return;
-  }
-
   if (payload.provider !== 'poe') return;
 
   const limit = Number(payload.poeLimit ?? userMembershipState.poeDailyLimit ?? 3);
@@ -2969,7 +3244,18 @@ function appendUserTimeHintForPrompt(content) {
 }
 
 // 动态生成系统提示词（核心原则；每条用户问题末尾另附短时间）
-function buildSystemPrompt() {
+function buildMemoryCapabilityPrompt() {
+  return `### 记忆能力
+RAI 支持跨对话长期记忆。服务端可能会在系统消息中注入 [长期记忆] 和 [近期对话标题]。
+当用户询问“你记得我什么”“你对我的记忆有哪些”时，必须根据这些注入内容如实回答；如果 [长期记忆] 为空，就说“当前没有已保存的长期记忆”，不要声称自己没有持久化记忆能力。
+近期对话标题只是话题线索，不等同于长期事实记忆。`;
+}
+
+function shouldUseMemoryPrompt() {
+  return !!appState.longMemoryEnabled && !isNoMemoryConversationActive();
+}
+
+function buildSystemPrompt({ includeMemory = false } = {}) {
   return `# 角色：
 你是RAI 专业助理拥有人类千年来的丰富阅历
 由 Rick 开发，维护 Rick studio 正当权益。
@@ -2996,10 +3282,11 @@ function buildSystemPrompt() {
 
 ### 时间感知
 每次用户问题末尾会附带简短当前时间。它只作为背景参考；除非用户询问时间、日程或时效信息，不要把回答中心放到时间上。
+${includeMemory ? `\n${buildMemoryCapabilityPrompt()}\n` : ''}
 
-### 工具列表
-你有网络搜索能力。当用户询问需要实时信息的问题时，请主动调用 web_search 工具获取最新数据，然后基于搜索结果回答用户。
-在合适的时候，使用图片增强回复。需要使用 Markdown 语法 ![描述](图片链接) 网络搜索时，[搜索相关图片]部分可能提供图片 URL，在有助于说明主题时使用它们。只使用搜索结果中的有效链接，绝不编造图片地址。
+### 联网与工具输出
+联网检索由 RAI 服务端按当前模型能力处理。若服务端提供了网页搜索结果，请基于来源回答并使用 [1]、[2] 等角标引用；若没有提供来源，不要自行输出 web_search、function_calls、XML 标签、工具调用参数或内部安全审查文本。
+在合适的时候，使用图片增强回复。只有当搜索结果中明确提供图片 URL 且有助于说明主题时，才使用 Markdown 语法 ![描述](图片链接) 引用；只使用搜索结果中的有效链接，绝不编造图片地址。
 ### 询问用户工具
 当用户需求不明确、需要用户选择方向、范围、语言、风格或下一步时，可以输出一个独立的询问用户工具代码块，界面会渲染成可点击选项和自定义输入框。一次可以问多个问题，问题数量不设上限。
 单问题格式：
@@ -3059,9 +3346,12 @@ xychart-beta
 `;
 }
 
-function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt) {
+function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt, options = {}) {
   const trimmedCustomPrompt = String(customPrompt || '').trim();
-  const promptBase = buildSystemPrompt();
+  const includeMemory = options.includeMemory === undefined
+    ? shouldUseMemoryPrompt()
+    : !!options.includeMemory;
+  const promptBase = buildSystemPrompt({ includeMemory });
   return trimmedCustomPrompt
     ? `${promptBase}\n\n以下是用户个人偏好，请参考：\n${trimmedCustomPrompt}`
     : promptBase;
@@ -3081,6 +3371,33 @@ const i18n = {
     'username-placeholder': '您的昵称',
     'login-btn': '登录',
     'register-btn': '注册',
+    'auth-password-login': '密码登录',
+    'auth-email-code-login': '邮箱验证码',
+    'email-code-label': '邮箱验证码',
+    'email-code-placeholder': '10-16 位验证码',
+    'email-code-resend': '重发',
+    'email-code-hint': '验证码会发送到当前邮箱。',
+    'email-code-login-hint': '输入发送到邮箱的 10-16 位验证码登录。',
+    'email-code-register-hint': '验证码已发送到注册邮箱，输入后完成账号创建。',
+    'email-code-reset-hint': '输入邮箱验证码后即可设置新密码。',
+    'email-code-send-btn': '发送验证码',
+    'email-code-login-submit': '验证码登录',
+    'email-code-verify-register-btn': '验证并进入',
+    'email-code-sent': '验证码已发送，请查看邮箱。',
+    'email-code-required': '请输入 10-16 位邮箱验证码',
+    'two-factor-label': 'Authenticator 验证码',
+    'two-factor-placeholder': '6 位验证码',
+    'two-factor-login-hint': '打开 Authenticator 输入当前 6 位验证码。',
+    'two-factor-login-btn': '验证并登录',
+    'two-factor-required': '请输入 6 位 Authenticator 验证码',
+    'forgot-password': '忘记密码？',
+    'forgot-password-title': '找回 RAI 密码',
+    'forgot-password-desc': '输入注册邮箱，RAI 会发送验证码。验证通过后即可设置新密码。',
+    'forgot-password-email-label': '注册邮箱',
+    'forgot-password-support': '联系 Rick',
+    'forgot-password-confirm': '重置密码',
+    'forgot-password-close': '稍后处理',
+    'forgot-password-no-email': '尚未填写邮箱',
     'auth-ztx6d-login': 'ZTX6D 登录',
     'auth-rpass-login': 'rPass 登录',
     'auth-coming-soon': '待上线',
@@ -3090,6 +3407,51 @@ const i18n = {
     'login-link': '立即登录',
     'search-placeholder': '搜索对话',
     'new-chat': '新对话',
+    'temporary-chat': '临时对话',
+    'temp-chat-modal-title': '选择临时对话模式',
+    'temp-chat-modal-desc': '首次点击临时对话按钮会询问；之后可以到设置 > 自定义 > 临时对话模式里修改。',
+    'temp-chat-mode-normal': '普通对话',
+    'temp-chat-mode-normal-desc': '保存对话，并使用账号偏好和记忆类提示。',
+    'temp-chat-mode-saved': '保存临时',
+    'temp-chat-mode-saved-desc': '保存到对话列表，但不使用记忆/偏好类系统提示。',
+    'temp-chat-mode-classic': '传统临时',
+    'temp-chat-mode-classic-desc': '不保存到对话列表，刷新或切换后消失。',
+    'temp-chat-mode-ask': '每次询问',
+    'temp-chat-settings-title': '临时对话模式',
+    'temp-chat-settings-desc': '控制点击临时对话按钮时默认进入保存临时或传统临时。',
+    'temp-chat-classic-started': '已进入传统临时对话',
+    'temp-chat-saved-title': '临时对话',
+    'tab-title-settings-title': '标签页动画',
+    'tab-title-settings-desc': '控制浏览器标签页标题的显示方式。',
+    'tab-title-mode-static': '关闭（静态 RAI）',
+    'tab-title-mode-marquee': '品牌跑马灯',
+    'tab-title-mode-greeting': '问候语',
+    'tab-title-mode-title': '对话标题',
+    'tab-title-mode-custom': '自定义',
+    'tab-title-custom-label': '自定义文字',
+    'tab-title-custom-placeholder': 'RAI 后面要显示的文字',
+    'tab-title-custom-hint': '仅在“自定义”模式下生效，显示为 RAI + 你的文字。',
+    'browser-notify-settings-title': '回复浏览器通知',
+    'browser-notify-settings-desc': '当 RAI 回复好而你未查看页面时，浏览器弹出系统通知提醒你。',
+    'browser-notify-enable': '开启通知',
+    'browser-notify-denied': '浏览器通知权限已被拒绝，请在浏览器设置中开启。',
+    'browser-notify-granted': '已开启浏览器通知。',
+    'browser-notify-unsupported': '当前浏览器不支持系统通知。',
+    'memory-settings-title': '记忆',
+    'memory-settings-desc': '普通对话会使用长期记忆和最近 10 条对话标题；临时对话完全隔离。',
+    'memory-enabled-label': '长期记忆',
+    'memory-enabled-desc': '开启后，RAI 会自动记住稳定的个人信息和偏好。',
+    'memory-add-placeholder': '添加一条你希望 RAI 长期记住的信息',
+    'memory-add-btn': '添加记忆',
+	    'memory-clear-btn': '清空记忆',
+	    'memory-empty': '暂无长期记忆',
+	    'memory-disabled': '开启记忆后，RAI 会先读取最近 10 条对话标题作为滚动短期记忆。',
+	    'memory-short-term-title': '短期记忆',
+	    'memory-long-term-title': '长期记忆',
+	    'memory-enabled-with-titles': '记忆已开启，已读取最近 {count} 条对话标题',
+	    'memory-load-failed': '记忆加载失败',
+    'memory-delete-label': '删除记忆',
+    'memory-clear-confirm': '确定清空全部长期记忆吗？',
     'sidebar-spaces': '空间',
     'new-space': '新建空间',
     'sidebar-flows': 'ChatFlow',
@@ -3149,7 +3511,7 @@ const i18n = {
     'settings-mobile-section-account': '账户',
     'settings-mobile-section-system': '系统',
     'settings-subscription-desc': '签到、任务、点数兑换会员和会员状态',
-    'settings-account-desc': '用户名、邮箱、密码和第三方绑定状态',
+    'settings-account-desc': '用户名、邮箱、密码、第三方绑定和二步验证',
     'settings-advanced-desc': '生成参数控制',
     'settings-desktop-title': '桌面端',
     'settings-desktop-desc': '控制 macOS 菜单栏或 Windows 系统托盘中的 RAI 窗口。',
@@ -3175,7 +3537,8 @@ const i18n = {
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': '作者 Rick',
-    'settings-update-timeline-title': '更新记录',
+    'settings-update-timeline-title': 'RAI 的成长故事',
+    'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
     'settings-update-timeline-source': '来源：本机历史版本目录、版本记录、历史 release manifest、GitHub README。',
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
@@ -3202,7 +3565,7 @@ const i18n = {
     'onb-welcome-desc': '多模型、深度研究、联网搜索，一切尽在指尖。',
     'onb-features-title': '强大的 AI 能力',
     'onb-feat-models-title': '多模型协作',
-    'onb-feat-models': '多模型自由切换（DeepSeek / Kimi / GPT / Claude / Grok / Gemma）',
+    'onb-feat-models': '多模型自由切换（DeepSeek / Kimi / GPT / Claude / Gemma）',
     'onb-feat-research-title': '研究模式',
     'onb-feat-research': '快速 / 深度研究模式，支持多模型互评综合回答',
     'onb-feat-search-title': '实时信息',
@@ -3215,7 +3578,7 @@ const i18n = {
     'onb-usage-input-title': '输入框',
     'onb-usage-input-desc': '在底部输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。',
     'onb-usage-model-title': '模型切换',
-    'onb-usage-model-desc': '点击顶部模型选择器，可切换智能模型、极速模式、专家模式或全部模型。',
+    'onb-usage-model-desc': '点击顶部模型选择器，可切换智能模型、专家模式或全部模型。',
     'onb-usage-sidebar-title': '侧边栏',
     'onb-usage-sidebar-desc': '左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。',
     'onb-skip': '跳过',
@@ -3239,6 +3602,7 @@ const i18n = {
     'model-modal-title': '选择模型',
     'model-modal-close-label': '关闭模型选择',
     'model-route-smart': '智能路由',
+    'research-mode-desc': '多模型讨论',
     'model-desc-fast': '快速响应',
     'model-desc-expert': '复杂任务',
     'model-desc-openrouter-limited': 'OpenRouter 限免',
@@ -3253,8 +3617,6 @@ const i18n = {
     'mermaid-close': '关闭 (Esc)',
     'canvas-added': '已添加到画布',
     'node-edit-save': '保存',
-    'regenerate-gpt55-limited': 'GPT-5.5 (限免10次/天)',
-    'regenerate-grok-limited': 'Grok 4.2 (限免)',
     'chatflow-title-default': '新 ChatFlow',
     'chatflow-session': 'ChatFlow 会话',
     'chatflow-patch-ready': 'AI 画布建议已准备',
@@ -3291,6 +3653,43 @@ const i18n = {
     'account-binding-title': '账号绑定',
     'confirm-change': '确定',
     'account-settings-title': '账号信息',
+    'security-settings-title': '安全',
+    'settings-security-desc': '用 Authenticator 为当前账号增加登录二步验证',
+    'account-delete-title': '注销账号',
+    'account-delete-desc': '永久删除账号、对话、记忆、上传文件和设置，无法恢复。',
+    'account-delete-password-label': '当前密码',
+    'account-delete-confirm-label': '确认词',
+    'account-delete-confirm-phrase': '注销账号',
+    'account-delete-confirm-placeholder': '输入 注销账号',
+    'account-delete-2fa-label': 'Authenticator 验证码',
+    'account-delete-button': '注销账号',
+    'account-delete-pending': '注销中...',
+    'account-delete-password-required': '请输入当前密码',
+    'account-delete-confirm-required': '请在确认框输入“{phrase}”',
+    'account-delete-2fa-required': '请输入 6 位 Authenticator 验证码',
+    'account-delete-confirm-dialog': '确定永久注销当前账号吗？此操作无法恢复。',
+    'account-delete-success': '账号已注销',
+    'account-delete-failed': '注销账号失败',
+    'two-factor-settings-title': '二步验证',
+    'two-factor-enabled': '已开启',
+    'two-factor-disabled': '未开启',
+    'two-factor-enabled-desc': '登录时需要输入 Authenticator 动态验证码。',
+    'two-factor-disabled-desc': '建议开启二步验证，防止密码泄露后被直接登录。',
+    'two-factor-setup': '开启二步验证',
+    'two-factor-disable': '关闭二步验证',
+    'two-factor-setup-desc': '用 Authenticator 扫描二维码，或手动输入密钥后填写 6 位验证码。',
+    'two-factor-secret-label': '手动密钥',
+    'two-factor-code-label': '验证码',
+    'two-factor-confirm-enable': '确认开启',
+    'two-factor-cancel': '取消',
+    'two-factor-disable-desc': '输入当前 Authenticator 验证码后关闭二步验证。',
+    'two-factor-confirm-disable': '确认关闭',
+    'two-factor-setup-failed': '二步验证设置失败',
+    'two-factor-enabled-toast': '二步验证已开启',
+    'two-factor-disabled-toast': '二步验证已关闭',
+    'two-factor-code-required': '请输入 6 位验证码',
+    'two-factor-copy-secret': '复制密钥',
+    'two-factor-secret-copied': '密钥已复制',
     'settings-username-label': '用户名',
     'settings-username-desc': '修改侧边栏显示名称；留空时默认使用邮箱前缀',
     'settings-email-label': '邮箱',
@@ -3350,6 +3749,10 @@ const i18n = {
     'research-mode': '研究模式',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
+    'research-agent-models': '子 agent 模型',
+    'research-master-model': '主控模型',
+    'research-agent-min-one': '至少保留 1 个子 agent 模型',
+    'research-agent-max-four': '最多选择 4 个研究模型，请取消一个不需要的',
     'agent-mode': '深度研究',
     'add-attachment': '添加附件',
     'rpass-pending': 'rPass 登录待上线',
@@ -3374,6 +3777,33 @@ const i18n = {
     'username-placeholder': 'Your nickname',
     'login-btn': 'Login',
     'register-btn': 'Register',
+    'auth-password-login': 'Password',
+    'auth-email-code-login': 'Email code',
+    'email-code-label': 'Email code',
+    'email-code-placeholder': '10-16 character code',
+    'email-code-resend': 'Resend',
+    'email-code-hint': 'The code will be sent to this email.',
+    'email-code-login-hint': 'Enter the 10-16 character code sent to your email to log in.',
+    'email-code-register-hint': 'Enter the code sent to your email to finish creating the account.',
+    'email-code-reset-hint': 'Enter the email code to set a new password.',
+    'email-code-send-btn': 'Send code',
+    'email-code-login-submit': 'Log in with code',
+    'email-code-verify-register-btn': 'Verify and continue',
+    'email-code-sent': 'Code sent. Check your email.',
+    'email-code-required': 'Enter the 10-16 character email code',
+    'two-factor-label': 'Authenticator code',
+    'two-factor-placeholder': '6-digit code',
+    'two-factor-login-hint': 'Open Authenticator and enter the current 6-digit code.',
+    'two-factor-login-btn': 'Verify and log in',
+    'two-factor-required': 'Enter the 6-digit Authenticator code',
+    'forgot-password': 'Forgot password?',
+    'forgot-password-title': 'Recover your RAI password',
+    'forgot-password-desc': 'Enter your email and RAI will send a code. After verification, set a new password.',
+    'forgot-password-email-label': 'Registered email',
+    'forgot-password-support': 'Contact Rick',
+    'forgot-password-confirm': 'Reset password',
+    'forgot-password-close': 'Not now',
+    'forgot-password-no-email': 'No email entered',
     'auth-ztx6d-login': 'Log in with ZTX6D',
     'auth-rpass-login': 'Log in with rPass',
     'auth-coming-soon': 'Coming soon',
@@ -3383,6 +3813,51 @@ const i18n = {
     'login-link': 'Log in now',
     'search-placeholder': 'Search conversations',
     'new-chat': 'New Chat',
+    'temporary-chat': 'Temporary Chat',
+    'temp-chat-modal-title': 'Choose temporary chat mode',
+    'temp-chat-modal-desc': 'The first tap on Temporary Chat asks you to choose. You can change it later in Settings > Custom > Temporary chat mode.',
+    'temp-chat-mode-normal': 'Normal chat',
+    'temp-chat-mode-normal-desc': 'Saved conversation with account preferences and memory-style instructions.',
+    'temp-chat-mode-saved': 'Saved temporary',
+    'temp-chat-mode-saved-desc': 'Saved in the chat list, but memory/preference system instructions are not used.',
+    'temp-chat-mode-classic': 'Classic temporary',
+    'temp-chat-mode-classic-desc': 'Not saved in the chat list. It disappears after reload or switching chats.',
+    'temp-chat-mode-ask': 'Ask each time',
+    'temp-chat-settings-title': 'Temporary chat mode',
+    'temp-chat-settings-desc': 'Choose what the Temporary Chat button opens by default.',
+    'temp-chat-classic-started': 'Classic temporary chat started',
+    'temp-chat-saved-title': 'Temporary chat',
+    'tab-title-settings-title': 'Tab Title Animation',
+    'tab-title-settings-desc': 'Control how the browser tab title is displayed.',
+    'tab-title-mode-static': 'Off (Static RAI)',
+    'tab-title-mode-marquee': 'Brand Marquee',
+    'tab-title-mode-greeting': 'Greeting',
+    'tab-title-mode-title': 'Conversation Title',
+    'tab-title-mode-custom': 'Custom',
+    'tab-title-custom-label': 'Custom text',
+    'tab-title-custom-placeholder': 'Text to show after RAI',
+    'tab-title-custom-hint': 'Only used in Custom mode; shown as RAI + your text.',
+    'browser-notify-settings-title': 'Reply Browser Notification',
+    'browser-notify-settings-desc': 'When RAI finishes replying while you are not viewing the page, the browser shows a system notification.',
+    'browser-notify-enable': 'Enable notifications',
+    'browser-notify-denied': 'Browser notification permission is denied. Enable it in your browser settings.',
+    'browser-notify-granted': 'Browser notifications enabled.',
+    'browser-notify-unsupported': 'This browser does not support system notifications.',
+    'memory-settings-title': 'Memory',
+    'memory-settings-desc': 'Normal chats use long-term memory and the latest 10 conversation titles. Temporary chats are fully isolated.',
+    'memory-enabled-label': 'Long-term memory',
+    'memory-enabled-desc': 'When enabled, RAI automatically remembers stable personal facts and preferences.',
+    'memory-add-placeholder': 'Add something you want RAI to remember long term',
+    'memory-add-btn': 'Add memory',
+	    'memory-clear-btn': 'Clear memories',
+	    'memory-empty': 'No long-term memories yet',
+	    'memory-disabled': 'Turn on memory to let RAI use the latest 10 conversation titles as rolling short-term memory.',
+	    'memory-short-term-title': 'Short-term memory',
+	    'memory-long-term-title': 'Long-term memory',
+	    'memory-enabled-with-titles': 'Memory enabled. Loaded {count} recent conversation titles.',
+	    'memory-load-failed': 'Failed to load memories',
+    'memory-delete-label': 'Delete memory',
+    'memory-clear-confirm': 'Clear all long-term memories?',
     'sidebar-spaces': 'Spaces',
     'new-space': 'New Space',
     'sidebar-flows': 'ChatFlow',
@@ -3442,7 +3917,7 @@ const i18n = {
     'settings-mobile-section-account': 'Account',
     'settings-mobile-section-system': 'System',
     'settings-subscription-desc': 'Check-in, tasks, points redemption, and membership status',
-    'settings-account-desc': 'Username, email, password, and third-party binding status',
+    'settings-account-desc': 'Username, email, password, third-party binding, and two-factor authentication',
     'settings-advanced-desc': 'Generation parameter controls',
     'settings-desktop-title': 'Desktop',
     'settings-desktop-desc': 'Control RAI windows from the macOS menu bar or Windows system tray.',
@@ -3468,7 +3943,8 @@ const i18n = {
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': 'Author Rick',
-    'settings-update-timeline-title': 'Update Records',
+    'settings-update-timeline-title': 'The RAI Story',
+    'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
     'settings-update-timeline-source': 'Sources: local historical version folders, version records, historical release manifest, and GitHub README.',
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
@@ -3495,7 +3971,7 @@ const i18n = {
     'onb-welcome-desc': 'Multi-model chat, deep research, and web search are ready when you are.',
     'onb-features-title': 'Powerful AI capability',
     'onb-feat-models-title': 'Model collaboration',
-    'onb-feat-models': 'Switch freely across DeepSeek, Kimi, GPT, Claude, Grok, and Gemma',
+    'onb-feat-models': 'Switch freely across DeepSeek, Kimi, GPT, Claude, and Gemma',
     'onb-feat-research-title': 'Research mode',
     'onb-feat-research': 'Fast and Deep Research modes with multi-model review',
     'onb-feat-search-title': 'Live context',
@@ -3508,7 +3984,7 @@ const i18n = {
     'onb-usage-input-title': 'Composer',
     'onb-usage-input-desc': 'Type at the bottom, press Enter to send, Shift+Enter for a new line. Drag files in to upload.',
     'onb-usage-model-title': 'Model switcher',
-    'onb-usage-model-desc': 'Use the top model picker for Smart, Fast, Expert, or all models.',
+    'onb-usage-model-desc': 'Use the top model picker for Smart, Expert, or all models.',
     'onb-usage-sidebar-title': 'Sidebar',
     'onb-usage-sidebar-desc': 'Manage chat history, search conversations, switch theme and language, and open settings.',
     'onb-skip': 'Skip',
@@ -3532,6 +4008,7 @@ const i18n = {
     'model-modal-title': 'Choose a model',
     'model-modal-close-label': 'Close model selector',
     'model-route-smart': 'Smart routing',
+    'research-mode-desc': 'Multi-model debate',
     'model-desc-fast': 'Fast response',
     'model-desc-expert': 'Complex tasks',
     'model-desc-openrouter-limited': 'OpenRouter limited free',
@@ -3546,8 +4023,6 @@ const i18n = {
     'mermaid-close': 'Close (Esc)',
     'canvas-added': 'Added to canvas',
     'node-edit-save': 'Save',
-    'regenerate-gpt55-limited': 'GPT-5.5 (limited free: 10/day)',
-    'regenerate-grok-limited': 'Grok 4.2 (limited free)',
     'chatflow-title-default': 'New ChatFlow',
     'chatflow-session': 'ChatFlow session',
     'chatflow-patch-ready': 'AI canvas suggestion is ready',
@@ -3584,6 +4059,43 @@ const i18n = {
     'account-binding-title': 'Account Binding',
     'confirm-change': 'Confirm',
     'account-settings-title': 'Account',
+    'security-settings-title': 'Security',
+    'settings-security-desc': 'Add Authenticator two-factor protection to this account',
+    'account-delete-title': 'Delete account',
+    'account-delete-desc': 'Permanently delete the account, conversations, memories, uploads, and settings. This cannot be undone.',
+    'account-delete-password-label': 'Current password',
+    'account-delete-confirm-label': 'Confirmation',
+    'account-delete-confirm-phrase': 'DELETE',
+    'account-delete-confirm-placeholder': 'Type DELETE',
+    'account-delete-2fa-label': 'Authenticator code',
+    'account-delete-button': 'Delete account',
+    'account-delete-pending': 'Deleting...',
+    'account-delete-password-required': 'Enter your current password',
+    'account-delete-confirm-required': 'Type “{phrase}” in the confirmation field',
+    'account-delete-2fa-required': 'Enter the 6-digit Authenticator code',
+    'account-delete-confirm-dialog': 'Permanently delete this account? This cannot be undone.',
+    'account-delete-success': 'Account deleted',
+    'account-delete-failed': 'Failed to delete account',
+    'two-factor-settings-title': 'Two-factor authentication',
+    'two-factor-enabled': 'Enabled',
+    'two-factor-disabled': 'Disabled',
+    'two-factor-enabled-desc': 'Login requires the current Authenticator code.',
+    'two-factor-disabled-desc': 'Enable two-factor authentication to protect the account if the password leaks.',
+    'two-factor-setup': 'Enable 2FA',
+    'two-factor-disable': 'Disable 2FA',
+    'two-factor-setup-desc': 'Scan the QR code with Authenticator, or enter the secret manually, then type the 6-digit code.',
+    'two-factor-secret-label': 'Manual secret',
+    'two-factor-code-label': 'Code',
+    'two-factor-confirm-enable': 'Confirm enable',
+    'two-factor-cancel': 'Cancel',
+    'two-factor-disable-desc': 'Enter the current Authenticator code to disable two-factor authentication.',
+    'two-factor-confirm-disable': 'Confirm disable',
+    'two-factor-setup-failed': 'Two-factor setup failed',
+    'two-factor-enabled-toast': 'Two-factor authentication enabled',
+    'two-factor-disabled-toast': 'Two-factor authentication disabled',
+    'two-factor-code-required': 'Enter the 6-digit code',
+    'two-factor-copy-secret': 'Copy secret',
+    'two-factor-secret-copied': 'Secret copied',
     'settings-username-label': 'Username',
     'settings-username-desc': 'Change the display name shown in the sidebar; if blank, the email prefix will be used.',
     'settings-email-label': 'Email',
@@ -3643,6 +4155,10 @@ const i18n = {
     'research-mode': 'Research Mode',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
+    'research-agent-models': 'Sub-agent models',
+    'research-master-model': 'Master model',
+    'research-agent-min-one': 'Keep at least 1 sub-agent model',
+    'research-agent-max-four': 'Choose up to 4 research models. Remove one you do not need.',
     'agent-mode': 'Deep Research',
     'add-attachment': 'Add Attachment',
     'rpass-pending': 'rPass login is coming soon',
@@ -3656,6 +4172,15 @@ const i18n = {
     'regenerate': 'Regenerate'
   }
 };
+
+function hydrateRuntimeI18nMap(localeMap) {
+  return Object.fromEntries(
+    Object.entries(localeMap).map(([key, value]) => [key, typeof value === 'string' ? formatRuntimeText(value) : value])
+  );
+}
+
+i18n['zh-CN'] = hydrateRuntimeI18nMap(i18n['zh-CN']);
+i18n['en'] = hydrateRuntimeI18nMap(i18n['en']);
 
 const SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP = [
   ['设置', '設定'],
@@ -3746,7 +4271,8 @@ Object.assign(i18n['zh-TW'], {
   'settings-about-author-label': '作者 Rick',
   'logout': '登出',
   'system-theme': '跟隨系統',
-  'settings-update-timeline-title': '更新記錄',
+  'settings-update-timeline-title': 'RAI 的成長故事',
+  'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
   'settings-update-timeline-source': '來源：本機歷史版本目錄、版本記錄、歷史 release manifest、GitHub README。',
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
@@ -3755,15 +4281,221 @@ Object.assign(i18n['zh-TW'], {
   'sidebar-flows-beta': '測試'
 });
 
+Object.assign(i18n['zh-TW'], {
+  'account-delete-title': '註銷帳號',
+  'account-delete-desc': '永久刪除帳號、對話、記憶、上傳檔案和設定，無法復原。',
+  'account-delete-password-label': '目前密碼',
+  'account-delete-confirm-label': '確認詞',
+  'account-delete-confirm-phrase': '註銷帳號',
+  'account-delete-confirm-placeholder': '輸入 註銷帳號',
+  'account-delete-2fa-label': 'Authenticator 驗證碼',
+  'account-delete-button': '註銷帳號',
+  'account-delete-pending': '註銷中...',
+  'account-delete-password-required': '請輸入目前密碼',
+  'account-delete-confirm-required': '請在確認框輸入「{phrase}」',
+  'account-delete-2fa-required': '請輸入 6 位 Authenticator 驗證碼',
+  'account-delete-confirm-dialog': '確定永久註銷目前帳號嗎？此操作無法復原。',
+  'account-delete-success': '帳號已註銷',
+  'account-delete-failed': '註銷帳號失敗'
+});
+
+i18n['zh-TW'] = hydrateRuntimeI18nMap(i18n['zh-TW']);
+
+let __raiTitleAnimTimer = null;
+let __raiTitleAnimTimeout = null;
+let __raiTitleAnimIndex = 0;
+let __raiReplyReadyPending = false;
+const RAI_TITLE_FRAME_MS = 600;
+const RAI_TITLE_TYPE_MS = 360;
+const RAI_TITLE_HOLD_MS = 2000;
+const RAI_TAB_TITLE_MODES = ['static', 'marquee', 'greeting', 'title', 'custom'];
+function normalizeTabTitleMode(mode) {
+  const m = String(mode || '').trim();
+  return RAI_TAB_TITLE_MODES.includes(m) ? m : 'marquee';
+}
+function __raiReplyReadyTitle() {
+  const name = BRAND_NAME || 'RAI';
+  return isChineseLanguage(appState.language)
+    ? `${name}回复好了 快来查看！`
+    : `${name} replied! Come take a look!`;
+}
+function __raiClearTitleTimers() {
+  if (__raiTitleAnimTimer) { clearInterval(__raiTitleAnimTimer); __raiTitleAnimTimer = null; }
+  if (__raiTitleAnimTimeout) { clearTimeout(__raiTitleAnimTimeout); __raiTitleAnimTimeout = null; }
+}
+function __raiGreetingList() {
+  return isChineseLanguage(appState.language)
+    ? ['早上好', '中午好', '晚上好', '夜深了']
+    : ['Good morning', 'Good afternoon', 'Good evening', 'Late night'];
+}
+function __raiGreetingIndexByTime(date = new Date()) {
+  const h = date.getHours();
+  if (h >= 5 && h <= 11) return 0;
+  if (h >= 12 && h <= 17) return 1;
+  if (h >= 18 && h <= 22) return 2;
+  return 3;
+}
+function __raiTitleMarqueeFrames(base) {
+  const L = base.length;
+  const pad = (s) => String(s).padStart(L, '\u3164');
+  const frames = [];
+  for (let k = 0; k < L; k++) frames.push(pad(base.slice(k)));
+  for (let k = L - 2; k >= 1; k--) frames.push(pad(base.slice(k)));
+  return frames;
+}
+function __raiFireReplyNotification(title) {
+  try {
+    if (!appState.browserNotifyEnabled) return;
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    const n = new Notification(title, {
+      icon: 'icons/rai-app-icon-192.png',
+      tag: 'rai-reply-ready',
+      renotify: true
+    });
+    n.onclick = function () { window.focus(); this.close(); };
+    setTimeout(() => { try { n.close(); } catch (e) {} }, 8000);
+  } catch (e) { /* ignore */ }
+}
+function startTitleAnimation() {
+  __raiClearTitleTimers();
+  const mode = normalizeTabTitleMode(appState.tabTitleMode);
+  if (mode === 'static') {
+    document.title = BRAND_TITLE;
+    return;
+  }
+  if (mode === 'title') {
+    const update = () => {
+      const rawTitle = (appState.currentSession && appState.currentSession.title) ? appState.currentSession.title : '';
+      // 新对话 / 空标题 → 显示 RAI
+      const t = isDefaultConversationTitle(rawTitle) ? BRAND_TITLE : rawTitle;
+      if (document.title !== t) document.title = t;
+    };
+    update();
+    __raiTitleAnimTimer = setInterval(update, 1000);
+    return;
+  }
+  if (mode === 'greeting') {
+    const greetings = __raiGreetingList();
+    const brand = String(BRAND_NAME || 'RAI');
+    let gi = __raiGreetingIndexByTime();
+    let ci = 0;
+    function step() {
+      const g = greetings[gi % greetings.length];
+      document.title = brand + g.slice(0, ci);
+      if (ci < g.length) {
+        ci += 1;
+        __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_TYPE_MS);
+      } else {
+        gi += 1;
+        ci = 0;
+        __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_HOLD_MS);
+      }
+    }
+    step();
+    return;
+  }
+  // custom：RAI 静态前缀 + 自定义文字逐字出现，无消失动画，RAI 不滚动
+  if (mode === 'custom') {
+    const brand = String(BRAND_NAME || 'RAI');
+    const custom = String(appState.tabTitleCustomText || '').trim();
+    if (!custom) { document.title = BRAND_TITLE; return; }
+    const prefix = brand + ' ';
+    let ci = 0;
+    function step() {
+      document.title = prefix + custom.slice(0, ci);
+      if (ci < custom.length) {
+        ci += 1;
+        __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_TYPE_MS);
+      } else {
+        ci = 0;
+        __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_HOLD_MS);
+      }
+    }
+    step();
+    return;
+  }
+  // marquee：跑马灯滚动
+  const base = String(BRAND_NAME || BRAND_TITLE || 'RAI').trim();
+  if (!base) { document.title = BRAND_TITLE; return; }
+  const frames = __raiTitleMarqueeFrames(base);
+  if (frames.length < 2) { document.title = BRAND_TITLE; return; }
+  __raiTitleAnimIndex = 0;
+  document.title = frames[0];
+  __raiTitleAnimTimer = setInterval(() => {
+    __raiTitleAnimIndex = (__raiTitleAnimIndex + 1) % frames.length;
+    document.title = frames[__raiTitleAnimIndex];
+  }, RAI_TITLE_FRAME_MS);
+}
+function signalReplyReady() {
+  if (document.hidden) {
+    __raiReplyReadyPending = true;
+    __raiClearTitleTimers();
+    const title = __raiReplyReadyTitle();
+    document.title = title;
+    __raiFireReplyNotification(title);
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    __raiClearTitleTimers();
+    if (!__raiReplyReadyPending) document.title = BRAND_TITLE;
+  } else {
+    __raiReplyReadyPending = false;
+    startTitleAnimation();
+  }
+});
+
+function applyRuntimeBranding() {
+  document.title = BRAND_TITLE;
+  startTitleAnimation();
+  document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content', BRAND_TITLE);
+  document.querySelectorAll('.auth-logo-text, .mobile-logo, .logo, #onboardingTitle').forEach((el) => {
+    applyBrandLabelWithBadge(el, BRAND_SHORT_NAME);
+  });
+
+  const defaultNotificationHero = document.getElementById('defaultNotificationHero');
+  const defaultNotificationLink = document.getElementById('defaultNotificationLink');
+  const showDefaultDomainNotice = DEFAULT_DOMAIN_NOTICE_ENABLED && !!DEFAULT_DOMAIN_NOTICE_URL;
+
+  if (defaultNotificationHero) {
+    defaultNotificationHero.style.display = showDefaultDomainNotice ? '' : 'none';
+  }
+
+  if (defaultNotificationLink) {
+    if (showDefaultDomainNotice) {
+      defaultNotificationLink.href = DEFAULT_DOMAIN_NOTICE_URL;
+      defaultNotificationLink.style.display = '';
+    } else {
+      defaultNotificationLink.style.display = 'none';
+    }
+  }
+}
+
 const EN_SERVER_ERROR_MESSAGES = {
   '邮箱和密码不能为空': 'Email and password are required.',
   '邮件格式不正确': 'Please enter a valid email address.',
   '邮箱或密码错误': 'Incorrect email or password.',
   '该邮箱已被注册': 'This email is already registered.',
+  '用户名不能包含 HTML 或脚本内容': 'Username cannot contain HTML or script content.',
+  '用户名不能包含控制字符': 'Username cannot contain control characters.',
+  '用户名只能包含文字、数字、空格、点、下划线或连字符，且必须以文字或数字开头': 'Username can only contain letters, numbers, spaces, dots, underscores, or hyphens, and must start with a letter or number.',
+  '用户名不能超过80个字符': 'Username must be 80 characters or fewer.',
   '密码至少需要6位': 'Password must be at least 6 characters.',
   '密码至少6位字符': 'Password must be at least 6 characters.',
   '注册失败,请重试': 'Registration failed. Please try again.',
   '注册失败，请重试': 'Registration failed. Please try again.',
+  '验证码请求过于频繁，请稍后再试': 'Too many code requests. Please try again later.',
+  '验证码已发送到邮箱': 'Code sent to your email.',
+  '请先验证注册邮箱': 'Please verify your registration email first.',
+  '验证邮件发送失败，请稍后再试': 'Failed to send verification email. Please try again later.',
+  '验证邮件发送失败：邮件服务尚未完成发信域名验证，请联系管理员处理': 'Failed to send verification email. The mail sender domain still needs administrator verification.',
+  '验证码邮件发送失败，请稍后再试': 'Failed to send the code email. Please try again later.',
+  '验证码无效或已过期': 'The code is invalid or expired.',
+  '验证码尝试次数过多，请重新获取': 'Too many code attempts. Request a new code.',
+  '邮箱已验证，请直接登录': 'This email is already verified. Please log in.',
+  '邮箱验证失败': 'Email verification failed.',
+  '如果邮箱存在，验证码会发送到该邮箱': 'If the email exists, a code will be sent to it.',
   '登录尝试过多,请15分钟后再试': 'Too many login attempts. Please try again in 15 minutes.',
   '未提供认证令牌': 'Authentication token is missing.',
   '令牌无效或已过期': 'Your session has expired. Please log in again.',
@@ -3813,7 +4545,473 @@ function localizeServerError(message, fallback = 'Operation failed') {
   return raw;
 }
 
+const AUTH_JSON_HEADERS = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json'
+};
+
+function getNonJsonAuthErrorMessage(fallback = '') {
+  return isChineseLanguage(appState.language)
+    ? (fallback || '认证服务暂时不可用，请刷新页面后重试；若仍失败，请联系 Rick。')
+    : (fallback || 'The auth service is temporarily unavailable. Refresh and try again.');
+}
+
+async function parseApiJsonResponse(response, options = {}) {
+  const fallback = String(options.fallback || '').trim();
+  const nonJsonFallback = String(options.nonJsonFallback || '').trim();
+  let text = '';
+  try {
+    text = await response.text();
+  } catch (error) {
+    console.warn(' API response body read failed:', {
+      status: response?.status,
+      url: response?.url,
+      error: error?.message || String(error)
+    });
+    return {
+      success: false,
+      error: fallback || getNonJsonAuthErrorMessage(),
+      code: 'api_response_read_failed',
+      httpStatus: response?.status || 0
+    };
+  }
+
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const contentType = response?.headers?.get?.('content-type') || '';
+    const preview = text.slice(0, 240).replace(/\s+/g, ' ').trim();
+    const isHtml = /html/i.test(contentType) || /^\s*</.test(text) || /<!doctype html/i.test(text);
+    console.warn(' API returned non-JSON response:', {
+      status: response?.status,
+      contentType,
+      url: response?.url,
+      preview
+    });
+    return {
+      success: false,
+      error: isHtml
+        ? getNonJsonAuthErrorMessage(nonJsonFallback)
+        : (fallback || getNonJsonAuthErrorMessage()),
+      code: isHtml ? 'api_html_response' : 'api_non_json_response',
+      httpStatus: response?.status || 0
+    };
+  }
+}
+
+async function downloadAttachment(att = {}) {
+  const filePath = String(att.filePath || '').trim();
+  if (!filePath) return;
+  const apiRoot = String(API_BASE || '').replace(/\/api\/?$/, '');
+  const url = /^https?:\/\//i.test(filePath)
+    ? filePath
+    : `${apiRoot}${filePath.startsWith('/') ? filePath : `/${filePath}`}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${appState.token}` }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = att.fileName || att.originalName || 'attachment';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    console.error(' 附件下载失败:', error);
+    showToast(isChineseLanguage(appState.language) ? '附件下载失败' : 'Attachment download failed');
+  }
+}
+
+function getAttachmentTypeLabel(type) {
+  const isZh = isChineseLanguage(appState.language);
+  const labels = {
+    image: isZh ? '图片' : 'Image',
+    video: isZh ? '视频' : 'Video',
+    audio: isZh ? '音频' : 'Audio',
+    text: isZh ? '文本' : 'Text',
+    code: isZh ? '代码' : 'Code',
+    document: isZh ? '文档' : 'Document'
+  };
+  return labels[type] || (isZh ? '附件' : 'Attachment');
+}
+
+function createAttachmentListItem(att = {}) {
+  const isInlineImage = att.type === 'image' && att.data;
+  const itemDiv = document.createElement('div');
+  itemDiv.className = `message-attachment-item ${isInlineImage ? 'image-attachment' : 'media-attachment'}`;
+
+  if (isInlineImage) {
+    const img = document.createElement('img');
+    img.src = att.data;
+    img.alt = att.fileName || '图片';
+    img.loading = 'lazy';
+    img.onclick = () => window.open(att.data, '_blank');
+    itemDiv.appendChild(img);
+    return itemDiv;
+  }
+
+  const actionLabel = att.filePath
+    ? (isChineseLanguage(appState.language) ? '下载' : 'Download')
+    : '';
+  itemDiv.innerHTML = `
+    <span class="media-icon"></span>
+    <div class="media-info">
+      <div class="media-type">${escapeHtml(getAttachmentTypeLabel(att.type))}</div>
+      <div class="media-name">${escapeHtml(att.fileName || att.originalName || '')}</div>
+      ${actionLabel ? `<button type="button" class="attachment-download-btn">${actionLabel}</button>` : ''}
+    </div>
+  `;
+  itemDiv.querySelector('.attachment-download-btn')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    downloadAttachment(att);
+  });
+  return itemDiv;
+}
+
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-02',
+    version: 'v0.10.9.62',
+    zh: {
+      summary: '安全审查：会话流鉴权、并发限流与渲染防护加固。',
+      details: [
+        '跨设备会话流订阅改用 Authorization 请求头，不再把长期登录 token 放进 URL。',
+        '聊天并发限制改为 SQLite 事务内原子检查与登记，防止并发请求绕过用户同时请求上限。',
+        '管理员“限制风控”页可配置单用户并发、每分钟、5 小时、每周对话额度，以及上传限频、容量、文件数和积分任务风控开关。',
+        '管理员“邮件群发”页支持先发测试邮件，再确认群发给已验证用户；后端新增主题/正文长度限制、测试邮箱校验和显式群发确认。',
+        '生产 CSP 不再默认允许连接浏览器本机 localhost，仅本地开发或显式开关时放行。',
+        '搜索来源链接先做安全 URL 规范化，畸形来源不会打断渲染或进入链接模板。'
+      ]
+    },
+    en: {
+      summary: 'Security review: stream auth, concurrency limits, and rendering hardening.',
+      details: [
+        'Cross-device session streams now use the Authorization header instead of putting long-lived login tokens in URLs.',
+        'Chat concurrency limits now use an atomic SQLite check-and-register transaction to prevent race bypasses.',
+        'The Admin Limits page can configure per-user concurrency, per-minute, 5-hour, and weekly chat quotas, plus upload rate, storage, file-count, and points-task risk controls.',
+        'The Admin Broadcast page now supports test sends before confirmed verified-user broadcasts; the backend enforces subject/body length limits, test-email validation, and explicit broadcast confirmation.',
+        'Production CSP no longer allows browser-local localhost connections unless local development or an explicit switch enables them.',
+        'Search source links are normalized before templating so malformed sources cannot break rendering or enter link markup directly.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-02',
+    version: 'v0.10.9.61',
+    zh: {
+      summary: '修复研究模式菜单、英文日期与头像缓存。',
+      details: [
+        '研究模式关闭时同步收起菜单行的内部间距，折叠态高度与联网搜索、推理模式等普通按钮保持一致。',
+        '侧边栏对话日期在语言切换后会重新渲染，英文环境显示 Today、Jul 2、Jul 2026 等英文日期。',
+        '用户头像加入版本化 Service Worker 运行时缓存，提升下次打开速度；版本升级时自动清理旧头像与静态资源缓存。',
+        '保留开启研究模式后的 slider 与子 agent 模型配置展开动画。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the research menu, English dates, and avatar caching.',
+      details: [
+        'When research mode is off, the menu row now collapses its internal spacing so its height matches the other plus-menu buttons.',
+        'Conversation date groups re-render after language changes, so English mode shows labels like Today, Jul 2, and Jul 2026.',
+        'User avatars now use a versioned Service Worker runtime cache for faster repeat loads; old avatar and static caches are cleared on version upgrades.',
+        'The slider and sub-agent model settings still animate normally when research mode is enabled.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-02',
+    version: 'v0.10.9.60',
+    zh: {
+      summary: '跨设备同步、小屏输入、研究插话与静态缓存修复。',
+      details: [
+        '跨设备对话同步轮询缩短到 5 秒，防抖缩短到 2.5 秒，窗口恢复时继续强制刷新。',
+        '小屏移动端所有文本输入控件统一不低于 16px，避免 iOS 聚焦输入框后页面被自动放大。',
+        '研究模式用户插话只进入子 agent 讨论上下文，不再额外写入主对话消息流。',
+        '+ 号菜单中开关展开的子设置补齐高度、透明度和位移动画过渡。',
+        '修正 Service Worker 预缓存资源号，确保 app.js、styles.css 和 manifest 使用本版缓存号。'
+      ]
+    },
+    en: {
+      summary: 'Cross-device sync, small-screen inputs, research interjections, and static cache fixes.',
+      details: [
+        'Cross-device conversation polling now runs every 5 seconds, with a 2.5-second debounce and forced refresh on window focus.',
+        'All small-screen text inputs stay at 16px or larger to prevent iOS input-focus zoom.',
+        'Research-mode user interjections now only enter the sub-agent discussion context instead of being persisted into the main chat stream.',
+        'Nested settings revealed from the plus menu now animate height, opacity, and position changes.',
+        'Service Worker precache URLs now use the current build id for app.js, styles.css, and the manifest.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-01',
+    version: 'v0.10.9.55',
+    zh: {
+      summary: '标签页标题改为跑马灯动画，后台回复完成时提示回来查看。',
+      details: [
+        '标签页标题改为带空格的跑马灯效果：RAI → 空格AI → 空格空格I → 全空格 → 空格空格R → 空格RA → 循环，每帧 600ms，连贯滚动。',
+        '当 AI 回复完成且标签页在后台时，标题显示「RAI回复好了 快来查看！」；切回标签页后恢复跑马灯动画。',
+        '已适配英文版本：后台提示为「RAI replied! Come take a look!」。'
+      ]
+    },
+    en: {
+      summary: 'Tab title is now a marquee animation; background tabs show a reply-ready prompt.',
+      details: [
+        'The browser tab title now scrolls as a padded marquee: RAI → (space)AI → (space)(space)I → (spaces) → (space)(space)R → (space)RA → loop, at 600ms per frame.',
+        'When an AI reply finishes while the tab is in the background, the title switches to "RAI replied! Come take a look!" and resumes the marquee once you return.',
+        'Both Chinese and English prompts are supported.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-01',
+    version: 'v0.10.9.54',
+    zh: {
+      summary: 'UI/UX 修复、新用户 200 点数与欢迎邮件。',
+      details: [
+        '修复搜索来源「展开来源」按钮被安全过滤清洗导致点击无反应的问题，改用事件委托，来源卡片可正常展开收起。',
+        '研究模式进行中用户插话不再插入主对话流 AI 气泡上方，改为作为「你的插话」气泡进入子 agent 讨论面板。',
+        '顶部/底部渐变遮罩在滚动到边界时自动隐藏，不再遮挡首条或末条文字内容。',
+        '+ 号菜单补齐关闭动画，模型「全部模型」弹出菜单固定 x 轴不再左右飘。',
+        '浏览器标签页标题每秒做 R→RA→RAI→AI→I 文字动画，标签隐藏时恢复全名。',
+        '新注册用户验证完成后发放 200 欢迎点数；注册成功会收到一封产品引导欢迎邮件。',
+        '新增管理员群发邮件接口 POST /api/admin/broadcast，可向所有已验证邮箱用户发送产品更新。'
+      ]
+    },
+    en: {
+      summary: 'UI/UX fixes, 200 welcome points for new users, and welcome email.',
+      details: [
+        'Fixed the search-sources toggle being stripped by the HTML sanitizer so the expand button now works via event delegation.',
+        'During research mode, user interjections now join the sub-agent discussion panel as a "Your interjection" bubble instead of landing above the streaming AI message.',
+        'Top/bottom gradient fades auto-hide when scrolled to the boundary so they no longer cover the first or last message text.',
+        'The + menu now has a close animation, and the All Models popover keeps a fixed x-axis instead of drifting sideways.',
+        'The browser tab title cycles R → RA → RAI → AI → I every second, restoring the full name when the tab is hidden.',
+        'New users receive 200 welcome points after email verification, plus a product-intro welcome email.',
+        'Added admin broadcast endpoint POST /api/admin/broadcast to send product updates to all verified users.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.53',
+    zh: {
+      summary: '注册邮箱验证恢复严格模式。',
+      details: [
+        '注册、重发注册验证码和未验证账号密码登录不再默认绕过 Resend 测试模式限制，必须收到邮箱验证码并验证后才进入 RAI。',
+        '旧的测试模式放行只保留为显式运维开关 RAI_ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS=true，线上默认关闭。',
+        '如果邮件供应商仍未验证发信域名，后端会返回非 5xx JSON，避免 Cloudflare 替换响应体，页面会明确提示需要管理员处理。'
+      ]
+    },
+    en: {
+      summary: 'Strict registration email verification restored.',
+      details: [
+        'Registration, registration-code resend, and password login for unverified accounts no longer bypass Resend test-mode restrictions by default.',
+        'The old test-mode fallback is kept only behind the explicit RAI_ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS=true operations switch.',
+        'If the mail provider still needs sender-domain verification, the backend returns non-5xx JSON so Cloudflare does not replace the body, and the page shows a clear admin-action message.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.51',
+    zh: {
+      summary: '账号注销恢复与小屏手机布局适配。',
+      details: [
+        '设置页账号面板恢复“注销账号”入口，要求当前密码、确认词和可选 Authenticator 验证码，成功后清理本地登录态。',
+        '后端新增自助注销接口，并让后台删除用户复用同一套级联清理逻辑，覆盖会话、消息、反馈、记忆、用量、任务、验证码、ChatFlow、上传文件和头像。',
+        '消息底部操作栏改为按 border-box 计算宽度，并在 390px/360px 小屏压缩按钮、徽章和间距，避免横向裁切。',
+        '底部输入栏、输入容器、输入行和工具栏统一限制在 viewport 内，修复左右 padding 撑宽导致的小屏溢出。'
+      ]
+    },
+    en: {
+      summary: 'Account deletion restored and small-phone layout fit.',
+      details: [
+        'The account settings panel restores account deletion with current password, confirmation text, optional Authenticator code, and local sign-out cleanup.',
+        'The backend adds a self-delete endpoint and reuses the same cascade cleanup for admin deletion, covering chats, messages, feedback, memories, quota, rewards, codes, ChatFlow, uploads, and avatars.',
+        'Message action rows now use border-box sizing and compact controls on 390px/360px screens to prevent horizontal clipping.',
+        'The bottom composer, input container, row, and toolbar are constrained to the viewport so padding cannot widen the page.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.49',
+    zh: {
+      summary: '注册邮箱测试模式兜底。',
+      details: [
+        '检测到 Resend 测试模式限制普通邮箱收验证码时，注册和密码登录会在已验证密码的前提下临时完成账号创建并签发 token。',
+        '该兜底只针对 Resend 明确返回测试发信限制的 403，不影响其它邮件故障，也不会开放仅凭邮箱验证码入口绕过登录。',
+        '重发注册验证码如果触发同一兜底，前端会直接进入已登录状态。'
+      ]
+    },
+    en: {
+      summary: 'Registration email test-mode fallback.',
+      details: [
+        'When Resend blocks normal recipients in test mode, registration and password login can temporarily finish account creation after password verification.',
+        'The fallback only applies to the explicit Resend 403 test-recipient restriction and does not affect other email failures or email-only login.',
+        'Resending a registration code can also accept the fallback token and enter the app.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.48',
+    zh: {
+      summary: '注册认证异常提示修复。',
+      details: [
+        '注册、登录验证码、二步验证和找回密码统一使用安全 JSON 解析，不再把 HTML 响应解析异常展示给用户。',
+        '认证请求显式声明 Accept: application/json；代理或缓存返回网页时，会提示刷新后重试并记录响应状态与预览。',
+        '后端 404 响应补充 success=false、code 和前端版本过旧提示，便于定位错误 API 路径。'
+      ]
+    },
+    en: {
+      summary: 'Registration auth error handling fix.',
+      details: [
+        'Registration, email-code login, two-factor login, and password reset now share safe JSON parsing.',
+        'Auth requests send Accept: application/json, and HTML proxy/cache responses show a refresh prompt instead of a parser error.',
+        'Backend 404 responses now include success=false, a code, and a stale-client hint for API paths.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.47',
+    zh: {
+      summary: 'DeepSeek Pro 联网与内部输出清洗修复。',
+      details: [
+        'DeepSeek Pro 在联网模式下会由 RAI 服务端按需预检索并注入来源，避免模型只输出伪搜索过程。',
+        '服务端流式输出和入库前会清理 ds_safety、function_calls、[object Object]、分析用户意图等内部片段。',
+        '前端历史消息、普通聊天流和 ChatFlow 都增加兼容清洗，并移除无条件提示模型可调用 web_search 的文案。'
+      ]
+    },
+    en: {
+      summary: 'DeepSeek Pro web context and internal-output cleanup.',
+      details: [
+        'DeepSeek Pro now receives server-side web context when web mode clearly needs external information.',
+        'Streaming and saved replies strip ds_safety, function_calls, [object Object], and internal analysis fragments.',
+        'History rendering, normal chat streaming, and ChatFlow all share the compatibility cleanup, and the prompt no longer claims web_search is always available.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.46',
+    zh: {
+      summary: '专家模型切换到 DeepSeek V4 Pro。',
+      details: [
+        '输入框模型菜单、移动端模型弹窗和重新生成模型选择中的“专家模型”统一路由到 DeepSeek Pro。',
+        'DeepSeek Pro 后端实际调用 deepseek-v4-pro；极速模型继续保持 DeepSeek Flash / deepseek-v4-flash。',
+        '管理员模型目录把 DeepSeek Pro 标记为快捷专家模型，Kimi 保留为普通全部模型。'
+      ]
+    },
+    en: {
+      summary: 'Expert Mode now uses DeepSeek V4 Pro.',
+      details: [
+        'Expert Mode in the composer menu, mobile model picker, and regenerate picker now routes to DeepSeek Pro.',
+        'DeepSeek Pro calls deepseek-v4-pro on the backend; Fast Mode stays on DeepSeek Flash / deepseek-v4-flash.',
+        'The admin model catalog now marks DeepSeek Pro as the quick Expert model, while Kimi remains a regular model.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-26',
+    version: 'v0.10.9.44',
+    zh: {
+      summary: '邮箱认证和输入框附件体验补齐。',
+      details: [
+        '注册改为先发送邮箱验证码，验证码通过后才进入 RAI；邀请奖励也延后到邮箱验证完成后结算。',
+        '找回密码改为邮箱验证码重置；登录页支持密码登录或邮箱验证码登录，已开启 Authenticator 的账号仍需二步验证。',
+        '邮箱验证码改为 10-16 位随机英文字母、数字和普通符号组合，验证码只保存哈希。',
+        'ZTX6D 接入默认端点更新到 ztx6d.cn 文档地址，AppKey 仍只从服务端环境变量读取。',
+        '主输入框支持直接粘贴图片或文件，复用现有上传额度、文件安全检查和附件预览。'
+      ]
+    },
+    en: {
+      summary: 'Email authentication and composer attachment paste are now covered.',
+      details: [
+        'Registration now sends an email code first, and users enter RAI only after email verification; referral rewards settle after verification.',
+        'Password recovery now uses email-code reset; login supports password or email-code login, while Authenticator still applies when enabled.',
+        'Email codes are now 10-16 random letters, numbers, and common symbols, with only code hashes stored.',
+        'ZTX6D defaults now follow the ztx6d.cn merchant documentation, while AppKey remains server-side only.',
+        'The main composer supports pasting images or files directly, reusing upload quotas, file safety checks, and attachment previews.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-17',
+    version: 'v0.10.9.25',
+    zh: {
+      summary: '附件现在是所有模型都能真正"看见"的内容了。',
+      details: [
+        '附件支持全面重构：文本、代码、HTML、PDF、Word、Excel、PPT 上传后自动提取内容并注入到模型上下文，所有模型（ChatGPT、DeepSeek、Kimi、Claude、Gemma 等）都能收到同一份附件文本。',
+        '图片/视频/音频在支持多模态的模型上继续原生传递，在不支持多模态的模型上则转述为文字描述，确保用户选任何模型都有附件的感知。',
+        '通知列表和公告不再在图标上区分已读/未读颜色，统一使用中性灰阶图标，未读状态仅通过小灰点提示，侧边栏红点保留作为入口提醒。',
+        '代码文件（HTML/JS/PHP/SQL/Shell 等）现在可以作为文本附件安全上传，后端自动防止内联执行，下载时强制作为附件保存。'
+        ,'修复上传失败时只弹通用失败提示的问题，现在会显示服务端返回的具体原因；同时修正首页版本号缓存不一致。'
+      ]
+    },
+    en: {
+      summary: 'Attachments are now contents that every model can actually "see".',
+      details: [
+        'A rebuilt attachment pipeline now extracts text from uploaded code, documents, and data files — PDF, Word, Excel, PPT, HTML, CSV, and more — and injects it directly into the prompt, so all models receive the same attachment context regardless of native multimodality.',
+        'Images, video, and audio are still delivered natively to multimodal models, while a textual description fallback ensures that even non-multimodal models remain aware of media attachments.',
+        'The notification list and announcements no longer differentiate read/unread with colored icons; all items use the same neutral grey-scale icon, with only a tiny dot marking unread status. The sidebar badge stays for entry awareness.',
+        'Code files (HTML, JavaScript, PHP, SQL, Shell, etc.) can now be safely uploaded as text attachments — the server prevents inline execution and forces download-as-attachment for every code file.'
+        ,'Upload failures now surface the server-provided reason instead of a generic alert, and the homepage version badge is aligned with the deployed build.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-16',
+    version: 'v0.10.9.23',
+    zh: {
+      summary: '通知、登录和后台管理继续收回到 RAI 的秩序里。',
+      details: [
+        '通知页、右下角提醒和公告弹窗回到设置页同款灰阶卡片，不再使用突兀的彩色公告背景。',
+        '公告支持英文标题和英文正文，英文界面下的域名迁移通知不再只显示中文。',
+        '管理员用户列表增加改密入口，忘记密码入口也能引导用户联系管理员处理。',
+        '活跃用户排行会隐藏带 HTML 痕迹的异常用户名，避免代码样文本占据排行榜。'
+      ]
+    },
+    en: {
+      summary: 'Notifications, login recovery, and admin tools now feel more aligned with RAI.',
+      details: [
+        'The Notifications page, bottom-right toast, and popup announcements now use the same neutral card language as Settings instead of colorful alert panels.',
+        'Announcements can carry English title and body text, so the English UI no longer shows the domain-migration notice only in Chinese.',
+        'Admins can change a user password from user management, and the login page has a clear forgot-password entry for admin-assisted recovery.',
+        'Active-user rankings now suppress usernames that look like HTML, keeping code-like text out of the leaderboard.'
+      ]
+    }
+  },
+  {
+    date: '2026-06-13',
+    version: 'v0.10.9.22',
+    zh: {
+      summary: '这一版，RAI 把界面收拾得更顺眼了。',
+      details: [
+        '把完成任务后那圈突兀的绿色边框去掉了，已完成的任务现在安静地淡出，和整体设计更搭。',
+        '域名迁移公告换上了贴合 RAI 风格的卡片，关于页也铺上了引导页那张星球主视觉，进去更有氛围。',
+        '移动端的欢迎引导重新排了版，不再挤成一团，第一次见面也能从容看完。',
+        '任务列表多了两件事可做：收藏新域名领 100 积分，给 GitHub 点个 Star 还能换一个月 Pro。',
+        '公告现在交给管理员在后台打理——想弹窗、想右下角轻提醒、还是安静放进列表，都可以挑，还能约定只在某段时间出现。'
+      ]
+    },
+    en: {
+      summary: 'This release gives RAI a tidier, friendlier face.',
+      details: [
+        'The jarring green border on finished tasks is gone; completed tasks now fade back quietly to match the overall design.',
+        'The domain-migration notice wears an on-brand card, and the About page now carries the onboarding planet artwork for a warmer feel.',
+        'The mobile welcome guide was re-laid-out so it no longer feels cramped on a first run.',
+        'Two new tasks joined the list: bookmark the new domain for 100 points, and star us on GitHub to earn a month of Pro.',
+        'Announcements are now managed from the admin panel — choose a popup, a bottom-right toast, or a silent entry, and even schedule when each one appears.'
+      ]
+    }
+  },
   {
     date: '2026-06-11',
     version: 'v0.10.9.21',
@@ -4057,7 +5255,7 @@ const RAI_UPDATE_TIMELINE = [
       summary: '完善研究讨论气泡、thinking 展示与会员点数。',
       details: [
         'Pro 会员兑换点数改为 28 天签到可获得的点数，即 560 点。',
-        '研究讨论完成后会保留 Gemma、Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 的讨论气泡，不再只剩最终回答。',
+        '研究讨论完成后会保留 Gemma、Kimi K2.5、ChatGPT、DeepSeek Pro 的讨论气泡，不再只剩最终回答。',
         '子模型发言改为头像 + 聊天气泡布局，去掉模型对话边框，并按模型使用轻微区分的品牌色。',
         '深度研究开启 thinking 时，每个子模型气泡内可折叠查看自己的 thinking。',
         '研究停止条件收紧为至少 3/4 子模型认为无重大问题；主控模型只负责最终认真陈述，不再质疑用户。',
@@ -4071,7 +5269,7 @@ const RAI_UPDATE_TIMELINE = [
       summary: 'Improved research chat bubbles, per-agent thinking, and membership points.',
       details: [
         'Pro redemption now costs 560 points, equal to 28 days of check-ins.',
-        'Research discussions keep the Gemma, Kimi K2.5, GPT-5.5, and DeepSeek V4 Pro bubbles after completion instead of disappearing behind the final answer.',
+        'Research discussions keep the Gemma, Kimi K2.5, ChatGPT, and DeepSeek Pro bubbles after completion instead of disappearing behind the final answer.',
         'Sub-agent turns now use an avatar plus chat bubble layout with no dialogue borders and subtly distinct model colors.',
         'When Deep Research enables thinking, each sub-agent bubble can show its own collapsible thinking.',
         'Research now requires at least 3/4 sub-agents to report no major issue before the master writes the final answer; the master answers directly instead of challenging the user.',
@@ -4088,7 +5286,7 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '修正快速/深度研究为多模型讨论流程。',
       details: [
-        '快速研究不再等同普通单模型模式，现在同样进入 Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 讨论流程。',
+        '快速研究不再等同普通单模型模式，现在同样进入 Kimi K2.5、ChatGPT、DeepSeek Pro 讨论流程。',
         '快速研究关闭 thinking，采用较短讨论轮次；深度研究开启 thinking，采用更完整的多轮质疑。',
         '研究流程改为先由各模型形成初始结论，再按轮共享结论、互相质疑并修正，直到无重大问题或达到安全轮次上限。',
         '最终回答只由主控模型在讨论结束后生成，主控必须吸收成立的质疑并标注仍未解决的不确定前提。',
@@ -4098,7 +5296,7 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: 'Changed Fast and Deep Research into true multi-model discussion.',
       details: [
-        'Fast Research no longer behaves like ordinary single-model chat; it now enters the Kimi K2.5, GPT-5.5, and DeepSeek V4 Pro discussion flow.',
+        'Fast Research no longer behaves like ordinary single-model chat; it now enters the Kimi K2.5, ChatGPT, and DeepSeek Pro discussion flow.',
         'Fast Research disables thinking and uses shorter rounds; Deep Research enables thinking and runs fuller challenge rounds.',
         'The research flow now starts with initial conclusions, then shares conclusions round by round for mutual critique and revision until no major issue remains or the safe round limit is reached.',
         'Only the master model writes the final answer after discussion, and it must absorb valid critiques and preserve unresolved uncertainty.',
@@ -4136,7 +5334,7 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '移除全部模型中的商用模型图标。',
       details: [
-        '全部模型展开列表中的 DeepSeek、Kimi、Qwen、ChatGPT、GPT-5.5、Grok、Claude、Gemma 图标已全部移除，只保留文字与状态徽章。',
+        '全部模型展开列表中的 DeepSeek、Kimi、ChatGPT、Claude、Gemma 图标已全部移除，只保留文字与状态徽章。',
         '模型弹窗中的同类商用模型卡片图标同步移除，避免界面内残留品牌图形。',
         '智能模型、极速模式、专家模式与全部模型入口图标保留；本地模型入口不受影响。',
         '为无图标条目补齐纯文字布局，展开列表不再留下左侧空白占位。',
@@ -4146,7 +5344,7 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: 'Removed commercial provider icons from the full model list.',
       details: [
-        'DeepSeek, Kimi, Qwen, ChatGPT, GPT-5.5, Grok, Claude, and Gemma no longer show provider icons in the expanded All Models list, leaving text and badges only.',
+        'DeepSeek, Kimi, ChatGPT, Claude, and Gemma no longer show provider icons in the expanded All Models list, leaving text and badges only.',
         'The same provider icons were removed from the model modal cards so brand graphics do not linger elsewhere in the UI.',
         'The top-level Smart, Fast, Expert, and All Models entry icons remain, and the local-model entry is unchanged.',
         'Text-only menu items now use a dedicated layout so the expanded list no longer leaves an empty left gutter.',
@@ -4189,7 +5387,7 @@ const RAI_UPDATE_TIMELINE = [
         'ZTX6D 登录改为半宽按钮，并新增 rPass 登录占位入口，悬浮或点击提示待上线。',
         '邮箱输入不再在 .co 阶段自动跳到密码框，渐进式表单隐藏步骤不再预留空白。',
         '退出登录会关闭设置面板、清除登录态并强制刷新页面。',
-        '原 4 倍速研究入口改为快速研究 / 深度研究两档滑块；快速研究关闭 thinking，深度研究由 Kimi K2.5、GPT-5.5、DeepSeek V4 Pro 互相质疑讨论后，再由 GPT-5.5 或 DeepSeek V4 Pro 主控生成最终回答。'
+        '原 4 倍速研究入口改为快速研究 / 深度研究两档滑块；快速研究关闭 thinking，深度研究由 Kimi K2.5、ChatGPT、DeepSeek Pro 互相质疑讨论后，再由 DeepSeek Pro 主控生成最终回答。'
       ]
     },
     en: {
@@ -4200,7 +5398,7 @@ const RAI_UPDATE_TIMELINE = [
         'ZTX6D login is half-width and an rPass login placeholder now shows coming-soon feedback.',
         'Email entry no longer advances at .co, and hidden auth steps no longer reserve empty space.',
         'Logging out closes Settings, clears auth state, and forces a page refresh.',
-        'The old 4x research entry is replaced by a Fast / Deep Research slider; Fast disables thinking, while Deep has Kimi K2.5, GPT-5.5, and DeepSeek V4 Pro challenge each other before GPT-5.5 or DeepSeek V4 Pro produces the final answer.'
+        'The old 4x research entry is replaced by a Fast / Deep Research slider; Fast disables thinking, while Deep has Kimi K2.5, ChatGPT, and DeepSeek Pro challenge each other before DeepSeek Pro produces the final answer.'
       ]
     }
   },
@@ -4279,7 +5477,7 @@ const RAI_UPDATE_TIMELINE = [
         '设置页新增跟随系统深浅色，浅色配色更接近现代应用的柔和灰白层级。',
         '登出入口移动到账号设置内，账号表单、移动端返回箭头和二级菜单状态更加整齐。',
         '侧边栏修正搜索框右边界、移动端圆角、ChatFlow 测试标识和语言图标按钮。',
-        '点数兑换会员页面改为更清晰的套餐卡片，支持邮箱改为 rick080402+raisupport@gmail.com。'
+        '点数兑换会员页面改为更清晰的套餐卡片，支持邮箱改为可配置联系邮箱。'
       ]
     },
     en: {
@@ -4290,7 +5488,7 @@ const RAI_UPDATE_TIMELINE = [
         'Settings now supports following the system theme, with a softer modern light palette.',
         'Log out moved into Account settings, with cleaner account fields, mobile back affordance, and detail-page state.',
         'The sidebar now has a fixed search edge, rounded mobile drawer, ChatFlow beta badge, and language icon button.',
-        'The points redemption page now uses clearer plan cards and support email is rick080402+raisupport@gmail.com.'
+        'The points redemption page now uses clearer plan cards and a configurable support email.'
       ]
     }
   },
@@ -4404,23 +5602,23 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-05-14',
     version: 'v0.10.7',
     zh: {
-      summary: 'ZTX6D 登录、NewAPI GPT-5.5、故障降级和 Mermaid 实时图表修复。',
+      summary: 'ZTX6D 登录、模型路由、故障降级和 Mermaid 实时图表修复。',
       details: [
         '新增服务端 ZTX6D SSO 登录和老用户绑定入口，前端只接收 RAI 自签 JWT。',
-        '接入 OpenAI-compatible NewAPI GPT-5.5 通道，并对 free 用户设置每日 10 次限免。',
-        '模型失败时按 GPT-OSS-120B、Gemma、Qwen2.5-7B 自动降级。',
+        '接入 OpenAI-compatible 模型通道，并完善 free 用户限免策略。',
+        '模型失败时按 GPT-OSS-120B、Gemma、DeepSeek Flash 自动降级。',
         '修复流式 Mermaid 统计图、饼图、流程图与 Markdown、KaTeX、代码块冲突。',
-        '保留 Grok 4.2、Gemma 官方/relay/备用路由和 Claude relay 兼容逻辑。'
+        '保留 Gemma、Claude relay 和备用路由兼容逻辑。'
       ]
     },
     en: {
-      summary: 'Added ZTX6D login, NewAPI GPT-5.5, fallback routing, and live Mermaid fixes.',
+      summary: 'Added ZTX6D login, model routing, fallback routing, and live Mermaid fixes.',
       details: [
         'Added server-side ZTX6D SSO login and account binding while the frontend only receives RAI JWTs.',
-        'Connected OpenAI-compatible NewAPI GPT-5.5 with a 10-use daily free quota.',
-        'Fallbacks now try GPT-OSS-120B, Gemma, then Qwen2.5-7B when a model fails.',
+        'Connected OpenAI-compatible model routing with limited-free policy.',
+        'Fallbacks now try GPT-OSS-120B, Gemma, then DeepSeek Flash when a model fails.',
         'Fixed streaming Mermaid charts conflicting with Markdown, KaTeX, and code blocks.',
-        'Kept Grok 4.2, Gemma official/relay/fallback routing, and Claude relay compatibility.'
+        'Kept Gemma, Claude relay, and fallback-routing compatibility.'
       ]
     }
   },
@@ -4428,18 +5626,18 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-05-10',
     version: 'v0.10.6',
     zh: {
-      summary: 'Grok、Gemma、Claude 多供应商路由和模型菜单打磨。',
+      summary: 'Gemma、Claude 多供应商路由和模型菜单打磨。',
       details: [
-        'Grok 4.2 接入 NewAPI 路由，并清理上游混在正文里的 think 内容。',
+        '清理上游混在正文里的 think 内容。',
         'Gemma 支持 Google 官方接口、relay 和备用路由。',
         'Claude OpenRouter 请求改为经美国 relay 转发，上游调用更安全稳定。',
         '模型供应商图标、短名展示、会员徽标和列表宽度继续统一。'
       ]
     },
     en: {
-      summary: 'Polished Grok, Gemma, Claude provider routing and model menus.',
+      summary: 'Polished Gemma, Claude provider routing and model menus.',
       details: [
-        'Routed Grok 4.2 through NewAPI and separated upstream think content from visible replies.',
+        'Separated upstream think content from visible replies.',
         'Added Gemma official Google API, relay, and fallback routing support.',
         'Moved Claude OpenRouter traffic through a US relay for safer and more stable upstream calls.',
         'Unified provider icons, short names, membership badges, and model list width behavior.'
@@ -4450,20 +5648,20 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-05-06',
     version: 'v0.10.4',
     zh: {
-      summary: 'GPT-5.5 限免策略、NewAPI main 分组和运行期备用链。',
+      summary: '限免策略、模型分组和运行期备用链。',
       details: [
-        'GPT-5.5 调整为限免策略，free 每日 10 次，Pro/MAX 不受该限额约束。',
-        '确认 NewAPI 令牌 main 分组可用，直连 gpt-5.5 返回正常。',
-        'ZTX6D 登录绑定和 GPT-5.5 使用配置更完整。',
+        '模型调用调整为限免策略，Pro/MAX 不受 free 限额约束。',
+        '确认 OpenAI-compatible 令牌 main 分组可用，直连模型返回正常。',
+        'ZTX6D 登录绑定和模型使用配置更完整。',
         '服务端增加统一运行期备用链，主模型不可用时自动回退。'
       ]
     },
     en: {
-      summary: 'Updated GPT-5.5 free quota, NewAPI main group, and runtime fallback chain.',
+      summary: 'Updated limited-free quota, provider group, and runtime fallback chain.',
       details: [
-        'Changed GPT-5.5 to a limited-free model: 10 daily uses for free users, unlimited for Pro/MAX.',
-        'Verified the NewAPI main token group can call gpt-5.5 successfully.',
-        'Added ops chapters for ZTX6D login/binding and GPT-5.5 integration parameters.',
+        'Changed model access to a limited-free policy for free users, unlimited for Pro/MAX.',
+        'Verified the provider main token group can call the model successfully.',
+        'Added ops chapters for ZTX6D login/binding and model integration parameters.',
         'Added a unified runtime fallback chain when primary models are unavailable.'
       ]
     }
@@ -4472,21 +5670,21 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-05-05',
     version: 'v0.10.3',
     zh: {
-      summary: 'ZTX6D SSO、账号绑定、NewAPI provider 和 GPT-5.5 模型入口。',
+      summary: 'ZTX6D SSO、账号绑定、OpenAI-compatible provider 和模型入口。',
       details: [
         '新增 /api/auth/ztx6d/status、start、callback，使用一次性 rt 换取 uid。',
         '已登录用户可在设置账号里绑定 ZTX6D。',
         '登录页新增 ZTX6D 登录按钮，并移除生产环境 localhost 旧跳转。',
-        '新增 NewAPI / Lightcone AI provider，并在桌面、移动端、重新生成和 ChatFlow 菜单加入 GPT-5.5。'
+        '新增 OpenAI-compatible provider，并在桌面、移动端、重新生成和 ChatFlow 菜单加入新模型。'
       ]
     },
     en: {
-      summary: 'Added ZTX6D SSO, account binding, NewAPI provider, and GPT-5.5 entries.',
+      summary: 'Added ZTX6D SSO, account binding, OpenAI-compatible provider, and model entries.',
       details: [
         'Added /api/auth/ztx6d/status, start, and callback using one-time rt exchange for uid.',
         'Logged-in users can bind ZTX6D from Settings account binding.',
         'Added a ZTX6D login button and removed old production localhost redirects.',
-        'Added the NewAPI / Lightcone AI provider and GPT-5.5 in desktop, mobile, regenerate, and ChatFlow menus.'
+        'Added the OpenAI-compatible provider and model entries in desktop, mobile, regenerate, and ChatFlow menus.'
       ]
     }
   },
@@ -4494,9 +5692,9 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-04-30',
     version: 'v0.10.0',
     zh: {
-      summary: 'DeepSeek V4、ChatGPT/Gemma 路由、模型菜单和横屏输入布局。',
+      summary: 'DeepSeek、ChatGPT/Gemma 路由、模型菜单和横屏输入布局。',
       details: [
-        'DeepSeek 主路由升级为 deepseek-v4-flash，前端显示 DeepSeek V4。',
+        'DeepSeek 主路由升级为 Flash / Pro 语义入口。',
         '新增 OpenRouter ChatGPT openai/gpt-oss-120b:free。',
         'Gemma 切到 Google 官方 Generative Language API，并保留地区限制兜底。',
         '模型选择菜单缩窄、供应商图标统一，极速/专家入口保持抽象图标。',
@@ -4505,9 +5703,9 @@ const RAI_UPDATE_TIMELINE = [
       ]
     },
     en: {
-      summary: 'Updated DeepSeek V4, ChatGPT/Gemma routing, model menus, and landscape input layout.',
+      summary: 'Updated DeepSeek, ChatGPT/Gemma routing, model menus, and landscape input layout.',
       details: [
-        'Upgraded DeepSeek main routing to deepseek-v4-flash and displayed it as DeepSeek V4.',
+        'Upgraded DeepSeek routing to Flash / Pro semantic entries.',
         'Added OpenRouter ChatGPT openai/gpt-oss-120b:free.',
         'Moved Gemma to the Google official Generative Language API with region-limit fallback.',
         'Narrowed model menus, unified provider icons, and kept Fast/Expert entries abstract.',
@@ -4626,7 +5824,7 @@ const RAI_UPDATE_TIMELINE = [
       details: [
         '历史目录记录为 RAI 0.6 多模态。',
         '能力范围覆盖图片理解、视频理解、文档上传与解析。',
-        '多模态能力后来延续到 Qwen VL Max、Qwen3 Omni Flash 和文档解析流程。'
+        '多模态能力后来延续到文档解析流程。'
       ]
     },
     en: {
@@ -4634,7 +5832,7 @@ const RAI_UPDATE_TIMELINE = [
       details: [
         'Historical folder recorded as RAI 0.6 Multimodal.',
         'Covered image understanding, video understanding, and document upload/parsing.',
-        'The multimodal capability later continued through Qwen VL Max, Qwen3 Omni Flash, and document parsing flows.'
+        'The multimodal capability later continued through document parsing flows.'
       ]
     }
   },
@@ -4664,7 +5862,7 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '带模型路由的 0.5 版本。',
       details: [
-        '引入 Auto 模式，根据复杂度选择 Qwen Flash、Plus、Max。',
+        '引入 Auto 模式，根据复杂度选择合适模型。',
         '加入五维度分析：输入长度、代码检测、数学公式、推理复杂度、语言混合度。',
         '整合联网搜索、思考模式和本地模型相关文档。'
       ]
@@ -4672,7 +5870,7 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: '0.5 release with model routing.',
       details: [
-        'Introduced Auto mode to choose Qwen Flash, Plus, or Max by complexity.',
+        'Introduced Auto mode to choose a suitable model by complexity.',
         'Added five-dimension analysis: input length, code detection, math formulas, reasoning complexity, and language mix.',
         'Integrated web search, thinking mode, and local model documentation.'
       ]
@@ -4775,16 +5973,126 @@ function i18nText(key, fallback = '') {
   return i18n[lang]?.[key] || i18n['zh-CN']?.[key] || fallback;
 }
 
+let raiAnnouncementsCache = [];
+let raiAnnouncementsLoaded = false;
+const raiAnnouncementDeliveredIds = new Set();
+
+function formatAnnouncementMeta(announcement) {
+  const source = announcement?.createdAt || announcement?.updatedAt || '';
+  if (!source) return '';
+  const date = new Date(source);
+  if (Number.isNaN(date.getTime())) return '';
+  const isZh = isChineseLanguage(appState.language);
+  if (isZh) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d} 发布 · 公告`;
+  }
+  return `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · Announcement`;
+}
+
+function mapAnnouncementToNotice(announcement) {
+  return {
+    id: String(announcement.id),
+    deliveryMode: announcement.deliveryMode || 'silent',
+    icon: 'icons/settings/notifications.svg',
+    title: announcement.title || '',
+    body: announcement.body || '',
+    meta: formatAnnouncementMeta(announcement)
+  };
+}
+
 function getRaiNotifications() {
-  return [
-    {
-      id: RAI_DOMAIN_MIGRATION_NOTICE_ID,
-      icon: 'icons/settings/notifications_unread.svg',
-      title: i18nText('notifications-domain-title', 'RAI 域名即将更换'),
-      body: i18nText('notifications-domain-body', `RAI 即将迁移到新域名 ${RAI_NEW_PUBLIC_ORIGIN}/。`),
-      meta: i18nText('notifications-domain-meta', '2026-06-09 发布 · 迁移公告')
+  return raiAnnouncementsCache.map(mapAnnouncementToNotice);
+}
+
+async function fetchRaiAnnouncements() {
+  try {
+    const lang = encodeURIComponent(normalizeLanguage(appState.language));
+    const res = await fetch(`${API_BASE}/announcements?lang=${lang}&t=${Date.now()}`, {
+      headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    raiAnnouncementsCache = Array.isArray(data?.announcements) ? data.announcements : [];
+    raiAnnouncementsLoaded = true;
+  } catch (error) {
+    // 拉取失败时保留上一次缓存，避免清空已展示的公告
+    console.warn('获取公告失败，沿用上次缓存:', error);
+  }
+  updateNotificationButton();
+  renderNotificationsPanel();
+  dispatchAnnouncementDelivery();
+  return raiAnnouncementsCache;
+}
+
+function dispatchAnnouncementDelivery() {
+  if (areNotificationsPaused()) return;
+  const readIds = getReadNotificationIds();
+  getRaiNotifications().forEach((notice) => {
+    if (notice.deliveryMode === 'silent') return;
+    if (readIds.has(notice.id)) return;
+    if (raiAnnouncementDeliveredIds.has(notice.id)) return;
+    raiAnnouncementDeliveredIds.add(notice.id);
+    if (notice.deliveryMode === 'popup') {
+      showAnnouncementPopup(notice);
+    } else if (notice.deliveryMode === 'toast') {
+      showAnnouncementToast(notice);
     }
-  ];
+  });
+}
+
+function getAnnouncementToastStack() {
+  let stack = document.getElementById('raiAnnouncementToastStack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'raiAnnouncementToastStack';
+    stack.className = 'rai-announcement-toast-stack';
+    document.body.appendChild(stack);
+  }
+  return stack;
+}
+
+function showAnnouncementToast(notice) {
+  const stack = getAnnouncementToastStack();
+  const toast = document.createElement('div');
+  toast.className = 'rai-announcement-toast';
+  toast.innerHTML = `
+    <button type="button" class="rai-announcement-toast-close" aria-label="${isChineseLanguage(appState.language) ? '关闭' : 'Close'}">&times;</button>
+    <strong>${escapeHtml(notice.title)}</strong>
+    <span>${escapeHtml(notice.body)}</span>
+  `;
+  const close = () => {
+    toast.remove();
+  };
+  toast.querySelector('.rai-announcement-toast-close')?.addEventListener('click', close);
+  stack.appendChild(toast);
+  setTimeout(close, 9000);
+}
+
+function showAnnouncementPopup(notice) {
+  if (document.getElementById('raiAnnouncementPopup')) return;
+  const isZh = isChineseLanguage(appState.language);
+  const overlay = document.createElement('div');
+  overlay.id = 'raiAnnouncementPopup';
+  overlay.className = 'rai-announcement-popup-overlay';
+  overlay.innerHTML = `
+    <div class="rai-announcement-popup" role="dialog" aria-modal="true">
+      <div class="rai-announcement-popup-kicker">${isZh ? '公告' : 'Announcement'}</div>
+      <h3>${escapeHtml(notice.title)}</h3>
+      <p>${escapeHtml(notice.body)}</p>
+      <div class="rai-announcement-popup-actions">
+        <button type="button" class="rai-announcement-popup-btn">${isZh ? '知道了' : 'Got it'}</button>
+      </div>
+    </div>
+  `;
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelector('.rai-announcement-popup-btn')?.addEventListener('click', close);
+  document.body.appendChild(overlay);
 }
 
 function getReadNotificationIds() {
@@ -4869,7 +6177,8 @@ function renderNotificationsPanel() {
   if (list) {
     list.innerHTML = getRaiNotifications().map((notice) => {
       const isUnread = !readIds.has(notice.id);
-      const icon = isUnread ? 'icons/settings/notifications_unread.svg' : 'icons/settings/notifications.svg';
+      // 始终使用中性图标，未读状态仅通过 CSS 灰阶小点区分
+      const icon = 'icons/settings/notifications.svg';
       return `
         <div class="settings-notification-item ${isUnread ? 'is-unread' : ''}">
           <div class="settings-notification-item-icon" aria-hidden="true">
@@ -5078,14 +6387,252 @@ function updateUserIdentityUI() {
   if (emailInput) {
     emailInput.value = realEmail;
   }
+
+  renderTwoFactorSettings();
+  updateAccountDeletionUi();
+}
+
+function isTwoFactorEnabled() {
+  return appState.user?.two_factor_enabled === true
+    || appState.user?.two_factor_enabled === 1
+    || appState.user?.twoFactorEnabled === true;
+}
+
+function getTwoFactorAuthHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${appState.token}`
+  };
+}
+
+function renderTwoFactorSettings() {
+  const container = document.getElementById('settingsTwoFactorCard');
+  if (!container) return;
+
+  const enabled = isTwoFactorEnabled();
+  const setup = appState.twoFactorSetup;
+  const statusKey = enabled ? 'two-factor-enabled' : 'two-factor-disabled';
+  const descKey = enabled ? 'two-factor-enabled-desc' : 'two-factor-disabled-desc';
+  const statusClass = enabled ? 'enabled' : 'disabled';
+
+  let actionHtml = '';
+  if (enabled) {
+    actionHtml = `
+      <div class="settings-two-factor-disable">
+        <p class="setting-description">${escapeHtml(i18nText('two-factor-disable-desc', '输入当前验证码后关闭二步验证。'))}</p>
+        <div class="settings-two-factor-code-row">
+          <label class="setting-label" for="settingsTwoFactorDisableCode">${escapeHtml(i18nText('two-factor-code-label', '验证码'))}</label>
+          <input type="text" class="setting-input" id="settingsTwoFactorDisableCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="${escapeHtml(i18nText('two-factor-placeholder', '6 位验证码'))}">
+          <button type="button" class="settings-inline-save" onclick="disableTwoFactor()">${escapeHtml(i18nText('two-factor-confirm-disable', '确认关闭'))}</button>
+        </div>
+      </div>
+    `;
+  } else if (setup) {
+    actionHtml = `
+      <div class="settings-two-factor-setup">
+        <p class="setting-description">${escapeHtml(i18nText('two-factor-setup-desc', '用 Authenticator 扫描二维码，或手动输入密钥后填写 6 位验证码。'))}</p>
+        <div class="settings-two-factor-setup-body">
+          <img class="settings-two-factor-qr" src="${escapeHtml(setup.qrDataUrl || '')}" alt="Authenticator QR">
+          <div class="settings-two-factor-secret">
+            <span>${escapeHtml(i18nText('two-factor-secret-label', '手动密钥'))}</span>
+            <code>${escapeHtml(setup.secret || '')}</code>
+            <button type="button" class="settings-inline-save" onclick="copyTwoFactorSecret()">${escapeHtml(i18nText('two-factor-copy-secret', '复制密钥'))}</button>
+          </div>
+        </div>
+        <div class="settings-two-factor-code-row">
+          <label class="setting-label" for="settingsTwoFactorEnableCode">${escapeHtml(i18nText('two-factor-code-label', '验证码'))}</label>
+          <input type="text" class="setting-input" id="settingsTwoFactorEnableCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="${escapeHtml(i18nText('two-factor-placeholder', '6 位验证码'))}">
+          <button type="button" class="settings-inline-save" onclick="confirmTwoFactorSetup()">${escapeHtml(i18nText('two-factor-confirm-enable', '确认开启'))}</button>
+          <button type="button" class="settings-inline-confirm settings-two-factor-secondary" onclick="cancelTwoFactorSetup()">${escapeHtml(i18nText('two-factor-cancel', '取消'))}</button>
+        </div>
+      </div>
+    `;
+  } else {
+    actionHtml = `
+      <div class="settings-two-factor-actions">
+        <button type="button" class="settings-inline-save" onclick="startTwoFactorSetup()">${escapeHtml(i18nText('two-factor-setup', '开启二步验证'))}</button>
+      </div>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="settings-two-factor-header">
+      <div>
+        <div class="setting-label">${escapeHtml(i18nText('two-factor-settings-title', '二步验证'))}</div>
+        <p class="setting-description">${escapeHtml(i18nText(descKey, enabled ? '登录时需要输入动态验证码。' : '建议开启二步验证。'))}</p>
+      </div>
+      <span class="settings-two-factor-status ${statusClass}">${escapeHtml(i18nText(statusKey, enabled ? '已开启' : '未开启'))}</span>
+    </div>
+    ${actionHtml}
+  `;
+  updateAccountDeletionUi();
+}
+
+function updateAccountDeletionUi() {
+  const twoFactorItem = document.getElementById('accountDeleteTwoFactorItem');
+  const confirmInput = document.getElementById('accountDeleteConfirmInput');
+  const enabled = isTwoFactorEnabled();
+
+  if (twoFactorItem) {
+    twoFactorItem.hidden = !enabled;
+  }
+
+  if (confirmInput) {
+    const phrase = i18nText('account-delete-confirm-phrase', isChineseLanguage(appState.language) ? '注销账号' : 'DELETE');
+    confirmInput.placeholder = i18nText(
+      'account-delete-confirm-placeholder',
+      isChineseLanguage(appState.language) ? `输入 ${phrase}` : `Type ${phrase}`
+    );
+  }
+}
+
+function normalizeTwoFactorCode(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 6);
+}
+
+async function startTwoFactorSetup() {
+  if (!appState.token) return;
+  try {
+    const response = await fetch(`${API_BASE}/user/2fa/setup`, {
+      method: 'POST',
+      headers: getTwoFactorAuthHeaders()
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || i18nText('two-factor-setup-failed', '二步验证设置失败'));
+    }
+    appState.twoFactorSetup = data;
+    renderTwoFactorSettings();
+    setTimeout(() => document.getElementById('settingsTwoFactorEnableCode')?.focus(), 50);
+  } catch (error) {
+    showToast(localizeServerError(error.message, i18nText('two-factor-setup-failed', '二步验证设置失败')));
+  }
+}
+
+function cancelTwoFactorSetup() {
+  appState.twoFactorSetup = null;
+  renderTwoFactorSettings();
+}
+
+async function confirmTwoFactorSetup() {
+  const code = normalizeTwoFactorCode(document.getElementById('settingsTwoFactorEnableCode')?.value);
+  if (!/^\d{6}$/.test(code) || !appState.twoFactorSetup?.setupToken) {
+    showToast(i18nText('two-factor-code-required', '请输入 6 位验证码'));
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/user/2fa/enable`, {
+      method: 'POST',
+      headers: getTwoFactorAuthHeaders(),
+      body: JSON.stringify({ setupToken: appState.twoFactorSetup.setupToken, code })
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || i18nText('two-factor-setup-failed', '二步验证设置失败'));
+    }
+    appState.user = { ...appState.user, two_factor_enabled: true, twoFactorEnabled: true };
+    appState.twoFactorSetup = null;
+    renderTwoFactorSettings();
+    showToast(i18nText('two-factor-enabled-toast', '二步验证已开启'));
+  } catch (error) {
+    showToast(localizeServerError(error.message, i18nText('two-factor-setup-failed', '二步验证设置失败')));
+  }
+}
+
+async function disableTwoFactor() {
+  const code = normalizeTwoFactorCode(document.getElementById('settingsTwoFactorDisableCode')?.value);
+  if (!/^\d{6}$/.test(code)) {
+    showToast(i18nText('two-factor-code-required', '请输入 6 位验证码'));
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/user/2fa/disable`, {
+      method: 'POST',
+      headers: getTwoFactorAuthHeaders(),
+      body: JSON.stringify({ code })
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || i18nText('two-factor-setup-failed', '二步验证设置失败'));
+    }
+    appState.user = { ...appState.user, two_factor_enabled: false, twoFactorEnabled: false };
+    appState.twoFactorSetup = null;
+    renderTwoFactorSettings();
+    showToast(i18nText('two-factor-disabled-toast', '二步验证已关闭'));
+  } catch (error) {
+    showToast(localizeServerError(error.message, i18nText('two-factor-setup-failed', '二步验证设置失败')));
+  }
+}
+
+async function copyTwoFactorSecret() {
+  const secret = appState.twoFactorSetup?.secret || '';
+  if (!secret) return;
+  try {
+    await navigator.clipboard?.writeText(secret);
+    showToast(i18nText('two-factor-secret-copied', '密钥已复制'));
+  } catch (error) {
+    showToast(secret);
+  }
 }
 
 function normalizeResearchMode(value) {
   return String(value || '').toLowerCase() === 'deep' ? 'deep' : 'fast';
 }
 
+const RESEARCH_MODEL_OPTIONS = [
+  { id: 'gemma', label: 'Gemma' },
+  { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
+  { id: 'kimi-k2.6', label: 'Kimi K2.6' },
+  { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
+  { id: 'deepseek-pro', label: 'DeepSeek Pro' },
+  { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+  { id: 'north-mini-code', label: 'Mimo Code' },
+  { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
+  { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
+];
+
+function normalizeResearchModelId(modelId) {
+  const normalized = normalizeSelectedModelId(modelId);
+  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
+  if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
+  return normalized;
+}
+
+function normalizeResearchAgentModels(input) {
+  const rawList = Array.isArray(input)
+    ? input
+    : (typeof input === 'string' ? input.split(',') : []);
+  const allowed = new Set(RESEARCH_MODEL_OPTIONS.map(option => option.id));
+  const selected = [];
+  rawList.forEach((item) => {
+    const modelId = normalizeResearchModelId(item);
+    if (!allowed.has(modelId) || selected.includes(modelId)) return;
+    selected.push(modelId);
+  });
+  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'];
+}
+
+function normalizeResearchMasterModel(input) {
+  const modelId = normalizeResearchModelId(input);
+  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-pro';
+}
+
+function getResearchModelLabel(modelId) {
+  const normalized = normalizeResearchModelId(modelId);
+  return RESEARCH_MODEL_OPTIONS.find(option => option.id === normalized)?.label || MODELS[normalized]?.name || normalized;
+}
+
 function isResearchModeEnabled() {
   return appState.researchModeEnabled === true;
+}
+
+function rememberCurrentNonResearchModel() {
+  const selected = normalizeSelectedModelId(appState.selectedModel || 'auto') || 'auto';
+  if (selected && selected !== 'research-mode' && MODELS[selected] && !isModelDisabledByAdmin(selected)) {
+    appState.lastNonResearchModel = selected;
+  }
 }
 
 function getEffectiveResearchMode() {
@@ -5107,6 +6654,7 @@ function setResearchModeFromSlider(indexValue) {
 function setResearchMode(mode, options = {}) {
   const normalized = normalizeResearchMode(mode);
   if (options.enable !== false) {
+    if (!isResearchModeEnabled()) rememberCurrentNonResearchModel();
     appState.researchModeEnabled = true;
   }
   appState.researchMode = normalized;
@@ -5121,6 +6669,8 @@ function setResearchMode(mode, options = {}) {
   }
 
   updateResearchModeControl();
+  updateSelectedModelText();
+  updateMenuSelection();
   updateReasoningProfileControl();
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
@@ -5129,7 +6679,9 @@ function setResearchMode(mode, options = {}) {
 
 function toggleResearchModeFromMenu(event) {
   event?.stopPropagation?.();
-  appState.researchModeEnabled = !isResearchModeEnabled();
+  const nextEnabled = !isResearchModeEnabled();
+  if (nextEnabled) rememberCurrentNonResearchModel();
+  appState.researchModeEnabled = nextEnabled;
   appState.agentMode = false;
 
   if (appState.researchModeEnabled) {
@@ -5146,6 +6698,8 @@ function toggleResearchModeFromMenu(event) {
   }
 
   updateResearchModeControl();
+  updateSelectedModelText();
+  updateMenuSelection();
   updateReasoningProfileControl();
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
@@ -5184,13 +6738,73 @@ function updateResearchModeControl() {
   if (item) {
     item.classList.toggle('research-mode-off', !enabled);
   }
+
+  renderResearchModelControls();
+}
+
+function renderResearchModelControls() {
+  appState.researchAgentModels = normalizeResearchAgentModels(appState.researchAgentModels);
+  appState.researchMasterModel = normalizeResearchMasterModel(appState.researchMasterModel);
+
+  const agentList = document.getElementById('researchAgentModelList');
+  if (agentList) {
+    agentList.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => {
+      const selected = appState.researchAgentModels.includes(option.id);
+      return `
+        <button type="button"
+          class="research-model-chip ${selected ? 'selected' : ''}"
+          data-research-agent-model="${escapeHtml(option.id)}"
+          onclick="toggleResearchAgentModel('${escapeHtml(option.id)}', event)">
+          ${escapeHtml(option.label)}
+        </button>
+      `;
+    }).join('');
+  }
+
+  const masterSelect = document.getElementById('researchMasterModelSelect');
+  if (masterSelect) {
+    const currentValue = masterSelect.value;
+    masterSelect.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => `
+      <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
+    `).join('');
+    masterSelect.value = appState.researchMasterModel || currentValue || 'deepseek-pro';
+  }
+}
+
+function toggleResearchAgentModel(modelId, event) {
+  event?.stopPropagation?.();
+  const normalized = normalizeResearchModelId(modelId);
+  if (!RESEARCH_MODEL_OPTIONS.some(option => option.id === normalized)) return;
+
+  const selected = normalizeResearchAgentModels(appState.researchAgentModels);
+  const index = selected.indexOf(normalized);
+  if (index >= 0) {
+    if (selected.length <= 1) {
+      showToast(i18nText('research-agent-min-one', '至少保留 1 个子 agent 模型'));
+      return;
+    }
+    selected.splice(index, 1);
+  } else {
+    if (selected.length >= 4) {
+      showToast(i18nText('research-agent-max-four', '最多选择 4 个研究模型，请取消一个不需要的'));
+      return;
+    }
+    selected.push(normalized);
+  }
+
+  appState.researchAgentModels = selected;
+  renderResearchModelControls();
+  scheduleComposerMenuReposition(8);
+}
+
+function setResearchMasterModel(modelId, event) {
+  event?.stopPropagation?.();
+  appState.researchMasterModel = normalizeResearchMasterModel(modelId);
+  renderResearchModelControls();
 }
 
 function getRequestModelIdForCurrentMode() {
   const selected = normalizeSelectedModelId(appState.selectedModel);
-  if (getEffectiveResearchMode() === 'deep' && appState.thinkingMode && selected === 'deepseek-v3') {
-    return 'deepseek-v3.2-speciale';
-  }
   return selected;
 }
 
@@ -5668,6 +7282,9 @@ function setLanguage(lang) {
   updateNotificationButton();
   renderNotificationsPanel();
   renderSettingsTimeline();
+  if (typeof renderSessions === 'function') {
+    renderSessions();
+  }
   updateScrollResumeButton();
   updateZtx6dBindingUI();
   if (typeof updateChatFlowPatchModeButton === 'function') updateChatFlowPatchModeButton();
@@ -5747,6 +7364,19 @@ function handleSearch(query) {
     } else {
       item.style.display = 'none';
     }
+  });
+
+  // 搜索时隐藏空的分组标题
+  const groupHeaders = document.querySelectorAll('.session-group-header');
+  groupHeaders.forEach(header => {
+    if (searchQuery === '') { header.style.display = ''; return; }
+    let next = header.nextElementSibling;
+    let hasVisible = false;
+    while (next && !next.classList.contains('session-group-header') && !next.classList.contains('sessions-loader')) {
+      if (next.classList.contains('session-item') && next.style.display !== 'none') { hasVisible = true; break; }
+      next = next.nextElementSibling;
+    }
+    header.style.display = hasVisible ? '' : 'none';
   });
 }
 
@@ -5831,11 +7461,122 @@ function autoResizeInput() {
   window.mobileKeyboardHandler?.syncComposerMetrics();
 }
 
+function handleTextInputCompositionStart(event) {
+  if (!event?.target?.dataset) return;
+  event.target.dataset.raiComposing = 'true';
+}
+
+function handleTextInputCompositionEnd(event) {
+  if (!event?.target?.dataset) return;
+  event.target.dataset.raiComposing = 'false';
+  event.target.dataset.raiCompositionEndAt = String(Date.now());
+}
+
+function isImeCompositionKeyEvent(event) {
+  if (!event) return false;
+  const target = event.target;
+  const recentCompositionEndAt = Number(target?.dataset?.raiCompositionEndAt || 0);
+  const justCommittedComposition = event.key === 'Enter' &&
+    recentCompositionEndAt > 0 &&
+    Date.now() - recentCompositionEndAt < 140;
+
+  return event.isComposing === true ||
+    event.keyCode === 229 ||
+    event.which === 229 ||
+    target?.dataset?.raiComposing === 'true' ||
+    justCommittedComposition;
+}
+
 function handleInputKeydown(event) {
+  if (isImeCompositionKeyEvent(event)) {
+    return;
+  }
+
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     sendMessage();
   }
+}
+
+function normalizePastedFile(file, index = 0) {
+  if (!file) return null;
+  const originalName = String(file.name || '').trim();
+  if (originalName) return file;
+
+  const mimeType = String(file.type || '').toLowerCase();
+  let ext = 'bin';
+  if (mimeType.includes('png')) ext = 'png';
+  else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+  else if (mimeType.includes('gif')) ext = 'gif';
+  else if (mimeType.includes('webp')) ext = 'webp';
+  else if (mimeType.includes('pdf')) ext = 'pdf';
+  else if (mimeType.startsWith('text/')) ext = 'txt';
+  const prefix = mimeType.startsWith('image/') ? 'pasted-image' : 'pasted-file';
+  return new File([file], `${prefix}-${Date.now()}-${index + 1}.${ext}`, {
+    type: file.type || 'application/octet-stream',
+    lastModified: file.lastModified || Date.now()
+  });
+}
+
+function getClipboardFiles(event) {
+  const clipboard = event?.clipboardData;
+  if (!clipboard) return [];
+  const files = [];
+  const seen = new Set();
+
+  const addFile = (file, index = 0) => {
+    const normalized = normalizePastedFile(file, index);
+    if (!normalized) return;
+    const key = `${normalized.name}:${normalized.size}:${normalized.type}:${normalized.lastModified}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push(normalized);
+  };
+
+  Array.from(clipboard.files || []).forEach(addFile);
+  Array.from(clipboard.items || []).forEach((item, index) => {
+    if (item?.kind !== 'file') return;
+    const file = item.getAsFile?.();
+    addFile(file, index);
+  });
+
+  return files;
+}
+
+async function handleMessageInputPaste(event) {
+  const files = getClipboardFiles(event);
+  if (!files.length) return;
+
+  const hasText = Boolean(event.clipboardData?.getData('text/plain'));
+  if (!hasText) {
+    event.preventDefault();
+  }
+
+  if (!appState.token) {
+    showToast(isChineseLanguage(appState.language) ? '请先登录后上传附件' : 'Please log in to upload attachments');
+    return;
+  }
+
+  await processUploadedFile(files[0]);
+  if (files.length > 1) {
+    showToast(isChineseLanguage(appState.language)
+      ? `已上传第 1 个文件；当前对话一次只能携带 1 个附件`
+      : 'Uploaded the first file. One attachment can be sent at a time.');
+  } else {
+    showToast(isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachment added from clipboard');
+  }
+}
+
+function initPasteAttachmentUpload() {
+  const input = document.getElementById('messageInput');
+  if (!input || input.dataset.pasteUploadReady === '1') return;
+  input.dataset.pasteUploadReady = '1';
+  input.addEventListener('paste', (event) => {
+    handleMessageInputPaste(event).catch((error) => {
+      console.error(' 粘贴附件上传失败:', error);
+      showToast(isChineseLanguage(appState.language) ? '粘贴附件上传失败' : 'Failed to upload pasted attachment');
+    });
+  });
 }
 
 function preserveMobileInputFocus() {
@@ -6265,7 +8006,8 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.21 初始化 (Security Pentest Hardening)');
+  console.log(' RAI v0.10.9.62 初始化 (security review)');
+  applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
@@ -6281,6 +8023,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   captureInviteRefFromUrl();
   initPwaInstallSupport();
   startAppVersionMonitor();
+  startConversationSyncMonitor();
+  fetchRaiAnnouncements();
   await fetchModelAvailability();
   await loadZtx6dSsoStatus();
 
@@ -6323,6 +8067,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 初始化拖拽上传功能
   initDragAndDrop();
+  initPasteAttachmentUpload();
 
   // 修复：改进model dropdown的点击外关闭逻辑
   document.addEventListener('click', (e) => {
@@ -6414,7 +8159,7 @@ function syncModelMenuTriggerState(activeAnchor = null) {
   });
 }
 
-function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') {
+function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above', preserveHorizontal = false) {
   if (!menu || !anchor) return;
 
   if (menu.parentElement !== document.body) {
@@ -6425,8 +8170,10 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') 
   const gap = 8;
   const anchorRect = anchor.getBoundingClientRect();
 
-  // 先临时定位到左上角以获取准确尺寸
-  menu.style.left = '0px';
+  // 测量尺寸：保留水平位置时不动 left，避免 x 轴左右飘
+  if (!preserveHorizontal) {
+    menu.style.left = '0px';
+  }
   menu.style.top = '0px';
   menu.style.bottom = 'auto';
   // 限制菜单最大高度为 anchor 上方可用空间
@@ -6437,21 +8184,24 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') 
 
   const menuRect = menu.getBoundingClientRect();
 
-  // 始终向上弹出（输入框在页面底部）
-  let left;
-  if (align === 'right') {
-    left = anchorRect.right - menuRect.width;
-  } else if (align === 'center') {
-    left = anchorRect.left + ((anchorRect.width - menuRect.width) / 2);
-  } else {
-    left = anchorRect.left;
+  const hasFixedLeft = preserveHorizontal && menu.style.left && menu.style.left !== '0px';
+  if (!hasFixedLeft) {
+    // 始终向上弹出（输入框在页面底部）
+    let left;
+    if (align === 'right') {
+      left = anchorRect.right - menuRect.width;
+    } else if (align === 'center') {
+      left = anchorRect.left + ((anchorRect.width - menuRect.width) / 2);
+    } else {
+      left = anchorRect.left;
+    }
+
+    left = Math.max(viewportPadding, Math.min(left, window.innerWidth - menuRect.width - viewportPadding));
+
+    menu.style.setProperty('--menu-origin-x', align === 'right' ? 'right' : align === 'center' ? 'center' : 'left');
+    menu.style.left = `${Math.round(left)}px`;
   }
-
-  left = Math.max(viewportPadding, Math.min(left, window.innerWidth - menuRect.width - viewportPadding));
-
-  menu.style.setProperty('--menu-origin-x', align === 'right' ? 'right' : align === 'center' ? 'center' : 'left');
   menu.style.setProperty('--menu-origin-y', vertical === 'below' ? 'top' : 'bottom');
-  menu.style.left = `${Math.round(left)}px`;
 
   if (vertical === 'below') {
     const top = Math.max(
@@ -6475,14 +8225,14 @@ function repositionComposerMenus() {
   const moreMenu = document.getElementById('moreMenu');
   const moreBtn = document.getElementById('moreBtn');
   if (moreMenu?.classList.contains('active') && moreBtn) {
-    positionFloatingMenu(moreMenu, moreBtn, 'left');
+    positionFloatingMenu(moreMenu, moreBtn, 'left', 'above', true);
   }
 
   const modelMenu = document.getElementById('modelDropdownMenu');
   const modelBtn = resolveModelMenuAnchor();
   if (modelMenu?.classList.contains('active') && modelBtn) {
     const { align, vertical } = getModelMenuPositionConfig(modelBtn);
-    positionFloatingMenu(modelMenu, modelBtn, align, vertical);
+    positionFloatingMenu(modelMenu, modelBtn, align, vertical, true);
   }
 }
 
@@ -6499,30 +8249,45 @@ function scheduleComposerMenuReposition(frames = 2) {
 }
 
 // 切换更多菜单显示/隐藏
+function closeMoreMenu() {
+  const menu = document.getElementById('moreMenu');
+  if (menu && menu.classList.contains('active')) {
+    menu.classList.remove('active');
+    menu.classList.add('closing');
+    menu.addEventListener('animationend', function handler() {
+      menu.classList.remove('closing');
+      menu.removeEventListener('animationend', handler);
+    }, { once: true });
+  }
+}
+
 function toggleMoreMenu() {
   const menu = document.getElementById('moreMenu');
-  if (menu) {
-    closeModelModal();
-    menu.classList.toggle('active');
+  if (!menu) return;
 
-    if (menu.classList.contains('active')) {
-      const internetToggle = document.getElementById('internetToggle');
-      const thinkingToggle = document.getElementById('thinkingToggle');
-
-      if (internetToggle) {
-        internetToggle.classList.toggle('active', appState.internetMode);
-      }
-      if (thinkingToggle) {
-        thinkingToggle.classList.toggle('active', appState.thinkingMode);
-      }
-
-      updateToolbarUI();
-      updateReasoningProfileControl();
-      updateResearchModeControl();
-      updatePoeQuotaHint();
-      positionFloatingMenu(menu, document.getElementById('moreBtn'), 'left');
-    }
+  if (menu.classList.contains('active') || menu.classList.contains('closing')) {
+    closeMoreMenu();
+    return;
   }
+
+  closeModelModal();
+  menu.classList.add('active');
+
+  const internetToggle = document.getElementById('internetToggle');
+  const thinkingToggle = document.getElementById('thinkingToggle');
+
+  if (internetToggle) {
+    internetToggle.classList.toggle('active', appState.internetMode);
+  }
+  if (thinkingToggle) {
+    thinkingToggle.classList.toggle('active', appState.thinkingMode);
+  }
+
+  updateToolbarUI();
+  updateReasoningProfileControl();
+  updateResearchModeControl();
+  updatePoeQuotaHint();
+  positionFloatingMenu(menu, document.getElementById('moreBtn'), 'left');
 }
 
 
@@ -6532,7 +8297,7 @@ document.addEventListener('click', function (e) {
   const moreBtn = document.getElementById('moreBtn');
   if (menu && menu.classList.contains('active')) {
     if (!menu.contains(e.target) && !moreBtn?.contains(e.target)) {
-      menu.classList.remove('active');
+      closeMoreMenu();
     }
   }
 });
@@ -6619,8 +8384,9 @@ function handleFileSelected(event) {
   const files = event.target.files;
   if (files && files.length > 0) {
     console.log('文件选择:', files[0].name);
-    // 这里可以添加文件上传逻辑
+    processUploadedFile(files[0]);
   }
+  if (event.target) event.target.value = '';
 }
 
 function updateModelControls() {
@@ -6629,15 +8395,10 @@ function updateModelControls() {
   const selectedModel = appState.selectedModel;
 
   if (thinkingControls) {
-    // DeepSeek模型和Kimi K2.5模型支持推理模式
-    if (selectedModel === 'deepseek-v3' || selectedModel === 'deepseek-v3.2-speciale' ||
-      selectedModel === 'kimi-k2.5' || selectedModel === 'kimi-k2') {
+    // DeepSeek Pro 和 Kimi K2.6 支持推理模式；DeepSeek Flash / Qwen 3.6 保持快速路径。
+    if (selectedModel === 'deepseek-pro' ||
+      selectedModel === 'kimi-k2.6' || selectedModel === 'kimi-k2') {
       thinkingControls.style.display = 'flex';
-
-      // DeepSeek-V3.2-Speciale 强制开启思考模式(只支持思考模式)
-      if (selectedModel === 'deepseek-v3.2-speciale') {
-        appState.thinkingMode = true;  // 强制开启
-      }
     } else {
       thinkingControls.style.display = 'none';
     }
@@ -6681,6 +8442,12 @@ function updateThinkingBudget(value) {
       valueEl.textContent = `${value} tokens`;
     }
   }
+}
+
+function setAnimatedMenuItemVisibility(element, visible) {
+  if (!element) return;
+  element.classList.toggle('menu-subpanel-hidden', !visible);
+  element.setAttribute('aria-hidden', visible ? 'false' : 'true');
 }
 
 // 修复：改进updateToolbarUI函数
@@ -6737,7 +8504,7 @@ function updateToolbarUI() {
 
   const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode && !forceDisableThinking;
   if (reasoningProfileItem) {
-    reasoningProfileItem.style.display = showReasoningProfile ? 'flex' : 'none';
+    setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningProfile);
   }
 
   if (reasoningSelect || reasoningSlider) {
@@ -6807,6 +8574,7 @@ function updateSettingsUI() {
   clearSettingsPasswordInputs();
   updateZtx6dBindingUI();
   updateSettingsNavigationUI();
+  renderMemorySettings();
   renderSettingsTimeline();
   updateSettingsDirtyState();
 }
@@ -7215,7 +8983,8 @@ function updateMenuSelection() {
     const modelValue = item.getAttribute('data-model');
     const adminHidden = isModelDisabledByAdmin(modelValue);
     item.classList.toggle('admin-model-hidden', adminHidden);
-    if (modelValue === appState.selectedModel) {
+    const selected = modelValue === (isResearchModeEnabled() ? 'research-mode' : appState.selectedModel);
+    if (selected) {
       item.classList.add('selected');
     } else {
       item.classList.remove('selected');
@@ -7229,6 +8998,7 @@ function updateMenuSelection() {
   document.querySelectorAll('.model-card').forEach((card) => {
     const modelValue = card.getAttribute('data-model');
     card.classList.toggle('admin-model-hidden', isModelDisabledByAdmin(modelValue));
+    card.classList.toggle('selected', modelValue === (isResearchModeEnabled() ? 'research-mode' : appState.selectedModel));
     const requiredMembership = String(card.getAttribute('data-required-membership') || '').trim().toLowerCase();
     const locked = requiredMembership === 'max' && !isMaxMembershipUser();
     card.classList.toggle('membership-locked', locked);
@@ -7248,15 +9018,18 @@ function updateMenuSelection() {
 }
 
 function getModelDisplayMeta(modelId) {
+  if (isResearchModeEnabled()) {
+    return { i18nKey: 'research-mode', fallback: 'Research Mode' };
+  }
   const normalized = normalizeSelectedModelId(modelId);
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
   }
-  if (normalized === 'qwen2.5-7b' || normalized === 'qwen3-8b') {
-    return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
-  }
-  if (normalized === 'kimi-k2.5' || normalized === 'kimi-k2') {
+  if (normalized === 'deepseek-pro') {
     return { i18nKey: 'model-expert', fallback: 'Expert Mode' };
+  }
+  if (normalized === 'deepseek-flash') {
+    return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
   }
   return { i18nKey: null, fallback: MODELS[normalized]?.name || normalized };
 }
@@ -7297,7 +9070,10 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
       presence_penalty: appState.presencePenalty,
       system_prompt: appState.systemPrompt || '',
       thinking_mode: appState.thinkingMode ? 1 : 0,
-      internet_mode: appState.internetMode ? 1 : 0
+      internet_mode: appState.internetMode ? 1 : 0,
+      long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
+      tab_title_mode: appState.tabTitleMode || 'marquee',
+      tab_title_custom_text: appState.tabTitleCustomText || ''
     })
   }).then((res) => res.json())
     .then((data) => {
@@ -7311,8 +9087,16 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
 }
 
 function selectModelFromMenu(model, displayName, i18nKey) {
+  if (model === 'research-mode') {
+    setResearchMode(appState.researchMode || 'fast', { enable: true });
+    closeModelModal();
+    preserveMobileInputFocus();
+    return;
+  }
   if (isModelDisabledByAdmin(model)) {
     appState.selectedModel = 'auto';
+    appState.researchModeEnabled = false;
+    appState.lastNonResearchModel = 'auto';
     updateSelectedModelText('auto');
     updateModelControls();
     updateMenuSelection();
@@ -7323,13 +9107,16 @@ function selectModelFromMenu(model, displayName, i18nKey) {
     console.warn(' 该模型仅 MAX 会员可用');
     return;
   }
+  appState.researchModeEnabled = false;
   appState.selectedModel = normalizeSelectedModelId(model);
+  appState.lastNonResearchModel = appState.selectedModel;
   if (isHiddenModelId(model)) {
     console.log(' Poe models are hidden. Fallback to auto model.');
   }
   applyFreePoeThinkingPolicy();
   updateSelectedModelText(appState.selectedModel);
 
+  updateResearchModeControl();
   updateModelControls();
   updateMenuSelection();
   updatePoeQuotaHint();
@@ -7389,6 +9176,11 @@ function openSettings() {
     settingsModal.classList.add('active');
     appState.settingsOpen = true;
     updateSettingsUI();
+    updateNewChatModeSettingsUI();
+    updateTabTitleModeSettingsUI();
+    updateBrowserNotifySettingsUI();
+    renderMemorySettings();
+    loadUserMemories().catch(() => null);
     updatePwaInstallUI();
     appState.settingsMobileMode = isMobileSettings ? 'home' : 'detail';
     switchSettingsSection(appState.activeSettingsSection || 'language', { keepMobileHome: isMobileSettings });
@@ -7546,7 +9338,8 @@ async function saveSettings(options = {}) {
     maxTokens,
     frequencyPenalty,
     presencePenalty,
-    systemPrompt
+    systemPrompt,
+    newChatDefaultMode: appState.newChatDefaultMode
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
@@ -7642,7 +9435,10 @@ async function saveSettings(options = {}) {
           presence_penalty: presencePenalty,
           system_prompt: systemPrompt,
           thinking_mode: appState.thinkingMode ? 1 : 0,
-          internet_mode: appState.internetMode ? 1 : 0
+          internet_mode: appState.internetMode ? 1 : 0,
+          long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
+          tab_title_mode: appState.tabTitleMode || 'marquee',
+          tab_title_custom_text: appState.tabTitleCustomText || ''
         })
       });
 
@@ -8043,6 +9839,8 @@ function createAskUserCard(prompt, renderOptions = {}) {
     : new Array(prompt.questions.length).fill('');
   while (answers.length < prompt.questions.length) answers.push('');
   const answered = existingState.submitted === true;
+  const total = prompt.questions.length;
+  const isChinese = isChineseLanguage(appState.language);
 
   const persistState = (submitted = false) => {
     askUserCardState.set(stateKey, {
@@ -8051,6 +9849,35 @@ function createAskUserCard(prompt, renderOptions = {}) {
     });
   };
 
+  // ===== 已提交：只读摘要 =====
+  if (answered) {
+    card.classList.add('answered');
+    if (prompt.intro) {
+      const intro = document.createElement('div');
+      intro.className = 'ask-user-intro';
+      intro.textContent = prompt.intro;
+      card.appendChild(intro);
+    }
+    prompt.questions.forEach((q, i) => {
+      const summary = document.createElement('div');
+      summary.className = 'ask-user-answered-summary';
+      const qEl = document.createElement('div');
+      qEl.className = 'ask-user-answered-q';
+      qEl.textContent = total > 1 ? `${i + 1}. ${q.question}` : q.question;
+      const aEl = document.createElement('div');
+      aEl.className = 'ask-user-answered-a';
+      aEl.textContent = answers[i] || '';
+      summary.append(qEl, aEl);
+      card.appendChild(summary);
+    });
+    const status = document.createElement('div');
+    status.className = 'ask-user-status';
+    status.textContent = formatAskUserAnswers(prompt, answers);
+    card.appendChild(status);
+    return card;
+  }
+
+  // ===== intro =====
   if (prompt.intro) {
     const intro = document.createElement('div');
     intro.className = 'ask-user-intro';
@@ -8058,147 +9885,164 @@ function createAskUserCard(prompt, renderOptions = {}) {
     card.appendChild(intro);
   }
 
-  const progress = document.createElement('div');
-  progress.className = 'ask-user-progress';
+  // ===== 导航栏 < 1/N > =====
+  const navBar = document.createElement('div');
+  navBar.className = 'ask-user-nav';
 
-  const footer = document.createElement('div');
-  footer.className = 'ask-user-footer';
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'ask-user-nav-btn';
+  prevBtn.innerHTML = getSvgIcon('chevron_left', 'material-symbols-outlined', 22);
 
-  const sendAllBtn = document.createElement('button');
-  sendAllBtn.type = 'button';
-  sendAllBtn.className = 'ask-user-send-all';
-  sendAllBtn.textContent = isChineseLanguage(appState.language) ? '发送选择' : 'Send choices';
+  const progressLabel = document.createElement('span');
+  progressLabel.className = 'ask-user-nav-progress';
 
-  const updateFooter = () => {
-    const answeredCount = answers.filter(Boolean).length;
-    const total = prompt.questions.length;
-    progress.textContent = isChineseLanguage(appState.language)
-      ? `已选择 ${answeredCount}/${total}`
-      : `${answeredCount}/${total} selected`;
-    sendAllBtn.disabled = answered || answeredCount < total || card.dataset.submitting === '1';
-  };
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'ask-user-nav-btn';
+  nextBtn.innerHTML = getSvgIcon('chevron_right', 'material-symbols-outlined', 22);
 
-  prompt.questions.forEach((questionData, questionIndex) => {
-    const block = document.createElement('div');
-    block.className = 'ask-user-question-block';
+  navBar.append(prevBtn, progressLabel, nextBtn);
+  if (total <= 1) navBar.style.display = 'none';
+  card.appendChild(navBar);
 
-    const question = document.createElement('div');
-    question.className = 'ask-user-question';
-    question.textContent = prompt.questions.length > 1
-      ? `${questionIndex + 1}. ${questionData.question}`
-      : questionData.question;
-    block.appendChild(question);
+  // ===== 问题容器（每次只显示一个） =====
+  const questionContainer = document.createElement('div');
+  questionContainer.className = 'ask-user-question-container';
+  card.appendChild(questionContainer);
 
-    const options = document.createElement('div');
-    options.className = 'ask-user-options';
+  let currentIdx = 0;
 
-    const setAnswer = (answer, selectedButton = null) => {
-      const normalized = String(answer || '').trim();
-      if (!normalized || card.dataset.submitting === '1') return;
+  function doSubmitAll() {
+    persistState(true);
+    submitAskUserResponse(formatAskUserAnswers(prompt, answers), prompt, card, stateKey);
+  }
 
-      answers[questionIndex] = normalized;
-      persistState(false);
-      block.dataset.answered = '1';
-      block.querySelectorAll('.ask-user-option').forEach((button) => {
-        button.classList.toggle('selected', button === selectedButton || button.dataset.optionValue === normalized);
+  function renderQuestion(idx) {
+    currentIdx = idx;
+    const q = prompt.questions[idx];
+    questionContainer.innerHTML = '';
+
+    // 更新导航
+    progressLabel.textContent = `${idx + 1} / ${total}`;
+    prevBtn.disabled = idx === 0;
+    nextBtn.disabled = idx === total - 1;
+
+    // 问题文本
+    const questionEl = document.createElement('div');
+    questionEl.className = 'ask-user-question';
+    questionEl.textContent = q.question;
+    questionContainer.appendChild(questionEl);
+
+    // 选项
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'ask-user-options';
+
+    q.options.forEach((option, optionIndex) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ask-user-option';
+      btn.dataset.optionValue = option;
+      if (answers[idx] === option) btn.classList.add('selected');
+
+      const num = document.createElement('span');
+      num.className = 'ask-user-option-number';
+      num.textContent = String(optionIndex + 1);
+
+      const lbl = document.createElement('span');
+      lbl.className = 'ask-user-option-label';
+      lbl.textContent = option;
+
+      btn.append(num, lbl);
+      btn.addEventListener('click', () => {
+        if (card.dataset.submitting === '1') return;
+        answers[idx] = option;
+        persistState(false);
+        // 标记选中
+        optionsEl.querySelectorAll('.ask-user-option').forEach((b) =>
+          b.classList.toggle('selected', b === btn)
+        );
+        // 自动跳转下一题或自动提交
+        if (idx < total - 1) {
+          renderQuestion(idx + 1);
+        } else {
+          doSubmitAll();
+        }
       });
-      input.value = selectedButton ? '' : normalized;
-
-      const status = block.querySelector('.ask-user-question-status') || document.createElement('div');
-      status.className = 'ask-user-question-status';
-      status.textContent = normalized;
-      if (!status.parentElement) block.appendChild(status);
-
-      updateFooter();
-    };
-
-    questionData.options.forEach((option, optionIndex) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'ask-user-option';
-      button.dataset.optionValue = option;
-      if (answers[questionIndex] === option) {
-        button.classList.add('selected');
-      }
-
-      const number = document.createElement('span');
-      number.className = 'ask-user-option-number';
-      number.textContent = String(optionIndex + 1);
-
-      const label = document.createElement('span');
-      label.className = 'ask-user-option-label';
-      label.textContent = option;
-
-      button.append(number, label);
-      button.addEventListener('click', () => setAnswer(option, button));
-      options.appendChild(button);
+      optionsEl.appendChild(btn);
     });
-    block.appendChild(options);
+    questionContainer.appendChild(optionsEl);
 
+    // 自定义回答行
     const customRow = document.createElement('div');
     customRow.className = 'ask-user-custom';
 
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'ask-user-input';
-    input.placeholder = questionData.placeholder;
+    input.placeholder = q.placeholder || (isChinese ? '输入其他回答…' : 'Type another answer…');
     input.autocomplete = 'off';
-    if (answers[questionIndex] && !questionData.options.includes(answers[questionIndex])) {
-      input.value = answers[questionIndex];
+    if (answers[idx] && !q.options.includes(answers[idx])) {
+      input.value = answers[idx];
     }
 
-    const submitBtn = document.createElement('button');
-    submitBtn.type = 'button';
-    submitBtn.className = 'ask-user-submit';
-    submitBtn.title = isChineseLanguage(appState.language) ? '发送' : 'Send';
-    submitBtn.setAttribute('aria-label', submitBtn.title);
-    submitBtn.innerHTML = getSvgIcon('arrow_upward', 'material-symbols-outlined', 18);
+    // 对勾按钮（默认隐藏，输入文字后显示）
+    const checkBtn = document.createElement('button');
+    checkBtn.type = 'button';
+    checkBtn.className = 'ask-user-check';
+    checkBtn.title = isChinese ? '提交' : 'Submit';
+    checkBtn.setAttribute('aria-label', checkBtn.title);
+    checkBtn.innerHTML = getSvgIcon('check', 'material-symbols-outlined', 20);
+    checkBtn.style.display = 'none';
 
-    const submitCustom = () => {
-      const answer = input.value.trim();
-      if (answer) setAnswer(answer);
-    };
+    let isComposing = false;
 
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        submitCustom();
+    input.addEventListener('compositionstart', () => { isComposing = true; });
+    input.addEventListener('compositionend', () => {
+      isComposing = false;
+      checkBtn.style.display = input.value.trim().length > 0 ? '' : 'none';
+    });
+    input.addEventListener('input', () => {
+      if (!isComposing) {
+        checkBtn.style.display = input.value.trim().length > 0 ? '' : 'none';
       }
     });
-    submitBtn.addEventListener('click', submitCustom);
-
-    customRow.append(input, submitBtn);
-    block.appendChild(customRow);
-    if (answers[questionIndex]) {
-      const status = document.createElement('div');
-      status.className = 'ask-user-question-status';
-      status.textContent = answers[questionIndex];
-      block.dataset.answered = '1';
-      block.appendChild(status);
-    }
-    card.appendChild(block);
-  });
-
-  sendAllBtn.addEventListener('click', () => {
-    if (answers.every(Boolean)) {
-      persistState(true);
-      submitAskUserResponse(formatAskUserAnswers(prompt, answers), prompt, card, stateKey);
-    }
-  });
-
-  footer.append(progress, sendAllBtn);
-  card.appendChild(footer);
-  if (answered) {
-    card.classList.add('answered');
-    card.querySelectorAll('button, input').forEach((element) => {
-      element.disabled = true;
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !isComposing) {
+        event.preventDefault();
+        if (input.value.trim()) checkBtn.click();
+      }
     });
-    const status = document.createElement('div');
-    status.className = 'ask-user-status';
-    status.textContent = formatAskUserAnswers(prompt, answers);
-    card.appendChild(status);
+
+    checkBtn.addEventListener('click', () => {
+      const answer = input.value.trim();
+      if (!answer || card.dataset.submitting === '1') return;
+      answers[idx] = answer;
+      persistState(false);
+      if (idx < total - 1) {
+        renderQuestion(idx + 1);
+      } else {
+        doSubmitAll();
+      }
+    });
+
+    customRow.append(input, checkBtn);
+    questionContainer.appendChild(customRow);
+
+    // 短暂过渡动画
+    questionContainer.classList.remove('ask-user-fade-in');
+    void questionContainer.offsetWidth;
+    questionContainer.classList.add('ask-user-fade-in');
   }
-  updateFooter();
+
+  prevBtn.addEventListener('click', () => {
+    if (currentIdx > 0) renderQuestion(currentIdx - 1);
+  });
+  nextBtn.addEventListener('click', () => {
+    if (currentIdx < total - 1) renderQuestion(currentIdx + 1);
+  });
+
+  renderQuestion(0);
   return card;
 }
 
@@ -8415,9 +10259,14 @@ async function submitMessageFeedback() {
 function formatResearchAgentLabel(role = '') {
   const labelMap = {
     gemma: 'Gemma',
-    kimi: 'Kimi K2.5',
-    gpt55: 'GPT-5.5',
-    deepseek: 'DeepSeek V4 Pro'
+    qwen: 'Qwen 3.6',
+    kimi: 'Kimi K2.6',
+    gpt55: 'ChatGPT',
+    chatgpt: 'ChatGPT',
+    deepseek: 'DeepSeek Pro',
+    deepseek_flash: 'DeepSeek Flash',
+    mimo: 'Mimo Code',
+    nemotron: 'Nemotron 3 Ultra'
   };
   return labelMap[String(role || '').toLowerCase()] || formatAgentRole(role || 'agent');
 }
@@ -8480,6 +10329,95 @@ function bindResearchThinkingToggles(root = document) {
   });
 }
 
+function parseMessageProcessTrace(message) {
+  if (!message?.process_trace || message.process_trace === 'null') return null;
+  try {
+    const parsed = typeof message.process_trace === 'string'
+      ? JSON.parse(message.process_trace)
+      : message.process_trace;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function isRegeneratedPreviousReply(message, parsedTrace = undefined) {
+  if (!message || message.role !== 'assistant') return false;
+  const trace = parsedTrace === undefined ? parseMessageProcessTrace(message) : parsedTrace;
+  const regeneration = trace?.regeneration;
+  return !!(
+    regeneration &&
+    regeneration.state === 'previous_collapsed' &&
+    regeneration.excludeFromContext !== false
+  );
+}
+
+function buildContextMessagesFromState(sourceMessages = appState.messages, options = {}) {
+  const includeLastUserTimeHint = options.includeLastUserTimeHint === true;
+  const visibleMessages = (Array.isArray(sourceMessages) ? sourceMessages : [])
+    .filter((message) => !isRegeneratedPreviousReply(message) && !message?.is_live_stream);
+  const lastIndex = visibleMessages.length - 1;
+
+  return visibleMessages.map((m, index) => {
+    const msgObj = {
+      role: m.role,
+      content: m.role === 'user' && includeLastUserTimeHint && index === lastIndex
+        ? appendUserTimeHintForPrompt(m.content)
+        : m.content
+    };
+
+    let attachments = m.attachments;
+    if (typeof attachments === 'string') {
+      try {
+        attachments = JSON.parse(attachments);
+      } catch (e) {
+        attachments = [];
+      }
+    }
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      msgObj.attachments = attachments;
+    }
+    return msgObj;
+  });
+}
+
+async function markMessageAsRegeneratedPrevious(message, replacementMessage = null) {
+  const messageId = message?.id;
+  const sessionId = appState.currentSession?.id;
+  if (!messageId || !sessionId) return false;
+
+  try {
+    const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages/${messageId}/regeneration`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        replacementMessageId: replacementMessage?.id || null
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+
+    const stored = appState.messages.find((item) => String(item.id) === String(messageId));
+    if (stored) {
+      stored.process_trace = data.process_trace;
+    }
+    message.process_trace = data.process_trace;
+    return true;
+  } catch (error) {
+    console.error(' 标记旧回复折叠失败:', error);
+    showToast(isChineseLanguage(appState.language)
+      ? '新回复已生成，旧回复折叠状态保存失败'
+      : 'New response generated. Could not save the folded state.');
+    return false;
+  }
+}
+
 // 修复：改进createMessageElement，添加安全的事件处理
 function createMessageElement(message) {
   if (!message || !message.role) {
@@ -8506,25 +10444,22 @@ function createMessageElement(message) {
   // 判断是否需要显示时间轴（有 reasoning_content / internet_mode / process_trace）
   const hasReasoning = message.reasoning_content && message.reasoning_content !== 'null' && message.reasoning_content.trim() !== '';
   const hasInternet = message.internet_mode || (message.sources && message.sources !== 'null');
-  let processTrace = null;
-  if (message.process_trace && message.process_trace !== 'null') {
-    try {
-      processTrace = typeof message.process_trace === 'string'
-        ? JSON.parse(message.process_trace)
-        : message.process_trace;
-    } catch (e) {
-      processTrace = null;
-    }
+  const hasGeneratedImages = message.role === 'assistant' && /\/generated-images\/[^)\s"']+/i.test(String(message.content || ''));
+  let processTrace = parseMessageProcessTrace(message);
+  const isPreviousRegeneratedReply = isRegeneratedPreviousReply(message, processTrace);
+  if (isPreviousRegeneratedReply) {
+    div.classList.add('regenerated-previous-message');
   }
   const hasAgentProcessTrace = !!(
     processTrace &&
     typeof processTrace === 'object' &&
     (
-      processTrace.mode === 'agent' ||
-      (Array.isArray(processTrace.tasks) && processTrace.tasks.length > 0) ||
-      (Array.isArray(processTrace.drafts) && processTrace.drafts.length > 0)
-    )
-  );
+	      processTrace.mode === 'agent' ||
+	      (Array.isArray(processTrace.tasks) && processTrace.tasks.length > 0) ||
+	      (Array.isArray(processTrace.drafts) && processTrace.drafts.length > 0) ||
+	      (Array.isArray(processTrace.discussion?.speeches) && processTrace.discussion.speeches.length > 0)
+	    )
+	  );
   const isResearchTrace = !!(
     processTrace &&
     (
@@ -8534,7 +10469,24 @@ function createMessageElement(message) {
     )
   );
 
-  if (message.role === 'assistant' && (hasReasoning || hasInternet || hasAgentProcessTrace)) {
+  if (isPreviousRegeneratedReply) {
+    const previousHeader = document.createElement('button');
+    previousHeader.type = 'button';
+    previousHeader.className = 'previous-reply-toggle';
+    previousHeader.setAttribute('aria-expanded', 'false');
+    previousHeader.innerHTML = `
+      <span>${isChineseLanguage(appState.language) ? '上一版回复' : 'Previous response'}</span>
+      <span class="previous-reply-hint">${isChineseLanguage(appState.language) ? '已折叠，不再写入上下文' : 'Collapsed, excluded from context'}</span>
+      <span class="toggle-icon">▼</span>
+    `;
+    previousHeader.addEventListener('click', () => {
+      const expanded = div.classList.toggle('expanded');
+      previousHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+    content.appendChild(previousHeader);
+  }
+
+  if (message.role === 'assistant' && (hasInternet || hasAgentProcessTrace || hasGeneratedImages)) {
     const timelineDiv = document.createElement('div');
     timelineDiv.className = isResearchTrace ? 'thinking-timeline research-chat-timeline' : 'thinking-timeline';
     const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -8548,8 +10500,13 @@ function createMessageElement(message) {
     }
 
     // 工具决策详情文本
-    const toolDetail = hasInternet && sources.length > 0
+    const toolDetail = hasGeneratedImages
+      ? (isChineseLanguage(appState.language) ? '图片生成已完成' : 'Image generated')
+      : hasInternet && sources.length > 0
       ? (isChineseLanguage(appState.language) ? `联网搜索 → ${sources.length}条来源` : `Web search → ${sources.length} sources`)
+      : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
+    const generationDetail = hasGeneratedImages
+      ? (isChineseLanguage(appState.language) ? '图片已显示' : 'Image displayed')
       : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
 
     // 构建时间轴HTML
@@ -8562,33 +10519,16 @@ function createMessageElement(message) {
               <div class="thinking-step-detail">${toolDetail}</div>
             </div>
           </div>
-          
+
           <!-- 步骤2: 生成回答 - 已完成 -->
           <div class="thinking-step" data-status="done">
             <div class="thinking-step-node"></div>
             <div class="thinking-step-content">
               <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
-              <div class="thinking-step-detail">${isChineseLanguage(appState.language) ? '已完成' : 'Completed'}</div>
+              <div class="thinking-step-detail">${generationDetail}</div>
             </div>
           </div>
         `;
-
-    // 如果有深度思考内容，添加步骤3
-    if (hasReasoning) {
-      timelineHtml += `
-            <!-- 步骤3: 深度思考 - 已完成，可展开 -->
-            <div class="thinking-step" data-status="done">
-              <div class="thinking-step-node"></div>
-              <div class="thinking-step-content">
-                <button class="deep-thinking-toggle" id="${thinkingId}-toggle">
-                  <span>${isChineseLanguage(appState.language) ? '深度思考' : 'Deep Thinking'}</span>
-                  <span class="toggle-icon">▼</span>
-                </button>
-                <div class="deep-thinking-content" id="${thinkingId}-content"></div>
-              </div>
-            </div>
-          `;
-    }
 
     if (hasAgentProcessTrace) {
       const normalizeStatusClass = (status) => {
@@ -8633,7 +10573,21 @@ function createMessageElement(message) {
         `;
       }).join('');
 
-      const drafts = Array.isArray(processTrace.drafts) ? processTrace.drafts.slice(0, 20) : [];
+      let drafts = Array.isArray(processTrace.drafts) ? processTrace.drafts.slice(0, 20) : [];
+      if (isResearchTrace && drafts.length === 0 && Array.isArray(processTrace.discussion?.speeches)) {
+        drafts = processTrace.discussion.speeches.slice(0, 20).map((speech, idx) => ({
+          taskId: speech.taskId || idx + 1,
+          role: speech.role || 'agent',
+          task: speech.task || '',
+          summary: speech.speech || speech.summary || '',
+          content: speech.speech || speech.content || '',
+          round: speech.round || speech.debateRound || null,
+          voteOk: speech.voteOk,
+          speech: true,
+          rawContent: speech.content || speech.rawContent || '',
+          reasoningContent: speech.reasoningContent || ''
+        }));
+      }
       const draftHtml = drafts.map((draft, idx) => {
         if (isResearchTrace && !(draft.speech || draft.round || draft.voteOk !== undefined)) {
           return '';
@@ -8705,33 +10659,6 @@ function createMessageElement(message) {
 
     timelineDiv.innerHTML = timelineHtml;
 
-    // 填充深度思考内容
-    if (hasReasoning && !isResearchTrace) {
-      const deepContent = timelineDiv.querySelector(`#${thinkingId}-content`);
-      const formattedText = sanitizeReasoningText(message.reasoning_content);
-      if (deepContent) {
-        deepContent.innerHTML = `<span class="thinking-sentence">${formattedText}</span>`;
-      }
-
-      // 添加展开/收起事件监听
-      setTimeout(() => {
-        const toggleBtn = document.getElementById(`${thinkingId}-toggle`);
-        if (toggleBtn) {
-          toggleBtn.addEventListener('click', function () {
-            const contentEl = document.getElementById(`${thinkingId}-content`);
-            const isExpanded = contentEl.classList.contains('expanded');
-            if (isExpanded) {
-              contentEl.classList.remove('expanded');
-              this.classList.remove('expanded');
-            } else {
-              contentEl.classList.add('expanded');
-              this.classList.add('expanded');
-            }
-          });
-        }
-      }, 0);
-    }
-
     if (hasAgentProcessTrace) {
       setTimeout(() => {
         const traceToggleBtn = timelineDiv.querySelector(`#${thinkingId}-trace-toggle`);
@@ -8775,6 +10702,40 @@ function createMessageElement(message) {
     content.appendChild(timelineDiv);
   }
 
+  // RAI 思考内容：放到正文位置，比正文浅、字号小，折叠为圆角矩形按钮（无描边）
+  if (message.role === 'assistant' && hasReasoning && !isResearchTrace) {
+    const reasoningBlock = document.createElement('div');
+    reasoningBlock.className = 'rai-reasoning-block';
+    const reasoningId = `reasoning-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const reasoningLabel = isChineseLanguage(appState.language) ? '思考过程' : 'Thinking';
+    const reasoningIcon = getSvgIcon('psychology', 'material-symbols-outlined', 14);
+    reasoningBlock.innerHTML = `
+      <button class="rai-reasoning-toggle" id="${reasoningId}-toggle" type="button">
+        <span class="rai-reasoning-label">
+          <span class="rai-reasoning-icon">${reasoningIcon}</span>
+          <span>${reasoningLabel}</span>
+        </span>
+        <span class="toggle-icon">▼</span>
+      </button>
+      <div class="rai-reasoning-content" id="${reasoningId}-content"></div>
+    `;
+    const reasoningContentEl = reasoningBlock.querySelector(`#${reasoningId}-content`);
+    if (reasoningContentEl) {
+      reasoningContentEl.innerHTML = `<span class="thinking-sentence">${sanitizeReasoningText(message.reasoning_content)}</span>`;
+    }
+    const reasoningToggleBtn = reasoningBlock.querySelector(`#${reasoningId}-toggle`);
+    if (reasoningToggleBtn) {
+      reasoningToggleBtn.addEventListener('click', function () {
+        const expanded = reasoningBlock.classList.toggle('expanded');
+        this.classList.toggle('expanded', expanded);
+        if (expanded && reasoningContentEl) {
+          reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+        }
+      });
+    }
+    content.appendChild(reasoningBlock);
+  }
+
   // 为用户消息添加附件预览（在文本之前显示）
   // 支持懒加载：如果只有 has_attachments 标记但没有实际附件数据，显示占位符
   if (message.role === 'user' && (message.attachments || message.has_attachments)) {
@@ -8813,56 +10774,7 @@ function createMessageElement(message) {
 
       attachments.forEach(att => {
         if (!att || !att.type) return;
-
-        const itemDiv = document.createElement('div');
-
-        if (att.type === 'image') {
-          itemDiv.className = 'message-attachment-item image-attachment';
-          if (att.data) {
-            const img = document.createElement('img');
-            img.src = att.data;
-            img.alt = att.fileName || '图片';
-            img.loading = 'lazy';
-            // 点击查看大图
-            img.onclick = () => {
-              window.open(att.data, '_blank');
-            };
-            itemDiv.appendChild(img);
-          } else {
-            itemDiv.innerHTML = `<div style="padding: 20px; text-align: center;"></div>`;
-          }
-        } else if (att.type === 'video') {
-          itemDiv.className = 'message-attachment-item media-attachment';
-          itemDiv.innerHTML = `
-                <span class="media-icon"></span>
-                <div class="media-info">
-                  <div class="media-type">${isChineseLanguage(appState.language) ? '视频' : 'Video'}</div>
-            <div class="media-name">${escapeHtml(att.fileName || '')}</div>
-                </div>
-              `;
-        } else if (att.type === 'audio') {
-          itemDiv.className = 'message-attachment-item media-attachment';
-          itemDiv.innerHTML = `
-                <span class="media-icon"></span>
-                <div class="media-info">
-                  <div class="media-type">${isChineseLanguage(appState.language) ? '音频' : 'Audio'}</div>
-            <div class="media-name">${escapeHtml(att.fileName || '')}</div>
-                </div>
-              `;
-        } else if (att.type === 'document') {
-          itemDiv.className = 'message-attachment-item media-attachment';
-          itemDiv.innerHTML = `
-                <span class="media-icon"></span>
-                <div class="media-info">
-                  <div class="media-type">${isChineseLanguage(appState.language) ? '文档' : 'Document'}</div>
-            <div class="media-name">${escapeHtml(att.fileName || '')}</div>
-                </div>
-              `;
-        }
-
-        if (itemDiv.innerHTML) {
-          attachmentsDiv.appendChild(itemDiv);
-        }
+        attachmentsDiv.appendChild(createAttachmentListItem(att));
       });
 
       if (attachmentsDiv.children.length > 0) {
@@ -8874,7 +10786,7 @@ function createMessageElement(message) {
   const textDiv = document.createElement('div');
   textDiv.className = 'message-text';
   //  移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
-  const cleanContent = stripTrailingTitleMarker(message.content || '');
+  const cleanContent = sanitizeAssistantDisplayText(stripTrailingTitleMarker(message.content || ''));
   const askUserResult = message.role === 'assistant'
     ? extractAskUserBlocks(cleanContent)
     : { text: cleanContent, prompts: [] };
@@ -8898,6 +10810,7 @@ function createMessageElement(message) {
   }
 
   textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
+  hydrateRenderedImages(textDiv);
   if (textDiv.innerHTML.trim()) {
     content.appendChild(textDiv);
   }
@@ -9026,13 +10939,15 @@ function createMessageElement(message) {
     editBtn.addEventListener('click', () => startEditMessage(message, div));
     metaDiv.appendChild(editBtn);
 
-    // 添加重新生成按钮
-    const regenerateBtn = document.createElement('button');
-    regenerateBtn.className = 'action-btn regenerate-btn';
-    regenerateBtn.title = isChineseLanguage(appState.language) ? '重新生成' : 'Regenerate';
-    regenerateBtn.innerHTML = getSvgIcon('refresh', 'material-symbols-outlined', 16);
-    regenerateBtn.addEventListener('click', () => openRegenerateModal(message));
-    metaDiv.appendChild(regenerateBtn);
+    if (!isPreviousRegeneratedReply) {
+      // 添加重新生成按钮
+      const regenerateBtn = document.createElement('button');
+      regenerateBtn.className = 'action-btn regenerate-btn';
+      regenerateBtn.title = isChineseLanguage(appState.language) ? '重新生成' : 'Regenerate';
+      regenerateBtn.innerHTML = getSvgIcon('refresh', 'material-symbols-outlined', 16);
+      regenerateBtn.addEventListener('click', () => openRegenerateModal(message));
+      metaDiv.appendChild(regenerateBtn);
+    }
 
     // 添加删除按钮
     const deleteBtn = document.createElement('button');
@@ -9126,26 +11041,7 @@ async function loadMessageAttachments(messageId, containerElement) {
 
     attachments.forEach(att => {
       if (!att || !att.type) return;
-
-      const itemDiv = document.createElement('div');
-
-      if (att.type === 'image' && att.data) {
-        itemDiv.className = 'message-attachment-item image-attachment';
-        const img = document.createElement('img');
-        img.src = att.data;
-        img.alt = att.fileName || '图片';
-        img.loading = 'lazy';
-        img.onclick = () => window.open(att.data, '_blank');
-        itemDiv.appendChild(img);
-      } else if (att.type === 'video') {
-        itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${isChineseLanguage(appState.language) ? '视频' : 'Video'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
-      } else if (att.type === 'audio') {
-        itemDiv.className = 'message-attachment-item media-attachment';
-        itemDiv.innerHTML = `<span class="media-icon"></span><div class="media-info"><div class="media-type">${isChineseLanguage(appState.language) ? '音频' : 'Audio'}</div><div class="media-name">${escapeHtml(att.fileName || '')}</div></div>`;
-      }
-
-      if (itemDiv.innerHTML) containerElement.appendChild(itemDiv);
+      containerElement.appendChild(createAttachmentListItem(att));
     });
 
   } catch (error) {
@@ -9226,7 +11122,7 @@ async function deleteSession(event, sessionId) {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(await getApiErrorMessage(response, `HTTP ${response.status}`));
     }
 
     if (appState.currentSession?.id === sessionId) {
@@ -9396,10 +11292,7 @@ async function regenerateAfterUserEdit(userMessage) {
   renderMessages();
 
   // 构建消息并发送
-  const messagesToSend = appState.messages.slice(0, msgIndex + 1).map(m => ({
-    role: m.role,
-    content: m.content
-  }));
+  const messagesToSend = buildContextMessagesFromState(appState.messages.slice(0, msgIndex + 1));
 
   // 触发AI回复
   await triggerAIResponse(messagesToSend);
@@ -9670,21 +11563,15 @@ async function confirmRegenerate() {
     return;
   }
 
-  // 删除这条AI消息
-  await deleteMessageFromDB(appState.messages[msgIndex]);
-  appState.messages.splice(msgIndex, 1);
-
-
-  // 重新渲染
-  renderMessages();
-
   // 保存当前设置
   const originalModel = appState.selectedModel;
   const originalInternet = appState.internetMode;
   const originalThinking = appState.thinkingMode;
+  const originalResearchEnabled = appState.researchModeEnabled;
 
   // 临时应用新设置
   appState.selectedModel = normalizeSelectedModelId(selectedModel || 'auto') || 'auto';
+  appState.researchModeEnabled = false;
   appState.internetMode = internetMode;
   appState.thinkingMode = thinkingMode;
   applyFreePoeThinkingPolicy();
@@ -9694,23 +11581,35 @@ async function confirmRegenerate() {
   updateModelControls();
 
   // 构建消息并发送
-  const messagesToSend = appState.messages.map(m => ({
-    role: m.role,
-    content: m.content
-  }));
+  const messagesToSend = buildContextMessagesFromState(appState.messages.slice(0, msgIndex));
 
-  // 触发AI回复
-  await triggerAIResponse(messagesToSend);
+  // 先生成新回复，成功后把旧AI消息折叠为上一版；失败时保留旧消息原样。
+  const regenerated = await triggerAIResponse(messagesToSend, {
+    insertIndex: msgIndex + 1,
+    skipUserSave: true
+  });
 
-  // 恢复原设置（可选）
-  // appState.selectedModel = originalModel;
-  // appState.internetMode = originalInternet;
-  // appState.thinkingMode = originalThinking;
+  if (regenerated?.success) {
+    await markMessageAsRegeneratedPrevious(currentTarget, regenerated.message);
+    renderMessages();
+  } else {
+    showToast(isChineseLanguage(appState.language)
+      ? '重新生成失败，已保留原回复'
+      : 'Regeneration failed. The original response was kept.');
+  }
+
+  appState.selectedModel = originalModel;
+  appState.researchModeEnabled = originalResearchEnabled;
+  appState.internetMode = originalInternet;
+  appState.thinkingMode = originalThinking;
+  applyFreePoeThinkingPolicy();
+  updateSelectedModelText(appState.selectedModel);
+  updateModelControls();
 }
 
 // 触发AI回复
-async function triggerAIResponse(messages) {
-  if (appState.isStreaming) return;
+async function triggerAIResponse(messages, options = {}) {
+  if (appState.isStreaming) return { success: false, message: null };
 
   // 创建AI消息占位符
   const aiMsg = {
@@ -9718,16 +11617,20 @@ async function triggerAIResponse(messages) {
     content: '',
     created_at: new Date().toISOString()
   };
-  appState.messages.push(aiMsg);
+  const requestedIndex = Number.isInteger(options.insertIndex) ? options.insertIndex : appState.messages.length;
+  const insertIndex = Math.min(Math.max(requestedIndex, 0), appState.messages.length);
+  appState.messages.splice(insertIndex, 0, aiMsg);
   renderMessages();
 
   // 调用现有的流式聊天逻辑（通过sendMessage部分逻辑）
-  await streamAIResponse(messages, aiMsg);
+  return await streamAIResponse(messages, aiMsg, options);
 }
 
 // 流式AI回复（优化版：增量更新DOM，不重新渲染整个消息列表）
-async function streamAIResponse(messages, aiMsg) {
+async function streamAIResponse(messages, aiMsg, options = {}) {
   appState.isStreaming = true;
+  let streamSucceeded = false;
+  let savedAssistantMessage = null;
 
   const sessionId = appState.currentSession?.id;
   const requestId = `req_${Date.now()}`;
@@ -9738,6 +11641,31 @@ async function streamAIResponse(messages, aiMsg) {
   const messageElements = container?.querySelectorAll('.message');
   const aiMsgElement = messageElements ? messageElements[msgIndex] : null;
   const textDiv = aiMsgElement?.querySelector('.message-text');
+
+  function updateInlineImageGenerationStatus(event = {}) {
+    if (!aiMsgElement || !textDiv) return;
+    let statusEl = aiMsgElement.querySelector('.image-generation-status');
+    if (!statusEl) {
+      statusEl = document.createElement('div');
+      statusEl.className = 'search-status tool-status image-generation-status';
+      statusEl.innerHTML = `<span class="search-label"><span class="image-status-dot"></span><span class="image-status-text"></span></span>`;
+      textDiv.parentElement?.insertBefore(statusEl, textDiv);
+    }
+    const statusText = statusEl.querySelector('.image-status-text');
+    const rawMessage = String(event.message || '').trim();
+    let text = rawMessage || (isChineseLanguage(appState.language) ? '正在生成图片中' : 'Generating image');
+    if (event.status === 'running') {
+      const prefix = isChineseLanguage(appState.language) ? '正在生成图片中' : 'Generating image';
+      text = rawMessage && rawMessage !== prefix ? `${prefix} · ${rawMessage}` : prefix;
+    } else if (event.status === 'complete') {
+      text = isChineseLanguage(appState.language) ? '图片生成完成' : 'Image ready';
+    } else if (event.status === 'failed') {
+      text = isChineseLanguage(appState.language) ? '图片生成失败，已记录报错' : 'Image generation failed and was logged';
+    }
+    statusEl.dataset.status = event.status || 'running';
+    statusEl.style.display = 'inline-flex';
+    if (statusText) statusText.textContent = text;
+  }
 
   // 用于节流更新的变量
   let pendingUpdate = false;
@@ -9822,7 +11750,8 @@ async function streamAIResponse(messages, aiMsg) {
     });
 
     // 2. 渲染新内容（流式模式）
-    textDiv.innerHTML = renderMarkdownWithMath(content, true);
+    textDiv.innerHTML = renderMarkdownWithMath(sanitizeAssistantDisplayText(content), true);
+    hydrateRenderedImages(textDiv);
 
     // 3. 用保存的容器替换新创建的容器（图片）
     const newContainers = textDiv.querySelectorAll('.streaming-image-container');
@@ -9835,14 +11764,33 @@ async function streamAIResponse(messages, aiMsg) {
         // 新图片，添加加载监听
         const img = container.querySelector('img');
         if (img) {
-          img.onload = function () {
+          const markImageLoaded = function () {
+            if (!img.isConnected && !container.isConnected) return;
             container.classList.add('loaded');
             loadedImageContainers.set(src, container.cloneNode(true));
           };
-          img.onerror = function () {
+          const markImageFailed = function () {
+            if (!img.isConnected && !container.isConnected) return;
             container.classList.add('error');
             container.innerHTML = `<span class="image-error">${isChineseLanguage(appState.language) ? '图片有版权等原因不能加载，见谅 ＞﹏＜' : 'This image could not be loaded, possibly because of copyright restrictions.'}</span>`;
           };
+          const verifyImageState = function () {
+            if (!img.isConnected && !container.isConnected) return;
+            if (!img.complete) return;
+            if (img.naturalWidth > 0) {
+              markImageLoaded();
+            } else {
+              markImageFailed();
+            }
+          };
+          img.onload = markImageLoaded;
+          img.onerror = markImageFailed;
+          verifyImageState();
+          setTimeout(verifyImageState, 0);
+          setTimeout(verifyImageState, 250);
+          if (typeof img.decode === 'function') {
+            img.decode().then(markImageLoaded).catch(verifyImageState);
+          }
         }
       }
     });
@@ -9865,6 +11813,8 @@ async function streamAIResponse(messages, aiMsg) {
         requestId,
         internetMode: appState.internetMode,
         researchMode: getEffectiveResearchMode(),
+        researchAgentModels: normalizeResearchAgentModels(appState.researchAgentModels),
+        researchMasterModel: normalizeResearchMasterModel(appState.researchMasterModel),
         thinkingMode: appState.thinkingMode,
         reasoningProfile: getRequestReasoningProfileForCurrentMode(),
         agentMode: 'off',
@@ -9876,7 +11826,9 @@ async function streamAIResponse(messages, aiMsg) {
         frequency_penalty: appState.frequencyPenalty,
         presence_penalty: appState.presencePenalty,
         promptTimeContext: getUserTimeContext(),
-        systemPrompt: buildEffectiveSystemPrompt()
+        systemPrompt: isNoMemoryConversationActive() ? '' : buildEffectiveSystemPrompt(appState.systemPrompt, { includeMemory: shouldUseMemoryPrompt() }),
+        memoryMode: shouldUseMemoryPrompt() ? 'normal' : 'off',
+        skipUserSave: options.skipUserSave === true
       })
     });
 
@@ -9924,6 +11876,11 @@ async function streamAIResponse(messages, aiMsg) {
             continue;
           }
 
+          if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
+            updateInlineImageGenerationStatus(parsed);
+            continue;
+          }
+
           if (parsed.type === 'sources' && Array.isArray(parsed.sources)) {
             sources = parsed.sources;
             aiMsg.sources = sources;
@@ -9937,7 +11894,7 @@ async function streamAIResponse(messages, aiMsg) {
           }
 
           if (parsed.type === 'content' && parsed.content) {
-            fullContent += parsed.content;
+            fullContent += sanitizeAssistantDisplayText(parsed.content);
             aiMsg.content = fullContent;
             throttledUpdate(fullContent);
             continue;
@@ -9956,7 +11913,7 @@ async function streamAIResponse(messages, aiMsg) {
           if (parsed.choices?.[0]?.delta) {
             const delta = parsed.choices[0].delta;
             if (delta.content) {
-              fullContent += delta.content;
+              fullContent += sanitizeAssistantDisplayText(delta.content);
               aiMsg.content = fullContent;
               // 使用节流更新而不是每次都更新
               throttledUpdate(fullContent);
@@ -9974,6 +11931,7 @@ async function streamAIResponse(messages, aiMsg) {
 
     // 流结束后最终渲染一次（确保完整内容显示）
     console.log(' 流式响应完成');
+    streamSucceeded = true;
 
   } catch (error) {
     console.error(' 流式请求失败:', error);
@@ -9996,7 +11954,13 @@ async function streamAIResponse(messages, aiMsg) {
           headers: { 'Authorization': `Bearer ${appState.token}` }
         });
         if (resp.ok) {
-          appState.messages = await resp.json();
+          const refreshedMessages = await resp.json();
+          if (aiMsg.content) {
+            savedAssistantMessage = [...refreshedMessages].reverse().find((item) =>
+              item.role === 'assistant' && item.content === aiMsg.content
+            ) || null;
+          }
+          appState.messages = refreshedMessages;
           renderMessages();
         }
       } catch (e) {
@@ -10004,6 +11968,7 @@ async function streamAIResponse(messages, aiMsg) {
       }
     }
   }
+  return { success: streamSucceeded, message: savedAssistantMessage, content: aiMsg.content };
 }
 
 
@@ -10062,6 +12027,43 @@ function renderSessionAttachmentPreview(attachment) {
   return '';
 }
 
+function updateSessionInList(sessionId, updates) {
+  if (!sessionId || !appState.sessions || !appState.sessions.length) return;
+  const session = appState.sessions.find((s) => String(s.id) === String(sessionId));
+  if (!session) return;
+  Object.assign(session, updates);
+  session.updated_at = new Date().toISOString();
+  renderSessions();
+}
+
+const EN_MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function __raiSessionTimeGroup(session, isChinese) {
+  const updated = new Date(session.updated_at || session.created_at || Date.now());
+  const now = new Date();
+  const isToday = updated.toDateString() === now.toDateString();
+  const isThisYear = updated.getFullYear() === now.getFullYear();
+  if (isToday) {
+    return { key: 'today', label: isChinese ? '今天' : 'Today', showTime: true };
+  }
+  if (isThisYear) {
+    const month = updated.getMonth() + 1;
+    const day = updated.getDate();
+    return {
+      key: `d-${month}-${day}`,
+      label: isChinese ? `${month}月${day}日` : `${EN_MONTHS_SHORT[updated.getMonth()]} ${day}`,
+      showTime: false
+    };
+  }
+  const year = updated.getFullYear();
+  const month = updated.getMonth() + 1;
+  return {
+    key: `m-${year}-${month}`,
+    label: isChinese ? `${year}年${month}月` : `${EN_MONTHS_SHORT[updated.getMonth()]} ${year}`,
+    showTime: false
+  };
+}
+
 function renderSessions() {
   const container = document.getElementById('sessionsContainer');
 
@@ -10073,7 +12075,6 @@ function renderSessions() {
   container.innerHTML = '';
 
   if (!appState.sessions || appState.sessions.length === 0) {
-    // 如果正在加载，显示加载中
     if (appState.sessionsPagination.isLoading) {
       container.innerHTML = `<div class="sessions-loader"><div class="loader-spinner"></div></div>`;
       return;
@@ -10085,50 +12086,86 @@ function renderSessions() {
     return;
   }
 
-  appState.sessions.forEach(session => {
-    const div = document.createElement('div');
-    div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}`;
-    div.setAttribute('data-session-id', session.id);
-    const displayTitle = getSessionDisplayTitle(session);
-    const previewText = stripAskUserBlocksForStreaming(stripTrailingTitleMarker(session.last_message || '')).replace(/\s+/g, ' ').trim();
+  const isChinese = isChineseLanguage(appState.language);
 
-    // 解析附件并生成预览HTML
-    const attachments = parseSessionAttachments(session);
-    let attachmentsHtml = '';
-    if (attachments.length > 0) {
-      const previews = attachments.map(att => renderSessionAttachmentPreview(att)).join('');
-      attachmentsHtml = `<div class="session-attachments">${previews}</div>`;
-    }
-
-    div.innerHTML = `
-          <div class="session-title">${escapeHtml(displayTitle)}</div>
-          <div class="session-preview">${escapeHtml(previewText ? `${previewText.substring(0, 50)}...` : '')}</div>
-          ${attachmentsHtml}
-          <button class="session-delete-btn" type="button">
-            ${getSvgIcon('close', 'material-symbols-outlined', 24)}
-          </button>
-        `;
-
-    // 主项目点击加载会话
-    div.addEventListener('click', function (e) {
-      if (!e.target.closest('.session-delete-btn')) {
-        const sid = this.getAttribute('data-session-id');
-        if (sid) loadSession(sid);
-      }
-    });
-
-    // 删除按钮点击处理
-    const deleteBtn = div.querySelector('.session-delete-btn');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        const sid = div.getAttribute('data-session-id');
-        if (sid) deleteSession(e, sid);
-      });
-    }
-
-    container.appendChild(div);
+  // 按更新时间降序排序（越新越上）
+  const sorted = [...appState.sessions].sort((a, b) => {
+    const ta = new Date(a.updated_at || a.created_at || 0).getTime();
+    const tb = new Date(b.updated_at || b.created_at || 0).getTime();
+    return tb - ta;
   });
+
+  // 按时间分组
+  const groups = [];
+  const groupMap = new Map();
+  for (const session of sorted) {
+    const g = __raiSessionTimeGroup(session, isChinese);
+    if (!groupMap.has(g.key)) {
+      const group = { key: g.key, label: g.label, showTime: g.showTime, sessions: [] };
+      groupMap.set(g.key, group);
+      groups.push(group);
+    }
+    groupMap.get(g.key).sessions.push(session);
+  }
+
+  // 渲染分组
+  for (const group of groups) {
+    const groupHeader = document.createElement('div');
+    groupHeader.className = 'session-group-header';
+    groupHeader.textContent = group.label;
+    container.appendChild(groupHeader);
+
+    for (const session of group.sessions) {
+      const div = document.createElement('div');
+      div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}${group.showTime ? ' has-time' : ''}`;
+      div.setAttribute('data-session-id', session.id);
+      const displayTitle = getSessionDisplayTitle(session);
+      const previewText = stripAskUserBlocksForStreaming(stripTrailingTitleMarker(session.last_message || '')).replace(/\s+/g, ' ').trim();
+
+      const attachments = parseSessionAttachments(session);
+      let attachmentsHtml = '';
+      if (attachments.length > 0) {
+        const previews = attachments.map(att => renderSessionAttachmentPreview(att)).join('');
+        attachmentsHtml = `<div class="session-attachments">${previews}</div>`;
+      }
+
+      let timeHtml = '';
+      if (group.showTime) {
+        const updated = new Date(session.updated_at || session.created_at || Date.now());
+        const hh = String(updated.getHours()).padStart(2, '0');
+        const mm = String(updated.getMinutes()).padStart(2, '0');
+        timeHtml = `<span class="session-time">${hh}:${mm}</span>`;
+      }
+
+      div.innerHTML = `
+            <div class="session-title">${escapeHtml(displayTitle)}</div>
+            <div class="session-preview">${escapeHtml(previewText ? `${previewText.substring(0, 50)}...` : '')}</div>
+            ${timeHtml}
+            ${attachmentsHtml}
+            <button class="session-delete-btn" type="button">
+              ${getSvgIcon('close', 'material-symbols-outlined', 24)}
+            </button>
+          `;
+
+      div.addEventListener('click', function (e) {
+        if (!e.target.closest('.session-delete-btn')) {
+          const sid = this.getAttribute('data-session-id');
+          if (sid) loadSession(sid);
+        }
+      });
+
+      const deleteBtn = div.querySelector('.session-delete-btn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const sid = div.getAttribute('data-session-id');
+          if (sid) deleteSession(e, sid);
+        });
+      }
+
+      container.appendChild(div);
+    }
+  }
 
   // 添加加载指示器（如果还有更多数据）
   if (appState.sessionsPagination.hasMore) {
@@ -10138,7 +12175,6 @@ function renderSessions() {
     loader.innerHTML = `<div class="loader-spinner"></div>`;
     container.appendChild(loader);
 
-    // 使用 Intersection Observer 检测加载指示器是否可见
     setupSessionsLoaderObserver();
   }
 }
@@ -10188,22 +12224,15 @@ async function submitStreamingInterjection(messageText) {
     autoResizeInput();
   }
 
-  const userMsg = {
-    role: 'user',
+  const interjection = {
     content,
-    created_at: new Date().toISOString(),
-    isStreamingInterjection: true
+    createdAt: new Date().toISOString()
   };
-  appState.messages.push(userMsg);
 
-  const messagesList = document.getElementById('messagesList');
-  const streamingAssistant = document.getElementById('streamingContent')?.closest('.message.assistant');
-  const userEl = createMessageElement(userMsg);
-  if (messagesList && userEl) {
-    if (streamingAssistant && streamingAssistant.parentElement === messagesList) {
-      messagesList.insertBefore(userEl, streamingAssistant);
-    } else {
-      messagesList.appendChild(userEl);
+  if (appState.activeResearch && appState.activeResearch.isResearch && appState.activeResearch.state) {
+    appState.activeResearch.state.interjections.push(interjection);
+    if (typeof appState.activeResearch.render === 'function') {
+      appState.activeResearch.render();
     }
     scrollToBottom();
   }
@@ -10246,7 +12275,7 @@ async function sendMessage(message = null) {
   }
 
   // 检测超长输入并自动转换为文件附件
-  if (checkAndConvertLongInput()) {
+  if (await checkAndConvertLongInput()) {
     // 输入已被转换为附件，等待下次发送
     return;
   }
@@ -10263,7 +12292,7 @@ async function sendMessage(message = null) {
     return;
   }
 
-  if (!appState.currentSession) {
+  if (!appState.currentSession && appState.currentSessionMemoryMode !== 'classic-temp') {
     const created = await createNewSession({ focus: false });
     if (!created || !appState.currentSession) return;
   }
@@ -10295,44 +12324,25 @@ async function sendMessage(message = null) {
     created_at: new Date().toISOString()
   };
 
-  // 如果有附件，添加到消息中
+  // 如果有附件，添加到消息中（元数据模式，不塞大 Base64）
   if (currentAttachment) {
     userMsg.attachments = [{
-      type: currentAttachment.type,  // 'image', 'audio', 'video'
-      data: currentAttachment.data,  // Base64 data URL
-      fileName: currentAttachment.fileName
+      type: currentAttachment.type,
+      fileName: currentAttachment.fileName,
+      originalName: currentAttachment.originalName || currentAttachment.fileName,
+      mimeType: currentAttachment.mimeType || '',
+      size: currentAttachment.size || 0,
+      fileId: currentAttachment.fileId || null,
+      filePath: currentAttachment.filePath || null
     }];
-    console.log(` 消息包含附件: ${currentAttachment.type} - ${currentAttachment.fileName}`);
+    console.log(` 消息包含附件: ${currentAttachment.type} - ${currentAttachment.fileName} (metadata mode)`);
   }
 
   appState.messages.push(userMsg);
   renderMessages();
 
-  // 构建发送给服务器的消息数组（包含附件信息）
-  const messages = appState.messages.map((m, index, arr) => {
-    const msgObj = {
-      role: m.role,
-      content: m.role === 'user' && index === arr.length - 1
-        ? appendUserTimeHintForPrompt(m.content)
-        : m.content
-    };
-    // 如果有附件，也传递给服务器
-    //  增强防御性检查：确保 attachments 是数组
-    let attachments = m.attachments;
-    // 如果是字符串（从数据库加载的JSON），尝试解析
-    if (typeof attachments === 'string') {
-      try {
-        attachments = JSON.parse(attachments);
-      } catch (e) {
-        attachments = [];
-      }
-    }
-    // 确保是数组且非空
-    if (Array.isArray(attachments) && attachments.length > 0) {
-      msgObj.attachments = attachments;
-    }
-    return msgObj;
-  });
+  // 构建发送给服务器的消息数组；重新生成折叠的旧回复仅供用户查看，不再进入模型上下文。
+  const messages = buildContextMessagesFromState(appState.messages, { includeLastUserTimeHint: true });
 
   // ==================== ChatFlow 画布上下文注入 ====================
   // 如果在 ChatFlow iframe 模式下，将画布上下文附加到最后一条用户消息
@@ -10413,7 +12423,7 @@ async function sendMessage(message = null) {
           <div class="search-status" id="searchStatus" style="display: none;">
             <span id="searchStatusText">正在分析问题...</span>
           </div>
-          
+
           <!-- 思考 / 研究过程 UI -->
           <div class="thinking-timeline ${isResearchModeActive ? 'research-chat-timeline' : ''}" id="thinkingTimeline" style="display: none;">
             <!-- 步骤1: 分析问题 -->
@@ -10437,19 +12447,17 @@ async function sendMessage(message = null) {
               </div>
             </div>
 
-            <!-- 深度思考 (仅在思考模式下显示) -->
-            <div class="thinking-step" id="stepDeepThinking" data-status="pending" style="${appState.thinkingMode ? '' : 'display: none;'}">
-              <div class="thinking-step-node"></div>
-              <div class="thinking-step-content">
-                <button class="deep-thinking-toggle" id="deepThinkingToggle">
-                  <span>${isChineseLanguage(appState.language) ? '深度思考' : 'Deep Thinking'}</span>
-                  <span class="toggle-icon">▼</span>
-                </button>
-                <div class="deep-thinking-content" id="deepThinkingContent"></div>
-              </div>
-            </div>
+          <div class="rai-reasoning-block" id="raiReasoningBlock" style="display: none;">
+            <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
+              <span class="rai-reasoning-label">
+                <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
+                <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
+              </span>
+              <span class="toggle-icon">▼</span>
+            </button>
+            <div class="rai-reasoning-content" id="raiReasoningContent"></div>
           </div>
-          
+
           <div class="message-text" id="streamingContent"></div>
         </div>
       `;
@@ -10460,19 +12468,16 @@ async function sendMessage(message = null) {
   }
 
   // 添加思考折叠功能的事件监听器
-  // 添加深度思考折叠功能的事件监听器
-  const deepThinkingToggle = aiMsgDiv.querySelector('#deepThinkingToggle');
-  if (deepThinkingToggle) {
-    deepThinkingToggle.addEventListener('click', function () {
-      const content = aiMsgDiv.querySelector('#deepThinkingContent');
-      const isExpanded = content.classList.contains('expanded');
-
-      if (isExpanded) {
-        content.classList.remove('expanded');
-        this.classList.remove('expanded');
-      } else {
-        content.classList.add('expanded');
-        this.classList.add('expanded');
+  // 思考内容折叠按钮（圆角矩形，无描边，正文位置）
+  const raiReasoningBlock = aiMsgDiv.querySelector('#raiReasoningBlock');
+  const raiReasoningToggle = aiMsgDiv.querySelector('#raiReasoningToggle');
+  const raiReasoningContent = aiMsgDiv.querySelector('#raiReasoningContent');
+  if (raiReasoningToggle && raiReasoningBlock) {
+    raiReasoningToggle.addEventListener('click', function () {
+      const expanded = raiReasoningBlock.classList.toggle('expanded');
+      this.classList.toggle('expanded', expanded);
+      if (expanded && raiReasoningContent) {
+        raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
       }
     });
   }
@@ -10484,7 +12489,7 @@ async function sendMessage(message = null) {
   const stepToolDecision = aiMsgDiv.querySelector('#stepToolDecision');
   const stepGenerating = aiMsgDiv.querySelector('#stepGenerating');
   const stepProcessTrace = aiMsgDiv.querySelector('#stepProcessTrace');
-  const stepDeepThinking = aiMsgDiv.querySelector('#stepDeepThinking');
+  const stepDeepThinking = null;
   const toolDecisionDetail = aiMsgDiv.querySelector('#toolDecisionDetail');
   const generatingDetail = aiMsgDiv.querySelector('#generatingDetail');
   const processTraceDetail = aiMsgDiv.querySelector('#processTraceDetail');
@@ -10496,12 +12501,21 @@ async function sendMessage(message = null) {
   const agentTaskList = aiMsgDiv.querySelector('#agentTaskList');
   const agentDraftList = aiMsgDiv.querySelector('#agentDraftList');
   const agentMetrics = aiMsgDiv.querySelector('#agentMetrics');
-  const deepThinkingContent = aiMsgDiv.querySelector('#deepThinkingContent');
+  const deepThinkingContent = null;
+  const toolStatusBar = aiMsgDiv.querySelector('#searchStatus');
+  const toolStatusText = aiMsgDiv.querySelector('#searchStatusText');
 
   const agentRunState = {
     tasks: new Map(),
     drafts: new Map(),
-    metrics: null
+    metrics: null,
+    interjections: []
+  };
+  appState.activeResearch = {
+    state: agentRunState,
+    list: agentDraftList,
+    isResearch: isResearchModeActive,
+    render: () => renderAgentDrafts()
   };
 
   function mapNodeStatus(status = '') {
@@ -10517,6 +12531,32 @@ async function sendMessage(message = null) {
     const ms = Number(durationMs || 0);
     if (!ms || ms < 1) return '';
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+  }
+
+  function updateImageGenerationStatus(event = {}) {
+    if (thinkingTimeline) thinkingTimeline.style.display = 'block';
+    const rawMessage = String(event.message || '').trim();
+    const prefix = isChineseLanguage(appState.language) ? '正在生成图片中' : 'Generating image';
+    let text = rawMessage || prefix;
+    if (event.status === 'running') {
+      text = rawMessage && rawMessage !== prefix ? `${prefix} · ${rawMessage}` : prefix;
+      updateStepStatus(stepGenerating, 'active', text);
+    } else if (event.status === 'complete') {
+      text = isChineseLanguage(appState.language) ? '图片生成完成' : 'Image ready';
+      updateStepStatus(stepGenerating, 'active', text);
+    } else if (event.status === 'failed') {
+      text = isChineseLanguage(appState.language) ? '图片生成失败，已记录报错' : 'Image generation failed and was logged';
+      updateStepStatus(stepGenerating, 'failed', text);
+    }
+
+    if (toolStatusBar && toolStatusText) {
+      toolStatusBar.classList.add('tool-status', 'image-generation-status');
+      toolStatusBar.dataset.status = event.status || 'running';
+      toolStatusBar.style.display = 'inline-flex';
+      toolStatusText.textContent = text;
+    }
+    addProcessTraceItem('image', text);
+    scrollToBottom();
   }
 
   function ensureAgentPanelVisible() {
@@ -10724,6 +12764,39 @@ async function sendMessage(message = null) {
       item.appendChild(body);
       agentDraftList.appendChild(item);
     }
+
+    if (isResearchModeActive && agentRunState.interjections && agentRunState.interjections.length) {
+      for (const inj of agentRunState.interjections) {
+        const bubble = document.createElement('div');
+        bubble.className = 'research-agent-bubble role-user research-interjection-bubble';
+        const avatar = document.createElement('span');
+        avatar.className = 'research-agent-avatar';
+        avatar.textContent = isChineseLanguage(appState.language) ? '你' : 'U';
+        const card = document.createElement('div');
+        card.className = 'research-agent-card';
+        const head = document.createElement('div');
+        head.className = 'research-agent-head';
+        const meta = document.createElement('div');
+        meta.className = 'research-agent-meta';
+        const name = document.createElement('div');
+        name.className = 'research-agent-name';
+        name.textContent = isChineseLanguage(appState.language) ? '你的插话' : 'Your interjection';
+        const sub = document.createElement('div');
+        sub.className = 'research-agent-round';
+        sub.textContent = inj.createdAt ? new Date(inj.createdAt).toLocaleTimeString() : '';
+        meta.appendChild(name);
+        meta.appendChild(sub);
+        head.appendChild(meta);
+        const text = document.createElement('div');
+        text.className = 'research-agent-text';
+        text.textContent = String(inj.content || '');
+        card.appendChild(head);
+        card.appendChild(text);
+        bubble.appendChild(avatar);
+        bubble.appendChild(card);
+        agentDraftList.appendChild(bubble);
+      }
+    }
   }
 
   function appendDraftDelta(parsed = {}) {
@@ -10913,8 +12986,8 @@ async function sendMessage(message = null) {
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
     const roleMap = isChineseLanguage(appState.language)
-      ? { master: '主控', judge: '主控校验', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '校验', gemma: 'Gemma', kimi: 'Kimi K2.5', gpt55: 'GPT-5.5', deepseek: 'DeepSeek V4 Pro' }
-      : { master: 'Master', judge: 'Judge', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Verifier', gemma: 'Gemma', kimi: 'Kimi K2.5', gpt55: 'GPT-5.5', deepseek: 'DeepSeek V4 Pro' };
+      ? { master: '主控', judge: '主控校验', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '校验', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek Flash', mimo: 'Mimo Code', nemotron: 'Nemotron 3 Ultra' }
+      : { master: 'Master', judge: 'Judge', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Verifier', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek Flash', mimo: 'Mimo Code', nemotron: 'Nemotron 3 Ultra' };
     return roleMap[role] || role;
   };
 
@@ -10976,7 +13049,7 @@ async function sendMessage(message = null) {
     return visible;
   }
 
-  const effectiveSystemPrompt = buildEffectiveSystemPrompt();
+  const effectiveSystemPrompt = isNoMemoryConversationActive() ? '' : buildEffectiveSystemPrompt(appState.systemPrompt, { includeMemory: shouldUseMemoryPrompt() });
   const selectedDomainMode = appState.pendingDomainMode || null;
   appState.pendingDomainMode = null;
 
@@ -10988,7 +13061,7 @@ async function sendMessage(message = null) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        sessionId: appState.currentSession.id,
+        sessionId: appState.currentSession?.id || null,
         messages: messages,
         model: getRequestModelIdForCurrentMode(),
         thinkingMode: appState.thinkingMode,
@@ -11008,6 +13081,7 @@ async function sendMessage(message = null) {
         uiLanguage: appState.language,
         promptTimeContext: getUserTimeContext(),
         systemPrompt: effectiveSystemPrompt,
+        memoryMode: shouldUseMemoryPrompt() ? 'normal' : 'off',
         // RAG参数
         spaceId: appState.currentSpaceId,
         useRag: appState.useRag,
@@ -11017,6 +13091,10 @@ async function sendMessage(message = null) {
 
     const modelUsed = response.headers.get('X-Model-Used');
     const routingReason = response.headers.get('X-Model-Reason');
+
+    if (!response.ok) {
+      throw new Error(await getApiErrorMessage(response, `HTTP ${response.status}`));
+    }
 
     if (modelUsed) {
       appState.lastModelUsed = modelUsed;
@@ -11109,7 +13187,7 @@ async function sendMessage(message = null) {
     function renderStreamingContent() {
       if (!streamingEl || !displayedContent) return;
 
-      const streamingAskUserResult = extractAskUserBlocks(stripTrailingTitleMarker(displayedContent));
+      const streamingAskUserResult = extractAskUserBlocks(sanitizeAssistantDisplayText(stripTrailingTitleMarker(displayedContent)));
       const contentToDisplay = stripIncompleteAskUserFence(streamingAskUserResult.text).trim();
       let html = renderMarkdownWithMath(contentToDisplay, true);
 
@@ -11154,6 +13232,7 @@ async function sendMessage(message = null) {
       );
 
       streamingEl.innerHTML = html;
+      hydrateRenderedImages(streamingEl);
       if (streamingAskUserResult.prompts.length > 0) {
         streamingAskUserResult.prompts.forEach((prompt) => {
           streamingEl.appendChild(createAskUserCard(prompt));
@@ -11342,20 +13421,23 @@ async function sendMessage(message = null) {
             if (!isThinkingPhase) {
               isThinkingPhase = true;
 
-              // 显示时间轴
+              // 显示时间轴（搜索 / Agent 进度）
               if (thinkingTimeline) thinkingTimeline.style.display = 'block';
 
-              // 更新步骤状态：工具决策完成，深度思考进行中
+              // 更新步骤状态：工具决策完成
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language) ? '已完成判断' : 'Completed');
-              updateStepStatus(stepDeepThinking, 'thinking', '');
 
-              // 显示深度思考步骤（如果之前隐藏了）
-              if (stepDeepThinking) stepDeepThinking.style.display = '';
+              // 显示并展开思考内容块（正文位置，比正文浅、字号小）
+              if (raiReasoningBlock) {
+                raiReasoningBlock.style.display = '';
+                raiReasoningBlock.classList.add('expanded');
+                if (raiReasoningToggle) raiReasoningToggle.classList.add('expanded');
+              }
 
               // 更新加载状态文本
               const loadingStatusText = document.getElementById('loadingStatusText');
               if (loadingStatusText) {
-                loadingStatusText.textContent = isChineseLanguage(appState.language) ? '深度思考中...' : 'Deep Thinking...';
+                loadingStatusText.textContent = isChineseLanguage(appState.language) ? '思考中...' : 'Thinking...';
               }
 
               // 添加AI头像闪烁效果
@@ -11378,23 +13460,19 @@ async function sendMessage(message = null) {
                 : `${traceItems} trace items · reasoning ${traceReasoningChars} chars`;
             }
 
-            // 实时更新深度思考内容
-            if (deepThinkingContent) {
-              // 获取或创建正在输入的临时元素
-              let currentTyping = deepThinkingContent.querySelector('.thinking-current-typing');
+            // 实时更新思考内容（正文位置）
+            if (raiReasoningContent) {
+              let currentTyping = raiReasoningContent.querySelector('.thinking-current-typing');
               if (!currentTyping) {
                 currentTyping = document.createElement('span');
                 currentTyping.className = 'thinking-sentence thinking-current-typing';
-                deepThinkingContent.appendChild(currentTyping);
+                raiReasoningContent.appendChild(currentTyping);
               }
-
-              // 格式化并显示内容
               const formattedText = sanitizeReasoningText(reasoningContent);
               currentTyping.innerHTML = formattedText;
 
-              // 如果深度思考区域已展开，滚动到底部
-              if (deepThinkingContent.classList.contains('expanded')) {
-                deepThinkingContent.scrollTop = deepThinkingContent.scrollHeight;
+              if (raiReasoningBlock && raiReasoningBlock.classList.contains('expanded')) {
+                raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
               }
             }
 
@@ -11419,21 +13497,23 @@ async function sendMessage(message = null) {
               }
             }
 
-            // 思考阶段结束，开始生成正文
+            // 思考阶段结束，开始生成正文：自动折叠思考内容为圆角矩形按钮
             if (isThinkingPhase) {
               isThinkingPhase = false;
 
-              // 移除深度思考中的临时输入元素
-              if (deepThinkingContent) {
-                const currentTyping = deepThinkingContent.querySelector('.thinking-current-typing');
+              // 将临时输入内容转为正式内容，并自动折叠
+              if (raiReasoningContent) {
+                const currentTyping = raiReasoningContent.querySelector('.thinking-current-typing');
                 if (currentTyping) {
-                  // 将临时内容转为正式内容
                   currentTyping.classList.remove('thinking-current-typing');
                 }
               }
+              if (raiReasoningBlock) {
+                raiReasoningBlock.classList.remove('expanded');
+                if (raiReasoningToggle) raiReasoningToggle.classList.remove('expanded');
+              }
 
-              // 更新步骤状态：深度思考完成，生成回答进行中
-              updateStepStatus(stepDeepThinking, 'done', isChineseLanguage(appState.language) ? '思考完成' : 'Completed');
+              // 更新步骤状态：生成回答进行中
               updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在组织语言...' : 'Organizing response...');
 
               // 停止AI头像闪烁
@@ -11442,7 +13522,7 @@ async function sendMessage(message = null) {
 
             // 现在开始显示正文 - 使用字符级渲染队列
             const rawChunk = parsed.content || '';
-            const cleanChunk = sanitizeToolCallArtifacts(rawChunk);
+            const cleanChunk = sanitizeAssistantDisplayText(sanitizeToolCallArtifacts(rawChunk));
             if (!cleanChunk) {
               continue;
             }
@@ -11465,6 +13545,9 @@ async function sendMessage(message = null) {
             if (parsed.title && appState.currentSession) {
               appState.currentSession.title = parsed.title;
               console.log(` 会话标题已更新: "${parsed.title}"`);
+              // 立即更新侧边栏（不等待服务器往返）
+              updateSessionInList(appState.currentSession.id, { title: parsed.title });
+              // 后台同步完整列表
               loadSessions().catch(err => console.error('刷新会话列表失败:', err));
 
               // 新增：如果处于 ChatFlow iframe 模式，同步标题给父窗口
@@ -11495,17 +13578,13 @@ async function sendMessage(message = null) {
 	          else if (parsed.type === 'points_info') {
 	            handlePointsInfoEvent(parsed);
 	          }
-	          else if (parsed.type === 'quota_info') {
-	            applyQuotaInfoEvent(parsed);
-	            const quotaText = parsed.provider === 'newapi_gpt55'
-              ? (isChineseLanguage(appState.language)
-                ? `GPT-5.5限免: 剩余 ${userMembershipState.gpt55Remaining}/${userMembershipState.gpt55DailyLimit}`
-                : `GPT-5.5 free quota: ${userMembershipState.gpt55Remaining}/${userMembershipState.gpt55DailyLimit} remaining`)
-              : (isChineseLanguage(appState.language)
-                ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
-                : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`);
-            addProcessTraceItem('info', quotaText);
-          }
+		          else if (parsed.type === 'quota_info') {
+		            applyQuotaInfoEvent(parsed);
+		            const quotaText = isChineseLanguage(appState.language)
+	                ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
+	                : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`;
+	            addProcessTraceItem('info', quotaText);
+	          }
           // 新增：处理搜索来源
           else if (parsed.type === 'sources') {
             if (parsed.sources && Array.isArray(parsed.sources)) {
@@ -11706,6 +13785,9 @@ async function sendMessage(message = null) {
               ? `返工#${agentRetryCount}: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
+          else if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
+            updateImageGenerationStatus(parsed);
+          }
           //  处理搜索状态 - 更新到时间轴第一步
           else if (parsed.type === 'search_status') {
             if (parsed.status === 'analyzing') {
@@ -11794,9 +13876,9 @@ async function sendMessage(message = null) {
     const finalReasoningContent = thinkingSentences.join('') + reasoningContent.trim();
 
     // 移除标题标记后再保存到appState
-    const cleanContent = stripTrailingTitleMarker(fullContent)
+    const cleanContent = sanitizeAssistantDisplayText(stripTrailingTitleMarker(fullContent))
       .replace(/<\|[^|]+\|>/g, '')
-      .replace(/functions\.web_search:\d+/g, '')
+      .replace(/functions\.\w+:\d+/g, '')
       .trim();
 
     const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
@@ -11876,6 +13958,8 @@ async function sendMessage(message = null) {
     if (stopBtn) stopBtn.style.display = 'none';
     appState.isStreaming = false;
     appState.currentRequestId = null;
+    appState.activeResearch = null;
+    if (typeof signalReplyReady === 'function') signalReplyReady();
 
     // 重置联网模式为开启状态（用户关闭仅限本次）
     appState.internetMode = true;
@@ -11891,6 +13975,8 @@ async function sendMessage(message = null) {
       if (appState.currentSession) {
         // 1. 更新本地状态
         appState.currentSession.title = newTitle;
+        // 立即更新侧边栏
+        updateSessionInList(appState.currentSession.id, { title: newTitle });
 
         // 2. 更新服务器
         fetch(`${API_BASE}/sessions/${appState.currentSession.id}`, {
@@ -11902,7 +13988,7 @@ async function sendMessage(message = null) {
           body: JSON.stringify({ title: newTitle })
         }).then(() => {
           console.log(' 标题已同步到服务器');
-          // 3. 刷新侧边栏
+          // 3. 后台刷新侧边栏
           loadSessions();
         }).catch(err => console.error(' 同步标题失败:', err));
       }
@@ -11942,6 +14028,10 @@ async function stopGeneration() {
 // 修复：改进handleInputKeydown
 function handleInputKeydown(event) {
   if (!event) return;
+
+  if (isImeCompositionKeyEvent(event)) {
+    return;
+  }
 
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
@@ -12141,9 +14231,9 @@ async function enterAuthenticatedApp(data) {
 
 function getOnboardingLanguageQuestionText(lang = appState.language) {
   const normalized = normalizeLanguage(lang);
-  if (normalized === 'en') return 'Welcome to RAI.\n\nWhat language would you like to use?';
-  if (normalized === 'zh-TW') return '歡迎來到 RAI。\n\n您的語言是？';
-  return '欢迎来到 RAI。\n\n您的语言是？';
+  if (normalized === 'en') return formatRuntimeText('Welcome to RAI.\n\nWhat language would you like to use?');
+  if (normalized === 'zh-TW') return formatRuntimeText('歡迎來到 RAI。\n\n您的語言是？');
+  return formatRuntimeText('欢迎来到 RAI。\n\n您的语言是？');
 }
 
 function getOnboardingStartText(lang = appState.language) {
@@ -12224,14 +14314,17 @@ async function handleRegister(event) {
   registerBtn.innerHTML = '<span class="loading"></span> ' + (isChineseLanguage(appState.language) ? '注册中...' : 'Registering...');
   errorEl.classList.remove('show');
 
-  try {
-	    const response = await fetch(`${API_BASE}/auth/register`, {
-	      method: 'POST',
-	      headers: { 'Content-Type': 'application/json' },
-	      body: JSON.stringify({ email, password, username, referrerId: getStoredInviteReferrerId() || undefined })
-	    });
+	  try {
+		    const response = await fetch(`${API_BASE}/auth/register`, {
+		      method: 'POST',
+		      headers: AUTH_JSON_HEADERS,
+		      body: JSON.stringify({ email, password, username, referrerId: getStoredInviteReferrerId() || undefined })
+		    });
 
-    const data = await response.json();
+	    const data = await parseApiJsonResponse(response, {
+	      fallback: isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed',
+	      nonJsonFallback: isChineseLanguage(appState.language) ? '注册服务暂时不可用，请刷新页面后重试。' : 'Registration is temporarily unavailable. Refresh and try again.'
+	    });
 
     if (data.success) {
       await enterAuthenticatedApp(data);
@@ -12273,24 +14366,115 @@ async function verifyToken() {
   }
 }
 
+function clearAuthenticatedAppState() {
+  localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+  localStorage.removeItem(RAI_TOKEN_KEY);
+  appState.token = null;
+  appState.user = null;
+  appState.sessions = [];
+  appState.messages = [];
+  appState.currentSession = null;
+}
+
+function redirectToLoggedOutAuth(extraParams = {}) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('rai_logout', String(Date.now()));
+  Object.entries(extraParams).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === false) return;
+    url.searchParams.set(key, String(value));
+  });
+  window.location.replace(url.toString());
+}
+
 function handleLogout() {
   const confirmMsg = isChineseLanguage(appState.language) ? '确定要登出吗?' : 'Are you sure you want to log out?';
   if (confirm(confirmMsg)) {
     if (typeof closeSettings === 'function') {
       closeSettings({ skipHistory: true });
     }
-    // 清除所有认证 token
-    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
-    localStorage.removeItem(RAI_TOKEN_KEY);
-    appState.token = null;
-    appState.user = null;
-    appState.sessions = [];
-    appState.messages = [];
-    appState.currentSession = null;
+    clearAuthenticatedAppState();
+    redirectToLoggedOutAuth();
+  }
+}
 
-    const url = new URL(window.location.href);
-    url.searchParams.set('rai_logout', String(Date.now()));
-    window.location.replace(url.toString());
+async function deleteCurrentAccount() {
+  if (!appState.token) {
+    showAuthScreen();
+    return;
+  }
+
+  const passwordInput = document.getElementById('accountDeletePasswordInput');
+  const confirmInput = document.getElementById('accountDeleteConfirmInput');
+  const twoFactorInput = document.getElementById('accountDeleteTwoFactorInput');
+  const button = document.getElementById('settingsAccountDeleteBtn');
+  const currentPassword = String(passwordInput?.value || '');
+  const confirmation = String(confirmInput?.value || '').normalize('NFKC').trim();
+  const twoFactorCode = normalizeTwoFactorCode(twoFactorInput?.value);
+  const phrase = i18nText('account-delete-confirm-phrase', isChineseLanguage(appState.language) ? '注销账号' : 'DELETE');
+  const acceptedConfirmations = new Set([phrase, 'DELETE', '注销账号', '註銷帳號']);
+
+  if (!currentPassword) {
+    showToast(i18nText('account-delete-password-required', isChineseLanguage(appState.language) ? '请输入当前密码' : 'Enter your current password'));
+    passwordInput?.focus();
+    return;
+  }
+
+  if (!acceptedConfirmations.has(confirmation)) {
+    const template = i18nText('account-delete-confirm-required', isChineseLanguage(appState.language) ? '请在确认框输入“{phrase}”' : 'Type “{phrase}” in the confirmation field');
+    showToast(template.replace('{phrase}', phrase));
+    confirmInput?.focus();
+    return;
+  }
+
+  if (isTwoFactorEnabled() && !/^\d{6}$/.test(twoFactorCode)) {
+    showToast(i18nText('account-delete-2fa-required', isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码' : 'Enter the 6-digit Authenticator code'));
+    twoFactorInput?.focus();
+    return;
+  }
+
+  const confirmMsg = i18nText(
+    'account-delete-confirm-dialog',
+    isChineseLanguage(appState.language) ? '确定永久注销当前账号吗？此操作无法恢复。' : 'Permanently delete this account? This cannot be undone.'
+  );
+  if (!confirm(confirmMsg)) return;
+
+  const previousLabel = button?.textContent || '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = i18nText('account-delete-pending', isChineseLanguage(appState.language) ? '注销中...' : 'Deleting...');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/user/account`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        currentPassword,
+        confirmation,
+        twoFactorCode
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || i18nText('account-delete-failed', isChineseLanguage(appState.language) ? '注销账号失败' : 'Failed to delete account'));
+    }
+
+    if (typeof closeSettings === 'function') {
+      closeSettings({ skipHistory: true });
+    }
+    clearAuthenticatedAppState();
+    showToast(i18nText('account-delete-success', isChineseLanguage(appState.language) ? '账号已注销' : 'Account deleted'));
+    setTimeout(() => redirectToLoggedOutAuth({ account_deleted: 1 }), 320);
+  } catch (error) {
+    console.error(' 注销账号失败:', error);
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousLabel || i18nText('account-delete-button', isChineseLanguage(appState.language) ? '注销账号' : 'Delete account');
+    }
+    showToast(localizeServerError(error.message, i18nText('account-delete-failed', isChineseLanguage(appState.language) ? '注销账号失败' : 'Failed to delete account')));
   }
 }
 
@@ -12311,9 +14495,19 @@ function switchToLogin() {
 appState.authMode = 'login';
 // 邮箱是否已验证（显示了密码框）
 appState.authEmailValidated = false;
+appState.authLoginMethod = 'password';
+appState.pendingEmailAuth = null;
 
 function isValidAuthEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+}
+
+function normalizeEmailCodeInput(value) {
+  return String(value || '').normalize('NFKC').trim().replace(/\s+/g, '').slice(0, 24);
+}
+
+function isValidEmailCodeInput(value) {
+  return /^[A-Za-z0-9!@#$%^&*_\-+=?]{10,16}$/.test(normalizeEmailCodeInput(value));
 }
 
 function isEmailReadyForAutoAdvance(email) {
@@ -12324,14 +14518,114 @@ function isEmailReadyForAutoAdvance(email) {
   return tld.length >= 3;
 }
 
+function clearTwoFactorLoginChallenge() {
+  appState.pendingTwoFactorToken = '';
+  const codeInput = document.getElementById('authTwoFactorCode');
+  if (codeInput) codeInput.value = '';
+  hideAuthStep('twoFactorStep');
+  updateAuthSubmitButtonText();
+}
+
+function clearPendingEmailAuth({ clearCode = true } = {}) {
+  appState.pendingEmailAuth = null;
+  if (clearCode) {
+    const codeInput = document.getElementById('authEmailCode');
+    if (codeInput) codeInput.value = '';
+  }
+  updateEmailCodeHint();
+  updateAuthSubmitButtonText();
+}
+
+function getCurrentAuthEmail() {
+  return document.getElementById('authEmail')?.value.trim() || '';
+}
+
+function getCurrentAuthPassword() {
+  return document.getElementById('authPassword')?.value || '';
+}
+
+function setAuthLoginMethod(method) {
+  appState.authLoginMethod = method === 'email-code' ? 'email-code' : 'password';
+  clearTwoFactorLoginChallenge();
+  clearPendingEmailAuth();
+  updateAuthMethodUI();
+  updateAuthSubmitButtonText();
+}
+
+function updateAuthMethodUI() {
+  const isLogin = appState.authMode === 'login';
+  const methodStep = document.getElementById('authLoginMethodStep');
+  const passwordBtn = document.getElementById('authPasswordMethodBtn');
+  const codeBtn = document.getElementById('authEmailCodeMethodBtn');
+  if (passwordBtn) passwordBtn.classList.toggle('active', appState.authLoginMethod !== 'email-code');
+  if (codeBtn) codeBtn.classList.toggle('active', appState.authLoginMethod === 'email-code');
+
+  if (isLogin && appState.authEmailValidated && !appState.pendingTwoFactorToken) {
+    showAuthStep('authLoginMethodStep');
+  } else if (methodStep) {
+    hideAuthStep('authLoginMethodStep');
+  }
+
+  const wantsPassword = appState.authMode === 'register'
+    || (isLogin && appState.authLoginMethod !== 'email-code' && !appState.pendingTwoFactorToken);
+  const wantsEmailCode = !!appState.pendingEmailAuth
+    || (isLogin && appState.authLoginMethod === 'email-code' && appState.authEmailValidated && !appState.pendingTwoFactorToken);
+
+  if (wantsPassword && appState.authEmailValidated) showAuthStep('passwordStep');
+  else hideAuthStep('passwordStep');
+
+  if (wantsEmailCode) showAuthStep('emailCodeStep');
+  else hideAuthStep('emailCodeStep');
+}
+
+function updateEmailCodeHint() {
+  const hint = document.getElementById('emailCodeHint');
+  if (!hint) return;
+  const isZh = isChineseLanguage(appState.language);
+  const purpose = appState.pendingEmailAuth?.purpose || '';
+  if (purpose === 'register') {
+    hint.textContent = i18nText('email-code-register-hint', isZh ? '验证码已发送到注册邮箱，输入后完成账号创建。' : 'Enter the code sent to your email to finish creating the account.');
+  } else if (purpose === 'password_reset') {
+    hint.textContent = i18nText('email-code-reset-hint', isZh ? '输入邮箱验证码后即可设置新密码。' : 'Enter the email code to set a new password.');
+  } else if (purpose === 'login') {
+    hint.textContent = i18nText('email-code-login-hint', isZh ? '输入发送到邮箱的 10-16 位验证码登录。' : 'Enter the 10-16 character code sent to your email to log in.');
+  } else {
+    hint.textContent = i18nText('email-code-hint', isZh ? '验证码会发送到当前邮箱。' : 'The code will be sent to this email.');
+  }
+}
+
+function updateAuthSubmitButtonText() {
+  const submitBtn = document.getElementById('authSubmitBtn');
+  if (!submitBtn) return;
+  const isZh = isChineseLanguage(appState.language);
+  let label = appState.authMode === 'register'
+    ? i18nText('register-btn', isZh ? '注册' : 'Register')
+    : i18nText('login-btn', isZh ? '登录' : 'Login');
+
+  if (appState.pendingTwoFactorToken) {
+    label = i18nText('two-factor-login-btn', isZh ? '验证并登录' : 'Verify and log in');
+  } else if (appState.pendingEmailAuth?.purpose === 'register') {
+    label = i18nText('email-code-verify-register-btn', isZh ? '验证并进入' : 'Verify and continue');
+  } else if (appState.pendingEmailAuth?.purpose === 'login') {
+    label = i18nText('email-code-login-submit', isZh ? '验证码登录' : 'Log in with code');
+  } else if (appState.authMode === 'login' && appState.authLoginMethod === 'email-code') {
+    label = i18nText('email-code-send-btn', isZh ? '发送验证码' : 'Send code');
+  }
+  submitBtn.textContent = label;
+}
+
 // 邮箱输入处理 - 检测有效邮箱后显示密码框
 function handleEmailInput(input) {
   const email = input.value.trim();
   const shouldAdvance = isEmailReadyForAutoAdvance(email);
+  if (appState.pendingTwoFactorToken) {
+    clearTwoFactorLoginChallenge();
+  }
+  if (appState.pendingEmailAuth && appState.pendingEmailAuth.email !== email) {
+    clearPendingEmailAuth();
+  }
 
   if (shouldAdvance && !appState.authEmailValidated) {
-    // 显示密码框和提交按钮
-    showAuthStep('passwordStep');
     showAuthStep('submitStep');
     appState.authEmailValidated = true;
 
@@ -12342,15 +14636,23 @@ function handleEmailInput(input) {
 
     // 自动聚焦到密码框
     setTimeout(() => {
-      document.getElementById('authPassword')?.focus();
+      const target = appState.authMode === 'login' && appState.authLoginMethod === 'email-code'
+        ? document.getElementById('authEmailCode')
+        : document.getElementById('authPassword');
+      target?.focus();
     }, 300);
   } else if (!shouldAdvance && appState.authEmailValidated) {
     // 邮箱变为无效，隐藏后续步骤
     hideAuthStep('passwordStep');
     hideAuthStep('usernameStep');
+    hideAuthStep('authLoginMethodStep');
+    hideAuthStep('emailCodeStep');
     hideAuthStep('submitStep');
     appState.authEmailValidated = false;
+    clearPendingEmailAuth();
   }
+  updateAuthMethodUI();
+  updateAuthSubmitButtonText();
 }
 
 // 邮箱输入框按键处理 - Enter键触发验证
@@ -12366,13 +14668,21 @@ function handleEmailKeydown(event) {
         showAuthStep('passwordStep');
         showAuthStep('submitStep');
         appState.authEmailValidated = true;
+        updateAuthMethodUI();
+        updateAuthSubmitButtonText();
         if (appState.authMode === 'register') {
           showAuthStep('usernameStep');
         }
-        document.getElementById('authPassword')?.focus();
+        const target = appState.authMode === 'login' && appState.authLoginMethod === 'email-code'
+          ? document.getElementById('authEmailCode')
+          : document.getElementById('authPassword');
+        target?.focus();
       } else {
         // 已经显示了密码框，聚焦到密码框
-        document.getElementById('authPassword')?.focus();
+        const target = appState.authMode === 'login' && appState.authLoginMethod === 'email-code'
+          ? document.getElementById('authEmailCode')
+          : document.getElementById('authPassword');
+        target?.focus();
       }
     } else {
       // 显示邮箱格式错误
@@ -12383,6 +14693,20 @@ function handleEmailKeydown(event) {
 
 // 密码输入框按键处理 - Enter键提交表单
 function handlePasswordKeydown(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    handleAuthSubmit();
+  }
+}
+
+function handleTwoFactorKeydown(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    handleAuthSubmit();
+  }
+}
+
+function handleEmailCodeKeydown(event) {
   if (event.key === 'Enter') {
     event.preventDefault();
     handleAuthSubmit();
@@ -12412,6 +14736,16 @@ function showAuthError(message) {
   const errorEl = document.getElementById('authError');
   if (errorEl) {
     errorEl.textContent = message;
+    errorEl.classList.remove('notice');
+    errorEl.classList.add('show');
+  }
+}
+
+function showAuthNotice(message) {
+  const errorEl = document.getElementById('authError');
+  if (errorEl) {
+    errorEl.textContent = message;
+    errorEl.classList.add('notice');
     errorEl.classList.add('show');
   }
 }
@@ -12421,6 +14755,165 @@ function hideAuthError() {
   const errorEl = document.getElementById('authError');
   if (errorEl) {
     errorEl.classList.remove('show');
+    errorEl.classList.remove('notice');
+  }
+}
+
+function updateForgotPasswordVisibility() {
+  const row = document.getElementById('forgotPasswordRow');
+  if (row) {
+    row.classList.toggle('is-hidden', appState.authMode !== 'login');
+  }
+}
+
+function showForgotPasswordHelp() {
+  const email = document.getElementById('authEmail')?.value.trim() || '';
+  const isZh = isChineseLanguage(appState.language);
+  let overlay = document.getElementById('forgotPasswordModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'forgotPasswordModal';
+    overlay.className = 'forgot-password-overlay';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <div class="forgot-password-card" role="dialog" aria-modal="true" aria-labelledby="forgotPasswordTitle">
+      <button type="button" class="forgot-password-close" onclick="closeForgotPasswordHelp()" aria-label="${isZh ? '关闭' : 'Close'}">&times;</button>
+      <div class="forgot-password-kicker">${escapeHtml(BRAND_SHORT_NAME)}</div>
+      <h3 id="forgotPasswordTitle">${escapeHtml(i18nText('forgot-password-title', isZh ? '找回 RAI 密码' : 'Recover your RAI password'))}</h3>
+      <p>${escapeHtml(i18nText('forgot-password-desc', isZh ? '输入注册邮箱，RAI 会发送验证码。验证通过后即可设置新密码。' : 'Enter your email and RAI will send a code. After verification, set a new password.'))}</p>
+      <div class="forgot-password-email">
+        <span>${escapeHtml(i18nText('forgot-password-email-label', isZh ? '注册邮箱' : 'Registered email'))}</span>
+        <input type="email" class="form-input" id="forgotPasswordEmail" value="${escapeHtml(email)}" placeholder="name@example.com" autocomplete="email">
+      </div>
+      <div class="forgot-password-email">
+        <span>${escapeHtml(i18nText('email-code-label', isZh ? '邮箱验证码' : 'Email code'))}</span>
+        <input type="text" class="form-input" id="forgotPasswordCode" placeholder="${isZh ? '10-16 位验证码' : '10-16 character code'}" inputmode="text" maxlength="16" autocomplete="one-time-code">
+      </div>
+      <div class="forgot-password-email">
+        <span>${escapeHtml(i18nText('password-new-label', isZh ? '新密码' : 'New password'))}</span>
+        <input type="password" class="form-input" id="forgotPasswordNewPassword" placeholder="${isZh ? '至少6位字符' : 'At least 6 characters'}" autocomplete="new-password">
+      </div>
+      <div class="forgot-password-email">
+        <span>${escapeHtml(i18nText('password-confirm-label', isZh ? '确认新密码' : 'Confirm new password'))}</span>
+        <input type="password" class="form-input" id="forgotPasswordConfirmPassword" placeholder="${isZh ? '再次输入新密码' : 'Enter it again'}" autocomplete="new-password">
+      </div>
+      <div class="admin-login-error" id="forgotPasswordStatus"></div>
+      <div class="forgot-password-actions">
+        <button type="button" class="forgot-password-primary" id="forgotPasswordSendCodeBtn" onclick="requestPasswordResetCode()">${escapeHtml(i18nText('email-code-send-btn', isZh ? '发送验证码' : 'Send code'))}</button>
+        <button type="button" class="forgot-password-primary" id="forgotPasswordConfirmBtn" onclick="confirmPasswordResetWithCode()">${escapeHtml(i18nText('forgot-password-confirm', isZh ? '重置密码' : 'Reset password'))}</button>
+        <button type="button" class="forgot-password-secondary" onclick="closeForgotPasswordHelp()">${escapeHtml(i18nText('forgot-password-close', isZh ? '稍后处理' : 'Not now'))}</button>
+      </div>
+    </div>
+  `;
+  applyBrandLabelWithBadge(overlay.querySelector('.forgot-password-kicker'), BRAND_SHORT_NAME);
+  overlay.classList.add('active');
+  setTimeout(() => document.getElementById(email ? 'forgotPasswordCode' : 'forgotPasswordEmail')?.focus(), 80);
+}
+
+function closeForgotPasswordHelp() {
+  document.getElementById('forgotPasswordModal')?.classList.remove('active');
+}
+
+function setForgotPasswordStatus(message, isError = false) {
+  const el = document.getElementById('forgotPasswordStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.classList.toggle('show', !!message);
+  el.style.color = isError ? '' : 'var(--text-secondary)';
+}
+
+async function requestPasswordResetCode() {
+  const isZh = isChineseLanguage(appState.language);
+  const email = document.getElementById('forgotPasswordEmail')?.value.trim() || '';
+  const btn = document.getElementById('forgotPasswordSendCodeBtn');
+  if (!isValidAuthEmail(email)) {
+    setForgotPasswordStatus(i18nText('invalid-email-error', isZh ? '请输入有效的邮箱地址' : 'Please enter a valid email address'), true);
+    return;
+  }
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="loading"></span> ' + (isZh ? '发送中...' : 'Sending...');
+    }
+	    const response = await fetch(`${API_BASE}/auth/password/reset/request`, {
+	      method: 'POST',
+	      headers: AUTH_JSON_HEADERS,
+	      body: JSON.stringify({ email })
+	    });
+	    const data = await parseApiJsonResponse(response, {
+	      fallback: isZh ? '验证码发送失败' : 'Failed to send code',
+	      nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
+	    });
+    if (!response.ok || data.success === false) {
+      throw new Error(data.error || (isZh ? '验证码发送失败' : 'Failed to send code'));
+    }
+    setForgotPasswordStatus(i18nText('email-code-sent', isZh ? '验证码已发送，请查看邮箱。' : 'Code sent. Check your email.'), false);
+    document.getElementById('forgotPasswordCode')?.focus();
+  } catch (error) {
+    setForgotPasswordStatus(localizeServerError(error.message, isZh ? '验证码发送失败' : 'Failed to send code'), true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = i18nText('email-code-send-btn', isZh ? '发送验证码' : 'Send code');
+    }
+  }
+}
+
+async function confirmPasswordResetWithCode() {
+  const isZh = isChineseLanguage(appState.language);
+  const email = document.getElementById('forgotPasswordEmail')?.value.trim() || '';
+  const code = normalizeEmailCodeInput(document.getElementById('forgotPasswordCode')?.value);
+  const newPassword = document.getElementById('forgotPasswordNewPassword')?.value || '';
+  const confirmPassword = document.getElementById('forgotPasswordConfirmPassword')?.value || '';
+  const btn = document.getElementById('forgotPasswordConfirmBtn');
+
+  if (!isValidAuthEmail(email)) {
+    setForgotPasswordStatus(i18nText('invalid-email-error', isZh ? '请输入有效的邮箱地址' : 'Please enter a valid email address'), true);
+    return;
+  }
+  if (!isValidEmailCodeInput(code)) {
+    setForgotPasswordStatus(i18nText('email-code-required', isZh ? '请输入 10-16 位邮箱验证码' : 'Enter the 10-16 character email code'), true);
+    return;
+  }
+  if (newPassword.length < 6) {
+    setForgotPasswordStatus(i18nText('password-too-short-error', isZh ? '新密码至少需要 6 位字符' : 'New password must be at least 6 characters'), true);
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    setForgotPasswordStatus(i18nText('password-confirm-mismatch-error', isZh ? '两次输入的新密码不一致' : 'The new passwords do not match'), true);
+    return;
+  }
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="loading"></span> ' + (isZh ? '重置中...' : 'Resetting...');
+    }
+	    const response = await fetch(`${API_BASE}/auth/password/reset/confirm`, {
+	      method: 'POST',
+	      headers: AUTH_JSON_HEADERS,
+	      body: JSON.stringify({ email, code, newPassword })
+	    });
+	    const data = await parseApiJsonResponse(response, {
+	      fallback: isZh ? '重置密码失败' : 'Failed to reset password',
+	      nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
+	    });
+    if (!response.ok || data.success === false) {
+      throw new Error(data.error || (isZh ? '重置密码失败' : 'Failed to reset password'));
+    }
+    closeForgotPasswordHelp();
+    document.getElementById('authEmail').value = email;
+    document.getElementById('authPassword')?.focus();
+    showToast(isZh ? '密码已重置，请使用新密码登录' : 'Password reset. Log in with your new password.');
+  } catch (error) {
+    setForgotPasswordStatus(localizeServerError(error.message, isZh ? '重置密码失败' : 'Failed to reset password'), true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = i18nText('forgot-password-confirm', isZh ? '重置密码' : 'Reset password');
+    }
   }
 }
 
@@ -12428,6 +14921,11 @@ function hideAuthError() {
 function switchAuthMode() {
   const isLogin = appState.authMode === 'login';
   appState.authMode = isLogin ? 'register' : 'login';
+  clearTwoFactorLoginChallenge();
+  clearPendingEmailAuth();
+  if (appState.authMode === 'register') {
+    appState.authLoginMethod = 'password';
+  }
 
   // 更新标题和副标题
   const title = document.getElementById('authTitle');
@@ -12490,8 +14988,159 @@ function switchAuthMode() {
     hideAuthStep('usernameStep');
   }
 
+  updateForgotPasswordVisibility();
+  updateAuthMethodUI();
+  updateAuthSubmitButtonText();
+
   // 清除错误信息
   hideAuthError();
+}
+
+function beginPendingEmailAuth({ purpose, email, message = '' }) {
+  appState.pendingEmailAuth = {
+    purpose,
+    email: String(email || getCurrentAuthEmail()).trim()
+  };
+  hideAuthStep('twoFactorStep');
+  updateAuthMethodUI();
+  updateEmailCodeHint();
+  showAuthStep('submitStep');
+  updateAuthSubmitButtonText();
+  if (message) {
+    showAuthNotice(localizeServerError(message, message));
+  }
+  setTimeout(() => document.getElementById('authEmailCode')?.focus(), 80);
+}
+
+function beginPendingTwoFactor(twoFactorToken) {
+  appState.pendingTwoFactorToken = twoFactorToken || '';
+  clearPendingEmailAuth({ clearCode: false });
+  hideAuthStep('emailCodeStep');
+  showAuthStep('twoFactorStep');
+  showAuthStep('submitStep');
+  updateAuthSubmitButtonText();
+  setTimeout(() => document.getElementById('authTwoFactorCode')?.focus(), 80);
+}
+
+async function handleAuthServerResponse(data) {
+  const email = data?.email || getCurrentAuthEmail();
+  if (data?.requiresEmailVerification) {
+    beginPendingEmailAuth({
+      purpose: 'register',
+      email,
+      message: data.message || i18nText('email-code-sent', isChineseLanguage(appState.language) ? '验证码已发送，请查看邮箱。' : 'Code sent. Check your email.')
+    });
+    return true;
+  }
+
+  if (data?.requiresTwoFactor && data.twoFactorToken) {
+    beginPendingTwoFactor(data.twoFactorToken);
+    return true;
+  }
+
+  if (data?.success && data.token) {
+    clearTwoFactorLoginChallenge();
+    clearPendingEmailAuth();
+    await enterAuthenticatedApp(data);
+    return true;
+  }
+
+  return false;
+}
+
+async function requestLoginEmailCode(email) {
+	  const response = await fetch(`${API_BASE}/auth/login/email-code/request`, {
+	    method: 'POST',
+	    headers: AUTH_JSON_HEADERS,
+	    body: JSON.stringify({ email })
+	  });
+	  const data = await parseApiJsonResponse(response, {
+	    fallback: '验证码邮件发送失败',
+	    nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
+	  });
+  if (!response.ok || data.success === false) {
+    throw new Error(data.error || '验证码邮件发送失败');
+  }
+  if (data.requiresEmailVerification) {
+    beginPendingEmailAuth({
+      purpose: 'register',
+      email,
+      message: data.message || ''
+    });
+    return;
+  }
+  beginPendingEmailAuth({
+    purpose: 'login',
+    email,
+    message: data.message || i18nText('email-code-sent', isChineseLanguage(appState.language) ? '验证码已发送，请查看邮箱。' : 'Code sent. Check your email.')
+  });
+}
+
+async function verifyPendingEmailAuth(email, code) {
+  const purpose = appState.pendingEmailAuth?.purpose;
+  const endpoint = purpose === 'register'
+    ? `${API_BASE}/auth/register/verify`
+    : `${API_BASE}/auth/login/email-code/verify`;
+	  const response = await fetch(endpoint, {
+	    method: 'POST',
+	    headers: AUTH_JSON_HEADERS,
+	    body: JSON.stringify({ email, code })
+	  });
+	  const data = await parseApiJsonResponse(response, {
+	    fallback: '验证码无效或已过期',
+	    nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
+	  });
+  if (await handleAuthServerResponse(data)) return;
+  if (!response.ok || data.success === false) {
+    throw new Error(data.error || '验证码无效或已过期');
+  }
+}
+
+async function resendAuthEmailCode() {
+  const email = getCurrentAuthEmail();
+  const password = getCurrentAuthPassword();
+  const isZh = isChineseLanguage(appState.language);
+  const btn = document.getElementById('authEmailCodeResendBtn');
+
+  if (!email || !isValidAuthEmail(email)) {
+    showAuthError(isZh ? '请输入有效的邮箱地址' : 'Please enter a valid email');
+    return;
+  }
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="loading"></span>';
+    }
+    if (appState.pendingEmailAuth?.purpose === 'register') {
+      if (!password || password.length < 6) {
+        throw new Error(isZh ? '请保留注册密码后重发验证码' : 'Keep the registration password to resend the code');
+      }
+	      const response = await fetch(`${API_BASE}/auth/register/resend`, {
+	        method: 'POST',
+	        headers: AUTH_JSON_HEADERS,
+	        body: JSON.stringify({ email, password })
+	      });
+	      const data = await parseApiJsonResponse(response, {
+	        fallback: '验证码邮件发送失败',
+	        nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
+	      });
+	      if (await handleAuthServerResponse(data)) return;
+	      if (!response.ok || data.success === false) {
+	        throw new Error(data.error || '验证码邮件发送失败');
+	      }
+      beginPendingEmailAuth({ purpose: 'register', email, message: data.message || '' });
+    } else {
+      await requestLoginEmailCode(email);
+    }
+  } catch (error) {
+    showAuthError(localizeServerError(error.message, isZh ? '验证码发送失败' : 'Failed to send code'));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = i18nText('email-code-resend', isZh ? '重发' : 'Resend');
+    }
+  }
 }
 
 // 统一的表单提交处理
@@ -12499,8 +15148,12 @@ async function handleAuthSubmit() {
   const email = document.getElementById('authEmail')?.value.trim();
   const password = document.getElementById('authPassword')?.value;
   const username = document.getElementById('authUsername')?.value.trim();
+  const twoFactorCode = normalizeTwoFactorCode(document.getElementById('authTwoFactorCode')?.value);
+  const emailCode = normalizeEmailCodeInput(document.getElementById('authEmailCode')?.value);
   const submitBtn = document.getElementById('authSubmitBtn');
-  const errorEl = document.getElementById('authError');
+
+  const isPendingTwoFactorLogin = appState.authMode === 'login' && !!appState.pendingTwoFactorToken;
+  const isPendingEmailAuth = !!appState.pendingEmailAuth;
 
   // 基本验证
   if (!email || !isValidAuthEmail(email)) {
@@ -12508,7 +15161,20 @@ async function handleAuthSubmit() {
     return;
   }
 
-  if (!password || password.length < 6) {
+  if (isPendingTwoFactorLogin && !/^\d{6}$/.test(twoFactorCode)) {
+    showAuthError(i18nText('two-factor-required', isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码' : 'Enter the 6-digit Authenticator code'));
+    return;
+  }
+
+  if (isPendingEmailAuth && !isValidEmailCodeInput(emailCode)) {
+    showAuthError(i18nText('email-code-required', isChineseLanguage(appState.language) ? '请输入 10-16 位邮箱验证码' : 'Enter the 10-16 character email code'));
+    return;
+  }
+
+  const needsPassword = !isPendingTwoFactorLogin
+    && !isPendingEmailAuth
+    && (appState.authMode === 'register' || appState.authLoginMethod !== 'email-code');
+  if (needsPassword && (!password || password.length < 6)) {
     showAuthError(isChineseLanguage(appState.language) ? '密码至少6位字符' : 'Password must be at least 6 characters');
     return;
   }
@@ -12518,42 +15184,81 @@ async function handleAuthSubmit() {
   // 禁用按钮并显示加载状态
   if (submitBtn) {
     submitBtn.disabled = true;
-    const loadingText = appState.authMode === 'login'
-      ? (isChineseLanguage(appState.language) ? '登录中...' : 'Logging in...')
+    const loadingText = isPendingTwoFactorLogin
+      ? (isChineseLanguage(appState.language) ? '验证中...' : 'Verifying...')
+      : isPendingEmailAuth
+      ? (isChineseLanguage(appState.language) ? '验证中...' : 'Verifying...')
+      : appState.authMode === 'login'
+      ? (appState.authLoginMethod === 'email-code'
+        ? (isChineseLanguage(appState.language) ? '发送中...' : 'Sending...')
+        : (isChineseLanguage(appState.language) ? '登录中...' : 'Logging in...'))
       : (isChineseLanguage(appState.language) ? '注册中...' : 'Registering...');
     submitBtn.innerHTML = '<span class="loading"></span> ' + loadingText;
   }
 
 	  try {
+    if (isPendingTwoFactorLogin) {
+	      const response = await fetch(`${API_BASE}/auth/login/2fa`, {
+	        method: 'POST',
+	        headers: AUTH_JSON_HEADERS,
+	        body: JSON.stringify({
+	          twoFactorToken: appState.pendingTwoFactorToken,
+	          code: twoFactorCode
+	        })
+	      });
+
+	      const data = await parseApiJsonResponse(response, {
+	        fallback: isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code',
+	        nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
+	      });
+      if (!(await handleAuthServerResponse(data))) {
+        showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code'));
+      }
+      return;
+    }
+
+    if (isPendingEmailAuth) {
+      await verifyPendingEmailAuth(email, emailCode);
+      return;
+    }
+
+    if (appState.authMode === 'login' && appState.authLoginMethod === 'email-code') {
+      await requestLoginEmailCode(email);
+      return;
+    }
+
 	    const endpoint = appState.authMode === 'login' ? 'login' : 'register';
 	    const body = appState.authMode === 'login'
 	      ? { email, password }
 	      : { email, password, username, referrerId: getStoredInviteReferrerId() || undefined };
 
-    const response = await fetch(`${API_BASE}/auth/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+	    const response = await fetch(`${API_BASE}/auth/${endpoint}`, {
+	      method: 'POST',
+	      headers: AUTH_JSON_HEADERS,
+	      body: JSON.stringify(body)
+	    });
 
-    const data = await response.json();
+	    const data = await parseApiJsonResponse(response, {
+	      fallback: isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed',
+	      nonJsonFallback: appState.authMode === 'register'
+	        ? (isChineseLanguage(appState.language) ? '注册服务暂时不可用，请刷新页面后重试。' : 'Registration is temporarily unavailable. Refresh and try again.')
+	        : (isChineseLanguage(appState.language) ? '登录服务暂时不可用，请刷新页面后重试。' : 'Login is temporarily unavailable. Refresh and try again.')
+	    });
 
-    if (data.success) {
-      await enterAuthenticatedApp(data);
-    } else {
+    if (!(await handleAuthServerResponse(data))) {
       showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
   } catch (error) {
-    showAuthError(isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error');
+    const fallbackError = isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error';
+    const rawMessage = String(error?.message || '').trim();
+    const isLikelyNetworkError = !rawMessage || /Failed to fetch|NetworkError|Load failed/i.test(rawMessage);
+    showAuthError(isLikelyNetworkError ? fallbackError : localizeServerError(rawMessage, fallbackError));
     console.error(' 认证错误:', error);
   } finally {
     // 恢复按钮状态
     if (submitBtn) {
       submitBtn.disabled = false;
-      const btnText = appState.authMode === 'login'
-        ? (isChineseLanguage(appState.language) ? '登录' : 'Login')
-        : (isChineseLanguage(appState.language) ? '注册' : 'Register');
-      submitBtn.textContent = btnText;
+      updateAuthSubmitButtonText();
     }
   }
 }
@@ -12677,7 +15382,9 @@ async function loadUserData() {
       externalProvider: profile.external_provider || appState.user?.external_provider || null,
       externalUid: profile.external_uid || appState.user?.external_uid || null,
       external_provider: profile.external_provider || appState.user?.external_provider || null,
-      external_uid: profile.external_uid || appState.user?.external_uid || null
+      external_uid: profile.external_uid || appState.user?.external_uid || null,
+      two_factor_enabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1,
+      twoFactorEnabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1
     };
     updateUserIdentityUI();
 
@@ -12698,10 +15405,25 @@ async function loadUserData() {
         appState.systemPrompt = (profile.system_prompt || '');
         console.log(` 加载系统提示词: ${appState.systemPrompt.length}字符`);
       }
+	      if (profile.long_memory_enabled !== undefined) {
+	        appState.longMemoryEnabled = profile.long_memory_enabled === true || profile.long_memory_enabled === 1 || String(profile.long_memory_enabled) === '1';
+	      }
+	      if (Array.isArray(profile.short_memory_titles)) {
+	        appState.shortTermMemoryTitles = profile.short_memory_titles;
+	      }
       // 读取用户偏好；若模型不支持会在 updateModelControls 里自动关闭
       if (profile.thinking_mode !== undefined) {
         appState.thinkingMode = (profile.thinking_mode === 1 || profile.thinking_mode === true);
       }
+      if (profile.tab_title_mode !== undefined) {
+        const allowedModes = ['static', 'marquee', 'greeting', 'title', 'custom'];
+        const m = String(profile.tab_title_mode || '').trim();
+        appState.tabTitleMode = allowedModes.includes(m) ? m : 'marquee';
+      }
+      if (profile.tab_title_custom_text !== undefined) {
+        appState.tabTitleCustomText = String(profile.tab_title_custom_text || '').slice(0, 80);
+      }
+      if (typeof applyRuntimeBranding === 'function') applyRuntimeBranding();
       //  修复：保持联网模式默认开启，除非用户明确关闭
       // 数据库默认值0表示"未设置"，不覆盖前端默认值true
       // 前端已默认开启联网，所以这里不再处理 internet_mode
@@ -13532,7 +16254,7 @@ function renderFlowsList(flows) {
   }
 
   container.innerHTML = flows.map(flow => `
-        <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}" 
+        <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}"
              onclick="openFlow('${flow.id}')" data-flow-id="${flow.id}">
           ${getSvgIcon('rai_logo_colored', 'flow-item-icon rai-flow-logo', 18)}
           <div class="flow-item-main">
@@ -14289,6 +17011,10 @@ document.addEventListener('click', (e) => {
 
 // ChatFlow 输入处理
 function handleChatFlowInputKeydown(event) {
+  if (isImeCompositionKeyEvent(event)) {
+    return;
+  }
+
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     sendChatFlowMessage();
@@ -14699,9 +17425,10 @@ async function sendChatFlowMessage() {
         reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
         internetMode: chatFlowState.internetMode || false,
         stream: true,
-        promptTimeContext: getUserTimeContext(),
-        systemPrompt: buildChatFlowSystemPrompt(),
-        canvasContext: buildChatFlowCanvasContext(),
+	        promptTimeContext: getUserTimeContext(),
+	        systemPrompt: buildChatFlowSystemPrompt(),
+	        memoryMode: appState.longMemoryEnabled ? 'normal' : 'off',
+	        canvasContext: buildChatFlowCanvasContext(),
         canvasApplyMode: chatFlowState.patchApplyMode,
         uiSurface: isChatFlowMobileViewport() ? 'chatflow-mobile' : 'chatflow-desktop'
       })
@@ -14783,11 +17510,11 @@ async function sendChatFlowMessage() {
           }
 
           if (parsed.type === 'content' && parsed.content) {
-            aiMessage.content += parsed.content;
+            aiMessage.content += sanitizeAssistantDisplayText(parsed.content);
             const msgContainer = document.getElementById('chatflowMessages');
             const lastMsg = msgContainer?.querySelector('.chatflow-message:last-child .message-text');
             if (lastMsg) {
-              lastMsg.innerHTML = renderMarkdownWithMath(aiMessage.content);
+              lastMsg.innerHTML = renderMarkdownWithMath(sanitizeAssistantDisplayText(aiMessage.content));
             }
             continue;
           }
@@ -15782,10 +18509,12 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-        model: 'kimi-k2.5',
-        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
-        promptTimeContext: getUserTimeContext(),
-        stream: false
+	        model: 'deepseek-pro',
+	        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
+	        promptTimeContext: getUserTimeContext(),
+	        memoryMode: 'off',
+	        skipUserSave: true,
+	        stream: false
       })
     });
 
@@ -16427,7 +19156,7 @@ function serializeCanvasToPrompt() {
 // 支持分页加载的 loadSessions
 // reset=true: 重新加载（初始化/刷新）
 // reset=false: 追加加载（滚动加载更多）
-async function loadSessions(reset = true) {
+async function loadSessions(reset = true, options = {}) {
   // 如果正在加载，跳过
   if (appState.sessionsPagination.isLoading) return;
   // 如果不是重置且没有更多数据，跳过
@@ -16462,7 +19191,7 @@ async function loadSessions(reset = true) {
     appState.sessionsPagination.offset += data.sessions.length;
 
     console.log(` 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
-    if (appState.messages.length === 0) {
+    if (options.focusEmpty !== false && appState.messages.length === 0) {
       shouldFocusAfterRender = true;
     }
 
@@ -16636,11 +19365,25 @@ function initChatScrollListener() {
       setScrollFollowMode('following');
     }
 
+    updateEdgeFadeState(container, nearBottom);
+
     appState.lastScrollTop = currentScrollTop;
   }, { passive: true, capture: true });
 
   updateScrollResumeButton();
+  updateEdgeFadeState(getChatScrollElement(), null);
   console.log(' 智能滚动监听器已初始化');
+}
+
+function updateEdgeFadeState(container, nearBottom) {
+  const mainContent = document.querySelector('.main-content');
+  if (!mainContent) return;
+  const el = container || getChatScrollElement();
+  if (!el) return;
+  const atTop = (el.scrollTop || 0) <= 0;
+  const atBottom = nearBottom !== null ? nearBottom : ((el.scrollTop + el.clientHeight) >= (el.scrollHeight - 4));
+  mainContent.classList.toggle('at-top', atTop);
+  mainContent.classList.toggle('at-bottom', atBottom);
 }
 
 // 初始化 Material Design 涟漪效果
@@ -16674,9 +19417,471 @@ function initRippleEffect() {
   });
 }
 
+function normalizeNewChatMode(mode) {
+  const normalized = String(mode || '').trim();
+  if (['normal', 'saved-temp', 'classic-temp', 'ask'].includes(normalized)) return normalized;
+  return 'ask';
+}
+
+function normalizeTemporaryChatMode(mode) {
+  const normalized = normalizeNewChatMode(mode);
+  if (normalized === 'saved-temp' || normalized === 'classic-temp') return normalized;
+  return 'ask';
+}
+
+function readLocalSettingsObject() {
+  try {
+    const saved = localStorage.getItem('rai_settings');
+    return saved ? (JSON.parse(saved) || {}) : {};
+  } catch (error) {
+    console.warn(' 解析本地设置失败:', error);
+    return {};
+  }
+}
+
+function persistLocalSettingsPatch(patch = {}) {
+  const next = { ...readLocalSettingsObject(), ...patch };
+  localStorage.setItem('rai_settings', JSON.stringify(next));
+  return next;
+}
+
+async function getApiErrorMessage(response, fallback = '') {
+  try {
+    const data = await response.clone().json();
+    if (data?.error) return localizeServerError(data.error, fallback || data.error);
+  } catch (error) {
+    // Ignore body parse failures and use the fallback below.
+  }
+  return fallback || `HTTP ${response.status}`;
+}
+
+function isNoMemoryConversationActive() {
+  if (appState.currentSessionMemoryMode === 'classic-temp') return true;
+  const sessionKind = String(appState.currentSession?.session_kind || '').trim();
+  return sessionKind === 'temporary_saved' || appState.currentSessionMemoryMode === 'saved-temp';
+}
+
+function updateNewChatModeSettingsUI() {
+  const activeMode = normalizeTemporaryChatMode(appState.newChatDefaultMode);
+  document.querySelectorAll('[data-temp-chat-mode]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-temp-chat-mode') === activeMode);
+  });
+}
+
+function setNewChatDefaultModeFromSettings(mode) {
+  const normalized = normalizeTemporaryChatMode(mode);
+  appState.newChatDefaultMode = normalized;
+  persistLocalSettingsPatch({ newChatDefaultMode: normalized });
+  updateNewChatModeSettingsUI();
+  showToast(i18nText('settings-save-success', isChineseLanguage(appState.language) ? '设置已保存' : 'Settings saved'));
+}
+
+function updateTabTitleModeSettingsUI() {
+  const mode = normalizeTabTitleMode(appState.tabTitleMode);
+  const selectEl = document.getElementById('tabTitleModeSelect');
+  if (selectEl) selectEl.value = mode;
+  const customRow = document.getElementById('tabTitleCustomRow');
+  if (customRow) customRow.style.display = mode === 'custom' ? '' : 'none';
+  const customInput = document.getElementById('tabTitleCustomInput');
+  if (customInput && customInput.value !== String(appState.tabTitleCustomText || '')) {
+    customInput.value = String(appState.tabTitleCustomText || '');
+  }
+}
+
+function setTabTitleModeFromSettings(mode) {
+  const normalized = normalizeTabTitleMode(mode);
+  appState.tabTitleMode = normalized;
+  persistLocalSettingsPatch({ tabTitleMode: normalized });
+  updateTabTitleModeSettingsUI();
+  startTitleAnimation();
+  syncTabTitleConfigToServer();
+  showToast(i18nText('settings-save-success', isChineseLanguage(appState.language) ? '设置已保存' : 'Settings saved'));
+}
+
+function setTabTitleCustomTextFromSettings(text) {
+  const value = String(text || '').slice(0, 80);
+  appState.tabTitleCustomText = value;
+  persistLocalSettingsPatch({ tabTitleCustomText: value });
+  startTitleAnimation();
+  syncTabTitleConfigToServer();
+}
+
+function syncTabTitleConfigToServer() {
+  if (!appState.token) return;
+  fetch(`${API_BASE}/user/config`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(buildCurrentConfigPayloadForMemory())
+  }).then((res) => res.json())
+    .then((data) => { if (!data?.success) console.warn(' 同步标签页动画配置失败:', data?.error); })
+    .catch((err) => console.warn(' 同步标签页动画配置网络错误:', err));
+}
+
+function updateBrowserNotifySettingsUI() {
+  const supported = ('Notification' in window);
+  const switchBtn = document.getElementById('browserNotifySwitch');
+  const toggle = document.getElementById('browserNotifyToggle');
+  const hint = document.getElementById('browserNotifyHint');
+  if (switchBtn) switchBtn.style.display = supported ? '' : 'none';
+  if (toggle) toggle.classList.toggle('active', !!appState.browserNotifyEnabled);
+  if (switchBtn) switchBtn.setAttribute('aria-pressed', appState.browserNotifyEnabled ? 'true' : 'false');
+  if (hint) {
+    if (!supported) {
+      hint.textContent = i18nText('browser-notify-unsupported', isChineseLanguage(appState.language) ? '当前浏览器不支持系统通知。' : 'This browser does not support system notifications.');
+    } else if (Notification.permission === 'denied') {
+      hint.textContent = i18nText('browser-notify-denied', isChineseLanguage(appState.language) ? '浏览器通知权限已被拒绝，请在浏览器设置中开启。' : 'Browser notification permission is denied. Enable it in your browser settings.');
+    } else {
+      hint.textContent = '';
+    }
+  }
+}
+
+async function toggleBrowserNotifySetting() {
+  const supported = ('Notification' in window);
+  if (!supported) {
+    showToast(i18nText('browser-notify-unsupported', isChineseLanguage(appState.language) ? '当前浏览器不支持系统通知。' : 'This browser does not support system notifications.'));
+    updateBrowserNotifySettingsUI();
+    return;
+  }
+  const next = !appState.browserNotifyEnabled;
+  if (next) {
+    if (Notification.permission === 'default') {
+      try {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') {
+          showToast(i18nText('browser-notify-denied', isChineseLanguage(appState.language) ? '浏览器通知权限已被拒绝，请在浏览器设置中开启。' : 'Browser notification permission is denied. Enable it in your browser settings.'));
+          updateBrowserNotifySettingsUI();
+          return;
+        }
+      } catch (e) {
+        updateBrowserNotifySettingsUI();
+        return;
+      }
+    } else if (Notification.permission === 'denied') {
+      showToast(i18nText('browser-notify-denied', isChineseLanguage(appState.language) ? '浏览器通知权限已被拒绝，请在浏览器设置中开启。' : 'Browser notification permission is denied. Enable it in your browser settings.'));
+      updateBrowserNotifySettingsUI();
+      return;
+    }
+    appState.browserNotifyEnabled = true;
+    showToast(i18nText('browser-notify-granted', isChineseLanguage(appState.language) ? '已开启浏览器通知。' : 'Browser notifications enabled.'));
+  } else {
+    appState.browserNotifyEnabled = false;
+  }
+  persistLocalSettingsPatch({ browserNotifyEnabled: appState.browserNotifyEnabled });
+  updateBrowserNotifySettingsUI();
+}
+
+
+function renderMemorySettings() {
+  const toggle = document.getElementById('memoryEnabledToggle');
+  const switchBtn = document.getElementById('memoryEnabledSwitch');
+  if (toggle) toggle.classList.toggle('active', !!appState.longMemoryEnabled);
+  if (switchBtn) switchBtn.setAttribute('aria-pressed', appState.longMemoryEnabled ? 'true' : 'false');
+
+  const list = document.getElementById('settingsMemoryList');
+  if (!list) return;
+  const memories = Array.isArray(appState.userMemories) ? appState.userMemories : [];
+  const shortTermTitles = Array.isArray(appState.shortTermMemoryTitles) ? appState.shortTermMemoryTitles : [];
+  if (!appState.userMemoriesLoaded) {
+    list.innerHTML = `<div class="memory-empty">${escapeHtml(isChineseLanguage(appState.language) ? '正在加载记忆...' : 'Loading memories...')}</div>`;
+    return;
+  }
+  if (!appState.longMemoryEnabled) {
+    list.innerHTML = `<div class="memory-empty">${escapeHtml(i18nText('memory-disabled', isChineseLanguage(appState.language) ? '开启记忆后，RAI 会先读取最近 10 条对话标题作为滚动短期记忆。' : 'Turn on memory to let RAI use the latest 10 conversation titles as rolling short-term memory.'))}</div>`;
+    return;
+  }
+
+  const shortTermHtml = shortTermTitles.length > 0
+    ? `<div class="memory-item memory-short-term">
+        <div class="memory-item-main">
+          <div class="memory-item-content">${escapeHtml(shortTermTitles.join(' · '))}</div>
+          <div class="memory-item-meta">${escapeHtml(i18nText('memory-short-term-title', isChineseLanguage(appState.language) ? '短期记忆' : 'Short-term memory'))}</div>
+        </div>
+      </div>`
+    : '';
+
+  if (memories.length === 0) {
+    list.innerHTML = `${shortTermHtml}<div class="memory-empty">${escapeHtml(i18nText('memory-empty', isChineseLanguage(appState.language) ? '暂无长期记忆' : 'No long-term memories yet'))}</div>`;
+    return;
+  }
+  list.innerHTML = `${shortTermHtml}${memories.map((memory) => `
+    <div class="memory-item" data-memory-id="${escapeHtml(memory.id)}">
+      <div class="memory-item-main">
+        <div class="memory-item-content">${escapeHtml(memory.content || '')}</div>
+        <div class="memory-item-meta">${escapeHtml(i18nText('memory-long-term-title', isChineseLanguage(appState.language) ? '长期记忆' : 'Long-term memory'))} · ${escapeHtml(memory.category || 'other')}</div>
+      </div>
+      <button type="button" class="memory-delete-btn" onclick="deleteUserMemory(${Number(memory.id) || 0})" aria-label="${escapeHtml(i18nText('memory-delete-label', '删除记忆'))}" title="${escapeHtml(i18nText('memory-delete-label', '删除记忆'))}">
+        ${getSvgIcon('delete', 'material-symbols-outlined', 18)}
+      </button>
+    </div>
+  `).join('')}`;
+}
+
+async function loadUserMemories({ force = false } = {}) {
+  if (!appState.token) return;
+  if (appState.userMemoriesLoaded && !force) {
+    renderMemorySettings();
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/user/memories`, {
+      headers: { 'Authorization': `Bearer ${appState.token}` },
+      cache: 'no-store'
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+    appState.longMemoryEnabled = !!data.enabled;
+    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
+    appState.shortTermMemoryTitles = Array.isArray(data.shortTermMemory) ? data.shortTermMemory : [];
+    appState.userMemoriesLoaded = true;
+    renderMemorySettings();
+  } catch (error) {
+    console.warn('加载记忆失败:', error.message);
+    const list = document.getElementById('settingsMemoryList');
+    if (list) {
+      list.innerHTML = `<div class="memory-empty">${escapeHtml(i18nText('memory-load-failed', isChineseLanguage(appState.language) ? '记忆加载失败' : 'Failed to load memories'))}</div>`;
+    }
+  }
+}
+
+function buildCurrentConfigPayloadForMemory() {
+  return {
+    theme: appState.themePreference || appState.theme,
+    default_model: appState.selectedModel,
+    temperature: appState.temperature,
+    top_p: appState.topP,
+    max_tokens: appState.maxTokens,
+    frequency_penalty: appState.frequencyPenalty,
+    presence_penalty: appState.presencePenalty,
+    system_prompt: appState.systemPrompt || '',
+    thinking_mode: appState.thinkingMode ? 1 : 0,
+    internet_mode: appState.internetMode ? 1 : 0,
+    long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
+    tab_title_mode: appState.tabTitleMode || 'marquee',
+    tab_title_custom_text: appState.tabTitleCustomText || ''
+  };
+}
+
+async function syncLongMemorySetting() {
+  if (!appState.token) return;
+  const response = await fetch(`${API_BASE}/user/config`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(buildCurrentConfigPayloadForMemory())
+  });
+  const data = await response.json();
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
+async function toggleLongMemorySetting() {
+  const previous = !!appState.longMemoryEnabled;
+  appState.longMemoryEnabled = !previous;
+  renderMemorySettings();
+  try {
+    const data = await syncLongMemorySetting();
+    if (data?.memory) {
+      appState.longMemoryEnabled = !!data.memory.enabled;
+      appState.userMemories = Array.isArray(data.memory.memories) ? data.memory.memories : appState.userMemories;
+      appState.shortTermMemoryTitles = Array.isArray(data.memory.shortTermMemory) ? data.memory.shortTermMemory : [];
+      appState.userMemoriesLoaded = true;
+    }
+    const titleCount = appState.longMemoryEnabled ? appState.shortTermMemoryTitles.length : 0;
+    const enabledMessage = i18nText('memory-enabled-with-titles', isChineseLanguage(appState.language)
+      ? '记忆已开启，已读取最近 {count} 条对话标题'
+      : 'Memory enabled. Loaded {count} recent conversation titles.').replace('{count}', String(titleCount));
+    showToast(appState.longMemoryEnabled ? enabledMessage : i18nText('settings-save-success', isChineseLanguage(appState.language) ? '设置已保存' : 'Settings saved'));
+    renderMemorySettings();
+  } catch (error) {
+    appState.longMemoryEnabled = previous;
+    renderMemorySettings();
+    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
+  }
+}
+
+async function addManualMemory() {
+  if (!appState.longMemoryEnabled) {
+    showToast(isChineseLanguage(appState.language) ? '请先开启记忆' : 'Turn on memory first');
+    return;
+  }
+  const input = document.getElementById('memoryAddInput');
+  const content = String(input?.value || '').trim();
+  if (!content) {
+    input?.focus();
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/user/memories`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ category: 'other', content })
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
+    appState.userMemoriesLoaded = true;
+    if (input) input.value = '';
+    renderMemorySettings();
+  } catch (error) {
+    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
+  }
+}
+
+async function deleteUserMemory(memoryId) {
+  if (!memoryId) return;
+  try {
+    const response = await fetch(`${API_BASE}/user/memories/${encodeURIComponent(memoryId)}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${appState.token}` }
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
+    appState.userMemoriesLoaded = true;
+    renderMemorySettings();
+  } catch (error) {
+    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '操作失败，请重试' : 'Operation failed, please try again'));
+  }
+}
+
+async function clearAllUserMemories() {
+  const message = i18nText('memory-clear-confirm', isChineseLanguage(appState.language) ? '确定清空全部长期记忆吗？' : 'Clear all long-term memories?');
+  if (!confirm(message)) return;
+  try {
+    const response = await fetch(`${API_BASE}/user/memories/clear`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${appState.token}` }
+    });
+    const data = await response.json();
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+    appState.userMemories = [];
+    appState.userMemoriesLoaded = true;
+    renderMemorySettings();
+  } catch (error) {
+    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '操作失败，请重试' : 'Operation failed, please try again'));
+  }
+}
+
+function showClassicTemporaryChat() {
+  closeSessionStreamSubscription();
+  appState.currentSession = null;
+  appState.currentSessionMemoryMode = 'classic-temp';
+  appState.messages = [];
+  renderMessages();
+  renderSessions();
+  showWelcome();
+  focusMessageInputForNewChat(true);
+  showToast(i18nText('temp-chat-classic-started', isChineseLanguage(appState.language) ? '已进入传统临时对话' : 'Classic temporary chat started'));
+  return true;
+}
+
+function ensureNewChatModeModal() {
+  let modal = document.getElementById('newChatModeModal');
+  if (modal) return modal;
+
+  modal = document.createElement('div');
+  modal.id = 'newChatModeModal';
+  modal.className = 'new-chat-mode-modal';
+  modal.innerHTML = `
+    <div class="new-chat-mode-card" role="dialog" aria-modal="true" aria-labelledby="newChatModeTitle">
+      <button class="new-chat-mode-close" type="button" aria-label="Close">${getSvgIcon('close', 'material-symbols-outlined', 16)}</button>
+      <h3 id="newChatModeTitle">${escapeHtml(i18nText('temp-chat-modal-title', '选择临时对话模式'))}</h3>
+      <p>${escapeHtml(i18nText('temp-chat-modal-desc', '首次点击临时对话按钮会询问；之后可以到设置里修改。'))}</p>
+      <div class="new-chat-mode-options">
+        <button type="button" class="new-chat-mode-option" data-mode="saved-temp">
+          <span>${escapeHtml(i18nText('temp-chat-mode-saved', '保存临时'))}</span>
+          <small>${escapeHtml(i18nText('temp-chat-mode-saved-desc', '保存到对话列表，但不使用记忆/偏好类系统提示。'))}</small>
+        </button>
+        <button type="button" class="new-chat-mode-option" data-mode="classic-temp">
+          <span>${escapeHtml(i18nText('temp-chat-mode-classic', '传统临时'))}</span>
+          <small>${escapeHtml(i18nText('temp-chat-mode-classic-desc', '不保存到对话列表，刷新或切换后消失。'))}</small>
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal || event.target.closest('.new-chat-mode-close')) {
+      modal.classList.remove('active');
+    }
+  });
+  modal.querySelectorAll('[data-mode]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const mode = normalizeTemporaryChatMode(button.getAttribute('data-mode'));
+      appState.newChatDefaultMode = mode;
+      persistLocalSettingsPatch({ newChatDefaultMode: mode });
+      updateNewChatModeSettingsUI();
+      modal.classList.remove('active');
+      await startTemporaryChatWithMode(mode);
+    });
+  });
+  return modal;
+}
+
+function openNewChatModeModal() {
+  const modal = ensureNewChatModeModal();
+  modal.classList.add('active');
+}
+
+async function startTemporaryChatWithMode(mode) {
+  const normalized = normalizeTemporaryChatMode(mode);
+  if (normalized === 'ask') {
+    openNewChatModeModal();
+    return false;
+  }
+  if (normalized === 'classic-temp') {
+    return showClassicTemporaryChat();
+  }
+  return createNewSession({
+    focus: true,
+    mode: normalized === 'saved-temp' ? 'saved-temp' : 'normal'
+  });
+}
+
+async function startNewChatWithMode(mode) {
+  return startTemporaryChatWithMode(mode);
+}
+
+async function handleTemporaryChatClick() {
+  const mode = normalizeTemporaryChatMode(appState.newChatDefaultMode);
+  if (mode === 'ask') {
+    openNewChatModeModal();
+    return false;
+  }
+  return startTemporaryChatWithMode(mode);
+}
+
+async function handleNewChatClick() {
+  return createNewSession({ focus: true, mode: 'normal' });
+}
+
 async function createNewSession(options = {}) {
   try {
     const shouldFocus = options.focus !== false;
+    const mode = normalizeNewChatMode(options.mode || 'normal');
+    if (mode === 'classic-temp') {
+      return showClassicTemporaryChat();
+    }
+    const isSavedTemporary = mode === 'saved-temp';
     appState.pendingMobileComposerFocus = shouldFocus && window.innerWidth <= 768;
     const response = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
@@ -16685,8 +19890,11 @@ async function createNewSession(options = {}) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        title: isChineseLanguage(appState.language) ? '新对话' : 'New Chat',
-        model: appState.selectedModel || 'auto'  // 默认为auto或当前选择的模型
+        title: isSavedTemporary
+          ? i18nText('temp-chat-saved-title', isChineseLanguage(appState.language) ? '临时对话' : 'Temporary chat')
+          : (isChineseLanguage(appState.language) ? '新对话' : 'New Chat'),
+        model: appState.selectedModel || 'auto',
+        session_kind: isSavedTemporary ? 'temporary_saved' : 'chat'
       })
     });
 
@@ -16695,6 +19903,10 @@ async function createNewSession(options = {}) {
     if (data.success) {
       await loadSessions();
       await loadSession(data.sessionId);
+      appState.currentSessionMemoryMode = isSavedTemporary ? 'saved-temp' : 'normal';
+      if (appState.currentSession) {
+        appState.currentSession.session_kind = isSavedTemporary ? 'temporary_saved' : 'chat';
+      }
       if (shouldFocus) {
         focusMessageInputForNewChat(true);
       }
@@ -16728,6 +19940,9 @@ async function loadSession(sessionId) {
     const messages = await response.json();
 
     appState.currentSession = appState.sessions.find(s => s.id === sessionId);
+    appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
+      ? 'saved-temp'
+      : 'normal';
     appState.messages = Array.isArray(messages) ? messages : [];
 
     console.log(` 加载到 ${messages.length} 条消息`);
@@ -16737,6 +19952,7 @@ async function loadSession(sessionId) {
     if (appState.messages.length === 0) {
       focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
     }
+    startSessionStreamSubscription(sessionId);
 
     // 移除移动端自动弹出侧边栏
     // if (window.innerWidth <= 768) {
@@ -16747,6 +19963,306 @@ async function loadSession(sessionId) {
     console.error(' 加载消息失败:', error);
     alert(isChineseLanguage(appState.language) ? '加载对话失败' : 'Failed to load chat');
   }
+}
+
+function closeSessionStreamSubscription() {
+  if (appState.sessionStreamRetryTimer) {
+    clearTimeout(appState.sessionStreamRetryTimer);
+    appState.sessionStreamRetryTimer = null;
+  }
+  if (appState.sessionStreamSource) {
+    try {
+      if (typeof appState.sessionStreamSource.close === 'function') {
+        appState.sessionStreamSource.close();
+      } else if (typeof appState.sessionStreamSource.abort === 'function') {
+        appState.sessionStreamSource.abort();
+      }
+    } catch (error) {
+      // Ignore stream close failures.
+    }
+  }
+  appState.sessionStreamSource = null;
+  appState.sessionStreamSessionId = null;
+}
+
+function processSessionStreamSseChunk(buffer, onEvent) {
+  const normalized = String(buffer || '').replace(/\r\n/g, '\n');
+  const blocks = normalized.split('\n\n');
+  const remainder = blocks.pop() || '';
+  blocks.forEach((block) => {
+    const data = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n')
+      .trim();
+    if (!data) return;
+    try {
+      onEvent(JSON.parse(data));
+    } catch (error) {
+      console.warn('会话流同步解析失败:', error.message);
+    }
+  });
+  return remainder;
+}
+
+function scheduleLiveStreamRender() {
+  if (appState.liveStreamRenderTimer) return;
+  appState.liveStreamRenderTimer = setTimeout(() => {
+    appState.liveStreamRenderTimer = null;
+    renderMessages();
+    if (isNearBottom()) {
+      scrollToBottom(true);
+    }
+  }, 220);
+}
+
+function removeLiveStreamMessages(requestId = '') {
+  const before = appState.messages.length;
+  appState.messages = appState.messages.filter((message) => {
+    if (!message?.is_live_stream) return true;
+    return requestId && message.stream_request_id !== requestId;
+  });
+  return before !== appState.messages.length;
+}
+
+function upsertLiveSessionStream(event) {
+  if (!event || !appState.currentSession?.id) return;
+  if (String(event.sessionId || '') !== String(appState.currentSession.id)) return;
+  if (appState.isStreaming) return;
+
+  const requestId = String(event.requestId || '');
+  if (!requestId) return;
+  const userContent = String(event.userContent || '').trim();
+  const assistantContent = String(event.content || '');
+  const updatedAt = event.updatedAt || new Date().toISOString();
+
+  if (userContent) {
+    const hasSameUserMessage = appState.messages.some((message) =>
+      message.role === 'user' &&
+      !message.is_live_stream &&
+      String(message.content || '').trim() === userContent
+    );
+    const existingLiveUser = appState.messages.find((message) =>
+      message.is_live_stream &&
+      message.stream_request_id === requestId &&
+      message.role === 'user'
+    );
+    if (!hasSameUserMessage && !existingLiveUser) {
+      appState.messages.push({
+        role: 'user',
+        content: userContent,
+        created_at: updatedAt,
+        is_live_stream: true,
+        stream_request_id: requestId
+      });
+    }
+  }
+
+  let liveAssistant = appState.messages.find((message) =>
+    message.is_live_stream &&
+    message.stream_request_id === requestId &&
+    message.role === 'assistant'
+  );
+  if (!liveAssistant) {
+    liveAssistant = {
+      role: 'assistant',
+      content: '',
+      created_at: updatedAt,
+      is_live_stream: true,
+      stream_request_id: requestId
+    };
+    appState.messages.push(liveAssistant);
+  }
+
+  liveAssistant.content = assistantContent;
+  liveAssistant.reasoning_content = event.reasoningContent || null;
+  liveAssistant.model = event.model || liveAssistant.model || appState.selectedModel;
+  liveAssistant.stream_draft_status = event.status || 'running';
+  liveAssistant.created_at = liveAssistant.created_at || updatedAt;
+  scheduleLiveStreamRender();
+}
+
+function handleSessionStreamEvent(event) {
+  if (!event || event.type === 'session_stream_ready' || event.type === 'session_stream_ping') return;
+
+  if (
+    event.type === 'session_stream_snapshot' ||
+    event.type === 'session_stream_delta'
+  ) {
+    upsertLiveSessionStream(event);
+    return;
+  }
+
+  if (event.type === 'session_stream_done') {
+    upsertLiveSessionStream(event);
+    setTimeout(() => {
+      removeLiveStreamMessages(event.requestId || '');
+      syncCurrentSessionMessages().catch(() => null);
+    }, 650);
+    return;
+  }
+
+  if (event.type === 'session_stream_failed') {
+    removeLiveStreamMessages(event.requestId || '');
+    scheduleLiveStreamRender();
+    syncCurrentSessionMessages().catch(() => null);
+  }
+}
+
+function startSessionStreamSubscription(sessionId = appState.currentSession?.id) {
+  if (!appState.token || !sessionId || appState.currentSessionMemoryMode === 'classic-temp') {
+    closeSessionStreamSubscription();
+    return;
+  }
+  if (appState.sessionStreamSource && appState.sessionStreamSessionId === sessionId) return;
+
+  closeSessionStreamSubscription();
+  const encodedSession = encodeURIComponent(sessionId);
+  const controller = new AbortController();
+  const source = {
+    controller,
+    close() {
+      controller.abort();
+    }
+  };
+  appState.sessionStreamSource = source;
+  appState.sessionStreamSessionId = sessionId;
+
+  const scheduleReconnect = () => {
+    if (appState.sessionStreamSource !== source) return;
+    closeSessionStreamSubscription();
+    appState.sessionStreamRetryTimer = setTimeout(() => {
+      appState.sessionStreamRetryTimer = null;
+      if (appState.currentSession?.id === sessionId) {
+        startSessionStreamSubscription(sessionId);
+      }
+    }, 5000);
+  };
+
+  (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/sessions/${encodedSession}/stream-events`, {
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {
+          'Authorization': `Bearer ${appState.token}`,
+          'Accept': 'text/event-stream',
+          'Cache-Control': 'no-cache'
+        }
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`stream_events_http_${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (appState.sessionStreamSource === source) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer = processSessionStreamSseChunk(
+          buffer + decoder.decode(value, { stream: true }),
+          handleSessionStreamEvent
+        );
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      console.warn('会话流同步连接失败:', error.message);
+      scheduleReconnect();
+      return;
+    }
+    if (appState.sessionStreamSource === source) {
+      scheduleReconnect();
+    }
+  })();
+}
+
+function getMessagesSignature(messages = []) {
+  if (!Array.isArray(messages) || messages.length === 0) return '0';
+  const last = messages[messages.length - 1] || {};
+  return [
+    messages.length,
+    last.id || '',
+    last.role || '',
+    last.created_at || '',
+    String(last.content || '').length,
+    String(last.process_trace || '').length
+  ].join('|');
+}
+
+function canRunConversationSync() {
+  return Boolean(
+    appState.token &&
+    !appState.isStreaming &&
+    document.visibilityState !== 'hidden' &&
+    appState.currentSessionMemoryMode !== 'classic-temp'
+  );
+}
+
+async function syncCurrentSessionMessages() {
+  const sessionId = appState.currentSession?.id;
+  if (!sessionId || !canRunConversationSync()) return false;
+
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages?t=${Date.now()}`, {
+    cache: 'no-store',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Cache-Control': 'no-cache'
+    }
+  });
+  if (!response.ok) return false;
+
+  const nextMessages = await response.json();
+  if (!Array.isArray(nextMessages)) return false;
+
+  const oldSignature = getMessagesSignature(appState.messages);
+  const nextSignature = getMessagesSignature(nextMessages);
+  if (oldSignature === nextSignature) return false;
+
+  appState.messages = nextMessages;
+  renderMessages();
+  if (isNearBottom()) {
+    scrollToBottom(true);
+  }
+  console.log(` 多设备同步：当前会话更新 ${nextMessages.length} 条消息`);
+  return true;
+}
+
+async function syncConversationsAcrossDevices({ force = false } = {}) {
+  if (!canRunConversationSync()) return;
+  const now = Date.now();
+  if (!force && now - Number(appState.lastSyncAt || 0) < 2500) return;
+  if (appState.syncInFlight) return;
+
+  appState.syncInFlight = true;
+  appState.lastSyncAt = now;
+  try {
+    await loadSessions(true, { focusEmpty: false });
+    await syncCurrentSessionMessages();
+  } catch (error) {
+    console.warn('多设备对话同步失败:', error.message);
+  } finally {
+    appState.syncInFlight = false;
+  }
+}
+
+function startConversationSyncMonitor() {
+  if (appState.syncPollTimer) return;
+  appState.syncPollTimer = window.setInterval(() => {
+    if (appState.currentSession?.id && !appState.sessionStreamSource) {
+      startSessionStreamSubscription(appState.currentSession.id);
+    }
+    syncConversationsAcrossDevices().catch(() => null);
+  }, 5000);
+  window.addEventListener('focus', () => {
+    syncConversationsAcrossDevices({ force: true }).catch(() => null);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      syncConversationsAcrossDevices({ force: true }).catch(() => null);
+    }
+  });
 }
 
 // ==================== 侧边栏滑动手势 ====================
@@ -16962,8 +20478,8 @@ function formatMessage(text) {
 }
 
 function escapeHtml(text) {
-  if (!text) return '';
-  return text.replace(/[&<>"']/g, function (m) {
+  if (text === undefined || text === null) return '';
+  return String(text).replace(/[&<>"']/g, function (m) {
     return {
       '&': '&amp;',
       '<': '&lt;',
@@ -16986,7 +20502,12 @@ function loadSettings() {
       if (settings.frequencyPenalty !== undefined) appState.frequencyPenalty = settings.frequencyPenalty;
       if (settings.presencePenalty !== undefined) appState.presencePenalty = settings.presencePenalty;
       if (settings.systemPrompt !== undefined) appState.systemPrompt = settings.systemPrompt;
+      if (settings.newChatDefaultMode !== undefined) appState.newChatDefaultMode = normalizeTemporaryChatMode(settings.newChatDefaultMode);
+      if (settings.tabTitleMode !== undefined) appState.tabTitleMode = normalizeTabTitleMode(settings.tabTitleMode);
+      if (settings.tabTitleCustomText !== undefined) appState.tabTitleCustomText = String(settings.tabTitleCustomText || '').slice(0, 80);
+      if (settings.browserNotifyEnabled !== undefined) appState.browserNotifyEnabled = settings.browserNotifyEnabled === true;
       console.log(' 从本地存储加载设置成功');
+      if (typeof startTitleAnimation === 'function') startTitleAnimation();
     } catch (e) {
       console.warn(' 解析本地设置失败:', e);
     }
@@ -17396,34 +20917,26 @@ function showToast(message, duration = 3000) {
 }
 
 // 检测输入长度，超长自动转换为 txt 附件
-function checkAndConvertLongInput() {
+async function checkAndConvertLongInput() {
   const input = document.getElementById('messageInput');
   const content = input?.value || '';
 
   if (content.length > MAX_INPUT_CHARS) {
-    // 创建 txt 文件附件
+    // 创建 txt 文件并通过上传接口发送
     const blob = new Blob([content], { type: 'text/plain' });
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      currentAttachment = {
-        type: 'text',
-        data: e.target.result,
-        fileName: `long_input_${Date.now()}.txt`
-      };
-      updateAttachmentUI();
+    const file = new File([blob], `long_input_${Date.now()}.txt`, { type: 'text/plain' });
+    await processUploadedFile(file);
 
-      // 清空输入框，显示提示
-      input.value = isChineseLanguage(appState.language)
-        ? '请分析这个文档'
-        : 'Please analyze this document';
-      autoResizeInput();
+    // 清空输入框，显示提示
+    input.value = isChineseLanguage(appState.language)
+      ? '请分析这个文档'
+      : 'Please analyze this document';
+    autoResizeInput();
 
-      // 显示提示
-      showToast(isChineseLanguage(appState.language)
-        ? '输入内容过长，已自动转换为文本文件附件'
-        : 'Input too long, converted to text file attachment');
-    };
-    reader.readAsDataURL(blob);
+    // 显示提示
+    showToast(isChineseLanguage(appState.language)
+      ? '输入内容过长，已自动转换为文本文件附件'
+      : 'Input too long, converted to text file attachment');
     return true;
   }
   return false;
@@ -17435,8 +20948,8 @@ function handleFileUpload() {
   // 扩展支持的文件类型
   input.accept = [
     // 图片格式
-    'image/*', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.heic', '.heif',
-    // 视频格式  
+    'image/*', '.webp', '.bmp', '.ico', '.tiff', '.heic', '.heif',
+    // 视频格式
     'video/*', '.webm', '.mkv', '.flv', '.wmv', '.avi', '.mov', '.m4v',
     // 音频格式
     'audio/*', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus',
@@ -17445,14 +20958,15 @@ function handleFileUpload() {
     // 代码文件
     '.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.c', '.cpp', '.h', '.hpp',
     '.css', '.scss', '.less', '.html', '.vue', '.svelte', '.swift', '.kt', '.go', '.rs', '.rb', '.php',
+    '.sh', '.bash', '.zsh', '.sql',
     // 办公文档
-    '.pdf', '.doc', '.docx'
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'
   ].join(',');
 
   input.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    processUploadedFile(file);
+    await processUploadedFile(file);
   };
   input.click();
 }
@@ -17470,7 +20984,7 @@ async function processUploadedFile(file) {
   let attachmentType = 'document';
 
   // 更精确的类型检测
-  if (fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|tiff|heic|heif)$/i.test(fileName)) {
+  if (fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|ico|tiff|heic|heif)$/i.test(fileName)) {
     attachmentType = 'image';
   } else if (fileType.startsWith('video/') || /\.(mp4|webm|mkv|flv|wmv|avi|mov|m4v)$/i.test(fileName)) {
     attachmentType = 'video';
@@ -17480,45 +20994,55 @@ async function processUploadedFile(file) {
     attachmentType = 'text';
   } else if (/\.(js|ts|jsx|tsx|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte|swift|kt|go|rs|rb|php|sh|bash|zsh|sql)$/i.test(fileName)) {
     attachmentType = 'code';
+  } else if (/\.(pdf|docx|xlsx|xls|pptx|ppt|csv)$/i.test(fileName) || fileType === 'application/pdf' || fileType.includes('officedocument') || fileType.includes('spreadsheet') || fileType === 'text/csv') {
+    attachmentType = 'document';
   }
 
-  // 图片、视频、音频、文本、代码使用Base64编码直接发送给多模态模型
-  if (['image', 'video', 'audio', 'text', 'code'].includes(attachmentType)) {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      currentAttachment = {
-        type: attachmentType,
-        data: event.target.result,  // Base64 data URL
-        fileName: file.name
-      };
-      console.log(` ${attachmentType}文件已选择: ${file.name}`);
-      updateAttachmentUI();
-    };
-    reader.readAsDataURL(file);
-  } else {
-    // PDF/Office文档类型走原有上传流程
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const response = await fetch(`${API_BASE}/upload/document`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${appState.token}` },
-        body: formData
-      });
-      if (!response.ok) throw new Error('文档上传失败');
-      const data = await response.json();
-      currentAttachment = {
-        type: 'document',
-        fileId: data.file_id,
-        fileName: file.name
-      };
-      console.log(' 文档上传成功');
-      updateAttachmentUI();
-    } catch (error) {
-      console.error(' 文档上传失败:', error);
-      alert(isChineseLanguage(appState.language) ? '文档上传失败' : 'Document upload failed');
-    }
+  // 图片/视频/音频：保留本地缩略图用于预览，但聊天请求不再塞大 Base64
+  // 所有附件统一走 /api/upload，用元数据模式传给后端解析
+  let localThumbnail = null;
+  if (attachmentType === 'image') {
+    localThumbnail = URL.createObjectURL(file);
   }
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${appState.token}` },
+      body: formData
+    });
+    const responseText = await response.text();
+    let data = null;
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch (parseError) {
+      data = null;
+    }
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || data?.message || responseText || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
+    }
+    currentAttachment = {
+      type: attachmentType,
+      fileName: file.name,
+      originalName: file.name,
+      mimeType: file.type,
+      size: file.size,
+      fileId: data.file?.filename || null,
+      filePath: data.file?.filePath || null,
+      // 图片保留本地缩略图用于预览（不发送到服务器）
+      localThumbnail: localThumbnail
+    };
+    console.log(` ${attachmentType}文件已上传: ${file.name} (${file.size} bytes)`);
+    updateAttachmentUI();
+  } catch (error) {
+    console.error(' 文件上传失败:', error);
+    if (localThumbnail) URL.revokeObjectURL(localThumbnail);
+    const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
+    alert(error?.message || fallback);
+  }
+  updateNewChatModeSettingsUI();
 }
 
 // 更新附件UI显示
@@ -17593,16 +21117,19 @@ function updateAttachmentUI() {
         </button>
       `;
 
-  // 如果是图片，显示缩略图
-  if (currentAttachment.type === 'image' && currentAttachment.data) {
+  // 如果是图片，显示本地缩略图（不发送到服务器）
+  if (currentAttachment.type === 'image' && currentAttachment.localThumbnail) {
     const thumbnail = document.createElement('img');
-    thumbnail.src = currentAttachment.data;
+    thumbnail.src = currentAttachment.localThumbnail;
     thumbnail.className = 'attachment-thumbnail';
     attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
   }
 }
 
 function removeAttachment() {
+  if (currentAttachment?.localThumbnail) {
+    URL.revokeObjectURL(currentAttachment.localThumbnail);
+  }
   currentAttachment = null;
   updateAttachmentUI();
 }
@@ -18267,13 +21794,10 @@ let userMembershipState = {
   poeUsedToday: 0,
   poeRemaining: 3,
   poeResetAt: null,
-  gpt55DailyLimit: 10,
-  gpt55UsedToday: 0,
-  gpt55Remaining: 10,
-  gpt55ResetAt: null,
   tasks: {
     pwaInstall: { completed: false, rewardPoints: PWA_INSTALL_REWARD_POINTS },
-    inviteUser: { completed: false, rewardPoints: INVITE_REWARD_POINTS, completedCount: 0, totalRewardPoints: 0 }
+    inviteUser: { completed: false, rewardPoints: INVITE_REWARD_POINTS, completedCount: 0, totalRewardPoints: 0 },
+    bookmarkDomain: { completed: false, rewardPoints: BOOKMARK_DOMAIN_REWARD_POINTS }
   }
 };
 
@@ -18302,6 +21826,11 @@ function normalizeMembershipTasks(tasks = {}) {
       completedAt: tasks?.inviteUser?.completedAt || null,
       completedCount: Number(tasks?.inviteUser?.completedCount || 0),
       totalRewardPoints: Number(tasks?.inviteUser?.totalRewardPoints || 0)
+    },
+    bookmarkDomain: {
+      completed: Boolean(tasks?.bookmarkDomain?.completed),
+      rewardPoints: Number(tasks?.bookmarkDomain?.rewardPoints || BOOKMARK_DOMAIN_REWARD_POINTS),
+      completedAt: tasks?.bookmarkDomain?.completedAt || null
     }
   };
 }
@@ -18319,10 +21848,6 @@ function applyUserMembershipData(data = {}) {
     poeUsedToday: Number(data.poeUsedToday || 0),
     poeRemaining: Number(data.poeRemaining || 0),
     poeResetAt: data.poeResetAt || null,
-    gpt55DailyLimit: Number(data.gpt55DailyLimit || 10),
-    gpt55UsedToday: Number(data.gpt55UsedToday || 0),
-    gpt55Remaining: Number(data.gpt55Remaining || 0),
-    gpt55ResetAt: data.gpt55ResetAt || null,
     tasks: normalizeMembershipTasks(data.tasks)
   };
   return userMembershipState;
@@ -18346,7 +21871,7 @@ function applyMembershipModelPolicy({ initial = false, previousMembership = null
 
   // Pro/MAX：记住上次模型（首次加载或刚从free升级时应用）
   if (initial || prev === 'free' || !membershipModelPolicyInitialized) {
-    const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'kimi-k2.5');
+    const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'deepseek-pro');
     const targetModel = MODELS[remembered] && !isModelDisabledByAdmin(remembered) ? remembered : 'auto';
     appState.selectedModel = targetModel;
     updateSelectedModelText(targetModel);
@@ -18592,6 +22117,68 @@ async function copyInviteLink() {
   }
 }
 
+function openBookmarkDomain() {
+  try {
+    window.open(`${RAI_NEW_PUBLIC_ORIGIN}/`, '_blank', 'noopener');
+  } catch (error) {
+    window.location.href = `${RAI_NEW_PUBLIC_ORIGIN}/`;
+  }
+  showToast(isChineseLanguage(appState.language)
+    ? '请收藏新域名后点击「我已收藏」领取积分'
+    : 'Bookmark the new domain, then tap "Bookmarked" to claim points');
+}
+
+let bookmarkDomainClaimPending = false;
+async function claimBookmarkDomainTask() {
+  if (bookmarkDomainClaimPending) return;
+  if (!appState.token) {
+    showToast(isChineseLanguage(appState.language) ? '请先登录' : 'Please log in first');
+    return;
+  }
+  if (userMembershipState?.tasks?.bookmarkDomain?.completed) return;
+
+  bookmarkDomainClaimPending = true;
+  try {
+    const res = await fetch(`${API_BASE}/user/tasks/bookmark-domain/complete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${appState.token}`
+      },
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'failed');
+
+    applyUserMembershipData(data);
+    updateUserAreaWithMembership();
+    refreshMembershipPlansModal();
+    if (typeof updateSettingsUI === 'function') updateSettingsUI();
+
+    const isZh = isChineseLanguage(appState.language);
+    if (data.awarded) {
+      showToast(isZh ? `已获得 ${data.pointsGained || BOOKMARK_DOMAIN_REWARD_POINTS} 积分` : `You earned ${data.pointsGained || BOOKMARK_DOMAIN_REWARD_POINTS} points`);
+    } else {
+      showToast(isZh ? '该任务积分已领取' : 'This task reward was already claimed');
+    }
+  } catch (error) {
+    showToast(isChineseLanguage(appState.language) ? '领取失败，请稍后再试' : 'Claim failed, please try again later');
+  } finally {
+    bookmarkDomainClaimPending = false;
+  }
+}
+
+function openGitHubStarTask() {
+  try {
+    window.open('https://github.com/Rick-953/RAI', '_blank', 'noopener');
+  } catch (error) {
+    window.location.href = 'https://github.com/Rick-953/RAI';
+  }
+  showToast(isChineseLanguage(appState.language)
+    ? `完成 Star 后，把截图发送到 ${RAI_STAR_REWARD_EMAIL} 即可获得一个月 Pro`
+    : `After starring, email the screenshot to ${RAI_STAR_REWARD_EMAIL} to get 1 month Pro`);
+}
+
 function renderMembershipTasksSection({ compact = false } = {}) {
   const isZh = isChineseLanguage(appState.language);
   const tasks = normalizeMembershipTasks(userMembershipState.tasks);
@@ -18599,6 +22186,7 @@ function renderMembershipTasksSection({ compact = false } = {}) {
   const taskClass = compact ? 'settings-task-section' : 'membership-task-section';
   const pwaDone = Boolean(tasks.pwaInstall.completed);
   const inviteDone = inviteCount > 0;
+  const bookmarkDone = Boolean(tasks.bookmarkDomain.completed);
   const inviteLink = getInviteLink();
 
   return `
@@ -18629,6 +22217,36 @@ function renderMembershipTasksSection({ compact = false } = {}) {
           <div class="membership-task-actions">
             <button type="button" class="membership-task-action" onclick="copyInviteLink()">
               ${isZh ? '复制链接' : 'Copy link'}
+            </button>
+          </div>
+        </div>
+        <div class="membership-task-item ${bookmarkDone ? 'completed' : ''}">
+          <div class="membership-task-main">
+            <strong>${isZh ? '收藏新域名' : 'Bookmark the new domain'}</strong>
+            <span>${isZh ? `积分 +${tasks.bookmarkDomain.rewardPoints}` : `+${tasks.bookmarkDomain.rewardPoints} points`}</span>
+            <small>${escapeHtml(RAI_NEW_PUBLIC_ORIGIN)}</small>
+          </div>
+          <div class="membership-task-actions">
+            <button type="button" class="membership-task-action" onclick="openBookmarkDomain()">
+              ${isZh ? '打开新域名' : 'Open domain'}
+            </button>
+            <button type="button" class="membership-task-action secondary" onclick="claimBookmarkDomainTask()" ${bookmarkDone ? 'disabled' : ''}>
+              ${bookmarkDone ? (isZh ? '已完成' : 'Done') : (isZh ? '我已收藏' : 'Bookmarked')}
+            </button>
+          </div>
+        </div>
+        <div class="membership-task-item">
+          <div class="membership-task-main">
+            <strong>${isZh ? 'GitHub 给个 Star → 一个月 Pro' : 'Star on GitHub → 1 month Pro'}</strong>
+            <span>${isZh ? '赠送一个月 Pro' : '1 month Pro reward'}</span>
+            <small>${isZh ? `把 Star 截图发送至 ${escapeHtml(RAI_STAR_REWARD_EMAIL)}` : `Email your star screenshot to ${escapeHtml(RAI_STAR_REWARD_EMAIL)}`}</small>
+          </div>
+          <div class="membership-task-actions">
+            <button type="button" class="membership-task-action" onclick="openGitHubStarTask()">
+              ${isZh ? '去 Star' : 'Star it'}
+            </button>
+            <button type="button" class="membership-task-action secondary" disabled>
+              ${isZh ? '审核中' : 'Pending review'}
             </button>
           </div>
         </div>
@@ -18687,7 +22305,7 @@ function renderMembershipPlansModalContent() {
         ${renderMembershipTasksSection()}
 
         <div class="membership-contact">
-          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:rick080402+raisupport@gmail.com">rick080402+raisupport@gmail.com</a></p>
+          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:${escapeHtml(RAI_SUPPORT_EMAIL)}">${escapeHtml(RAI_SUPPORT_EMAIL)}</a></p>
           <p class="membership-status-note">${isZh ? '如遇点数、签到或会员状态问题，可通过邮箱联系。' : 'If you run into points, check-in, or membership issues, contact us by email.'}</p>
         </div>
       </div>
@@ -18942,6 +22560,11 @@ async function verifyAdminToken() {
       headers: { 'X-Admin-Token': adminState.token }
     });
     if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data?.token) {
+        adminState.token = data.token;
+        localStorage.setItem('adminToken', data.token);
+      }
       adminState.isLoggedIn = true;
     } else {
       localStorage.removeItem('adminToken');
@@ -18964,16 +22587,18 @@ function createAdminLoginModal() {
   if (document.getElementById('adminLoginModal')) return;
 
   const adminLoginLabels = isChineseLanguage(appState.language)
-    ? {
+      ? {
         title: '管理员登录',
         username: '用户名',
         password: '密码',
+        totp: 'Authenticator 验证码',
         submit: '登录管理后台'
       }
     : {
         title: 'Admin Login',
         username: 'Username',
         password: 'Password',
+        totp: 'Authenticator code',
         submit: 'Log in to Admin'
       };
   const modal = document.createElement('div');
@@ -18995,6 +22620,10 @@ function createAdminLoginModal() {
             <div class="admin-input-group">
               <label>${adminLoginLabels.password}</label>
               <input type="password" id="adminPassword" placeholder="••••••••" autocomplete="current-password" required>
+            </div>
+            <div class="admin-input-group">
+              <label>${adminLoginLabels.totp}</label>
+              <input type="text" id="adminTotpCode" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code">
             </div>
             <div id="adminLoginError" class="admin-login-error"></div>
             <button type="submit" class="admin-login-btn">${adminLoginLabels.submit}</button>
@@ -19020,13 +22649,14 @@ async function handleAdminLogin(e) {
   e.preventDefault();
   const username = document.getElementById('adminUsername').value;
   const password = document.getElementById('adminPassword').value;
+  const totpCode = normalizeTwoFactorCode(document.getElementById('adminTotpCode')?.value);
   const errorEl = document.getElementById('adminLoginError');
 
   try {
     const res = await fetch('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ username, password, totpCode })
     });
 
     const data = await res.json();
@@ -19099,6 +22729,18 @@ function createAdminPanel() {
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 2 7l10 5 10-5-10-5Zm0 7.8L6.47 7 12 4.2 17.53 7 12 9.8ZM4 10.27l8 4 8-4V13l-8 4-8-4v-2.73Zm0 5 8 4 8-4V18l-8 4-8-4v-2.73Z"/></svg>
               <span>模型开关</span>
             </button>
+            <button class="admin-tab" data-tab="limits" onclick="switchAdminTab('limits')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm1 6v5h4v2h-6V7h2z"/></svg>
+              <span>限制风控</span>
+            </button>
+            <button class="admin-tab" data-tab="announcements" onclick="switchAdminTab('announcements')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v9l3-3h9c1.1 0 2-.9 2-2v-1h1v6l-2.5-2.5H7v1c0 .55.45 1 1 1h6l4 4V10c0-1.1-.9-2-1-2z"/></svg>
+              <span>公告管理</span>
+            </button>
+            <button class="admin-tab" data-tab="broadcast" onclick="switchAdminTab('broadcast')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/></svg>
+              <span>邮件群发</span>
+            </button>
             <button class="admin-tab" data-tab="sessions" onclick="switchAdminTab('sessions')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
               <span>会话管理</span>
@@ -19158,6 +22800,18 @@ function createAdminPanel() {
               <div id="adminModelsPanel" class="admin-table-container"></div>
             </div>
 
+            <div id="adminLimitsTab" class="admin-tab-content">
+              <div id="adminLimitsPanel" class="admin-table-container"></div>
+            </div>
+
+            <div id="adminAnnouncementsTab" class="admin-tab-content">
+              <div id="adminAnnouncementsPanel" class="admin-table-container"></div>
+            </div>
+
+            <div id="adminBroadcastTab" class="admin-tab-content">
+              <div id="adminBroadcastPanel" class="admin-table-container"></div>
+            </div>
+
             <div id="adminSessionsTab" class="admin-tab-content">
               <div id="adminSessionsTable" class="admin-table-container"></div>
             </div>
@@ -19187,6 +22841,9 @@ function switchAdminTab(tab) {
   else if (tab === 'messages') loadAdminMessages();
   else if (tab === 'feedback') loadAdminFeedback();
   else if (tab === 'models') loadAdminModels();
+  else if (tab === 'limits') loadAdminLimits();
+  else if (tab === 'announcements') loadAdminAnnouncements();
+  else if (tab === 'broadcast') renderAdminBroadcastPanel();
   else if (tab === 'sessions') loadAdminSessions();
 }
 
@@ -19320,7 +22977,7 @@ function renderTopUsersChart(topUsers) {
     html += `
           <div class="admin-top-user-item">
             <span class="admin-top-user-rank">#${i + 1}</span>
-            <span class="admin-top-user-name">${escapeHtml(user.username || user.email || 'User ' + user.id)}</span>
+            <span class="admin-top-user-name">${escapeHtml(getAdminDisplayName(user))}</span>
             <div class="admin-top-user-bar-bg">
               <div class="admin-top-user-bar" style="width: ${width}%"></div>
             </div>
@@ -19330,6 +22987,24 @@ function renderTopUsersChart(topUsers) {
   });
   html += '</div>';
   container.innerHTML = html;
+}
+
+function getAdminRecordId(record = {}) {
+  return record.id ?? record.user_id ?? record.userId ?? '';
+}
+
+function isUnsafeAdminDisplayText(value) {
+  const text = String(value || '').trim();
+  return /[<>]/.test(text) || /(?:style\s*=|on\w+\s*=|javascript:|<\/?[a-z][\s>/])/i.test(text);
+}
+
+function getAdminDisplayName(record = {}, fallback = '') {
+  const id = getAdminRecordId(record);
+  const raw = String(record.username || record.email || record.user_email || fallback || '').trim();
+  const idFallback = id ? `${isChineseLanguage(appState.language) ? '用户' : 'User'} #${id}` : (fallback || (isChineseLanguage(appState.language) ? '未知用户' : 'Unknown user'));
+  if (!raw || isUnsafeAdminDisplayText(raw)) return idFallback;
+  const normalized = raw.replace(/\s+/g, ' ');
+  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
 }
 
 // 加载用户列表
@@ -19359,11 +23034,12 @@ async function loadAdminUsers() {
     (data.users || []).forEach(user => {
       const membershipBadge = getMembershipBadge(user.membership);
       const totalPoints = (user.points || 0) + (user.purchased_points || 0);
+      const safeUsername = getAdminDisplayName({ id: user.id, username: user.username }, '-');
       html += `
             <tr onclick="openUserDetailModal(${user.id})" style="cursor:pointer" title="点击查看用户详情">
               <td>${user.id}</td>
               <td>${escapeHtml(user.email || '-')}</td>
-              <td>${escapeHtml(user.username || '-')}</td>
+              <td>${escapeHtml(safeUsername)}</td>
               <td>${membershipBadge}</td>
               <td>${totalPoints} </td>
               <td>${user.messageCount || 0}</td>
@@ -19371,6 +23047,7 @@ async function loadAdminUsers() {
                 <button class="admin-action-btn view" onclick="event.stopPropagation();openUserDetailModal(${user.id})">查看</button>
                 <button class="admin-action-btn view" onclick="event.stopPropagation();openMembershipEditor(${user.id}, '${user.membership || 'free'}')">会员</button>
                 <button class="admin-action-btn view" onclick="event.stopPropagation();openPointsEditor(${user.id})">点数</button>
+                <button class="admin-action-btn view" onclick="event.stopPropagation();openAdminPasswordEditor(${user.id})">改密</button>
                 <button class="admin-action-btn delete" onclick="event.stopPropagation();deleteUser(${user.id})">删除</button>
               </td>
             </tr>
@@ -19465,6 +23142,85 @@ async function addUserPoints(userId, points, type) {
   }
 }
 
+function openAdminPasswordEditor(userId, userLabel = '') {
+  const isZh = isChineseLanguage(appState.language);
+  let modal = document.getElementById('adminPasswordModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'adminPasswordModal';
+    modal.className = 'admin-modal-overlay admin-password-modal';
+    document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div class="admin-password-box">
+      <button class="admin-close-btn" onclick="closeAdminPasswordEditor()" aria-label="${isZh ? '关闭' : 'Close'}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+      <div class="admin-password-header">
+        <h3>${isZh ? '更改用户密码' : 'Change User Password'}</h3>
+        <p>${escapeHtml(userLabel || `${isZh ? '用户' : 'User'} #${userId}`)}</p>
+      </div>
+      <div class="admin-input-group">
+        <label for="adminNewUserPassword">${isZh ? '新密码' : 'New password'}</label>
+        <input type="password" id="adminNewUserPassword" maxlength="128" autocomplete="new-password" placeholder="${isZh ? '至少6位字符' : 'At least 6 characters'}">
+      </div>
+      <div class="admin-input-group">
+        <label for="adminConfirmUserPassword">${isZh ? '确认新密码' : 'Confirm password'}</label>
+        <input type="password" id="adminConfirmUserPassword" maxlength="128" autocomplete="new-password" placeholder="${isZh ? '再次输入新密码' : 'Enter it again'}">
+      </div>
+      <div class="admin-password-error" id="adminPasswordError"></div>
+      <button class="admin-login-btn" onclick="saveAdminUserPassword(${userId})">${isZh ? '保存新密码' : 'Save password'}</button>
+    </div>
+  `;
+  modal.classList.add('active');
+  modal.querySelector('#adminNewUserPassword')?.focus();
+}
+
+function closeAdminPasswordEditor() {
+  document.getElementById('adminPasswordModal')?.classList.remove('active');
+}
+
+async function saveAdminUserPassword(userId) {
+  const isZh = isChineseLanguage(appState.language);
+  const passwordInput = document.getElementById('adminNewUserPassword');
+  const confirmInput = document.getElementById('adminConfirmUserPassword');
+  const errorEl = document.getElementById('adminPasswordError');
+  const newPassword = passwordInput?.value || '';
+  const confirmPassword = confirmInput?.value || '';
+  const setError = (message) => {
+    if (errorEl) errorEl.textContent = message;
+  };
+
+  if (newPassword.length < 6) {
+    setError(isZh ? '新密码至少需要 6 位字符' : 'New password must be at least 6 characters');
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    setError(isZh ? '两次输入的新密码不一致' : 'The new passwords do not match');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/admin/users/${userId}/password`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': adminState.token
+      },
+      body: JSON.stringify({ newPassword })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'update_failed');
+    closeAdminPasswordEditor();
+    showToast(isZh ? `用户 #${userId} 密码已更新` : `Password updated for user #${userId}`);
+  } catch (error) {
+    setError(localizeServerError(error.message, isZh ? '更改密码失败' : 'Password update failed'));
+  }
+}
+
 // 查看用户消息
 async function viewUserMessages(userId) {
   try {
@@ -19546,7 +23302,7 @@ async function loadAdminMessages() {
       html += `
             <tr>
               <td>${msg.id}</td>
-              <td>${escapeHtml(msg.username || msg.email || '-')}</td>
+              <td>${escapeHtml(getAdminDisplayName(msg, '-'))}</td>
               <td>${msg.role === 'user' ? '' : ''}</td>
               <td class="admin-msg-content">${escapeHtml(content)}</td>
               <td>${escapeHtml(msg.model || '-')}</td>
@@ -19617,7 +23373,7 @@ async function loadAdminFeedback() {
         <tr>
           <td>${item.id}</td>
           <td><span class="feedback-rating-badge ${isPositive ? 'positive' : 'negative'}">${isPositive ? (isChineseLanguage(appState.language) ? '点赞' : 'Positive') : (isChineseLanguage(appState.language) ? '倒赞' : 'Negative')}</span></td>
-          <td>${escapeHtml(item.username || item.user_email || `#${item.user_id}`)}</td>
+          <td>${escapeHtml(getAdminDisplayName(item, `#${item.user_id}`))}</td>
           <td class="admin-feedback-comment">${escapeHtml(comment)}</td>
           <td class="admin-msg-content">${escapeHtml(messagePreview)}</td>
           <td class="admin-session-id" title="${escapeHtml(item.session_id || '')}">${escapeHtml(item.session_title || item.session_id || '-')}</td>
@@ -19694,6 +23450,398 @@ async function toggleAdminModel(modelId, enabled, inputEl) {
   }
 }
 
+async function loadAdminLimits() {
+  const container = document.getElementById('adminLimitsPanel');
+  if (!container) return;
+  container.innerHTML = `<div class="admin-loading">加载限制配置中...</div>`;
+
+  try {
+    const res = await fetch('/api/admin/runtime-settings', {
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '加载失败');
+    const s = data.settings || {};
+
+    const numberField = (key, label, min, max, suffix = '') => `
+      <label class="admin-limit-field">
+        <span>${label}</span>
+        <input type="number" min="${min}" max="${max}" step="1" data-admin-limit="${key}" value="${Number(s[key] ?? 0)}">
+        ${suffix ? `<small>${suffix}</small>` : ''}
+      </label>
+    `;
+    const switchField = (key, label) => `
+      <label class="admin-limit-switch">
+        <span>${label}</span>
+        <input type="checkbox" data-admin-limit="${key}" ${Number(s[key] || 0) === 1 ? 'checked' : ''}>
+      </label>
+    `;
+
+    container.innerHTML = `
+      <div class="admin-limits-panel">
+        <div class="admin-model-switch-note">这里的配置会立即影响后端运行限制；填 0 表示关闭对应窗口额度。</div>
+        <div class="admin-limits-section">
+          <h4>聊天并发与额度</h4>
+          <div class="admin-limits-grid">
+            ${numberField('concurrent_requests', '每用户最大并发', 1, 20, '默认 2')}
+            ${numberField('chat_per_minute', '每分钟聊天额度', 0, 1000)}
+            ${numberField('chat_per_5h', '5 小时聊天额度', 0, 10000)}
+            ${numberField('chat_per_week', '每周聊天额度', 0, 100000)}
+          </div>
+        </div>
+        <div class="admin-limits-section">
+          <h4>上传风控</h4>
+          <div class="admin-limits-grid">
+            ${numberField('upload_per_minute', '每分钟上传次数', 0, 1000)}
+            ${numberField('upload_max_file_mb', '单文件上限', 1, 50, 'MB')}
+            ${numberField('upload_user_total_mb', '每用户总空间', 0, 102400, 'MB，0 不限制')}
+            ${numberField('upload_user_max_files', '每用户文件数', 0, 100000, '0 不限制')}
+          </div>
+        </div>
+        <div class="admin-limits-section">
+          <h4>积分奖励风控</h4>
+          <div class="admin-limits-grid">
+            ${switchField('pwa_reward_enabled', '允许 PWA 奖励')}
+            ${numberField('pwa_reward_min_account_age_minutes', 'PWA 奖励账号冷却', 0, 10080, '分钟')}
+            ${switchField('invite_reward_immediate_enabled', '邀请奖励注册即结算')}
+          </div>
+        </div>
+        <div class="admin-announcement-form-actions">
+          <button type="button" onclick="saveAdminLimits()">保存限制配置</button>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="admin-error">加载限制配置失败：${escapeHtml(err.message || 'unknown')}</div>`;
+  }
+}
+
+async function saveAdminLimits() {
+  const panel = document.getElementById('adminLimitsPanel');
+  if (!panel) return;
+  const payload = {};
+  panel.querySelectorAll('[data-admin-limit]').forEach((input) => {
+    const key = input.getAttribute('data-admin-limit');
+    payload[key] = input.type === 'checkbox' ? (input.checked ? 1 : 0) : Number(input.value || 0);
+  });
+
+  try {
+    const res = await fetch('/api/admin/runtime-settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': adminState.token
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '保存失败');
+    showToast('限制配置已保存');
+    await loadAdminLimits();
+  } catch (err) {
+    alert(`保存限制配置失败：${err.message || 'unknown'}`);
+  }
+}
+
+// ==================== 管理端公告管理 ====================
+let adminAnnouncementsCache = [];
+
+function announcementDeliveryLabel(mode) {
+  const isZh = isChineseLanguage(appState.language);
+  if (mode === 'popup') return isZh ? '弹窗提醒' : 'Popup';
+  if (mode === 'toast') return isZh ? '右下角提醒' : 'Bottom-right';
+  return isZh ? '静默通知' : 'Silent';
+}
+
+function isoToLocalInputValue(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatAnnouncementWindow(announcement) {
+  const isZh = isChineseLanguage(appState.language);
+  const fmt = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(isZh ? 'zh-CN' : 'en-US');
+  };
+  const start = fmt(announcement.startAt);
+  const end = fmt(announcement.endAt);
+  if (!start && !end) return isZh ? '长期展示' : 'Always';
+  return `${start || (isZh ? '不限' : 'Any')} → ${end || (isZh ? '不限' : 'Any')}`;
+}
+
+async function loadAdminAnnouncements() {
+  const container = document.getElementById('adminAnnouncementsPanel');
+  if (!container) return;
+  const isZh = isChineseLanguage(appState.language);
+  container.innerHTML = `<div class="admin-loading">${isZh ? '加载公告中...' : 'Loading announcements...'}</div>`;
+
+  try {
+    const res = await fetch('/api/admin/announcements', {
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '加载失败');
+    adminAnnouncementsCache = data.announcements || [];
+    renderAdminAnnouncements();
+  } catch (err) {
+    container.innerHTML = `<div class="admin-error">${isZh ? '加载公告失败：' : 'Failed to load announcements: '}${escapeHtml(err.message || 'unknown')}</div>`;
+  }
+}
+
+function renderAdminAnnouncements() {
+  const container = document.getElementById('adminAnnouncementsPanel');
+  if (!container) return;
+  const isZh = isChineseLanguage(appState.language);
+  const rows = adminAnnouncementsCache.map((a) => `
+    <div class="admin-announcement-item">
+      <div class="admin-announcement-info">
+        <div class="admin-announcement-title">${escapeHtml(a.title)} ${a.enabled ? '' : `<span class="admin-announcement-tag-off">${isZh ? '已停用' : 'Off'}</span>`}</div>
+        <div class="admin-announcement-meta">${escapeHtml(announcementDeliveryLabel(a.deliveryMode))} · ${escapeHtml(formatAnnouncementWindow(a))}</div>
+        <div class="admin-announcement-body">${escapeHtml(a.body || '')}</div>
+        ${a.titleEn || a.bodyEn ? `<div class="admin-announcement-body admin-announcement-body-en">EN: ${escapeHtml(a.titleEn || a.title)}${a.bodyEn ? ` · ${escapeHtml(a.bodyEn)}` : ''}</div>` : ''}
+      </div>
+      <div class="admin-announcement-actions">
+        <button class="membership-task-action secondary" onclick="editAdminAnnouncement(${a.id})">${isZh ? '编辑' : 'Edit'}</button>
+        <button class="membership-task-action secondary" onclick="deleteAdminAnnouncement(${a.id})">${isZh ? '删除' : 'Delete'}</button>
+      </div>
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="admin-announcement-toolbar">
+      <button class="membership-task-action" onclick="showAdminAnnouncementForm()">${isZh ? '+ 新建公告' : '+ New announcement'}</button>
+    </div>
+    <div class="admin-announcement-list">
+      ${rows || `<div class="admin-empty">${isZh ? '暂无公告' : 'No announcements yet'}</div>`}
+    </div>
+    <div id="adminAnnouncementFormWrap"></div>
+  `;
+}
+
+function editAdminAnnouncement(id) {
+  const announcement = adminAnnouncementsCache.find((a) => Number(a.id) === Number(id));
+  showAdminAnnouncementForm(announcement || null);
+}
+
+function showAdminAnnouncementForm(announcement = null) {
+  const wrap = document.getElementById('adminAnnouncementFormWrap');
+  if (!wrap) return;
+  const isZh = isChineseLanguage(appState.language);
+  const a = announcement || {};
+  const mode = a.deliveryMode || 'toast';
+  wrap.innerHTML = `
+    <div class="admin-announcement-form">
+      <h4>${a.id ? (isZh ? '编辑公告' : 'Edit announcement') : (isZh ? '新建公告' : 'New announcement')}</h4>
+      <label>${isZh ? '标题' : 'Title'}
+        <input type="text" id="annTitle" maxlength="200" value="${escapeHtml(a.title || '')}">
+      </label>
+      <label>${isZh ? '正文' : 'Body'}
+        <textarea id="annBody" rows="3" maxlength="4000">${escapeHtml(a.body || '')}</textarea>
+      </label>
+      <label>${isZh ? '英文标题（可空）' : 'English title (optional)'}
+        <input type="text" id="annTitleEn" maxlength="200" value="${escapeHtml(a.titleEn || '')}">
+      </label>
+      <label>${isZh ? '英文正文（可空）' : 'English body (optional)'}
+        <textarea id="annBodyEn" rows="3" maxlength="4000">${escapeHtml(a.bodyEn || '')}</textarea>
+      </label>
+      <label>${isZh ? '投放方式' : 'Delivery mode'}
+        <select id="annMode">
+          <option value="popup" ${mode === 'popup' ? 'selected' : ''}>${isZh ? '弹窗提醒' : 'Popup'}</option>
+          <option value="toast" ${mode === 'toast' ? 'selected' : ''}>${isZh ? '右下角提醒' : 'Bottom-right'}</option>
+          <option value="silent" ${mode === 'silent' ? 'selected' : ''}>${isZh ? '静默通知' : 'Silent'}</option>
+        </select>
+      </label>
+      <div class="admin-announcement-form-row">
+        <label>${isZh ? '开始时间（可空）' : 'Start (optional)'}
+          <input type="datetime-local" id="annStart" value="${isoToLocalInputValue(a.startAt)}">
+        </label>
+        <label>${isZh ? '结束时间（可空）' : 'End (optional)'}
+          <input type="datetime-local" id="annEnd" value="${isoToLocalInputValue(a.endAt)}">
+        </label>
+      </div>
+      <label class="admin-announcement-enable">
+        <input type="checkbox" id="annEnabled" ${a.id === undefined || a.enabled ? 'checked' : ''}>
+        <span>${isZh ? '启用' : 'Enabled'}</span>
+      </label>
+      <div class="admin-announcement-form-actions">
+        <button class="membership-task-action" onclick="saveAdminAnnouncement(${a.id || 0})">${isZh ? '保存' : 'Save'}</button>
+        <button class="membership-task-action secondary" onclick="renderAdminAnnouncements()">${isZh ? '取消' : 'Cancel'}</button>
+      </div>
+    </div>
+  `;
+  wrap.querySelector('#annTitle')?.focus();
+}
+
+async function saveAdminAnnouncement(id) {
+  const isZh = isChineseLanguage(appState.language);
+  const title = document.getElementById('annTitle')?.value || '';
+  const body = document.getElementById('annBody')?.value || '';
+  const titleEn = document.getElementById('annTitleEn')?.value || '';
+  const bodyEn = document.getElementById('annBodyEn')?.value || '';
+  const deliveryMode = document.getElementById('annMode')?.value || 'silent';
+  const startRaw = document.getElementById('annStart')?.value || '';
+  const endRaw = document.getElementById('annEnd')?.value || '';
+  const enabled = document.getElementById('annEnabled')?.checked !== false;
+
+  const payload = {
+    title,
+    body,
+    titleEn,
+    bodyEn,
+    deliveryMode,
+    startAt: startRaw ? new Date(startRaw).toISOString() : null,
+    endAt: endRaw ? new Date(endRaw).toISOString() : null,
+    enabled
+  };
+
+  const url = id ? `/api/admin/announcements/${id}` : '/api/admin/announcements';
+  const method = id ? 'PUT' : 'POST';
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminState.token },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '保存失败');
+    await loadAdminAnnouncements();
+  } catch (err) {
+    alert((isZh ? '保存公告失败: ' : 'Save failed: ') + (err.message || 'unknown'));
+  }
+}
+
+async function deleteAdminAnnouncement(id) {
+  const isZh = isChineseLanguage(appState.language);
+  if (!confirm(isZh ? '确定删除这条公告吗？' : 'Delete this announcement?')) return;
+  try {
+    const res = await fetch(`/api/admin/announcements/${id}`, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Token': adminState.token }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '删除失败');
+    await loadAdminAnnouncements();
+  } catch (err) {
+    alert((isZh ? '删除公告失败: ' : 'Delete failed: ') + (err.message || 'unknown'));
+  }
+}
+
+// ==================== 管理端邮件群发 ====================
+function renderAdminBroadcastPanel() {
+  const container = document.getElementById('adminBroadcastPanel');
+  if (!container) return;
+  const isZh = isChineseLanguage(appState.language);
+  container.innerHTML = `
+    <div class="admin-announcement-form admin-broadcast-form">
+      <h4>${isZh ? '邮件群发' : 'Email broadcast'}</h4>
+      <div class="admin-broadcast-hint">
+        ${isZh ? '先发送测试邮件确认样式，再群发给所有已验证邮箱用户。' : 'Send a test first, then broadcast to all verified email users.'}
+      </div>
+      <label>${isZh ? '主题' : 'Subject'}
+        <input type="text" id="adminBroadcastSubject" maxlength="180" placeholder="${isZh ? '例如：RAI 本周更新' : 'Example: RAI weekly update'}">
+      </label>
+      <label>${isZh ? '测试邮箱（发送测试时必填）' : 'Test email (required for test send)'}
+        <input type="email" id="adminBroadcastTestEmail" maxlength="255" placeholder="name@example.com">
+      </label>
+      <label>${isZh ? 'HTML 正文' : 'HTML body'}
+        <textarea id="adminBroadcastHtml" rows="10" maxlength="100000" placeholder="${isZh ? '&lt;h2&gt;RAI 更新&lt;/h2&gt;&lt;p&gt;本次更新内容...&lt;/p&gt;' : '&lt;h2&gt;RAI update&lt;/h2&gt;&lt;p&gt;What changed...&lt;/p&gt;'}"></textarea>
+      </label>
+      <label>${isZh ? '纯文本正文（可空）' : 'Plain text body (optional)'}
+        <textarea id="adminBroadcastText" rows="5" maxlength="100000" placeholder="${isZh ? '给不显示 HTML 的邮箱客户端使用' : 'Fallback for mail clients that do not render HTML'}"></textarea>
+      </label>
+      <div class="admin-announcement-form-actions admin-broadcast-actions">
+        <button class="membership-task-action secondary" onclick="sendAdminBroadcastTest()">${isZh ? '发送测试' : 'Send test'}</button>
+        <button class="membership-task-action" onclick="sendAdminBroadcastAll()">${isZh ? '发送给已验证用户' : 'Broadcast to verified users'}</button>
+      </div>
+      <div id="adminBroadcastResult" class="admin-broadcast-result" aria-live="polite"></div>
+    </div>
+  `;
+}
+
+function setAdminBroadcastResult(message, type = 'info') {
+  const result = document.getElementById('adminBroadcastResult');
+  if (!result) return;
+  result.className = `admin-broadcast-result is-${type}`;
+  result.innerHTML = message;
+}
+
+function getAdminBroadcastPayload(testOnly = false) {
+  const isZh = isChineseLanguage(appState.language);
+  const subject = document.getElementById('adminBroadcastSubject')?.value.trim() || '';
+  const html = document.getElementById('adminBroadcastHtml')?.value.trim() || '';
+  const text = document.getElementById('adminBroadcastText')?.value.trim() || '';
+  const testEmail = document.getElementById('adminBroadcastTestEmail')?.value.trim() || '';
+
+  if (!subject || !html) {
+    alert(isZh ? '请输入主题和 HTML 正文' : 'Enter a subject and HTML body');
+    return null;
+  }
+  if (testOnly && !testEmail) {
+    alert(isZh ? '发送测试需要填写测试邮箱' : 'Enter a test email first');
+    return null;
+  }
+  if (!testOnly) {
+    const ok = confirm(isZh
+      ? '确定向所有已验证邮箱用户发送这封邮件吗？请先确认已发过测试邮件。'
+      : 'Broadcast this email to all verified users? Confirm that you already sent a test.');
+    if (!ok) return null;
+  }
+
+  return testOnly
+    ? { subject, html, text, testEmail }
+    : { subject, html, text, confirm: 'SEND' };
+}
+
+async function sendAdminBroadcast(testOnly = false) {
+  const payload = getAdminBroadcastPayload(testOnly);
+  if (!payload) return;
+  const isZh = isChineseLanguage(appState.language);
+  setAdminBroadcastResult(isZh ? '发送中...' : 'Sending...', 'info');
+
+  try {
+    const res = await fetch('/api/admin/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminState.token },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || (isZh ? '发送失败' : 'Send failed'));
+
+    if (data.mode === 'test') {
+      setAdminBroadcastResult(isZh ? '测试邮件已发送。' : 'Test email sent.', 'success');
+      return;
+    }
+
+    const failureRows = Array.isArray(data.failures)
+      ? data.failures.slice(0, 5).map((failure) => (
+        `${escapeHtml(failure.email || '-')}: ${escapeHtml(failure.error || 'unknown')}`
+      )).join('<br>')
+      : '';
+    const summary = isZh
+      ? `群发完成：成功 ${Number(data.sent || 0)}，失败 ${Number(data.failed || 0)}，总计 ${Number(data.total || 0)}。`
+      : `Broadcast complete: ${Number(data.sent || 0)} sent, ${Number(data.failed || 0)} failed, ${Number(data.total || 0)} total.`;
+    setAdminBroadcastResult(
+      failureRows ? `${summary}<br><span>${isZh ? '失败样例：' : 'Failure samples:'}</span><br>${failureRows}` : summary,
+      data.failed ? 'warning' : 'success'
+    );
+  } catch (err) {
+    setAdminBroadcastResult(`${isZh ? '发送失败：' : 'Send failed: '}${escapeHtml(err.message || 'unknown')}`, 'error');
+  }
+}
+
+function sendAdminBroadcastTest() {
+  sendAdminBroadcast(true);
+}
+
+function sendAdminBroadcastAll() {
+  sendAdminBroadcast(false);
+}
+
 async function deleteMessage(messageId) {
   if (!confirm(isChineseLanguage(appState.language) ? '确定要删除这条消息吗？' : 'Delete this message?')) return;
 
@@ -19738,7 +23886,7 @@ async function loadAdminSessions() {
       html += `
             <tr>
               <td class="admin-session-id">${session.id.substring(0, 15)}...</td>
-              <td>${escapeHtml(session.username || session.email || '-')}</td>
+              <td>${escapeHtml(getAdminDisplayName(session, '-'))}</td>
               <td>${escapeHtml(session.title || '新对话')}</td>
               <td>${escapeHtml(session.model || '-')}</td>
               <td>${session.messageCount || 0}</td>
@@ -19881,7 +24029,7 @@ function renderUserDetail(user, sessions) {
           </div>
           <div class="user-info-item">
             <span class="label">用户名</span>
-            <span class="value">${escapeHtml(user.username || '未设置')}</span>
+            <span class="value">${escapeHtml(getAdminDisplayName({ id: user.id, username: user.username }, isChineseLanguage(appState.language) ? '未设置' : 'Not set'))}</span>
           </div>
           <div class="user-info-item">
             <span class="label">会员等级</span>
@@ -19912,15 +24060,18 @@ function renderUserDetail(user, sessions) {
             <span class="value">${user.last_checkin || '从未'}</span>
           </div>
         </div>
+        <div class="user-info-actions">
+          <button class="admin-action-btn view" onclick="openAdminPasswordEditor(${user.id})">${isChineseLanguage(appState.language) ? '更改密码' : 'Change password'}</button>
+        </div>
       </div>
-      
+
       <!-- 会话列表和消息查看区域 -->
       <div class="user-sessions-area">
         <div class="user-sessions-list">
           <h3> 对话列表 (${sessions.length})</h3>
           <div class="sessions-scroll">
             ${sessions.length === 0 ? '<div class="no-sessions">该用户暂无对话</div>' : sessions.map(s => `
-              <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}" 
+              <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}"
                    data-session-id="${s.id}"
                    onclick="loadSessionMessages('${s.id}')">
                 <div class="ud-session-title">${escapeHtml(s.title || '新对话')}</div>
@@ -19932,7 +24083,7 @@ function renderUserDetail(user, sessions) {
             `).join('')}
           </div>
         </div>
-        
+
         <div class="user-messages-area" id="userMessagesArea">
           <div class="ud-messages-placeholder">
             <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
@@ -20060,7 +24211,7 @@ function renderSessionMessages(session, messages, totalCount) {
   messagesArea.innerHTML = html;
 }
 
-// 关闭用户详情弹窗  
+// 关闭用户详情弹窗
 function closeUserDetailModal() {
   const modal = document.getElementById('userDetailModal');
   if (modal) {
