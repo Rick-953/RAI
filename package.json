@@ -1,6 +1,7 @@
 {
   "name": "rai",
-  "version": "0.10.9.62",
+  "version": "0.10.9.63",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

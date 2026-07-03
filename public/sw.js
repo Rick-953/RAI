@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.10.9.62-20260702-security-review-a';
+const RAI_SW_VERSION = '0.10.9.63-20260703-license-update-a';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-';
 const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
@@ -8,9 +8,9 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260702-security-review-v010962a',
-  '/styles.css?v=20260702-security-review-v010962a',
-  '/site.webmanifest?v=20260702-security-review-v010962a',
+  '/app.js?v=20260703-license-update-v010963a',
+  '/styles.css?v=20260703-license-update-v010963a',
+  '/site.webmanifest?v=20260703-license-update-v010963a',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',

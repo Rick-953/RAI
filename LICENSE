@@ -1,21 +1,57 @@
-MIT License
+RAI Personal and Non-Commercial Source License
+Version 1.0
 
-Copyright (c) 2026 Rick
+Copyright (c) 2026 Rick. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software and its source code are made available for personal,
+educational, research, evaluation, and other non-commercial use only.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Permitted use without a separate commercial license:
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+- personal learning, study, and experimentation;
+- non-commercial research and education;
+- private non-commercial self-hosting;
+- non-commercial modification for your own use.
+
+Commercial use is not permitted without prior written permission from the
+copyright holder.
+
+Commercial use includes, but is not limited to:
+
+- company or organization internal deployment;
+- operating the software as a paid or revenue-generating service;
+- using the software in SaaS, hosted services, managed services, or consulting;
+- integrating the software into a paid product or commercial workflow;
+- redistributing, sublicensing, reselling, leasing, or otherwise monetizing the
+  software or modified versions of it;
+- using the software to provide services to customers, clients, or users in a
+  business context.
+
+You may not remove or obscure copyright, license, attribution, or commercial
+licensing notices from this software.
+
+Third-party dependencies remain governed by their own licenses. This license
+applies only to the RAI project code and documentation provided by the
+copyright holder.
+
+Unless required by applicable law or agreed to in writing, the software is
+provided "AS IS", without warranties or conditions of any kind, express or
+implied. The copyright holder is not liable for any claim, damages, or other
+liability arising from the software or its use.
+
+For commercial licensing, contact the project maintainer through the public
+support channel configured for RAI or through the GitHub repository.
+
+中文说明
+
+RAI 源码公开，个人学习、研究、教育、评估和非商业自用免费。
+
+未经版权所有者事先书面授权，不允许商业使用。商业使用包括但不限于：
+
+- 公司或组织内部部署；
+- 作为付费服务、营收服务、SaaS、托管服务、代运维服务或咨询服务使用；
+- 集成到付费产品、商业工作流或客户项目中；
+- 二次分发、转授权、转售、出租或以其他方式变现本软件或修改版本；
+- 在商业场景中使用本软件向客户、用户或第三方提供服务。
+
+如需商业授权，请通过 RAI 项目配置的公开支持渠道或 GitHub 仓库联系维护者。

@@ -2166,8 +2166,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.62';
-const RAI_BUILD_ID = '20260702-security-review-v010962a';
+const RAI_APP_VERSION = '0.10.9.63';
+const RAI_BUILD_ID = '20260703-license-update-v010963a';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4676,6 +4676,28 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-03',
+    version: 'v0.10.9.63',
+    zh: {
+      summary: '授权模式修正：个人与非商业使用免费，商业使用需授权。',
+      details: [
+        '项目许可证从 MIT 改为 RAI Personal and Non-Commercial Source License。',
+        '源码仍公开，个人学习、研究、教育、评估和非商业自用免费。',
+        '公司内部部署、SaaS/托管服务、付费产品集成、二次分发、转售或商业运营需事先取得书面商业授权。',
+        'README、LICENSE、package 元数据和 GitHub Release 说明同步更新，避免误解为 MIT 商用许可。'
+      ]
+    },
+    en: {
+      summary: 'License correction: free for personal and non-commercial use; commercial use requires permission.',
+      details: [
+        'The project license changed from MIT to the RAI Personal and Non-Commercial Source License.',
+        'The source remains available and free for personal, educational, research, evaluation, and other non-commercial use.',
+        'Company internal deployment, SaaS/hosted services, paid product integration, redistribution, resale, or commercial operation requires prior written commercial permission.',
+        'README, LICENSE, package metadata, and GitHub Release notes were updated so the project is no longer presented as MIT-licensed for commercial use.'
+      ]
+    }
+  },
   {
     date: '2026-07-02',
     version: 'v0.10.9.62',
@@ -8006,7 +8028,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.62 初始化 (security review)');
+  console.log(' RAI v0.10.9.63 初始化 (license update)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

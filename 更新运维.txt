@@ -1,6 +1,6 @@
-RAI v0.10.9.62 public release notes
+RAI v0.10.9.63 public release notes
 
-Release date: 2026-07-02
+Release date: 2026-07-03
 
 This public file is intentionally sanitized for GitHub.
 
@@ -11,6 +11,13 @@ Security and privacy policy for this repository:
 - Keep production environment variables and full deployment records in private operations storage only.
 
 本次更新重点
+
+- 授权模式修正：RAI 不再以 MIT License 发布，改为 RAI Personal and Non-Commercial Source License。
+- 源码仍公开，个人学习、研究、教育、评估和非商业自用免费。
+- 商业使用需事先取得书面授权，包括但不限于公司/组织内部部署、SaaS 或托管服务、付费产品集成、商业分发、二次销售、商业运营或在商业场景中向客户/用户提供服务。
+- README、LICENSE、package 元数据和 GitHub Release 说明已同步更新，避免误解为 MIT 商用授权。
+
+上一版安全与产品更新摘要
 
 - 管理员后台新增“限制风控”能力：可配置单用户并发请求数、每分钟额度、5 小时额度、每周额度，并可配置上传限频、单用户上传总容量、文件数量、PWA 任务奖励和邀请奖励结算策略。
 - 修复上传可被账号批量滥用打满磁盘的风险：/api/upload 现在有独立频率限制、单文件大小限制、单用户总容量限制、单用户文件数限制；默认免费用户上传上限为 100MB / 50 files，删除用户时会同步清理用户文件记录与本地文件。
@@ -31,11 +38,12 @@ Security and privacy policy for this repository:
 
 Public changelog since 0.10.9.21
 
+- Changed project licensing from MIT to a source-available personal and non-commercial license. Commercial use now requires prior written permission.
 - Hardened account registration, upload, session streaming, admin auth, and points-reward flows.
 - Added admin runtime controls for concurrency, quotas, upload risk limits, PWA reward policy, invite reward policy, model visibility, announcements, and verified-user emails.
 - Improved multilingual UI, mobile layout, sidebar grouping, title sync, browser title animation, notifications, search-source rendering, and research-mode interjections.
 - Reworked authenticated stream handling to avoid long-lived tokens in EventSource URLs.
 - Added server-side request concurrency accounting, stricter production CSP defaults, safer URL normalization, and reduced public health-check exposure.
-- Updated static asset cache busting and Service Worker versions through 0.10.9.62.
+- Updated static asset cache busting and Service Worker versions through 0.10.9.63.
 
 For deployment, use a private runbook. Public GitHub releases should include source code and safe product documentation only.

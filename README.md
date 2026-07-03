@@ -4,11 +4,11 @@
 
 ### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
 
-[![Version](https://img.shields.io/badge/Version-0.10.7-F59E0B?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.10.9.63-F59E0B?style=flat-square)]()
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
-[![License](https://img.shields.io/badge/License-MIT-F59E0B?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-Personal%20%26%20Non--Commercial-F59E0B?style=flat-square)](LICENSE)
 
 
 **Try now:** [https://rai.rick.quest](https://rai.rick.quest)
@@ -328,9 +328,13 @@ rai/
 
 ## <img src="https://api.iconify.design/material-symbols/license.svg?color=%23F59E0B&width=24&height=24" valign="middle" /> 授权与商用
 
-**个人用户免费支持分支**。
+RAI 是源码公开项目，个人学习、研究、教育、评估和非商业自用免费。
 
-如需**商业用途**，请使用项目中配置的公开支持邮箱联系维护者。
+未经作者书面授权，不允许商业使用。商业使用包括但不限于：公司或组织内部部署、SaaS/托管服务、付费产品集成、二次分发、转售、商业运营或在商业场景中向客户/用户提供服务。
+
+如需商业用途，请通过项目中配置的公开支持渠道或 GitHub 仓库联系维护者获取授权。
+
+This project is source-available and free for personal, educational, research, evaluation, and other non-commercial use. Commercial use requires prior written permission from the maintainer. See [LICENSE](LICENSE).
 
 ---
 
