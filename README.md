@@ -4,16 +4,16 @@
 
 ### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
 
-[![Version](https://img.shields.io/badge/Version-0.11.27-F59E0B?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.11.28-F59E0B?style=flat-square)]()
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![License](https://img.shields.io/badge/License-Personal%20%26%20Non--Commercial-F59E0B?style=flat-square)](LICENSE)
 
 
-**Try now:** [https://rai.rick.quest](https://rai.rick.quest)
+**Try now:** [https://rai.000339.xyz](https://rai.000339.xyz)
 
-## 官网：rai.rick.quest
+## 官网：rai.000339.xyz
 
 [English](#english) | [功能特性](#-功能特性) | [功能列表](#-功能列表) | [快速开始](#-快速开始) | [模型路由](#-智能模型路由) | [在线体验](#-在线体验)
 
@@ -22,6 +22,14 @@
 ---
 
 # 最新更新内容
+
+## 2026年7月11日 RAI v0.11.28
+
+- **无用代码清理**：移除经静态分析确认不可达、未调用或被后续同名实现覆盖的历史代码，不删减产品功能。
+- **加载优化**：渲染库与主脚本保持依赖顺序地延后执行，减少首屏解析阻塞。
+- **正式版收敛**：移除 /beta 路径、Beta 版本号和 Beta 缓存作用域；正式站统一使用根路径与独立的 v0.11.28 缓存标识。
+
+[Changelog / Release notes](https://github.com/Rick-953/RAI/releases/tag/v0.11.28)
 
 ## 2026年7月10日 RAI v0.11.27
 

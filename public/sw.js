@@ -1,29 +1,29 @@
-const RAI_SW_VERSION = '0.11.27-20260710-password-reset-login-recovery-v01127';
-const RAI_STATIC_CACHE_PREFIX = 'rai-static-';
-const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-';
-const RAI_FONT_CACHE_NAME = 'rai-fonts-v1';
-const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
+const RAI_SW_VERSION = '0.11.28-20260711-code-cleanup-v01128';
+const RAI_STATIC_CACHE_PREFIX = 'rai-static-root-';
+const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-root-';
+const RAI_FONT_CACHE_NAME = 'rai-fonts-root-v1';
+const RAI_CACHE_NAME = `${RAI_STATIC_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = '/index.html';
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260710-password-reset-login-recovery-v01127',
-  '/styles.css?v=20260710-password-reset-login-recovery-v01127',
-  '/site.webmanifest?v=20260710-password-reset-login-recovery-v01127',
+  '/app.js?v=20260711-code-cleanup-v01128',
+  '/styles.css?v=20260711-code-cleanup-v01128',
+  '/site.webmanifest?v=20260711-code-cleanup-v01128',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
-  '/lib/marked.min.js',
-  '/lib/purify.min.js',
-  '/lib/katex/katex.min.css',
-  '/lib/katex/katex.min.js',
-  '/lib/katex/contrib/auto-render.min.js',
-  '/lib/mermaid/mermaid.min.js',
-  '/lib/highlight/styles/github-dark.min.css',
-  '/lib/highlight/highlight.min.js'
+  '/lib/marked.min.js?v=20260711-code-cleanup-v01128',
+  '/lib/purify.min.js?v=20260711-code-cleanup-v01128',
+  '/lib/katex/katex.min.css?v=20260711-code-cleanup-v01128',
+  '/lib/katex/katex.min.js?v=20260711-code-cleanup-v01128',
+  '/lib/katex/contrib/auto-render.min.js?v=20260711-code-cleanup-v01128',
+  '/lib/mermaid/mermaid.min.js?v=20260711-code-cleanup-v01128',
+  '/lib/highlight/styles/github-dark.min.css?v=20260711-code-cleanup-v01128',
+  '/lib/highlight/highlight.min.js?v=20260711-code-cleanup-v01128'
 ];
 
 function isAvatarRequest(url) {

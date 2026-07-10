@@ -829,14 +829,7 @@ function convertLegacyBarChart(code) {
 }
 
 // HTML转义辅助函数
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+
 
 function normalizeSafeLinkUrl(value, fallback = '#') {
   const raw = String(value || '').trim();
@@ -871,9 +864,7 @@ function normalizeSafeImageUrl(value, fallback = '') {
 }
 
 // 兼容旧代码的空函数
-function restoreAndRenderMath(element) {
-  // 不再需要，因为renderMarkdownWithMath已经完成了所有工作
-}
+
 
 // 新增：将文本中的 [1] [2] 等转换为可点击的角标
 function renderCitations(html, sources) {
@@ -1545,15 +1536,7 @@ function copyMermaidCode(containerId) {
 }
 
 // 查看 Mermaid 代码（打开全屏并切换到代码视图）
-function showMermaidCode(containerId) {
-  toggleMermaidFullscreen(containerId);
-  // 延迟切换到代码视图，确保模态框已渲染
-  setTimeout(() => {
-    if (!mermaidFullscreenState.showCode) {
-      toggleMermaidCodeView();
-    }
-  }, 100);
-}
+
 
 // 下载 SVG
 function downloadMermaidSVG(containerId) {
@@ -1903,74 +1886,10 @@ function closeMermaidFullscreen() {
 // ==================== 流式 Mermaid 渲染 ====================
 
 // 流式过程中渲染完整的 Mermaid 图表
-async function renderStreamingMermaidCharts(textDiv, renderedCache) {
-  if (typeof mermaid === 'undefined') return;
 
-  const containers = textDiv.querySelectorAll('.mermaid-container:not(.rendered)');
-
-  for (const container of containers) {
-    const code = container.dataset.mermaidCode;
-    if (!code) continue;
-
-    // 检查缓存中是否已有渲染结果
-    if (renderedCache.has(code)) {
-      const cached = renderedCache.get(code);
-      container.replaceWith(cached.cloneNode(true));
-      continue;
-    }
-
-    // 检测代码是否完整（以有效的 Mermaid 关键字开头）
-    const decodedCode = decodeURIComponent(code).trim();
-    const validStarts = ['graph', 'flowchart', 'sequencediagram', 'classdiagram',
-      'statediagram', 'erdiagram', 'gantt', 'pie', 'mindmap',
-      'journey', 'gitgraph', 'c4', 'timeline', 'quadrantchart', 'xychart', 'block'];
-    const codeLower = decodedCode.toLowerCase();
-    const isValidStart = validStarts.some(k => codeLower.startsWith(k));
-
-    if (!isValidStart) continue; // 等待更多内容
-
-    // 异步渲染，不阻塞流式输出
-    renderSingleMermaidContainer(container, decodedCode, renderedCache);
-  }
-}
 
 // 渲染单个 Mermaid 容器
-async function renderSingleMermaidContainer(container, code, cache) {
-  // 如果已经在渲染中或已渲染，跳过
-  if (container.classList.contains('rendering') || container.classList.contains('rendered')) {
-    return;
-  }
 
-  container.classList.add('rendering');
-
-  try {
-    const sanitizedCode = sanitizeMermaidCode(code);
-    if (!sanitizedCode) {
-      container.classList.remove('rendering');
-      return;
-    }
-
-    const id = container.id + '-svg';
-    const { svg, code: renderedCode } = await renderMermaidSvg(sanitizedCode, id);
-
-    container.dataset.mermaidCode = encodeURIComponent(renderedCode);
-    container.innerHTML = svg;
-    container.classList.remove('rendering');
-    container.classList.add('rendered');
-
-    // 添加工具栏
-    addMermaidToolbar(container);
-
-    // 缓存渲染结果
-    cache.set(container.dataset.mermaidCode, container.cloneNode(true));
-
-    console.log(` 流式渲染 Mermaid 图表: ${container.id}`);
-  } catch (err) {
-    container.classList.remove('rendering');
-    // 渲染失败则保持loading状态，等待更多内容（可能代码不完整）
-    console.debug(' Mermaid 代码可能不完整，等待更多内容...', err.message);
-  }
-}
 
 // 抽取工具栏添加逻辑为独立函数
 function addMermaidToolbar(container) {
@@ -2160,12 +2079,9 @@ function isTauriDesktopRuntime() {
 
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
-const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/beta' || window.location.pathname.startsWith('/beta/'))
-  ? '/beta'
-  : '';
-const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.11.27';
-const RAI_BUILD_ID = '20260710-password-reset-login-recovery-v01127';
+const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
+const RAI_APP_VERSION = '0.11.28';
+const RAI_BUILD_ID = '20260711-code-cleanup-v01128';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -2181,18 +2097,16 @@ function resolveRaiRemoteUrl(value) {
   return raw;
 }
 
-if ((APP_BASE_PATH || RAI_IS_TAURI_DESKTOP) && typeof window.fetch === 'function') {
+if (RAI_IS_TAURI_DESKTOP && typeof window.fetch === 'function') {
   const nativeFetch = window.fetch.bind(window);
   window.fetch = function (resource, init) {
     if (typeof resource === 'string' && resource.startsWith('/api/')) {
-      return nativeFetch(RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}${resource}` : `${APP_BASE_PATH}${resource}`, init);
+      return nativeFetch(`${RAI_PRODUCTION_ORIGIN}${resource}`, init);
     }
     if (resource instanceof Request) {
       const url = new URL(resource.url, window.location.origin);
       if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
-        const nextUrl = RAI_IS_TAURI_DESKTOP
-          ? `${RAI_PRODUCTION_ORIGIN}${url.pathname}${url.search}${url.hash}`
-          : `${APP_BASE_PATH}${url.pathname}${url.search}${url.hash}`;
+        const nextUrl = `${RAI_PRODUCTION_ORIGIN}${url.pathname}${url.search}${url.hash}`;
         return nativeFetch(new Request(nextUrl, resource), init);
       }
     }
@@ -2379,8 +2293,8 @@ function clearStoredInviteReferrerId() {
 
 function getInviteLink() {
   const userId = appState.user?.id;
-  if (!userId) return window.location.origin + APP_BASE_PATH;
-  const url = new URL(window.location.origin + APP_BASE_PATH + '/');
+  if (!userId) return window.location.origin;
+  const url = new URL('/', window.location.origin);
   url.searchParams.set('ref', String(userId));
   return url.toString();
 }
@@ -4901,6 +4815,24 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-11',
+    version: 'v0.11.28',
+    zh: {
+      summary: '清理已废弃的不可达代码，并优化页面加载。',
+      details: [
+        '仅移除经静态分析确认未被调用或已被同名后续实现覆盖的历史代码，功能保持不变。',
+        '前端渲染库与主脚本改为按文档顺序延后加载，减少首屏解析阻塞。'
+      ]
+    },
+    en: {
+      summary: 'Removed unreachable legacy code and improved page loading.',
+      details: [
+        'Only statically verified unreferenced code and declarations shadowed by later implementations were removed; product behavior is unchanged.',
+        'Rendering libraries and the main script now load after document parsing while retaining their execution order.'
+      ]
+    }
+  },
   {
     date: '2026-07-10',
     version: 'v0.11.27',
@@ -7879,10 +7811,7 @@ function normalizeResearchMasterModel(input) {
   return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-pro';
 }
 
-function getResearchModelLabel(modelId) {
-  const normalized = normalizeResearchModelId(modelId);
-  return RESEARCH_MODEL_OPTIONS.find(option => option.id === normalized)?.label || MODELS[normalized]?.name || normalized;
-}
+
 
 function isResearchModeEnabled() {
   return appState.researchModeEnabled === true;
@@ -9144,10 +9073,7 @@ function expandInput() {
   appState.inputExpanded = true;
 }
 
-function collapseInput() {
-  // 保留空函数以兼容现有代码调用
-  // 不再收缩输入框
-}
+
 
 function handleInputContainerClick(event) {
   // 点击输入容器时聚焦输入框
@@ -9215,14 +9141,7 @@ function handleActionCard(action) {
 // 明确暴露给首页内联入口，避免缓存混用或作用域变化时按钮失效。
 window.handleActionCard = handleActionCard;
 
-function autoResizeInput() {
-  const input = document.getElementById('messageInput');
-  if (!input) return;
 
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-  window.mobileKeyboardHandler?.syncComposerMetrics();
-}
 
 function handleTextInputCompositionStart(event) {
   if (!event?.target?.dataset) return;
@@ -9250,16 +9169,7 @@ function isImeCompositionKeyEvent(event) {
     justCommittedComposition;
 }
 
-function handleInputKeydown(event) {
-  if (isImeCompositionKeyEvent(event)) {
-    return;
-  }
 
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    sendMessage();
-  }
-}
 
 function normalizePastedFile(file, index = 0) {
   if (!file) return null;
@@ -9769,7 +9679,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.26 初始化 (symmetric chat width)');
+  console.log(' RAI v0.11.28 初始化 (code cleanup release)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -9867,24 +9777,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ==================== 自定义模型选择器 ====================
-function toggleModelDropdown() {
-  const dropdown = document.getElementById('modelDropdown');
-  const customSelect = document.getElementById('modelSelectCustom');
 
-  if (!dropdown || !customSelect) {
-    console.error(' 模型选择器元素未找到');
-    return;
-  }
-
-  const isOpen = dropdown.classList.contains('open');
-
-  if (isOpen) {
-    closeModelDropdown();
-  } else {
-    dropdown.classList.add('open');
-    customSelect.classList.add('open');
-  }
-}
 
 function closeModelDropdown() {
   const dropdown = document.getElementById('modelDropdown');
@@ -10121,10 +10014,7 @@ function toggleThinkingFromMenu(event) {
 }
 
 // 从菜单切换Agent模式
-function toggleAgentFromMenu(event) {
-  event?.stopPropagation?.();
-  setResearchMode(getEffectiveResearchMode() === 'deep' ? 'fast' : 'deep', { enable: true });
-}
+
 
 
 // 从菜单触发文件上传
@@ -10135,55 +10025,15 @@ function handleFileUploadFromMenu() {
 }
 
 // 原有的切换函数（向后兼容）
-function toggleInternet() {
-  appState.internetMode = !appState.internetMode;
-  updateToolbarUI();
-}
 
-function toggleThinking() {
-  if (isFreePoeMode()) {
-    appState.thinkingMode = false;
-    updateToolbarUI();
-    return;
-  }
-  appState.thinkingMode = !appState.thinkingMode;
-  updateToolbarUI();
-}
 
-function handleFileUpload() {
-  const fileInput = document.getElementById('fileInput');
-  if (fileInput) {
-    fileInput.click();
-  }
-}
 
-function handleFileSelected(event) {
-  const files = event.target.files;
-  if (files && files.length > 0) {
-    console.log('文件选择:', files[0].name);
-    processUploadedFile(files[0]);
-  }
-  if (event.target) event.target.value = '';
-}
 
-function updateModelControls() {
-  // 根据选择的模型显示/隐藏推理控件
-  const thinkingControls = document.getElementById('thinkingControls');
-  const selectedModel = appState.selectedModel;
 
-  if (thinkingControls) {
-    // DeepSeek Pro 和 Kimi K2.6 支持推理模式；DeepSeek Flash / Qwen 3.6 保持快速路径。
-    if (selectedModel === 'deepseek-pro' ||
-      selectedModel === 'kimi-k2.6' || selectedModel === 'kimi-k2') {
-      thinkingControls.style.display = 'flex';
-    } else {
-      thinkingControls.style.display = 'none';
-    }
-  }
 
-  // 更新工具栏UI状态
-  updateToolbarUI();
-}
+
+
+
 
 // 修复：改进toggleThinkingBudget函数
 function toggleThinkingBudget() {
@@ -10406,143 +10256,18 @@ function updateModelControls() {
 }
 
 // 修复：改进toggleThinking函数
-function toggleThinking() {
-  appState.selectedModel = normalizeSelectedModelId(appState.selectedModel);
-  const model = MODELS[appState.selectedModel];
 
-  if (!model || !model.supportsThinking) {
-    console.warn(' 当前模型不支持思考模式');
-    return;
-  }
-  if (isFreePoeMode()) {
-    appState.thinkingMode = false;
-    updateModelControls();
-    updateToolbarUI();
-    return;
-  }
-
-  appState.thinkingMode = !appState.thinkingMode;
-  updateModelControls();
-  updateToolbarUI();
-}
 
 // 修复：改进toggleInternet函数
-function toggleInternet() {
-  appState.internetMode = !appState.internetMode;
-  updateToolbarUI();
-}
+
 
 // ==================== 新版思考UI函数 ====================
 
 // 解析思考内容，提取以"-"开头的第一句作为预览
-function parseThinkingPreview(rawContent) {
-  if (!rawContent) return '';
 
-  // 匹配以 "- " 开头的行，取第一个
-  const lines = rawContent.split('\n');
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- ')) {
-      // 移除开头的 "- "，返回第一句
-      const sentence = trimmed.substring(2).trim();
-      if (sentence) {
-        // 限制预览长度
-        return sentence.length > 40 ? sentence.substring(0, 40) + '...' : sentence;
-      }
-    }
-  }
-
-  //  修复：如果没有"-"格式，尝试提取第一句有意义的文本
-  const firstMeaningful = rawContent.trim().split(/[\n.!?。！？]/)[0]?.trim();
-  if (firstMeaningful && firstMeaningful.length > 5) {
-    return firstMeaningful.length > 40 ? firstMeaningful.substring(0, 40) + '...' : firstMeaningful;
-  }
-
-  //  修复：返回默认文本而不是空字符串
-  return isChineseLanguage(appState.language) ? 'AI 正在分析内容...' : 'AI is analyzing...';
-}
 
 // 更新预览文本
-function updateThinkingPreview(previewText) {
-  const previewEl = document.getElementById('thinkingPreviewText');
-  const previewContainer = document.getElementById('thinkingPreview');
 
-  if (previewEl && previewText) {
-    previewEl.textContent = previewText;
-    if (previewContainer) previewContainer.style.display = 'inline-flex';
-  } else if (previewContainer && !previewText) {
-    //  修复：如果没有预览文本，隐藏容器避免显示空条
-    previewContainer.style.display = 'none';
-  }
-}
-
-// 切换思考UI模式（简洁/展开）
-function toggleThinkingUIMode(thinkingId) {
-  const thinkingContent = document.getElementById(thinkingId);
-  const toggleBtn = document.getElementById('thinkingToggleBtn');
-  const previewContainer = document.getElementById('thinkingPreview');
-  const thinkingLine = document.getElementById('thinkingLine');
-
-  if (!thinkingContent) return;
-
-  const isExpanding = !thinkingContent.classList.contains('expanded');
-
-  if (isExpanding) {
-    // 切换到展开模式
-    appState.thinkingUIMode = 'expanded';
-    thinkingContent.classList.add('expanded');
-
-    // 隐藏预览
-    if (previewContainer) previewContainer.style.display = 'none';
-
-    // 更新按钮：显示"收起思路"和向上箭头
-    if (toggleBtn) {
-      toggleBtn.classList.add('expanded');
-      toggleBtn.classList.remove('icon-only');
-      toggleBtn.innerHTML = `
-            <span class="toggle-text">${isChineseLanguage(appState.language) ? '收起思路' : 'Hide'}</span>
-            ${getSvgIcon('expand_less', 'toggle-icon', 16)}
-          `;
-    }
-
-    // 显示竖线并更新高度
-    if (thinkingLine) {
-      thinkingLine.classList.add('visible');
-    }
-    updateThinkingLine(thinkingId);
-
-    // 启动实时更新定时器 (0.1s刷新一次)
-    if (appState.thinkingLineInterval) clearInterval(appState.thinkingLineInterval);
-    appState.thinkingLineInterval = setInterval(() => updateThinkingLine(thinkingId), 100);
-  } else {
-    // 切换到简洁模式
-    appState.thinkingUIMode = 'collapsed';
-    thinkingContent.classList.remove('expanded');
-
-    // 显示预览
-    if (previewContainer) previewContainer.style.display = 'inline-flex';
-
-    // 更新按钮：只显示向下箭头
-    if (toggleBtn) {
-      toggleBtn.classList.remove('expanded');
-      toggleBtn.classList.add('icon-only');
-      toggleBtn.innerHTML = `${getSvgIcon('expand_more', 'toggle-icon', 16)}`;
-    }
-
-    // 停止实时更新定时器
-    if (appState.thinkingLineInterval) {
-      clearInterval(appState.thinkingLineInterval);
-      appState.thinkingLineInterval = null;
-    }
-
-    // 隐藏竖线
-    if (thinkingLine) {
-      thinkingLine.classList.remove('visible');
-      thinkingLine.style.height = '0px';
-    }
-  }
-}
 
 // 更新竖线长度 - 直接操作thinking-line元素
 function updateThinkingLine(thinkingId) {
@@ -10573,110 +10298,6 @@ function updateThinkingLine(thinkingId) {
 
   // 延迟再更新一次，确保动态内容也被计算
   setTimeout(updateHeight, 300);
-}
-
-// 开始思考动画
-function startThinkingAnimation(avatarElement, thinkingId, previewText) {
-  if (!avatarElement) return;
-
-  // 添加光晕动画，随机周期
-  const glowDuration = 1.2 + Math.random() * 0.3; // 1.2-1.5s
-  avatarElement.style.animationDuration = `${glowDuration}s`;
-  avatarElement.classList.add('thinking');
-
-  // 更新预览文本
-  if (previewText) {
-    updateThinkingPreview(previewText);
-  }
-
-  // 如果是展开模式，更新竖线
-  if (appState.thinkingUIMode === 'expanded') {
-    updateThinkingLine(thinkingId);
-  }
-}
-
-// 停止思考动画
-function stopThinkingAnimation(avatarElement, thinkingId) {
-  if (!avatarElement) return;
-
-  avatarElement.classList.remove('thinking');
-
-  // 停止实时更新定时器
-  if (appState.thinkingLineInterval) {
-    clearInterval(appState.thinkingLineInterval);
-    appState.thinkingLineInterval = null;
-  }
-
-  // 更新按钮文本为"展开思路"
-  const toggleBtn = document.getElementById('thinkingToggleBtn');
-  const previewContainer = document.getElementById('thinkingPreview');
-
-  if (appState.thinkingUIMode === 'collapsed') {
-    // 简洁模式：显示预览和展开按钮
-    if (toggleBtn) {
-      toggleBtn.classList.remove('expanded');
-      toggleBtn.classList.add('icon-only');
-      toggleBtn.innerHTML = `${getSvgIcon('expand_more', 'toggle-icon', 16)}`;
-    }
-    if (previewContainer) previewContainer.style.display = 'inline-flex';
-  }
-}
-
-
-// 历史消息的思考UI切换（使用动态ID）
-function toggleHistoryThinkingUI(thinkingId) {
-  const thinkingContent = document.getElementById(thinkingId);
-  const toggleBtn = document.getElementById(`${thinkingId}-btn`);
-  const previewContainer = document.getElementById(`${thinkingId}-preview`);
-  const thinkingLine = document.getElementById(`${thinkingId}-line`);
-
-  if (!thinkingContent) return;
-
-  const isExpanding = !thinkingContent.classList.contains('expanded');
-
-  if (isExpanding) {
-    // 展开模式
-    thinkingContent.classList.add('expanded');
-
-    // 隐藏预览
-    if (previewContainer) previewContainer.style.display = 'none';
-
-    // 更新按钮
-    if (toggleBtn) {
-      toggleBtn.classList.add('expanded');
-      toggleBtn.classList.remove('icon-only');
-      toggleBtn.innerHTML = `
-            <span class="toggle-text">${isChineseLanguage(appState.language) ? '收起思路' : 'Hide'}</span>
-            ${getSvgIcon('expand_less', 'toggle-icon', 16)}
-          `;
-    }
-
-    // 显示竖线
-    if (thinkingLine) {
-      const contentHeight = thinkingContent.scrollHeight;
-      thinkingLine.style.height = `${contentHeight + 8}px`;
-      thinkingLine.classList.add('visible');
-    }
-  } else {
-    // 收起模式
-    thinkingContent.classList.remove('expanded');
-
-    // 显示预览
-    if (previewContainer) previewContainer.style.display = 'inline-flex';
-
-    // 更新按钮
-    if (toggleBtn) {
-      toggleBtn.classList.remove('expanded');
-      toggleBtn.classList.add('icon-only');
-      toggleBtn.innerHTML = `${getSvgIcon('expand_more', 'toggle-icon', 16)}`;
-    }
-
-    // 隐藏竖线
-    if (thinkingLine) {
-      thinkingLine.classList.remove('visible');
-      thinkingLine.style.height = '0px';
-    }
-  }
 }
 
 // ==================== 模型选择下拉菜单函数 ====================
@@ -10937,15 +10558,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ==================== 设置相关 ====================
-function toggleAdvancedOptions() {
-  const content = document.getElementById('advancedOptionsContent');
-  const header = document.querySelector('.advanced-options-header');
 
-  if (content && header) {
-    content.classList.toggle('expanded');
-    header.classList.toggle('expanded');
-  }
-}
 
 // 修复：改进openSettings函数
 function openSettings() {
@@ -13166,35 +12779,7 @@ async function deleteMessageFromDB(message) {
 }
 
 // 删除消息
-async function deleteMessage(message) {
-  const confirmMsg = isChineseLanguage(appState.language) ? '确定要删除这条消息吗?' : 'Delete this message?';
-  if (!confirm(confirmMsg)) return;
 
-  // 确保消息有ID
-  const msgWithId = await ensureMessageHasId(message);
-  if (!msgWithId) {
-    alert(isChineseLanguage(appState.language) ? '无法获取消息信息，请刷新页面后重试' : 'Cannot get message info, please refresh and retry');
-    return;
-  }
-
-  const deleted = await deleteMessageFromDB(msgWithId);
-  if (deleted) {
-    // 从本地状态移除（通过ID查找，因为已经reload了）
-    const msgIndex = appState.messages.findIndex(m => m.id === msgWithId.id);
-    if (msgIndex !== -1) {
-      appState.messages.splice(msgIndex, 1);
-    }
-
-    // 重新渲染
-    if (appState.messages.length === 0) {
-      showWelcome();
-    } else {
-      renderMessages();
-    }
-  } else {
-    alert(isChineseLanguage(appState.language) ? '删除失败' : 'Delete failed');
-  }
-}
 
 // ==================== 引用功能 ====================
 
@@ -16316,22 +15901,7 @@ function showButtonTooltip(buttonElement, tooltipText) {
 }
 
 // 修复：改进handleFileUpload，添加悬浮提示
-function handleFileUpload() {
-  const fileInput = document.getElementById('fileInput');
-  const attachBtn = document.getElementById('attachBtn');
-  if (!fileInput) {
-    console.error(' 文件输入框未找到');
-    return;
-  }
 
-  // 显示提示
-  const tooltipText = isChineseLanguage(appState.language) ? '附件' : 'Attach';
-  showButtonTooltip(attachBtn, tooltipText);
-
-  // 清除之前的值，确保可以重复选择同一文件
-  fileInput.value = '';
-  fileInput.click();
-}
 
 // 切换联网模式
 function toggleInternet() {
@@ -16545,44 +16115,7 @@ function handleOnboardingLanguageChoice(answer) {
   focusMessageInputForNewChat(false);
 }
 
-async function handleRegister(event) {
-  event.preventDefault();
 
-  const email = document.getElementById('registerEmail').value;
-  const password = document.getElementById('registerPassword').value;
-  const username = document.getElementById('registerUsername').value;
-  const registerBtn = document.getElementById('registerBtn');
-  const errorEl = document.getElementById('registerError');
-
-  registerBtn.disabled = true;
-  registerBtn.innerHTML = '<span class="loading"></span> ' + (isChineseLanguage(appState.language) ? '注册中...' : 'Registering...');
-  errorEl.classList.remove('show');
-
-	  try {
-		    const response = await fetch(`${API_BASE}/auth/register`, {
-		      method: 'POST',
-		      headers: AUTH_JSON_HEADERS,
-		      body: JSON.stringify({ email, password, username, referrerId: getStoredInviteReferrerId() || undefined })
-		    });
-	
-	    const data = await parseApiJsonResponse(response, {
-	      fallback: isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed',
-	      nonJsonFallback: isChineseLanguage(appState.language) ? '注册服务暂时不可用，请刷新页面后重试。' : 'Registration is temporarily unavailable. Refresh and try again.'
-    });
-
-    if (data.success) {
-      await enterAuthenticatedApp(data);
-    } else {
-      showError(errorEl, localizeServerError(data.error, isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed'));
-    }
-  } catch (error) {
-    showError(errorEl, isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error');
-    console.error(' 注册错误:', error);
-  } finally {
-    registerBtn.disabled = false;
-    registerBtn.textContent = isChineseLanguage(appState.language) ? '注册' : 'Register';
-  }
-}
 
 async function verifyToken() {
   try {
@@ -16722,17 +16255,9 @@ async function deleteCurrentAccount() {
   }
 }
 
-function switchToRegister() {
-  // 兼容旧代码，调用新的切换函数
-  switchAuthMode();
-}
 
-function switchToLogin() {
-  // 兼容旧代码，调用新的切换函数
-  if (appState.authMode === 'register') {
-    switchAuthMode();
-  }
-}
+
+
 
 // ==================== Apple风格渐进式登录系统 ====================
 // 当前认证模式: 'login' | 'register'
@@ -17702,10 +17227,7 @@ function replayOnboarding() {
   });
 }
 
-function showError(element, message) {
-  element.textContent = message;
-  element.classList.add('show');
-}
+
 
 async function loadUserData() {
   try {
@@ -17835,28 +17357,7 @@ async function loadUserData() {
 // ==================== RAG 功能函数 ====================
 
 // 标签页切换
-function switchSidebarTab(tabName) {
-  const tabs = document.querySelectorAll('.sidebar-tab');
-  const tabContents = document.querySelectorAll('.tab-content');
 
-  tabs.forEach(tab => tab.classList.remove('active'));
-  tabContents.forEach(content => content.classList.remove('active'));
-
-  const activeTab = Array.from(tabs).find(tab =>
-    tab.onclick.toString().includes(tabName)
-  );
-  if (activeTab) activeTab.classList.add('active');
-
-  const activeContent = document.getElementById(
-    tabName === 'sessions' ? 'sessionsTab' : 'spacesTab'
-  );
-  if (activeContent) activeContent.classList.add('active');
-
-  // 切换到空间标签页时加载空间列表
-  if (tabName === 'spaces') {
-    loadSpaces();
-  }
-}
 
 // 加载用户空间列表
 async function loadSpaces() {
@@ -17999,51 +17500,7 @@ async function loadDocuments(spaceId) {
 }
 
 // 上传文档
-function uploadDocument() {
-  if (!appState.currentSpaceId) {
-    alert(isChineseLanguage(appState.language) ? '请先选择一个空间' : 'Please select a space first');
-    return;
-  }
 
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.txt,.pdf,.docx';
-  input.onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await fetch(`${API_BASE}/spaces/${appState.currentSpaceId}/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${appState.token}`
-        },
-        body: formData
-      });
-
-      if (!response.ok) throw new Error('上传失败');
-
-      const result = await response.json();
-      console.log(' 文件上传成功:', result);
-
-      // 重新加载文档列表和空间列表
-      await loadDocuments(appState.currentSpaceId);
-      await loadSpaces();
-
-      alert(isChineseLanguage(appState.language)
-        ? `文件上传成功！\n状态: ${result.document.embedding_status === 'completed' ? '已索引' : '处理中'}`
-        : `File uploaded.\nStatus: ${result.document.embedding_status === 'completed' ? 'Indexed' : 'Processing'}`);
-    } catch (error) {
-      console.error('上传文件失败:', error);
-      alert((isChineseLanguage(appState.language) ? '上传失败: ' : 'Upload failed: ') + error.message);
-    }
-  };
-
-  input.click();
-}
 
 // 删除文档
 async function deleteDocument(spaceId, docId) {
@@ -18101,44 +17558,10 @@ async function deleteSpace(spaceId) {
 }
 
 // RAG功能切换
-function toggleRAG() {
-  appState.useRag = !appState.useRag;
-  const ragBtn = document.getElementById('ragBtn');
-  if (ragBtn) {
-    ragBtn.classList.toggle('active');
-  }
-  console.log('RAG功能:', appState.useRag ? '已开启' : '已关闭');
-}
+
 
 // 场景预设切换
-async function selectScenario(scenario) {
-  appState.currentScenario = scenario;
 
-  // 更新UI
-  const scenarioBtns = document.querySelectorAll('.scenario-btn');
-  scenarioBtns.forEach(btn => btn.classList.remove('active'));
-
-  const selectedBtn = document.getElementById(`scenario-${scenario}`);
-  if (selectedBtn) selectedBtn.classList.add('active');
-
-  // 调用意图识别API获取推荐参数(可选)
-  // 这里简化处理,直接设置预定义的参数
-  const scenarios = {
-    divergent: { temperature: 1.3, top_p: 0.95, presence_penalty: 0.6 },
-    precise: { temperature: 0.4, top_p: 0.2, presence_penalty: 0 },
-    code: { temperature: 0.3, top_p: 0.2, presence_penalty: 0 },
-    creative: { temperature: 0.9, top_p: 0.85, presence_penalty: 0.4 },
-    balanced: { temperature: 0.7, top_p: 0.9, presence_penalty: 0 }
-  };
-
-  const params = scenarios[scenario];
-  if (params) {
-    appState.temperature = params.temperature;
-    appState.topP = params.top_p;
-    appState.presencePenalty = params.presence_penalty;
-    console.log(` 切换到${scenario}模式:`, params);
-  }
-}
 
 // 辅助函数：格式化文件大小
 function formatFileSize(bytes) {
@@ -18922,21 +18345,7 @@ function renderChatFlowMessages() {
 }
 
 // 渲染画布节点
-function renderCanvasNodes() {
-  const nodesLayer = document.getElementById('nodesLayer');
-  if (!nodesLayer) return;
 
-  // 清空现有节点
-  nodesLayer.innerHTML = '';
-
-  // 如果没有节点，显示提示
-  const hint = document.getElementById('canvasHint');
-  if (hint) {
-    hint.style.display = chatFlowState.nodes.length === 0 ? 'flex' : 'none';
-  }
-
-  // TODO: 渲染节点 (Phase 2)
-}
 
 // 初始化 ChatFlow 画布
 function initChatFlowCanvas() {
@@ -19274,12 +18683,7 @@ function canvasResetView() {
 // ==================== ChatFlow UI 控制函数 ====================
 
 // 更多菜单切换
-function toggleChatFlowMoreMenu() {
-  const menu = document.getElementById('chatflowMoreMenu');
-  if (menu) {
-    menu.classList.toggle('active');
-  }
-}
+
 
 // 模型菜单切换
 function toggleChatFlowModelMenu() {
@@ -19974,97 +19378,7 @@ async function stopChatFlowGeneration() {
 // ==================== Phase 2: 拖拽节点生成 ====================
 
 // 初始化拖拽
-function initChatFlowDragDrop() {
-  const messagesContainer = document.getElementById('chatflowMessages');
-  const canvasContainer = document.getElementById('chatflowCanvasContainer');
 
-  if (!messagesContainer || !canvasContainer) return;
-
-  // 拖拽开始
-  messagesContainer.addEventListener('dragstart', (e) => {
-    const msgElement = e.target.closest('.chatflow-message');
-    if (!msgElement) return;
-
-    const msgIndex = parseInt(msgElement.dataset.msgIndex);
-    e.dataTransfer.setData('text/plain', JSON.stringify({
-      type: 'message',
-      index: msgIndex
-    }));
-    e.dataTransfer.effectAllowed = 'copy';
-    msgElement.classList.add('dragging');
-  });
-
-  messagesContainer.addEventListener('dragend', (e) => {
-    const msgElement = e.target.closest('.chatflow-message');
-    if (msgElement) {
-      msgElement.classList.remove('dragging');
-    }
-  });
-
-  // 画布接收拖拽
-  canvasContainer.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    canvasContainer.classList.add('drag-over');
-  });
-
-  canvasContainer.addEventListener('dragleave', () => {
-    canvasContainer.classList.remove('drag-over');
-  });
-
-  canvasContainer.addEventListener('drop', (e) => {
-    e.preventDefault();
-    canvasContainer.classList.remove('drag-over');
-
-    try {
-      // 计算放置位置（相对于画布）
-      const rect = canvasContainer.getBoundingClientRect();
-      const x = (e.clientX - rect.left - chatFlowState.canvas.translateX) / chatFlowState.canvas.scale;
-      const y = (e.clientY - rect.top - chatFlowState.canvas.translateY) / chatFlowState.canvas.scale;
-
-      // 尝试解析结构化数据
-      let handled = false;
-      const jsonData = e.dataTransfer.getData('text/plain');
-
-      if (jsonData) {
-        try {
-          const data = JSON.parse(jsonData);
-          if (data.type === 'message') {
-            const msg = chatFlowState.messages[data.index];
-            if (msg) {
-              createCanvasNode(msg, x, y, data.index);
-              handled = true;
-            }
-          } else if (data.type === 'selected-text') {
-            // 选中文本拖拽创建节点
-            createTextNode(data.text, x, y);
-            handled = true;
-          }
-        } catch (parseErr) {
-          // 不是 JSON 格式，尝试作为纯文本处理
-        }
-      }
-
-      // 尝试获取纯文本（选中文本拖拽）
-      if (!handled) {
-        const plainText = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text');
-        if (plainText && plainText.trim() && plainText.length > 0 && plainText.length < 10000) {
-          // 检查是否是有效的纯文本（非 JSON）
-          try {
-            JSON.parse(plainText);
-            // 如果能解析成 JSON 但没被处理，可能是无效数据
-          } catch {
-            // 不是 JSON，作为选中文本处理
-            createTextNode(plainText.trim(), x, y);
-            handled = true;
-          }
-        }
-      }
-    } catch (err) {
-      console.error('拖放处理失败:', err);
-    }
-  });
-}
 
 // 创建画布节点
 function createCanvasNode(message, x, y, sourceReference = null) {
@@ -21443,75 +20757,7 @@ function initAutoSave() {
  * 将画布内容序列化为 LLM 可理解的文本格式
  * 包含：所有节点、便签、连线关系及标签
  */
-function serializeCanvasToPrompt() {
-  if (chatFlowState.nodes.length === 0 && chatFlowState.edges.length === 0) return '';
 
-  let context = '\n\n---\n **当前思维画布内容：**\n\n';
-
-  // 1. 输出所有节点
-  if (chatFlowState.nodes.length > 0) {
-    context += '**节点列表：**\n';
-    chatFlowState.nodes.forEach((node, index) => {
-      const typeLabel = {
-        'user': ' 用户',
-        'assistant': ' AI',
-        'sticky': ' 便签',
-        'text': ' 文本'
-      }[node.type] || ' 节点';
-
-      const content = (node.fullContent || node.content || '').replace(/\n/g, ' ').slice(0, 100);
-      context += `${index + 1}. [${node.id}] ${typeLabel}: "${content}"${content.length >= 100 ? '...' : ''}\n`;
-    });
-    context += '\n';
-  }
-
-  // 2. 输出便签内容（特别标注）
-  const stickyNotes = chatFlowState.nodes.filter(n => n.type === 'sticky');
-  if (stickyNotes.length > 0) {
-    context += '**便签备注：**\n';
-    stickyNotes.forEach((note, index) => {
-      const content = (note.fullContent || note.content || '').replace(/\n/g, ' ');
-      const attachedInfo = note.attachedTo ? ` (附注于: ${note.attachedTo})` : '';
-      context += `- 便签${index + 1}: "${content}"${attachedInfo}\n`;
-    });
-    context += '\n';
-  }
-
-  // 3. 输出连线关系
-  if (chatFlowState.edges.length > 0) {
-    context += '**节点关系（连线）：**\n';
-    chatFlowState.edges.forEach((edge, index) => {
-      const fromNode = chatFlowState.nodes.find(n => n.id === edge.from);
-      const toNode = chatFlowState.nodes.find(n => n.id === edge.to);
-      const fromLabel = fromNode ? (fromNode.content || '').slice(0, 30) : edge.from;
-      const toLabel = toNode ? (toNode.content || '').slice(0, 30) : edge.to;
-      const relationLabel = edge.label ? ` --「${edge.label}」-->` : ' -->';
-      context += `${index + 1}. "${fromLabel}"${relationLabel} "${toLabel}"\n`;
-    });
-    context += '\n';
-  }
-
-  // 4. 输出 Mermaid 图表（便于 AI 理解结构）
-  context += '**结构图（Mermaid格式）：**\n```mermaid\ngraph TD\n';
-  chatFlowState.nodes.forEach(node => {
-    const label = (node.content || '').replace(/"/g, "'").replace(/\n/g, ' ').slice(0, 40);
-    let shape;
-    switch (node.type) {
-      case 'user': shape = `["${label}"]`; break;
-      case 'assistant': shape = `("${label}")`; break;
-      case 'sticky': shape = `>"${label}"]`; break;
-      default: shape = `["${label}"]`;
-    }
-    context += `  ${node.id}${shape}\n`;
-  });
-  chatFlowState.edges.forEach(edge => {
-    const arrow = edge.label ? `-->|${edge.label}|` : '-->';
-    context += `  ${edge.from} ${arrow} ${edge.to}\n`;
-  });
-  context += '```\n\n---\n';
-
-  return context;
-}
 
 // 不再使用装饰器模式，将画布上下文直接整合到消息发送逻辑中
 // 见下方 sendChatFlowMessageWithCanvasContext
@@ -22358,9 +21604,7 @@ async function startTemporaryChatWithMode(mode) {
   });
 }
 
-async function startNewChatWithMode(mode) {
-  return startTemporaryChatWithMode(mode);
-}
+
 
 async function handleTemporaryChatClick() {
   const mode = normalizeTemporaryChatMode(appState.newChatDefaultMode);
@@ -22959,37 +22203,9 @@ function selectModel(value, displayName) {
 }
 
 // 修复：添加null检查和安全的DOM操作
-function toggleThinkingContent(id) {
-  if (!id) return;
 
-  const content = document.getElementById(id);
-  const icon = document.getElementById(`${id}-icon`);
 
-  if (!content || !icon) {
-    console.warn(` 找不到元素: ${id}`);
-    return;
-  }
 
-  const expanded = content.classList.toggle('expanded');
-  const iconName = expanded ? 'expand_less' : 'expand_more';
-  icon.outerHTML = getSvgIcon(iconName, 'material-symbols-outlined thinking-expand-icon', 24).replace('<svg', `<svg id="${icon.id}"`);
-}
-
-function formatMessage(text) {
-  // 简单转义与换行处理，考虑插入代码块渲染等
-  if (!text) return '';
-
-  let escaped = text.replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-  // 保留换行
-  escaped = escaped.replace(/\n/g, '<br>');
-
-  return escaped;
-}
 
 function escapeHtml(text) {
   if (text === undefined || text === null) return '';
@@ -25776,36 +24992,7 @@ async function saveAdminUserPassword(userId) {
 }
 
 // 查看用户消息
-async function viewUserMessages(userId) {
-  try {
-    const res = await fetch(`/api/admin/users/${userId}/messages`, {
-      headers: { 'X-Admin-Token': adminState.token }
-    });
-    const data = await res.json();
 
-    let html = `<h3>用户 #${userId} 的消息</h3><button onclick="loadAdminUsers()" class="admin-back-btn">← 返回用户列表</button>`;
-    html += `<table class="admin-table"><thead><tr><th>ID</th><th>角色</th><th>内容</th><th>模型</th><th>时间</th></tr></thead><tbody>`;
-
-    (data.messages || []).forEach(msg => {
-      const content = (msg.content || '').substring(0, 100) + (msg.content?.length > 100 ? '...' : '');
-      html += `
-            <tr>
-              <td>${msg.id}</td>
-              <td>${msg.role === 'user' ? ' 用户' : ' AI'}</td>
-              <td class="admin-msg-content">${escapeHtml(content)}</td>
-              <td>${escapeHtml(msg.model || '-')}</td>
-              <td>${formatDate(msg.created_at)}</td>
-            </tr>
-          `;
-    });
-
-    html += '</tbody></table>';
-    document.getElementById('adminUsersTable').innerHTML = html;
-
-  } catch (err) {
-    console.error('加载用户消息失败:', err);
-  }
-}
 
 // 删除用户
 async function deleteUser(userId) {
