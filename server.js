@@ -9,6 +9,8 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const net = require('net');
 const https = require('https');  // 用于网页搜索
 const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
@@ -29,6 +31,20 @@ function cleanEnvValue(value) {
     return text;
 }
 
+function normalizeResendFromEmail(value) {
+    const text = cleanEnvValue(value);
+    if (!text || /[\r\n]/.test(text)) return '';
+
+    const namedMatch = text.match(/^(.+?)\s*<([^<>]+)>$/);
+    const displayName = namedMatch ? namedMatch[1].trim() : '';
+    const email = (namedMatch ? namedMatch[2] : text).trim();
+    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email)) {
+        return '';
+    }
+
+    return displayName ? `${displayName} <${email}>` : email;
+}
+
 // 安全默认：本地直连时不信任代理头。反向代理部署时可通过 TRUST_PROXY 显式开启。
 const trustProxyEnv = cleanEnvValue(process.env.TRUST_PROXY);
 let trustProxySetting = false;
@@ -46,12 +62,14 @@ if (trustProxyEnv) {
 app.set('trust proxy', trustProxySetting);
 const PORT = cleanEnvValue(process.env.PORT) || 3009;
 const HOST = (cleanEnvValue(process.env.HOST) || cleanEnvValue(process.env.BIND_HOST) || '127.0.0.1').trim();
+const IS_PRODUCTION = cleanEnvValue(process.env.NODE_ENV).toLowerCase() === 'production';
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
 const MAX_CONCURRENT_REQUESTS_PER_USER = Math.max(
     1,
     parseInt(cleanEnvValue(process.env.RAI_MAX_CONCURRENT_REQUESTS_PER_USER) || '2', 10) || 2
 );
-const ADMIN_TOKEN_EXPIRES_IN = cleanEnvValue(process.env.ADMIN_TOKEN_EXPIRES_IN) || '30d';
+const ADMIN_TOKEN_EXPIRES_IN = cleanEnvValue(process.env.ADMIN_TOKEN_EXPIRES_IN) || (IS_PRODUCTION ? '12h' : '30d');
+const ADMIN_TOTP_REQUIRED = parseBooleanEnv(process.env.RAI_ADMIN_TOTP_REQUIRED, IS_PRODUCTION);
 const PASSWORD_MIN_LENGTH = 6;
 const PASSWORD_MAX_LENGTH = 128;
 const EMAIL_MAX_LENGTH = 255;
@@ -65,8 +83,17 @@ const MEMORY_KEY_MAX_LENGTH = 96;
 const MEMORY_EXTRACTION_MODEL_ID = 'deepseek-flash';
 const MEMORY_MODEL_MAX_TOKENS = 700;
 const MEMORY_MODEL_TIMEOUT_MS = 15000;
+const TITLE_FALLBACK_MODEL_IDS = ['chatgpt-gpt-oss-120b', 'deepseek-flash'];
+const TITLE_FALLBACK_MAX_TOKENS = 80;
+const TITLE_FALLBACK_TIMEOUT_MS = 10000;
 const IMAGE_WAITING_LINE_MODEL_ID = 'deepseek-flash';
 const IMAGE_WAITING_LINE_TIMEOUT_MS = 5000;
+const CHAT_CLIENT_ALLOWED_ROLES = new Set(['user', 'assistant']);
+const CHAT_CLIENT_MAX_MESSAGES = Math.max(2, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_MESSAGES) || '40', 10) || 40, 80));
+const CHAT_CLIENT_MAX_MESSAGE_CHARS = Math.max(1000, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_MESSAGE_CHARS) || '24000', 10) || 24000, 60000));
+const CHAT_CLIENT_MAX_TOTAL_CHARS = Math.max(CHAT_CLIENT_MAX_MESSAGE_CHARS, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_TOTAL_CHARS) || '140000', 10) || 140000, 240000));
+const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
+const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
 const GENERIC_SESSION_TITLE_RE = /^(新对话|新 ChatFlow|临时对话|New Chat|Temporary chat|Untitled|未命名)$/i;
 const MEMORY_CATEGORIES = new Set([
     'identity',
@@ -216,14 +243,13 @@ const BRAND_NAME = cleanEnvValue(process.env.RAI_BRAND_NAME) || 'RAI';
 const BRAND_SHORT_NAME = cleanEnvValue(process.env.RAI_BRAND_SHORT_NAME) || BRAND_NAME;
 const BRAND_BADGE = cleanEnvValue(process.env.RAI_BRAND_BADGE);
 const BRAND_TITLE = cleanEnvValue(process.env.RAI_BRAND_TITLE) || [BRAND_NAME, BRAND_BADGE].filter(Boolean).join(' ') || BRAND_NAME;
-const RAI_SUPPORT_EMAIL = cleanEnvValue(process.env.RAI_SUPPORT_EMAIL) || 'support@example.com';
-const RAI_STAR_REWARD_EMAIL = cleanEnvValue(process.env.RAI_STAR_REWARD_EMAIL) || RAI_SUPPORT_EMAIL;
 const OPENROUTER_HTTP_REFERER = cleanEnvValue(process.env.OPENROUTER_HTTP_REFERER) || PUBLIC_BASE_URL || 'https://rai.000339.xyz';
 const OPENROUTER_APP_TITLE = cleanEnvValue(process.env.OPENROUTER_APP_TITLE) || BRAND_TITLE || 'RAI';
 const DEFAULT_DOMAIN_NOTICE_ENABLED = parseBooleanEnv(process.env.RAI_DEFAULT_DOMAIN_NOTICE_ENABLED, true);
 const DEFAULT_DOMAIN_NOTICE_URL = cleanEnvValue(process.env.RAI_DEFAULT_DOMAIN_NOTICE_URL) || 'https://rai.000339.xyz/';
 const DEFAULT_DISABLED_MODEL_IDS_RAW = parseCsvEnv(process.env.RAI_DEFAULT_DISABLED_MODELS);
 const CSP_ALLOW_LOCAL_CONNECT = parseBooleanEnv(process.env.RAI_CSP_ALLOW_LOCAL_CONNECT, false);
+const CSP_STRICT_SCRIPT_SRC = parseBooleanEnv(process.env.RAI_CSP_STRICT_SCRIPT_SRC, false);
 const ADMIN_USERNAME = cleanEnvValue(process.env.ADMIN_USERNAME) || 'admin';
 const ADMIN_PASSWORD_HASH = requireSecretEnv('ADMIN_PASSWORD_HASH', 50);
 const ADMIN_JWT_SECRET = requireSecretEnv('ADMIN_JWT_SECRET', 32);
@@ -235,7 +261,15 @@ const TWO_FACTOR_SETUP_TTL = '10m';
 const TWO_FACTOR_LOGIN_TTL = '5m';
 const RESEND_API_KEY = cleanEnvValue(process.env.RESEND_API_KEY || process.env.RAI_RESEND_API_KEY);
 const RESEND_API_URL = cleanEnvValue(process.env.RESEND_API_URL) || 'https://api.resend.com/emails';
-const RESEND_FROM_EMAIL = cleanEnvValue(process.env.RESEND_FROM_EMAIL || process.env.RAI_EMAIL_FROM) || 'onboarding@resend.dev';
+const RESEND_FROM_EMAIL_RAW = cleanEnvValue(process.env.RESEND_FROM_EMAIL || process.env.RAI_EMAIL_FROM) || 'onboarding@resend.dev';
+const RESEND_FROM_EMAIL = normalizeResendFromEmail(RESEND_FROM_EMAIL_RAW);
+if (!RESEND_FROM_EMAIL) {
+    console.warn(' RESEND_FROM_EMAIL/RAI_EMAIL_FROM 格式无效，应为 email@example.com 或 Name <email@example.com>');
+}
+const RESEND_TIMEOUT_MS = Math.max(
+    3000,
+    parseInt(cleanEnvValue(process.env.RAI_RESEND_TIMEOUT_MS) || '12000', 10) || 12000
+);
 const ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS = parseBooleanEnv(process.env.RAI_ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS, false);
 const EMAIL_CODE_TTL_MS = Math.max(
     60 * 1000,
@@ -264,7 +298,7 @@ const ENV_API_KEYS = {
 };
 
 const RAI_RUNTIME_REPORT_PATH = path.resolve(cleanEnvValue(process.env.RAI_RUNTIME_REPORT_PATH) || path.join(__dirname, 'rai运行报告.md'));
-const RAI_RUNTIME_REPORT_CONTACT = cleanEnvValue(process.env.RAI_RUNTIME_REPORT_CONTACT) || RAI_SUPPORT_EMAIL;
+const RAI_RUNTIME_REPORT_CONTACT = 'rick080402@gmail.com';
 
 function buildProviderFetchHeaders(providerConfig, providerName = '') {
     const headers = {
@@ -353,6 +387,27 @@ const SILICONFLOW_IMAGE_GENERATION_URL = cleanEnvValue(process.env.SILICONFLOW_I
 const KOLORS_IMAGE_SIZES = ['1024x1024', '960x1280', '768x1024', '720x1440', '720x1280'];
 const GENERATED_IMAGES_DIR = path.join(__dirname, 'uploads', 'generated-images');
 const GENERATED_IMAGE_PUBLIC_PREFIX = '/generated-images';
+const MAX_GENERATED_IMAGE_BYTES = Math.max(
+    1024 * 1024,
+    parseInt(cleanEnvValue(process.env.RAI_GENERATED_IMAGE_MAX_BYTES) || String(20 * 1024 * 1024), 10) || 20 * 1024 * 1024
+);
+const GENERATED_IMAGE_FETCH_TIMEOUT_MS = Math.max(
+    1000,
+    parseInt(cleanEnvValue(process.env.RAI_GENERATED_IMAGE_FETCH_TIMEOUT_MS) || '8000', 10) || 8000
+);
+const IMAGE_URL_HEAD_TIMEOUT_MS = Math.max(
+    500,
+    parseInt(cleanEnvValue(process.env.RAI_IMAGE_URL_HEAD_TIMEOUT_MS) || '2000', 10) || 2000
+);
+const SAFE_IMAGE_FETCH_MAX_REDIRECTS = Math.max(
+    0,
+    Math.min(5, parseInt(cleanEnvValue(process.env.RAI_IMAGE_FETCH_MAX_REDIRECTS) || '3', 10) || 3)
+);
+const GENERATED_IMAGE_ALLOWED_SOURCE_HOSTS = new Set(
+    parseCsvEnv(process.env.RAI_GENERATED_IMAGE_ALLOWED_HOSTS || 'siliconflow.cn')
+        .map((host) => normalizeHostname(host))
+        .filter(Boolean)
+);
 
 const TOTP_BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -465,12 +520,84 @@ function buildOtpAuthUrl({ issuer = TOTP_ISSUER, accountName = '', secret }) {
     return `otpauth://totp/${label}?${params.toString()}`;
 }
 
-function buildUserTwoFactorSetupToken(user, secret) {
+function buildUserTwoFactorSetupToken(user, setupId) {
     return jwt.sign(
-        { type: 'user_2fa_setup', userId: user.id, email: user.email, secret: normalizeTotpSecret(secret) },
+        { type: 'user_2fa_setup', userId: user.id, email: user.email, setupId: String(setupId || '') },
         JWT_SECRET,
         { expiresIn: TWO_FACTOR_SETUP_TTL }
     );
+}
+
+function buildUserTwoFactorSetupId() {
+    return crypto.randomBytes(24).toString('base64url');
+}
+
+async function cleanupUserTwoFactorSetupChallenges() {
+    const now = Date.now();
+    const consumedBefore = now - (24 * 60 * 60 * 1000);
+    await dbRunAsync(
+        'DELETE FROM user_two_factor_setup_challenges WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
+        [now, consumedBefore]
+    ).catch((error) => {
+        console.warn(' 二步验证设置挑战清理失败:', error.message);
+    });
+}
+
+async function createUserTwoFactorSetupChallenge(user, secret) {
+    const setupId = buildUserTwoFactorSetupId();
+    const now = Date.now();
+    const expiresAt = now + 10 * 60 * 1000;
+    await cleanupUserTwoFactorSetupChallenges();
+    await dbRunAsync(
+        `UPDATE user_two_factor_setup_challenges
+         SET consumed_at = ?
+         WHERE user_id = ? AND consumed_at IS NULL`,
+        [now, user.id]
+    );
+    await dbRunAsync(
+        `INSERT INTO user_two_factor_setup_challenges
+         (setup_id, user_id, secret, created_at, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+        [setupId, user.id, normalizeTotpSecret(secret), now, expiresAt]
+    );
+    return { setupId, expiresAt };
+}
+
+async function consumeUserTwoFactorSetupChallenge({ setupId, userId }) {
+    const safeSetupId = String(setupId || '').trim();
+    const numericUserId = Number(userId);
+    if (!/^[A-Za-z0-9_-]{24,128}$/.test(safeSetupId) || !Number.isInteger(numericUserId) || numericUserId <= 0) {
+        return null;
+    }
+
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        const row = await dbGetAsync(
+            `SELECT *
+             FROM user_two_factor_setup_challenges
+             WHERE setup_id = ? AND user_id = ?`,
+            [safeSetupId, numericUserId]
+        );
+        if (!row || row.consumed_at || Number(row.expires_at || 0) <= Date.now()) {
+            await dbRunAsync('COMMIT');
+            return null;
+        }
+        const result = await dbRunAsync(
+            `UPDATE user_two_factor_setup_challenges
+             SET consumed_at = ?
+             WHERE setup_id = ? AND consumed_at IS NULL`,
+            [Date.now(), safeSetupId]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            await dbRunAsync('ROLLBACK');
+            return null;
+        }
+        await dbRunAsync('COMMIT');
+        return row;
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
+    }
 }
 
 function buildUserLoginTwoFactorToken(user) {
@@ -545,8 +672,6 @@ function buildRuntimeConfigPayload() {
         brandBadge: BRAND_BADGE,
         brandTitle: BRAND_TITLE,
         publicBaseUrl: PUBLIC_BASE_URL,
-        supportEmail: RAI_SUPPORT_EMAIL,
-        starRewardEmail: RAI_STAR_REWARD_EMAIL,
         defaultDomainNoticeEnabled: !!(DEFAULT_DOMAIN_NOTICE_ENABLED && DEFAULT_DOMAIN_NOTICE_URL),
         defaultDomainNoticeUrl: DEFAULT_DOMAIN_NOTICE_URL || ''
     };
@@ -1192,6 +1317,269 @@ function getGeneratedImageExtension(contentType = '', fallbackUrl = '', buffer =
     return 'png';
 }
 
+function normalizeHostname(hostname = '') {
+    return String(hostname || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^\[|\]$/g, '')
+        .replace(/\.$/, '');
+}
+
+function isHostnameAllowedBySet(hostname = '', allowedHosts = null) {
+    if (!allowedHosts || allowedHosts.size === 0) return true;
+    const host = normalizeHostname(hostname);
+    if (!host) return false;
+    for (const allowed of allowedHosts) {
+        const safeAllowed = normalizeHostname(allowed);
+        if (!safeAllowed) continue;
+        if (host === safeAllowed || host.endsWith(`.${safeAllowed}`)) return true;
+    }
+    return false;
+}
+
+function parseIpv4Address(address = '') {
+    const parts = String(address || '').split('.');
+    if (parts.length !== 4) return null;
+    const numbers = parts.map((part) => {
+        if (!/^\d{1,3}$/.test(part)) return NaN;
+        return Number(part);
+    });
+    if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    return numbers;
+}
+
+function isPrivateOrReservedIpv4(address = '') {
+    const parts = parseIpv4Address(address);
+    if (!parts) return false;
+    const [a, b, c, d] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a === 192 && b === 0) return true;
+    if (a === 192 && b === 0 && c === 2) return true;
+    if (a === 198 && (b === 18 || b === 19)) return true;
+    if (a === 198 && b === 51 && c === 100) return true;
+    if (a === 203 && b === 0 && c === 113) return true;
+    if (a >= 224) return true;
+    if (a === 255 && b === 255 && c === 255 && d === 255) return true;
+    return false;
+}
+
+function isPrivateOrReservedIpv6(address = '') {
+    let ip = normalizeHostname(address);
+    if (!ip) return false;
+    if (ip.startsWith('::ffff:')) {
+        const mapped = ip.slice('::ffff:'.length);
+        if (net.isIP(mapped) === 4) return isPrivateOrReservedIpv4(mapped);
+    }
+    if (ip === '::' || ip === '::1') return true;
+    if (ip.startsWith('fe80:') || ip.startsWith('fe8') || ip.startsWith('fe9') || ip.startsWith('fea') || ip.startsWith('feb')) return true;
+    if (/^f[c-d][0-9a-f]{2}:/i.test(ip)) return true;
+    if (ip.startsWith('2001:db8:')) return true;
+    return false;
+}
+
+function isPrivateOrReservedIp(address = '') {
+    const normalized = normalizeHostname(address);
+    const ipVersion = net.isIP(normalized);
+    if (ipVersion === 4) return isPrivateOrReservedIpv4(normalized);
+    if (ipVersion === 6) return isPrivateOrReservedIpv6(normalized);
+    return false;
+}
+
+async function resolveImageUrlAddresses(urlObj) {
+    const hostname = normalizeHostname(urlObj.hostname);
+    if (!hostname) throw new Error('image_url_missing_host');
+    if (net.isIP(hostname)) return [{ address: hostname, family: net.isIP(hostname) }];
+    const records = await dns.lookup(hostname, { all: true, verbatim: true });
+    if (!records || records.length === 0) {
+        throw new Error('image_url_dns_empty');
+    }
+    return records;
+}
+
+async function assertSafeOutboundImageUrl(rawUrl, options = {}) {
+    const source = String(rawUrl || '').trim();
+    let urlObj;
+    try {
+        urlObj = new URL(source);
+    } catch (error) {
+        throw new Error('image_url_invalid');
+    }
+
+    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+        throw new Error('image_url_protocol_blocked');
+    }
+    if (urlObj.username || urlObj.password) {
+        throw new Error('image_url_credentials_blocked');
+    }
+
+    const hostname = normalizeHostname(urlObj.hostname);
+    if (!hostname) throw new Error('image_url_missing_host');
+    if (!isHostnameAllowedBySet(hostname, options.allowedHosts || null)) {
+        throw new Error('image_url_host_not_allowed');
+    }
+
+    const addresses = await resolveImageUrlAddresses(urlObj);
+    const blocked = addresses.find((record) => isPrivateOrReservedIp(record.address));
+    if (blocked) {
+        const error = new Error('image_url_private_address_blocked');
+        error.address = blocked.address;
+        throw error;
+    }
+    return urlObj;
+}
+
+function buildRedirectedUrl(locationHeader = '', currentUrlObj) {
+    const location = String(locationHeader || '').trim();
+    if (!location) return '';
+    try {
+        return new URL(location, currentUrlObj).href;
+    } catch (error) {
+        return '';
+    }
+}
+
+async function readResponseBufferWithLimit(response, maxBytes) {
+    const chunks = [];
+    let total = 0;
+    if (!response.body || typeof response.body.getReader !== 'function') {
+        const fallbackBuffer = Buffer.from(await response.arrayBuffer());
+        if (fallbackBuffer.length > maxBytes) throw new Error(`image too large: ${fallbackBuffer.length}`);
+        return fallbackBuffer;
+    }
+
+    const reader = response.body.getReader();
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = Buffer.from(value);
+            total += chunk.length;
+            if (total > maxBytes) {
+                await reader.cancel().catch(() => null);
+                throw new Error(`image too large: ${total}`);
+            }
+            chunks.push(chunk);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
+}
+
+function logBlockedGeneratedImageFetch(sourceUrl, error) {
+    const hostname = (() => {
+        try {
+            return normalizeHostname(new URL(String(sourceUrl || '')).hostname);
+        } catch (e) {
+            return '';
+        }
+    })();
+    console.warn(` 生成图片下载被安全策略拦截: host=${hostname || 'unknown'}, reason=${error.message}`);
+    appendRaiRuntimeReport({
+        level: '警告',
+        tag: 'generated_image_ssrf_blocked',
+        message: '生成图片下载被 SSRF 防护拦截',
+        context: {
+            host: hostname,
+            reason: error.message,
+            address: error.address || null
+        }
+    });
+}
+
+async function fetchGeneratedImageBuffer(sourceUrl) {
+    let currentUrl = String(sourceUrl || '').trim();
+    for (let redirectCount = 0; redirectCount <= SAFE_IMAGE_FETCH_MAX_REDIRECTS; redirectCount += 1) {
+        let urlObj;
+        try {
+            urlObj = await assertSafeOutboundImageUrl(currentUrl, {
+                allowedHosts: GENERATED_IMAGE_ALLOWED_SOURCE_HOSTS
+            });
+        } catch (error) {
+            logBlockedGeneratedImageFetch(currentUrl, error);
+            throw error;
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), GENERATED_IMAGE_FETCH_TIMEOUT_MS);
+        let imageResponse;
+        try {
+            imageResponse = await fetch(urlObj.href, {
+                redirect: 'manual',
+                signal: controller.signal,
+                headers: {
+                    'User-Agent': 'RAI/1.0 image-cache',
+                    'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1'
+                }
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
+
+        if (imageResponse.status >= 300 && imageResponse.status < 400) {
+            const nextUrl = buildRedirectedUrl(imageResponse.headers.get('location') || '', urlObj);
+            if (!nextUrl) throw new Error('image_redirect_invalid');
+            const nextUrlObj = new URL(nextUrl);
+            if (normalizeHostname(nextUrlObj.hostname) !== normalizeHostname(urlObj.hostname)) {
+                throw new Error('image_redirect_cross_host_blocked');
+            }
+            currentUrl = nextUrl;
+            continue;
+        }
+
+        if (!imageResponse.ok) {
+            throw new Error(`image download failed with HTTP ${imageResponse.status}`);
+        }
+        const contentType = imageResponse.headers.get('content-type') || '';
+        const contentLength = Number(imageResponse.headers.get('content-length') || 0);
+        if (contentLength > MAX_GENERATED_IMAGE_BYTES) {
+            throw new Error(`image too large: ${contentLength}`);
+        }
+        const buffer = await readResponseBufferWithLimit(imageResponse, MAX_GENERATED_IMAGE_BYTES);
+        return { buffer, contentType };
+    }
+    throw new Error('image_redirect_limit_exceeded');
+}
+
+async function fetchSafeImageHead(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
+    let currentUrl = String(imageUrl || '').trim();
+    for (let redirectCount = 0; redirectCount <= SAFE_IMAGE_FETCH_MAX_REDIRECTS; redirectCount += 1) {
+        const urlObj = await assertSafeOutboundImageUrl(currentUrl);
+        const controller = new AbortController();
+        const timeoutHandle = setTimeout(() => controller.abort(), timeout);
+        let response;
+        try {
+            response = await fetch(urlObj.href, {
+                method: 'HEAD',
+                redirect: 'manual',
+                signal: controller.signal,
+                headers: {
+                    'User-Agent': 'RAI/1.0 image-url-check',
+                    'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1'
+                }
+            });
+        } finally {
+            clearTimeout(timeoutHandle);
+        }
+
+        if (response.status >= 300 && response.status < 400) {
+            const nextUrl = buildRedirectedUrl(response.headers.get('location') || '', urlObj);
+            if (!nextUrl) return false;
+            currentUrl = nextUrl;
+            continue;
+        }
+
+        if (response.status < 200 || response.status >= 300) return false;
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        return !contentType || contentType.startsWith('image/');
+    }
+    return false;
+}
+
 async function persistGeneratedImage(imageUrl = '', index = 0) {
     const sourceUrl = String(imageUrl || '').trim();
     if (!sourceUrl) return null;
@@ -1204,26 +1592,15 @@ async function persistGeneratedImage(imageUrl = '', index = 0) {
         contentType = match[1];
         buffer = Buffer.from(match[2], 'base64');
     } else if (/^https?:\/\//i.test(sourceUrl)) {
-        const imageResponse = await fetch(sourceUrl, {
-            headers: {
-                'User-Agent': 'RAI/1.0 image-cache'
-            }
-        });
-        if (!imageResponse.ok) {
-            throw new Error(`image download failed with HTTP ${imageResponse.status}`);
-        }
-        contentType = imageResponse.headers.get('content-type') || '';
-        const contentLength = Number(imageResponse.headers.get('content-length') || 0);
-        if (contentLength > 20 * 1024 * 1024) {
-            throw new Error(`image too large: ${contentLength}`);
-        }
-        buffer = Buffer.from(await imageResponse.arrayBuffer());
+        const downloaded = await fetchGeneratedImageBuffer(sourceUrl);
+        buffer = downloaded.buffer;
+        contentType = downloaded.contentType;
     } else {
         return null;
     }
 
     if (!buffer || buffer.length === 0) return null;
-    if (buffer.length > 20 * 1024 * 1024) {
+    if (buffer.length > MAX_GENERATED_IMAGE_BYTES) {
         throw new Error(`image too large: ${buffer.length}`);
     }
     const sniffed = sniffImageBuffer(buffer);
@@ -1505,6 +1882,125 @@ const TOOL_DEFINITIONS = [{
     }
 }];
 
+const MEMORY_DELETE_TOOL_DEFINITION = {
+    type: "function",
+    function: {
+        name: "delete_memory",
+        description: "删除用户已保存的一条或多条长期记忆。仅当用户明确要求忘记、删除、移除长期记忆时调用。优先使用[长期记忆]里#后的 memory_id / memory_ids；没有编号时传入要删除的准确记忆文本。",
+        parameters: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                memory_id: {
+                    type: "integer",
+                    description: "长期记忆列表中#后的数字ID，优先使用。"
+                },
+                memory_ids: {
+                    type: "array",
+                    items: {
+                        type: "integer"
+                    },
+                    description: "一次需要删除多条长期记忆时，传入多个#后的数字ID，例如用户确认“这两条都删掉”。"
+                },
+                target: {
+                    type: "string",
+                    description: "没有 memory_id 时，传入要删除的记忆原文或足够精确的目标文本。"
+                },
+                reason: {
+                    type: "string",
+                    description: "简短说明用户为什么要求删除，可省略。"
+                }
+            }
+        }
+    }
+};
+
+function hasToolDefinition(toolDefinitions = [], toolName = '') {
+    return toolDefinitions.some((tool) => tool?.function?.name === toolName);
+}
+
+function buildChatToolDefinitions({
+    internetMode = false,
+    imageGenerationRequested = false,
+    memoryDeleteToolRequested = false
+} = {}) {
+    const definitions = [];
+    if (internetMode || imageGenerationRequested) {
+        definitions.push(...TOOL_DEFINITIONS);
+    }
+    if (memoryDeleteToolRequested && !hasToolDefinition(definitions, 'delete_memory')) {
+        definitions.push(MEMORY_DELETE_TOOL_DEFINITION);
+    }
+    return definitions;
+}
+
+function uniquePositiveMemoryIds(values = []) {
+    const ids = [];
+    const seen = new Set();
+    const add = (value) => {
+        const id = Number(value);
+        if (!Number.isInteger(id) || id <= 0 || seen.has(id)) return;
+        seen.add(id);
+        ids.push(id);
+    };
+
+    const walk = (value) => {
+        if (Array.isArray(value)) {
+            value.forEach(walk);
+            return;
+        }
+        if (typeof value === 'number') {
+            add(value);
+            return;
+        }
+        if (typeof value === 'string') {
+            for (const match of value.matchAll(/\d+/g)) {
+                add(match[0]);
+            }
+        }
+    };
+
+    walk(values);
+    return ids;
+}
+
+function extractMemoryIdsFromText(text = '') {
+    const ids = [];
+    const seen = new Set();
+    for (const match of String(text || '').matchAll(/#\s*(\d+)/g)) {
+        const id = Number(match[1]);
+        if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids;
+}
+
+function formatMemoryIdList(ids = []) {
+    return uniquePositiveMemoryIds(ids).map((id) => `#${id}`).join('、');
+}
+
+function normalizeDeleteMemoryToolArgs(args = {}) {
+    const rawTarget = sanitizeMemoryContent(args.target || args.memory || args.content || '');
+    const explicitIds = uniquePositiveMemoryIds([
+        args.memory_ids,
+        args.memoryIds,
+        args.ids,
+        args.memory_id,
+        args.memoryId,
+        args.id
+    ]);
+    const memoryIds = uniquePositiveMemoryIds([...explicitIds, ...extractMemoryIdsFromText(rawTarget)]);
+    const reason = sanitizeMemoryContent(args.reason || '').slice(0, 180);
+    if (memoryIds.length === 0 && !rawTarget) return null;
+    return {
+        ...(memoryIds.length > 1 ? { memory_ids: memoryIds } : {}),
+        ...(memoryIds.length === 1 ? { memory_id: memoryIds[0] } : {}),
+        ...(rawTarget ? { target: rawTarget } : {}),
+        ...(reason ? { reason } : {})
+    };
+}
+
 // 工具执行器映射
 const TOOL_EXECUTORS = {
     web_search: async (args, searchDepth = 'basic') => {
@@ -1520,6 +2016,17 @@ const TOOL_EXECUTORS = {
         const safeArgs = normalizeKolorsImageArgs(args);
         console.log(` 执行工具 generate_image: model=${KOLORS_IMAGE_MODEL}, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
         return await generateKolorsImages(safeArgs);
+    },
+    delete_memory: async (args, context = {}) => {
+        const safeArgs = normalizeDeleteMemoryToolArgs(args);
+        console.log(` 执行工具 delete_memory: userId=${context?.userId || 'missing'}, ids=${formatMemoryIdList(safeArgs?.memory_ids || safeArgs?.memory_id || []) || 'none'}, target="${safeArgs?.target || ''}"`);
+        return await deleteUserMemoryByModel({
+            userId: context?.userId,
+            memoryId: safeArgs?.memory_id,
+            memoryIds: safeArgs?.memory_ids,
+            target: safeArgs?.target,
+            reason: safeArgs?.reason
+        });
     }
 };
 
@@ -2588,6 +3095,145 @@ function detectImageGenerationNeed(message = '') {
     return /(?:画|绘制|生成|做|设计|出)(?:一张|张|个|幅)?[^，。,.!?]{0,40}(?:图|图片|海报|插画|头像|封面|壁纸|视觉|logo|图像)|(?:生图|文生图|图生图|draw|generate|create|make)[^.!?]{0,60}(?:image|picture|poster|illustration|wallpaper|logo)/i.test(text);
 }
 
+function isShortMemoryDeleteConfirmation(message = '') {
+    const text = sanitizeMemoryContent(message).toLowerCase();
+    return /^(删|删除|删掉|清理|可以|好|好的|行|对|是|帮我删|那就删|删了吧|delete|remove|yes|ok|okay)$/.test(text);
+}
+
+function isVagueMemoryDeleteReference(message = '') {
+    const text = sanitizeMemoryContent(message).toLowerCase();
+    if (!text || !/(?:删|删除|删掉|清理|移除|忘掉|忘记|delete|remove|forget|clear)/i.test(text)) return false;
+    return /(?:这俩|那俩|这两|那两|两个|两条|几条|几个|这些|那些|它们|他们|上面|以上|刚才|刚刚|前面|都|全部|一起)/i.test(text)
+        || /^(?:这|那|它|这条|那条)[\s\S]{0,16}(?:删|删除|删掉|清理|移除|忘掉|忘记|delete|remove|forget|clear)/i.test(text)
+        || /(?:删|删除|删掉|清理|移除|忘掉|忘记|delete|remove|forget|clear)[\s\S]{0,16}(?:这|那|它|这些|那些|这俩|那俩|这两|那两|两个|两条|上面|以上|都|全部|一起)/i.test(text);
+}
+
+function isPluralMemoryDeleteReference(message = '') {
+    const text = sanitizeMemoryContent(message).toLowerCase();
+    return /(?:这俩|那俩|这两|那两|两个|两条|几条|几个|这些|那些|它们|他们|都|全部|一起|both|these|those|them|all)/i.test(text);
+}
+
+function scoreMemoryDeleteSegment(segment = '') {
+    const text = String(segment || '');
+    let score = 0;
+    if (/(删|删除|删掉|清理|移除|忘掉|忘记|该删|delete|remove|forget|clean)/i.test(text)) score += 5;
+    if (/(不合理|异常|错误|误会|不准|冲突|奇怪|提示词注入|攻击|不是正常|wrong|mistake|bad|incorrect|injection)/i.test(text)) score += 4;
+    if (/(需要我|是否|要我|帮你|吗|should i|want me)/i.test(text)) score += 2;
+    if (/(准确|正确|保留|不要删|别删|正常|keep|correct|accurate)/i.test(text)) score -= 5;
+    return score;
+}
+
+function pickMemoryDeleteIdsFromAssistantText(text = '', userText = '') {
+    const content = String(text || '');
+    const allIds = extractMemoryIdsFromText(content);
+    if (allIds.length === 0) return [];
+
+    const scored = [];
+    const segments = content
+        .split(/[\n\r。！？!?；;]+/)
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+    for (const segment of segments) {
+        const segmentIds = extractMemoryIdsFromText(segment);
+        const leadingIdMatch = segment.match(/^\s*(?:[-*]\s*)?#\s*(\d+)/);
+        const hasExplicitIdGroup = /(?:和|与|及|、|,|，)\s*#\s*\d+/.test(segment);
+        const ids = leadingIdMatch && !hasExplicitIdGroup
+            ? [Number(leadingIdMatch[1])]
+            : segmentIds;
+        if (ids.length === 0) continue;
+        scored.push({
+            ids,
+            score: scoreMemoryDeleteSegment(segment),
+            index: content.indexOf(segment)
+        });
+    }
+
+    if (scored.length === 0) {
+        return allIds.length === 1 ? allIds : [];
+    }
+
+    scored.sort((a, b) => b.score - a.score || b.index - a.index);
+    const positive = scored.filter((item) => item.score > 0);
+    if (positive.length === 0) {
+        return allIds.length === 1 ? allIds : [];
+    }
+
+    const top = positive[0];
+    if (isPluralMemoryDeleteReference(userText)) {
+        return uniquePositiveMemoryIds(
+            positive
+                .sort((a, b) => b.index - a.index)
+                .flatMap((item) => item.ids)
+        );
+    }
+
+    if (top.ids.length > 1) {
+        return uniquePositiveMemoryIds(
+            positive
+                .filter((item) => item.score >= top.score - 2)
+                .sort((a, b) => b.index - a.index)
+                .flatMap((item) => item.ids)
+        );
+    }
+
+    return top.ids.length > 0 ? [top.ids[0]] : [];
+}
+
+function pickMemoryDeleteIdFromAssistantText(text = '') {
+    return pickMemoryDeleteIdsFromAssistantText(text)[0] || null;
+}
+
+function buildMemoryDeleteArgsFromIds(ids = [], reason = 'user_confirmed_recent_memory_delete') {
+    const memoryIds = uniquePositiveMemoryIds(ids);
+    if (memoryIds.length === 0) return null;
+    return {
+        ...(memoryIds.length > 1 ? { memory_ids: memoryIds } : {}),
+        ...(memoryIds.length === 1 ? { memory_id: memoryIds[0] } : {}),
+        reason
+    };
+}
+
+function buildMemoryDeleteToolArgsFromConversation(userText = '', messages = []) {
+    const clean = sanitizeMemoryContent(userText);
+    if (!clean) return null;
+    const hasDeleteVerb = /(?:删|删除|删掉|清理|移除|忘掉|忘记|不要记|别记|delete|remove|forget|clear)/i.test(clean);
+    const explicitIds = extractMemoryIdsFromText(clean);
+    if (hasDeleteVerb && explicitIds.length > 0) {
+        return buildMemoryDeleteArgsFromIds(explicitIds, 'user_explicit_memory_ids');
+    }
+
+    const recentAssistantMessages = (Array.isArray(messages) ? messages : [])
+        .slice(0, -1)
+        .filter((message) => message?.role === 'assistant' && message.content)
+        .slice(-4)
+        .reverse();
+
+    const isContextualConfirmation = isShortMemoryDeleteConfirmation(clean) || isVagueMemoryDeleteReference(clean);
+    if (isContextualConfirmation) {
+        for (const message of recentAssistantMessages) {
+            const memoryIds = pickMemoryDeleteIdsFromAssistantText(message.content, clean);
+            const args = buildMemoryDeleteArgsFromIds(memoryIds, 'user_confirmed_recent_memory_delete');
+            if (args) return args;
+        }
+        return null;
+    }
+
+    const explicitArgs = normalizeDeleteMemoryToolArgs({ target: clean });
+    if (hasDeleteVerb && explicitArgs?.target && clean.length > 1) {
+        return explicitArgs;
+    }
+
+    return null;
+}
+
+function detectMemoryDeleteToolNeed(message = '', messages = []) {
+    const text = String(message || '');
+    if (!text.trim()) return false;
+    return /(?:忘掉|忘记|删除|删掉|移除|清除|取消|不要记|别记|不需要记)[\s\S]{0,80}(?:记忆|长期记忆|你记得|关于我|#\s*\d+)/i.test(text)
+        || /(?:delete|remove|forget|clear)[\s\S]{0,80}(?:memory|remember|about me|#\s*\d+)/i.test(text)
+        || !!buildMemoryDeleteToolArgsFromConversation(text, messages);
+}
+
 function detectRiskLevel(message = '') {
     const lower = String(message || '').toLowerCase();
     return HIGH_RISK_KEYWORDS.some(k => lower.includes(k.toLowerCase())) ? 'high' : 'low';
@@ -3040,45 +3686,14 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
  * @param {number} timeout - 超时时间(ms)
  * @returns {Promise<boolean>} 是否可访问
  */
-function validateImageUrl(imageUrl, timeout = 2000) {
-    return new Promise((resolve) => {
-        if (!imageUrl || typeof imageUrl !== 'string') {
-            resolve(false);
-            return;
-        }
-
-        try {
-            const urlObj = new URL(imageUrl);
-            const protocol = urlObj.protocol === 'https:' ? https : require('http');
-
-            const req = protocol.request({
-                hostname: urlObj.hostname,
-                port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
-                path: urlObj.pathname + urlObj.search,
-                method: 'HEAD',  // 只获取头部，不下载整个图片
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            }, (res) => {
-                // 2xx 或 3xx 状态码认为有效
-                const isValid = res.statusCode >= 200 && res.statusCode < 400;
-                resolve(isValid);
-            });
-
-            req.on('error', () => {
-                resolve(false);  // 请求失败，URL无效
-            });
-
-            req.setTimeout(timeout, () => {
-                req.destroy();
-                resolve(false);  // 超时，认为无效
-            });
-
-            req.end();
-        } catch (e) {
-            resolve(false);  // URL解析失败
-        }
-    });
+async function validateImageUrl(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
+    if (!imageUrl || typeof imageUrl !== 'string') return false;
+    try {
+        return await fetchSafeImageHead(imageUrl, timeout);
+    } catch (error) {
+        console.warn(` 图片URL验证已拒绝: ${error.message}`);
+        return false;
+    }
 }
 
 /**
@@ -3331,6 +3946,20 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
         };
     }
 
+    if (toolName === 'delete_memory') {
+        return {
+            success: !!result?.success,
+            deleted_count: Number(result?.deletedCount || 0),
+            deleted_memory: result?.deletedMemory || null,
+            deleted_memories: Array.isArray(result?.deletedMemories) ? result.deletedMemories : [],
+            matched_by: result?.matchedBy || '',
+            message: result?.message || '',
+            reply_instruction: result?.success
+                ? 'Tell the user briefly that the requested memory was deleted. Do not repeat or rely on the deleted memory afterward.'
+                : 'Tell the user briefly that the memory was not found or could not be deleted, and ask for the exact memory if needed.'
+        };
+    }
+
     return result;
 }
 
@@ -3580,6 +4209,21 @@ function normalizeToolCalls(toolCalls = []) {
                 },
                 _args: normalizedArgs
             });
+            continue;
+        }
+
+        if (toolName === 'delete_memory') {
+            const normalizedArgs = normalizeDeleteMemoryToolArgs(args);
+            if (!normalizedArgs) continue;
+            normalized.push({
+                id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
+                type: 'function',
+                function: {
+                    name: toolName,
+                    arguments: JSON.stringify(normalizedArgs)
+                },
+                _args: normalizedArgs
+            });
         }
     }
     return normalized;
@@ -3675,7 +4319,9 @@ async function executeNormalizedToolCall({
     taskKey,
     res,
     actualModel,
-    thinkingMode
+    thinkingMode,
+    userId = null,
+    sessionId = null
 }) {
     const toolName = toolCall?.function?.name;
     const args = toolCall?._args || {};
@@ -3709,6 +4355,15 @@ async function executeNormalizedToolCall({
         const imageResult = await TOOL_EXECUTORS.generate_image(args);
         return {
             result: imageResult,
+            sources: [],
+            searchCountInc: 0
+        };
+    }
+
+    if (toolName === 'delete_memory') {
+        const memoryResult = await TOOL_EXECUTORS.delete_memory(args, { userId, sessionId });
+        return {
+            result: memoryResult,
             sources: [],
             searchCountInc: 0
         };
@@ -4712,7 +5367,28 @@ function compactResearchSpeech(content = '', maxChars = 220) {
     if (text.length > maxChars) {
         text = `${text.slice(0, maxChars).trim()}...`;
     }
-    return text || '我需要更多信息才能判断。';
+    return text || '';
+}
+
+function extractResearchAskUserBlock(content = '') {
+    const text = String(content || '');
+    const match = text.match(/```rai_ask_user\s*\n[\s\S]*?\n```/i);
+    return match ? match[0].trim() : '';
+}
+
+function researchNeedsClarification(content = '') {
+    const text = String(content || '').replace(/```[\s\S]*?```/g, ' ').trim();
+    if (!text) return false;
+    return /(?:我需要更多信息才能判断|需要更多信息|信息不够|信息不足|缺少(?:关键)?信息|无法判断|无法评估|无法确定|无法给出判断|需要用户补充|need more information|insufficient information|not enough information|cannot determine|cannot judge)/i.test(text);
+}
+
+function buildResearchAskUserBlock({ speakerLabel = '研究模型' } = {}) {
+    const payload = {
+        question: `${speakerLabel} 认为还缺少关键条件。请补充背景、目标、限制或你希望优先判断的标准。`,
+        options: [],
+        placeholder: '补充信息后发送，RAI 会继续研究'
+    };
+    return `\`\`\`rai_ask_user\n${JSON.stringify(payload)}\n\`\`\``;
 }
 
 function buildResearchChatTranscript(speeches = [], maxChars = 4200, interjections = []) {
@@ -4748,7 +5424,7 @@ async function runResearchDebateMode({
     const masterId = await resolveAvailableResearchModel(normalizeResearchMasterModel(masterModelId));
     const debateMode = normalizeResearchMode(researchMode) === 'fast' ? 'fast' : 'deep';
     const useThinking = debateMode === 'deep' && debateThinkingMode !== false;
-    const roundLimit = Math.max(1, Math.min(parseInt(maxDebateRounds, 10) || (debateMode === 'deep' ? 3 : 2), debateMode === 'deep' ? 4 : 3));
+    const roundLimit = Math.max(1, Math.min(parseInt(maxDebateRounds, 10) || (debateMode === 'deep' ? 3 : 2), 50));
     const speechTokenLimit = debateMode === 'deep' ? 520 : 360;
     const speakers = buildResearchSpeakers(agentModelIds);
     for (const speaker of speakers) {
@@ -4895,13 +5571,14 @@ async function runResearchDebateMode({
                         `[研究聊天第${round}轮：${speaker.label}]`,
                         `当前研究模式：${debateMode === 'deep' ? '深度研究' : '快速研究'}。`,
                         '你正在一个聊天软件气泡式讨论中发言。你只发言一次，必须短、准、在点上。',
-                        '输出必须只有两行：',
+                        '通常输出必须只有两行：',
                         '第一行必须从下面二选一：结论状态：无重大问题 / 结论状态：仍有问题',
                         '第二行必须写：发言：一句或两句，最多120个中文字符或80个英文单词。',
-                        '开放性问题不要用“信息不足”逃避；除非确实缺少关键事实，否则必须基于已知上下文给出有用判断。',
+                        '开放性问题不要用“信息不足”逃避；除非确实缺少会改变答案的关键事实，否则必须基于已知上下文给出有用判断。',
+                        '如果你确实认为缺少关键事实，不要说“我需要更多信息才能判断”，而是只输出一个 rai_ask_user 工具块：```rai_ask_user 后接 JSON（question、options、placeholder）再以 ``` 结束，不要输出其他文字。',
                         '质疑对象只能是此前模型发言，不要质疑用户的问题或用户的新插话。',
                         '如果前面模型有漏洞，要尖锐指出最关键漏洞和修正方向；如果认可，也必须说明还有哪些边界需要收紧，不要空泛附和。',
-                        '不要输出给用户的最终正文，不要长篇分点，不要代码块。',
+                        '不要输出给用户的最终正文，不要长篇分点；除 rai_ask_user 以外不要输出代码块。',
                         '',
                         '用户原问题：',
                         userMessage,
@@ -4972,6 +5649,33 @@ async function runResearchDebateMode({
                 });
 
                 const rawContent = truncateResearchText(result.content || streamedSpeech, 1200);
+                const askUserBlock = extractResearchAskUserBlock(rawContent)
+                    || (researchNeedsClarification(rawContent) ? buildResearchAskUserBlock({ speakerLabel: speaker.label }) : '');
+                if (askUserBlock) {
+                    emitResearchEvent({
+                        type: 'agent_status',
+                        role: speaker.role,
+                        scope: 'task',
+                        stepId,
+                        taskId,
+                        status: 'done',
+                        detail: `${speaker.label} 请求用户补充关键信息`,
+                        durationMs: Date.now() - stepStartedAt
+                    });
+                    if (typeof onContent === 'function') {
+                        onContent(askUserBlock);
+                    }
+                    return {
+                        finalModel: masterId,
+                        actualModel: result.actualModel || masterId,
+                        content: askUserBlock,
+                        reasoningContent: truncateResearchText(result.reasoningContent || streamedReasoning, 3000),
+                        sources: [],
+                        usage: result.usage || {},
+                        clarificationRequested: true,
+                        researchMode: debateMode
+                    };
+                }
                 const reasoningForBubble = truncateResearchText(result.reasoningContent || streamedReasoning, 3000);
                 const debateStatus = extractResearchDebateStatus(rawContent);
                 const speech = compactResearchSpeech(rawContent, debateMode === 'deep' ? 240 : 180);
@@ -5617,6 +6321,87 @@ async function runTrueParallelAgentMode({
 }
 
 // ==================== 多模态内容处理 (OpenAI兼容格式) ====================
+
+function sanitizeClientMessageContent(content) {
+    if (typeof content === 'string') {
+        return content.replace(/\u0000/g, '').slice(0, CHAT_CLIENT_MAX_MESSAGE_CHARS);
+    }
+    if (Array.isArray(content)) {
+        const textParts = [];
+        for (const item of content.slice(0, 16)) {
+            if (!item || typeof item !== 'object') continue;
+            if (item.type === 'text' && typeof item.text === 'string') {
+                textParts.push(item.text);
+            }
+        }
+        return textParts.join('\n').replace(/\u0000/g, '').slice(0, CHAT_CLIENT_MAX_MESSAGE_CHARS);
+    }
+    return '';
+}
+
+function sanitizeClientAttachment(attachment = {}) {
+    if (!attachment || typeof attachment !== 'object') return null;
+    const type = String(attachment.type || '').trim().toLowerCase();
+    if (!['image', 'audio', 'video', 'file', 'document'].includes(type)) return null;
+    const data = typeof attachment.data === 'string'
+        ? attachment.data.slice(0, 12 * 1024 * 1024)
+        : '';
+    return {
+        type,
+        fileName: String(attachment.fileName || attachment.originalName || '').slice(0, 255),
+        originalName: String(attachment.originalName || '').slice(0, 255),
+        fileId: path.basename(String(attachment.fileId || attachment.filename || '').slice(0, 255)),
+        filename: path.basename(String(attachment.filename || '').slice(0, 255)),
+        filePath: String(attachment.filePath || '').slice(0, 512),
+        mimeType: String(attachment.mimeType || attachment.fileType || '').slice(0, 120),
+        fileType: String(attachment.fileType || attachment.mimeType || '').slice(0, 120),
+        size: Number.isFinite(Number(attachment.size)) ? Math.max(0, Number(attachment.size)) : 0,
+        data
+    };
+}
+
+function sanitizeClientAttachments(attachments) {
+    if (!Array.isArray(attachments)) return [];
+    return attachments
+        .slice(0, CHAT_CLIENT_MAX_ATTACHMENTS)
+        .map((attachment) => sanitizeClientAttachment(attachment))
+        .filter(Boolean);
+}
+
+function sanitizeClientChatMessages(rawMessages = []) {
+    const source = Array.isArray(rawMessages)
+        ? rawMessages.slice(-CHAT_CLIENT_MAX_MESSAGES)
+        : [];
+    const messages = [];
+    const rejectedRoles = [];
+    let totalChars = 0;
+
+    for (const item of source) {
+        if (!item || typeof item !== 'object') continue;
+        const role = String(item.role || '').trim().toLowerCase();
+        if (!CHAT_CLIENT_ALLOWED_ROLES.has(role)) {
+            rejectedRoles.push(role || '(empty)');
+            continue;
+        }
+
+        let content = sanitizeClientMessageContent(item.content);
+        const remaining = CHAT_CLIENT_MAX_TOTAL_CHARS - totalChars;
+        if (remaining <= 0) break;
+        if (content.length > remaining) {
+            content = content.slice(0, remaining);
+        }
+        totalChars += content.length;
+
+        const sanitized = { role, content };
+        if (role === 'user') {
+            const attachments = sanitizeClientAttachments(item.attachments);
+            if (attachments.length > 0) sanitized.attachments = attachments;
+        }
+        messages.push(sanitized);
+    }
+
+    return { messages, rejectedRoles };
+}
 
 /**
  * 检测消息中是否包含多模态内容
@@ -6481,6 +7266,11 @@ db.serialize(() => {
     password_hash TEXT NOT NULL,
     email_verified INTEGER DEFAULT 1,
     email_verified_at DATETIME,
+    pending_email TEXT,
+    pending_email_current_code_hash TEXT,
+    pending_email_current_verified_at INTEGER,
+    pending_email_code_hash TEXT,
+    pending_email_expires_at INTEGER,
     username TEXT,
     avatar_url TEXT,
     pending_referrer_id INTEGER,
@@ -6500,7 +7290,7 @@ db.serialize(() => {
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     title TEXT DEFAULT '新对话',
-    model TEXT DEFAULT 'deepseek-pro',
+    model TEXT DEFAULT 'auto',
     session_kind TEXT DEFAULT 'chat',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -6542,7 +7332,8 @@ db.serialize(() => {
     long_memory_opted_in_at DATETIME,
     short_memory_titles TEXT,
     short_memory_updated_at DATETIME,
-    tab_title_mode TEXT DEFAULT 'marquee',
+    font_preference TEXT DEFAULT 'rai',
+    tab_title_mode TEXT DEFAULT 'default',
     tab_title_custom_text TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
@@ -6735,6 +7526,16 @@ db.serialize(() => {
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS user_two_factor_setup_challenges (
+    setup_id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    secret TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
     db.run(`CREATE TABLE IF NOT EXISTS admin_runtime_settings (
     setting_key TEXT PRIMARY KEY,
     setting_value TEXT NOT NULL,
@@ -6859,7 +7660,15 @@ db.serialize(() => {
             }
         });
 
-        db.run(`ALTER TABLE user_configs ADD COLUMN tab_title_mode TEXT DEFAULT 'marquee'`, (err) => {
+        db.run(`ALTER TABLE user_configs ADD COLUMN font_preference TEXT DEFAULT 'rai'`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加font_preference列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加font_preference列到user_configs表');
+            }
+        });
+
+        db.run(`ALTER TABLE user_configs ADD COLUMN tab_title_mode TEXT DEFAULT 'default'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
                 console.warn(` 添加tab_title_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
@@ -6988,6 +7797,46 @@ db.serialize(() => {
             );
         });
 
+        db.run(`ALTER TABLE users ADD COLUMN pending_email TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加pending_email列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加pending_email列到users表');
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN pending_email_current_code_hash TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加pending_email_current_code_hash列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加pending_email_current_code_hash列到users表');
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN pending_email_current_verified_at INTEGER`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加pending_email_current_verified_at列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加pending_email_current_verified_at列到users表');
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN pending_email_code_hash TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加pending_email_code_hash列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加pending_email_code_hash列到users表');
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN pending_email_expires_at INTEGER`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加pending_email_expires_at列失败(可能已存在):`, err.message);
+            } else if (!err) {
+                console.log(' 已添加pending_email_expires_at列到users表');
+            }
+        });
+
         db.run(`ALTER TABLE users ADD COLUMN pending_referrer_id INTEGER`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
                 console.warn(` 添加pending_referrer_id列失败(可能已存在):`, err.message);
@@ -7107,6 +7956,22 @@ db.serialize(() => {
                 console.warn(` 创建邮箱验证码过期索引失败:`, err.message);
             } else {
                 console.log(' 邮箱验证码过期索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_users_pending_email ON users(pending_email, pending_email_expires_at)`, (err) => {
+            if (err) {
+                console.warn(` 创建待确认邮箱索引失败:`, err.message);
+            } else {
+                console.log(' 待确认邮箱索引就绪');
+            }
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_user_2fa_setup_challenges_user ON user_two_factor_setup_challenges(user_id, expires_at, consumed_at)`, (err) => {
+            if (err) {
+                console.warn(` 创建二步验证设置挑战索引失败:`, err.message);
+            } else {
+                console.log(' 二步验证设置挑战索引就绪');
             }
         });
 
@@ -7300,6 +8165,14 @@ function buildConnectSrcPolicy(req) {
     return `connect-src ${sources.join(' ')}`;
 }
 
+function buildScriptSrcPolicy() {
+    const sources = ["'self'", 'blob:'];
+    if (!CSP_STRICT_SCRIPT_SRC) {
+        sources.splice(1, 0, "'unsafe-inline'", "'unsafe-eval'");
+    }
+    return `script-src ${sources.join(' ')}`;
+}
+
 function setSecurityHeaders(req, res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -7310,7 +8183,7 @@ function setSecurityHeaders(req, res) {
         "base-uri 'self'",
         "object-src 'none'",
         "frame-ancestors 'self' https://rai.rick.quest https://rai.000339.xyz",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+        buildScriptSrcPolicy(),
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
         "font-src 'self' data:",
@@ -7353,11 +8226,18 @@ app.use((req, res, next) => {
     setSecurityHeaders(req, res);
     next();
 });
-// 静态资源缓存配置（1天 = 86400秒）
+// 静态资源缓存配置（普通资源 1 天；版本化字体长期缓存）
 const staticCacheOptions = {
     maxAge: '1d',
     etag: true,
-    lastModified: true
+    lastModified: true,
+    setHeaders(res, filePath) {
+        const normalizedPath = String(filePath || '').split(path.sep).join('/');
+        if (normalizedPath.includes('/public/fonts/')) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+        }
+    }
 };
 
 const avatarStaticOptions = {
@@ -8130,6 +9010,7 @@ async function deleteUserDataCascade(userId, options = {}) {
         await dbRunAsync('DELETE FROM auth_ztx6d_codes WHERE user_id = ?', [numericUserId]);
         await dbRunAsync('DELETE FROM auth_ztx6d_rt WHERE bind_user_id = ?', [numericUserId]);
         await dbRunAsync('DELETE FROM auth_email_codes WHERE user_id = ? OR LOWER(email) = LOWER(?)', [numericUserId, user.email || '']);
+        await dbRunAsync('DELETE FROM user_two_factor_setup_challenges WHERE user_id = ?', [numericUserId]);
         await dbRunAsync('UPDATE users SET pending_referrer_id = NULL WHERE pending_referrer_id = ?', [numericUserId]);
 
         const result = await dbRunAsync('DELETE FROM users WHERE id = ?', [numericUserId]);
@@ -8162,7 +9043,7 @@ const avatarUpload = multer({
 
 const attachmentUpload = multer({
     storage: storage,
-    limits: { fileSize: 20 * 1024 * 1024 },
+    limits: { fileSize: ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES },
     fileFilter: validateAttachmentUpload
 });
 
@@ -8763,7 +9644,7 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
         try {
             inviteReward = await awardInviteReferralIfValid(pendingReferrer, userId, req);
             if (inviteReward?.awarded) {
-                console.log(` 邀请奖励成功: referrer=${pendingReferrer}, invited=${userId}, points=${inviteReward.pointsGained}`);
+                console.log(` 邀请奖励成功: referrer=${pendingReferrer}, invited=${userId}, referrerPoints=${inviteReward.pointsGained || 0}, inviteePoints=${inviteReward.inviteePointsGained || 0}`);
             }
         } catch (inviteError) {
             console.warn(` 邀请奖励失败 referrer=${pendingReferrer}, invited=${userId}:`, inviteError.message);
@@ -8989,9 +9870,30 @@ app.post('/api/auth/register/verify', authLimiter, async (req, res) => {
     }
 });
 
+app.post('/api/auth/login/precheck', authLimiter, async (req, res) => {
+    try {
+        const normalizedEmail = normalizeEmailForAuth(req.body?.email);
+        if (!isValidEmailForAuth(normalizedEmail)) {
+            return res.json({ success: true, twoFactorRequired: false });
+        }
+        const user = await dbGetAsync(
+            'SELECT email_verified, two_factor_enabled, two_factor_secret FROM users WHERE LOWER(email) = LOWER(?)',
+            [normalizedEmail]
+        );
+        if (!user || Number(user.email_verified ?? 1) !== 1) {
+            return res.json({ success: true, twoFactorRequired: false });
+        }
+        const twoFactorRequired = Number(user.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(user.two_factor_secret);
+        return res.json({ success: true, twoFactorRequired });
+    } catch (error) {
+        console.error(' 登录预检失败:', error);
+        return res.json({ success: true, twoFactorRequired: false });
+    }
+});
+
 app.post('/api/auth/login', authLimiter, async (req, res) => {
     try {
-        const { email, password, fingerprint } = req.body;
+        const { email, password, fingerprint, twoFactorCode } = req.body;
         const normalizedEmail = normalizeEmailForAuth(email);
 
         if (!normalizedEmail || !password) {
@@ -9028,14 +9930,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 	                        fingerprint,
 	                        referrerId: user.pending_referrer_id || '',
 	                        bypassReason: 'resend_testing_domain_restricted'
-	                    });
+                    });
 	                    return res.json(payload);
 	                }
 	                if (isResendTestingRestrictionError(sent.error)) {
 	                    return res.status(400).json({
 	                        success: false,
 	                        error: '验证邮件发送失败：邮件服务尚未完成发信域名验证，请联系管理员处理'
-	                    });
+                    });
 	                }
 	                return res.status(502).json({ success: false, error: '验证邮件发送失败，请稍后再试' });
 	            }
@@ -9049,6 +9951,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
         const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(user.two_factor_secret);
         if (twoFactorEnabled) {
+            const inlineTwoFactorCode = typeof twoFactorCode === 'string' ? twoFactorCode.trim() : '';
+            if (inlineTwoFactorCode) {
+                if (!verifyTotpCode(user.two_factor_secret, inlineTwoFactorCode)) {
+                    return res.status(401).json({ success: false, error: 'Authenticator 验证码无效' });
+                }
+                const payload = await buildAuthenticatedUserPayload(user, req, fingerprint);
+                console.log(' 登录成功(含二步验证), 用户ID:', user.id);
+                return res.json(payload);
+            }
             console.log(' 登录需要二步验证, 用户ID:', user.id);
             return res.json({
                 success: false,
@@ -9278,6 +10189,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
     db.get(
         `SELECT u.id, u.email, u.username, u.avatar_url, u.created_at, u.last_login,
       COALESCE(u.email_verified, 1) as email_verified, u.email_verified_at,
+	      u.pending_email, u.pending_email_expires_at, u.pending_email_current_verified_at, u.pending_email_code_hash,
       u.external_provider, u.external_uid, COALESCE(u.two_factor_enabled, 0) as two_factor_enabled,
       COALESCE(c.theme, 'dark') as theme,
       COALESCE(c.default_model, 'auto') as default_model,
@@ -9289,11 +10201,12 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
       COALESCE(c.system_prompt, '') as system_prompt,
       COALESCE(c.thinking_mode, 0) as thinking_mode,
 	      COALESCE(c.internet_mode, 0) as internet_mode,
-	      COALESCE(c.long_memory_enabled, ?) as long_memory_enabled,
+ 	      COALESCE(c.long_memory_enabled, ?) as long_memory_enabled,
           c.long_memory_opted_in_at as long_memory_opted_in_at,
           c.short_memory_titles as short_memory_titles,
           c.short_memory_updated_at as short_memory_updated_at,
-          COALESCE(c.tab_title_mode, 'marquee') as tab_title_mode,
+          COALESCE(c.font_preference, 'rai') as font_preference,
+          COALESCE(c.tab_title_mode, 'default') as tab_title_mode,
           c.tab_title_custom_text as tab_title_custom_text
     FROM users u
     LEFT JOIN user_configs c ON u.id = c.user_id
@@ -9302,64 +10215,12 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
         (err, user) => {
             if (err) {
                 console.error(' 获取用户信息失败:', err);
-                // 返回默认配置,而不是抛出500错误
-                return res.json({
-                    id: req.user.userId,
-                    email: 'user@example.com',
-                    username: 'User',
-                    avatar_url: null,
-                    external_provider: null,
-                    external_uid: null,
-                    two_factor_enabled: 0,
-                    created_at: new Date().toISOString(),
-                    last_login: new Date().toISOString(),
-                    theme: 'dark',
-                    default_model: 'auto',
-                    temperature: 0.7,
-                    top_p: 0.9,
-                    max_tokens: 2000,
-                    frequency_penalty: 0,
-                    presence_penalty: 0,
-                    system_prompt: '',
-                    thinking_mode: 0,
-                    internet_mode: 0,
-	                    long_memory_enabled: 0,
-                        long_memory_opted_in_at: null,
-                        short_memory_titles: [],
-                        tab_title_mode: 'marquee',
-                        tab_title_custom_text: ''
-                });
+                return res.status(500).json({ success: false, error: '获取用户资料失败' });
             }
 
             if (!user) {
                 console.error(' 用户不存在, ID:', req.user.userId);
-                // 同样返回默认配置
-                return res.json({
-                    id: req.user.userId,
-                    email: 'user@example.com',
-                    username: 'User',
-                    avatar_url: null,
-                    external_provider: null,
-                    external_uid: null,
-                    two_factor_enabled: 0,
-                    created_at: new Date().toISOString(),
-                    last_login: new Date().toISOString(),
-                    theme: 'dark',
-                    default_model: 'auto',
-                    temperature: 0.7,
-                    top_p: 0.9,
-                    max_tokens: 2000,
-                    frequency_penalty: 0,
-                    presence_penalty: 0,
-                    system_prompt: '',
-                    thinking_mode: 0,
-                    internet_mode: 0,
-	                    long_memory_enabled: 0,
-                        long_memory_opted_in_at: null,
-                        short_memory_titles: [],
-                        tab_title_mode: 'marquee',
-                        tab_title_custom_text: ''
-                });
+                return res.status(401).json({ success: false, error: '用户不存在，请重新登录' });
             }
 
             //  修复：确保所有字段都有值，特别是system_prompt
@@ -9369,7 +10230,12 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 username: user.username || user.email.split('@')[0],
                 avatar_url: user.avatar_url || null,
                 email_verified: Number(user.email_verified ?? 1) === 1,
-                email_verified_at: user.email_verified_at || null,
+	                email_verified_at: user.email_verified_at || null,
+	                pending_email: user.pending_email || null,
+	                pending_email_expires_at: user.pending_email_expires_at || null,
+	                pending_email_stage: user.pending_email
+	                    ? (user.pending_email_current_verified_at && user.pending_email_code_hash ? 'new' : 'current')
+	                    : null,
                 external_provider: user.external_provider || null,
                 external_uid: user.external_uid || null,
                 two_factor_enabled: Number(user.two_factor_enabled || 0) === 1,
@@ -9388,7 +10254,8 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
 	                long_memory_enabled: isMemoryOptedInConfig(user) ? 1 : 0,
                     long_memory_opted_in_at: user.long_memory_opted_in_at || null,
                     short_memory_titles: parseShortMemoryTitles(user.short_memory_titles),
-                    tab_title_mode: user.tab_title_mode || 'marquee',
+                    font_preference: user.font_preference || 'rai',
+                    tab_title_mode: user.tab_title_mode || 'default',
                     tab_title_custom_text: user.tab_title_custom_text || ''
             };
 
@@ -9400,20 +10267,17 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
 
 app.put('/api/user/profile', authenticateToken, async (req, res) => {
     try {
-        const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+        const rawEmail = normalizeEmailForAuth(req.body?.email);
         const rawUsername = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+        const twoFactorCode = typeof req.body?.twoFactorCode === 'string' ? req.body.twoFactorCode : '';
 
         if (!rawEmail) {
             return res.status(400).json({ success: false, error: '邮箱不能为空' });
         }
 
-        if (!emailRegex.test(rawEmail)) {
+        if (!isValidEmailForAuth(rawEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
-        }
-
-        if (rawEmail.length > 255) {
-            return res.status(400).json({ success: false, error: '邮箱长度不能超过255个字符' });
         }
 
         const usernameResult = normalizeUsernameForStorage(rawUsername);
@@ -9421,29 +10285,98 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             return res.status(400).json({ success: false, error: usernameResult.error });
         }
 
-        const finalUsername = usernameResult.value || buildDefaultUsernameFromEmail(rawEmail);
-        const duplicateUser = await dbGetAsync(
-            'SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?',
-            [rawEmail, req.user.userId]
+        const existingUser = await dbGetAsync(
+            `SELECT id, email, username, password_hash, avatar_url, external_provider, external_uid,
+                    COALESCE(two_factor_enabled, 0) as two_factor_enabled, two_factor_secret
+             FROM users
+             WHERE id = ?`,
+            [req.user.userId]
         );
 
-        if (duplicateUser) {
-            return res.status(409).json({ success: false, error: '该邮箱已被其他账号使用' });
+        if (!existingUser) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+
+        const currentEmail = normalizeEmailForAuth(existingUser.email);
+        const emailChanged = rawEmail !== currentEmail;
+        const finalUsername = usernameResult.value || buildDefaultUsernameFromEmail(emailChanged ? rawEmail : existingUser.email);
+
+        if (emailChanged) {
+            const duplicateUser = await dbGetAsync(
+                'SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?',
+                [rawEmail, req.user.userId]
+            );
+
+            if (duplicateUser) {
+                return res.status(409).json({ success: false, error: '该邮箱已被其他账号使用' });
+            }
+
+            const currentPasswordError = validatePasswordLength(currentPassword, '当前密码');
+            if (currentPasswordError) {
+                return res.status(400).json({ success: false, error: '修改邮箱需要输入当前密码' });
+            }
+
+            const passwordMatched = await bcrypt.compare(currentPassword, existingUser.password_hash).catch(() => false);
+            if (!passwordMatched) {
+                return res.status(400).json({ success: false, error: '当前密码错误' });
+            }
+
+            const twoFactorEnabled = Number(existingUser.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(existingUser.two_factor_secret);
+            if (twoFactorEnabled && !verifyTotpCode(existingUser.two_factor_secret, twoFactorCode)) {
+                return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
+            }
+
+            await dbRunAsync('UPDATE users SET username = ? WHERE id = ?', [finalUsername, req.user.userId]);
+
+            let pending;
+            try {
+                pending = await issuePendingEmailChangeCode({
+                    userId: req.user.userId,
+                    currentEmail,
+                    email: rawEmail,
+                    req
+                });
+            } catch (emailError) {
+                console.error(' 修改邮箱验证码发送失败:', emailError);
+                return res.status(503).json({
+                    success: false,
+                    error: '验证码发送失败，邮箱尚未变更，请稍后重试'
+                });
+            }
+
+            const updatedUser = await dbGetAsync(
+                'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
+                [req.user.userId]
+            );
+
+            console.log(` 用户邮箱变更待验证: userId=${existingUser.id}, old=${existingUser.email}, pending=${rawEmail}`);
+            return res.json({
+	                success: true,
+	                email_change_verification_required: true,
+	                current_email_verification_required: true,
+	                pending_email: pending.pending_email,
+	                pending_email_expires_at: pending.pending_email_expires_at,
+	                pending_email_stage: pending.pending_email_stage,
+	                user: {
+                    id: updatedUser.id,
+                    email: updatedUser.email,
+                    username: updatedUser.username,
+                    avatar_url: updatedUser.avatar_url || null,
+                    external_provider: updatedUser.external_provider || null,
+                    external_uid: updatedUser.external_uid || null
+                }
+            });
         }
 
         await dbRunAsync(
-            'UPDATE users SET email = ?, username = ? WHERE id = ?',
-            [rawEmail, finalUsername, req.user.userId]
+            'UPDATE users SET username = ? WHERE id = ?',
+            [finalUsername, req.user.userId]
         );
 
         const updatedUser = await dbGetAsync(
             'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
             [req.user.userId]
         );
-
-        if (!updatedUser) {
-            return res.status(404).json({ success: false, error: '用户不存在' });
-        }
 
         const refreshedToken = jwt.sign(
             { userId: updatedUser.id, email: updatedUser.email },
@@ -9470,6 +10403,71 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
+app.post('/api/user/profile/email/verify', authenticateToken, async (req, res) => {
+    try {
+        const email = normalizeEmailForAuth(req.body?.email);
+        const code = normalizeEmailCodeInput(req.body?.code);
+        const updatedUser = await verifyPendingEmailChange({
+            userId: req.user.userId,
+            email,
+            code
+        });
+
+        const refreshedToken = jwt.sign(
+            { userId: updatedUser.id, email: updatedUser.email },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        console.log(` 用户邮箱变更已确认: userId=${updatedUser.id}, email=${updatedUser.email}`);
+        res.json({
+            success: true,
+            token: refreshedToken,
+            user: {
+                id: updatedUser.id,
+                email: updatedUser.email,
+                username: updatedUser.username,
+                avatar_url: updatedUser.avatar_url || null,
+                external_provider: updatedUser.external_provider || null,
+                external_uid: updatedUser.external_uid || null
+            }
+        });
+    } catch (error) {
+        console.error(' 确认邮箱变更失败:', error.message);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.statusCode ? error.message : '确认邮箱变更失败'
+        });
+    }
+});
+
+app.post('/api/user/profile/email/verify-current', authenticateToken, async (req, res) => {
+    try {
+        const email = normalizeEmailForAuth(req.body?.email);
+        const currentEmailCode = normalizeEmailCodeInput(req.body?.currentEmailCode);
+        const pending = await verifyPendingEmailCurrentCodeAndIssueNewCode({
+            userId: req.user.userId,
+            email,
+            currentEmailCode,
+            req
+        });
+
+        res.json({
+            success: true,
+            new_email_verification_required: true,
+            pending_email: pending.pending_email,
+            pending_email_expires_at: pending.pending_email_expires_at,
+            pending_email_stage: pending.pending_email_stage
+        });
+    } catch (error) {
+        console.error(' 确认旧邮箱验证码失败:', error.message);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.statusCode ? error.message : '确认旧邮箱验证码失败'
+        });
+    }
+});
+
 app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
     try {
         const user = await dbGetAsync(
@@ -9486,6 +10484,7 @@ app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
         }
 
         const secret = generateTotpSecret();
+        const setupChallenge = await createUserTwoFactorSetupChallenge(user, secret);
         const accountName = user.email || `user-${user.id}`;
         const otpauthUrl = buildOtpAuthUrl({ accountName, secret });
         const qrDataUrl = await QRCode.toDataURL(otpauthUrl, {
@@ -9499,7 +10498,8 @@ app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
             secret,
             otpauthUrl,
             qrDataUrl,
-            setupToken: buildUserTwoFactorSetupToken(user, secret)
+            setupToken: buildUserTwoFactorSetupToken(user, setupChallenge.setupId),
+            expiresAt: setupChallenge.expiresAt
         });
     } catch (error) {
         console.error(' 创建二步验证设置失败:', error);
@@ -9526,12 +10526,20 @@ app.post('/api/user/2fa/enable', authenticateToken, async (req, res) => {
         if (
             decoded?.type !== 'user_2fa_setup'
             || Number(decoded.userId) !== Number(req.user.userId)
-            || !normalizeTotpSecret(decoded.secret)
+            || !decoded.setupId
         ) {
             return res.status(401).json({ success: false, error: '二步验证设置无效，请重新生成' });
         }
 
-        const secret = normalizeTotpSecret(decoded.secret);
+        const setupChallenge = await consumeUserTwoFactorSetupChallenge({
+            setupId: decoded.setupId,
+            userId: req.user.userId
+        });
+        const secret = normalizeTotpSecret(setupChallenge?.secret);
+        if (!secret) {
+            return res.status(401).json({ success: false, error: '二步验证设置已过期，请重新生成' });
+        }
+
         if (!verifyTotpCode(secret, code)) {
             return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
         }
@@ -9715,10 +10723,11 @@ function sanitizeUserConfigPayload(payload = {}) {
     const safeDefaultModel = defaultModel === 'auto' || PUBLIC_MODEL_IDS.includes(defaultModel) || MODEL_ROUTING[defaultModel]
         ? defaultModel
         : 'auto';
-    const allowedTabTitleModes = ['static', 'marquee', 'greeting', 'title', 'custom'];
+    const fontPreference = String(payload.font_preference || '').trim().toLowerCase() === 'system' ? 'system' : 'rai';
+    const allowedTabTitleModes = ['default', 'static', 'marquee', 'greeting', 'title', 'custom'];
     const tabTitleMode = allowedTabTitleModes.includes(String(payload.tab_title_mode || '').trim())
         ? String(payload.tab_title_mode).trim()
-        : 'marquee';
+        : 'default';
     const tabTitleCustomText = String(payload.tab_title_custom_text ?? '').slice(0, 80);
 
     return {
@@ -9735,6 +10744,7 @@ function sanitizeUserConfigPayload(payload = {}) {
         long_memory_enabled: payload.long_memory_enabled === undefined
             ? null
             : (isLongMemoryEnabledValue(payload.long_memory_enabled) ? 1 : 0),
+        font_preference: fontPreference,
         tab_title_mode: tabTitleMode,
         tab_title_custom_text: tabTitleCustomText
     };
@@ -9748,9 +10758,9 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
             `INSERT INTO user_configs (
           user_id, theme, default_model, temperature, top_p, max_tokens,
           frequency_penalty, presence_penalty, system_prompt, thinking_mode, internet_mode, long_memory_enabled,
-          tab_title_mode, tab_title_custom_text
+          font_preference, tab_title_mode, tab_title_custom_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           theme = excluded.theme,
           default_model = excluded.default_model,
@@ -9766,6 +10776,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
             WHEN ? IS NULL THEN user_configs.long_memory_enabled
             ELSE excluded.long_memory_enabled
           END,
+          font_preference = excluded.font_preference,
           tab_title_mode = excluded.tab_title_mode,
           tab_title_custom_text = excluded.tab_title_custom_text`,
             [
@@ -9773,7 +10784,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
                 safeConfig.temperature, safeConfig.top_p, safeConfig.max_tokens,
                 safeConfig.frequency_penalty, safeConfig.presence_penalty, safeConfig.system_prompt,
                 safeConfig.thinking_mode, safeConfig.internet_mode, safeConfig.long_memory_enabled,
-                safeConfig.tab_title_mode, safeConfig.tab_title_custom_text,
+                safeConfig.font_preference, safeConfig.tab_title_mode, safeConfig.tab_title_custom_text,
                 safeConfig.long_memory_enabled
             ]
         );
@@ -9955,10 +10966,14 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
 
         const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
         const { title, model, session_kind: sessionKind = 'chat' } = req.body;
+        const requestedTitle = String(title || '').trim();
+        const fallbackTitle = String(sessionKind || 'chat') === 'temporary_saved' ? '临时对话' : '新对话';
+        const safeTitle = sanitizeGeneratedConversationTitle(requestedTitle)
+            || (requestedTitle && GENERIC_SESSION_TITLE_RE.test(requestedTitle) ? requestedTitle : fallbackTitle);
 
         db.run(
             'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
-            [sessionId, req.user.userId, title || '新对话', model || 'deepseek-pro', sessionKind || 'chat'],
+            [sessionId, req.user.userId, safeTitle, model || 'deepseek-pro', sessionKind || 'chat'],
             (err) => {
                 if (err) {
                     console.error(' 创建会话失败:', err);
@@ -9976,10 +10991,11 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
 
 app.put('/api/sessions/:id', authenticateToken, (req, res) => {
     const { title, model, is_archived } = req.body;
+    const safeTitle = title === undefined ? null : sanitizeGeneratedConversationTitle(title);
 
     db.run(
         'UPDATE sessions SET title = COALESCE(?, title), model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-        [title, model, is_archived, req.params.id, req.user.userId],
+        [safeTitle, model, is_archived, req.params.id, req.user.userId],
         (err) => {
             if (err) {
                 console.error(' 更新会话失败:', err);
@@ -10015,9 +11031,9 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
         // 优化：只查询必要字段，避免加载大的attachments Base64数据
         // 附件数据可以按需加载（懒加载）
         db.all(
-            `SELECT id, session_id, role, content, reasoning_content, model,
+            `SELECT id, session_id, role, content, reasoning_content, model, 
                     enable_search, thinking_mode, internet_mode, sources, process_trace, created_at,
-                    CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
+                    CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]' 
                          THEN 1 ELSE 0 END as has_attachments
              FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
             [req.params.id],
@@ -10313,6 +11329,217 @@ function parseStructuredAssistantOutput(rawText = '') {
         canvasPatchRaw,
         canvasPatchParseError
     };
+}
+
+function sanitizeGeneratedConversationTitle(text = '', uiLanguage = '') {
+    let title = String(text || '')
+        .replace(/\[TITLE\]|\[\/TITLE\]/gi, '')
+        .replace(/^["'“”‘’\s]+|["'“”‘’\s]+$/g, '')
+        .trim();
+    if (!title) return null;
+
+    try {
+        const parsed = JSON.parse(title);
+        if (typeof parsed === 'string') {
+            title = parsed;
+        } else if (parsed && typeof parsed.title === 'string') {
+            title = parsed.title;
+        } else {
+            return null;
+        }
+    } catch {
+        // Model should return plain text; ignore JSON parse failures.
+    }
+
+    if (/^\s*[\[{]/.test(title) || /"id"\s*:/.test(title)) {
+        return null;
+    }
+
+    title = String(title || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean) || '';
+    title = title
+        .replace(/^(?:标题|对话标题|title|chat title|conversation title)\s*[:：-]\s*/i, '')
+        .replace(/[\[\]<>]/g, '')
+        .replace(/[。.!！?？,，;；:：]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const maxChars = /zh|cn|hans|hant|中文|简|繁/i.test(String(uiLanguage || '')) ? 18 : 60;
+    const chars = Array.from(title);
+    if (chars.length > maxChars) {
+        title = chars.slice(0, maxChars).join('').trim();
+    }
+    if (!title || GENERIC_SESSION_TITLE_RE.test(title)) return null;
+    return title;
+}
+
+async function generateFallbackConversationTitleWithModel({ modelId, userContent = '', assistantContent = '', uiLanguage = '' } = {}) {
+    if (!isRuntimeConfiguredModel(modelId)) {
+        appendRaiRuntimeReport({
+            level: '报错',
+            tag: 'title_fallback_model_unavailable',
+            message: 'Title fallback model is not configured',
+            context: { modelId }
+        });
+        return null;
+    }
+
+    const routing = MODEL_ROUTING[modelId];
+    const providerConfig = routing ? API_PROVIDERS[routing.provider] : null;
+    if (!routing || !providerConfig?.apiKey || providerConfig.isGemini || routing.isGemini) return null;
+
+    const system = [
+        'You generate concise conversation titles for a chat app.',
+        'Return the title text only.',
+        'Use the same language as the latest user message.',
+        'Chinese titles should be 3-9 Chinese characters when possible. English titles should be 2-6 words.',
+        'Do not include quotes, punctuation, explanations, markdown, or [TITLE] markers.'
+    ].join('\n');
+    const user = [
+        `Latest user message:\n${String(userContent || '').slice(0, 1800)}`,
+        '',
+        `Assistant reply:\n${String(assistantContent || '').slice(0, 2200)}`
+    ].join('\n');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TITLE_FALLBACK_TIMEOUT_MS);
+    try {
+        const response = await fetch(providerConfig.baseURL, {
+            method: 'POST',
+            headers: buildProviderFetchHeaders(providerConfig, routing.provider),
+            body: JSON.stringify({
+                model: routing.model,
+                messages: [
+                    { role: 'system', content: system },
+                    { role: 'user', content: user }
+                ],
+                temperature: 0.2,
+                max_tokens: TITLE_FALLBACK_MAX_TOKENS,
+                stream: false
+            }),
+            signal: controller.signal
+        });
+        const payloadText = await response.text();
+        if (!response.ok) {
+            appendRaiRuntimeReport({
+                level: '报错',
+                tag: 'title_fallback_http_failed',
+                message: `Title fallback HTTP ${response.status}`,
+                context: { modelId, provider: routing.provider, body: payloadText.slice(0, 600) }
+            });
+            return null;
+        }
+
+        let payload = null;
+        try {
+            payload = JSON.parse(payloadText);
+        } catch {
+            payload = null;
+        }
+        const content = payload?.choices?.[0]?.message?.content || payloadText;
+        return sanitizeGeneratedConversationTitle(content, uiLanguage);
+    } catch (error) {
+        appendRaiRuntimeReport({
+            level: '报错',
+            tag: 'title_fallback_failed',
+            message: error.message,
+            context: { modelId, provider: routing.provider }
+        });
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function generateFallbackConversationTitle({ userContent = '', assistantContent = '', uiLanguage = '' } = {}) {
+    for (const modelId of TITLE_FALLBACK_MODEL_IDS) {
+        const title = await generateFallbackConversationTitleWithModel({
+            modelId,
+            userContent,
+            assistantContent,
+            uiLanguage
+        });
+        if (title) return title;
+    }
+    return null;
+}
+
+async function resolveAssistantTitle({ extractedTitle, userContent = '', assistantContent = '', uiLanguage = '' } = {}) {
+    const directTitle = sanitizeGeneratedConversationTitle(extractedTitle || '', uiLanguage);
+    if (directTitle) return directTitle;
+    return generateFallbackConversationTitle({ userContent, assistantContent, uiLanguage });
+}
+
+function buildPresetConversationTitle(userContent = '', uiLanguage = '') {
+    const text = String(userContent || '').trim().toLowerCase();
+    const isZh = /[\u4e00-\u9fff]/.test(userContent) || /zh|cn|hans|hant|中文|简|繁/i.test(String(uiLanguage || ''));
+    const titleMap = {
+        '你好': isZh ? '问候' : 'Greeting',
+        'hello': isZh ? '问候' : 'Greeting',
+        'hi': isZh ? '问候' : 'Greeting',
+        '谢谢': isZh ? '致谢' : 'Thanks',
+        'thank you': isZh ? '致谢' : 'Thanks',
+        'thanks': isZh ? '致谢' : 'Thanks',
+        '再见': isZh ? '告别' : 'Goodbye',
+        'bye': isZh ? '告别' : 'Goodbye'
+    };
+    return sanitizeGeneratedConversationTitle(titleMap[text] || userContent, uiLanguage);
+}
+
+async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId, title } = {}) {
+    const trimmedTitle = sanitizeGeneratedConversationTitle(title || '');
+    if (!trimmedTitle || !sessionId) return null;
+
+    if (flowId) {
+        await syncFlowTitle(flowId, userId, trimmedTitle);
+        console.log(` Flow标题已更新: "${trimmedTitle}"`);
+    } else {
+        await dbRunAsync(
+            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [trimmedTitle, sessionId]
+        );
+        console.log(` 会话标题已更新: "${trimmedTitle}"`);
+    }
+
+    if (res && !res.writableEnded && !res.destroyed) {
+        res.write(`data: ${JSON.stringify({
+            type: 'title',
+            title: trimmedTitle
+        })}\n\n`);
+    }
+    return trimmedTitle;
+}
+
+function scheduleFallbackConversationTitleUpdate({ sessionId, flowId, userId, userContent = '', assistantContent = '', uiLanguage = '' } = {}) {
+    if (!sessionId) return;
+    setTimeout(async () => {
+        try {
+            const fallbackTitle = await generateFallbackConversationTitle({
+                userContent,
+                assistantContent,
+                uiLanguage
+            });
+            if (!fallbackTitle) return;
+            await updateSessionOrFlowTitleAndEmit({
+                res: null,
+                sessionId,
+                flowId,
+                userId,
+                title: fallbackTitle
+            });
+            console.log(` 后台标题兜底已更新: "${fallbackTitle}"`);
+        } catch (error) {
+            console.warn(` 后台标题兜底失败: ${error.message}`);
+            appendRaiRuntimeReport({
+                level: '报错',
+                tag: 'title_fallback_background_failed',
+                message: error.message,
+                context: { sessionId, flowId, userId }
+            });
+        }
+    }, 0);
 }
 
 const INTERNAL_ASSISTANT_SECTION_TITLES = new Set([
@@ -10797,9 +12024,9 @@ app.get('/api/messages/:messageId/attachments', authenticateToken, (req, res) =>
     const { messageId } = req.params;
 
     db.get(
-        `SELECT m.attachments, s.user_id
-         FROM messages m
-         JOIN sessions s ON m.session_id = s.id
+        `SELECT m.attachments, s.user_id 
+         FROM messages m 
+         JOIN sessions s ON m.session_id = s.id 
          WHERE m.id = ?`,
         [messageId],
         (err, row) => {
@@ -11133,7 +12360,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const {
             sessionId: requestedSessionId,
             flowId,
-            messages,
+            messages: rawMessages,
             model: requestedModel = 'auto',  // 默认为auto模式
             thinkingMode: thinkingModeInput = false,
             thinkingBudget = 1024,
@@ -11146,6 +12373,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             researchMode = 'off',
             researchAgentModels = null,
             researchMasterModel = '',
+            researchMaxRounds = null,
             temperature = 0.7,
             top_p = 0.9,
             max_tokens = 2000,
@@ -11177,10 +12405,22 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
         const normalizedResearchAgentModels = normalizeResearchAgentModels(rawResearchAgentModels);
         const normalizedResearchMasterModel = normalizeResearchMasterModel(researchMasterModel || requestedModel);
+        const normalizedResearchMaxRounds = Math.max(
+            1,
+            Math.min(
+                parseInt(researchMaxRounds, 10) || (normalizeResearchMode(researchMode) === 'deep' ? 3 : 2),
+                50
+            )
+        );
         const normalizedPromptTimeContext = normalizePromptTimeContext(promptTimeContext);
 
+        const sanitizedChatInput = sanitizeClientChatMessages(rawMessages);
+        const messages = sanitizedChatInput.messages;
         if (!Array.isArray(messages) || messages.length === 0) {
             return res.status(400).json({ error: '消息不能为空' });
+        }
+        if (sanitizedChatInput.rejectedRoles.length > 0) {
+            console.warn(` 已拒绝客户端消息角色: ${[...new Set(sanitizedChatInput.rejectedRoles)].join(', ')}`);
         }
 
         if (normalizedResearchMode === 'fast') {
@@ -11190,7 +12430,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             normalizedReasoningProfile = 'mixed';
         }
 
-        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, researchMode=${normalizedResearchMode}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
+        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
         if (requestedModel !== model) {
             console.log(` 已将旧模型ID ${requestedModel} 归一化为 ${model}`);
         }
@@ -11319,7 +12559,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         if (model !== 'auto' && await isPublicModelDisabled(model)) {
-            console.warn(` 模型 ${model} 已被管理员关闭，回退到智能模型`);
+            console.warn(` 模型 ${model} 已被管理员关闭，回退到 智能模型`);
             model = 'auto';
         }
 
@@ -11353,6 +12593,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             : JSON.stringify(lastUserMsg.content);
         const userContent = stripInlinePromptTimeHint(rawUserContent);
         const imageGenerationRequested = detectImageGenerationNeed(userContent);
+        const memoryDeleteToolArgs = !memoryModeOff
+            ? buildMemoryDeleteToolArgsFromConversation(userContent, messages)
+            : null;
+        const memoryDeleteToolRequested = !memoryModeOff && (
+            !!memoryDeleteToolArgs || detectMemoryDeleteToolNeed(userContent, messages)
+        );
+        const runtimeToolDefinitions = buildChatToolDefinitions({
+            internetMode,
+            imageGenerationRequested,
+            memoryDeleteToolRequested
+        });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
 
         if (sessionId) {
@@ -11367,6 +12618,83 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         console.log(` 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
+
+        if (memoryDeleteToolArgs && sessionId && !flowId && !shouldSkipUserSave) {
+            console.log(` 记忆删除直达路径: userId=${req.user.userId}, args=${JSON.stringify(memoryDeleteToolArgs)}`);
+            res.write(`data: ${JSON.stringify({
+                type: 'tool_status',
+                tool: 'delete_memory',
+                status: 'running',
+                message: '正在删除指定记忆'
+            })}\n\n`);
+
+            const deleteResult = await deleteUserMemoryByModel({
+                userId: req.user.userId,
+                memoryId: memoryDeleteToolArgs.memory_id,
+                memoryIds: memoryDeleteToolArgs.memory_ids,
+                target: memoryDeleteToolArgs.target,
+                reason: memoryDeleteToolArgs.reason
+            });
+            const deletedMemoryIds = uniquePositiveMemoryIds([
+                Array.isArray(deleteResult?.deletedMemories) ? deleteResult.deletedMemories.map((memory) => memory?.id) : [],
+                deleteResult?.deletedMemory?.id,
+                memoryDeleteToolArgs.memory_ids,
+                memoryDeleteToolArgs.memory_id
+            ]);
+            const deletedMemoryIdList = formatMemoryIdList(deletedMemoryIds);
+            const deletedCount = Number(deleteResult?.deletedCount || deletedMemoryIds.length || 0);
+            const assistantReply = deleteResult?.success
+                ? (deletedMemoryIdList
+                    ? (deletedCount > 1 ? `已删除 ${deletedMemoryIdList} 这 ${deletedCount} 条记忆。` : `已删除 ${deletedMemoryIdList} 这条记忆。`)
+                    : `已删除 ${deletedCount} 条匹配的记忆。`)
+                : (deleteResult?.message || '没有找到要删除的那条记忆。你可以告诉我记忆编号，例如“删除 #12”。');
+
+            await dbRunAsync(
+                'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
+                [sessionId, 'user', userContent, new Date().toISOString()]
+            );
+            await dbRunAsync(
+                'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                    sessionId,
+                    'assistant',
+                    assistantReply,
+                    'memory-tool',
+                    0,
+                    0,
+                    0,
+                    promptContextTrace ? JSON.stringify(promptContextTrace) : null,
+                    new Date().toISOString()
+                ]
+            );
+
+            await updateSessionOrFlowTitleAndEmit({
+                res,
+                sessionId,
+                flowId,
+                userId: req.user.userId,
+                title: '记忆清理'
+            });
+            await dbRunAsync('UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [sessionId]);
+
+            const updatedMemories = await listActiveUserMemories(req.user.userId, 200).catch(() => []);
+            res.write(`data: ${JSON.stringify({
+                type: 'tool_status',
+                tool: 'delete_memory',
+                status: deleteResult?.success ? 'complete' : 'no_results',
+                message: deleteResult?.message || assistantReply
+            })}\n\n`);
+            res.write(`data: ${JSON.stringify({
+                type: 'memory_update',
+                enabled: true,
+                memories: updatedMemories
+            })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'content', content: assistantReply })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+            res.end();
+            console.log(` 记忆删除直达完成: success=${!!deleteResult?.success}, deleted=${Number(deleteResult?.deletedCount || 0)}`);
+            return;
+        }
 
         let agentRuntime = {
             enabled: false,
@@ -11397,7 +12725,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             // SSE头已在前面设置，直接发送预设答案
             res.write(`data: ${JSON.stringify({ type: 'content', content: presetAnswer })}\n\n`);
-            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
 
             // 保存到数据库
             if (sessionId) {
@@ -11450,8 +12777,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         assistantContent: presetAnswer
                     });
                 }
+
+                const presetTitle = buildPresetConversationTitle(userContent, uiLanguage);
+                if (presetTitle) {
+                    await updateSessionOrFlowTitleAndEmit({
+                        res,
+                        sessionId,
+                        flowId,
+                        userId: req.user.userId,
+                        title: presetTitle
+                    });
+                }
             }
 
+            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             console.log('\n 预设答案处理完成（0成本）\n');
@@ -11747,7 +13086,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     });
                     const structuredAgentOutput = parseStructuredAssistantOutput(contentToSave);
                     contentToSave = structuredAgentOutput.visibleContent || contentToSave;
-                    const extractedTitle = structuredAgentOutput.extractedTitle || null;
+                    const directTitle = sanitizeGeneratedConversationTitle(structuredAgentOutput.extractedTitle || '', uiLanguage);
 
                     if (sessionId) {
                         console.log('\n 保存真并行 Agent 结果到数据库');
@@ -11806,21 +13145,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             );
                         });
 
-                        if (extractedTitle) {
-                            if (flowId) {
-                                await syncFlowTitle(flowId, req.user.userId, extractedTitle);
-                                res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
-                            } else {
-                                db.run(
-                                    'UPDATE sessions SET title = ? WHERE id = ?',
-                                    [extractedTitle, sessionId],
-                                    (updateErr) => {
-                                        if (!updateErr) {
-                                            res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
-                                        }
-                                    }
-                                );
-                            }
+                        if (directTitle) {
+                            await updateSessionOrFlowTitleAndEmit({
+                                res,
+                                sessionId,
+                                flowId,
+                                userId: req.user.userId,
+                                title: directTitle
+                            });
+                        } else {
+                            scheduleFallbackConversationTitleUpdate({
+                                sessionId,
+                                flowId,
+                                userId: req.user.userId,
+                                userContent,
+                                assistantContent: contentToSave,
+                                uiLanguage
+                            });
                         }
 
                         await new Promise((resolve) => {
@@ -11935,7 +13276,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (supportsNativeMultimodal) {
                 finalModel = defaultMultimodalModel;
                 autoRoutingReason = model === 'auto'
-                    ? `${userMembershipTier} 用户智能模型使用 Qwen 3.6 处理${multimodalTypesText}`
+                    ? `${userMembershipTier} 用户 智能模型使用 Qwen 3.6 处理${multimodalTypesText}`
                     : `${defaultMultimodalModel} 原生支持多模态，直接处理${multimodalTypesText}`;
                 console.log(`    模型 ${finalModel} 原生支持多模态，无需切换`);
             } else {
@@ -11946,7 +13287,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         } else if (model === 'auto') {
             // 智能模型策略：纯文本默认 DeepSeek Pro；文档类附件会被转成文本后继续走这里。
             finalModel = await resolveVisibleAutoModel();
-            autoRoutingReason = `${userMembershipTier} 用户智能模型默认使用 ${finalModel}`;
+            autoRoutingReason = `${userMembershipTier} 用户 智能模型默认使用 ${finalModel}`;
             console.log(` auto_route_decision: ${autoRoutingReason}`);
         }
 
@@ -12327,11 +13668,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         if (
             !enableResearchDebate &&
-            (internetMode || imageGenerationRequested) &&
+            runtimeToolDefinitions.length > 0 &&
             routing.provider !== 'aliyun' &&
-            (routing.supportsWebSearch !== false || imageGenerationRequested)
+            (routing.supportsWebSearch !== false || imageGenerationRequested || memoryDeleteToolRequested)
         ) {
-            console.log(` 工具模式: 启用流式工具调用 (Streaming Function Calling), internet=${internetMode}, image=${imageGenerationRequested}`);
+            console.log(` 工具模式: 启用流式工具调用 (Streaming Function Calling), tools=${runtimeToolDefinitions.length}, internet=${internetMode}, image=${imageGenerationRequested}, memoryDelete=${memoryDeleteToolRequested}`);
             useStreamingTools = true;
             // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
         } else if (!enableResearchDebate && internetMode && finalModel === 'deepseek-pro') {
@@ -12481,10 +13822,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         //  流式工具调用：为请求添加 tools 参数
         if (useStreamingTools) {
-            requestBody.tools = TOOL_DEFINITIONS;
+            requestBody.tools = runtimeToolDefinitions;
             // 支持“先说一部分，再按需调用工具，再继续说”
             requestBody.tool_choice = "auto";
-            console.log(` 已为流式调用添加工具定义: ${TOOL_DEFINITIONS.length}个工具`);
+            console.log(` 已为流式调用添加工具定义: ${runtimeToolDefinitions.length}个工具`);
         }
 
         //  防御性检查：确保数值解析成功
@@ -12658,6 +13999,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     version: 1,
                     mode: 'research_debate',
                     researchMode: normalizedResearchMode,
+                    requestedMaxRounds: normalizedResearchMaxRounds,
                     plan: null,
                     tasks: {},
                     statuses: [],
@@ -12789,7 +14131,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     agentModelIds: normalizedResearchAgentModels,
                     researchMode: normalizedResearchMode,
                     debateThinkingMode: normalizedResearchMode === 'deep',
-                    maxDebateRounds: normalizedResearchMode === 'deep' ? 3 : 2,
+                    maxDebateRounds: normalizedResearchMaxRounds,
                     reasoningProfile: normalizedReasoningProfile,
                     maxTokens: max_tokens,
                     onContent: emitStructuredAssistantChunk,
@@ -12972,23 +14314,28 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         //  Gemini API 特殊处理
         let isGeminiAPI = providerConfig.isGemini || routing.isGemini;
         const shouldEnableToolsForRoute = (candidateRouting) => !!(
-            (internetMode || imageGenerationRequested) &&
+            runtimeToolDefinitions.length > 0 &&
             candidateRouting?.provider !== 'aliyun' &&
-            (candidateRouting?.supportsWebSearch !== false || imageGenerationRequested)
+            (candidateRouting?.supportsWebSearch !== false || imageGenerationRequested || memoryDeleteToolRequested)
         );
 
         const buildRuntimeFallbackRequestBody = (fallbackModelId, fallbackRouting, fallbackActualModel) => {
             if (fallbackRouting.provider === 'siliconflow') {
-                return buildSiliconflowFreeFallbackRequestBody({
+                const siliconflowBody = buildSiliconflowFreeFallbackRequestBody({
                     actualModel: fallbackActualModel,
                     messages: finalMessages,
-                    internetMode: internetMode || imageGenerationRequested,
+                    internetMode: false,
                     thinkingMode,
                     thinkingBudget,
                     temperature,
                     top_p,
                     max_tokens
                 });
+                if (shouldEnableToolsForRoute(fallbackRouting)) {
+                    siliconflowBody.tools = runtimeToolDefinitions;
+                    siliconflowBody.tool_choice = 'auto';
+                }
+                return siliconflowBody;
             }
 
             const body = {
@@ -13020,7 +14367,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
 
             if (shouldEnableToolsForRoute(fallbackRouting)) {
-                body.tools = TOOL_DEFINITIONS;
+                body.tools = runtimeToolDefinitions;
                 body.tool_choice = 'auto';
             }
 
@@ -13494,7 +14841,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             enable_thinking: !!thinkingMode
                         };
                         if (useStreamingTools) {
-                            requestBody.tools = TOOL_DEFINITIONS;
+                            requestBody.tools = runtimeToolDefinitions;
                             requestBody.tool_choice = 'auto';
                         }
 
@@ -14122,12 +15469,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 if (!trimmedText) return fallbackCalls;
 
                 // 1) JSON 数组格式
-                if (trimmedText.startsWith('[') && /(web_search|finance_quote|generate_image)/.test(trimmedText)) {
+                if (trimmedText.startsWith('[') && /(web_search|finance_quote|generate_image|delete_memory)/.test(trimmedText)) {
                     try {
                         const parsedCalls = JSON.parse(trimmedText);
                         if (Array.isArray(parsedCalls)) {
                             for (const call of parsedCalls) {
-                                if ((call?.name === 'web_search' || call?.name === 'finance_quote' || call?.name === 'generate_image') && call.arguments) {
+                                if ((call?.name === 'web_search' || call?.name === 'finance_quote' || call?.name === 'generate_image' || call?.name === 'delete_memory') && call.arguments) {
                                     fallbackCalls.push({
                                         name: call.name,
                                         arguments: call.arguments
@@ -14147,7 +15494,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     while ((markerMatch = markerRegex.exec(trimmedText)) !== null) {
                         const functionName = markerMatch[1];
                         const argumentText = markerMatch[2];
-                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image') continue;
+                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image' && functionName !== 'delete_memory') continue;
 
                         try {
                             fallbackCalls.push({
@@ -14163,7 +15510,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 // 3) DeepSeek 风格 XML 伪工具调用:
                 // <function_calls><invoke name="web_search"><parameter name="query">...</parameter></invoke></function_calls>
                 if (fallbackCalls.length === 0 && trimmedText.includes('<invoke')) {
-                    const xmlInvokeRegex = /<invoke\s+name=["'](web_search|finance_quote|generate_image)["'][^>]*>([\s\S]*?)<\/invoke>/g;
+                    const xmlInvokeRegex = /<invoke\s+name=["'](web_search|finance_quote|generate_image|delete_memory)["'][^>]*>([\s\S]*?)<\/invoke>/g;
                     let invokeMatch;
                     while ((invokeMatch = xmlInvokeRegex.exec(trimmedText)) !== null) {
                         const functionName = invokeMatch[1];
@@ -14180,18 +15527,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             fallbackCalls.push({ name: functionName, arguments: args });
                         } else if (functionName === 'generate_image' && args.prompt) {
                             fallbackCalls.push({ name: functionName, arguments: args });
+                        } else if (functionName === 'delete_memory' && (args.memory_id || args.memory_ids || args.memoryId || args.memoryIds || args.id || args.ids || args.target || args.memory || args.content)) {
+                            fallbackCalls.push({ name: functionName, arguments: args });
                         }
                     }
                 }
 
                 // 4) 松散文本格式
                 if (fallbackCalls.length === 0 && trimmedText.includes('functions.')) {
-                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,200}?(\{[\s\S]*?"(?:query|symbol|prompt)"[\s\S]*?\})/g;
+                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,200}?(\{[\s\S]*?"(?:query|symbol|prompt|memory_id|memory_ids|memoryId|memoryIds|target)"[\s\S]*?\})/g;
                     let looseMatch;
                     while ((looseMatch = looseRegex.exec(trimmedText)) !== null) {
                         const functionName = looseMatch[1];
                         const argumentText = looseMatch[2];
-                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image') continue;
+                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image' && functionName !== 'delete_memory') continue;
 
                         try {
                             fallbackCalls.push({
@@ -14220,6 +15569,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     }
 
                     const toolName = String(toolCall.function.name || '').trim();
+                    if (!hasToolDefinition(runtimeToolDefinitions, toolName)) {
+                        continue;
+                    }
                     if (toolName === 'web_search') {
                         if (!args || typeof args !== 'object' || typeof args.query !== 'string' || !args.query.trim()) {
                             continue;
@@ -14268,6 +15620,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 interval: normalizeFinanceInterval(args.interval || FINANCE_DEFAULT_INTERVAL)
                             };
                         } catch (error) {
+                            continue;
+                        }
+
+                        normalized.push({
+                            ...toolCall,
+                            function: {
+                                ...toolCall.function,
+                                arguments: JSON.stringify(normalizedArgs)
+                            },
+                            _args: normalizedArgs
+                        });
+                        continue;
+                    }
+
+                    if (toolName === 'delete_memory') {
+                        const normalizedArgs = normalizeDeleteMemoryToolArgs(args);
+                        if (!normalizedArgs) {
                             continue;
                         }
 
@@ -14350,6 +15719,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             console.log(` 执行工具: ${toolName}, args=${JSON.stringify(args)}`);
                             const isSearchTool = toolName === 'web_search';
                             const isImageTool = toolName === 'generate_image';
+                            const isMemoryDeleteTool = toolName === 'delete_memory';
                             if (isSearchTool && agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
@@ -14373,6 +15743,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     tool: 'generate_image',
                                     status: 'running',
                                     message: '正在生成图片中'
+                                })}\n\n`);
+                            }
+                            if (isMemoryDeleteTool) {
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: 'delete_memory',
+                                    status: 'running',
+                                    message: '正在删除指定记忆'
                                 })}\n\n`);
                             }
 
@@ -14410,9 +15788,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         result = await resultPromise;
                                     }
                                 } else {
-                                    result = isSearchTool
-                                        ? await executor(args, searchDepth)
-                                        : await executor(args);
+                                    if (isSearchTool) {
+                                        result = await executor(args, searchDepth);
+                                    } else if (isMemoryDeleteTool) {
+                                        result = await executor(args, { userId: req.user.userId, sessionId });
+                                    } else {
+                                        result = await executor(args);
+                                    }
                                 }
                             } catch (toolError) {
                                 appendRaiRuntimeReport({
@@ -14429,11 +15811,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     }
                                 });
                                 res.write(`data: ${JSON.stringify({
-                                    type: isImageTool ? 'tool_status' : 'search_status',
+                                    type: (isImageTool || isMemoryDeleteTool) ? 'tool_status' : 'search_status',
                                     tool: toolName,
                                     status: 'failed',
-                                    query: args.query || args.prompt || args.symbol || '',
-                                    message: isImageTool ? '图片生成失败，已记录报错' : '工具调用失败，已记录报错'
+                                    query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                    message: isImageTool ? '图片生成失败，已记录报错' : (isMemoryDeleteTool ? '记忆删除失败，已记录报错' : '工具调用失败，已记录报错')
                                 })}\n\n`);
                                 executedToolResults.push({
                                     toolCall,
@@ -14554,6 +15936,29 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     message: `生成 ${result?.images?.length || 0} 张图片`
                                 })}\n\n`);
                                 console.log(` 工具执行完成: generate_image count=${result?.images?.length || 0}`);
+                            } else if (isMemoryDeleteTool) {
+                                executedToolResults.push({
+                                    toolCall,
+                                    result: buildToolResultForLLM({
+                                        toolName,
+                                        result,
+                                        sources: [],
+                                        args
+                                    })
+                                });
+                                const updatedMemories = await listActiveUserMemories(req.user.userId, 200).catch(() => []);
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: 'delete_memory',
+                                    status: result?.success ? 'complete' : 'no_results',
+                                    message: result?.message || (result?.success ? '已删除指定记忆' : '未找到指定记忆')
+                                })}\n\n`);
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'memory_update',
+                                    enabled: true,
+                                    memories: updatedMemories
+                                })}\n\n`);
+                                console.log(` 工具执行完成: delete_memory success=${!!result?.success}, deleted=${Number(result?.deletedCount || 0)}`);
                             }
                         }
 
@@ -14587,7 +15992,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             messages: conversationMessages,
                             max_tokens: parseInt(max_tokens, 10) || 2000,
                             stream: true,
-                            tools: TOOL_DEFINITIONS,
+                            tools: runtimeToolDefinitions,
                             tool_choice: "auto"
                         };
                         if (routing.provider === 'openrouter' && Array.isArray(routing.fallbackModels) && routing.fallbackModels.length > 1) {
@@ -14986,13 +16391,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 .replace(/functions\.\w+:\d+/g, '')
                 .trim();
             const structuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer || contentToSave);
-            const extractedTitle = structuredAssistantOutput.extractedTitle || null;
             contentToSave = sanitizeAssistantVisibleContent(structuredAssistantOutput.visibleContent || contentToSave).trim();
             if (!contentToSave) {
                 contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
             }
-            if (extractedTitle) {
-                console.log(` 提取到标题: "${extractedTitle}"`);
+            const directTitle = sanitizeGeneratedConversationTitle(structuredAssistantOutput.extractedTitle || '', uiLanguage);
+            if (directTitle) {
+                console.log(` 已取得会话标题: "${directTitle}"`);
             }
 
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
@@ -15025,34 +16430,24 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             });
 
 
-            // 4. 如果提取到标题,更新会话标题（每次对话都更新）
-            if (extractedTitle) {
-                if (flowId) {
-                    await syncFlowTitle(flowId, req.user.userId, extractedTitle);
-                    console.log(` Flow标题已更新: "${extractedTitle}"`);
-                    res.write(`data: ${JSON.stringify({
-                        type: 'title',
-                        title: extractedTitle
-                    })}\n\n`);
-                } else {
-                    // 每次对话都更新标题，不再限制只在新对话时更新
-                    db.run(
-                        'UPDATE sessions SET title = ? WHERE id = ?',
-                        [extractedTitle, sessionId],
-                        (updateErr) => {
-                            if (!updateErr) {
-                                console.log(` 会话标题已更新: "${extractedTitle}"`);
-                                // 通知前端标题更新
-                                res.write(`data: ${JSON.stringify({
-                                    type: 'title',
-                                    title: extractedTitle
-                                })}\n\n`);
-                            } else {
-                                console.error(' 更新会话标题失败:', updateErr);
-                            }
-                        }
-                    );
-                }
+            // 4. 更新会话标题：AI 直接输出 [TITLE] 时同步更新；未输出时后台兜底，不阻塞 done。
+            if (directTitle) {
+                await updateSessionOrFlowTitleAndEmit({
+                    res,
+                    sessionId,
+                    flowId,
+                    userId: req.user.userId,
+                    title: directTitle
+                });
+            } else {
+                scheduleFallbackConversationTitleUpdate({
+                    sessionId,
+                    flowId,
+                    userId: req.user.userId,
+                    userContent,
+                    assistantContent: contentToSave,
+                    uiLanguage
+                });
             }
 
             if (flowId && structuredAssistantOutput.canvasPatchRaw) {
@@ -15078,7 +16473,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 );
             });
 
-            if (!memoryModeOff && !flowId && !shouldSkipUserSave) {
+            if (!memoryModeOff && !flowId && !shouldSkipUserSave && !memoryDeleteToolRequested) {
                 scheduleConversationMemoryProcessing({
                     userId: req.user.userId,
                     sessionId,
@@ -15241,6 +16636,7 @@ const MEMBERSHIP_CONFIG = {
 const USER_TASK_REWARDS = {
     pwaInstall: { key: 'pwa_install', points: 300 },
     inviteUser: { keyPrefix: 'invite_user:', points: 600 },
+    inviteeUser: { keyPrefix: 'invitee_user:', points: 600 },
     bookmarkDomain: { key: 'bookmark_domain', points: 100 }
 };
 
@@ -15301,27 +16697,359 @@ function buildEmailCodeMessage({ purpose, code }) {
     return { subject, html, text };
 }
 
+function hashPendingEmailChangeCode({ userId, email, code }) {
+    const normalizedCode = normalizeEmailCodeInput(code);
+    return crypto
+        .createHmac('sha256', JWT_SECRET)
+        .update(`${Number(userId) || 0}:email_change:${normalizeEmailForAuth(email)}:${normalizedCode}`)
+        .digest('hex');
+}
+
+function hashPendingEmailCurrentCode({ userId, currentEmail, pendingEmail, code }) {
+    const normalizedCode = normalizeEmailCodeInput(code);
+    return crypto
+        .createHmac('sha256', JWT_SECRET)
+        .update(`${Number(userId) || 0}:email_change_current:${normalizeEmailForAuth(currentEmail)}:${normalizeEmailForAuth(pendingEmail)}:${normalizedCode}`)
+        .digest('hex');
+}
+
+function buildEmailChangeCodeMessage({ email, code, currentEmail = '', kind = 'new' }) {
+    const brand = BRAND_TITLE || 'RAI';
+    const safeBrand = escapeEmailHtml(brand);
+    const safeCode = escapeEmailHtml(code);
+    const safeEmail = escapeEmailHtml(email);
+    const safeCurrentEmail = escapeEmailHtml(currentEmail);
+    const minutes = Math.max(1, Math.round(EMAIL_CODE_TTL_MS / 60000));
+    const isCurrent = kind === 'current';
+    const subject = isCurrent ? `${brand} 修改邮箱旧邮箱验证码` : `${brand} 修改邮箱新邮箱验证码`;
+    const intro = isCurrent
+        ? `你正在把 ${brand} 登录邮箱从 ${currentEmail} 改为 ${email}，请输入下面的旧邮箱验证码确认这是你本人操作。`
+        : `你正在把 ${brand} 登录邮箱改为 ${email}，请输入下面的新邮箱验证码确认这个邮箱可用。`;
+    const html = [
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;line-height:1.6;color:#111827;padding:24px">',
+        `<h2 style="margin:0 0 12px">${safeBrand}</h2>`,
+        isCurrent
+            ? `<p style="margin:0 0 18px">你正在把登录邮箱从 <strong>${safeCurrentEmail}</strong> 改为 <strong>${safeEmail}</strong>，请输入下面的旧邮箱验证码确认这是你本人操作。</p>`
+            : `<p style="margin:0 0 18px">你正在把登录邮箱改为 <strong>${safeEmail}</strong>，请输入下面的新邮箱验证码确认这个邮箱可用。</p>`,
+        `<div style="font-size:32px;font-weight:700;letter-spacing:0.18em;padding:14px 18px;background:#f3f4f6;border-radius:12px;display:inline-block">${safeCode}</div>`,
+        `<p style="margin:18px 0 0;color:#6b7280;font-size:14px">验证码 ${minutes} 分钟内有效。若不是你本人操作，请立即修改密码并开启二步验证。</p>`,
+        '</div>'
+    ].join('');
+    const text = `${brand}\n\n${intro}\n\n验证码: ${code}\n\n验证码 ${minutes} 分钟内有效。若不是你本人操作，请立即修改密码并开启二步验证。`;
+    return { subject, html, text };
+}
+
+async function issuePendingEmailChangeCode({ userId, currentEmail, email, req }) {
+    const normalizedCurrentEmail = normalizeEmailForAuth(currentEmail);
+    const normalizedEmail = normalizeEmailForAuth(email);
+    if (!Number.isInteger(Number(userId)) || Number(userId) <= 0 || !isValidEmailForAuth(normalizedCurrentEmail) || !isValidEmailForAuth(normalizedEmail)) {
+        throw new Error('invalid_email_change_request');
+    }
+
+    const currentCode = generateEmailCode();
+    const currentCodeHash = hashPendingEmailCurrentCode({
+        userId,
+        currentEmail: normalizedCurrentEmail,
+        pendingEmail: normalizedEmail,
+        code: currentCode
+    });
+    const expiresAt = Date.now() + EMAIL_CODE_TTL_MS;
+    await dbRunAsync(
+        `UPDATE users
+         SET pending_email = ?,
+             pending_email_current_code_hash = ?,
+             pending_email_current_verified_at = NULL,
+             pending_email_code_hash = NULL,
+             pending_email_expires_at = ?
+         WHERE id = ?`,
+        [normalizedEmail, currentCodeHash, expiresAt, userId]
+    );
+
+    const currentMessage = buildEmailChangeCodeMessage({
+        email: normalizedEmail,
+        currentEmail: normalizedCurrentEmail,
+        code: currentCode,
+        kind: 'current'
+    });
+    try {
+        await sendResendEmail({
+            to: normalizedCurrentEmail,
+            subject: currentMessage.subject,
+            html: currentMessage.html,
+            text: currentMessage.text
+        });
+    } catch (error) {
+        await dbRunAsync(
+            `UPDATE users
+             SET pending_email = NULL,
+                 pending_email_current_code_hash = NULL,
+                 pending_email_current_verified_at = NULL,
+                 pending_email_code_hash = NULL,
+                 pending_email_expires_at = NULL
+             WHERE id = ? AND pending_email_current_code_hash = ?`,
+            [userId, currentCodeHash]
+        ).catch(() => null);
+        appendRaiRuntimeReport({
+            level: '报错',
+            tag: 'email_change_code',
+            message: `修改邮箱验证码发送失败: ${error.message}`,
+            context: {
+                userId,
+                currentEmailDomain: String(normalizedCurrentEmail).split('@')[1] || '',
+                emailDomain: String(normalizedEmail).split('@')[1] || '',
+                code: error.code || null,
+                status: error.status || null,
+                response: error.response || null
+            }
+        });
+        throw error;
+    }
+
+    console.log(` 修改邮箱旧邮箱验证码已发送: userId=${userId}, currentDomain=${normalizedCurrentEmail.split('@')[1] || ''}, pendingDomain=${normalizedEmail.split('@')[1] || ''}`);
+    return { pending_email: normalizedEmail, pending_email_expires_at: expiresAt, pending_email_stage: 'current' };
+}
+
+async function verifyPendingEmailCurrentCodeAndIssueNewCode({ userId, email = '', currentEmailCode = '', req }) {
+    const numericUserId = Number(userId);
+    const normalizedEmail = normalizeEmailForAuth(email);
+    const normalizedCurrentEmailCode = normalizeEmailCodeInput(currentEmailCode);
+    if (!Number.isInteger(numericUserId) || numericUserId <= 0 || !isValidEmailForAuth(normalizedEmail) || !isValidEmailCodeInput(normalizedCurrentEmailCode)) {
+        const error = new Error('旧邮箱验证码无效或已过期');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const newCode = generateEmailCode();
+    const newCodeHash = hashPendingEmailChangeCode({ userId: numericUserId, email: normalizedEmail, code: newCode });
+    const expiresAt = Date.now() + EMAIL_CODE_TTL_MS;
+    let user;
+
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        user = await dbGetAsync(
+            `SELECT id, email, pending_email, pending_email_current_code_hash, pending_email_expires_at
+             FROM users
+             WHERE id = ?`,
+            [numericUserId]
+        );
+        if (!user) {
+            const error = new Error('用户不存在');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const pendingEmail = normalizeEmailForAuth(user.pending_email);
+        if (!pendingEmail || pendingEmail !== normalizedEmail) {
+            const error = new Error('没有待确认的新邮箱');
+            error.statusCode = 400;
+            throw error;
+        }
+        if (Number(user.pending_email_expires_at || 0) <= Date.now()) {
+            const error = new Error('旧邮箱验证码无效或已过期');
+            error.statusCode = 400;
+            throw error;
+        }
+        const expectedCurrentHash = hashPendingEmailCurrentCode({
+            userId: numericUserId,
+            currentEmail: user.email,
+            pendingEmail,
+            code: normalizedCurrentEmailCode
+        });
+        if (!safeCompareText(expectedCurrentHash, user.pending_email_current_code_hash || '')) {
+            const error = new Error('旧邮箱验证码无效或已过期');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        await dbRunAsync(
+            `UPDATE users
+             SET pending_email_current_verified_at = ?,
+                 pending_email_code_hash = ?,
+                 pending_email_expires_at = ?
+             WHERE id = ?`,
+            [Date.now(), newCodeHash, expiresAt, numericUserId]
+        );
+        await dbRunAsync('COMMIT');
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
+    }
+
+    const message = buildEmailChangeCodeMessage({
+        email: normalizedEmail,
+        currentEmail: normalizeEmailForAuth(user.email),
+        code: newCode,
+        kind: 'new'
+    });
+    try {
+        await sendResendEmail({
+            to: normalizedEmail,
+            subject: message.subject,
+            html: message.html,
+            text: message.text
+        });
+    } catch (error) {
+        await dbRunAsync(
+            `UPDATE users
+             SET pending_email_code_hash = NULL
+             WHERE id = ? AND pending_email_code_hash = ?`,
+            [numericUserId, newCodeHash]
+        ).catch(() => null);
+        appendRaiRuntimeReport({
+            level: '报错',
+            tag: 'email_change_new_code',
+            message: `修改邮箱新邮箱验证码发送失败: ${error.message}`,
+            context: {
+                userId: numericUserId,
+                emailDomain: String(normalizedEmail).split('@')[1] || '',
+                code: error.code || null,
+                status: error.status || null,
+                response: error.response || null
+            }
+        });
+        throw error;
+    }
+
+    console.log(` 修改邮箱新邮箱验证码已发送: userId=${numericUserId}, pendingDomain=${normalizedEmail.split('@')[1] || ''}`);
+    return { pending_email: normalizedEmail, pending_email_expires_at: expiresAt, pending_email_stage: 'new' };
+}
+
+async function verifyPendingEmailChange({ userId, email = '', code = '' }) {
+    const numericUserId = Number(userId);
+    const normalizedEmail = normalizeEmailForAuth(email);
+    const normalizedCode = normalizeEmailCodeInput(code);
+    if (!Number.isInteger(numericUserId) || numericUserId <= 0 || !isValidEmailCodeInput(normalizedCode)) {
+        const error = new Error('验证码无效或已过期');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+    try {
+        const user = await dbGetAsync(
+            `SELECT id, email, username, avatar_url, external_provider, external_uid,
+                    pending_email, pending_email_current_verified_at, pending_email_code_hash, pending_email_expires_at
+             FROM users
+             WHERE id = ?`,
+            [numericUserId]
+        );
+        if (!user) {
+            const error = new Error('用户不存在');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const pendingEmail = normalizeEmailForAuth(user.pending_email);
+        if (!pendingEmail || (normalizedEmail && normalizedEmail !== pendingEmail)) {
+            const error = new Error('没有待确认的新邮箱');
+            error.statusCode = 400;
+            throw error;
+        }
+        if (!isValidEmailForAuth(pendingEmail) || Number(user.pending_email_expires_at || 0) <= Date.now()) {
+            const error = new Error('验证码无效或已过期');
+            error.statusCode = 400;
+            throw error;
+        }
+        if (!user.pending_email_current_verified_at || !user.pending_email_code_hash) {
+            const error = new Error('请先验证旧邮箱验证码');
+            error.statusCode = 400;
+            throw error;
+        }
+        const expectedHash = hashPendingEmailChangeCode({
+            userId: numericUserId,
+            email: pendingEmail,
+            code: normalizedCode
+        });
+        if (!safeCompareText(expectedHash, user.pending_email_code_hash || '')) {
+            const error = new Error('新邮箱验证码无效或已过期');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const duplicate = await dbGetAsync(
+            'SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?',
+            [pendingEmail, numericUserId]
+        );
+        if (duplicate) {
+            const error = new Error('该邮箱已被其他账号使用');
+            error.statusCode = 409;
+            throw error;
+        }
+
+        await dbRunAsync(
+            `UPDATE users
+             SET email = ?,
+                 email_verified = 1,
+                 email_verified_at = CURRENT_TIMESTAMP,
+                 pending_email = NULL,
+                 pending_email_current_code_hash = NULL,
+                 pending_email_current_verified_at = NULL,
+                 pending_email_code_hash = NULL,
+                 pending_email_expires_at = NULL
+             WHERE id = ?`,
+            [pendingEmail, numericUserId]
+        );
+        await dbRunAsync('COMMIT');
+
+        return {
+            ...user,
+            email: pendingEmail,
+            pending_email: null,
+            pending_email_current_code_hash: null,
+            pending_email_current_verified_at: null,
+            pending_email_code_hash: null,
+            pending_email_expires_at: null
+        };
+    } catch (error) {
+        await dbRunAsync('ROLLBACK').catch(() => null);
+        throw error;
+    }
+}
+
 async function sendResendEmail({ to, subject, html, text }) {
     if (!RESEND_API_KEY) {
         const error = new Error('resend_api_key_missing');
         error.code = 'email_service_not_configured';
         throw error;
     }
+    if (!RESEND_FROM_EMAIL) {
+        const error = new Error('resend_from_email_invalid');
+        error.code = 'email_from_invalid';
+        error.response = {
+            message: 'RESEND_FROM_EMAIL/RAI_EMAIL_FROM must be email@example.com or Name <email@example.com>'
+        };
+        throw error;
+    }
 
-    const response = await fetch(RESEND_API_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${RESEND_API_KEY}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            from: RESEND_FROM_EMAIL,
-            to,
-            subject,
-            html,
-            text
-        })
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
+    let response;
+    try {
+        response = await fetch(RESEND_API_URL, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+                'Authorization': `Bearer ${RESEND_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                from: RESEND_FROM_EMAIL,
+                to,
+                subject,
+                html,
+                text
+            })
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            const timeoutError = new Error('resend_email_timeout');
+            timeoutError.code = 'email_timeout';
+            throw timeoutError;
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
 
     const rawBody = await response.text().catch(() => '');
     let parsedBody = null;
@@ -15586,6 +17314,8 @@ async function getUserTaskSnapshot(userId) {
     const pwaInstall = rows.find((row) => row.task_key === USER_TASK_REWARDS.pwaInstall.key);
     const inviteRows = rows.filter((row) => String(row.task_key || '').startsWith(USER_TASK_REWARDS.inviteUser.keyPrefix));
     const invitePoints = inviteRows.reduce((sum, row) => sum + Number(row.points || 0), 0);
+    const inviteeRows = rows.filter((row) => String(row.task_key || '').startsWith(USER_TASK_REWARDS.inviteeUser.keyPrefix));
+    const inviteePoints = inviteeRows.reduce((sum, row) => sum + Number(row.points || 0), 0);
     const bookmarkDomain = rows.find((row) => row.task_key === USER_TASK_REWARDS.bookmarkDomain.key);
 
     return {
@@ -15602,6 +17332,14 @@ async function getUserTaskSnapshot(userId) {
             completedAt: inviteRows[0]?.completed_at || null,
             completedCount: inviteRows.length,
             totalRewardPoints: invitePoints
+        },
+        inviteeUser: {
+            key: 'invitee_user',
+            rewardPoints: USER_TASK_REWARDS.inviteeUser.points,
+            completed: inviteeRows.length > 0,
+            completedAt: inviteeRows[0]?.completed_at || null,
+            completedCount: inviteeRows.length,
+            totalRewardPoints: inviteePoints
         },
         bookmarkDomain: {
             key: USER_TASK_REWARDS.bookmarkDomain.key,
@@ -15664,15 +17402,33 @@ async function awardInviteReferralIfValid(referrerId, invitedUserId, req) {
         return { awarded: false, pointsGained: 0, reason: 'referrer_not_found' };
     }
 
-    return awardUserTaskPoints({
+    const referrerReward = await awardUserTaskPoints({
         userId: normalizedReferrerId,
         taskKey: `${USER_TASK_REWARDS.inviteUser.keyPrefix}${invitedUserId}`,
         points: USER_TASK_REWARDS.inviteUser.points,
         metadata: buildTaskMetadata(req, {
             invitedUserId,
-            source: 'register_referral'
+            source: 'register_referral_referrer'
         })
     });
+
+    const inviteeReward = await awardUserTaskPoints({
+        userId: invitedUserId,
+        taskKey: `${USER_TASK_REWARDS.inviteeUser.keyPrefix}${normalizedReferrerId}`,
+        points: USER_TASK_REWARDS.inviteeUser.points,
+        metadata: buildTaskMetadata(req, {
+            referrerId: normalizedReferrerId,
+            source: 'register_referral_invitee'
+        })
+    });
+
+    return {
+        awarded: Boolean(referrerReward.awarded || inviteeReward.awarded),
+        pointsGained: Number(referrerReward.pointsGained || 0),
+        inviteePointsGained: Number(inviteeReward.pointsGained || 0),
+        referrerReward,
+        inviteeReward
+    };
 }
 
 const ANNOUNCEMENT_DELIVERY_MODES = ['popup', 'toast', 'silent'];
@@ -16292,9 +18048,10 @@ async function buildConversationMemoryPrompt(userId) {
     sections.push([
         '[长期记忆]',
         memories.length > 0
-            ? memories.map((memory) => `- ${memory.content}`).join('\n')
+            ? memories.map((memory) => `- #${memory.id} [${memory.category}] ${memory.content}`).join('\n')
             : '- 当前没有已保存的长期记忆。',
-        'RAI 已具备跨对话长期记忆能力。用户问“你记得我什么/你对我的记忆有哪些”时，按本段如实列出长期记忆；如果为空，就说当前没有已保存长期记忆，并可提示用户在设置里添加或直接告诉你“记住……”。不要声称自己没有持久化记忆能力。'
+        'RAI 已具备跨对话长期记忆能力。用户问“你记得我什么/你对我的记忆有哪些”时，按本段如实列出长期记忆；如果为空，就说当前没有已保存长期记忆，并可提示用户在设置里添加或直接告诉你“记住……”。不要声称自己没有持久化记忆能力。',
+        '如果用户明确要求删除、忘掉或移除某条长期记忆，优先调用 delete_memory 工具；可直接使用 # 后面的数字作为 memory_id。工具删除成功后只简短确认，不要继续引用已删除记忆。'
     ].join('\n'));
 
     if (recentTitles.length > 0) {
@@ -16552,8 +18309,118 @@ async function softDeleteUserMemory(userId, memoryId) {
     );
 }
 
+function serializeDeletedMemory(memory) {
+    if (!memory) return null;
+    return {
+        id: Number(memory.id),
+        category: memory.category || 'other',
+        content: memory.content || ''
+    };
+}
+
+async function deleteUserMemoryByModel({ userId, memoryId = null, memoryIds = [], target = '', reason = '' } = {}) {
+    const safeUserId = Number(userId);
+    if (!Number.isInteger(safeUserId) || safeUserId <= 0) {
+        return {
+            success: false,
+            deletedCount: 0,
+            message: '缺少用户身份，无法删除记忆。'
+        };
+    }
+
+    const safeTarget = sanitizeMemoryContent(target);
+    const requestedIds = uniquePositiveMemoryIds([
+        memoryIds,
+        memoryId,
+        extractMemoryIdsFromText(safeTarget)
+    ]);
+
+    if (requestedIds.length > 0) {
+        const placeholders = requestedIds.map(() => '?').join(',');
+        const memories = await dbAllAsync(
+            `SELECT id, category, content
+             FROM user_memories
+             WHERE user_id = ? AND deleted_at IS NULL AND id IN (${placeholders})`,
+            [safeUserId, ...requestedIds]
+        ).catch(() => []);
+        if (!Array.isArray(memories) || memories.length === 0) {
+            return {
+                success: false,
+                deletedCount: 0,
+                matchedBy: 'id',
+                message: `没有找到 ${formatMemoryIdList(requestedIds)} 这些长期记忆。`
+            };
+        }
+
+        let deletedCount = 0;
+        for (const memory of memories) {
+            const result = await softDeleteUserMemory(safeUserId, memory.id);
+            deletedCount += Number(result?.changes || 0);
+        }
+        const deletedMemories = memories.map(serializeDeletedMemory);
+        const deletedIds = deletedMemories.map((memory) => memory?.id);
+        const missingIds = requestedIds.filter((id) => !deletedIds.includes(id));
+        const deletedIdList = formatMemoryIdList(deletedIds);
+        const missingSuffix = missingIds.length > 0 ? `（未找到 ${formatMemoryIdList(missingIds)}）` : '';
+        return {
+            success: deletedCount > 0,
+            deletedCount,
+            deletedMemory: deletedMemories.length === 1 ? deletedMemories[0] : null,
+            deletedMemories,
+            matchedBy: 'id',
+            reason: sanitizeMemoryContent(reason).slice(0, 180),
+            message: deletedCount > 0
+                ? `已删除长期记忆 ${deletedIdList}。${missingSuffix}`
+                : `没有找到 ${formatMemoryIdList(requestedIds)} 这些长期记忆。`
+        };
+    }
+
+    const normalizedTarget = normalizeMemoryKeyText(safeTarget);
+    if (!normalizedTarget || /^(全部记忆|所有记忆|allmemories|everything)$/.test(normalizedTarget)) {
+        return {
+            success: false,
+            deletedCount: 0,
+            matchedBy: 'target',
+            message: 'delete_memory 需要一条具体记忆的编号或准确文本，不能用于不确认地清空全部记忆。'
+        };
+    }
+
+    const memories = await listActiveUserMemories(safeUserId, 200);
+    const matches = memories.filter((memory) => {
+        const normalizedContent = normalizeMemoryKeyText(memory.content);
+        if (!normalizedContent) return false;
+        return normalizedContent.includes(normalizedTarget) || normalizedTarget.includes(normalizedContent);
+    });
+
+    for (const memory of matches) {
+        await softDeleteUserMemory(safeUserId, memory.id);
+    }
+
+    return {
+        success: matches.length > 0,
+        deletedCount: matches.length,
+        deletedMemory: matches.length === 1 ? serializeDeletedMemory(matches[0]) : null,
+        deletedMemories: matches.map(serializeDeletedMemory),
+        matchedBy: 'target',
+        reason: sanitizeMemoryContent(reason).slice(0, 180),
+        message: matches.length > 0
+            ? `已删除 ${matches.length} 条匹配的长期记忆。`
+            : '没有找到匹配的长期记忆。'
+    };
+}
+
 async function deleteMemoriesByTarget(userId, target) {
     const safeTarget = sanitizeMemoryContent(target);
+    const memoryIds = extractMemoryIdsFromText(safeTarget);
+    if (memoryIds.length > 0) {
+        let changes = 0;
+        for (const memoryId of memoryIds) {
+            const result = await softDeleteUserMemory(userId, memoryId);
+            changes += Number(result?.changes || 0);
+        }
+        return { changes };
+    }
+
     const normalizedTarget = normalizeMemoryKeyText(safeTarget);
     if (!normalizedTarget || /^(全部记忆|所有记忆|allmemories|everything)$/.test(normalizedTarget)) {
         return dbRunAsync(
@@ -17213,7 +19080,15 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
             && await bcrypt.compare(passwordInput, ADMIN_PASSWORD_HASH);
 
         if (passwordOk) {
-            if (ADMIN_TOTP_SECRET && !verifyTotpCode(ADMIN_TOTP_SECRET, totpCode)) {
+            if (ADMIN_TOTP_REQUIRED && !ADMIN_TOTP_SECRET) {
+                console.error(' 管理员二步验证被要求但 ADMIN_TOTP_SECRET 未配置');
+                return res.status(503).json({
+                    error: '管理员二步验证未配置',
+                    requiresTwoFactor: true
+                });
+            }
+
+            if ((ADMIN_TOTP_REQUIRED || ADMIN_TOTP_SECRET) && !verifyTotpCode(ADMIN_TOTP_SECRET, totpCode)) {
                 console.log(' 管理员二步验证失败尝试');
                 return res.status(401).json({
                     error: 'Authenticator 验证码无效',
@@ -17638,8 +19513,8 @@ app.get('/api/admin/users', authenticateAdmin, (req, res) => {
                COALESCE(u.points, 0) as points,
                COALESCE(u.purchased_points, 0) as purchased_points,
                (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as sessionCount,
-               (SELECT COUNT(*) FROM messages m
-                JOIN sessions s ON m.session_id = s.id
+               (SELECT COUNT(*) FROM messages m 
+                JOIN sessions s ON m.session_id = s.id 
                 WHERE s.user_id = u.id) as messageCount
         FROM users u
         ORDER BY u.created_at DESC
@@ -17700,8 +19575,8 @@ app.get('/api/admin/users/:userId/detail', authenticateAdmin, async (req, res) =
                        COALESCE(u.purchased_points, 0) as purchased_points,
                        u.last_checkin, u.last_daily_grant,
                        (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as sessionCount,
-                       (SELECT COUNT(*) FROM messages m
-                        JOIN sessions s ON m.session_id = s.id
+                       (SELECT COUNT(*) FROM messages m 
+                        JOIN sessions s ON m.session_id = s.id 
                         WHERE s.user_id = u.id) as messageCount
                 FROM users u
                 WHERE u.id = ?
@@ -17772,7 +19647,7 @@ app.get('/api/admin/sessions/:sessionId/messages', authenticateAdmin, async (req
         // 获取消息列表（完整内容，按时间正序排列便于阅读）
         const messages = await new Promise((resolve, reject) => {
             db.all(`
-                SELECT id, role, content, reasoning_content, model, enable_search,
+                SELECT id, role, content, reasoning_content, model, enable_search, 
                        thinking_mode, internet_mode, sources, process_trace, created_at
                 FROM messages
                 WHERE session_id = ?
@@ -17857,7 +19732,7 @@ app.put('/api/admin/users/:userId/membership', authenticateAdmin, (req, res) => 
     }
 
     db.run(`
-        UPDATE users SET
+        UPDATE users SET 
             membership = ?,
             membership_start = ?,
             membership_end = ?
@@ -17895,7 +19770,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
         }
 
         db.run(`
-            UPDATE users SET
+            UPDATE users SET 
                 purchased_points = COALESCE(purchased_points, 0) + ?,
                 purchased_points_expire = COALESCE(?, purchased_points_expire)
             WHERE id = ?

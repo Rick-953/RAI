@@ -4,7 +4,7 @@
 
 ### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
 
-[![Version](https://img.shields.io/badge/Version-0.10.9.63-F59E0B?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.11.26-F59E0B?style=flat-square)]()
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
@@ -22,6 +22,17 @@
 ---
 
 # 最新更新内容
+
+## 2026年7月10日 RAI v0.11.26
+
+- **对话布局**：PC 消息区与输入框同宽居中，左右安全距离对称；输入框恢复贴底，取消整条黑色底栏。
+- **磨砂视觉**：输入框、站内通知和版本更新提示统一为 80% 不透明、20% 透明的无描边磨砂卡片。
+- **侧边栏稳定性**：修复阅读历史对话时列表被后台同步反复重建、自行滚动和抽搐的问题。
+- **设置与快捷操作**：PC 设置恢复登出；设置搜索支持二/三级项与模糊匹配；写作、财务、代码、翻译快捷项恢复响应。
+- **交互动效**：加号菜单、模型菜单及折叠区统一为 1 秒先快后慢、支持中途反向打断的过渡。
+- **登录安全**：开启 2FA 的账号在输入邮箱后即显示 Authenticator 验证码框，支持密码与 TOTP 一次提交。
+
+[Changelog / Release notes](https://github.com/Rick-953/RAI/releases/tag/v0.11.26)
 
 ## 2026年5月14日 RAI v0.10.9.7
 新设置UI UX风格

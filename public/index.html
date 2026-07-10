@@ -26,7 +26,7 @@
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260703-license-update-v010963a">
+  <link rel="manifest" href="site.webmanifest?v=20260710-symmetric-chat-width-v01126">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
@@ -46,7 +46,7 @@
   <script src="lib/highlight/highlight.min.js"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260703-license-update-v010963a">
+  <link rel="stylesheet" href="styles.css?v=20260710-symmetric-chat-width-v01126">
 </head>
 
 <body>
@@ -221,7 +221,7 @@
               </div>
               <div>
                 <strong data-i18n="onb-usage-model-title">模型切换</strong>
-                <p data-i18n="onb-usage-model-desc">点击顶部模型选择器，可切换智能模型 / 专家模式或全部模型。</p>
+                <p data-i18n="onb-usage-model-desc">点击顶部模型选择器，可切换快速、思考、研究或全部模型。</p>
               </div>
             </div>
             <div class="onboarding-usage-item">
@@ -270,10 +270,10 @@
         </button>
         <button class="control-btn temp-chat-top-btn mobile-temp-chat-btn" onclick="handleTemporaryChatClick()"
           data-i18n-title="temporary-chat" data-i18n-aria-label="temporary-chat" title="临时对话" aria-label="临时对话">
-          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
             width="24" height="24" fill="currentColor">
             <path
-              d="M360-120q-33 0-56.5-23.5T280-200v-80H160q-33 0-56.5-23.5T80-360v-360q0-33 23.5-56.5T160-800h520q33 0 56.5 23.5T760-720v120h40q33 0 56.5 23.5T880-520v320q0 33-23.5 56.5T800-120H360ZM160-360h120q33 0 56.5 23.5T360-280v80h440v-320H360q-33 0-56.5-23.5T280-600v-120H160v360Zm200-240h320v-120H360v120Z" />
+              d="M15.1 19.37l1 1.74c-.96.44-2.01.73-3.1.84v-2.02c.74-.09 1.44-.28 2.1-.56ZM4.07 13H2.05c.11 1.1.4 2.14.84 3.1l1.74-1c-.28-.66-.47-1.36-.56-2.1ZM15.1 4.63l1-1.74c-.96-.44-2-.73-3.1-.84v2.02c.74.09 1.44.28 2.1.56ZM19.93 11h2.02c-.11-1.1-.4-2.14-.84-3.1l-1.74 1c.28.66.47 1.36.56 2.1ZM8.9 19.37l-1 1.74c.96.44 2.01.73 3.1.84v-2.02c-.74-.09-1.44-.28-2.1-.56ZM11 4.07V2.05c-1.1.11-2.14.4-3.1.84l1 1.74c.66-.28 1.36-.47 2.1-.56ZM18.36 7.17l1.74-1.01c-.63-.87-1.4-1.64-2.27-2.27l-1.01 1.74c.59.45 1.1.96 1.54 1.54ZM4.63 8.9l-1.74-1c-.44.96-.73 2-.84 3.1h2.02c.09-.74.28-1.44.56-2.1ZM19.93 13c-.09.74-.28 1.44-.56 2.1l1.74 1c.44-.96.73-2.01.84-3.1h-2.02ZM16.83 18.36l1.01 1.74c.87-.63 1.64-1.4 2.27-2.27l-1.74-1.01c-.45.59-.96 1.1-1.54 1.54ZM7.17 5.64l-1-1.75c-.88.64-1.64 1.4-2.27 2.28l1.74 1.01c.44-.59.95-1.1 1.53-1.54ZM5.64 16.83l-1.74 1c.63.87 1.4 1.64 2.27 2.27l1.01-1.74c-.59-.44-1.1-.95-1.54-1.53ZM13 7h-2v5.41l4.29 4.29 1.41-1.41-3.7-3.7V7Z" />
           </svg>
         </button>
         <div class="mobile-logo">RAI</div>
@@ -332,16 +332,16 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-              <div class="logo-subtitle">by Rick · v0.10.9.62</div>
+                <div class="logo-subtitle">by Rick · v0.11.26</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
             <button class="sidebar-control-btn temp-chat-top-btn" onclick="handleTemporaryChatClick()" data-i18n-title="temporary-chat"
               data-i18n-aria-label="temporary-chat" title="临时对话" aria-label="临时对话">
-              <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+              <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
                 width="22" height="22" fill="currentColor">
                 <path
-                  d="M360-120q-33 0-56.5-23.5T280-200v-80H160q-33 0-56.5-23.5T80-360v-360q0-33 23.5-56.5T160-800h520q33 0 56.5 23.5T760-720v120h40q33 0 56.5 23.5T880-520v320q0 33-23.5 56.5T800-120H360ZM160-360h120q33 0 56.5 23.5T360-280v80h440v-320H360q-33 0-56.5-23.5T280-600v-120H160v360Zm200-240h320v-120H360v120Z" />
+                  d="M15.1 19.37l1 1.74c-.96.44-2.01.73-3.1.84v-2.02c.74-.09 1.44-.28 2.1-.56ZM4.07 13H2.05c.11 1.1.4 2.14.84 3.1l1.74-1c-.28-.66-.47-1.36-.56-2.1ZM15.1 4.63l1-1.74c-.96-.44-2-.73-3.1-.84v2.02c.74.09 1.44.28 2.1.56ZM19.93 11h2.02c-.11-1.1-.4-2.14-.84-3.1l-1.74 1c.28.66.47 1.36.56 2.1ZM8.9 19.37l-1 1.74c.96.44 2.01.73 3.1.84v-2.02c-.74-.09-1.44-.28-2.1-.56ZM11 4.07V2.05c-1.1.11-2.14.4-3.1.84l1 1.74c.66-.28 1.36-.47 2.1-.56ZM18.36 7.17l1.74-1.01c-.63-.87-1.4-1.64-2.27-2.27l-1.01 1.74c.59.45 1.1.96 1.54 1.54ZM4.63 8.9l-1.74-1c-.44.96-.73 2-.84 3.1h2.02c.09-.74.28-1.44.56-2.1ZM19.93 13c-.09.74-.28 1.44-.56 2.1l1.74 1c.44-.96.73-2.01.84-3.1h-2.02ZM16.83 18.36l1.01 1.74c.87-.63 1.64-1.4 2.27-2.27l-1.74-1.01c-.45.59-.96 1.1-1.54 1.54ZM7.17 5.64l-1-1.75c-.88.64-1.64 1.4-2.27 2.28l1.74 1.01c.44-.59.95-1.1 1.53-1.54ZM5.64 16.83l-1.74 1c.63.87 1.4 1.64 2.27 2.27l1.01-1.74c-.59-.44-1.1-.95-1.54-1.53ZM13 7h-2v5.41l4.29 4.29 1.41-1.41-3.7-3.7V7Z" />
               </svg>
             </button>
             <button class="sidebar-control-btn" onclick="toggleTheme()" data-i18n-title="theme-toggle-label" title="切换主题">
@@ -526,41 +526,41 @@
           </div>
           <h1 class="welcome-title" data-i18n="welcome-title">How can I help you? </h1>
 
-          <div class="welcome-actions">
-            <div class="action-card" onclick="handleActionCard('write')">
+          <div class="welcome-actions home-action-rail">
+            <button type="button" class="action-card" data-home-action="write" onclick="handleActionCard('write')">
               <svg class="material-symbols-outlined action-card-icon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path
                   d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
               </svg>
               <span class="action-card-title" data-i18n="action-write">写作</span>
-            </div>
+            </button>
 
-            <div class="action-card" onclick="handleActionCard('finance')">
+            <button type="button" class="action-card" data-home-action="finance" onclick="handleActionCard('finance')">
               <svg class="material-symbols-outlined action-card-icon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path
-                  d="M3 17h3.2l3.7-4.44 3.2 2.67L21 6v3h-2V9.7l-5.58 6.97-3.33-2.78L7.13 17H11v2H3v-2z" />
+                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-.98 2.4-1.59 0-.83-.44-1.61-2.67-2.14-2.48-.6-4.18-1.62-4.18-3.67 0-1.72 1.39-2.84 3.11-3.21V4h2.67v1.95c1.86.45 2.79 1.86 2.85 3.39H14.3c-.05-1.11-.64-1.87-2.22-1.87-1.5 0-2.4.68-2.4 1.64 0 .84.65 1.39 2.67 1.91s4.18 1.39 4.18 3.91c-.01 1.83-1.38 2.83-3.12 3.16Z" />
               </svg>
               <span class="action-card-title" data-i18n="action-finance">财务</span>
-            </div>
+            </button>
 
-            <div class="action-card" onclick="handleActionCard('code')">
+            <button type="button" class="action-card" data-home-action="code" onclick="handleActionCard('code')">
               <svg class="material-symbols-outlined action-card-icon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" />
               </svg>
               <span class="action-card-title" data-i18n="action-code">代码</span>
-            </div>
+            </button>
 
-            <div class="action-card" onclick="handleActionCard('translate')">
+            <button type="button" class="action-card" data-home-action="translate" onclick="handleActionCard('translate')">
               <svg class="material-symbols-outlined action-card-icon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path
                   d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
               </svg>
               <span class="action-card-title" data-i18n="action-translate">翻译</span>
-            </div>
+            </button>
           </div>
         </div>
 
@@ -594,7 +594,7 @@
                 </button>
 
                 <!-- 更多菜单下拉 -->
-                <div class="more-menu" id="moreMenu">
+                <div class="more-menu" id="moreMenu" aria-hidden="true">
                   <!-- 联网搜索开关 -->
                   <div class="more-menu-item" onclick="toggleInternetFromMenu(event)">
                     <div class="more-menu-item-icon">
@@ -607,28 +607,17 @@
                     <div class="more-menu-item-toggle" id="internetToggle"></div>
                   </div>
 
-                  <!-- 推理模式开关 -->
-                  <div class="more-menu-item" onclick="toggleThinkingFromMenu(event)">
-                    <div class="more-menu-item-icon">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
-                        <path
-                          d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
-                      </svg>
-                    </div>
-                    <span class="more-menu-item-text" data-i18n="reasoning-mode">推理模式</span>
-                    <div class="more-menu-item-toggle" id="thinkingToggle"></div>
-                  </div>
-
-                  <!-- 推理强度 -->
+                  <!-- 推理模式 -->
                   <div class="more-menu-item more-menu-item-static reasoning-profile-item" onclick="event.stopPropagation()">
-                    <div class="reasoning-profile-header">
+                    <div class="reasoning-profile-header" onclick="toggleThinkingFromMenu(event)">
                       <div class="more-menu-item-icon">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
                           <path
-                            d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q33 0 62.5-12.5T594-206l-56-56q-12 9-26.5 13.5T480-244q-39 0-66.5-27.5T386-338q0-17 4.5-31.5T404-396l-56-56q-19 22-29.5 49.5T308-338q0 72 50 122t122 50Zm200-200q0-72-50-122T508-604q-17 0-31.5 4.5T448-586l56 56q12-9 26.5-13.5T562-548q39 0 66.5 27.5T656-454q0 17-4.5 31.5T638-396l56 56q19-22 29.5-49.5T734-454Z" />
+                            d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
                         </svg>
                       </div>
-                      <span class="more-menu-item-text" data-i18n="reasoning-profile">推理时间</span>
+                      <span class="more-menu-item-text" data-i18n="reasoning-mode">推理模式</span>
+                      <div class="more-menu-item-toggle" id="thinkingToggle"></div>
                     </div>
                     <div class="reasoning-profile-slider-wrap">
                       <input
@@ -744,24 +733,31 @@
                 </div>
 
                 <!-- 模型下拉菜单 -->
-                <div class="model-dropdown-menu" id="modelDropdownMenu">
-                  <!-- 智能模型 -->
-                  <div class="model-menu-item" data-model="auto"
-                    onclick="selectModelFromMenu('auto', '智能模型', 'model-smart')">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
-                      viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                      <path
-                        d="M80-140v-320h320v320H80Zm80-80h160v-160H160v160Zm60-340 220-360 220 360H220Zm142-80h156l-78-126-78 126ZM863-42 757-148q-21 14-45.5 21t-51.5 7q-75 0-127.5-52.5T480-300q0-75 52.5-127.5T660-480q75 0 127.5 52.5T840-300q0 26-7 50.5T813-204L919-98l-56 56ZM660-200q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29ZM320-380Zm120-260Z" />
+                <div class="model-dropdown-menu" id="modelDropdownMenu" aria-hidden="true">
+                  <div class="model-menu-item model-mode-item" data-mode="fast" data-model="deepseek-flash"
+                    onclick="selectRaiModeFromMenu('fast', event)">
+                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24px" height="24px" fill="currentColor" aria-hidden="true">
+                      <path d="M20.38 8.57l-1.23 1.85A8 8 0 0 1 18.93 18H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44ZM10.59 15.41a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-smart">智能模型</div>
+                      <div class="model-menu-title" data-i18n="model-fast">快速</div>
                     </div>
                   </div>
 
-                  <div class="model-menu-divider"></div>
+                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-pro"
+                    onclick="selectRaiModeFromMenu('think', event)">
+                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
+                      viewBox="0 -960 960 960" width="24px" fill="currentColor">
+                      <path
+                        d="M480-80q-26 0-47-12.5T400-126q-33 0-56.5-23.5T320-206v-142q-59-39-94.5-103T190-590q0-121 84.5-205.5T480-880q121 0 205.5 84.5T770-590q0 77-35.5 140T640-348v142q0 33-23.5 56.5T560-126q-12 21-33 33.5T480-80Zm-80-126h160v-36H400v36Zm0-76h160v-38H400v38Zm-8-118h58v-108l-88-88 42-42 76 76 76-76 42 42-88 88v108h58q54-26 88-76.5T690-590q0-88-61-149t-149-61q-88 0-149 61t-61 149q0 63 34 113.5t88 76.5Zm88-162Zm0-38Z" />
+                    </svg>
+                    <div class="model-menu-content">
+                      <div class="model-menu-title" data-i18n="model-expert">思考</div>
+                    </div>
+                  </div>
 
-                  <div class="model-menu-item" data-model="research-mode"
-                    onclick="selectModelFromMenu('research-mode', '研究模式', 'research-mode')">
+                  <div class="model-menu-item model-mode-item" data-mode="research" data-model="research-mode"
+                    onclick="selectRaiModeFromMenu('research', event)">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
                       <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h338q16 0 30.5 6t25.5 17l129 129q11 11 17 25.5t6 30.5v104q-18-7-38-9.5t-42-.5v-80H520v-142H200v560h246q7 22 20 42t30 38H200Zm80-160h166q4-21 12-40t21-40H280v80Zm0-160h320v-80H280v80Zm386 360q-79 0-134.5-55.5T476-270q0-79 55.5-134.5T666-460q79 0 134.5 55.5T856-270q0 79-55.5 134.5T666-80Zm-40-130 140-140-42-42-98 98-40-40-42 42 82 82Z" />
                     </svg>
@@ -772,35 +768,8 @@
 
                   <div class="model-menu-divider"></div>
 
-                  <!-- 专家模式 -->
-                  <div class="model-menu-item" data-model="deepseek-pro"
-                    onclick="selectModelFromMenu('deepseek-pro', '专家模式', 'model-expert')">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
-                      viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                      <path
-                        d="M480-80q-26 0-47-12.5T400-126q-33 0-56.5-23.5T320-206v-142q-59-39-94.5-103T190-590q0-121 84.5-205.5T480-880q121 0 205.5 84.5T770-590q0 77-35.5 140T640-348v142q0 33-23.5 56.5T560-126q-12 21-33 33.5T480-80Zm-80-126h160v-36H400v36Zm0-76h160v-38H400v38Zm-8-118h58v-108l-88-88 42-42 76 76 76-76 42 42-88 88v108h58q54-26 88-76.5T690-590q0-88-61-149t-149-61q-88 0-149 61t-61 149q0 63 34 113.5t88 76.5Zm88-162Zm0-38Z" />
-                    </svg>
-                    <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-expert">专家模式</div>
-                    </div>
-                  </div>
-
-                  <div class="model-menu-divider"></div>
-
-                  <div class="model-menu-item" data-model="deepseek-flash"
-                    onclick="selectModelFromMenu('deepseek-flash', '极速模型', 'model-fast')">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="24px" height="24px" fill="currentColor" aria-hidden="true">
-                      <path d="M418-80 520-360H320l220-520h100L538-520h222L518-80H418Z" />
-                    </svg>
-                    <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-fast">极速模型</div>
-                    </div>
-                  </div>
-
-                  <div class="model-menu-divider"></div>
-
                   <!-- 全部模型 (Expandable) -->
-                  <div class="model-menu-item" data-toggle="all-models" onclick="toggleAllModels()">
+                  <div class="model-menu-item" data-toggle="all-models" aria-expanded="false" onclick="toggleAllModels()">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
                       <path
@@ -816,13 +785,24 @@
                   </div>
 
                   <!-- 全部模型展开内容 -->
-                  <div class="all-models-section" id="allModelsSection" style="display: none;">
+                  <div class="all-models-section" id="allModelsSection" aria-hidden="true">
+                    <div class="model-menu-divider"></div>
+
+                    <div class="model-menu-item" data-model="auto"
+                      onclick="selectModelFromMenu('auto', '智能模型', 'model-smart')">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title" data-i18n="model-smart">智能模型</div>
+                        <div class="model-menu-description">auto</div>
+                      </div>
+                    </div>
+
                     <div class="model-menu-divider"></div>
 
                     <div class="model-menu-item" data-model="deepseek-pro"
                       onclick="selectModelFromMenu('deepseek-pro', 'DeepSeek Pro')">
                       <div class="model-menu-content">
                         <div class="model-menu-title">DeepSeek Pro</div>
+                        <div class="model-menu-description">deepseek-pro</div>
                       </div>
                     </div>
 
@@ -830,6 +810,7 @@
                       onclick="selectModelFromMenu('deepseek-flash', 'DeepSeek Flash')">
                       <div class="model-menu-content">
                         <div class="model-menu-title">DeepSeek Flash</div>
+                        <div class="model-menu-description">deepseek-flash</div>
                       </div>
                     </div>
 
@@ -840,6 +821,7 @@
                       onclick="selectModelFromMenu('qwen3.6-35b-a3b', 'Qwen 3.6')">
                       <div class="model-menu-content">
                         <div class="model-menu-title">Qwen 3.6</div>
+                        <div class="model-menu-description">qwen3.6-35b-a3b</div>
                       </div>
                     </div>
 
@@ -847,6 +829,7 @@
                       onclick="selectModelFromMenu('kimi-k2.6', 'Kimi K2.6')">
                       <div class="model-menu-content">
                         <div class="model-menu-title">Kimi K2.6</div>
+                        <div class="model-menu-description">kimi-k2.6</div>
                       </div>
                     </div>
 
@@ -857,6 +840,7 @@
                       onclick="selectModelFromMenu('chatgpt-gpt-oss-120b', 'ChatGPT')">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">ChatGPT</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
+                        <div class="model-menu-description">chatgpt-gpt-oss-120b</div>
                       </div>
                     </div>
 
@@ -864,6 +848,7 @@
                       onclick="selectModelFromMenu('north-mini-code', 'Mimo Code')">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Mimo Code</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
+                        <div class="model-menu-description">north-mini-code</div>
                       </div>
                     </div>
 
@@ -871,6 +856,7 @@
                       onclick="selectModelFromMenu('nemotron-3-ultra', 'Nemotron 3 Ultra')">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Nemotron 3 Ultra</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
+                        <div class="model-menu-description">nemotron-3-ultra</div>
                       </div>
                     </div>
 
@@ -880,6 +866,7 @@
                       onclick="selectModelFromMenu('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6')">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Claude Sonnet 4.6</span><span class="model-badge max-only">MAX</span></div>
+                        <div class="model-menu-description">anthropic/claude-sonnet-4.6</div>
                       </div>
                     </div>
 
@@ -889,6 +876,7 @@
                       onclick="selectModelFromMenu('anthropic/claude-3-haiku', 'Claude 3 Haiku')">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Claude 3 Haiku</span><span class="model-badge max-only">MAX</span></div>
+                        <div class="model-menu-description">anthropic/claude-3-haiku</div>
                       </div>
                     </div>
 
@@ -899,6 +887,7 @@
                       onclick="selectModelFromMenu('gemma', 'Gemma')">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Gemma</span><span class="model-badge limited-free" data-i18n="model-badge-limited-free">限免</span></div>
+                        <div class="model-menu-description">gemma</div>
                       </div>
                     </div>
 
@@ -923,7 +912,7 @@
                 </div>
               </div>
 
-              <button type="button" class="send-btn" id="sendBtn" onclick="sendMessage()">
+              <button type="button" class="send-btn" id="sendBtn" onclick="handleSendButtonClick(event)">
                 <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
                   height="24" fill="currentColor">
                   <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" stroke-width="2" />
@@ -1218,67 +1207,108 @@
 
   <div class="settings-modal" id="settingsModal">
     <div class="settings-content" role="dialog" aria-modal="true" aria-labelledby="settingsPanelTitle">
+      <button class="settings-desktop-close-btn" onclick="closeSettings()" data-i18n-aria-label="settings-close-label" aria-label="关闭设置">
+        <img class="settings-close-icon" src="icons/settings/close.svg" alt="" aria-hidden="true">
+      </button>
       <aside class="settings-sidebar">
-        <button class="settings-close-btn" onclick="closeSettings()" data-i18n-aria-label="settings-close-label" aria-label="关闭设置">
-          <img class="settings-close-icon" src="icons/settings/close.svg" alt="" aria-hidden="true">
+        <div class="settings-mobile-chrome">
+          <button class="settings-close-btn" onclick="closeSettings()" data-i18n-aria-label="settings-close-label" aria-label="关闭设置">
+            <img class="settings-close-icon" src="icons/settings/close.svg" alt="" aria-hidden="true">
+          </button>
+          <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
+          <button type="button" class="settings-mobile-info-btn" onclick="switchSettingsSection('about')"
+            data-i18n-aria-label="settings-nav-about" aria-label="关于">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260710-symmetric-chat-width-v01126" alt="" aria-hidden="true">
+          </button>
+        </div>
+
+        <label class="settings-search">
+          <span aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M9.5 3a6.5 6.5 0 0 1 5.17 10.44l4.44 4.45-1.42 1.42-4.45-4.44A6.5 6.5 0 1 1 9.5 3Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z" />
+            </svg>
+          </span>
+          <input type="search" id="settingsSearchInput" oninput="filterSettingsNav(this.value)"
+            data-i18n-placeholder="settings-search-placeholder" data-i18n-aria-label="settings-search-placeholder"
+            placeholder="搜索设置" aria-label="搜索设置" autocomplete="off">
+        </label>
+        <div class="settings-search-results" id="settingsSearchResults" role="listbox" aria-live="polite" hidden></div>
+
+        <button type="button" class="settings-mobile-account-card" onclick="switchSettingsSection('account')">
+          <span class="settings-mobile-avatar" id="settingsMobileAvatar">R</span>
+          <span class="settings-mobile-account-copy">
+            <span class="settings-mobile-account-line">
+              <strong id="settingsMobileName">Rick</strong>
+              <span class="settings-mobile-plan free" id="settingsMobilePlan">free</span>
+            </span>
+            <span id="settingsMobileEmail">rick@example.com</span>
+          </span>
         </button>
 
-        <div class="settings-mobile-profile">
-          <button type="button" class="settings-mobile-avatar-btn" onclick="openAvatarPicker()"
-            data-i18n-aria-label="avatar-change-label" aria-label="更换头像">
-            <span class="settings-mobile-avatar" id="settingsMobileAvatar">R</span>
-            <span class="settings-mobile-avatar-edit" aria-hidden="true">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
-                <path d="M3 17.25V21h3.75L17.8 9.95l-3.75-3.75L3 17.25Zm17.7-10.2c.4-.4.4-1.03 0-1.42L18.37 3.3a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.82-1.83Z" />
-              </svg>
-            </span>
-          </button>
-          <div class="settings-mobile-name" id="settingsMobileName">Rick</div>
+        <div class="settings-sidebar-brand">
+          <div class="settings-sidebar-avatar" id="settingsSidebarAvatar" aria-hidden="true">R</div>
+          <div class="settings-sidebar-user-copy">
+            <div class="settings-sidebar-user-line">
+              <strong id="settingsSidebarName">RAI</strong>
+              <span class="settings-sidebar-plan free" id="settingsSidebarPlan">free</span>
+            </div>
+            <span id="settingsSidebarEmail">设置中心</span>
+          </div>
         </div>
 
         <nav class="settings-nav" data-i18n-aria-label="settings-nav-aria" aria-label="设置分类">
-          <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-rai">我的 RAI</div>
-          <div class="settings-nav-group">
-            <button type="button" class="settings-nav-item active" data-settings-section="language"
-              onclick="switchSettingsSection('language')">
-              <img class="settings-nav-icon" src="icons/settings/language.svg" alt="" aria-hidden="true">
-              <span data-i18n="settings-nav-language">语言 / English</span>
-            </button>
-            <button type="button" class="settings-nav-item" data-settings-section="custom"
-              onclick="switchSettingsSection('custom')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg" alt="" aria-hidden="true">
-              <span data-i18n="settings-nav-custom">自定义</span>
-            </button>
-            <button type="button" class="settings-nav-item" data-settings-section="appearance"
-              onclick="switchSettingsSection('appearance')">
-              <img class="settings-nav-icon" src="icons/settings/appearance.svg" alt="" aria-hidden="true">
-              <span data-i18n="settings-nav-appearance">外观</span>
-            </button>
-          </div>
           <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-account">账户</div>
           <div class="settings-nav-group">
-            <button type="button" class="settings-nav-item" data-settings-section="subscription"
-              onclick="switchSettingsSection('subscription')">
-              <img class="settings-nav-icon" src="icons/settings/subscription.svg" alt="" aria-hidden="true">
-              <span data-i18n="settings-nav-subscription">订阅</span>
-            </button>
             <button type="button" class="settings-nav-item" data-settings-section="account"
               onclick="switchSettingsSection('account')">
               <img class="settings-nav-icon" src="icons/settings/account.svg" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-account">账号</span>
             </button>
+            <button type="button" class="settings-nav-item" data-settings-section="subscription"
+              onclick="switchSettingsSection('subscription')">
+              <img class="settings-nav-icon" src="icons/settings/subscription.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-subscription">会员</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="language"
+              onclick="switchSettingsSection('language')">
+              <img class="settings-nav-icon" src="icons/settings/language.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-language">语言 / English</span>
+            </button>
+          </div>
+          <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-rai">我的 RAI</div>
+          <div class="settings-nav-group">
+            <button type="button" class="settings-nav-item active" data-settings-section="general"
+              onclick="switchSettingsSection('general')">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260710-symmetric-chat-width-v01126" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-general">自定义</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="capabilities"
+              onclick="switchSettingsSection('capabilities')">
+              <img class="settings-nav-icon" src="icons/settings/capabilities.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-capabilities">能力</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="personalization"
+              onclick="switchSettingsSection('personalization')">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260710-symmetric-chat-width-v01126" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-personalization">个性化</span>
+            </button>
+            <button type="button" class="settings-nav-item" data-settings-section="memory"
+              onclick="switchSettingsSection('memory')">
+              <img class="settings-nav-icon" src="icons/settings/memory.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-memory">记忆</span>
+            </button>
           </div>
           <div class="settings-mobile-section-label" data-i18n="settings-mobile-section-system">系统</div>
           <div class="settings-nav-group">
-            <button type="button" class="settings-nav-item tauri-desktop-only is-hidden" data-settings-section="desktop"
-              onclick="switchSettingsSection('desktop')" aria-hidden="true">
-              <img class="settings-nav-icon" src="icons/settings/settings.svg" alt="" aria-hidden="true">
-              <span data-i18n="settings-nav-desktop">桌面端</span>
-            </button>
             <button type="button" class="settings-nav-item" data-settings-section="notifications"
               onclick="switchSettingsSection('notifications')">
-              <img class="settings-nav-icon" src="icons/settings/notification_settings.svg" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/notifications.svg" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-notifications">通知</span>
+            </button>
+            <button type="button" class="settings-nav-item tauri-desktop-only is-hidden" data-settings-section="desktop"
+              onclick="switchSettingsSection('desktop')" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/desktop.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-desktop">桌面端</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="advanced"
               onclick="switchSettingsSection('advanced')">
@@ -1293,6 +1323,9 @@
           </div>
         </nav>
 
+        <button type="button" class="settings-desktop-logout-link" onclick="handleLogout()" data-i18n="logout">登出</button>
+        <button type="button" class="settings-mobile-logout-link" onclick="handleLogout()" data-i18n="logout">登出</button>
+
       </aside>
 
       <main class="settings-main">
@@ -1303,23 +1336,134 @@
               height="24" fill="currentColor">
               <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.42-1.41L7.83 13H20v-2z" />
             </svg>
+            <span class="settings-back-label" data-i18n="settings">设置</span>
           </button>
-          <h2 class="settings-title" id="settingsPanelTitle" data-i18n="settings-nav-language">语言 / English</h2>
+          <h2 class="settings-title" id="settingsPanelTitle" data-i18n="settings-nav-general">自定义</h2>
         </div>
 
         <div class="settings-panel-container">
-          <section class="settings-panel active" id="settingsPanel-language" data-settings-panel="language">
+          <section class="settings-panel" id="settingsPanel-language" data-settings-panel="language">
             <div class="settings-section-intro">
-              <h3 data-i18n="language-label">语言</h3>
+              <h3 data-i18n="settings-nav-language">语言 / English</h3>
               <p data-i18n="language-desc">选择界面语言</p>
             </div>
-            <div class="settings-choice-row">
-              <button type="button" class="settings-choice-btn" data-language-option="zh-CN"
-                onclick="setLanguage('zh-CN')">简体中文</button>
-              <button type="button" class="settings-choice-btn" data-language-option="zh-TW"
-                onclick="setLanguage('zh-TW')">繁體中文</button>
-              <button type="button" class="settings-choice-btn" data-language-option="en"
-                onclick="setLanguage('en')">English</button>
+            <div class="settings-row-list">
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="language-label">语言</div>
+                  <p class="setting-description" data-i18n="language-desc">选择界面语言</p>
+                </div>
+                <div class="settings-segmented" role="group" aria-label="Language">
+                  <button type="button" class="settings-choice-btn" data-language-option="zh-CN"
+                    onclick="setLanguage('zh-CN')">简体中文</button>
+                  <button type="button" class="settings-choice-btn" data-language-option="zh-TW"
+                    onclick="setLanguage('zh-TW')">繁體中文</button>
+                  <button type="button" class="settings-choice-btn" data-language-option="en"
+                    onclick="setLanguage('en')">English</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-panel active" id="settingsPanel-general" data-settings-panel="general">
+            <div class="settings-section-intro">
+              <h3 data-i18n="settings-general-title">自定义</h3>
+              <p data-i18n="settings-general-desc">外观和标签页行为。</p>
+            </div>
+            <div class="settings-row-list">
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="appearance">外观</div>
+                  <p class="setting-description" data-i18n="theme-desc">选择界面主题</p>
+                </div>
+                <div class="settings-segmented" role="group" aria-label="Theme">
+                  <button type="button" class="settings-choice-btn" data-theme-option="dark"
+                    onclick="setTheme('dark')"><span data-i18n="dark-theme">深色</span></button>
+                  <button type="button" class="settings-choice-btn" data-theme-option="light"
+                    onclick="setTheme('light')"><span data-i18n="light-theme">浅色</span></button>
+                  <button type="button" class="settings-choice-btn" data-theme-option="system"
+                    onclick="setTheme('system')"><span data-i18n="system-theme">跟随系统</span></button>
+                </div>
+              </div>
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="font-label">字体</div>
+                  <p class="setting-description" data-i18n="font-desc">选择界面字体</p>
+                </div>
+                <div class="settings-segmented" role="group" aria-label="Font">
+                  <button type="button" class="settings-choice-btn" data-font-option="rai"
+                    onclick="setFontPreference('rai')"><span data-i18n="font-rai">RAI 默认</span></button>
+                  <button type="button" class="settings-choice-btn" data-font-option="system"
+                    onclick="setFontPreference('system')"><span data-i18n="font-system">系统默认</span></button>
+                </div>
+              </div>
+              <div class="settings-setting-row settings-setting-row-stacked">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="tab-title-settings-title">标签页动画</div>
+                  <p class="setting-description" data-i18n="tab-title-settings-desc">控制浏览器标签页标题的显示方式。</p>
+                </div>
+                <select id="tabTitleModeSelect" class="setting-input tab-title-select" onchange="setTabTitleModeFromSettings(this.value)">
+                  <option value="default" data-i18n="tab-title-mode-default">默认</option>
+                  <option value="marquee" data-i18n="tab-title-mode-marquee">品牌跑马灯</option>
+                  <option value="static" data-i18n="tab-title-mode-static">关闭（静态 RAI）</option>
+                  <option value="greeting" data-i18n="tab-title-mode-greeting">问候语</option>
+                  <option value="title" data-i18n="tab-title-mode-title">对话标题</option>
+                  <option value="custom" data-i18n="tab-title-mode-custom">自定义</option>
+                </select>
+                <div class="settings-inline-field" id="tabTitleCustomRow" style="display: none;">
+                  <input type="text" class="setting-input" id="tabTitleCustomInput" maxlength="80"
+                    data-i18n-placeholder="tab-title-custom-placeholder" placeholder="RAI 后面要显示的文字"
+                    oninput="setTabTitleCustomTextFromSettings(this.value)">
+                </div>
+                <p class="setting-description" data-i18n="tab-title-custom-hint">仅在“自定义”模式下生效，显示为 RAI + 你的文字。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-capabilities" data-settings-panel="capabilities">
+            <div class="settings-section-intro">
+              <h3 data-i18n="settings-capabilities-title">能力</h3>
+              <p data-i18n="settings-capabilities-desc">控制 RAI 在默认对话中可使用的增强能力。</p>
+            </div>
+            <div class="settings-row-list">
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="internet-search">联网搜索</div>
+                  <p class="setting-description" data-i18n="settings-capability-web-desc">需要实时信息时允许 RAI 联网检索。</p>
+                </div>
+                <button type="button" class="more-menu-switch settings-row-switch" id="settingsInternetSwitch"
+                  onclick="settingsToggleInternetMode()" aria-pressed="true">
+                  <span class="more-menu-item-toggle" id="settingsInternetToggle"></span>
+                </button>
+              </div>
+              <div class="settings-setting-row" id="settingsThinkingCapabilityRow">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="thinkingMode">思考模式</div>
+                  <p class="setting-description" data-i18n="settings-capability-thinking-desc">当前模型支持时，允许更长的内部推理。</p>
+                </div>
+                <button type="button" class="more-menu-switch settings-row-switch" id="settingsThinkingSwitch"
+                  onclick="settingsToggleThinkingMode()" aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="settingsThinkingToggle"></span>
+                </button>
+              </div>
+              <div class="settings-setting-row settings-setting-row-stacked">
+                <div class="settings-setting-row-head">
+                  <div class="settings-setting-copy">
+                    <div class="setting-label" data-i18n="research-mode">研究模式</div>
+                    <p class="setting-description" data-i18n="research-mode-desc">多模型讨论</p>
+                  </div>
+                  <button type="button" class="more-menu-switch settings-row-switch" id="settingsResearchSwitch"
+                    onclick="settingsToggleResearchMode()" aria-pressed="false">
+                    <span class="more-menu-item-toggle" id="settingsResearchToggle"></span>
+                  </button>
+                </div>
+                <div class="settings-segmented settings-research-mode-choice" role="group" aria-label="Research mode depth">
+                  <button type="button" class="settings-choice-btn" data-settings-research-mode="fast"
+                    onclick="setResearchMode('fast', { enable: true })" data-i18n="research-fast">快速研究</button>
+                  <button type="button" class="settings-choice-btn" data-settings-research-mode="deep"
+                    onclick="setResearchMode('deep', { enable: true })" data-i18n="research-deep">深度研究</button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -1356,11 +1500,8 @@
               <div class="settings-section-row">
                 <div class="settings-section-intro">
                   <h3 data-i18n="account-settings-title">账号信息</h3>
-                  <p data-i18n="settings-account-desc">用户名、邮箱、密码和第三方绑定状态</p>
+                  <p data-i18n="settings-account-desc">用户名、邮箱、密码、第三方绑定和二步验证</p>
                 </div>
-                <button type="button" class="settings-inline-confirm" id="settingsAccountSaveBtn"
-                  onclick="saveSettings({ closeAfterSave: false })" data-settings-save-action
-                  data-label-key="confirm-change" data-i18n="confirm-change">确定</button>
               </div>
 
               <div class="settings-avatar-card">
@@ -1383,10 +1524,22 @@
                 </div>
                 <div class="setting-item">
                   <label class="setting-label" for="settingsEmailInput" data-i18n="settings-email-label">邮箱</label>
-                  <p class="setting-description" data-i18n="settings-email-desc">修改登录邮箱，保存后立即生效</p>
-                  <input type="email" class="setting-input" id="settingsEmailInput" maxlength="255" autocomplete="email"
-                    data-i18n-placeholder="settings-email-placeholder" placeholder="name@example.com">
+                  <p class="setting-description" data-i18n="settings-email-desc">修改登录邮箱需依次验证当前密码、Authenticator、旧邮箱和新邮箱。</p>
+                  <div class="settings-email-inline-row">
+                    <input type="email" class="setting-input" id="settingsEmailInput" maxlength="255" autocomplete="email"
+                      data-i18n-placeholder="settings-email-placeholder" placeholder="name@example.com">
+                    <button type="button" class="settings-inline-confirm settings-email-confirm-btn"
+                      id="settingsEmailChangeStartBtn" onclick="startSettingsEmailChangeFlow()"
+                      data-i18n="confirm-change">确定</button>
+                  </div>
+                  <p class="setting-description settings-email-verify-status" id="settingsEmailVerificationStatus"></p>
                 </div>
+              </div>
+
+              <div class="settings-account-action-row">
+                <button type="button" class="settings-inline-confirm" id="settingsAccountSaveBtn"
+                  onclick="saveSettings({ closeAfterSave: false })" data-settings-save-action
+                  data-label-key="confirm-change" data-i18n="confirm-change">确定</button>
               </div>
 
               <div class="settings-subsection">
@@ -1482,25 +1635,10 @@
             </div>
           </section>
 
-          <section class="settings-panel" id="settingsPanel-appearance" data-settings-panel="appearance">
-            <div class="settings-section-intro">
-              <h3 data-i18n="appearance">外观</h3>
-              <p data-i18n="theme-desc">选择界面主题</p>
-            </div>
-            <div class="settings-choice-row">
-              <button type="button" class="settings-choice-btn" data-theme-option="dark"
-                onclick="setTheme('dark')"><span data-i18n="dark-theme">深色</span></button>
-              <button type="button" class="settings-choice-btn" data-theme-option="light"
-                onclick="setTheme('light')"><span data-i18n="light-theme">浅色</span></button>
-              <button type="button" class="settings-choice-btn" data-theme-option="system"
-                onclick="setTheme('system')"><span data-i18n="system-theme">跟随系统</span></button>
-            </div>
-          </section>
-
-          <section class="settings-panel" id="settingsPanel-custom" data-settings-panel="custom">
+          <section class="settings-panel" id="settingsPanel-personalization" data-settings-panel="personalization">
             <div class="settings-section-row">
               <div class="settings-section-intro">
-                <h3 data-i18n="preferences-title">您有什么偏好？</h3>
+                <h3 data-i18n="settings-personalization-title">个性化</h3>
                 <p data-i18n="preferences-desc">设置AI的角色和行为</p>
               </div>
               <button type="button" class="settings-inline-save" onclick="saveSettings({ closeAfterSave: false })"
@@ -1524,50 +1662,15 @@
                   onclick="setNewChatDefaultModeFromSettings('classic-temp')" data-i18n="temp-chat-mode-classic">传统临时</button>
               </div>
             </div>
-            <div class="settings-subsection settings-tab-title-section">
-              <div class="settings-section-row settings-subsection-row">
-                <div>
-                  <div class="settings-subsection-title" data-i18n="tab-title-settings-title">标签页动画</div>
-                  <p class="setting-description" data-i18n="tab-title-settings-desc">控制浏览器标签页标题的显示方式。</p>
-                </div>
-              </div>
-              <select id="tabTitleModeSelect" class="setting-input tab-title-select" onchange="setTabTitleModeFromSettings(this.value)">
-                <option value="marquee" data-i18n="tab-title-mode-marquee">品牌跑马灯</option>
-                <option value="static" data-i18n="tab-title-mode-static">关闭（静态 RAI）</option>
-                <option value="greeting" data-i18n="tab-title-mode-greeting">问候语</option>
-                <option value="title" data-i18n="tab-title-mode-title">对话标题</option>
-                <option value="custom" data-i18n="tab-title-mode-custom">自定义</option>
-              </select>
-              <div class="memory-add-row" id="tabTitleCustomRow" style="display: none;">
-                <input type="text" class="setting-input" id="tabTitleCustomInput" maxlength="80"
-                  data-i18n-placeholder="tab-title-custom-placeholder" placeholder="RAI 后面要显示的文字"
-                  oninput="setTabTitleCustomTextFromSettings(this.value)">
-              </div>
-              <p class="setting-description" data-i18n="tab-title-custom-hint">仅在“自定义”模式下生效，显示为 RAI + 你的文字。</p>
-            </div>
-            <div class="settings-subsection settings-browser-notify-section">
-              <div class="memory-toggle-row">
-                <div>
-                  <div class="setting-label" data-i18n="browser-notify-settings-title">回复浏览器通知</div>
-                  <p class="setting-description" data-i18n="browser-notify-settings-desc">当 RAI 回复好而你未查看页面时，浏览器弹出系统通知提醒你。</p>
-                </div>
-                <button type="button" class="more-menu-switch browser-notify-switch" id="browserNotifySwitch"
-                  onclick="toggleBrowserNotifySetting()" aria-pressed="false">
-                  <span class="more-menu-item-toggle" id="browserNotifyToggle"></span>
-                </button>
-              </div>
-              <p class="setting-description" id="browserNotifyHint"></p>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-memory" data-settings-panel="memory">
+            <div class="settings-section-intro">
+              <h3 data-i18n="memory-settings-title">记忆</h3>
+              <p data-i18n="memory-settings-desc">普通对话会使用长期记忆和最近 10 条对话标题；临时对话完全隔离。</p>
             </div>
             <div class="settings-subsection settings-memory-section">
-              <div class="settings-section-row settings-subsection-row">
-                <div>
-                  <div class="settings-subsection-title" data-i18n="memory-settings-title">记忆</div>
-                  <p class="setting-description" data-i18n="memory-settings-desc">普通对话会使用长期记忆和最近 10 条对话标题；临时对话完全隔离。</p>
-                </div>
-                <button type="button" class="settings-inline-save secondary" onclick="clearAllUserMemories()"
-                  data-i18n="memory-clear-btn">清空记忆</button>
-              </div>
-              <div class="memory-toggle-row">
+              <div class="memory-toggle-row settings-memory-toggle-row">
                 <div>
                   <div class="setting-label" data-i18n="memory-enabled-label">长期记忆</div>
                   <p class="setting-description" data-i18n="memory-enabled-desc">开启后，RAI 会自动记住稳定的个人信息和偏好。</p>
@@ -1577,13 +1680,21 @@
                   <span class="more-menu-item-toggle" id="memoryEnabledToggle"></span>
                 </button>
               </div>
-              <div class="memory-add-row">
+              <div class="memory-add-row settings-memory-add-row">
                 <input type="text" class="setting-input memory-add-input" id="memoryAddInput" maxlength="360"
                   data-i18n-placeholder="memory-add-placeholder" placeholder="添加一条你希望 RAI 长期记住的信息">
                 <button type="button" class="settings-inline-save" onclick="addManualMemory()"
                   data-i18n="memory-add-btn">添加记忆</button>
               </div>
               <div class="memory-list" id="settingsMemoryList"></div>
+              <div class="settings-danger-zone settings-memory-danger">
+                <div>
+                  <h4 data-i18n="memory-clear-btn">清空记忆</h4>
+                  <p data-i18n="memory-clear-confirm">确定要清空所有记忆吗？此操作无法撤销。</p>
+                </div>
+                <button type="button" class="settings-inline-save secondary settings-danger-action" onclick="clearAllUserMemories()"
+                  data-i18n="memory-clear-btn">清空记忆</button>
+              </div>
             </div>
           </section>
 
@@ -1614,26 +1725,41 @@
                 <h3 data-i18n="settings-notifications-title">通知</h3>
                 <p data-i18n="settings-notifications-desc">查看 RAI 公告、迁移提示和重要产品更新。</p>
               </div>
-              <button type="button" class="settings-inline-save secondary" id="notificationPauseBtn"
-                onclick="toggleNotificationsPaused()" data-i18n="notifications-pause">暂停红点</button>
             </div>
-            <div class="settings-notice-hero" id="defaultNotificationHero">
-              <div class="settings-notice-icon" aria-hidden="true">
-                <img src="icons/settings/notifications_unread.svg" alt="">
+            <div class="settings-row-list settings-notification-control-list">
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="browser-notify-settings-title">回复浏览器通知</div>
+                  <p class="setting-description" data-i18n="browser-notify-settings-desc">当 RAI 回复好而你未查看页面时，浏览器弹出系统通知提醒你。</p>
+                  <p class="setting-description settings-notification-hint" id="browserNotifyHint"></p>
+                </div>
+                <button type="button" class="more-menu-switch browser-notify-switch" id="browserNotifySwitch"
+                  aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="browserNotifyToggle"></span>
+                </button>
               </div>
-              <div>
-                <div class="settings-notice-kicker" data-i18n="notifications-announcement-kicker">公告</div>
-                <h4 data-i18n="notifications-domain-title">RAI 域名即将更换</h4>
-                <p data-i18n="notifications-domain-body">RAI 即将迁移到新域名 https://rai.000339.xyz/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。</p>
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="notifications-red-dot-title">侧边栏红点</div>
+                  <p class="setting-description" data-i18n="notifications-red-dot-desc">只控制侧边栏通知红点，不影响公告列表和系统通知。</p>
+                </div>
+                <div class="settings-row-actions settings-notification-row-actions">
+                  <button type="button" class="settings-inline-save secondary" id="notificationPauseBtn"
+                    onclick="toggleNotificationsPaused()" data-i18n="notifications-pause">暂停红点</button>
+                  <button type="button" class="settings-inline-save" onclick="markRaiNotificationsRead()"
+                    data-i18n="notifications-mark-read">标记已读</button>
+                </div>
               </div>
             </div>
-            <div class="settings-notification-actions">
-              <a class="settings-install-download" id="defaultNotificationLink" href="https://rai.000339.xyz/" target="_blank" rel="noopener noreferrer"
-                data-i18n="notifications-open-new-domain">打开新域名</a>
-              <button type="button" class="settings-install-btn" onclick="markRaiNotificationsRead()"
-                data-i18n="notifications-mark-read">标记已读</button>
+            <div class="settings-notification-board">
+              <div class="settings-notification-board-head">
+                <div>
+                  <h4 data-i18n="notifications-list-title">公告列表</h4>
+                  <p data-i18n="notifications-list-desc">产品公告、迁移提示和需要留意的更新会集中显示在这里。</p>
+                </div>
+              </div>
+              <div class="settings-notification-list" id="settingsNotificationList"></div>
             </div>
-            <div class="settings-notification-list" id="settingsNotificationList"></div>
           </section>
 
           <section class="settings-panel" id="settingsPanel-advanced" data-settings-panel="advanced">
@@ -1731,9 +1857,9 @@
                 <span data-i18n="settings-about-github-label">GitHub</span>
                 <span>github.com/Rick-953/RAI</span>
               </a>
-              <a class="settings-about-link" href="mailto:support@example.com">
+              <a class="settings-about-link" href="mailto:rick080402+raisupport@gmail.com">
                 <span data-i18n="settings-about-author-label">作者 Rick</span>
-                <span>support@example.com</span>
+                <span>rick080402+raisupport@gmail.com</span>
               </a>
               <button type="button" class="settings-about-link settings-about-action" onclick="replayOnboarding()">
                 <span data-i18n="settings-replay-onboarding">重新观看欢迎引导</span>
@@ -1784,7 +1910,7 @@
         </button>
       </div>
       <div class="model-modal-body">
-        <!-- 智能模型 -->
+        <!-- rAI 预览模型 -->
         <div class="model-card selected" data-model="auto" onclick="selectModelFromModal('auto', '智能模型')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
             <path
@@ -1794,13 +1920,13 @@
           <div class="model-description" data-i18n="model-route-smart">智能路由</div>
         </div>
 
-        <!-- 专家模式 -->
-        <div class="model-card" data-model="deepseek-pro" onclick="selectModelFromModal('deepseek-pro', '专家模式')">
+        <!-- 思考 -->
+        <div class="model-card" data-model="deepseek-pro" onclick="selectModelFromModal('deepseek-pro', '思考')">
           <svg class="model-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
             <path
               d="M240-80v-172q-57-52-88.5-121.5T120-520q0-150 105-255t255-105q125 0 221.5 73.5T827-615l52 205q5 19-7 34.5T840-360h-80v120q0 33-23.5 56.5T680-160h-80v80h-80v-160h160v-200h108l-38-155q-23-91-98-148t-172-57q-116 0-198 81t-82 197q0 60 24.5 114t69.5 96l26 24v208h-80Zm254-360Zm-54 80h80l6-50q8-3 14.5-7t11.5-9l46 20 40-68-40-30q2-8 2-16t-2-16l40-30-40-68-46 20q-5-5-11.5-9t-14.5-7l-6-50h-80l-6 50q-8 3-14.5 7t-11.5 9l-46-20-40 68 40 30q-2 8-2 16t2 16l-40 30 40 68 46-20q5 5 11.5 9t14.5 7l6 50Zm40-100q-25 0-42.5-17.5T420-520q0-25 17.5-42.5T480-580q25 0 42.5 17.5T540-520q0 25-17.5 42.5T480-460Z" />
           </svg>
-          <div class="model-label" data-i18n="model-expert">专家模式</div>
+          <div class="model-label" data-i18n="model-expert">思考</div>
           <div class="model-description" data-i18n="model-desc-expert">复杂任务</div>
         </div>
 
@@ -1881,7 +2007,7 @@
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
           <option value="deepseek-pro" data-i18n="expertMode">专家</option>
-          <option value="deepseek-flash" data-i18n="model-fast">极速模型</option>
+          <option value="deepseek-flash" data-i18n="model-fast">快速</option>
           <option value="qwen3.6-35b-a3b">Qwen 3.6</option>
           <option value="kimi-k2.6">Kimi K2.6</option>
           <option value="chatgpt-gpt-oss-120b">ChatGPT</option>
@@ -1927,7 +2053,7 @@
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script src="app.js?v=20260703-license-update-v010963a"></script>
+  <script src="app.js?v=20260710-symmetric-chat-width-v01126"></script>
 </body>
 
 </html>

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "RAI",
-  "version": "0.10.9+17",
+  "version": "0.10.9+63",
   "identifier": "quest.rick.rai",
   "build": {
     "frontendDist": "../public",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' data: blob: https:; worker-src 'self' blob:; form-action 'self'; frame-src 'self'"
     }
   },
   "bundle": {

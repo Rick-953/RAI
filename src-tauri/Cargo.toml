@@ -1,9 +1,9 @@
 [package]
 name = "rai_desktop"
-version = "0.10.9+17"
+version = "0.10.9+63"
 description = "RAI desktop client"
 authors = ["Rick"]
-license = ""
+license = "MIT"
 repository = "https://github.com/Rick-953/RAI"
 edition = "2021"
 rust-version = "1.77.2"

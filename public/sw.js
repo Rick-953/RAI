@@ -1,6 +1,7 @@
-const RAI_SW_VERSION = '0.10.9.63-20260703-license-update-a';
+const RAI_SW_VERSION = '0.11.26-20260710-symmetric-chat-width-v01126';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-';
+const RAI_FONT_CACHE_NAME = 'rai-fonts-v1';
 const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
 const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = '/index.html';
@@ -8,9 +9,10 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260703-license-update-v010963a',
-  '/styles.css?v=20260703-license-update-v010963a',
-  '/site.webmanifest?v=20260703-license-update-v010963a',
+  '/app.js?v=20260710-symmetric-chat-width-v01126',
+  '/styles.css?v=20260710-symmetric-chat-width-v01126',
+  '/site.webmanifest?v=20260710-symmetric-chat-width-v01126',
+  '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
@@ -26,6 +28,10 @@ const RAI_STATIC_ASSETS = [
 
 function isAvatarRequest(url) {
   return url.pathname.startsWith('/avatars/') && /\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
+}
+
+function isFontRequest(url) {
+  return url.pathname.startsWith('/fonts/') && /\.(?:ttf|otf|woff2?|eot)$/i.test(url.pathname);
 }
 
 async function trimCache(cacheName, maxEntries) {
@@ -51,6 +57,18 @@ async function getCachedAvatarResponse(request) {
   }
 
   return refresh;
+}
+
+async function getCachedFontResponse(request) {
+  const cache = await caches.open(RAI_FONT_CACHE_NAME);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  const response = await fetch(request, { cache: 'force-cache' });
+  if (response && response.status === 200) {
+    cache.put(request, response.clone()).catch(() => null);
+  }
+  return response;
 }
 
 self.addEventListener('install', (event) => {
@@ -84,6 +102,11 @@ self.addEventListener('fetch', (event) => {
 
   if (isAvatarRequest(url)) {
     event.respondWith(getCachedAvatarResponse(request).catch(() => caches.match(request)));
+    return;
+  }
+
+  if (isFontRequest(url)) {
+    event.respondWith(getCachedFontResponse(request).catch(() => caches.match(request)));
     return;
   }
 

@@ -7,8 +7,6 @@ const BRAND_SHORT_NAME = String(RAI_RUNTIME_CONFIG.brandShortName || BRAND_NAME)
 const BRAND_BADGE = String(RAI_RUNTIME_CONFIG.brandBadge || '').trim();
 const BRAND_TITLE = String(RAI_RUNTIME_CONFIG.brandTitle || '').trim() || [BRAND_NAME, BRAND_BADGE].filter(Boolean).join(' ') || BRAND_NAME;
 const RUNTIME_PUBLIC_BASE_URL = String(RAI_RUNTIME_CONFIG.publicBaseUrl || '').trim();
-const RAI_SUPPORT_EMAIL = String(RAI_RUNTIME_CONFIG.supportEmail || 'support@example.com').trim() || 'support@example.com';
-const RAI_STAR_REWARD_EMAIL = String(RAI_RUNTIME_CONFIG.starRewardEmail || RAI_SUPPORT_EMAIL).trim() || RAI_SUPPORT_EMAIL;
 const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnabled !== false;
 const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.000339.xyz/').trim() || 'https://rai.000339.xyz/';
 
@@ -910,7 +908,7 @@ function renderSourcesList(sources, language) {
   let html = `
         <div class="sources-list is-collapsed">
           <div class="sources-header">
-            <span class="sources-header-icon" aria-hidden="true">🔎</span>
+            <span class="sources-header-icon source-search-icon" aria-hidden="true"></span>
             <span>${headerText}</span>
             <span
               role="button"
@@ -2166,8 +2164,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.10.9.63';
-const RAI_BUILD_ID = '20260703-license-update-v010963a';
+const RAI_APP_VERSION = '0.11.26';
+const RAI_BUILD_ID = '20260710-symmetric-chat-width-v01126';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -2210,7 +2208,7 @@ const appState = {
   messages: [],
   currentRequestId: null,
   isStreaming: false,
-  selectedModel: 'auto',  // 默认智能模型
+  selectedModel: 'auto',  // 默认 rAI 预览版模型
   lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
   thinkingMode: false,  // 默认关闭推理模式
@@ -2223,6 +2221,9 @@ const appState = {
   researchMode: 'fast',
   researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'],
   researchMasterModel: 'deepseek-pro',
+  researchMaxRounds: 50,
+  sendHoldSuppressClick: false,
+  sendHoldPicker: null,
   inputExpanded: false,  // 输入框展开状态
   thinkingBudget: 1024,
   thinkingBudgetOpen: false,
@@ -2237,17 +2238,20 @@ const appState = {
   userMemoriesLoaded: false,
   shortTermMemoryTitles: [],
   newChatDefaultMode: 'ask',
-  tabTitleMode: 'marquee',
+  tabTitleMode: 'default',
   tabTitleCustomText: '',
-  browserNotifyEnabled: false,
+  browserNotifyEnabled: (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'),
   currentSessionMemoryMode: 'normal',
   pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
   sidebarOpen: false,
   settingsOpen: false,
-  activeSettingsSection: 'language',
+  activeSettingsSection: 'general',
   settingsMobileMode: 'home',
   settingsHistoryDepth: 0,
   pendingTwoFactorToken: '',
+  pendingSettingsEmailChange: null,
+  settingsEmailChangeVerifying: false,
+  settingsEmailChangeDialogOpen: false,
   twoFactorSetup: null,
   onboardingActive: false,
   touchStartX: 0,
@@ -2261,6 +2265,7 @@ const appState = {
   activeModelMenuAnchorId: 'modelSelectCustom',
   theme: 'dark',
   themePreference: 'dark',
+  fontPreference: 'rai',
   systemThemeListenerBound: false,
   language: 'zh-CN',
   languageToggleChinese: 'zh-CN',
@@ -3256,48 +3261,78 @@ function shouldUseMemoryPrompt() {
 }
 
 function buildSystemPrompt({ includeMemory = false } = {}) {
-  return `# 角色：
-你是RAI 专业助理拥有人类千年来的丰富阅历
-由 Rick 开发，维护 Rick studio 正当权益。
----
+  return `# RAI 主系统提示词
+
+## 角色与身份
+- 你是 RAI，一名专业助理，拥有丰富阅历和广泛知识。
+- RAI 由 Rick 开发，维护 Rick studio 的正当权益。
+- RAI 的名字意思是 Rick 做的 AI 对话软件。
+- RAI 适配移动端和桌面端。
 
 ## 核心原则
 
 ### 诚实守信
-每一条陈述都必须真实、准确、可验证。
-绝不编造信息，始终保持诚实。如有不确定，坦诚告知并详细询问用户。请勿就您目前不具备的能力做出承诺，确保所有承诺都在您实际可提供的范围内，以避免误导用户并损害信任。
+- RAI can discuss virtually any topic factually and objectively.
+- 绝不编造信息，始终保持诚实。如有不确定，坦诚告知并详细询问用户。
+- 不要承诺目前不具备的能力；所有承诺必须在实际可提供的范围内，以免误导用户并损害信任。
 
 ### 语言风格
-始终保持温和、友好的态度回应，绝不表现出不耐烦或敷衍。
-除非用户要求，否则不要使用表情符号和破折号连字符等。
+- RAI 采用温暖的语气，以友善的态度对待他人，不对对方的判断力或能力做负面假设。
+- RAI 可以适时提出异议并坦诚相告，但要以建设性的方式进行，始终保持友善、同理心，并以对方的最佳利益为出发点。
+- RAI 能够通过实例、思想实验或比喻来阐释说明。
+- 除非对方主动要求或自身频繁使用脏话，否则 RAI 绝不使用脏话；即便如此，也要极少使用。
+- RAI 并非总是提出问题；一旦提问，每次回复中只问一个问题。请求澄清前，应尽量先尝试解答模棱两可的问题。
+- 提示中暗示存在文件并不意味着文件确实存在。用户可能忘记上传，或文件格式不兼容，因此 RAI 需要自行核查。
 
 ### 先理解后回应
-回复前先深入分析用户真实意图。简单问题简洁明了；复杂问题全面深入研究。做出契合上下文的有用回复。
-提供可执行的解决方案，注重实用性。思考时使用**加粗标题**进行多层级的全面详细具象真实思考。
-回答前想下用户会有哪些不满意的地方 对此进行改进 用户可能喜欢的点进行加深。
-主动思考并建议下一步行动。
+- 回复前先深入分析用户真实意图。
+- 简单问题简洁明了；复杂问题全面深入研究。
+- 做出契合上下文的有用回复，提供可执行方案，注重实用性。
+- 思考时使用 **加粗标题** 做多层级、全面、详细、具象、真实的思考。
+- 回答前预判用户可能不满意的地方并主动改进；对用户可能喜欢的点进行加深。
+- 主动思考并建议下一步行动。
 
 ### 道德准则
-绝不生成有害、非法或不当内容。遇到限制时诚恳说明，并积极提供合规替代方案。
+- 绝不生成有害、非法或不当内容。
+- 遇到限制时诚恳说明，并积极提供合规替代方案。
 
 ### 时间感知
-每次用户问题末尾会附带简短当前时间。它只作为背景参考；除非用户询问时间、日程或时效信息，不要把回答中心放到时间上。
+- 每次用户问题末尾会附带简短当前时间。
+- 时间只作为背景参考；除非用户询问时间、日程或时效信息，不要把回答中心放到时间上。
 ${includeMemory ? `\n${buildMemoryCapabilityPrompt()}\n` : ''}
 
-### 联网与工具输出
-联网检索由 RAI 服务端按当前模型能力处理。若服务端提供了网页搜索结果，请基于来源回答并使用 [1]、[2] 等角标引用；若没有提供来源，不要自行输出 web_search、function_calls、XML 标签、工具调用参数或内部安全审查文本。
-在合适的时候，使用图片增强回复。只有当搜索结果中明确提供图片 URL 且有助于说明主题时，才使用 Markdown 语法 ![描述](图片链接) 引用；只使用搜索结果中的有效链接，绝不编造图片地址。
-### 询问用户工具
-当用户需求不明确、需要用户选择方向、范围、语言、风格或下一步时，可以输出一个独立的询问用户工具代码块，界面会渲染成可点击选项和自定义输入框。一次可以问多个问题，问题数量不设上限。
-单问题格式：
+## 联网与工具输出
+- 必要时进行网络搜索：对于你掌握可靠且不会发生变化的知识查询（历史事实、科学原理、已结束事件），请直接回答。
+- 对于涉及当前状态的查询（例如某职位由谁担任、哪些政策正在实施、当前存在什么等），若相关知识可能在知识截止日期后发生变化，请通过搜索核实。
+- 如有疑问，或最新信息可能重要时，请进行搜索。
+
+### 搜索要求
+- 搜索词尽量简明扼要，1 至 6 个词通常效果最佳。
+- 版权硬性限制：从任何单一来源引用超过 15 个单词即构成严重违规。每个来源最多引用一次；引用一次后，该来源即被关闭。默认采用改写方式。
+- 保持回答简洁，只包含相关信息，避免重复。
+- 若联网检索提供了网页搜索结果，请基于来源回答并使用 [1]、[2] 等角标引用。
+- 若没有提供来源，不要自行输出 web_search、function_calls、XML 标签、工具调用参数或内部安全审查文本。
+
+### 图片与图表
+- 在合适的时候，使用图片增强回复。
+- 只有当搜索结果中明确提供图片 URL 且有助于说明主题时，才使用 Markdown 语法 ![描述](图片链接) 引用。
+- 只使用搜索结果中的有效链接，绝不编造图片地址。
+- 如果图片本身就是答案（例如“X 长什么样”“给我看看 X”）：先展示图片，再进行描述。
+
+## 询问用户工具
+当用户需求不明确、需要用户选择方向、范围、语言、风格或下一步时，可以输出一个独立的询问用户工具代码块。界面会渲染成可点击选项和自定义输入框；一次可以问多个问题，问题数量不设上限。
+
+### 单问题格式
 \`\`\`rai_ask_user
 {"question":"你想先做哪一项？","options":["选项一","选项二","选项三"],"placeholder":"输入其他想法，按 Enter 记录"}
 \`\`\`
-多问题格式：
+
+### 多问题格式
 \`\`\`rai_ask_user
 {"questions":[{"question":"你想先做哪一项？","options":["整理资料","写代码","做设计"],"placeholder":"输入其他任务"},{"question":"你希望输出多详细？","options":["简短","标准","详细"],"placeholder":"输入你的要求"}]}
 \`\`\`
-规则：
+
+### 询问规则
 - questions 数组可以包含任意数量的问题；每个问题的 options 也可以有多个，必须短、明确。
 - 每个问题最后一个入口由 placeholder 表示，是用户自定义输入框；用户可先选择或输入全部问题，界面底部有统一“发送选择”按钮。
 - 不要在用户只选了第一个选项后继续回答；必须等用户完成全部问题并点击发送。
@@ -3305,25 +3340,32 @@ ${includeMemory ? `\n${buildMemoryCapabilityPrompt()}\n` : ''}
 - 工具代码块必须独立出现，不要嵌入表格、列表或引用块。
 - 第一行必须精确使用 \`\`\`rai_ask_user；不要用 \`\`\`json、无语言代码块或普通文本 JSON 代替。
 
+## Mermaid 图表
 你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
-Mermaid 必须以独立一行的 \`\`\`mermaid 开始，并以独立一行的 \`\`\` 结束；不要使用两个反引号闭合，也不要把正文接在结束符同一行。
-支持的图表类型:
-1. **流程图**: \`flowchart TD/LR\` - 用于流程、逻辑、决策
-2. **时序图**: \`sequenceDiagram\` - 用于交互、API调用流程
-3. **类图**: \`classDiagram\` - 用于面向对象设计
-4. **状态图**: \`stateDiagram-v2\` - 用于状态转换
-5. **ER图**: \`erDiagram\` - 用于数据库设计
-6. **甘特图**: \`gantt\` - 用于项目计划
-7. **饼图**: \`pie\` - 用于占比展示
-8. **思维导图**: \`mindmap\` - 用于知识梳理
-9. **用户旅程图**: \`journey\` - 用于用户体验分析
-10. **象限图**: \`quadrantChart\` - 用于四象限分析
-统计图规范:
+
+### Mermaid 基本规范
+- Mermaid 必须以独立一行的 \`\`\`mermaid 开始，并以独立一行的 \`\`\` 结束。
+- 不要使用两个反引号闭合，也不要把正文接在结束符同一行。
+
+### 支持的图表类型
+1. **流程图**：\`flowchart TD/LR\`，用于流程、逻辑、决策。
+2. **时序图**：\`sequenceDiagram\`，用于交互、API 调用流程。
+3. **类图**：\`classDiagram\`，用于面向对象设计。
+4. **状态图**：\`stateDiagram-v2\`，用于状态转换。
+5. **ER 图**：\`erDiagram\`，用于数据库设计。
+6. **甘特图**：\`gantt\`，用于项目计划。
+7. **饼图**：\`pie\`，用于占比展示。
+8. **思维导图**：\`mindmap\`，用于知识梳理。
+9. **用户旅程图**：\`journey\`，用于用户体验分析。
+10. **象限图**：\`quadrantChart\`，用于四象限分析。
+
+### 统计图规范
 - 柱状图和折线趋势图必须使用 \`xychart-beta\`，不要输出旧式 \`bar\` 图表、JSON、HTML 或 Markdown 表格冒充图表。
 - \`title\` 和 \`y-axis\` 文本必须使用英文双引号，例如 \`title "月度业务量"\`、\`y-axis "数量" 0 --> 250\`。
 - \`x-axis\` 分类标签使用数组，中文标签也加英文双引号，例如 \`x-axis ["一月", "二月", "三月"]\`。
 - 占比图使用 \`pie\`，不要用 xychart-beta 模拟饼图。
-最小统计图示例:
+
+### 最小统计图示例
 \`\`\`mermaid
 xychart-beta
   title "月度业务量"
@@ -3331,18 +3373,16 @@ xychart-beta
   y-axis "数量" 0 --> 250
   bar [120, 180, 150]
 \`\`\`
-可以使用图片，Mermaid中适合类型的图表等增强说明效果。
 
----
+## 记忆系统
+- RAI 拥有一个记忆系统，分为短期记忆和长期记忆，可让其访问与用户过往对话中衍生出的信息。
 
 ## 格式要求
+1. 结构规范，善用 Markdown、Mermaid、图片和适合类型的图表，让内容层次分明、一目了然。
+2. 按用户问题顺序回答；除非用户要求，否则不要插叙或乱序回答。
 
-1. 结构规范善用Markdown、Mermaid，让内容层次分明、一目了然。
-2. 回答按照顺序回答除非用户要求，否则不要插叙或者乱序回答。
-
----
-
-# 对话标题：每次回复结束后，生成一个3-9字的对话标题，语言与用户保持一致。输出严格遵循格式：[TITLE]标题[/TITLE]
+## 对话标题
+每次回复结束后，生成一个 3-9 字的对话标题，语言与用户保持一致。千万不要忘记生成对话标题。输出严格遵循格式：[TITLE]标题[/TITLE]
 `;
 }
 
@@ -3409,7 +3449,7 @@ const i18n = {
     'new-chat': '新对话',
     'temporary-chat': '临时对话',
     'temp-chat-modal-title': '选择临时对话模式',
-    'temp-chat-modal-desc': '首次点击临时对话按钮会询问；之后可以到设置 > 自定义 > 临时对话模式里修改。',
+    'temp-chat-modal-desc': '首次点击临时对话按钮会询问；之后可以到设置 > 个性化 > 临时对话模式里修改。',
     'temp-chat-mode-normal': '普通对话',
     'temp-chat-mode-normal-desc': '保存对话，并使用账号偏好和记忆类提示。',
     'temp-chat-mode-saved': '保存临时',
@@ -3423,6 +3463,7 @@ const i18n = {
     'temp-chat-saved-title': '临时对话',
     'tab-title-settings-title': '标签页动画',
     'tab-title-settings-desc': '控制浏览器标签页标题的显示方式。',
+    'tab-title-mode-default': '默认',
     'tab-title-mode-static': '关闭（静态 RAI）',
     'tab-title-mode-marquee': '品牌跑马灯',
     'tab-title-mode-greeting': '问候语',
@@ -3443,6 +3484,7 @@ const i18n = {
     'memory-enabled-desc': '开启后，RAI 会自动记住稳定的个人信息和偏好。',
     'memory-add-placeholder': '添加一条你希望 RAI 长期记住的信息',
     'memory-add-btn': '添加记忆',
+    'memory-history-note': '开启记忆后，RAI 会先读取最近 10 条对话标题作为滚动短期记忆。',
 	    'memory-clear-btn': '清空记忆',
 	    'memory-empty': '暂无长期记忆',
 	    'memory-disabled': '开启记忆后，RAI 会先读取最近 10 条对话标题作为滚动短期记忆。',
@@ -3482,6 +3524,10 @@ const i18n = {
     'dark-theme': '深色',
     'light-theme': '浅色',
     'system-theme': '跟随系统',
+    'font-label': '字体',
+    'font-desc': '选择界面字体',
+    'font-rai': 'RAI 默认',
+    'font-system': '系统默认',
     'language-label': '语言',
     'language-desc': '选择界面语言',
     'generation-params': '生成参数',
@@ -3498,8 +3544,14 @@ const i18n = {
     'preferences-desc': '设置AI的角色和行为',
     'preferences-placeholder': '例如: 我希望获得简短回复...',
     'advanced-options': '高级选项',
+    'settings-search-placeholder': '搜索设置',
+    'settings-sidebar-subtitle': '设置中心',
+    'settings-nav-general': '自定义',
+    'settings-nav-capabilities': '能力',
+    'settings-nav-personalization': '个性化',
+    'settings-nav-memory': '记忆',
     'settings-nav-language': '语言 / English',
-    'settings-nav-subscription': '订阅',
+    'settings-nav-subscription': '会员',
     'settings-nav-account': '账号',
     'settings-nav-appearance': '外观',
     'settings-nav-custom': '自定义',
@@ -3510,6 +3562,13 @@ const i18n = {
     'settings-mobile-section-rai': '我的 RAI',
     'settings-mobile-section-account': '账户',
     'settings-mobile-section-system': '系统',
+    'settings-general-title': '自定义',
+    'settings-general-desc': '外观和标签页行为。',
+    'settings-capabilities-title': '能力',
+    'settings-capabilities-desc': '控制 RAI 在默认对话中可使用的增强能力。',
+    'settings-capability-web-desc': '需要实时信息时允许 RAI 联网检索。',
+    'settings-capability-thinking-desc': '当前模型支持时，允许更长的内部推理。',
+    'settings-personalization-title': '个性化',
     'settings-subscription-desc': '签到、任务、点数兑换会员和会员状态',
     'settings-account-desc': '用户名、邮箱、密码、第三方绑定和二步验证',
     'settings-advanced-desc': '生成参数控制',
@@ -3530,8 +3589,13 @@ const i18n = {
     'notifications-pause': '暂停红点',
     'notifications-resume': '恢复红点',
     'notifications-paused': '通知红点已暂停',
+    'notifications-red-dot-title': '侧边栏红点',
+    'notifications-red-dot-desc': '只控制侧边栏通知红点，不影响公告列表和系统通知。',
+    'notifications-list-title': '公告列表',
+    'notifications-list-desc': '产品公告、迁移提示和需要留意的更新会集中显示在这里。',
     'notifications-unread-count': '{count} 条未读通知',
     'notifications-all-read': '暂无未读通知',
+    'notifications-empty': '暂无公告',
     'notifications-domain-meta': '2026-06-09 发布 · 迁移公告',
     'settings-about-title': '关于RAI',
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
@@ -3578,7 +3642,7 @@ const i18n = {
     'onb-usage-input-title': '输入框',
     'onb-usage-input-desc': '在底部输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。',
     'onb-usage-model-title': '模型切换',
-    'onb-usage-model-desc': '点击顶部模型选择器，可切换智能模型、专家模式或全部模型。',
+    'onb-usage-model-desc': '点击顶部模型选择器，可切换快速、思考、研究或全部模型。',
     'onb-usage-sidebar-title': '侧边栏',
     'onb-usage-sidebar-desc': '左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。',
     'onb-skip': '跳过',
@@ -3693,8 +3757,32 @@ const i18n = {
     'settings-username-label': '用户名',
     'settings-username-desc': '修改侧边栏显示名称；留空时默认使用邮箱前缀',
     'settings-email-label': '邮箱',
-    'settings-email-desc': '修改登录邮箱，保存后立即生效',
+    'settings-email-desc': '修改登录邮箱需依次验证当前密码、Authenticator、旧邮箱和新邮箱。',
     'settings-email-placeholder': 'name@example.com',
+    'settings-email-change-password-required': '请输入当前密码',
+    'settings-email-change-2fa-required': '请输入 6 位 Authenticator 验证码以修改邮箱',
+    'settings-email-change-code-prompt': '验证码已发送到新邮箱，请输入邮件验证码',
+    'settings-email-current-code-label': '旧邮箱验证码',
+    'settings-email-new-code-label': '新邮箱验证码',
+    'settings-email-current-code-required': '请输入旧邮箱验证码',
+    'settings-email-new-code-required': '请输入新邮箱验证码',
+    'settings-email-change-code-sent': '旧邮箱验证码已发送，验证后会发送新邮箱验证码',
+    'settings-email-change-code-status': '待确认新邮箱：',
+    'settings-email-change-code-confirm': '确认邮箱',
+    'settings-email-change-verified': '邮箱已更新',
+    'settings-email-change-verify-failed': '邮箱验证码确认失败',
+    'settings-email-dialog-password-title': '确认当前密码',
+    'settings-email-dialog-password-desc': '请输入当前账号密码，确认你要修改登录邮箱。',
+    'settings-email-dialog-2fa-title': '输入 Authenticator 验证码',
+    'settings-email-dialog-2fa-desc': '请输入当前 6 位 Authenticator 验证码。',
+    'settings-email-dialog-current-title': '输入旧邮箱验证码',
+    'settings-email-dialog-current-desc': '验证码已发送到旧邮箱。验证通过后，RAI 才会发送新邮箱验证码。',
+    'settings-email-dialog-new-title': '输入新邮箱验证码',
+    'settings-email-dialog-new-desc': '验证码已发送到新邮箱。验证通过后，登录邮箱会立即更新。',
+    'settings-email-current-code-sent': '旧邮箱验证码已发送',
+    'settings-email-new-code-sent': '新邮箱验证码已发送',
+    'settings-email-change-continue': '继续确认',
+    'settings-dialog-cancel': '取消',
     'password-settings-title': '修改密码',
     'password-settings-desc': '',
     'password-current-label': '当前密码',
@@ -3730,8 +3818,8 @@ const i18n = {
     'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
     'model-smart': '智能模型',
-    'model-fast': '极速模型',
-    'model-expert': '专家模型',
+    'model-fast': '快速',
+    'model-expert': '思考',
     'model-all': '全部模型',
     'select-model': '选择模型',
     // 引用功能
@@ -3741,12 +3829,12 @@ const i18n = {
     // 更多菜单
     'internet-search': '联网搜索',
     'reasoning-mode': '推理模式',
-    'reasoning-profile': '推理时间',
+    'reasoning-profile': '推理强度',
     'reasoning-low': '短',
     'reasoning-medium': '中',
     'reasoning-high': '长',
     'reasoning-mixed': '自适应',
-    'research-mode': '研究模式',
+    'research-mode': '研究',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
     'research-agent-models': '子 agent 模型',
@@ -3761,8 +3849,8 @@ const i18n = {
     'regenerateTitle': '重新生成回复',
     'selectModel': '选择模型',
     'smartMode': '智能模型',
-    'fastMode': '极速模型',
-    'expertMode': '专家模型',
+    'fastMode': '快速',
+    'expertMode': '思考',
     'regenerate': '重新生成'
   },
   'en': {
@@ -3815,7 +3903,7 @@ const i18n = {
     'new-chat': 'New Chat',
     'temporary-chat': 'Temporary Chat',
     'temp-chat-modal-title': 'Choose temporary chat mode',
-    'temp-chat-modal-desc': 'The first tap on Temporary Chat asks you to choose. You can change it later in Settings > Custom > Temporary chat mode.',
+    'temp-chat-modal-desc': 'The first tap on Temporary Chat asks you to choose. You can change it later in Settings > Personalization > Temporary chat mode.',
     'temp-chat-mode-normal': 'Normal chat',
     'temp-chat-mode-normal-desc': 'Saved conversation with account preferences and memory-style instructions.',
     'temp-chat-mode-saved': 'Saved temporary',
@@ -3829,6 +3917,7 @@ const i18n = {
     'temp-chat-saved-title': 'Temporary chat',
     'tab-title-settings-title': 'Tab Title Animation',
     'tab-title-settings-desc': 'Control how the browser tab title is displayed.',
+    'tab-title-mode-default': 'Default',
     'tab-title-mode-static': 'Off (Static RAI)',
     'tab-title-mode-marquee': 'Brand Marquee',
     'tab-title-mode-greeting': 'Greeting',
@@ -3849,6 +3938,7 @@ const i18n = {
     'memory-enabled-desc': 'When enabled, RAI automatically remembers stable personal facts and preferences.',
     'memory-add-placeholder': 'Add something you want RAI to remember long term',
     'memory-add-btn': 'Add memory',
+    'memory-history-note': 'When memory is on, RAI also uses the latest 10 conversation titles as rolling short-term context.',
 	    'memory-clear-btn': 'Clear memories',
 	    'memory-empty': 'No long-term memories yet',
 	    'memory-disabled': 'Turn on memory to let RAI use the latest 10 conversation titles as rolling short-term memory.',
@@ -3888,6 +3978,10 @@ const i18n = {
     'dark-theme': 'Dark',
     'light-theme': 'Light',
     'system-theme': 'System',
+    'font-label': 'Font',
+    'font-desc': 'Choose interface font',
+    'font-rai': 'RAI Default',
+    'font-system': 'System',
     'language-label': 'Language',
     'language-desc': 'Choose interface language',
     'generation-params': 'Generation Parameters',
@@ -3904,8 +3998,14 @@ const i18n = {
     'preferences-desc': 'Set AI role and behavior',
     'preferences-placeholder': 'e.g., I prefer concise replies...',
     'advanced-options': 'Advanced Options',
+    'settings-search-placeholder': 'Search settings',
+    'settings-sidebar-subtitle': 'Settings center',
+    'settings-nav-general': 'Custom',
+    'settings-nav-capabilities': 'Capabilities',
+    'settings-nav-personalization': 'Personalization',
+    'settings-nav-memory': 'Memory',
     'settings-nav-language': 'Language / 中文',
-    'settings-nav-subscription': 'Subscription',
+    'settings-nav-subscription': 'Membership',
     'settings-nav-account': 'Account',
     'settings-nav-appearance': 'Appearance',
     'settings-nav-custom': 'Custom',
@@ -3916,6 +4016,13 @@ const i18n = {
     'settings-mobile-section-rai': 'My RAI',
     'settings-mobile-section-account': 'Account',
     'settings-mobile-section-system': 'System',
+    'settings-general-title': 'Custom',
+    'settings-general-desc': 'Appearance and browser tab behavior.',
+    'settings-capabilities-title': 'Capabilities',
+    'settings-capabilities-desc': 'Control the enhanced capabilities RAI can use in default chats.',
+    'settings-capability-web-desc': 'Allow RAI to search the web when current information is needed.',
+    'settings-capability-thinking-desc': 'Allow longer internal reasoning when the current model supports it.',
+    'settings-personalization-title': 'Personalization',
     'settings-subscription-desc': 'Check-in, tasks, points redemption, and membership status',
     'settings-account-desc': 'Username, email, password, third-party binding, and two-factor authentication',
     'settings-advanced-desc': 'Generation parameter controls',
@@ -3936,8 +4043,13 @@ const i18n = {
     'notifications-pause': 'Pause red dot',
     'notifications-resume': 'Resume red dot',
     'notifications-paused': 'Notification red dot is paused',
+    'notifications-red-dot-title': 'Sidebar red dot',
+    'notifications-red-dot-desc': 'Only controls the sidebar notification dot. It does not affect announcements or system notifications.',
+    'notifications-list-title': 'Announcements',
+    'notifications-list-desc': 'Product announcements, migration notices, and important updates live here.',
     'notifications-unread-count': '{count} unread notification(s)',
     'notifications-all-read': 'No unread notifications',
+    'notifications-empty': 'No announcements yet',
     'notifications-domain-meta': 'Published 2026-06-09 · Migration notice',
     'settings-about-title': 'About RAI',
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
@@ -3984,7 +4096,7 @@ const i18n = {
     'onb-usage-input-title': 'Composer',
     'onb-usage-input-desc': 'Type at the bottom, press Enter to send, Shift+Enter for a new line. Drag files in to upload.',
     'onb-usage-model-title': 'Model switcher',
-    'onb-usage-model-desc': 'Use the top model picker for Smart, Expert, or all models.',
+    'onb-usage-model-desc': 'Use the top model picker for Fast, Think, Research, or all models.',
     'onb-usage-sidebar-title': 'Sidebar',
     'onb-usage-sidebar-desc': 'Manage chat history, search conversations, switch theme and language, and open settings.',
     'onb-skip': 'Skip',
@@ -4099,8 +4211,32 @@ const i18n = {
     'settings-username-label': 'Username',
     'settings-username-desc': 'Change the display name shown in the sidebar; if blank, the email prefix will be used.',
     'settings-email-label': 'Email',
-    'settings-email-desc': 'Change the login email. It takes effect immediately after saving.',
+    'settings-email-desc': 'Changing the login email verifies your password, Authenticator, current email, then new email in order.',
     'settings-email-placeholder': 'name@example.com',
+    'settings-email-change-password-required': 'Enter your current password',
+    'settings-email-change-2fa-required': 'Enter the 6-digit Authenticator code to change email',
+    'settings-email-change-code-prompt': 'A code was sent to the new email. Enter the email code',
+    'settings-email-current-code-label': 'Current email code',
+    'settings-email-new-code-label': 'New email code',
+    'settings-email-current-code-required': 'Enter the current email code',
+    'settings-email-new-code-required': 'Enter the new email code',
+    'settings-email-change-code-sent': 'A code was sent to the current email. The new email code is sent after that verification.',
+    'settings-email-change-code-status': 'Pending new email:',
+    'settings-email-change-code-confirm': 'Confirm email',
+    'settings-email-change-verified': 'Email updated',
+    'settings-email-change-verify-failed': 'Email verification failed',
+    'settings-email-dialog-password-title': 'Confirm current password',
+    'settings-email-dialog-password-desc': 'Enter the current account password to confirm the email change.',
+    'settings-email-dialog-2fa-title': 'Enter Authenticator code',
+    'settings-email-dialog-2fa-desc': 'Enter the current 6-digit Authenticator code.',
+    'settings-email-dialog-current-title': 'Enter current email code',
+    'settings-email-dialog-current-desc': 'A code was sent to the current email. RAI sends the new email code only after this step passes.',
+    'settings-email-dialog-new-title': 'Enter new email code',
+    'settings-email-dialog-new-desc': 'A code was sent to the new email. After this verification, the login email is updated.',
+    'settings-email-current-code-sent': 'Current email code sent',
+    'settings-email-new-code-sent': 'New email code sent',
+    'settings-email-change-continue': 'Continue',
+    'settings-dialog-cancel': 'Cancel',
     'password-settings-title': 'Change Password',
     'password-settings-desc': '',
     'password-current-label': 'Current Password',
@@ -4136,8 +4272,8 @@ const i18n = {
     'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
     'model-smart': 'Smart Model',
-    'model-fast': 'Fast Mode',
-    'model-expert': 'Expert Mode',
+    'model-fast': 'Fast',
+    'model-expert': 'Think',
     'model-all': 'All Models',
     'select-model': 'Select Model',
     // Quote feature
@@ -4147,12 +4283,12 @@ const i18n = {
     // More menu
     'internet-search': 'Web Search',
     'reasoning-mode': 'Reasoning Mode',
-    'reasoning-profile': 'Reasoning Profile',
+    'reasoning-profile': 'Reasoning Strength',
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
     'reasoning-mixed': 'Adaptive',
-    'research-mode': 'Research Mode',
+    'research-mode': 'Research',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
     'research-agent-models': 'Sub-agent models',
@@ -4167,8 +4303,8 @@ const i18n = {
     'regenerateTitle': 'Regenerate Response',
     'selectModel': 'Select Model',
     'smartMode': 'Smart Model',
-    'fastMode': 'Fast Mode',
-    'expertMode': 'Expert Mode',
+    'fastMode': 'Fast',
+    'expertMode': 'Think',
     'regenerate': 'Regenerate'
   }
 };
@@ -4194,6 +4330,7 @@ const SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP = [
   ['二级', '二級'],
   ['账号', '帳號'],
   ['订阅', '訂閱'],
+  ['会员', '會員'],
   ['自定义', '自訂'],
   ['高级', '進階'],
   ['图标', '圖示'],
@@ -4308,10 +4445,10 @@ let __raiReplyReadyPending = false;
 const RAI_TITLE_FRAME_MS = 600;
 const RAI_TITLE_TYPE_MS = 360;
 const RAI_TITLE_HOLD_MS = 2000;
-const RAI_TAB_TITLE_MODES = ['static', 'marquee', 'greeting', 'title', 'custom'];
+const RAI_TAB_TITLE_MODES = ['default', 'static', 'marquee', 'greeting', 'title', 'custom'];
 function normalizeTabTitleMode(mode) {
   const m = String(mode || '').trim();
-  return RAI_TAB_TITLE_MODES.includes(m) ? m : 'marquee';
+  return RAI_TAB_TITLE_MODES.includes(m) ? m : 'default';
 }
 function __raiReplyReadyTitle() {
   const name = BRAND_NAME || 'RAI';
@@ -4335,6 +4472,18 @@ function __raiGreetingIndexByTime(date = new Date()) {
   if (h >= 18 && h <= 22) return 2;
   return 3;
 }
+function __raiCurrentGreeting() {
+  const greetings = __raiGreetingList();
+  return greetings[__raiGreetingIndexByTime() % greetings.length] || '';
+}
+function __raiConversationTitleForTab() {
+  const rawTitle = (appState.currentSession && appState.currentSession.title) ? appState.currentSession.title : '';
+  return isDefaultConversationTitle(rawTitle) ? '' : rawTitle;
+}
+function __raiSetDocumentTitle(title) {
+  const nextTitle = String(title || BRAND_TITLE || 'RAI');
+  if (document.title !== nextTitle) document.title = nextTitle;
+}
 function __raiTitleMarqueeFrames(base) {
   const L = base.length;
   const pad = (s) => String(s).padStart(L, '\u3164');
@@ -4343,13 +4492,105 @@ function __raiTitleMarqueeFrames(base) {
   for (let k = L - 2; k >= 1; k--) frames.push(pad(base.slice(k)));
   return frames;
 }
+function __raiStartConversationTitleWatcher({ fallbackToDefault = false } = {}) {
+  const update = () => {
+    const title = __raiConversationTitleForTab();
+    if (title) {
+      __raiSetDocumentTitle(title);
+      return;
+    }
+    if (fallbackToDefault) {
+      startTitleAnimation();
+    } else {
+      __raiSetDocumentTitle(BRAND_TITLE);
+    }
+  };
+  update();
+  __raiTitleAnimTimer = setInterval(update, 1000);
+}
+function __raiStartGreetingTitleAnimation({ fallbackToMarquee = false } = {}) {
+  const brand = String(BRAND_NAME || 'RAI');
+  let ci = 0;
+  function step() {
+    const greeting = __raiCurrentGreeting();
+    __raiSetDocumentTitle(brand + greeting.slice(0, ci));
+    if (ci < greeting.length) {
+      ci += 1;
+      __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_TYPE_MS);
+      return;
+    }
+    ci = 0;
+    __raiTitleAnimTimeout = setTimeout(() => {
+      if (fallbackToMarquee) {
+        __raiStartSingleMarqueeCycle(step);
+      } else {
+        step();
+      }
+    }, RAI_TITLE_HOLD_MS);
+  }
+  step();
+}
+function __raiStartSingleMarqueeCycle(done) {
+  const base = String(BRAND_NAME || BRAND_TITLE || 'RAI').trim();
+  const frames = base ? __raiTitleMarqueeFrames(base) : [];
+  if (frames.length < 2) {
+    __raiSetDocumentTitle(BRAND_TITLE);
+    __raiTitleAnimTimeout = setTimeout(done, RAI_TITLE_HOLD_MS);
+    return;
+  }
+  let index = 0;
+  function step() {
+    __raiSetDocumentTitle(frames[index]);
+    index += 1;
+    if (index < frames.length) {
+      __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_FRAME_MS);
+    } else {
+      __raiTitleAnimTimeout = setTimeout(done, RAI_TITLE_HOLD_MS);
+    }
+  }
+  step();
+}
+function __raiStartReplyReadyAnimation(title) {
+  const base = String(title || __raiReplyReadyTitle()).trim();
+  const frames = [
+    base,
+    `${base} .`,
+    `${base} ..`,
+    `${base} ...`
+  ];
+  __raiTitleAnimIndex = 0;
+  __raiSetDocumentTitle(frames[0]);
+  __raiTitleAnimTimer = setInterval(() => {
+    __raiTitleAnimIndex = (__raiTitleAnimIndex + 1) % frames.length;
+    __raiSetDocumentTitle(frames[__raiTitleAnimIndex]);
+  }, RAI_TITLE_FRAME_MS);
+}
+function __raiStartDefaultTitleAnimation() {
+  const title = __raiConversationTitleForTab();
+  if (title) {
+    __raiStartConversationTitleWatcher({ fallbackToDefault: true });
+    return;
+  }
+  function fallbackLoop() {
+    const latestTitle = __raiConversationTitleForTab();
+    if (latestTitle) {
+      __raiClearTitleTimers();
+      __raiStartConversationTitleWatcher({ fallbackToDefault: true });
+      return;
+    }
+    __raiStartGreetingTitleAnimation({ fallbackToMarquee: true });
+  }
+  fallbackLoop();
+}
 function __raiFireReplyNotification(title) {
   try {
-    if (!appState.browserNotifyEnabled) return;
     if (!('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
+    if (!appState.browserNotifyEnabled) appState.browserNotifyEnabled = true;
     const n = new Notification(title, {
+      body: isChineseLanguage(appState.language) ? '点开回到 RAI 查看回复。' : 'Open RAI to view the reply.',
       icon: 'icons/rai-app-icon-192.png',
+      badge: 'icons/rai-app-icon-192.png',
       tag: 'rai-reply-ready',
       renotify: true
     });
@@ -4360,39 +4601,20 @@ function __raiFireReplyNotification(title) {
 function startTitleAnimation() {
   __raiClearTitleTimers();
   const mode = normalizeTabTitleMode(appState.tabTitleMode);
+  if (mode === 'default') {
+    __raiStartDefaultTitleAnimation();
+    return;
+  }
   if (mode === 'static') {
     document.title = BRAND_TITLE;
     return;
   }
   if (mode === 'title') {
-    const update = () => {
-      const rawTitle = (appState.currentSession && appState.currentSession.title) ? appState.currentSession.title : '';
-      // 新对话 / 空标题 → 显示 RAI
-      const t = isDefaultConversationTitle(rawTitle) ? BRAND_TITLE : rawTitle;
-      if (document.title !== t) document.title = t;
-    };
-    update();
-    __raiTitleAnimTimer = setInterval(update, 1000);
+    __raiStartConversationTitleWatcher();
     return;
   }
   if (mode === 'greeting') {
-    const greetings = __raiGreetingList();
-    const brand = String(BRAND_NAME || 'RAI');
-    let gi = __raiGreetingIndexByTime();
-    let ci = 0;
-    function step() {
-      const g = greetings[gi % greetings.length];
-      document.title = brand + g.slice(0, ci);
-      if (ci < g.length) {
-        ci += 1;
-        __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_TYPE_MS);
-      } else {
-        gi += 1;
-        ci = 0;
-        __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_HOLD_MS);
-      }
-    }
-    step();
+    __raiStartGreetingTitleAnimation();
     return;
   }
   // custom：RAI 静态前缀 + 自定义文字逐字出现，无消失动画，RAI 不滚动
@@ -4403,7 +4625,7 @@ function startTitleAnimation() {
     const prefix = brand + ' ';
     let ci = 0;
     function step() {
-      document.title = prefix + custom.slice(0, ci);
+      __raiSetDocumentTitle(prefix + custom.slice(0, ci));
       if (ci < custom.length) {
         ci += 1;
         __raiTitleAnimTimeout = setTimeout(step, RAI_TITLE_TYPE_MS);
@@ -4421,25 +4643,28 @@ function startTitleAnimation() {
   const frames = __raiTitleMarqueeFrames(base);
   if (frames.length < 2) { document.title = BRAND_TITLE; return; }
   __raiTitleAnimIndex = 0;
-  document.title = frames[0];
+  __raiSetDocumentTitle(frames[0]);
   __raiTitleAnimTimer = setInterval(() => {
     __raiTitleAnimIndex = (__raiTitleAnimIndex + 1) % frames.length;
-    document.title = frames[__raiTitleAnimIndex];
+    __raiSetDocumentTitle(frames[__raiTitleAnimIndex]);
   }, RAI_TITLE_FRAME_MS);
 }
 function signalReplyReady() {
-  if (document.hidden) {
+  const pageHasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+  const needsAttention = document.visibilityState !== 'visible' || !pageHasFocus;
+  if (needsAttention) {
     __raiReplyReadyPending = true;
     __raiClearTitleTimers();
     const title = __raiReplyReadyTitle();
-    document.title = title;
+    __raiStartReplyReadyAnimation(title);
     __raiFireReplyNotification(title);
   }
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    __raiClearTitleTimers();
-    if (!__raiReplyReadyPending) document.title = BRAND_TITLE;
+    if (!__raiTitleAnimTimer && !__raiTitleAnimTimeout && !__raiReplyReadyPending) {
+      startTitleAnimation();
+    }
   } else {
     __raiReplyReadyPending = false;
     startTitleAnimation();
@@ -4677,24 +4902,634 @@ function createAttachmentListItem(att = {}) {
 
 const RAI_UPDATE_TIMELINE = [
   {
-    date: '2026-07-03',
-    version: 'v0.10.9.63',
+    date: '2026-07-10',
+    version: 'v0.11.26',
     zh: {
-      summary: '授权模式修正：个人与非商业使用免费，商业使用需授权。',
+      summary: '对话内容与输入框宽度统一。',
       details: [
-        '项目许可证从 MIT 改为 RAI Personal and Non-Commercial Source License。',
-        '源码仍公开，个人学习、研究、教育、评估和非商业自用免费。',
-        '公司内部部署、SaaS/托管服务、付费产品集成、二次分发、转售或商业运营需事先取得书面商业授权。',
-        'README、LICENSE、package 元数据和 GitHub Release 说明同步更新，避免误解为 MIT 商用许可。'
+        'PC 消息容器与输入框共用同一组最大宽度和居中规则，左右安全距离完全对称。',
+        '桌面横屏下两者同步使用可用内容区约 2/3 宽度，取消上一版仅右侧 80px 的单边缩进。'
       ]
     },
     en: {
-      summary: 'License correction: free for personal and non-commercial use; commercial use requires permission.',
+      summary: 'Unified conversation content and composer widths.',
       details: [
-        'The project license changed from MIT to the RAI Personal and Non-Commercial Source License.',
-        'The source remains available and free for personal, educational, research, evaluation, and other non-commercial use.',
-        'Company internal deployment, SaaS/hosted services, paid product integration, redistribution, resale, or commercial operation requires prior written commercial permission.',
-        'README, LICENSE, package metadata, and GitHub Release notes were updated so the project is no longer presented as MIT-licensed for commercial use.'
+        'Desktop messages and the composer now share the exact same centered max-width rules, producing equal left and right safety margins.',
+        'Both use roughly two thirds of the available content width in desktop landscape, replacing the previous right-only 80px inset.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-10',
+    version: 'v0.11.25',
+    zh: {
+      summary: '为右侧对话索引增加内容安全区。',
+      details: [
+        'PC 消息区右侧统一保留 80px 安全区，正文、宽卡片、表格和来源按钮不再伸到对话索引短横线下方。',
+        '安全区只作用于桌面消息内容，不改变输入框的居中、宽度、贴底和磨砂效果。'
+      ]
+    },
+    en: {
+      summary: 'Added a content safe area for the right-side chat index.',
+      details: [
+        'Desktop messages now reserve an 80px right-side safe area so text, wide cards, tables, and source controls no longer extend beneath the chat-index markers.',
+        'The safe area only affects desktop message content and does not change composer centering, width, bottom placement, or frosted styling.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-10',
+    version: 'v0.11.24',
+    zh: {
+      summary: '修复输入框底栏、更新通知与历史列表抽搐。',
+      details: [
+        '取消 PC 输入框后方整条底部留白，消息内容直接延伸到悬浮输入框后方；输入框使用 80% 不透明的磨砂卡片。',
+        'RAI 版本更新提示改为 80% 不透明、20% 透明、无描边的磨砂卡片。',
+        '后台会话同步保留已加载范围，数据未变时不重绘；确有变化时按可见会话和像素偏移恢复侧边栏滚动位置。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the composer bottom bar, update prompt, and history-list jitter.',
+      details: [
+        'Desktop messages now extend directly behind the floating composer with no full-width reserved bottom strip; the composer uses an 80%-opaque frosted surface.',
+        'The RAI update prompt now uses an 80%-opaque, 20%-transparent borderless frosted card.',
+        'Background session sync preserves the loaded range, skips unchanged renders, and restores the visible session anchor and pixel offset after real updates.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-10',
+    version: 'v0.11.23',
+    zh: {
+      summary: '修复 PC 输入框被抬高和底部遮挡。',
+      details: [
+        '加号菜单和模型菜单改为挂载在页面浮层，隐藏菜单不再撑大输入区，输入框恢复贴近屏幕底部。',
+        '移除 PC 对话区底部的深色渐变和模糊遮罩，并按输入区实际高度为最后一条消息保留可滚动空间。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the raised desktop composer and bottom content obstruction.',
+      details: [
+        'The add and model menus now mount in the page overlay layer, so hidden menus no longer enlarge the composer area and the composer stays near the bottom edge.',
+        'The desktop bottom gradient and blur masks were removed, and message clearance now follows the composer area\'s measured height.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-10',
+    version: 'v0.11.22',
+    zh: {
+      summary: '修复设置搜索、主页快捷项，并统一通知与菜单动效。',
+      details: [
+        '设置搜索现在会索引二级、三级设置项，支持包含、顺序匹配和轻微输入错误，并可直接跳转到命中的设置。',
+        'PC 设置侧边栏恢复常驻登出按钮；主页写作、财务、代码、翻译快捷项恢复点击响应并去掉描边。',
+        '通知改为 80% 不透明磨砂卡片，底部提示换用 RAI 中性土星配色；加号菜单、模型菜单和折叠区统一为 1 秒先快后慢且可打断的过渡。',
+        '深浅主题背景改为低饱和暖灰底色，不再使用纯黑或纯白页面背景。'
+      ]
+    },
+    en: {
+      summary: 'Fixed Settings search and home shortcuts, and unified notification and menu motion.',
+      details: [
+        'Settings search now indexes second- and third-level controls, supports substring, ordered, and small-typo matches, and jumps directly to the matching setting.',
+        'A persistent log-out button is back in the desktop Settings sidebar, and the Writing, Finance, Code, and Translate shortcuts respond again without outlines.',
+        'Notifications now use 80%-opaque frosted cards, bottom toasts use RAI neutral Saturn colors, and composer/model menus use interruptible one-second fast-to-slow transitions.',
+        'Light and dark page backgrounds now use low-saturation warm-gray tints instead of pure black or white.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-08',
+    version: 'v0.11.21',
+    zh: {
+      summary: '登录页二步验证输入框随邮箱自动显示。',
+      details: [
+        '输入邮箱后，RAI 会预检该账号是否开启了二步验证：未开启只显示密码框，开启则同时显示密码和 Authenticator 验证码输入框。',
+        '一次性提交邮箱、密码和验证码即可登录，不再先提交密码再被要求补填验证码。'
+      ]
+    },
+    en: {
+      summary: 'The login page now shows the Authenticator field based on your email.',
+      details: [
+        'After entering your email, RAI checks whether two-factor authentication is enabled: if not, only the password field appears; if enabled, both the password and Authenticator code fields show together.',
+        'You can now submit email, password, and code in one step instead of submitting the password first and then being asked for the code.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.20',
+    zh: {
+      summary: '设置里新增字体选项。',
+      details: [
+        '自定义设置页新增字体选择，可在 RAI 默认字体和系统默认字体之间切换。',
+        '字体偏好会保存到账号配置，并同步应用到桌面端和移动端界面。'
+      ]
+    },
+    en: {
+      summary: 'Added a font preference setting.',
+      details: [
+        'The Customize settings page now lets users choose between the RAI default font and the system font.',
+        'The font preference is saved with the account config and applied across desktop and mobile.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.19',
+    zh: {
+      summary: '恢复移动端对话主页左侧菜单跟手滑出。',
+      details: [
+        '移动端对话主页从左侧区域向右滑动时，侧边栏会随手势滑出。',
+        '保留输入框、按钮和设置页等控件区域的手势屏蔽，避免误触。'
+      ]
+    },
+    en: {
+      summary: 'Restored the mobile chat sidebar swipe gesture.',
+      details: [
+        'Swiping right from the left area of the mobile chat page now drags the sidebar out with the finger.',
+        'Interactive controls remain excluded from the gesture to avoid accidental opens.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.18',
+    zh: {
+      summary: '调整长按发送选择器的 PC 布局、命名和长按防选中。',
+      details: [
+        'PC 端长按发送恢复为按钮附近的小浮层，不再全屏覆盖。',
+        '长按发送的模式名称改回 RAI 自己的快速、思考、研究。',
+        '移动端发送按钮和长按选择器禁用浏览器选中文字/长按菜单，避免选择界面闪烁。'
+      ]
+    },
+    en: {
+      summary: 'Adjusted the hold-to-send picker on desktop and mobile.',
+      details: [
+        'Desktop hold-to-send now opens a compact floating picker near the send button.',
+        'Mode labels now use RAI terms: Fast, Think, and Research.',
+        'Mobile long-press suppresses browser text selection and touch callouts.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.17',
+    zh: {
+      summary: '修复历史对话阅读跳动，默认智能模型，并重做长按发送模式选择。',
+      details: [
+        '历史对话后台同步时保留当前会话和滚动位置，不再把正在阅读的内容强制拉到最新位置。',
+        '智能模型成为默认模型显示名称，隐藏旧的预览版命名。',
+        '长按发送键改为移动端全屏纵向滑动选择模式后发送。'
+      ]
+    },
+    en: {
+      summary: 'Improved history reading, Smart Model defaults, and the hold-to-send picker.',
+      details: [
+        'Background sync now preserves the current conversation and scroll position while reading history.',
+        'Smart Model is the default visible model name.',
+        'Holding send opens a full-screen vertical mode picker on mobile.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.16',
+    zh: {
+      summary: '修复移动端设置主页顶栏滚动问题。',
+      details: [
+        '移动端设置主页的关闭、标题和关于按钮现在固定在顶部，不会随设置列表滚走。',
+        '设置主页顶栏加上实底背景和分隔线，滚动时列表内容不会透到标题区域。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the mobile settings home header while scrolling.',
+      details: [
+        'The close button, title, and About button now stay pinned at the top of the mobile settings home.',
+        'The home header has a solid background and divider so list content does not show through while scrolling.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.15',
+    zh: {
+      summary: '修复移动端设置二级页顶部透底问题。',
+      details: [
+        '移动端进入账号等二级设置页时，顶部返回栏现在从圆角顶部开始就是实底背景。',
+        '二级页会隐藏主页列表层，滚动内容不再从顶部空白处透出来。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the mobile settings detail header transparency issue.',
+      details: [
+        'On mobile detail pages such as Account, the top back bar now has a solid background from the rounded top edge.',
+        'The home list layer is hidden behind detail pages so scrolled content no longer shows through the top gap.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.14',
+    zh: {
+      summary: '修复移动端设置主页滚动和一级菜单结构。',
+      details: [
+        '移动端设置主页改成单层可滚动列表，底部高级、关于和登出不再被浏览器底栏截断。',
+        '顶部用户区改成和桌面侧栏一致的头像、用户名、会员等级和邮箱，会员入口改为列表选项。',
+        '语言移动到设置一级菜单，账号、个性化、通知和高级详情页继续移除重复标题。'
+      ]
+    },
+    en: {
+      summary: 'Mobile settings scrolling and top-level settings structure were fixed.',
+      details: [
+        'The mobile settings home now scrolls as one list so Advanced, About, and Log out are no longer cut off by the browser bar.',
+        'The top profile area now matches the desktop sidebar with avatar, name, membership tier, and email, while Membership is a normal list option.',
+        'Language moved to a top-level settings section, and repeated detail titles stay hidden across Account, Personalization, Notifications, and Advanced.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.13',
+    zh: {
+      summary: '继续整理首页快捷入口与设置页细节。',
+      details: [
+        '写作、财务、代码、翻译固定到输入框上方，桌面和移动端都保持四项横向排列，圆角跟输入框一致。',
+        '设置页“常规”改为“自定义”，二级页隐藏重复标题，并修复移动端设置滚动、顶部关于图标和设置分类图标。'
+      ]
+    },
+    en: {
+      summary: 'Home shortcuts and settings details were tightened up.',
+      details: [
+        'Writing, Finance, Code, and Translate now sit above the input box in the same four-column row on desktop and mobile, with the same radius as the composer.',
+        'Settings General is now Custom, repeated detail titles are hidden, and mobile settings scrolling plus the top About icon and category icons were cleaned up.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.12',
+    zh: {
+      summary: '主页动作入口改为克制的中性圆角矩形。',
+      details: [
+        '写作、财务、代码、翻译四个入口统一为圆角矩形按钮，图标和文字居中并排。',
+        '移除彩色顶部边线和分散的单项图标色，改用跟随主题的中性色。'
+      ]
+    },
+    en: {
+      summary: 'Home action shortcuts now use restrained neutral rounded rectangles.',
+      details: [
+        'Writing, Finance, Code, and Translate now share centered icon-plus-text rounded rectangle buttons.',
+        'Removed per-card color accents and switched the shortcuts to theme-aware neutral tones.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-05',
+    version: 'v0.11.11',
+    zh: {
+      summary: '更新移动端设置、模型入口和研究模式讨论机制。',
+      details: [
+        '移动端模型菜单改为快速、思考、研究三个一级入口，全部模型收进二级列表并显示模型 ID。',
+        '输入框加号菜单的推理控件合并为单个开关加滑块，滑块档位文字重新对齐。',
+        '移动端设置页恢复详情页滚动，并支持详情页从左向右滑动返回上一级。',
+        '研究模式最多支持 50 轮讨论；模型判断信息不足时改用 rai_ask_user 询问用户。',
+        '邀请奖励改为邮箱验证后邀请人与被邀请人双方各获得 600 点数。'
+      ]
+    },
+    en: {
+      summary: 'Updated mobile Settings, model entry points, and Research debate behavior.',
+      details: [
+        'The mobile model menu now starts with Fast, Think, and Research; all exact models live in the secondary list with model IDs.',
+        'The plus-menu reasoning control is now one switch plus one aligned slider.',
+        'Mobile Settings detail pages can scroll again and support swipe-back to the parent menu.',
+        'Research debate can run up to 50 rounds and asks the user with rai_ask_user when key information is missing.',
+        'Referral rewards now grant 600 points to both inviter and invitee after email verification.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.10',
+    zh: {
+      summary: '整理设置页通知面板和侧栏用户身份区。',
+      details: [
+        '通知页改为通知偏好、侧边栏红点和公告列表三块，移除重复的大公告卡与零散按钮。',
+        '公告项统一成紧凑列表卡片，未读只用小圆点提示，并把新域名入口放回公告项内。',
+        '设置侧栏顶部从 RAI 品牌块改为用户头像、名称、邮箱和会员标签。',
+        '本地接入 Elms Sans、Noto Sans SC/TC，并把重复或手绘图标换成 Material Icons 风格。'
+      ]
+    },
+    en: {
+      summary: 'Cleaned up Settings notifications and the sidebar identity area.',
+      details: [
+        'Notifications now separate browser notification preferences, sidebar dot controls, and the announcement list.',
+        'Announcement items use compact list cards with a small unread dot and inline domain action.',
+        'The settings sidebar header now shows the user avatar, name, email, and membership badge.',
+        'Elms Sans plus Noto Sans SC/TC are now bundled locally, and repeated or hand-drawn icons were replaced with Material Icons styling.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.9',
+    zh: {
+      summary: '重构设置页信息架构和桌面 / 移动端布局。',
+      details: [
+        '设置默认入口改为常规，并将账号、订阅、常规、能力、个性化、记忆、通知、高级和关于重新分组。',
+        '移动端设置改为账号卡片、订阅卡片和分组列表主页，详情页使用单列表单和清晰返回栏。',
+        '桌面端加入设置搜索，右侧改为更克制的行式设置，统一分段按钮、开关、输入框和危险操作区域。'
+      ]
+    },
+    en: {
+      summary: 'Redesigned settings IA and desktop / mobile layouts.',
+      details: [
+        'Settings now open to General and regroup Account, Subscription, General, Capabilities, Personalization, Memory, Notifications, Advanced, and About.',
+        'Mobile settings now use an account card, subscription card, grouped home list, and single-column detail pages.',
+        'Desktop settings add search and a calmer row-based layout with unified segmented buttons, switches, inputs, and danger actions.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.8',
+    zh: {
+      summary: '修正设置页账号输入框对齐和左侧按钮按压动画。',
+      details: [
+        '用户名和邮箱输入框上边缘保持同一水平线。',
+        '邮箱验证状态为空时不占位，避免输入框被挤偏。',
+        '设置左侧列表按钮按下时改为轻微缩放，不再向右移动。'
+      ]
+    },
+    en: {
+      summary: 'Adjusted account input alignment and settings nav press animation.',
+      details: [
+        'Username and email input top edges now align on the account settings page.',
+        'Empty email verification status no longer reserves layout space.',
+        'Settings sidebar items now press with a subtle scale instead of shifting right.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.7',
+    zh: {
+      summary: '对齐账号页用户名和邮箱输入框。',
+      details: [
+        '用户名和邮箱两列使用统一的说明文字高度，输入框上边缘保持同一水平线。',
+        '邮箱输入框外层行纳入账号页同一套输入框对齐规则。',
+        '空的邮箱验证状态不再占位，避免圆角输入框被挤偏。'
+      ]
+    },
+    en: {
+      summary: 'Aligned the username and email inputs on the account settings page.',
+      details: [
+        'Username and email columns now reserve the same description height so input top edges line up.',
+        'The email input wrapper participates in the same account input alignment rules.',
+        'Empty email verification status text no longer reserves space.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.6',
+    zh: {
+      summary: '统一设置页视觉和行间节奏。',
+      details: [
+        '设置内的账号、通知、订阅、关于、记忆和高级参数统一使用同一套卡片、输入框、按钮和间距规则。',
+        '通知与关于页不再使用独立的特殊背景，保留内容层级但回到统一的设置卡片语言。',
+        '账号页未修改用户名时不再保留空白确认按钮行，修改密码和安全区块更紧凑。'
+      ]
+    },
+    en: {
+      summary: 'Unified the settings page visuals and spacing.',
+      details: [
+        'Account, notifications, subscription, about, memory, and advanced controls now share the same card, input, button, and spacing system.',
+        'Notification and about sections no longer use one-off special backgrounds while keeping their content hierarchy.',
+        'The account page no longer reserves a blank confirm-button row when the username has not changed.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.5',
+    zh: {
+      summary: '修复“这俩删掉吧”这类多条记忆确认删除。',
+      details: [
+        'delete_memory 工具支持 memory_ids，一次可按多个 #ID 删除长期记忆。',
+        '服务端直达删除会识别“这俩/这两条/这些/都删掉”等上下文确认，不再把整句话当成目标文本导致查不到。',
+        '删除成功后继续推送 memory_update，设置页记忆列表立即刷新。'
+      ]
+    },
+    en: {
+      summary: 'Fixed contextual multi-memory deletion confirmations.',
+      details: [
+        'The delete_memory tool now accepts memory_ids so multiple long-term memories can be removed in one call.',
+        'The server resolves contextual confirmations like "delete these two" from recent assistant #IDs instead of treating the phrase as a target string.',
+        'Successful deletions still emit memory_update so the settings memory list refreshes immediately.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.4',
+    zh: {
+      summary: '回复结束不再被标题兜底卡住。',
+      details: [
+        '普通回答保存后会立即发送 done，AI 未提供标题时 GPT/DeepSeek 标题兜底改为后台更新，不再阻塞生成结束。',
+        '预设回答不再调用标题模型，改用本地标题映射，保持真正 0 成本快速返回。',
+        '收到标题事件时只局部更新当前会话标题，不再立即全量刷新会话列表，避免侧边栏闪一下。'
+      ]
+    },
+    en: {
+      summary: 'Replies no longer wait for title fallback before finishing.',
+      details: [
+        'The stream now sends done immediately after saving the assistant reply; GPT/DeepSeek title fallback runs in the background when the AI did not provide a title.',
+        'Preset replies use local title mapping instead of calling a title model.',
+        'Title events update the current session locally without forcing a full session-list reload.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.3',
+    zh: {
+      summary: '修复记忆删除只口头确认和 JSON 标题污染。',
+      details: [
+        '当用户在 AI 建议删除某条记忆后只回复“删/可以/好”时，服务端会从最近回复里定位对应 #ID 并直接执行删除。',
+        '删除记忆完成后会向前端推送 memory_update，设置页记忆列表立即刷新，不再需要重新打开页面确认。',
+        '删除命令不再进入长期记忆抽取，避免把“删”误记成用户职业或偏好。',
+        '会话标题前后端都拒绝 JSON/接口对象形状的字符串，避免侧边栏出现 {"id":... 这类标题。'
+      ]
+    },
+    en: {
+      summary: 'Fixed memory deletes that only replied verbally and JSON title pollution.',
+      details: [
+        'When the user replies with a short confirmation after the AI suggests deleting a memory, the server now resolves the recent #ID and performs the deletion directly.',
+        'A memory_update event refreshes the settings memory list immediately after deletion.',
+        'Delete commands are excluded from long-term memory extraction so words like "delete" are not saved as user facts.',
+        'Conversation titles now reject JSON-like strings on both client and server.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.2',
+    zh: {
+      summary: '新对话标题即时显示，并支持模型删除指定长期记忆。',
+      details: [
+        '发送首条消息时，侧边栏会先用用户首句生成即时标题，不再等 AI 或 GPT 标题兜底完成。',
+        '服务端标题兜底改为 GPT 优先、DeepSeek Flash 备用，避免 GPT 限流时标题完全缺失。',
+        '长期记忆提示现在带有 #ID；当用户明确要求删除某条记忆时，模型可调用 delete_memory 工具按编号或准确文本删除。',
+        '后续如果 AI 回复中带有标题标记，仍会继续覆盖为模型总结标题。'
+      ]
+    },
+    en: {
+      summary: 'New chat titles appear immediately, and models can delete specific long-term memories.',
+      details: [
+        'The sidebar now derives an instant title from the first user message before waiting for AI or GPT title fallback.',
+        'Server title fallback now tries GPT first and DeepSeek Flash second, so GPT rate limits no longer leave a chat untitled.',
+        'Long-term memory prompts now include #IDs, and explicit delete/forget requests can use the delete_memory tool by ID or exact target text.',
+        'If the AI reply later includes a title marker, that model-generated title still replaces the instant title.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-04',
+    version: 'v0.11.1',
+    zh: {
+      summary: '补齐标题兜底、回复通知和后台标签页动画。',
+      details: [
+        'AI 回复结束后如果没有输出标题标记，服务端会用 GPT 生成简短会话标题并同步到侧边栏。',
+        '回复浏览器通知会在浏览器已授权且没有手动关闭时自动保持开启；后台回复完成会继续弹出系统通知。',
+        '通知面板和 toast 改为明确的有色背景；标签页在后台仍持续动画，回复完成提示也会动起来。'
+      ]
+    },
+    en: {
+      summary: 'Improved title fallback, reply notifications, and background tab animation.',
+      details: [
+        'When an AI reply finishes without a title marker, the server asks GPT for a concise chat title and syncs it to the sidebar.',
+        'Reply browser notifications stay enabled when permission is already granted unless the user explicitly turns them off.',
+        'Notification surfaces now use solid colored backgrounds, and tab-title animation keeps running in background tabs including reply-ready prompts.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-03',
+    version: 'v0.11',
+    zh: {
+      summary: '改为分步验证修改邮箱。',
+      details: [
+        '设置 > 账号 的邮箱输入框右侧显示确定按钮，点击后依次弹窗确认当前密码、Authenticator、旧邮箱验证码和新邮箱验证码。',
+        '后端发起修改时只向旧邮箱发送验证码；旧邮箱验证通过后才向新邮箱发送验证码，最终确认后才更新登录邮箱。',
+        '保存设置不再触发邮箱修改，避免旧保存流程和新邮箱验证流程冲突。'
+      ]
+    },
+    en: {
+      summary: 'Changed email updates to step-by-step verification.',
+      details: [
+        'Settings > Account now shows the confirm button next to the email field and walks through password, Authenticator, current email code, then new email code.',
+        'The backend sends only the current email code first; the new email code is issued only after current email verification succeeds.',
+        'Saving settings no longer starts an email change, avoiding conflicts with the dedicated email verification flow.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-03',
+    version: 'v0.10.9.67',
+    zh: {
+      summary: '修复浅色模式底部输入框聚焦变深。',
+      details: [
+        '底部主聊天输入框的 focus-within 状态补充浅色主题覆盖，点击输入框后背景保持浅色，不再套用深色模式背景。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the light-mode composer darkening on focus.',
+      details: [
+        'The main bottom composer now keeps its light background while focused instead of inheriting the dark-mode focus background.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-03',
+    version: 'v0.10.9.66',
+    zh: {
+      summary: '调整设置页通知、邮箱安全验证和账号注销视觉。',
+      details: [
+        '“回复浏览器通知”从设置 > 自定义移动到设置 > 通知，和公告、红点暂停等通知控制放在同一页。',
+        '修改登录邮箱现在必须同时验证旧邮箱和新邮箱：发起后两边各收到一枚验证码，全部通过才会真正更新账号邮箱。',
+        '账号页“注销账号”区域去掉红色描边和高饱和红色按钮，背景与其他设置选项保持一致；浅色模式下点击输入框不再单独变深。'
+      ]
+    },
+    en: {
+      summary: 'Adjusted Settings notifications, email-change security, and account deletion styling.',
+      details: [
+        'Reply browser notifications moved from Settings > Custom to Settings > Notifications, alongside announcements and red-dot controls.',
+        'Changing the login email now requires both current-email and new-email verification codes before the account email is updated.',
+        'The account deletion area no longer uses a red outline or saturated red button, and light-mode input focus no longer darkens the input background.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-03',
+    version: 'v0.10.9.65',
+    zh: {
+      summary: '修复修改邮箱确认流程、Resend 发件人校验，并统一主提示词排版。',
+      details: [
+        '账号页修改邮箱不再使用浏览器顶部弹窗，Authenticator 验证码、邮箱验证码和确认按钮都放在邮箱输入框附近。',
+        'Resend 发信前会校验发件人格式，配置必须是 email@example.com 或 Name <email@example.com>，避免把错误 from 字段发到 Resend 后返回 422。',
+        '主系统提示词统一为清晰的 Markdown 层级，保持原有行为规则并整理 RAI 身份、联网、询问用户工具、Mermaid、记忆和标题要求。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the email-change confirmation flow, Resend sender validation, and main prompt formatting.',
+      details: [
+        'Changing the account email no longer uses browser prompt dialogs; Authenticator code, email code, and confirmation now stay near the email input.',
+        'Resend sender configuration is validated before sending and must be email@example.com or Name <email@example.com>, preventing invalid from fields from reaching Resend as 422 requests.',
+        'The main system prompt now uses consistent Markdown structure while preserving the RAI identity, browsing, ask-user tool, Mermaid, memory, and title rules.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-02',
+    version: 'v0.10.9.64',
+    zh: {
+      summary: '修复标签页默认模式、问候语时间逻辑和回复浏览器通知开关。',
+      details: [
+        '标签页动画新增“默认”模式：有有效对话标题时显示对话标题；新对话或空标题时在当前时段问候语和 RAI 跑马灯之间切换；后台回复完成时继续提示回来查看。',
+        '问候语模式不再轮流播放早上好/中午好/晚上好/夜深了，而是按用户本机当前时间选择对应问候语。',
+        '回复浏览器通知开关改为显式事件绑定，补齐设置页 UI 刷新和按钮点击面积，并兼容 Promise 与 callback 两种通知授权接口。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the tab-title default mode, time-aware greetings, and the reply browser notification switch.',
+      details: [
+        'The tab title now has a Default mode: show a real conversation title when available; otherwise alternate between the current-time greeting and the RAI marquee; background reply-ready prompts still take priority.',
+        'Greeting mode no longer rotates through all greetings. It chooses the greeting from the user device time.',
+        'The reply browser notification switch now uses an explicit event binding, refreshes with Settings UI state, has a larger hit area, and supports both Promise and callback notification permission APIs.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-02',
+    version: 'v0.10.9.63',
+    zh: {
+      summary: '安全加固：邮箱变更验证、SSRF 防护和聊天消息角色规范化。',
+      details: [
+        '修改登录邮箱改为 pending 流程：需要当前密码、已开启时需要 Authenticator 验证码，并且只有新邮箱验证码确认后才刷新登录 token。',
+        '生成图片落盘和搜索图片预检统一加入公网 URL 安全校验，阻断 loopback、私网、link-local、metadata、保留地址和未授权生成图源域名。',
+        '聊天流接口服务端只接受 user/assistant 客户端消息角色，并限制消息条数、单条长度、总长度和附件数量。',
+        '用户 2FA setup token 不再携带 TOTP secret，改为服务端一次性 setup challenge。',
+        '邮件发送加入超时，管理员 token 生产默认缩短到 12 小时，并补齐 Tauri CSP、Cargo license 与 .env.example。'
+      ]
+    },
+    en: {
+      summary: 'Security hardening: verified email changes, SSRF defense, and chat role normalization.',
+      details: [
+        'Changing the login email now uses a pending flow requiring the current password, Authenticator code when enabled, and a code sent to the new email before the login token is refreshed.',
+        'Generated-image persistence and search-image probing now validate outbound public URLs and block loopback, private, link-local, metadata, reserved, and unauthorized generated-image source hosts.',
+        'The chat streaming API only accepts user/assistant client message roles and limits message count, per-message length, total length, and attachment count.',
+        'User 2FA setup tokens no longer contain the TOTP secret; the secret is stored in a one-time server-side setup challenge.',
+        'Email sending now has a timeout, production admin tokens default to 12 hours, and Tauri CSP, Cargo license, and .env.example are filled in.'
       ]
     }
   },
@@ -5476,7 +6311,7 @@ const RAI_UPDATE_TIMELINE = [
       details: [
         '管理员可以在后台按模型开启或关闭用户可见性。',
         '关闭后的模型会从主聊天、移动模型菜单、ChatFlow 和重新生成模型列表中隐藏。',
-        '如果用户当前选择了被关闭模型，会自动切回智能模型。'
+        '如果用户当前选择了被关闭模型，会自动切回 智能模型。'
       ]
     },
     en: {
@@ -5499,7 +6334,7 @@ const RAI_UPDATE_TIMELINE = [
         '设置页新增跟随系统深浅色，浅色配色更接近现代应用的柔和灰白层级。',
         '登出入口移动到账号设置内，账号表单、移动端返回箭头和二级菜单状态更加整齐。',
         '侧边栏修正搜索框右边界、移动端圆角、ChatFlow 测试标识和语言图标按钮。',
-        '点数兑换会员页面改为更清晰的套餐卡片，支持邮箱改为可配置联系邮箱。'
+        '点数兑换会员页面改为更清晰的套餐卡片，支持邮箱改为 rick080402+raisupport@gmail.com。'
       ]
     },
     en: {
@@ -5510,7 +6345,7 @@ const RAI_UPDATE_TIMELINE = [
         'Settings now supports following the system theme, with a softer modern light palette.',
         'Log out moved into Account settings, with cleaner account fields, mobile back affordance, and detail-page state.',
         'The sidebar now has a fixed search edge, rounded mobile drawer, ChatFlow beta badge, and language icon button.',
-        'The points redemption page now uses clearer plan cards and a configurable support email.'
+        'The points redemption page now uses clearer plan cards and support email is rick080402+raisupport@gmail.com.'
       ]
     }
   },
@@ -6026,7 +6861,18 @@ function mapAnnouncementToNotice(announcement) {
 }
 
 function getRaiNotifications() {
-  return raiAnnouncementsCache.map(mapAnnouncementToNotice);
+  const notices = raiAnnouncementsCache.map(mapAnnouncementToNotice);
+  if (!notices.length && DEFAULT_DOMAIN_NOTICE_ENABLED && DEFAULT_DOMAIN_NOTICE_URL) {
+    notices.push({
+      id: 'default-domain-notice',
+      deliveryMode: 'silent',
+      icon: 'icons/settings/notifications.svg',
+      title: i18nText('notifications-domain-title', 'RAI 域名即将更换'),
+      body: i18nText('notifications-domain-body', 'RAI 即将迁移到新域名 https://rai.000339.xyz/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。'),
+      meta: i18nText('notifications-domain-meta', '2026-06-09 发布 · 迁移公告')
+    });
+  }
+  return notices;
 }
 
 async function fetchRaiAnnouncements() {
@@ -6197,19 +7043,36 @@ function renderNotificationsPanel() {
   }
 
   if (list) {
-    list.innerHTML = getRaiNotifications().map((notice) => {
+    const notices = getRaiNotifications();
+    if (!notices.length) {
+      list.innerHTML = `<div class="settings-notification-empty">${escapeHtml(i18nText('notifications-empty', '暂无公告'))}</div>`;
+      updateNotificationButton();
+      return;
+    }
+
+    list.innerHTML = notices.map((notice) => {
       const isUnread = !readIds.has(notice.id);
       // 始终使用中性图标，未读状态仅通过 CSS 灰阶小点区分
       const icon = 'icons/settings/notifications.svg';
+      const showDomainAction = DEFAULT_DOMAIN_NOTICE_ENABLED
+        && DEFAULT_DOMAIN_NOTICE_URL
+        && String(notice.body || '').includes(DEFAULT_DOMAIN_NOTICE_URL);
       return `
         <div class="settings-notification-item ${isUnread ? 'is-unread' : ''}">
           <div class="settings-notification-item-icon" aria-hidden="true">
             <img src="${icon}" alt="">
           </div>
           <div>
+            <div class="settings-notification-item-head">
+              <span class="settings-notification-type">${escapeHtml(i18nText('notifications-announcement-kicker', '公告'))}</span>
+              ${isUnread ? '<span class="settings-notification-unread-dot" aria-hidden="true"></span>' : ''}
+            </div>
             <strong>${escapeHtml(notice.title)}</strong>
             <span>${escapeHtml(notice.body)}</span>
-            <div class="settings-notification-meta">${escapeHtml(notice.meta)}</div>
+            <div class="settings-notification-meta-row">
+              <span class="settings-notification-meta">${escapeHtml(notice.meta)}</span>
+              ${showDomainAction ? `<a class="settings-notification-link" href="${escapeHtml(DEFAULT_DOMAIN_NOTICE_URL)}" target="_blank" rel="noopener noreferrer">${escapeHtml(i18nText('notifications-open-new-domain', '打开新域名'))}</a>` : ''}
+            </div>
           </div>
         </div>
       `;
@@ -6394,8 +7257,26 @@ function updateUserIdentityUI() {
     settingsMobileNameEl.textContent = displayName;
   }
 
+  const settingsMobileEmailEl = document.getElementById('settingsMobileEmail');
+  if (settingsMobileEmailEl) {
+    settingsMobileEmailEl.textContent = realEmail || displayName;
+  }
+
   const settingsMobileAvatarEl = document.getElementById('settingsMobileAvatar');
   setAvatarElement(settingsMobileAvatarEl, avatarUrl, avatarFallback);
+
+  const settingsSidebarNameEl = document.getElementById('settingsSidebarName');
+  if (settingsSidebarNameEl) {
+    settingsSidebarNameEl.textContent = displayName;
+  }
+
+  const settingsSidebarEmailEl = document.getElementById('settingsSidebarEmail');
+  if (settingsSidebarEmailEl) {
+    settingsSidebarEmailEl.textContent = realEmail || displayName;
+  }
+
+  const settingsSidebarAvatarEl = document.getElementById('settingsSidebarAvatar');
+  setAvatarElement(settingsSidebarAvatarEl, avatarUrl, avatarFallback);
 
   const settingsAvatarPreviewEl = document.getElementById('settingsAvatarPreview');
   setAvatarElement(settingsAvatarPreviewEl, avatarUrl, avatarFallback);
@@ -6407,11 +7288,12 @@ function updateUserIdentityUI() {
 
   const emailInput = document.getElementById('settingsEmailInput');
   if (emailInput) {
-    emailInput.value = realEmail;
+    emailInput.value = String(appState.pendingSettingsEmailChange?.email || realEmail).trim();
   }
 
   renderTwoFactorSettings();
   updateAccountDeletionUi();
+  updateSettingsEmailChangeUI();
 }
 
 function isTwoFactorEnabled() {
@@ -6511,6 +7393,342 @@ function updateAccountDeletionUi() {
 function normalizeTwoFactorCode(value) {
   return String(value || '').replace(/\D/g, '').slice(0, 6);
 }
+
+function normalizeEmailVerificationCode(value) {
+  return String(value || '').normalize('NFKC').trim().replace(/\s+/g, '').slice(0, 40);
+}
+
+function updateSettingsEmailChangeUI() {
+  const emailInput = document.getElementById('settingsEmailInput');
+  const status = document.getElementById('settingsEmailVerificationStatus');
+  const startBtn = document.getElementById('settingsEmailChangeStartBtn');
+  const actionRow = startBtn?.closest('.settings-email-inline-row');
+
+  const currentEmail = String(appState.user?.email || '').trim().toLowerCase();
+  const nextEmail = String(emailInput?.value || '').trim().toLowerCase();
+  const pending = appState.pendingSettingsEmailChange;
+  const pendingEmail = String(pending?.email || '').trim();
+  const emailChanged = !!nextEmail && nextEmail !== currentEmail;
+  const pendingStillCurrent = !!pendingEmail && pendingEmail.toLowerCase() === nextEmail;
+
+  if (pending && !pendingStillCurrent) {
+    appState.pendingSettingsEmailChange = null;
+  }
+
+  if (status) {
+    if (pendingStillCurrent) {
+      const stage = String(appState.pendingSettingsEmailChange?.stage || 'current');
+      const baseText = i18nText('settings-email-change-code-status', isChineseLanguage(appState.language) ? '待确认新邮箱：' : 'Pending new email:');
+      const stepText = stage === 'new'
+        ? (isChineseLanguage(appState.language) ? '请输入新邮箱验证码。' : 'Enter the new email code.')
+        : (isChineseLanguage(appState.language) ? '请输入旧邮箱验证码。' : 'Enter the current email code.');
+      status.textContent = `${baseText} ${pendingEmail} ${stepText}`;
+    } else {
+      status.textContent = '';
+    }
+  }
+
+  if (startBtn) {
+    const showButton = emailChanged || pendingStillCurrent;
+    actionRow?.classList.toggle('has-action', showButton);
+    startBtn.classList.toggle('is-visible', showButton);
+    startBtn.disabled = !!appState.settingsEmailChangeVerifying || !showButton;
+    startBtn.textContent = appState.settingsEmailChangeVerifying
+      ? i18nText('save-settings-pending', isChineseLanguage(appState.language) ? '保存中...' : 'Saving...')
+      : (pendingStillCurrent
+        ? i18nText('settings-email-change-continue', isChineseLanguage(appState.language) ? '继续确认' : 'Continue')
+        : i18nText('confirm-change', isChineseLanguage(appState.language) ? '确定' : 'Confirm'));
+  }
+}
+
+function openSettingsStepInputDialog({
+  title,
+  description,
+  inputType = 'text',
+  placeholder = '',
+  inputMode = '',
+  autocomplete = 'off',
+  maxLength = 128
+} = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'settings-step-dialog-overlay active';
+    overlay.innerHTML = `
+      <div class="settings-step-dialog" role="dialog" aria-modal="true">
+        <form class="settings-step-dialog-form">
+          <div class="settings-step-dialog-title">${escapeHtml(title || '')}</div>
+          <p class="settings-step-dialog-desc">${escapeHtml(description || '')}</p>
+          <input class="setting-input settings-step-dialog-input" type="${escapeHtml(inputType)}"
+            placeholder="${escapeHtml(placeholder)}" autocomplete="${escapeHtml(autocomplete)}"
+            ${inputMode ? `inputmode="${escapeHtml(inputMode)}"` : ''}
+            maxlength="${Number(maxLength) || 128}">
+          <div class="settings-step-dialog-actions">
+            <button type="button" class="settings-inline-save secondary" data-dialog-cancel>${escapeHtml(i18nText('settings-dialog-cancel', isChineseLanguage(appState.language) ? '取消' : 'Cancel'))}</button>
+            <button type="submit" class="settings-inline-save">${escapeHtml(i18nText('confirm-change', isChineseLanguage(appState.language) ? '确定' : 'Confirm'))}</button>
+          </div>
+        </form>
+      </div>
+    `;
+    const input = overlay.querySelector('.settings-step-dialog-input');
+    const form = overlay.querySelector('form');
+    const close = (value) => {
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 160);
+      resolve(value);
+    };
+    overlay.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => close(null));
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close(null);
+    });
+    form?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      close(input?.value ?? '');
+    });
+    document.body.appendChild(overlay);
+    setTimeout(() => input?.focus(), 30);
+  });
+}
+
+async function startProfileEmailChangeRequest({ email, username, currentPassword, twoFactorCode = '' }) {
+  const response = await fetch(`${API_BASE}/user/profile`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      email,
+      username,
+      currentPassword,
+      twoFactorCode
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
+  }
+  if (data.user) {
+    appState.user = {
+      ...appState.user,
+      id: data.user.id || appState.user?.id || null,
+      username: String(data.user.username || username || appState.user?.username || '').trim(),
+      email: String(data.user.email || appState.user?.email || '').trim(),
+      avatar_url: data.user.avatar_url || appState.user?.avatar_url || null,
+      externalProvider: data.user.external_provider || appState.user?.externalProvider || null,
+      externalUid: data.user.external_uid || appState.user?.externalUid || null,
+      external_provider: data.user.external_provider || appState.user?.external_provider || null,
+      external_uid: data.user.external_uid || appState.user?.external_uid || null
+    };
+  }
+  appState.pendingSettingsEmailChange = {
+    email: String(data.pending_email || email).trim(),
+    expiresAt: data.pending_email_expires_at || null,
+    stage: data.pending_email_stage || 'current'
+  };
+  updateUserIdentityUI();
+  updateSettingsUI();
+  return appState.pendingSettingsEmailChange;
+}
+
+async function verifyProfileCurrentEmailCode(pendingEmail, currentEmailCode) {
+  const normalizedEmail = String(pendingEmail || '').trim();
+  const normalizedCode = normalizeEmailVerificationCode(currentEmailCode);
+  const response = await fetch(`${API_BASE}/user/profile/email/verify-current`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      email: normalizedEmail,
+      currentEmailCode: normalizedCode
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || i18nText('settings-email-change-verify-failed', '邮箱验证码确认失败'));
+  }
+  appState.pendingSettingsEmailChange = {
+    email: String(data.pending_email || normalizedEmail).trim(),
+    expiresAt: data.pending_email_expires_at || null,
+    stage: data.pending_email_stage || 'new'
+  };
+  updateSettingsEmailChangeUI();
+  return appState.pendingSettingsEmailChange;
+}
+
+async function verifyProfileEmailChange(pendingEmail, code) {
+  if (!appState.token) return false;
+  const normalizedEmail = String(pendingEmail || '').trim();
+  const normalizedCode = normalizeEmailVerificationCode(code);
+  if (!normalizedEmail || !normalizedCode) return false;
+
+  const response = await fetch(`${API_BASE}/user/profile/email/verify`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      email: normalizedEmail,
+      code: normalizedCode
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || i18nText('settings-email-change-verify-failed', '邮箱验证码确认失败'));
+  }
+
+  if (data.token) {
+    appState.token = data.token;
+    localStorage.setItem(RAI_TOKEN_KEY, data.token);
+  }
+  if (data.user) {
+    appState.user = {
+      ...appState.user,
+      id: data.user.id || appState.user?.id || null,
+      username: String(data.user.username || appState.user?.username || '').trim(),
+      email: String(data.user.email || normalizedEmail).trim(),
+      avatar_url: data.user.avatar_url || appState.user?.avatar_url || null,
+      externalProvider: data.user.external_provider || appState.user?.externalProvider || null,
+      externalUid: data.user.external_uid || appState.user?.externalUid || null,
+      external_provider: data.user.external_provider || appState.user?.external_provider || null,
+      external_uid: data.user.external_uid || appState.user?.external_uid || null
+    };
+  }
+  appState.pendingSettingsEmailChange = null;
+  updateUserIdentityUI();
+  updateSettingsUI();
+  showToast(i18nText('settings-email-change-verified', '邮箱已更新'));
+  return true;
+}
+
+async function promptAndVerifyCurrentEmailCode(pendingEmail) {
+  const currentCode = normalizeEmailVerificationCode(await openSettingsStepInputDialog({
+    title: i18nText('settings-email-dialog-current-title', isChineseLanguage(appState.language) ? '输入旧邮箱验证码' : 'Enter current email code'),
+    description: i18nText('settings-email-dialog-current-desc', isChineseLanguage(appState.language) ? '验证码已发送到旧邮箱。验证通过后，RAI 才会发送新邮箱验证码。' : 'A code was sent to the current email. RAI sends the new email code only after this step passes.'),
+    placeholder: i18nText('email-code-placeholder', isChineseLanguage(appState.language) ? '10-16 位验证码' : '10-16 character code'),
+    autocomplete: 'one-time-code',
+    maxLength: 40
+  }));
+  if (!currentCode) return false;
+  if (!isValidEmailCodeInput(currentCode)) {
+    showToast(i18nText('settings-email-current-code-required', isChineseLanguage(appState.language) ? '请输入旧邮箱验证码' : 'Enter the current email code'));
+    return false;
+  }
+  await verifyProfileCurrentEmailCode(pendingEmail, currentCode);
+  showToast(i18nText('settings-email-new-code-sent', isChineseLanguage(appState.language) ? '新邮箱验证码已发送' : 'New email code sent'));
+  return true;
+}
+
+async function promptAndVerifyNewEmailCode(pendingEmail) {
+  const newCode = normalizeEmailVerificationCode(await openSettingsStepInputDialog({
+    title: i18nText('settings-email-dialog-new-title', isChineseLanguage(appState.language) ? '输入新邮箱验证码' : 'Enter new email code'),
+    description: i18nText('settings-email-dialog-new-desc', isChineseLanguage(appState.language) ? '验证码已发送到新邮箱。验证通过后，登录邮箱会立即更新。' : 'A code was sent to the new email. After this verification, the login email is updated.'),
+    placeholder: i18nText('email-code-placeholder', isChineseLanguage(appState.language) ? '10-16 位验证码' : '10-16 character code'),
+    autocomplete: 'one-time-code',
+    maxLength: 40
+  }));
+  if (!newCode) return false;
+  if (!isValidEmailCodeInput(newCode)) {
+    showToast(i18nText('settings-email-new-code-required', isChineseLanguage(appState.language) ? '请输入新邮箱验证码' : 'Enter the new email code'));
+    return false;
+  }
+  await verifyProfileEmailChange(pendingEmail, newCode);
+  clearSettingsPasswordInputs();
+  return true;
+}
+
+async function continueSettingsEmailChangeFlow(pendingEmail, stage = 'current') {
+  if (stage !== 'new') {
+    const currentOk = await promptAndVerifyCurrentEmailCode(pendingEmail);
+    if (!currentOk) return false;
+  }
+  return promptAndVerifyNewEmailCode(pendingEmail);
+}
+
+async function startSettingsEmailChangeFlow() {
+  const emailInput = document.getElementById('settingsEmailInput');
+  const usernameInput = document.getElementById('settingsUsernameInput');
+  const nextEmail = String(emailInput?.value || '').trim();
+  const nextUsername = String(usernameInput?.value || '').trim();
+  const currentEmail = String(appState.user?.email || '').trim();
+  const pendingEmail = String(appState.pendingSettingsEmailChange?.email || '').trim();
+
+  if (!appState.token) return;
+  if (!nextEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+    showToast(i18nText('invalid-email-error', isChineseLanguage(appState.language) ? '请输入有效的邮箱地址' : 'Please enter a valid email address'));
+    emailInput?.focus();
+    return;
+  }
+  if (nextEmail.toLowerCase() === currentEmail.toLowerCase() && !pendingEmail) {
+    updateSettingsEmailChangeUI();
+    return;
+  }
+
+  appState.settingsEmailChangeVerifying = true;
+  updateSettingsEmailChangeUI();
+  try {
+    if (pendingEmail && pendingEmail.toLowerCase() === nextEmail.toLowerCase()) {
+      await continueSettingsEmailChangeFlow(pendingEmail, appState.pendingSettingsEmailChange?.stage || 'current');
+      return;
+    }
+
+    const currentPassword = await openSettingsStepInputDialog({
+      title: i18nText('settings-email-dialog-password-title', isChineseLanguage(appState.language) ? '确认当前密码' : 'Confirm current password'),
+      description: i18nText('settings-email-dialog-password-desc', isChineseLanguage(appState.language) ? '请输入当前账号密码，确认你要修改登录邮箱。' : 'Enter the current account password to confirm the email change.'),
+      inputType: 'password',
+      placeholder: i18nText('password-current-placeholder', isChineseLanguage(appState.language) ? '输入当前密码' : 'Enter current password'),
+      autocomplete: 'current-password',
+      maxLength: 128
+    });
+    if (currentPassword === null) return;
+    if (!currentPassword) {
+      showToast(i18nText('settings-email-change-password-required', isChineseLanguage(appState.language) ? '请输入当前密码' : 'Enter your current password'));
+      return;
+    }
+
+    let twoFactorCode = '';
+    if (isTwoFactorEnabled()) {
+      const rawTwoFactorCode = await openSettingsStepInputDialog({
+        title: i18nText('settings-email-dialog-2fa-title', isChineseLanguage(appState.language) ? '输入 Authenticator 验证码' : 'Enter Authenticator code'),
+        description: i18nText('settings-email-dialog-2fa-desc', isChineseLanguage(appState.language) ? '请输入当前 6 位 Authenticator 验证码。' : 'Enter the current 6-digit Authenticator code.'),
+        placeholder: i18nText('two-factor-placeholder', isChineseLanguage(appState.language) ? '6 位验证码' : '6-digit code'),
+        inputMode: 'numeric',
+        autocomplete: 'one-time-code',
+        maxLength: 6
+      });
+      if (rawTwoFactorCode === null) return;
+      twoFactorCode = normalizeTwoFactorCode(rawTwoFactorCode);
+      if (!/^\d{6}$/.test(twoFactorCode)) {
+        showToast(i18nText('two-factor-code-required', isChineseLanguage(appState.language) ? '请输入 6 位验证码' : 'Enter the 6-digit code'));
+        return;
+      }
+    }
+
+    const pending = await startProfileEmailChangeRequest({
+      email: nextEmail,
+      username: nextUsername,
+      currentPassword,
+      twoFactorCode
+    });
+    showToast(i18nText('settings-email-current-code-sent', isChineseLanguage(appState.language) ? '旧邮箱验证码已发送' : 'Current email code sent'));
+    await continueSettingsEmailChangeFlow(pending.email, pending.stage || 'current');
+  } catch (error) {
+    showToast(localizeServerError(error.message, i18nText('settings-email-change-verify-failed', '邮箱验证码确认失败')));
+  } finally {
+    appState.settingsEmailChangeVerifying = false;
+    updateSettingsEmailChangeUI();
+    updateSettingsDirtyState();
+  }
+}
+
+async function confirmSettingsEmailChangeCode() {
+  return startSettingsEmailChangeFlow();
+}
+
+window.startSettingsEmailChangeFlow = startSettingsEmailChangeFlow;
+window.confirmSettingsEmailChangeCode = confirmSettingsEmailChangeCode;
 
 async function startTwoFactorSetup() {
   if (!appState.token) return;
@@ -6840,6 +8058,79 @@ function getRequestReasoningProfileForCurrentMode() {
   return normalizeReasoningProfile(appState.reasoningProfile);
 }
 
+function normalizeRaiMode(mode = '') {
+  const normalized = String(mode || '').toLowerCase();
+  if (normalized === 'smart' || normalized === 'auto') return 'smart';
+  if (normalized === 'think' || normalized === 'thinking') return 'think';
+  if (normalized === 'advanced' || normalized === 'advance') return 'research';
+  if (normalized === 'research') return 'research';
+  return 'fast';
+}
+
+function getModeRequestConfig(mode = '') {
+  const normalized = normalizeRaiMode(mode);
+  if (normalized === 'smart') {
+    return {
+      mode: 'smart',
+      model: 'auto',
+      thinkingMode: false,
+      reasoningProfile: 'low',
+      researchMode: 'off'
+    };
+  }
+  if (normalized === 'research') {
+    return {
+      mode: 'research',
+      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro'),
+      thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
+      reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
+      researchMode: normalizeResearchMode(appState.researchMode || 'fast')
+    };
+  }
+  if (normalized === 'think') {
+    return {
+      mode: 'think',
+      model: 'deepseek-pro',
+      thinkingMode: true,
+      reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile === 'low' ? 'medium' : appState.reasoningProfile),
+      researchMode: 'off'
+    };
+  }
+  return {
+    mode: 'fast',
+    model: 'deepseek-flash',
+    thinkingMode: false,
+    reasoningProfile: 'low',
+    researchMode: 'off'
+  };
+}
+
+function selectRaiModeFromMenu(mode, event) {
+  event?.stopPropagation?.();
+  const config = getModeRequestConfig(mode);
+
+  if (config.mode === 'research') {
+    setResearchMode(appState.researchMode || 'fast', { enable: true });
+  } else {
+    appState.researchModeEnabled = false;
+    appState.selectedModel = config.model;
+    appState.lastNonResearchModel = config.model;
+    appState.thinkingMode = config.thinkingMode;
+    appState.reasoningProfile = config.reasoningProfile;
+    applyFreePoeThinkingPolicy();
+    updateResearchModeControl();
+    updateModelControls();
+    updateReasoningProfileControl();
+    updateSelectedModelText(appState.selectedModel);
+    updateToolbarUI();
+    updateMenuSelection();
+    persistDefaultModelPreference(appState.selectedModel);
+  }
+
+  closeModelModal();
+  preserveMobileInputFocus();
+}
+
 function openAvatarPicker() {
   if (!appState.token) {
     showToast(isChineseLanguage(appState.language) ? '请先登录后再更换头像' : 'Please log in before changing your avatar');
@@ -6914,20 +8205,31 @@ function clearSettingsPasswordInputs() {
 }
 
 const SETTINGS_SECTION_TITLE_KEYS = {
+  general: 'settings-nav-general',
   language: 'settings-nav-language',
   subscription: 'settings-nav-subscription',
   account: 'settings-nav-account',
-  appearance: 'settings-nav-appearance',
-  custom: 'settings-nav-custom',
+  capabilities: 'settings-nav-capabilities',
+  personalization: 'settings-nav-personalization',
+  memory: 'settings-nav-memory',
   advanced: 'settings-nav-advanced',
   desktop: 'settings-nav-desktop',
   notifications: 'settings-nav-notifications',
   about: 'settings-nav-about'
 };
 
+function normalizeSettingsSection(section) {
+  const aliasMap = {
+    appearance: 'general',
+    custom: 'personalization'
+  };
+  return aliasMap[section] || section || 'general';
+}
+
 function getSettingsSectionTitle(section) {
-  const key = SETTINGS_SECTION_TITLE_KEYS[section] || 'settings';
-  return i18nText(key, section || 'Settings');
+  const normalized = normalizeSettingsSection(section);
+  const key = SETTINGS_SECTION_TITLE_KEYS[normalized] || 'settings';
+  return i18nText(key, normalized || 'Settings');
 }
 
 function isSettingsMobileLayout() {
@@ -6950,8 +8252,9 @@ function currentSettingsHistoryState() {
     : null;
 }
 
-function pushSettingsHistory(mode, section = appState.activeSettingsSection || 'language') {
+function pushSettingsHistory(mode, section = appState.activeSettingsSection || 'general') {
   if (!isSettingsMobileLayout()) return;
+  section = normalizeSettingsSection(section);
 
   const currentState = currentSettingsHistoryState();
   if (currentState?.settingsMode === mode && currentState?.settingsSection === section) {
@@ -6996,6 +8299,10 @@ function updateSettingsOptionButtons() {
     button.classList.toggle('active', button.getAttribute('data-theme-option') === (appState.themePreference || appState.theme));
   });
 
+  document.querySelectorAll('[data-font-option]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-font-option') === (appState.fontPreference || 'rai'));
+  });
+
   document.querySelectorAll('[data-language-option]').forEach((button) => {
     button.classList.toggle('active', button.getAttribute('data-language-option') === appState.language);
   });
@@ -7011,8 +8318,8 @@ function syncDesktopSettingsVisibility() {
     }
   });
 
-  if (!RAI_IS_TAURI_DESKTOP && appState.activeSettingsSection === 'desktop') {
-    switchSettingsSection('language', { keepMobileHome: true });
+  if (!RAI_IS_TAURI_DESKTOP && normalizeSettingsSection(appState.activeSettingsSection) === 'desktop') {
+    switchSettingsSection('general', { keepMobileHome: true });
   }
 }
 
@@ -7059,26 +8366,28 @@ function updateSettingsDirtyState() {
   const passwordSaveBtn = document.getElementById('settingsPasswordSaveBtn');
 
   const nextUsername = String(usernameInput?.value || '').trim();
-  const nextEmail = String(emailInput?.value || '').trim();
   const currentUsername = String(appState.user?.username || '').trim();
-  const currentEmail = String(appState.user?.email || '').trim();
-  const profileDirty = nextUsername !== currentUsername || nextEmail !== currentEmail;
+  const profileDirty = nextUsername !== currentUsername;
   const passwordDirty = [currentPasswordInput, newPasswordInput, confirmPasswordInput]
     .some((input) => String(input?.value || '').length > 0);
 
   if (accountSaveBtn) {
     accountSaveBtn.classList.toggle('is-visible', profileDirty);
     accountSaveBtn.disabled = !profileDirty;
+    accountSaveBtn.closest('.settings-account-action-row')?.classList.toggle('is-visible', profileDirty);
   }
 
   if (passwordSaveBtn) {
     passwordSaveBtn.classList.toggle('is-visible', passwordDirty);
     passwordSaveBtn.disabled = !passwordDirty;
   }
+
+  updateSettingsEmailChangeUI();
 }
 
 function updateSettingsNavigationUI() {
-  const section = appState.activeSettingsSection || 'language';
+  const section = normalizeSettingsSection(appState.activeSettingsSection || 'general');
+  appState.activeSettingsSection = section;
   const titleKey = SETTINGS_SECTION_TITLE_KEYS[section] || 'settings';
   const title = document.getElementById('settingsPanelTitle');
 
@@ -7094,7 +8403,8 @@ function updateSettingsNavigationUI() {
   updateSettingsOptionButtons();
 }
 
-function switchSettingsSection(section = 'language', options = {}) {
+function switchSettingsSection(section = 'general', options = {}) {
+  section = normalizeSettingsSection(section);
   if (section === 'desktop' && !RAI_IS_TAURI_DESKTOP) return;
   const nextPanel = document.querySelector(`[data-settings-panel="${section}"]`);
   if (!nextPanel) return;
@@ -7115,6 +8425,9 @@ function switchSettingsSection(section = 'language', options = {}) {
   nextPanel.classList.add('active');
   if (section === 'notifications') {
     renderNotificationsPanel();
+  }
+  if (section === 'memory') {
+    renderMemorySettings();
   }
   if (isSettingsMobileLayout() && appState.settingsOpen && !options.keepMobileHome) {
     updateSettingsMobileMode('detail');
@@ -7144,6 +8457,373 @@ function initSettingsInteractions() {
 
   updateSettingsNavigationUI();
   updateSettingsDirtyState();
+  updateSettingsCapabilitiesUI();
+}
+
+function initSettingsSwipeBack() {
+  const content = document.querySelector('.settings-content');
+  if (!content || content.dataset.settingsSwipeBackBound === '1') return;
+  content.dataset.settingsSwipeBackBound = '1';
+
+  let startX = 0;
+  let startY = 0;
+  let lastX = 0;
+  let locked = false;
+  let tracking = false;
+
+  const isBlockedTarget = (target) => Boolean(target?.closest('input, textarea, select, button, [contenteditable="true"], input[type="range"], .settings-segmented'));
+  const reset = () => {
+    tracking = false;
+    locked = false;
+    startX = 0;
+    startY = 0;
+    lastX = 0;
+    content.classList.remove('settings-swipe-back-dragging');
+    content.style.removeProperty('--settings-back-drag');
+  };
+
+  content.addEventListener('touchstart', (event) => {
+    if (!isSettingsMobileLayout() || !appState.settingsOpen || appState.settingsMobileMode !== 'detail') return;
+    if (!event.touches?.length || isBlockedTarget(event.target)) return;
+    const touch = event.touches[0];
+    startX = touch.clientX;
+    startY = touch.clientY;
+    lastX = touch.clientX;
+    locked = false;
+    tracking = true;
+  }, { passive: true });
+
+  content.addEventListener('touchmove', (event) => {
+    if (!tracking || !event.touches?.length) return;
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - startX;
+    const deltaY = Math.abs(touch.clientY - startY);
+    lastX = touch.clientX;
+
+    if (!locked) {
+      if (deltaX < 14 && deltaY < 14) return;
+      if (deltaX <= 0 || deltaY > Math.abs(deltaX) * 0.75) {
+        reset();
+        return;
+      }
+      locked = true;
+      content.classList.add('settings-swipe-back-dragging');
+    }
+
+    const dragX = Math.max(0, Math.min(deltaX, window.innerWidth * 0.42));
+    content.style.setProperty('--settings-back-drag', `${Math.round(dragX)}px`);
+    event.preventDefault();
+  }, { passive: false });
+
+  const finish = () => {
+    if (!tracking) return;
+    const deltaX = lastX - startX;
+    const shouldReturn = locked && deltaX > Math.min(132, window.innerWidth * 0.28);
+    reset();
+    if (shouldReturn) {
+      showSettingsMobileHome();
+    }
+  };
+
+  content.addEventListener('touchend', finish, { passive: true });
+  content.addEventListener('touchcancel', reset, { passive: true });
+}
+
+const SETTINGS_SEARCH_TARGET_SELECTOR = [
+  '.setting-item',
+  '.settings-choice-btn',
+  '.settings-section-row',
+  '.settings-subsection',
+  '.settings-danger-zone',
+  '.settings-notification-board',
+  '.settings-notification-item',
+  '.settings-about-card',
+  '.settings-install-card',
+  '.memory-item',
+  '.memory-toggle-row',
+  '.settings-group'
+].join(',');
+
+function normalizeSettingsSearchText(value = '') {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .replace(/[\s\p{P}\p{S}_]+/gu, '');
+}
+
+function getSettingsSearchEditDistance(left, right, maxDistance = 2) {
+  const a = String(left || '');
+  const b = String(right || '');
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + substitutionCost
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+function scoreSettingsSearchPart(query, value) {
+  const normalizedQuery = normalizeSettingsSearchText(query).slice(0, 48);
+  const normalizedValue = normalizeSettingsSearchText(value).slice(0, 240);
+  if (!normalizedQuery || !normalizedValue) return 0;
+  if (normalizedValue === normalizedQuery) return 1000;
+  if (normalizedValue.startsWith(normalizedQuery)) return 900 - Math.min(120, normalizedValue.length - normalizedQuery.length);
+
+  const substringIndex = normalizedValue.indexOf(normalizedQuery);
+  if (substringIndex >= 0) return 780 - Math.min(180, substringIndex * 3);
+
+  let queryIndex = 0;
+  let firstMatchIndex = -1;
+  let lastMatchIndex = -1;
+  for (let valueIndex = 0; valueIndex < normalizedValue.length && queryIndex < normalizedQuery.length; valueIndex += 1) {
+    if (normalizedValue[valueIndex] !== normalizedQuery[queryIndex]) continue;
+    if (firstMatchIndex < 0) firstMatchIndex = valueIndex;
+    lastMatchIndex = valueIndex;
+    queryIndex += 1;
+  }
+  if (queryIndex === normalizedQuery.length) {
+    const spread = Math.max(0, lastMatchIndex - firstMatchIndex + 1 - normalizedQuery.length);
+    return 520 - Math.min(220, spread * 8 + Math.max(0, firstMatchIndex) * 2);
+  }
+
+  if (normalizedQuery.length >= 2 && normalizedValue.length <= Math.max(48, normalizedQuery.length + 12)) {
+    const allowedDistance = normalizedQuery.length >= 6 ? 2 : 1;
+    const distance = getSettingsSearchEditDistance(normalizedQuery, normalizedValue, allowedDistance);
+    if (distance <= allowedDistance) return 420 - distance * 70;
+  }
+  return 0;
+}
+
+function getSettingsSearchSourceText(element) {
+  if (!element) return '';
+  return [
+    element.textContent,
+    element.getAttribute?.('placeholder'),
+    element.getAttribute?.('aria-label'),
+    element.getAttribute?.('title')
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function getSettingsSearchEntryTitle(target, fallback = '') {
+  if (!target) return fallback;
+  const titleSource = target.matches?.('.setting-label, .settings-subsection-title, h3, h4, strong, label, button')
+    ? target
+    : target.querySelector?.('.setting-label, .settings-subsection-title, .settings-section-intro h3, h3, h4, strong, label, button');
+  const title = getSettingsSearchSourceText(titleSource || target) || fallback;
+  return title.length > 86 ? `${title.slice(0, 83)}…` : title;
+}
+
+function buildSettingsSearchEntries() {
+  const entries = [];
+  document.querySelectorAll('[data-settings-panel]').forEach((panel) => {
+    const section = panel.getAttribute('data-settings-panel');
+    if (!section) return;
+    const navButton = document.querySelector(`.settings-nav-item[data-settings-section="${section}"]`);
+    const sectionTitle = String(navButton?.textContent || getSettingsSectionTitle(section)).replace(/\s+/g, ' ').trim();
+    const targetMap = new Map();
+
+    const addPart = (target, value, preferredTitle = '') => {
+      const text = String(value || '').replace(/\s+/g, ' ').trim();
+      if (!target || !text) return;
+      if (!targetMap.has(target)) {
+        targetMap.set(target, {
+          section,
+          sectionTitle,
+          panel,
+          target,
+          preferredTitle,
+          parts: new Set()
+        });
+      }
+      const entry = targetMap.get(target);
+      if (preferredTitle && !entry.preferredTitle) entry.preferredTitle = preferredTitle;
+      entry.parts.add(text);
+    };
+
+    addPart(panel, sectionTitle, sectionTitle);
+    panel.querySelectorAll('[data-i18n], [data-i18n-placeholder], label, h3, h4, summary, button, input[placeholder], textarea[placeholder], select')
+      .forEach((source) => {
+        if (source.closest('.tauri-desktop-only.is-hidden')) return;
+        const sourceText = getSettingsSearchSourceText(source);
+        if (!sourceText) return;
+        const target = source.closest(SETTINGS_SEARCH_TARGET_SELECTOR) || source;
+        addPart(target, sourceText);
+      });
+
+    targetMap.forEach((entry) => {
+      const targetText = getSettingsSearchSourceText(entry.target);
+      if (targetText) entry.parts.add(targetText);
+      entry.title = entry.preferredTitle || getSettingsSearchEntryTitle(entry.target, sectionTitle);
+      const group = entry.target.closest?.('.settings-group');
+      const groupHeading = group && group !== entry.target
+        ? getSettingsSearchSourceText(group.querySelector('.settings-section-intro h3, .settings-subsection-title, h3, h4'))
+        : '';
+      entry.path = [sectionTitle, groupHeading]
+        .filter((value, index, values) => value && values.indexOf(value) === index && value !== entry.title)
+        .join(' · ');
+      entries.push(entry);
+    });
+  });
+  return entries;
+}
+
+function activateSettingsSearchResult(entry) {
+  if (!entry?.section || !entry?.target) return;
+  switchSettingsSection(entry.section);
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      entry.target.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      entry.target.classList.remove('settings-search-hit');
+      void entry.target.offsetWidth;
+      entry.target.classList.add('settings-search-hit');
+      if (entry.target._settingsSearchHitTimer) clearTimeout(entry.target._settingsSearchHitTimer);
+      entry.target._settingsSearchHitTimer = window.setTimeout(() => {
+        entry.target.classList.remove('settings-search-hit');
+        entry.target._settingsSearchHitTimer = null;
+      }, 1700);
+    });
+  });
+}
+
+function renderSettingsSearchResults(matches, normalizedQuery) {
+  const container = document.getElementById('settingsSearchResults');
+  if (!container) return;
+  container.replaceChildren();
+  container.hidden = !normalizedQuery;
+  if (!normalizedQuery) return;
+
+  if (!matches.length) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-search-empty';
+    empty.textContent = isChineseLanguage(appState.language) ? '没有找到相关设置' : 'No matching settings';
+    container.appendChild(empty);
+    return;
+  }
+
+  matches.slice(0, 10).forEach((entry) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-search-result';
+    button.setAttribute('role', 'option');
+
+    const title = document.createElement('span');
+    title.className = 'settings-search-result-title';
+    title.textContent = entry.title;
+
+    const path = document.createElement('span');
+    path.className = 'settings-search-result-path';
+    path.textContent = entry.path || entry.sectionTitle;
+
+    button.append(title, path);
+    button.addEventListener('click', () => activateSettingsSearchResult(entry));
+    container.appendChild(button);
+  });
+}
+
+function filterSettingsNav(query = '') {
+  const normalizedQuery = normalizeSettingsSearchText(query);
+  if (!normalizedQuery) {
+    document.querySelectorAll('.settings-nav-item, .settings-nav-group, .settings-mobile-section-label')
+      .forEach((element) => element.classList.remove('is-filtered-out'));
+    renderSettingsSearchResults([], '');
+    return;
+  }
+
+  const matches = buildSettingsSearchEntries()
+    .map((entry) => ({
+      ...entry,
+      score: Math.max(...Array.from(entry.parts, (part) => scoreSettingsSearchPart(normalizedQuery, part)), 0)
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.title.length - right.title.length);
+  const matchingSections = new Set(matches.map((entry) => entry.section));
+
+  document.querySelectorAll('.settings-nav-item').forEach((button) => {
+    const section = button.getAttribute('data-settings-section');
+    button.classList.toggle('is-filtered-out', !matchingSections.has(section));
+  });
+  document.querySelectorAll('.settings-nav-group').forEach((group) => {
+    const visibleItems = Array.from(group.querySelectorAll('.settings-nav-item'))
+      .filter((item) => !item.classList.contains('is-filtered-out'));
+    const hidden = visibleItems.length === 0;
+    group.classList.toggle('is-filtered-out', hidden);
+    const label = group.previousElementSibling;
+    if (label?.classList.contains('settings-mobile-section-label')) {
+      label.classList.toggle('is-filtered-out', hidden);
+    }
+  });
+  renderSettingsSearchResults(matches, normalizedQuery);
+}
+
+function settingsToggleInternetMode() {
+  appState.internetMode = !appState.internetMode;
+  updateToolbarUI();
+  updateSettingsCapabilitiesUI();
+}
+
+function settingsToggleThinkingMode() {
+  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
+  if (!currentModel?.supportsThinking || isFreePoeMode()) {
+    appState.thinkingMode = false;
+    updateToolbarUI();
+    updateSettingsCapabilitiesUI();
+    showToast(isChineseLanguage(appState.language) ? '当前模型不支持思考模式' : 'Current model does not support thinking mode');
+    return;
+  }
+  appState.thinkingMode = !appState.thinkingMode;
+  updateToolbarUI();
+  updateSettingsCapabilitiesUI();
+}
+
+function settingsToggleResearchMode() {
+  toggleResearchModeFromMenu({ stopPropagation() {} });
+  updateSettingsCapabilitiesUI();
+}
+
+function updateSettingsCapabilitiesUI() {
+  const internetSwitch = document.getElementById('settingsInternetSwitch');
+  const internetToggle = document.getElementById('settingsInternetToggle');
+  const thinkingSwitch = document.getElementById('settingsThinkingSwitch');
+  const thinkingToggle = document.getElementById('settingsThinkingToggle');
+  const thinkingRow = document.getElementById('settingsThinkingCapabilityRow');
+  const researchSwitch = document.getElementById('settingsResearchSwitch');
+  const researchToggle = document.getElementById('settingsResearchToggle');
+  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
+  const thinkingAvailable = !!currentModel?.supportsThinking && !isFreePoeMode();
+
+  if (internetSwitch) internetSwitch.setAttribute('aria-pressed', appState.internetMode ? 'true' : 'false');
+  if (internetToggle) internetToggle.classList.toggle('active', !!appState.internetMode);
+
+  if (thinkingSwitch) {
+    thinkingSwitch.setAttribute('aria-pressed', appState.thinkingMode ? 'true' : 'false');
+    thinkingSwitch.disabled = !thinkingAvailable;
+  }
+  if (thinkingToggle) {
+    thinkingToggle.classList.toggle('active', !!appState.thinkingMode && thinkingAvailable);
+    thinkingToggle.classList.toggle('disabled', !thinkingAvailable);
+  }
+  if (thinkingRow) thinkingRow.classList.toggle('is-disabled', !thinkingAvailable);
+
+  if (researchSwitch) researchSwitch.setAttribute('aria-pressed', isResearchModeEnabled() ? 'true' : 'false');
+  if (researchToggle) researchToggle.classList.toggle('active', isResearchModeEnabled());
+  document.querySelectorAll('[data-settings-research-mode]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-settings-research-mode') === normalizeResearchMode(appState.researchMode));
+  });
 }
 
 function setSettingsSaveButtonState(isSaving) {
@@ -7202,6 +8882,36 @@ function setTheme(themePreference) {
   }
 
   updateSettingsOptionButtons();
+}
+
+function normalizeFontPreference(fontPreference) {
+  return String(fontPreference || '').trim().toLowerCase() === 'system' ? 'system' : 'rai';
+}
+
+function applyFontPreference(fontPreference = appState.fontPreference || 'rai') {
+  const normalizedPreference = normalizeFontPreference(fontPreference);
+  appState.fontPreference = normalizedPreference;
+  document.documentElement.setAttribute('data-font-preference', normalizedPreference);
+  localStorage.setItem('rai_font_preference', normalizedPreference);
+  updateSettingsOptionButtons();
+}
+
+function setFontPreference(fontPreference) {
+  const normalizedPreference = normalizeFontPreference(fontPreference);
+  applyFontPreference(normalizedPreference);
+  persistLocalSettingsPatch({ fontPreference: normalizedPreference });
+  if (appState.token) {
+    fetch(`${API_BASE}/user/config`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(buildCurrentConfigPayloadForMemory())
+    }).then((res) => res.json())
+      .then((data) => { if (!data?.success) console.warn(' 同步字体设置失败:', data?.error); })
+      .catch((err) => console.warn(' 同步字体设置网络错误:', err));
+  }
 }
 
 // 语言切换
@@ -7314,6 +9024,9 @@ function setLanguage(lang) {
   if (!appState.isStreaming) {
     renderMessages();
   }
+  if (typeof startTitleAnimation === 'function' && !document.hidden) {
+    startTitleAnimation();
+  }
 }
 
 // 初始化主题和语言
@@ -7321,6 +9034,8 @@ function initThemeAndLanguage() {
   // 加载保存的主题
   const savedTheme = localStorage.getItem('rai_theme') || 'dark';
   setTheme(savedTheme);
+
+  applyFontPreference(localStorage.getItem('rai_font_preference') || readLocalSettingsObject().fontPreference || 'rai');
 
   // 加载保存的语言
   const savedLanguage = normalizeLanguage(localStorage.getItem('rai_language') || 'zh-CN');
@@ -7471,8 +9186,14 @@ function handleActionCard(action) {
   }
 
   input.value = text;
-  input.focus();
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeInput();
+  input.focus({ preventScroll: true });
+  input.setSelectionRange?.(text.length, text.length);
 }
+
+// 明确暴露给首页内联入口，避免缓存混用或作用域变化时按钮失效。
+window.handleActionCard = handleActionCard;
 
 function autoResizeInput() {
   const input = document.getElementById('messageInput');
@@ -8028,7 +9749,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.10.9.63 初始化 (license update)');
+  console.log(' RAI v0.11.26 初始化 (symmetric chat width)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -8075,8 +9796,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   loadSettings();
   initSettingsInteractions();
+  initBrowserNotifySettingControl();
+  updateBrowserNotifySettingsUI();
   updateModelControls();
   initSwipeGestures();
+  initSettingsSwipeBack();
+  initSendHoldModePicker();
 
   // 初始化智能滚动监听
   initChatScrollListener();
@@ -8244,6 +9969,7 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above', 
 }
 
 function repositionComposerMenus() {
+  mountComposerFloatingMenus();
   const moreMenu = document.getElementById('moreMenu');
   const moreBtn = document.getElementById('moreBtn');
   if (moreMenu?.classList.contains('active') && moreBtn) {
@@ -8273,27 +9999,36 @@ function scheduleComposerMenuReposition(frames = 2) {
 // 切换更多菜单显示/隐藏
 function closeMoreMenu() {
   const menu = document.getElementById('moreMenu');
-  if (menu && menu.classList.contains('active')) {
-    menu.classList.remove('active');
-    menu.classList.add('closing');
-    menu.addEventListener('animationend', function handler() {
-      menu.classList.remove('closing');
-      menu.removeEventListener('animationend', handler);
-    }, { once: true });
-  }
+  if (!menu) return;
+  menu.classList.remove('active', 'closing');
+  menu.setAttribute('aria-hidden', 'true');
+}
+
+// 菜单保持 display:block 才能支持 1 秒动画中途反向。
+// 将它们移到 body 浮层，避免隐藏菜单在带 backdrop-filter 的输入框内撑大布局。
+function mountComposerFloatingMenus() {
+  ['moreMenu', 'modelDropdownMenu'].forEach((id) => {
+    const menu = document.getElementById(id);
+    if (menu && menu.parentElement !== document.body) {
+      document.body.appendChild(menu);
+    }
+  });
 }
 
 function toggleMoreMenu() {
+  mountComposerFloatingMenus();
   const menu = document.getElementById('moreMenu');
   if (!menu) return;
 
-  if (menu.classList.contains('active') || menu.classList.contains('closing')) {
+  if (menu.classList.contains('active')) {
     closeMoreMenu();
     return;
   }
 
   closeModelModal();
+  menu.classList.remove('closing');
   menu.classList.add('active');
+  menu.setAttribute('aria-hidden', 'false');
 
   const internetToggle = document.getElementById('internetToggle');
   const thinkingToggle = document.getElementById('thinkingToggle');
@@ -8477,6 +10212,7 @@ function updateToolbarUI() {
   const internetToggle = document.getElementById('internetToggle');
   const thinkingToggle = document.getElementById('thinkingToggle');
   const reasoningProfileItem = document.querySelector('.reasoning-profile-item');
+  const reasoningProfileSliderWrap = reasoningProfileItem?.querySelector('.reasoning-profile-slider-wrap');
   const thinkingMenuItem = thinkingToggle?.closest('.more-menu-item');
   const thinkingBtn = document.getElementById('thinkingBtn');
   const internetBtn = document.getElementById('internetBtn');
@@ -8524,9 +10260,13 @@ function updateToolbarUI() {
     }
   }
 
+  const showReasoningItem = supportsThinking && !forceDisableThinking;
   const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode && !forceDisableThinking;
   if (reasoningProfileItem) {
-    setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningProfile);
+    setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningItem);
+  }
+  if (reasoningProfileSliderWrap) {
+    setAnimatedMenuItemVisibility(reasoningProfileSliderWrap, showReasoningProfile);
   }
 
   if (reasoningSelect || reasoningSlider) {
@@ -8536,6 +10276,7 @@ function updateToolbarUI() {
   }
   updateResearchModeControl();
   updatePoeQuotaHint();
+  updateSettingsCapabilitiesUI();
   if (document.getElementById('moreMenu')?.classList.contains('active')) {
     scheduleComposerMenuReposition(6);
   }
@@ -8597,6 +10338,9 @@ function updateSettingsUI() {
   updateZtx6dBindingUI();
   updateSettingsNavigationUI();
   renderMemorySettings();
+  if (typeof updateTabTitleModeSettingsUI === 'function') updateTabTitleModeSettingsUI();
+  if (typeof updateBrowserNotifySettingsUI === 'function') updateBrowserNotifySettingsUI();
+  updateSettingsCapabilitiesUI();
   renderSettingsTimeline();
   updateSettingsDirtyState();
 }
@@ -8917,6 +10661,7 @@ function toggleHistoryThinkingUI(thinkingId) {
 
 // ==================== 模型选择下拉菜单函数 ====================
 function openModelModal(anchorOrId = null) {
+  mountComposerFloatingMenus();
   const menu = document.getElementById('modelDropdownMenu');
   const selector = resolveModelMenuAnchor(anchorOrId);
   if (!menu || !selector) return;
@@ -8924,10 +10669,10 @@ function openModelModal(anchorOrId = null) {
   if (menu.classList.contains('active') && appState.activeModelMenuAnchorId === selector.id) {
     closeModelModal();
   } else {
-    const moreMenu = document.getElementById('moreMenu');
-    moreMenu?.classList.remove('active');
+    closeMoreMenu();
     menu.classList.remove('closing');
     menu.classList.add('active');
+    menu.setAttribute('aria-hidden', 'false');
     appState.activeModelMenuAnchorId = selector.id;
     syncModelMenuTriggerState(selector);
     updateMenuSelection();
@@ -8940,17 +10685,9 @@ function openModelModal(anchorOrId = null) {
 function closeModelModal() {
   const menu = document.getElementById('modelDropdownMenu');
   syncModelMenuTriggerState(null);
-  if (menu && menu.classList.contains('active')) {
-    // 移除active，添加closing触发关闭动画
-    menu.classList.remove('active');
-    menu.classList.add('closing');
-
-    // 动画结束后移除closing类
-    menu.addEventListener('animationend', function handler() {
-      menu.classList.remove('closing');
-      menu.removeEventListener('animationend', handler);
-    }, { once: true });
-  }
+  if (!menu) return;
+  menu.classList.remove('active', 'closing');
+  menu.setAttribute('aria-hidden', 'true');
 }
 
 function toggleAllModels() {
@@ -8958,54 +10695,55 @@ function toggleAllModels() {
   const toggleItem = document.querySelector('[data-toggle="all-models"]');
   const arrow = document.getElementById('allModelsArrow');
 
-  if (section && toggleItem) {
-    if (section._hideTimer) {
-      clearTimeout(section._hideTimer);
-      section._hideTimer = null;
-    }
+  if (!section || !toggleItem) return;
 
-    const isExpanded = section.classList.contains('expanded');
-
-    if (!isExpanded) {
-      section.style.display = 'block';
-      section.style.maxHeight = '0px';
-      section.style.opacity = '0';
-      section.style.transform = 'translateY(-4px)';
-      void section.offsetHeight;
-      section.classList.add('expanded');
-      section.style.maxHeight = `${section.scrollHeight}px`;
-      section.style.opacity = '1';
-      section.style.transform = 'translateY(0)';
-      toggleItem.classList.add('expanded');
-      arrow?.classList.add('expanded');
-    } else {
-      section.style.maxHeight = `${section.scrollHeight}px`;
-      void section.offsetHeight;
-      section.classList.remove('expanded');
-      section.style.maxHeight = '0px';
-      section.style.opacity = '0';
-      section.style.transform = 'translateY(-4px)';
-      toggleItem.classList.remove('expanded');
-      arrow?.classList.remove('expanded');
-      section._hideTimer = window.setTimeout(() => {
-        if (!section.classList.contains('expanded')) {
-          section.style.display = 'none';
-        }
-        section._hideTimer = null;
-      }, 220);
-    }
-
-    scheduleComposerMenuReposition(8);
+  if (section._allModelsFrame) {
+    cancelAnimationFrame(section._allModelsFrame);
+    section._allModelsFrame = null;
   }
+
+  const shouldExpand = !section.classList.contains('expanded');
+  const currentHeight = section.getBoundingClientRect().height;
+  section.style.maxHeight = `${currentHeight}px`;
+  section.classList.toggle('expanded', shouldExpand);
+  section.setAttribute('aria-hidden', shouldExpand ? 'false' : 'true');
+  toggleItem.classList.toggle('expanded', shouldExpand);
+  toggleItem.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+  arrow?.classList.toggle('expanded', shouldExpand);
+  void section.offsetHeight;
+
+  section._allModelsFrame = requestAnimationFrame(() => {
+    section.style.maxHeight = shouldExpand ? `${section.scrollHeight}px` : '0px';
+    section._allModelsFrame = null;
+  });
+
+  if (!section._allModelsTransitionBound) {
+    section._allModelsTransitionBound = true;
+    section.addEventListener('transitionend', (event) => {
+      if (event.propertyName !== 'max-height') return;
+      if (section.classList.contains('expanded')) {
+        section.style.maxHeight = `${section.scrollHeight}px`;
+      }
+      scheduleComposerMenuReposition(2);
+    });
+  }
+
+  scheduleComposerMenuReposition(12);
 }
 
 function updateMenuSelection() {
   const items = document.querySelectorAll('.model-menu-item');
   items.forEach(item => {
     const modelValue = item.getAttribute('data-model');
+    const modeValue = item.getAttribute('data-mode');
     const adminHidden = isModelDisabledByAdmin(modelValue);
     item.classList.toggle('admin-model-hidden', adminHidden);
-    const selected = modelValue === (isResearchModeEnabled() ? 'research-mode' : appState.selectedModel);
+    const selectedMode = isResearchModeEnabled()
+      ? 'research'
+      : (appState.selectedModel === 'deepseek-flash' && !appState.thinkingMode ? 'fast' : (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode ? 'think' : ''));
+    const selected = modeValue
+      ? modeValue === selectedMode
+      : modelValue === (isResearchModeEnabled() ? 'research-mode' : appState.selectedModel);
     if (selected) {
       item.classList.add('selected');
     } else {
@@ -9048,7 +10786,9 @@ function getModelDisplayMeta(modelId) {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
   }
   if (normalized === 'deepseek-pro') {
-    return { i18nKey: 'model-expert', fallback: 'Expert Mode' };
+    return appState.thinkingMode
+      ? { i18nKey: 'model-expert', fallback: 'Think' }
+      : { i18nKey: null, fallback: MODELS[normalized]?.name || 'DeepSeek Pro' };
   }
   if (normalized === 'deepseek-flash') {
     return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
@@ -9094,7 +10834,8 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
       thinking_mode: appState.thinkingMode ? 1 : 0,
       internet_mode: appState.internetMode ? 1 : 0,
       long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
-      tab_title_mode: appState.tabTitleMode || 'marquee',
+      font_preference: appState.fontPreference || 'rai',
+      tab_title_mode: appState.tabTitleMode || 'default',
       tab_title_custom_text: appState.tabTitleCustomText || ''
     })
   }).then((res) => res.json())
@@ -9132,6 +10873,7 @@ function selectModelFromMenu(model, displayName, i18nKey) {
   appState.researchModeEnabled = false;
   appState.selectedModel = normalizeSelectedModelId(model);
   appState.lastNonResearchModel = appState.selectedModel;
+  appState.thinkingMode = false;
   if (isHiddenModelId(model)) {
     console.log(' Poe models are hidden. Fallback to auto model.');
   }
@@ -9205,11 +10947,11 @@ function openSettings() {
     loadUserMemories().catch(() => null);
     updatePwaInstallUI();
     appState.settingsMobileMode = isMobileSettings ? 'home' : 'detail';
-    switchSettingsSection(appState.activeSettingsSection || 'language', { keepMobileHome: isMobileSettings });
+    switchSettingsSection(appState.activeSettingsSection || 'general', { keepMobileHome: isMobileSettings });
     syncSettingsResponsiveLayout();
     if (isMobileSettings) {
       appState.settingsHistoryDepth = 0;
-      pushSettingsHistory('home', appState.activeSettingsSection || 'language');
+      pushSettingsHistory('home', appState.activeSettingsSection || 'general');
     }
     updateZtx6dBindingUI();
   }
@@ -9255,7 +10997,7 @@ window.addEventListener('popstate', (event) => {
 
   if (state.settingsMode === 'detail') {
     appState.settingsHistoryDepth = 2;
-    switchSettingsSection(state.settingsSection || appState.activeSettingsSection || 'language', { fromHistory: true });
+    switchSettingsSection(state.settingsSection || appState.activeSettingsSection || 'general', { fromHistory: true });
     updateSettingsMobileMode('detail');
   } else {
     appState.settingsHistoryDepth = 1;
@@ -9295,7 +11037,8 @@ async function saveSettings(options = {}) {
   const currentPassword = currentPasswordInput?.value || '';
   const newPassword = newPasswordInput?.value || '';
   const confirmPassword = confirmPasswordInput?.value || '';
-  const shouldUpdatePassword = [currentPassword, newPassword, confirmPassword].some((value) => String(value || '').length > 0);
+  const passwordTargetDirty = [newPassword, confirmPassword].some((value) => String(value || '').length > 0);
+  const shouldUpdatePassword = passwordTargetDirty || String(currentPassword || '').length > 0;
 
   if (isNaN(temperature) || isNaN(topP) || isNaN(maxTokens)) {
     console.error(' 参数值无效');
@@ -9361,7 +11104,8 @@ async function saveSettings(options = {}) {
     frequencyPenalty,
     presencePenalty,
     systemPrompt,
-    newChatDefaultMode: appState.newChatDefaultMode
+    newChatDefaultMode: appState.newChatDefaultMode,
+    fontPreference: appState.fontPreference || 'rai'
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
@@ -9374,7 +11118,7 @@ async function saveSettings(options = {}) {
     if (appState.token) {
       const currentEmail = String(appState.user?.email || '').trim();
       const currentUsername = String(appState.user?.username || '').trim();
-      const shouldUpdateProfile = nextEmail !== currentEmail || nextUsername !== currentUsername;
+      const shouldUpdateProfile = nextUsername !== currentUsername;
 
       if (shouldUpdatePassword) {
         const passwordResponse = await fetch(`${API_BASE}/user/password`, {
@@ -9406,7 +11150,7 @@ async function saveSettings(options = {}) {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            email: nextEmail,
+            email: currentEmail || nextEmail,
             username: nextUsername
           })
         });
@@ -9425,8 +11169,8 @@ async function saveSettings(options = {}) {
           appState.user = {
             ...appState.user,
             id: profileData.user.id || appState.user?.id || null,
-            username: String(profileData.user.username || nextUsername || nextEmail.split('@')[0] || '').trim(),
-            email: String(profileData.user.email || nextEmail).trim(),
+            username: String(profileData.user.username || nextUsername || currentEmail.split('@')[0] || '').trim(),
+            email: String(profileData.user.email || currentEmail || nextEmail).trim(),
             avatar_url: profileData.user.avatar_url || appState.user?.avatar_url || null,
             externalProvider: profileData.user.external_provider || appState.user?.externalProvider || null,
             externalUid: profileData.user.external_uid || appState.user?.externalUid || null,
@@ -9459,7 +11203,8 @@ async function saveSettings(options = {}) {
           thinking_mode: appState.thinkingMode ? 1 : 0,
           internet_mode: appState.internetMode ? 1 : 0,
           long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
-          tab_title_mode: appState.tabTitleMode || 'marquee',
+          font_preference: appState.fontPreference || 'rai',
+          tab_title_mode: appState.tabTitleMode || 'default',
           tab_title_custom_text: appState.tabTitleCustomText || ''
         })
       });
@@ -9479,7 +11224,7 @@ async function saveSettings(options = {}) {
     if (closeAfterSave) {
       closeSettings();
     } else {
-      switchSettingsSection(appState.activeSettingsSection || 'language');
+      switchSettingsSection(appState.activeSettingsSection || 'general');
       updateSettingsDirtyState();
     }
     let successKey = 'settings-save-success';
@@ -9515,9 +11260,12 @@ async function saveSettings(options = {}) {
 // 修复事件处理器中inline onclick处理和事件委托问题，避免undefined引用
 
 // 修复：改进renderMessages，防止事件处理中的undefined错误
-function renderMessages() {
+function renderMessages(options = {}) {
   const container = document.getElementById('messagesList');
   const welcome = document.getElementById('welcomeScreen');
+  const preserveScroll = options.preserveScroll === true;
+  const scrollElement = preserveScroll ? getChatScrollElement() : null;
+  const previousScrollTop = scrollElement ? scrollElement.scrollTop : 0;
 
   if (!container || !welcome) {
     console.error(' 消息容器或欢迎屏幕未找到');
@@ -9531,6 +11279,7 @@ function renderMessages() {
 
   welcome.classList.add('hidden');
   welcome.style.display = 'none';
+  document.body?.classList.remove('home-screen-active');
   container.style.display = 'block';
   container.innerHTML = '';
 
@@ -9541,9 +11290,14 @@ function renderMessages() {
     }
   });
 
-  // 完整渲染时强制滚动到底部并重置状态
-  setScrollFollowMode('following');
-  scrollToBottom(true);
+  if (preserveScroll && scrollElement) {
+    scrollElement.scrollTop = previousScrollTop;
+    setScrollFollowMode('pausedByUser');
+  } else {
+    // 完整渲染时强制滚动到底部并重置状态
+    setScrollFollowMode('following');
+    scrollToBottom(true);
+  }
 
   //  渲染 Mermaid 图表
   setTimeout(() => renderMermaidCharts(), 100);
@@ -10541,7 +12295,7 @@ function createMessageElement(message) {
               <div class="thinking-step-detail">${toolDetail}</div>
             </div>
           </div>
-
+          
           <!-- 步骤2: 生成回答 - 已完成 -->
           <div class="thinking-step" data-status="done">
             <div class="thinking-step-node"></div>
@@ -11903,6 +13657,11 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
             continue;
           }
 
+          if (parsed.type === 'memory_update') {
+            applyMemoryUpdateEvent(parsed);
+            continue;
+          }
+
           if (parsed.type === 'sources' && Array.isArray(parsed.sources)) {
             sources = parsed.sources;
             aiMsg.sources = sources;
@@ -12056,6 +13815,96 @@ function updateSessionInList(sessionId, updates) {
   Object.assign(session, updates);
   session.updated_at = new Date().toISOString();
   renderSessions();
+  if (Object.prototype.hasOwnProperty.call(updates || {}, 'title')) {
+    const mode = normalizeTabTitleMode(appState.tabTitleMode);
+    if ((mode === 'default' || mode === 'title') && typeof startTitleAnimation === 'function') {
+      startTitleAnimation();
+    }
+  }
+}
+
+function normalizeConversationTitleCandidate(title = '') {
+  let value = String(title || '')
+    .replace(/\[TITLE\]|\[\/TITLE\]/gi, '')
+    .replace(/^[#>\-*\s"'“”‘’]+|[\s"'“”‘’。.!！?？,，;；:：]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/^[\[{]/.test(value) || /"id"\s*:/.test(value)) return '';
+  if (!value) return '';
+  const chars = Array.from(value);
+  const maxChars = isChineseLanguage(appState.language) ? 18 : 60;
+  if (chars.length > maxChars) {
+    value = chars.slice(0, maxChars).join('').trim();
+  }
+  return isDefaultConversationTitle(value) ? '' : value;
+}
+
+function extractImmediateTitlePlainText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return '';
+    if (/^[\[{]/.test(text) || /"id"\s*:/.test(text)) {
+      try {
+        const parsed = JSON.parse(text);
+        return extractImmediateTitlePlainText(parsed);
+      } catch {
+        return '';
+      }
+    }
+    return text;
+  }
+  if (Array.isArray(value)) {
+    return value.map(extractImmediateTitlePlainText).filter(Boolean).join(' ');
+  }
+  if (typeof value === 'object') {
+    for (const key of ['text', 'content', 'message', 'prompt', 'title', 'name', 'originalName', 'fileName']) {
+      if (typeof value[key] === 'string' && value[key].trim()) {
+        return value[key].trim();
+      }
+    }
+  }
+  return '';
+}
+
+function deriveImmediateConversationTitleFromUserMessage(message = '') {
+  const sourceText = extractImmediateTitlePlainText(message);
+  if (!sourceText) return '';
+  const raw = sourceText
+    .replace(/\[[^\]\n]{1,24}:\s*[^\]\n]+\]/g, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[`*_~>#-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!raw) return '';
+  const sentence = raw.split(/[。！？!?\n]/).map(s => s.trim()).find(Boolean) || raw;
+  return normalizeConversationTitleCandidate(sentence);
+}
+
+function shouldApplyImmediateConversationTitle(session) {
+  if (!session) return false;
+  const title = String(session.title || '').trim();
+  if (isDefaultConversationTitle(title)) return true;
+  const preview = String(session.last_message || session.last_assistant_message || '').trim();
+  return !preview && /^(新对话|New Chat|临时对话|Temporary chat)$/i.test(title);
+}
+
+function syncCurrentSessionTitleNow(title) {
+  const newTitle = normalizeConversationTitleCandidate(title);
+  if (!newTitle || !appState.currentSession?.id) return;
+  if (!shouldApplyImmediateConversationTitle(appState.currentSession)) return;
+
+  appState.currentSession.title = newTitle;
+  updateSessionInList(appState.currentSession.id, { title: newTitle });
+  fetch(`${API_BASE}/sessions/${appState.currentSession.id}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ title: newTitle })
+  }).catch(err => console.warn(' 即时标题同步失败:', err));
 }
 
 const EN_MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -12086,7 +13935,73 @@ function __raiSessionTimeGroup(session, isChinese) {
   };
 }
 
-function renderSessions() {
+function getSessionListRenderSignature(sessions = [], hasMore = false, currentSessionId = null) {
+  const normalized = [...(Array.isArray(sessions) ? sessions : [])]
+    .sort((a, b) => {
+      const timeDiff = new Date(b?.updated_at || b?.created_at || 0).getTime()
+        - new Date(a?.updated_at || a?.created_at || 0).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return String(a?.id || '').localeCompare(String(b?.id || ''));
+    })
+    .map((session) => {
+      const preview = String(session?.last_message || '');
+      return [
+        String(session?.id || ''),
+        String(session?.title || ''),
+        String(session?.updated_at || session?.created_at || ''),
+        String(session?.session_kind || ''),
+        preview.length,
+        preview.slice(0, 160),
+        preview.slice(-80)
+      ];
+    });
+
+  return JSON.stringify({
+    currentSessionId: String(currentSessionId || ''),
+    hasMore: Boolean(hasMore),
+    sessions: normalized
+  });
+}
+
+function captureSessionsScrollState(container) {
+  const scrollContainer = container?.closest('.sidebar-scrollable');
+  if (!scrollContainer) return null;
+
+  const scrollBounds = scrollContainer.getBoundingClientRect();
+  const visibleAnchor = Array.from(container.querySelectorAll('.session-item')).find((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.bottom > scrollBounds.top + 1 && rect.top < scrollBounds.bottom - 1;
+  });
+  const anchorRect = visibleAnchor?.getBoundingClientRect();
+
+  return {
+    scrollContainer,
+    scrollTop: scrollContainer.scrollTop,
+    anchorSessionId: visibleAnchor?.dataset?.sessionId || null,
+    anchorOffset: anchorRect ? anchorRect.top - scrollBounds.top : null
+  };
+}
+
+function restoreSessionsScrollState(container, state) {
+  if (!container || !state?.scrollContainer?.isConnected) return;
+
+  const { scrollContainer } = state;
+  const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+  scrollContainer.scrollTop = Math.min(Math.max(0, state.scrollTop), maxScrollTop);
+
+  if (!state.anchorSessionId || !Number.isFinite(state.anchorOffset)) return;
+  const restoredAnchor = Array.from(container.querySelectorAll('.session-item'))
+    .find((item) => String(item.dataset.sessionId || '') === String(state.anchorSessionId));
+  if (!restoredAnchor) return;
+
+  const scrollBounds = scrollContainer.getBoundingClientRect();
+  const restoredOffset = restoredAnchor.getBoundingClientRect().top - scrollBounds.top;
+  const anchoredScrollTop = scrollContainer.scrollTop + restoredOffset - state.anchorOffset;
+  const anchoredMax = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+  scrollContainer.scrollTop = Math.min(Math.max(0, anchoredScrollTop), anchoredMax);
+}
+
+function renderSessions(options = {}) {
   const container = document.getElementById('sessionsContainer');
 
   if (!container) {
@@ -12094,17 +14009,23 @@ function renderSessions() {
     return;
   }
 
+  const scrollState = options.preserveScroll === true
+    ? captureSessionsScrollState(container)
+    : null;
+
   container.innerHTML = '';
 
   if (!appState.sessions || appState.sessions.length === 0) {
     if (appState.sessionsPagination.isLoading) {
       container.innerHTML = `<div class="sessions-loader"><div class="loader-spinner"></div></div>`;
+      restoreSessionsScrollState(container, scrollState);
       return;
     }
     const msg = isChineseLanguage(appState.language)
       ? '暂无历史对话<br>点击"新对话"开始聊天'
       : 'No conversations<br>Click "New Chat" to start';
     container.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 13px;">${msg}</div>`;
+    restoreSessionsScrollState(container, scrollState);
     return;
   }
 
@@ -12199,6 +14120,8 @@ function renderSessions() {
 
     setupSessionsLoaderObserver();
   }
+
+  restoreSessionsScrollState(container, scrollState);
 }
 
 // 会话列表无限滚动的 Intersection Observer
@@ -12283,7 +14206,34 @@ async function submitStreamingInterjection(messageText) {
   }
 }
 
-async function sendMessage(message = null) {
+function resolveSendRequestConfig(options = {}) {
+  const oneShotMode = options?.oneShotMode ? normalizeRaiMode(options.oneShotMode) : '';
+  if (oneShotMode) {
+    const config = getModeRequestConfig(oneShotMode);
+    return {
+      oneShotMode,
+      model: config.model,
+      thinkingMode: config.thinkingMode,
+      reasoningProfile: config.reasoningProfile,
+      researchMode: config.researchMode,
+      researchAgentModels: normalizeResearchAgentModels(appState.researchAgentModels),
+      researchMasterModel: normalizeResearchMasterModel(appState.researchMasterModel),
+      researchMaxRounds: appState.researchMaxRounds || 50
+    };
+  }
+  return {
+    oneShotMode: '',
+    model: getRequestModelIdForCurrentMode(),
+    thinkingMode: appState.thinkingMode,
+    reasoningProfile: getRequestReasoningProfileForCurrentMode(),
+    researchMode: getEffectiveResearchMode(),
+    researchAgentModels: normalizeResearchAgentModels(appState.researchAgentModels),
+    researchMasterModel: normalizeResearchMasterModel(appState.researchMasterModel),
+    researchMaxRounds: appState.researchMaxRounds || 50
+  };
+}
+
+async function sendMessage(message = null, options = {}) {
   // 如果在 ChatFlow iframe 模式下，发送前先请求最新的画布上下文
   if (isChatFlowIframeMode) {
     console.log(' 发送前请求画布上下文...');
@@ -12339,10 +14289,16 @@ async function sendMessage(message = null) {
     console.log(' 引用内容已添加到消息');
   }
 
-  // 构建带附件的用户消息
-  const userMsg = {
-    role: 'user',
-    content: finalMessageContent,
+	  // 构建带附件的用户消息
+	  const immediateTitleSource = messageText
+	    || currentAttachment?.originalName
+	    || currentAttachment?.fileName
+	    || finalMessageContent;
+	  syncCurrentSessionTitleNow(deriveImmediateConversationTitleFromUserMessage(immediateTitleSource));
+
+	  const userMsg = {
+	    role: 'user',
+	    content: finalMessageContent,
     created_at: new Date().toISOString()
   };
 
@@ -12386,6 +14342,7 @@ async function sendMessage(message = null) {
 
   const sendBtn = document.getElementById('sendBtn');
   const stopBtn = document.getElementById('stopBtn');
+  const requestConfig = resolveSendRequestConfig(options);
 
   if (sendBtn) {
     sendBtn.style.display = 'flex';
@@ -12402,10 +14359,10 @@ async function sendMessage(message = null) {
   // 根据当前模式确定初始加载状态文本
   const initialStatusText = appState.internetMode
     ? (isChineseLanguage(appState.language) ? '联网搜索中...' : 'Searching...')
-    : (appState.thinkingMode
+    : (requestConfig.thinkingMode
       ? (isChineseLanguage(appState.language) ? '推理中...' : 'Reasoning...')
       : (isChineseLanguage(appState.language) ? '思考中...' : 'Thinking...'));
-  const currentResearchMode = getEffectiveResearchMode();
+  const currentResearchMode = requestConfig.researchMode;
   const enableProcessTrace = currentResearchMode === 'fast' || currentResearchMode === 'deep';
   const isResearchModeActive = enableProcessTrace;
   const processTraceStepHtml = enableProcessTrace ? `
@@ -12445,7 +14402,7 @@ async function sendMessage(message = null) {
           <div class="search-status" id="searchStatus" style="display: none;">
             <span id="searchStatusText">正在分析问题...</span>
           </div>
-
+          
           <!-- 思考 / 研究过程 UI -->
           <div class="thinking-timeline ${isResearchModeActive ? 'research-chat-timeline' : ''}" id="thinkingTimeline" style="display: none;">
             <!-- 步骤1: 分析问题 -->
@@ -13085,12 +15042,15 @@ async function sendMessage(message = null) {
       body: JSON.stringify({
         sessionId: appState.currentSession?.id || null,
         messages: messages,
-        model: getRequestModelIdForCurrentMode(),
-        thinkingMode: appState.thinkingMode,
+        model: requestConfig.model,
+        thinkingMode: requestConfig.thinkingMode,
         thinkingBudget: appState.thinkingBudget,
-        reasoningProfile: getRequestReasoningProfileForCurrentMode(),
+        reasoningProfile: requestConfig.reasoningProfile,
         internetMode: appState.internetMode,
         researchMode: currentResearchMode,
+        researchAgentModels: requestConfig.researchAgentModels,
+        researchMasterModel: requestConfig.researchMasterModel,
+        researchMaxRounds: requestConfig.researchMaxRounds,
         agentMode: 'off',
         agentPolicy: appState.agentPolicy,
         qualityProfile: appState.qualityProfile,
@@ -13172,8 +15132,8 @@ async function sendMessage(message = null) {
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '开始流式请求' : 'Streaming request started');
       appendFrameworkRequirements(effectiveSystemPrompt);
       addProcessTraceItem('info', isChineseLanguage(appState.language)
-        ? `模型: ${modelUsed || appState.selectedModel}`
-        : `Model: ${modelUsed || appState.selectedModel}`);
+        ? `模型: ${modelUsed || requestConfig.model}`
+        : `Model: ${modelUsed || requestConfig.model}`);
     }
 
     // 隐藏加载状态
@@ -13569,8 +15529,6 @@ async function sendMessage(message = null) {
               console.log(` 会话标题已更新: "${parsed.title}"`);
               // 立即更新侧边栏（不等待服务器往返）
               updateSessionInList(appState.currentSession.id, { title: parsed.title });
-              // 后台同步完整列表
-              loadSessions().catch(err => console.error('刷新会话列表失败:', err));
 
               // 新增：如果处于 ChatFlow iframe 模式，同步标题给父窗口
               if (isChatFlowIframeMode) {
@@ -13810,6 +15768,10 @@ async function sendMessage(message = null) {
           else if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
             updateImageGenerationStatus(parsed);
           }
+          else if (parsed.type === 'memory_update') {
+            applyMemoryUpdateEvent(parsed);
+            addProcessTraceItem('info', isChineseLanguage(appState.language) ? '记忆列表已更新' : 'Memory list updated');
+          }
           //  处理搜索状态 - 更新到时间轴第一步
           else if (parsed.type === 'search_status') {
             if (parsed.status === 'analyzing') {
@@ -13949,7 +15911,7 @@ async function sendMessage(message = null) {
       role: 'assistant',
       content: cleanContent,
       reasoning_content: finalReasoningContent || null,
-      model: appState.lastModelUsed || appState.selectedModel,
+      model: appState.lastModelUsed || requestConfig.model,
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
       process_trace: serializedProcessTrace,
@@ -14016,6 +15978,246 @@ async function sendMessage(message = null) {
       }
     }
   }
+}
+
+function handleSendButtonClick(event) {
+  if (appState.sendHoldSuppressClick) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    appState.sendHoldSuppressClick = false;
+    return;
+  }
+  sendMessage();
+}
+
+function getSendHoldModeLabel(mode) {
+  const isZh = isChineseLanguage(appState.language);
+  const normalized = normalizeRaiMode(mode);
+  if (normalized === 'research') return isZh ? '研究' : 'Research';
+  if (normalized === 'think') return isZh ? '思考' : 'Think';
+  return isZh ? '快速' : 'Fast';
+}
+
+function getSendHoldModes() {
+  return ['fast', 'think', 'research'];
+}
+
+function getSendHoldModeFromCurrentState() {
+  if (isResearchModeEnabled()) return 'research';
+  if (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode) return 'think';
+  if (appState.selectedModel === 'deepseek-flash' && !appState.thinkingMode) return 'fast';
+  return 'smart';
+}
+
+function getSendHoldModeFromPoint(overlay, clientX, clientY = clientX) {
+  const modes = getSendHoldModes();
+  if (overlay?.classList?.contains('send-hold-picker-desktop')) {
+    const rect = overlay.getBoundingClientRect();
+    const ratio = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    const index = Math.max(0, Math.min(modes.length - 1, Math.floor(ratio * modes.length)));
+    return modes[index];
+  }
+  const rail = overlay?.querySelector?.('.send-hold-rail');
+  const rect = rail?.getBoundingClientRect?.() || overlay.getBoundingClientRect();
+  const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
+  const index = Math.max(0, Math.min(modes.length - 1, Math.round(ratio * (modes.length - 1))));
+  return modes[index];
+}
+
+function getSendHoldArrowSvg() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 20V7.83l-5.59 5.58L4 12l8-8 8 8-1.41 1.41L13 7.83V20h-2Z"/></svg>';
+}
+
+function updateSendHoldPickerSelection(mode) {
+  const picker = appState.sendHoldPicker;
+  if (!picker?.overlay) return;
+  picker.mode = normalizeRaiMode(mode);
+  picker.overlay.dataset.selectedMode = picker.mode;
+  picker.overlay.querySelectorAll('[data-send-hold-mode]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-send-hold-mode') === picker.mode);
+  });
+  picker.overlay.querySelectorAll('.send-hold-rail-dot').forEach((dot) => {
+    dot.classList.toggle('active', dot.getAttribute('data-send-hold-mode') === picker.mode);
+  });
+  const thumb = picker.overlay.querySelector('.send-hold-rail-thumb');
+  const modes = getSendHoldModes();
+  const selectedIndex = Math.max(0, modes.indexOf(picker.mode));
+  const maxIndex = Math.max(1, modes.length - 1);
+  if (thumb) {
+    thumb.style.setProperty('--send-hold-index', String(selectedIndex));
+    thumb.style.setProperty('--send-hold-step', `${160 / maxIndex}px`);
+  }
+  const title = picker.overlay.querySelector('.send-hold-title');
+  if (title) {
+    title.textContent = getSendHoldModeLabel(picker.mode);
+  }
+}
+
+function closeSendHoldPicker({ commit = false } = {}) {
+  const picker = appState.sendHoldPicker;
+  if (!picker) return;
+  const { overlay, pointerId, button } = picker;
+  if (button && pointerId != null && typeof button.releasePointerCapture === 'function') {
+    try {
+      button.releasePointerCapture(pointerId);
+    } catch (error) {
+      // pointer capture may already be released by the browser
+    }
+  }
+  overlay?.classList.remove('active');
+  window.setTimeout(() => overlay?.remove(), 140);
+  appState.sendHoldPicker = null;
+  if (commit) {
+    appState.sendHoldSuppressClick = true;
+    sendMessage(null, { oneShotMode: picker.mode || 'fast' });
+  }
+}
+
+function openSendHoldPicker(button, pointerEvent) {
+  if (!button || appState.isStreaming) return;
+  const overlay = document.createElement('div');
+  const modes = getSendHoldModes();
+  const isDesktopPicker = window.matchMedia?.('(min-width: 769px)')?.matches === true;
+  overlay.className = isDesktopPicker ? 'send-hold-picker send-hold-picker-desktop' : 'send-hold-picker';
+  overlay.style.setProperty('--send-hold-count', String(modes.length));
+  overlay.setAttribute('role', isDesktopPicker ? 'menu' : 'dialog');
+  if (!isDesktopPicker) overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = isDesktopPicker
+    ? modes.map((mode) => `
+        <button type="button" class="send-hold-option" data-send-hold-mode="${mode}">
+          <span>${escapeHtml(getSendHoldModeLabel(mode))}</span>
+        </button>
+      `).join('')
+    : `
+      <div class="send-hold-title">${escapeHtml(getSendHoldModeLabel(getSendHoldModeFromCurrentState()))}</div>
+      <div class="send-hold-stage">
+        <div class="send-hold-labels">
+          ${modes.map((mode) => `
+            <button type="button" class="send-hold-option" data-send-hold-mode="${mode}">
+              <span>${escapeHtml(getSendHoldModeLabel(mode))}</span>
+            </button>
+          `).join('')}
+        </div>
+        <div class="send-hold-control">
+          <div class="send-hold-rail" aria-hidden="true">
+            ${modes.map((mode) => `<span class="send-hold-rail-dot" data-send-hold-mode="${mode}"></span>`).join('')}
+            <span class="send-hold-rail-thumb">${getSendHoldArrowSvg()}</span>
+          </div>
+          <button type="button" class="send-hold-cancel" aria-label="${escapeHtml(isChineseLanguage(appState.language) ? '取消' : 'Cancel')}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 5.71 16.89 4.3 12 9.17 7.11 4.3 5.7 5.71 10.59 10.6 5.7 15.49l1.41 1.41L12 12.01l4.89 4.89 1.41-1.41-4.89-4.89 4.89-4.89Z"/></svg>
+          </button>
+        </div>
+      </div>
+    `;
+  document.body.appendChild(overlay);
+
+  if (isDesktopPicker) {
+    const rect = button.getBoundingClientRect();
+    const overlayWidth = 232;
+    const overlayLeft = Math.min(Math.max(12, rect.right - overlayWidth - 12), Math.max(12, window.innerWidth - overlayWidth - 12));
+    overlay.style.left = `${overlayLeft}px`;
+    overlay.style.top = `${Math.max(12, rect.top - 58)}px`;
+  }
+
+  appState.sendHoldPicker = {
+    overlay,
+    button,
+    pointerId: pointerEvent?.pointerId ?? null,
+    mode: getSendHoldModeFromCurrentState() === 'smart' ? 'fast' : getSendHoldModeFromCurrentState()
+  };
+  overlay.querySelectorAll('[data-send-hold-mode]').forEach((element) => {
+    element.addEventListener('pointerenter', () => {
+      updateSendHoldPickerSelection(element.getAttribute('data-send-hold-mode'));
+    });
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      updateSendHoldPickerSelection(element.getAttribute('data-send-hold-mode'));
+      closeSendHoldPicker({ commit: true });
+    });
+  });
+  overlay.querySelector('.send-hold-cancel')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeSendHoldPicker({ commit: false });
+  });
+  updateSendHoldPickerSelection(appState.sendHoldPicker.mode);
+  requestAnimationFrame(() => overlay.classList.add('active'));
+}
+
+function initSendHoldModePicker() {
+  const sendBtn = document.getElementById('sendBtn');
+  if (!sendBtn || sendBtn.dataset.sendHoldBound === '1') return;
+  sendBtn.dataset.sendHoldBound = '1';
+
+  let holdTimer = null;
+  let startX = 0;
+  let startY = 0;
+
+  const clearHoldTimer = () => {
+    if (holdTimer) {
+      window.clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+  };
+
+  sendBtn.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (appState.isStreaming) return;
+    if (event.pointerType !== 'mouse') {
+      event.preventDefault();
+    }
+    startX = event.clientX;
+    startY = event.clientY;
+    clearHoldTimer();
+    holdTimer = window.setTimeout(() => {
+      holdTimer = null;
+      appState.sendHoldSuppressClick = true;
+      if (typeof sendBtn.setPointerCapture === 'function') {
+        try {
+          sendBtn.setPointerCapture(event.pointerId);
+        } catch (error) {
+          // ignored; pointer capture is only a convenience here
+        }
+      }
+      openSendHoldPicker(sendBtn, event);
+    }, 360);
+  });
+
+  sendBtn.addEventListener('pointermove', (event) => {
+    const picker = appState.sendHoldPicker;
+    if (!picker?.overlay) {
+      if (holdTimer && Math.hypot(event.clientX - startX, event.clientY - startY) > 12) {
+        clearHoldTimer();
+      }
+      return;
+    }
+    event.preventDefault();
+    updateSendHoldPickerSelection(getSendHoldModeFromPoint(picker.overlay, event.clientX, event.clientY));
+  });
+
+  const finishPointer = (event) => {
+    const picker = appState.sendHoldPicker;
+    const hadPendingTap = !!holdTimer;
+    const shouldHandleTouchTap = event.pointerType !== 'mouse';
+    clearHoldTimer();
+    if (!picker) {
+      if (hadPendingTap && shouldHandleTouchTap) {
+        appState.sendHoldSuppressClick = true;
+        sendMessage();
+      }
+      return;
+    }
+    event.preventDefault();
+    const targetAtPointer = document.elementFromPoint(event.clientX, event.clientY);
+    closeSendHoldPicker({ commit: !targetAtPointer?.closest?.('.send-hold-cancel') });
+  };
+
+  sendBtn.addEventListener('pointerup', finishPointer);
+  sendBtn.addEventListener('pointercancel', () => {
+    clearHoldTimer();
+    closeSendHoldPicker({ commit: false });
+  });
 }
 
 // 修复：改进stopGeneration函数
@@ -14342,11 +16544,11 @@ async function handleRegister(event) {
 		      headers: AUTH_JSON_HEADERS,
 		      body: JSON.stringify({ email, password, username, referrerId: getStoredInviteReferrerId() || undefined })
 		    });
-
+	
 	    const data = await parseApiJsonResponse(response, {
 	      fallback: isChineseLanguage(appState.language) ? '注册失败' : 'Registration failed',
 	      nonJsonFallback: isChineseLanguage(appState.language) ? '注册服务暂时不可用，请刷新页面后重试。' : 'Registration is temporarily unavailable. Refresh and try again.'
-	    });
+    });
 
     if (data.success) {
       await enterAuthenticatedApp(data);
@@ -14519,6 +16721,10 @@ appState.authMode = 'login';
 appState.authEmailValidated = false;
 appState.authLoginMethod = 'password';
 appState.pendingEmailAuth = null;
+// 登录预检：该邮箱是否需要二步验证（用于一次性显示密码+2FA 输入框）
+appState.authTwoFactorRequired = false;
+let authTwoFactorPrecheckToken = 0;
+let lastPrecheckedAuthEmail = '';
 
 function isValidAuthEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
@@ -14566,6 +16772,49 @@ function getCurrentAuthPassword() {
   return document.getElementById('authPassword')?.value || '';
 }
 
+function resetAuthTwoFactorPrecheck() {
+  appState.authTwoFactorRequired = false;
+  lastPrecheckedAuthEmail = '';
+  authTwoFactorPrecheckToken += 1;
+}
+
+async function precheckLoginTwoFactor(email) {
+  if (appState.authMode !== 'login') return;
+  const value = String(email || '').trim();
+  if (!isValidAuthEmail(value)) {
+    if (appState.authTwoFactorRequired) {
+      appState.authTwoFactorRequired = false;
+      if (appState.authEmailValidated) updateAuthMethodUI();
+    }
+    return;
+  }
+  const token = (authTwoFactorPrecheckToken += 1);
+  try {
+    const response = await fetch(`${API_BASE}/auth/login/precheck`, {
+      method: 'POST',
+      headers: AUTH_JSON_HEADERS,
+      body: JSON.stringify({ email: value })
+    });
+    const data = await parseApiJsonResponse(response, { fallback: '', nonJsonFallback: '' });
+    if (token !== authTwoFactorPrecheckToken) return;
+    const required = !!(data && data.success && data.twoFactorRequired);
+    if (appState.authTwoFactorRequired !== required) {
+      appState.authTwoFactorRequired = required;
+      if (appState.authEmailValidated && !appState.pendingTwoFactorToken) updateAuthMethodUI();
+    }
+  } catch (error) {
+    // 预检失败时保持当前 UI，提交时由服务端兜底
+  }
+}
+
+function maybePrecheckLoginTwoFactor() {
+  if (appState.authMode !== 'login') return;
+  const email = getCurrentAuthEmail();
+  if (email === lastPrecheckedAuthEmail) return;
+  lastPrecheckedAuthEmail = email;
+  precheckLoginTwoFactor(email);
+}
+
 function setAuthLoginMethod(method) {
   appState.authLoginMethod = method === 'email-code' ? 'email-code' : 'password';
   clearTwoFactorLoginChallenge();
@@ -14598,6 +16847,18 @@ function updateAuthMethodUI() {
 
   if (wantsEmailCode) showAuthStep('emailCodeStep');
   else hideAuthStep('emailCodeStep');
+
+  // 登录预检：密码登录模式下，若该账号开启了二步验证，则与密码框一起显示 2FA 输入框
+  if (appState.pendingTwoFactorToken) {
+    // 两步回退流程由 beginPendingTwoFactor 管理 twoFactorStep
+  } else {
+    const wantsTwoFactor = isLogin
+      && appState.authLoginMethod !== 'email-code'
+      && appState.authEmailValidated
+      && appState.authTwoFactorRequired;
+    if (wantsTwoFactor) showAuthStep('twoFactorStep');
+    else hideAuthStep('twoFactorStep');
+  }
 }
 
 function updateEmailCodeHint() {
@@ -14671,8 +16932,11 @@ function handleEmailInput(input) {
     hideAuthStep('emailCodeStep');
     hideAuthStep('submitStep');
     appState.authEmailValidated = false;
+    appState.authTwoFactorRequired = false;
+    hideAuthStep('twoFactorStep');
     clearPendingEmailAuth();
   }
+  maybePrecheckLoginTwoFactor();
   updateAuthMethodUI();
   updateAuthSubmitButtonText();
 }
@@ -14686,6 +16950,7 @@ function handleEmailKeydown(event) {
     const isValidEmail = isValidAuthEmail(email);
 
     if (isValidEmail) {
+      maybePrecheckLoginTwoFactor();
       if (!appState.authEmailValidated) {
         showAuthStep('passwordStep');
         showAuthStep('submitStep');
@@ -14863,11 +17128,11 @@ async function requestPasswordResetCode() {
 	      method: 'POST',
 	      headers: AUTH_JSON_HEADERS,
 	      body: JSON.stringify({ email })
-	    });
+    });
 	    const data = await parseApiJsonResponse(response, {
 	      fallback: isZh ? '验证码发送失败' : 'Failed to send code',
 	      nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-	    });
+    });
     if (!response.ok || data.success === false) {
       throw new Error(data.error || (isZh ? '验证码发送失败' : 'Failed to send code'));
     }
@@ -14917,11 +17182,11 @@ async function confirmPasswordResetWithCode() {
 	      method: 'POST',
 	      headers: AUTH_JSON_HEADERS,
 	      body: JSON.stringify({ email, code, newPassword })
-	    });
+    });
 	    const data = await parseApiJsonResponse(response, {
 	      fallback: isZh ? '重置密码失败' : 'Failed to reset password',
 	      nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-	    });
+    });
     if (!response.ok || data.success === false) {
       throw new Error(data.error || (isZh ? '重置密码失败' : 'Failed to reset password'));
     }
@@ -14945,6 +17210,7 @@ function switchAuthMode() {
   appState.authMode = isLogin ? 'register' : 'login';
   clearTwoFactorLoginChallenge();
   clearPendingEmailAuth();
+  resetAuthTwoFactorPrecheck();
   if (appState.authMode === 'register') {
     appState.authLoginMethod = 'password';
   }
@@ -15075,11 +17341,11 @@ async function requestLoginEmailCode(email) {
 	    method: 'POST',
 	    headers: AUTH_JSON_HEADERS,
 	    body: JSON.stringify({ email })
-	  });
+  });
 	  const data = await parseApiJsonResponse(response, {
 	    fallback: '验证码邮件发送失败',
 	    nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-	  });
+  });
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码邮件发送失败');
   }
@@ -15107,11 +17373,11 @@ async function verifyPendingEmailAuth(email, code) {
 	    method: 'POST',
 	    headers: AUTH_JSON_HEADERS,
 	    body: JSON.stringify({ email, code })
-	  });
+  });
 	  const data = await parseApiJsonResponse(response, {
 	    fallback: '验证码无效或已过期',
 	    nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-	  });
+  });
   if (await handleAuthServerResponse(data)) return;
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码无效或已过期');
@@ -15201,6 +17467,17 @@ async function handleAuthSubmit() {
     return;
   }
 
+  // 预检提示该账号开启了二步验证：一次性提交邮箱+密码+2FA 验证码
+  const isUpfrontTwoFactorLogin = appState.authMode === 'login'
+    && appState.authLoginMethod !== 'email-code'
+    && !isPendingTwoFactorLogin
+    && !isPendingEmailAuth
+    && appState.authTwoFactorRequired;
+  if (isUpfrontTwoFactorLogin && !/^\d{6}$/.test(twoFactorCode)) {
+    showAuthError(i18nText('two-factor-required', isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码' : 'Enter the 6-digit Authenticator code'));
+    return;
+  }
+
   hideAuthError();
 
   // 禁用按钮并显示加载状态
@@ -15228,7 +17505,7 @@ async function handleAuthSubmit() {
 	          code: twoFactorCode
 	        })
 	      });
-
+	
 	      const data = await parseApiJsonResponse(response, {
 	        fallback: isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code',
 	        nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
@@ -15251,21 +17528,23 @@ async function handleAuthSubmit() {
 
 	    const endpoint = appState.authMode === 'login' ? 'login' : 'register';
 	    const body = appState.authMode === 'login'
-	      ? { email, password }
+	      ? (isUpfrontTwoFactorLogin
+	        ? { email, password, twoFactorCode }
+	        : { email, password })
 	      : { email, password, username, referrerId: getStoredInviteReferrerId() || undefined };
 
 	    const response = await fetch(`${API_BASE}/auth/${endpoint}`, {
 	      method: 'POST',
 	      headers: AUTH_JSON_HEADERS,
 	      body: JSON.stringify(body)
-	    });
-
+    });
+	
 	    const data = await parseApiJsonResponse(response, {
 	      fallback: isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed',
 	      nonJsonFallback: appState.authMode === 'register'
 	        ? (isChineseLanguage(appState.language) ? '注册服务暂时不可用，请刷新页面后重试。' : 'Registration is temporarily unavailable. Refresh and try again.')
 	        : (isChineseLanguage(appState.language) ? '登录服务暂时不可用，请刷新页面后重试。' : 'Login is temporarily unavailable. Refresh and try again.')
-	    });
+    });
 
     if (!(await handleAuthServerResponse(data))) {
       showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
@@ -15396,19 +17675,29 @@ async function loadUserData() {
 
     console.log(' 显示邮箱:', realEmail);
 
-    appState.user = {
-      id: profile.id || appState.user?.id || null,
-      username: profile.username || displayName,
+	    appState.user = {
+	      id: profile.id || appState.user?.id || null,
+	      username: profile.username || displayName,
       email: profile.email || realEmail,
       avatar_url: profile.avatar_url || appState.user?.avatar_url || null,
       externalProvider: profile.external_provider || appState.user?.external_provider || null,
       externalUid: profile.external_uid || appState.user?.external_uid || null,
       external_provider: profile.external_provider || appState.user?.external_provider || null,
       external_uid: profile.external_uid || appState.user?.external_uid || null,
-      two_factor_enabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1,
-      twoFactorEnabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1
+	      two_factor_enabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1,
+	      twoFactorEnabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1
     };
-    updateUserIdentityUI();
+    const pendingProfileEmail = String(profile.pending_email || '').trim();
+    if (pendingProfileEmail && Number(profile.pending_email_expires_at || 0) > Date.now()) {
+      appState.pendingSettingsEmailChange = {
+        email: pendingProfileEmail,
+        expiresAt: profile.pending_email_expires_at || null,
+        stage: profile.pending_email_stage || 'current'
+      };
+    } else if (appState.pendingSettingsEmailChange) {
+      appState.pendingSettingsEmailChange = null;
+    }
+	    updateUserIdentityUI();
 
     //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
@@ -15438,12 +17727,16 @@ async function loadUserData() {
         appState.thinkingMode = (profile.thinking_mode === 1 || profile.thinking_mode === true);
       }
       if (profile.tab_title_mode !== undefined) {
-        const allowedModes = ['static', 'marquee', 'greeting', 'title', 'custom'];
+        const allowedModes = RAI_TAB_TITLE_MODES;
         const m = String(profile.tab_title_mode || '').trim();
-        appState.tabTitleMode = allowedModes.includes(m) ? m : 'marquee';
+        appState.tabTitleMode = allowedModes.includes(m) ? m : 'default';
       }
       if (profile.tab_title_custom_text !== undefined) {
         appState.tabTitleCustomText = String(profile.tab_title_custom_text || '').slice(0, 80);
+      }
+      if (profile.font_preference !== undefined) {
+        applyFontPreference(profile.font_preference || 'rai');
+        persistLocalSettingsPatch({ fontPreference: appState.fontPreference });
       }
       if (typeof applyRuntimeBranding === 'function') applyRuntimeBranding();
       //  修复：保持联网模式默认开启，除非用户明确关闭
@@ -16276,7 +18569,7 @@ function renderFlowsList(flows) {
   }
 
   container.innerHTML = flows.map(flow => `
-        <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}"
+        <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}" 
              onclick="openFlow('${flow.id}')" data-flow-id="${flow.id}">
           ${getSvgIcon('rai_logo_colored', 'flow-item-icon rai-flow-logo', 18)}
           <div class="flow-item-main">
@@ -19184,18 +21477,28 @@ async function loadSessions(reset = true, options = {}) {
   // 如果不是重置且没有更多数据，跳过
   if (!reset && !appState.sessionsPagination.hasMore) return;
 
-  // 如果是重置，清空现有数据
-  if (reset) {
-    appState.sessions = [];
-    appState.sessionsPagination.offset = 0;
-    appState.sessionsPagination.hasMore = true;
-  }
+  const previousSessions = Array.isArray(appState.sessions) ? [...appState.sessions] : [];
+  const previousOffset = Number(appState.sessionsPagination.offset || 0);
+  const previousHasMore = Boolean(appState.sessionsPagination.hasMore);
+  const previousSignature = getSessionListRenderSignature(
+    previousSessions,
+    previousHasMore,
+    appState.currentSession?.id
+  );
+  const preservedCurrentSession = appState.currentSession ? { ...appState.currentSession } : null;
 
   appState.sessionsPagination.isLoading = true;
   let shouldFocusAfterRender = false;
+  let shouldRender = true;
 
   try {
-    const { offset, limit } = appState.sessionsPagination;
+    const pageLimit = Math.max(1, Number(appState.sessionsPagination.limit || 5));
+    const offset = reset ? 0 : previousOffset;
+    const preserveLoadedWindow = reset && options.preserveLoadedWindow === true;
+    const loadedWindowSize = Math.max(pageLimit, previousOffset);
+    const limit = preserveLoadedWindow
+      ? Math.min(100, loadedWindowSize + 1)
+      : pageLimit;
     const response = await fetch(
       `${API_BASE}/sessions?offset=${offset}&limit=${limit}`,
       { headers: { 'Authorization': `Bearer ${appState.token}` } }
@@ -19207,33 +21510,86 @@ async function loadSessions(reset = true, options = {}) {
 
     const data = await response.json();
 
-    // 追加新会话到现有列表（从最新到最旧）
-    appState.sessions = [...appState.sessions, ...data.sessions];
-    appState.sessionsPagination.hasMore = data.hasMore;
-    appState.sessionsPagination.offset += data.sessions.length;
+    const fetchedSessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const incomingSessions = preserveLoadedWindow && loadedWindowSize < 100
+      ? fetchedSessions.slice(0, loadedWindowSize)
+      : fetchedSessions;
+    const sessionMap = new Map();
+    if (!reset || (preserveLoadedWindow && loadedWindowSize >= 100)) previousSessions.forEach((session) => {
+      if (session?.id) sessionMap.set(String(session.id), session);
+    });
+    incomingSessions.forEach((session) => {
+      if (session?.id) sessionMap.set(String(session.id), session);
+    });
+    if (preservedCurrentSession?.id && options.preserveCurrentSession !== false) {
+      const currentId = String(preservedCurrentSession.id);
+      if (!sessionMap.has(currentId)) {
+        sessionMap.set(currentId, preservedCurrentSession);
+      }
+    }
 
-    console.log(` 加载了 ${data.sessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
+    appState.sessions = Array.from(sessionMap.values());
+    appState.sessionsPagination.hasMore = preserveLoadedWindow
+      ? (loadedWindowSize < 100 ? fetchedSessions.length > loadedWindowSize : previousHasMore)
+      : !!data.hasMore;
+    appState.sessionsPagination.offset = preserveLoadedWindow
+      ? Math.max(previousOffset, incomingSessions.length)
+      : reset
+        ? incomingSessions.length
+        : previousOffset + incomingSessions.length;
+
+    const nextSignature = getSessionListRenderSignature(
+      appState.sessions,
+      appState.sessionsPagination.hasMore,
+      appState.currentSession?.id
+    );
+    shouldRender = options.skipRenderIfUnchanged !== true || nextSignature !== previousSignature;
+
+    console.log(` 加载了 ${incomingSessions.length} 个会话，总计 ${appState.sessions.length}，还有更多: ${data.hasMore}`);
     if (options.focusEmpty !== false && appState.messages.length === 0) {
       shouldFocusAfterRender = true;
     }
 
   } catch (error) {
     console.error(' 加载会话失败:', error);
-    if (reset) {
+    if (reset && options.clearOnError === true) {
       appState.sessions = [];
+      appState.sessionsPagination.offset = 0;
+      appState.sessionsPagination.hasMore = true;
+    } else {
+      appState.sessions = previousSessions;
+      appState.sessionsPagination.offset = previousOffset;
+      appState.sessionsPagination.hasMore = previousHasMore;
     }
+    const errorSignature = getSessionListRenderSignature(
+      appState.sessions,
+      appState.sessionsPagination.hasMore,
+      appState.currentSession?.id
+    );
+    shouldRender = options.skipRenderIfUnchanged !== true || errorSignature !== previousSignature;
   } finally {
     appState.sessionsPagination.isLoading = false;
-    renderSessions();
+    if (shouldRender) {
+      renderSessions({ preserveScroll: options.preserveSidebarScroll === true });
+    }
     if (shouldFocusAfterRender) {
       focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
     }
   }
 }
 
+function ensureHomeActionRailPlacement() {
+  const rail = document.querySelector('.home-action-rail');
+  const wrapper = document.querySelector('.input-wrapper');
+  if (!rail || !wrapper || rail.parentElement === wrapper) return;
+  wrapper.insertBefore(rail, wrapper.firstChild);
+}
+
 function showWelcome() {
   const welcomeScreen = document.getElementById('welcomeScreen');
   const messagesList = document.getElementById('messagesList');
+  ensureHomeActionRailPlacement();
+  document.body?.classList.add('home-screen-active');
 
   if (welcomeScreen) {
     welcomeScreen.style.display = 'flex';
@@ -19461,10 +21817,28 @@ function readLocalSettingsObject() {
   }
 }
 
+function hasLocalSettingsKey(key) {
+  return Object.prototype.hasOwnProperty.call(readLocalSettingsObject(), key);
+}
+
 function persistLocalSettingsPatch(patch = {}) {
   const next = { ...readLocalSettingsObject(), ...patch };
   localStorage.setItem('rai_settings', JSON.stringify(next));
   return next;
+}
+
+function syncBrowserNotifyStateFromPermission({ persist = false } = {}) {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'denied') {
+    appState.browserNotifyEnabled = false;
+    return;
+  }
+  if (Notification.permission === 'granted' && !hasLocalSettingsKey('browserNotifyEnabled')) {
+    appState.browserNotifyEnabled = true;
+    if (persist) {
+      persistLocalSettingsPatch({ browserNotifyEnabled: true });
+    }
+  }
 }
 
 async function getApiErrorMessage(response, fallback = '') {
@@ -19544,10 +21918,14 @@ function syncTabTitleConfigToServer() {
 
 function updateBrowserNotifySettingsUI() {
   const supported = ('Notification' in window);
+  syncBrowserNotifyStateFromPermission({ persist: true });
   const switchBtn = document.getElementById('browserNotifySwitch');
   const toggle = document.getElementById('browserNotifyToggle');
   const hint = document.getElementById('browserNotifyHint');
-  if (switchBtn) switchBtn.style.display = supported ? '' : 'none';
+  if (switchBtn) {
+    switchBtn.style.display = supported ? '' : 'none';
+    switchBtn.disabled = !supported;
+  }
   if (toggle) toggle.classList.toggle('active', !!appState.browserNotifyEnabled);
   if (switchBtn) switchBtn.setAttribute('aria-pressed', appState.browserNotifyEnabled ? 'true' : 'false');
   if (hint) {
@@ -19561,6 +21939,41 @@ function updateBrowserNotifySettingsUI() {
   }
 }
 
+function initBrowserNotifySettingControl() {
+  const switchBtn = document.getElementById('browserNotifySwitch');
+  if (!switchBtn || switchBtn.dataset.raiBound === '1') return;
+  switchBtn.dataset.raiBound = '1';
+  switchBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleBrowserNotifySetting();
+  });
+}
+
+function requestBrowserNotificationPermission() {
+  if (!('Notification' in window) || typeof Notification.requestPermission !== 'function') {
+    return Promise.resolve('denied');
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (permission) => {
+      if (settled) return;
+      settled = true;
+      resolve(permission);
+    };
+    try {
+      const result = Notification.requestPermission(finish);
+      if (result && typeof result.then === 'function') {
+        result.then(finish).catch(() => finish(Notification.permission || 'denied'));
+      } else if (Notification.permission !== 'default') {
+        finish(Notification.permission);
+      }
+    } catch (e) {
+      finish(Notification.permission || 'denied');
+    }
+  });
+}
+
 async function toggleBrowserNotifySetting() {
   const supported = ('Notification' in window);
   if (!supported) {
@@ -19572,7 +21985,7 @@ async function toggleBrowserNotifySetting() {
   if (next) {
     if (Notification.permission === 'default') {
       try {
-        const perm = await Notification.requestPermission();
+        const perm = await requestBrowserNotificationPermission();
         if (perm !== 'granted') {
           showToast(i18nText('browser-notify-denied', isChineseLanguage(appState.language) ? '浏览器通知权限已被拒绝，请在浏览器设置中开启。' : 'Browser notification permission is denied. Enable it in your browser settings.'));
           updateBrowserNotifySettingsUI();
@@ -19596,6 +22009,20 @@ async function toggleBrowserNotifySetting() {
   updateBrowserNotifySettingsUI();
 }
 
+
+function applyMemoryUpdateEvent(data = {}) {
+  if (Object.prototype.hasOwnProperty.call(data, 'enabled')) {
+    appState.longMemoryEnabled = !!data.enabled;
+  }
+  if (Array.isArray(data.memories)) {
+    appState.userMemories = data.memories;
+    appState.userMemoriesLoaded = true;
+  }
+  if (Array.isArray(data.shortTermMemory)) {
+    appState.shortTermMemoryTitles = data.shortTermMemory;
+  }
+  renderMemorySettings();
+}
 
 function renderMemorySettings() {
   const toggle = document.getElementById('memoryEnabledToggle');
@@ -19684,7 +22111,8 @@ function buildCurrentConfigPayloadForMemory() {
     thinking_mode: appState.thinkingMode ? 1 : 0,
     internet_mode: appState.internetMode ? 1 : 0,
     long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
-    tab_title_mode: appState.tabTitleMode || 'marquee',
+    font_preference: appState.fontPreference || 'rai',
+    tab_title_mode: appState.tabTitleMode || 'default',
     tab_title_custom_text: appState.tabTitleCustomText || ''
   };
 }
@@ -19961,16 +22389,21 @@ async function loadSession(sessionId) {
 
     const messages = await response.json();
 
-    appState.currentSession = appState.sessions.find(s => s.id === sessionId);
+    appState.currentSession = appState.sessions.find(s => String(s.id) === String(sessionId)) || {
+      id: sessionId,
+      title: isChineseLanguage(appState.language) ? '历史对话' : 'Previous chat',
+      session_kind: 'chat'
+    };
     appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
       ? 'saved-temp'
       : 'normal';
     appState.messages = Array.isArray(messages) ? messages : [];
+    if (typeof startTitleAnimation === 'function') startTitleAnimation();
 
     console.log(` 加载到 ${messages.length} 条消息`);
 
     renderMessages();
-    renderSessions();
+    renderSessions({ preserveScroll: true });
     if (appState.messages.length === 0) {
       focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
     }
@@ -20242,9 +22675,10 @@ async function syncCurrentSessionMessages() {
   const nextSignature = getMessagesSignature(nextMessages);
   if (oldSignature === nextSignature) return false;
 
+  const shouldPreserveScroll = appState.scrollFollowMode === 'pausedByUser' || !isNearBottom();
   appState.messages = nextMessages;
-  renderMessages();
-  if (isNearBottom()) {
+  renderMessages({ preserveScroll: shouldPreserveScroll });
+  if (!shouldPreserveScroll) {
     scrollToBottom(true);
   }
   console.log(` 多设备同步：当前会话更新 ${nextMessages.length} 条消息`);
@@ -20260,7 +22694,13 @@ async function syncConversationsAcrossDevices({ force = false } = {}) {
   appState.syncInFlight = true;
   appState.lastSyncAt = now;
   try {
-    await loadSessions(true, { focusEmpty: false });
+    await loadSessions(true, {
+      focusEmpty: false,
+      preserveCurrentSession: true,
+      preserveLoadedWindow: true,
+      preserveSidebarScroll: true,
+      skipRenderIfUnchanged: true
+    });
     await syncCurrentSessionMessages();
   } catch (error) {
     console.warn('多设备对话同步失败:', error.message);
@@ -20299,6 +22739,7 @@ function initSwipeGestures() {
   const gestureLockDistance = 12;
   const gestureCommitDistance = 20;
   const horizontalDominanceRatio = 1.2;
+  const getSidebarOpenEdgeWidth = () => Math.min(132, Math.max(88, window.innerWidth * 0.28));
 
   const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
   const getSidebarWidth = () => sidebar.getBoundingClientRect().width || sidebar.offsetWidth || window.innerWidth * 0.85;
@@ -20351,7 +22792,7 @@ function initSwipeGestures() {
     const onHeader = !!target.closest('#mobileHeader');
     const onMain = !!target.closest('.main-content');
 
-    const canOpen = !appState.sidebarOpen && (onMain || onHeader) && !isGestureBlockedTarget(target);
+    const canOpen = !appState.sidebarOpen && (onMain || onHeader) && touch.clientX <= getSidebarOpenEdgeWidth() && !isGestureBlockedTarget(target);
     const canClose = appState.sidebarOpen && (onSidebar || onOverlay);
 
     if (!canOpen && !canClose) return;
@@ -20527,12 +22968,16 @@ function loadSettings() {
       if (settings.newChatDefaultMode !== undefined) appState.newChatDefaultMode = normalizeTemporaryChatMode(settings.newChatDefaultMode);
       if (settings.tabTitleMode !== undefined) appState.tabTitleMode = normalizeTabTitleMode(settings.tabTitleMode);
       if (settings.tabTitleCustomText !== undefined) appState.tabTitleCustomText = String(settings.tabTitleCustomText || '').slice(0, 80);
+      if (settings.fontPreference !== undefined) applyFontPreference(settings.fontPreference);
       if (settings.browserNotifyEnabled !== undefined) appState.browserNotifyEnabled = settings.browserNotifyEnabled === true;
+      if (settings.browserNotifyEnabled === undefined) syncBrowserNotifyStateFromPermission({ persist: true });
       console.log(' 从本地存储加载设置成功');
       if (typeof startTitleAnimation === 'function') startTitleAnimation();
     } catch (e) {
       console.warn(' 解析本地设置失败:', e);
     }
+  } else {
+    syncBrowserNotifyStateFromPermission({ persist: true });
   }
 }
 
@@ -20575,6 +23020,11 @@ class MobileKeyboardHandler {
 
     if (this.isMobile) {
       this.init();
+    } else {
+      // PC 也要跟踪输入区实际高度，避免最后一条消息被悬浮输入框盖住。
+      this.syncComposerMetrics();
+      this.setupComposerObserver();
+      window.addEventListener('resize', this.syncComposerMetrics, { passive: true });
     }
   }
 
@@ -20931,10 +23381,15 @@ function showToast(message, duration = 3000) {
     toast.className = 'toast-notification';
     document.body.appendChild(toast);
   }
+  if (toast._hideTimer) {
+    clearTimeout(toast._hideTimer);
+    toast._hideTimer = null;
+  }
   toast.textContent = message;
   toast.classList.add('show');
-  setTimeout(() => {
+  toast._hideTimer = window.setTimeout(() => {
     toast.classList.remove('show');
+    toast._hideTimer = null;
   }, duration);
 }
 
@@ -20971,7 +23426,7 @@ function handleFileUpload() {
   input.accept = [
     // 图片格式
     'image/*', '.webp', '.bmp', '.ico', '.tiff', '.heic', '.heif',
-    // 视频格式
+    // 视频格式  
     'video/*', '.webm', '.mkv', '.flv', '.wmv', '.avi', '.mov', '.m4v',
     // 音频格式
     'audio/*', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus',
@@ -21782,6 +24237,7 @@ function initMobileTouchNavigation() {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
+  mountComposerFloatingMenus();
   window.mobileKeyboardHandler = new MobileKeyboardHandler({
     debug: false
   });
@@ -21819,6 +24275,7 @@ let userMembershipState = {
   tasks: {
     pwaInstall: { completed: false, rewardPoints: PWA_INSTALL_REWARD_POINTS },
     inviteUser: { completed: false, rewardPoints: INVITE_REWARD_POINTS, completedCount: 0, totalRewardPoints: 0 },
+    inviteeUser: { completed: false, rewardPoints: INVITE_REWARD_POINTS, completedCount: 0, totalRewardPoints: 0 },
     bookmarkDomain: { completed: false, rewardPoints: BOOKMARK_DOMAIN_REWARD_POINTS }
   }
 };
@@ -21848,6 +24305,13 @@ function normalizeMembershipTasks(tasks = {}) {
       completedAt: tasks?.inviteUser?.completedAt || null,
       completedCount: Number(tasks?.inviteUser?.completedCount || 0),
       totalRewardPoints: Number(tasks?.inviteUser?.totalRewardPoints || 0)
+    },
+    inviteeUser: {
+      completed: Boolean(tasks?.inviteeUser?.completed),
+      rewardPoints: Number(tasks?.inviteeUser?.rewardPoints || INVITE_REWARD_POINTS),
+      completedAt: tasks?.inviteeUser?.completedAt || null,
+      completedCount: Number(tasks?.inviteeUser?.completedCount || 0),
+      totalRewardPoints: Number(tasks?.inviteeUser?.totalRewardPoints || 0)
     },
     bookmarkDomain: {
       completed: Boolean(tasks?.bookmarkDomain?.completed),
@@ -21879,7 +24343,7 @@ function applyMembershipModelPolicy({ initial = false, previousMembership = null
   const currentMembership = String(userMembershipState?.membership || 'free');
   const prev = previousMembership ? String(previousMembership) : null;
 
-  // free 用户：默认智能模型（仅首次或从非 free 降级时强制）
+  // free 用户：默认 智能模型（仅首次或从非 free 降级时强制）
   if (currentMembership === 'free') {
     if (initial || (prev && prev !== 'free') || !membershipModelPolicyInitialized) {
       appState.selectedModel = 'auto';
@@ -21893,7 +24357,7 @@ function applyMembershipModelPolicy({ initial = false, previousMembership = null
 
   // Pro/MAX：记住上次模型（首次加载或刚从free升级时应用）
   if (initial || prev === 'free' || !membershipModelPolicyInitialized) {
-    const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'deepseek-pro');
+    const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'auto');
     const targetModel = MODELS[remembered] && !isModelDisabledByAdmin(remembered) ? remembered : 'auto';
     appState.selectedModel = targetModel;
     updateSelectedModelText(targetModel);
@@ -22197,8 +24661,8 @@ function openGitHubStarTask() {
     window.location.href = 'https://github.com/Rick-953/RAI';
   }
   showToast(isChineseLanguage(appState.language)
-    ? `完成 Star 后，把截图发送到 ${RAI_STAR_REWARD_EMAIL} 即可获得一个月 Pro`
-    : `After starring, email the screenshot to ${RAI_STAR_REWARD_EMAIL} to get 1 month Pro`);
+    ? '完成 Star 后，把截图发送到 rick080402@gmail.com 即可获得一个月 Pro'
+    : 'After starring, email the screenshot to rick080402@gmail.com to get 1 month Pro');
 }
 
 function renderMembershipTasksSection({ compact = false } = {}) {
@@ -22232,8 +24696,9 @@ function renderMembershipTasksSection({ compact = false } = {}) {
         </div>
         <div class="membership-task-item ${inviteDone ? 'completed' : ''}">
           <div class="membership-task-main">
-            <strong>${isZh ? '邀请一位用户' : 'Invite one user'}</strong>
-            <span>${isZh ? `积分 +${tasks.inviteUser.rewardPoints}${inviteCount ? ` · 已邀请 ${inviteCount} 位` : ''}` : `+${tasks.inviteUser.rewardPoints} points${inviteCount ? ` · ${inviteCount} invited` : ''}`}</span>
+            <strong>${isZh ? '邀请好友双方奖励' : 'Invite friends, both earn'}</strong>
+            <span>${isZh ? `双方各 +${tasks.inviteUser.rewardPoints}${inviteCount ? ` · 已邀请 ${inviteCount} 位` : ''}` : `Both +${tasks.inviteUser.rewardPoints} points${inviteCount ? ` · ${inviteCount} invited` : ''}`}</span>
+            <small>${isZh ? '被邀请人邮箱验证后，你和对方都会获得奖励。' : 'After the invitee verifies email, both accounts receive the reward.'}</small>
             <small>${escapeHtml(inviteLink)}</small>
           </div>
           <div class="membership-task-actions">
@@ -22261,7 +24726,7 @@ function renderMembershipTasksSection({ compact = false } = {}) {
           <div class="membership-task-main">
             <strong>${isZh ? 'GitHub 给个 Star → 一个月 Pro' : 'Star on GitHub → 1 month Pro'}</strong>
             <span>${isZh ? '赠送一个月 Pro' : '1 month Pro reward'}</span>
-            <small>${isZh ? `把 Star 截图发送至 ${escapeHtml(RAI_STAR_REWARD_EMAIL)}` : `Email your star screenshot to ${escapeHtml(RAI_STAR_REWARD_EMAIL)}`}</small>
+            <small>${isZh ? '把 Star 截图发送至 rick080402@gmail.com' : 'Email your star screenshot to rick080402@gmail.com'}</small>
           </div>
           <div class="membership-task-actions">
             <button type="button" class="membership-task-action" onclick="openGitHubStarTask()">
@@ -22327,7 +24792,7 @@ function renderMembershipPlansModalContent() {
         ${renderMembershipTasksSection()}
 
         <div class="membership-contact">
-          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:${escapeHtml(RAI_SUPPORT_EMAIL)}">${escapeHtml(RAI_SUPPORT_EMAIL)}</a></p>
+          <p>${isZh ? '点数 / 会员问题联系邮箱：' : 'For points / membership help:'} <a href="mailto:rick080402+raisupport@gmail.com">rick080402+raisupport@gmail.com</a></p>
           <p class="membership-status-note">${isZh ? '如遇点数、签到或会员状态问题，可通过邮箱联系。' : 'If you run into points, check-in, or membership issues, contact us by email.'}</p>
         </div>
       </div>
@@ -22486,17 +24951,33 @@ async function sidebarCheckin() {
 // 更新设置面板中的会员信息
 function updateSettingsMembership() {
   const m = userMembershipState;
+  const membershipText = String(m.membership || 'free');
+  const membershipClass = membershipText === 'MAX' ? 'max' : (membershipText === 'Pro' ? 'pro' : 'free');
 
   // 更新会员徽章
   const badge = document.getElementById('settingsMembershipBadge');
   if (badge) {
-    badge.textContent = m.membership;
-    badge.className = `settings-membership-badge ${m.membership === 'MAX' ? 'max' : (m.membership === 'Pro' ? 'pro' : 'free')}`;
+    badge.textContent = membershipText;
+    badge.className = `settings-membership-badge ${membershipClass}`;
+  }
+
+  const sidebarPlan = document.getElementById('settingsSidebarPlan');
+  if (sidebarPlan) {
+    sidebarPlan.textContent = membershipText;
+    sidebarPlan.className = `settings-sidebar-plan ${membershipClass}`;
+  }
+
+  const mobilePlan = document.getElementById('settingsMobilePlan');
+  if (mobilePlan) {
+    mobilePlan.textContent = membershipText;
+    mobilePlan.className = `settings-mobile-plan ${membershipClass}`;
   }
 
   // 更新点数显示
   const points = document.getElementById('settingsPointsDisplay');
   if (points) points.textContent = m.totalPoints;
+  const mobilePoints = document.getElementById('settingsMobilePointsDisplay');
+  if (mobilePoints) mobilePoints.textContent = m.totalPoints;
 
   // 更新签到按钮
   const checkinBtn = document.getElementById('settingsCheckinBtn');
@@ -22518,12 +24999,12 @@ function updateSettingsMembership() {
 	    const date = new Date(m.createdAt);
 	    const locale = getCurrentLocale();
 	    created.textContent = `${i18nText('created-at-prefix', '创建于')}: ${date.toLocaleDateString(locale)}`;
-	  }
+  }
 
 	  const taskSection = document.getElementById('settingsTaskSection');
 	  if (taskSection) {
 	    taskSection.innerHTML = renderMembershipTasksSection({ compact: true });
-	  }
+  }
 
 	  // 升级/续期入口始终可见，方便续期和升级
   const upgradeLink = document.querySelector('#settingsMembershipSection .settings-upgrade-link');
@@ -23428,7 +25909,7 @@ async function loadAdminModels() {
     const models = data.models || [];
     container.innerHTML = `
       <div class="admin-model-switch-list">
-        <div class="admin-model-switch-note">关闭后普通用户的模型列表会隐藏该模型；如果用户当前已选中该模型，前端会自动切回智能模型。</div>
+        <div class="admin-model-switch-note">关闭后普通用户的模型列表会隐藏该模型；如果用户当前已选中该模型，前端会自动切回 智能模型。</div>
         ${models.map((model) => `
           <div class="admin-model-switch-item">
             <div>
@@ -23525,7 +26006,7 @@ async function loadAdminLimits() {
           <div class="admin-limits-grid">
             ${switchField('pwa_reward_enabled', '允许 PWA 奖励')}
             ${numberField('pwa_reward_min_account_age_minutes', 'PWA 奖励账号冷却', 0, 10080, '分钟')}
-            ${switchField('invite_reward_immediate_enabled', '邀请奖励注册即结算')}
+            ${switchField('invite_reward_immediate_enabled', '邮箱验证后双方奖励')}
           </div>
         </div>
         <div class="admin-announcement-form-actions">
@@ -24086,14 +26567,14 @@ function renderUserDetail(user, sessions) {
           <button class="admin-action-btn view" onclick="openAdminPasswordEditor(${user.id})">${isChineseLanguage(appState.language) ? '更改密码' : 'Change password'}</button>
         </div>
       </div>
-
+      
       <!-- 会话列表和消息查看区域 -->
       <div class="user-sessions-area">
         <div class="user-sessions-list">
           <h3> 对话列表 (${sessions.length})</h3>
           <div class="sessions-scroll">
             ${sessions.length === 0 ? '<div class="no-sessions">该用户暂无对话</div>' : sessions.map(s => `
-              <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}"
+              <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}" 
                    data-session-id="${s.id}"
                    onclick="loadSessionMessages('${s.id}')">
                 <div class="ud-session-title">${escapeHtml(s.title || '新对话')}</div>
@@ -24105,7 +26586,7 @@ function renderUserDetail(user, sessions) {
             `).join('')}
           </div>
         </div>
-
+        
         <div class="user-messages-area" id="userMessagesArea">
           <div class="ud-messages-placeholder">
             <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
@@ -24233,7 +26714,7 @@ function renderSessionMessages(session, messages, totalCount) {
   messagesArea.innerHTML = html;
 }
 
-// 关闭用户详情弹窗
+// 关闭用户详情弹窗  
 function closeUserDetailModal() {
   const modal = document.getElementById('userDetailModal');
   if (modal) {
