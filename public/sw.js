@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.28-beta.1-20260710-code-cleanup-beta-v01128b1';
+const RAI_SW_VERSION = '0.11.28-beta.1-20260710-code-cleanup-beta-v01128b2';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, '');
 const RAI_CACHE_SCOPE = (RAI_SCOPE_PATH || 'root').replace(/^\/+/, '').replace(/[^a-z0-9_-]+/gi, '-');
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_CACHE_SCOPE}-`;
@@ -11,21 +11,21 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260710-code-cleanup-beta-v01128b1',
-  '/styles.css?v=20260710-code-cleanup-beta-v01128b1',
-  '/site.webmanifest?v=20260710-code-cleanup-beta-v01128b1',
+  '/app.js?v=20260710-code-cleanup-beta-v01128b2',
+  '/styles.css?v=20260710-code-cleanup-beta-v01128b2',
+  '/site.webmanifest?v=20260710-code-cleanup-beta-v01128b2',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
-  '/lib/marked.min.js',
-  '/lib/purify.min.js',
-  '/lib/katex/katex.min.css',
-  '/lib/katex/katex.min.js',
-  '/lib/katex/contrib/auto-render.min.js',
-  '/lib/mermaid/mermaid.min.js',
-  '/lib/highlight/styles/github-dark.min.css',
-  '/lib/highlight/highlight.min.js'
+  '/lib/marked.min.js?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/purify.min.js?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/katex/katex.min.css?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/katex/katex.min.js?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/katex/contrib/auto-render.min.js?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/mermaid/mermaid.min.js?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/highlight/styles/github-dark.min.css?v=20260710-code-cleanup-beta-v01128b2',
+  '/lib/highlight/highlight.min.js?v=20260710-code-cleanup-beta-v01128b2'
 ].map(scopedPath);
 const RAI_NON_CACHEABLE_PATHS = [
   '/api/',

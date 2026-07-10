@@ -2084,7 +2084,7 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
 const RAI_APP_VERSION = '0.11.28-beta.1';
-const RAI_BUILD_ID = '20260710-code-cleanup-beta-v01128b1';
+const RAI_BUILD_ID = '20260710-code-cleanup-beta-v01128b2';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
