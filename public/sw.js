@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.27-20260710-password-reset-login-recovery-v01127';
+const RAI_SW_VERSION = '0.11.28-beta.1-20260710-code-cleanup-beta-v01128b1';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-';
 const RAI_FONT_CACHE_NAME = 'rai-fonts-v1';
@@ -9,9 +9,9 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260710-password-reset-login-recovery-v01127',
-  '/styles.css?v=20260710-password-reset-login-recovery-v01127',
-  '/site.webmanifest?v=20260710-password-reset-login-recovery-v01127',
+  '/app.js?v=20260710-code-cleanup-beta-v01128b1',
+  '/styles.css?v=20260710-code-cleanup-beta-v01128b1',
+  '/site.webmanifest?v=20260710-code-cleanup-beta-v01128b1',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',

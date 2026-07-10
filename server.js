@@ -898,97 +898,10 @@ function evaluateComplexity(message) {
 }
 
 // ========== 路由决策引擎 ==========
-function routeModel(evaluation) {
-    const score = evaluation.score;
-    const keywords = evaluation.keywords;
-    let model, cost, reason, isForceMax = false;
 
-    // 强制高质量场景优先 DeepSeek Pro；多模态在聊天路由层单独切 Qwen。
-    if (keywords.forceMax.length > 0) {
-        model = 'deepseek-pro';
-        cost = 0.001;
-        reason = `强制高质量: "${keywords.forceMax[0]}"等关键词`;
-        isForceMax = true;
-    }
-    // 专业词汇高密度：优先 DeepSeek Pro
-    else if (keywords.professional.count >= config.professional.maxThreshold) {
-        model = 'deepseek-pro';
-        cost = 0.001;
-        reason = `专业词汇(${keywords.professional.count}个) → DeepSeek Pro`;
-    }
-    // 中高复杂：DeepSeek
-    else if (keywords.professional.count >= config.professional.threshold) {
-        model = 'deepseek-pro';
-        cost = 0.001;
-        reason = `专业词汇(${keywords.professional.count}个) → DeepSeek`;
-    }
-    else if (score < config.thresholds.t1) {
-        model = 'chatgpt-gpt-oss-120b';
-        cost = 0;
-        reason = `分数${score.toFixed(2)} < ${config.thresholds.t1} → ChatGPT(限免)`;
-    }
-    else if (score < config.thresholds.t2) {
-        model = 'deepseek-pro';
-        cost = 0.001;
-        reason = `分数${score.toFixed(2)}在中等范围 → DeepSeek`;
-    }
-    else {
-        model = 'deepseek-pro';
-        cost = 0.001;
-        reason = `分数${score.toFixed(2)} ≥ ${config.thresholds.t2} → DeepSeek Pro`;
-    }
-
-    return { model, cost, reason, isForceMax };
-}
 
 // ========== 核心API接口 ==========
-function analyzeMessage(message) {
-    // 预设答案快速通道
-    const presetAnswers = {
-        '你好': '你好！很高兴见到你',
-        '谢谢': '不客气！',
-        '再见': '再见！'
-    };
 
-    if (presetAnswers[message.trim()]) {
-        //  修复：返回完整的分析对象，包含所有必需字段
-        return {
-            model: 'chatgpt-gpt-oss-120b',
-            cost: 0,
-            reason: '预设答案(限免响应)',
-            isForceMax: false,
-            score: 0.05,  //  添加 score 字段
-            dimensions: {  //  添加完整的维度对象
-                inputLength: 0.05,
-                codeDetection: 0,
-                mathFormula: 0,
-                reasoning: 0,
-                languageMix: 0
-            },
-            keywords: {  //  添加完整的关键词对象
-                forceMax: [],
-                complexity: { count: 0, keywords: [] },
-                professional: { count: 0, keywords: [] },
-                math: { count: 0, keywords: [] },
-                code: { detected: false, types: [] }
-            }
-        };
-    }
-
-    // 完整路由流程
-    const evaluation = evaluateComplexity(message);
-    const route = routeModel(evaluation);
-
-    return {
-        model: route.model,
-        cost: route.cost,
-        reason: route.reason,
-        isForceMax: route.isForceMax,
-        score: evaluation.score,
-        dimensions: evaluation.dimensions,
-        keywords: evaluation.keywords
-    };
-}
 
 // ==================== 网页搜索功能 (Tavily API) ====================
 
@@ -1235,17 +1148,9 @@ async function fetchYahooFinanceQuote({ symbol, range = FINANCE_DEFAULT_RANGE, i
     return normalized;
 }
 
-function clampInteger(value, min, max, fallback) {
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.min(max, Math.max(min, parsed));
-}
 
-function clampNumber(value, min, max, fallback) {
-    const parsed = Number.parseFloat(value);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.min(max, Math.max(min, parsed));
-}
+
+
 
 function normalizeKolorsImageArgs(args = {}) {
     const prompt = String(args.prompt || args.description || '').trim().slice(0, 2000);
@@ -3010,30 +2915,7 @@ function buildSiliconflowFreeFallbackRequestBody({
     return body;
 }
 
-function buildOpenAIFallbackRequestBody({
-    actualModel,
-    messages,
-    internetMode,
-    temperature,
-    top_p,
-    max_tokens
-}) {
-    const body = {
-        model: actualModel,
-        messages,
-        max_tokens: parseInt(max_tokens, 10) || 2000,
-        stream: true,
-        temperature: parseFloat(temperature) || 0.7,
-        top_p: parseFloat(top_p) || 0.9
-    };
 
-    if (internetMode) {
-        body.tools = TOOL_DEFINITIONS;
-        body.tool_choice = 'auto';
-    }
-
-    return body;
-}
 
 function normalizeAgentMode(value) {
     if (value === 'on' || value === true || value === 'true' || value === 1 || value === '1') {
@@ -3179,9 +3061,7 @@ function pickMemoryDeleteIdsFromAssistantText(text = '', userText = '') {
     return top.ids.length > 0 ? [top.ids[0]] : [];
 }
 
-function pickMemoryDeleteIdFromAssistantText(text = '') {
-    return pickMemoryDeleteIdsFromAssistantText(text)[0] || null;
-}
+
 
 function buildMemoryDeleteArgsFromIds(ids = [], reason = 'user_confirmed_recent_memory_delete') {
     const memoryIds = uniquePositiveMemoryIds(ids);
@@ -3531,11 +3411,7 @@ function runAgentOrchestrator({ res, userMessage, internetMode, agentMode, agent
  * @param {Array} conversationHistory - 对话历史（可选）
  * @returns {Promise<string>} 优化后的搜索查询
  */
-async function generateAISearchQuery(userMessage, conversationHistory = []) {
-    // 直接使用新的决策函数
-    const decision = await aiDecideWebSearch(userMessage, conversationHistory);
-    return decision.query;
-}
+
 
 
 /**
@@ -4372,173 +4248,7 @@ async function executeNormalizedToolCall({
     throw new Error(`不支持的工具: ${toolName}`);
 }
 
-async function callK2p5NonStream({
-    providerConfig,
-    actualModel,
-    messages,
-    thinkingMode,
-    thinkingBudget = 1024,
-    internetMode,
-    maxTokens,
-    maxToolRounds = 2,
-    searchBudget,
-    taskKey,
-    res,
-    requestTimeoutMs = 35000
-}) {
-    let conversationMessages = [...messages];
-    let aggregatedSources = [];
-    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    let searchCount = 0;
-    let responseContent = '';
-    let reasoningContent = '';
 
-    for (let round = 0; round <= maxToolRounds; round += 1) {
-        const requestBody = {
-            model: actualModel,
-            messages: conversationMessages,
-            max_tokens: Math.max(256, parseInt(maxTokens, 10) || 2000),
-            stream: false
-        };
-        if (isKimiK25ActualModel(actualModel)) {
-            requestBody.enable_thinking = !!thinkingMode;
-        } else {
-            const budget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
-            if (budget !== null) {
-                requestBody.thinking_budget = budget;
-            }
-        }
-
-        if (internetMode) {
-            requestBody.tools = TOOL_DEFINITIONS;
-            requestBody.tool_choice = 'auto';
-        }
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
-        let apiResponse;
-        try {
-            apiResponse = await fetch(providerConfig.baseURL, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${providerConfig.apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody),
-                signal: controller.signal
-            });
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error(`Kimi K2 非流式调用超时(${requestTimeoutMs}ms)`);
-            }
-            throw error;
-        } finally {
-            clearTimeout(timeoutId);
-        }
-
-        if (!apiResponse.ok) {
-            const errText = await apiResponse.text();
-            throw new Error(`Kimi K2 非流式调用失败 ${apiResponse.status}: ${errText.substring(0, 300)}`);
-        }
-
-        const result = await apiResponse.json();
-        const choice = result.choices?.[0] || {};
-        const message = choice.message || {};
-        const finishReason = choice.finish_reason || 'stop';
-        const roundReasoningContent = extractReasoningTextFromPayload(message, choice);
-
-        const currentUsage = normalizeUsage(result.usage);
-        totalUsage.prompt_tokens += currentUsage.prompt_tokens;
-        totalUsage.completion_tokens += currentUsage.completion_tokens;
-        totalUsage.total_tokens += currentUsage.total_tokens;
-
-        if (typeof message.content === 'string') {
-            responseContent = message.content;
-        }
-        if (roundReasoningContent) {
-            reasoningContent = roundReasoningContent;
-        }
-
-        if (!internetMode || finishReason !== 'tool_calls' || !Array.isArray(message.tool_calls) || round >= maxToolRounds) {
-            return {
-                content: responseContent,
-                reasoningContent,
-                sources: dedupeSources(aggregatedSources),
-                usage: totalUsage,
-                searchCount
-            };
-        }
-
-        const normalizedCalls = normalizeToolCalls(message.tool_calls);
-        if (normalizedCalls.length === 0) {
-            return {
-                content: responseContent,
-                reasoningContent,
-                sources: dedupeSources(aggregatedSources),
-                usage: totalUsage,
-                searchCount
-            };
-        }
-
-        const executedToolMessages = [];
-        for (const toolCall of normalizedCalls) {
-            const toolResult = await executeNormalizedToolCall({
-                toolCall,
-                taskKey,
-                searchBudget,
-                res,
-                actualModel,
-                thinkingMode
-            });
-
-            searchCount += Number(toolResult.searchCountInc || 0);
-            const sourceAppendResult = appendAnnotatedSources(aggregatedSources, toolResult.sources);
-            aggregatedSources = sourceAppendResult.merged;
-            emitSourcesEvent(res, sourceAppendResult.newlyAdded);
-
-            executedToolMessages.push({
-                role: 'tool',
-                tool_call_id: toolCall.id,
-                content: JSON.stringify(buildToolResultForLLM({
-                    toolName: toolCall.function.name,
-                    result: toolResult.result,
-                    sources: sourceAppendResult.newlyAdded,
-                    args: toolCall._args || {}
-                }))
-            });
-        }
-
-        const assistantToolCallMessage = {
-            role: 'assistant',
-            content: message.content || null,
-            tool_calls: normalizedCalls.map((call) => ({
-                id: call.id,
-                type: 'function',
-                function: {
-                    name: call.function.name,
-                    arguments: call.function.arguments
-                }
-            }))
-        };
-        if (thinkingMode) {
-            assistantToolCallMessage.reasoning_content = roundReasoningContent || 'Tool call continuation reasoning.';
-        }
-
-        conversationMessages = [
-            ...conversationMessages,
-            assistantToolCallMessage,
-            ...executedToolMessages
-        ];
-    }
-
-    return {
-        content: responseContent,
-        reasoningContent,
-        sources: dedupeSources(aggregatedSources),
-        usage: totalUsage,
-        searchCount
-    };
-}
 
 async function callK2p5Stream({
     providerConfig,
@@ -5338,12 +5048,7 @@ function extractResearchDebateStatus(content = '') {
     return { hasBlockingIssue: true, statusLine: statusLine || '未明确' };
 }
 
-function buildResearchDiscussionBrief(items = [], maxLengthPerItem = 3200) {
-    return items
-        .filter((item) => item && item.content)
-        .map((item) => `### ${item.label || item.role || '模型'}\n${truncateResearchText(item.content, maxLengthPerItem)}`)
-        .join('\n\n');
-}
+
 
 function compactResearchSpeech(content = '', maxChars = 220) {
     const rawText = String(content || '')
@@ -6488,28 +6193,7 @@ function detectMultimodalContent(message) {
  * @param {Array} messages - 消息数组
  * @returns {object} 多模态检测结果
  */
-function detectMultimodalInMessages(messages) {
-    const result = {
-        hasMultimodal: false,
-        types: [],
-        totalCount: 0
-    };
 
-    if (!messages || !Array.isArray(messages)) return result;
-
-    for (const msg of messages) {
-        const detection = detectMultimodalContent(msg);
-        if (detection.hasMultimodal) {
-            result.hasMultimodal = true;
-            result.types.push(...detection.types);
-            result.totalCount += detection.count;
-        }
-    }
-
-    // 去重
-    result.types = [...new Set(result.types)];
-    return result;
-}
 
 /**
  * 将带附件的消息转换为OpenAI兼容多模态格式
@@ -8604,17 +8288,7 @@ function cleanupSessionStreamState(sessionId, requestId) {
     }, 30000);
 }
 
-async function getActiveRequestCountForUser(userId) {
-    const row = await dbGetAsync(
-        `SELECT COUNT(*) AS count
-         FROM active_requests
-         WHERE user_id = ?
-           AND COALESCE(is_cancelled, 0) = 0
-           AND created_at > datetime('now', '-10 minutes')`,
-        [userId]
-    );
-    return Number(row?.count || 0);
-}
+
 
 async function registerActiveRequestForUser({ requestId, userId, sessionId, limit }) {
     const numericLimit = Math.max(1, Number(limit || MAX_CONCURRENT_REQUESTS_PER_USER));
@@ -11498,11 +11172,7 @@ async function generateFallbackConversationTitle({ userContent = '', assistantCo
     return null;
 }
 
-async function resolveAssistantTitle({ extractedTitle, userContent = '', assistantContent = '', uiLanguage = '' } = {}) {
-    const directTitle = sanitizeGeneratedConversationTitle(extractedTitle || '', uiLanguage);
-    if (directTitle) return directTitle;
-    return generateFallbackConversationTitle({ userContent, assistantContent, uiLanguage });
-}
+
 
 function buildPresetConversationTitle(userContent = '', uiLanguage = '') {
     const text = String(userContent || '').trim().toLowerCase();
