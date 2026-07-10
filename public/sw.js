@@ -1,10 +1,12 @@
 const RAI_SW_VERSION = '0.11.28-beta.1-20260710-code-cleanup-beta-v01128b1';
-const RAI_STATIC_CACHE_PREFIX = 'rai-static-';
-const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-';
-const RAI_FONT_CACHE_NAME = 'rai-fonts-v1';
-const RAI_CACHE_NAME = `rai-static-${RAI_SW_VERSION}`;
+const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+const RAI_CACHE_SCOPE = (RAI_SCOPE_PATH || 'root').replace(/^\/+/, '').replace(/[^a-z0-9_-]+/gi, '-');
+const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_CACHE_SCOPE}-`;
+const RAI_AVATAR_CACHE_PREFIX = `rai-avatar-${RAI_CACHE_SCOPE}-`;
+const RAI_FONT_CACHE_NAME = `rai-fonts-${RAI_CACHE_SCOPE}-v1`;
+const RAI_CACHE_NAME = `${RAI_STATIC_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
-const RAI_NAVIGATION_FALLBACK = '/index.html';
+const RAI_NAVIGATION_FALLBACK = scopedPath('/index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
@@ -24,14 +26,24 @@ const RAI_STATIC_ASSETS = [
   '/lib/mermaid/mermaid.min.js',
   '/lib/highlight/styles/github-dark.min.css',
   '/lib/highlight/highlight.min.js'
-];
+].map(scopedPath);
+const RAI_NON_CACHEABLE_PATHS = [
+  '/api/',
+  '/uploads/',
+  '/generated-images/',
+  '/downloads/'
+].map(scopedPath);
+
+function scopedPath(pathname) {
+  return `${RAI_SCOPE_PATH}${pathname}`;
+}
 
 function isAvatarRequest(url) {
-  return url.pathname.startsWith('/avatars/') && /\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
+  return url.pathname.startsWith(scopedPath('/avatars/')) && /\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
 }
 
 function isFontRequest(url) {
-  return url.pathname.startsWith('/fonts/') && /\.(?:ttf|otf|woff2?|eot)$/i.test(url.pathname);
+  return url.pathname.startsWith(scopedPath('/fonts/')) && /\.(?:ttf|otf|woff2?|eot)$/i.test(url.pathname);
 }
 
 async function trimCache(cacheName, maxEntries) {
@@ -110,7 +122,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/') || url.pathname.startsWith('/generated-images/') || url.pathname.startsWith('/downloads/')) {
+  if (RAI_NON_CACHEABLE_PATHS.some((pathPrefix) => url.pathname.startsWith(pathPrefix))) {
     return;
   }
 

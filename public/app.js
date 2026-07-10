@@ -2671,7 +2671,8 @@ function initPwaInstallSupport() {
 
   if ('serviceWorker' in navigator && window.isSecureContext) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      const serviceWorkerScope = `${APP_BASE_PATH || ''}/`;
+      navigator.serviceWorker.register(`${APP_BASE_PATH || ''}/sw.js`, { scope: serviceWorkerScope })
         .then((registration) => {
           if (typeof registration.update === 'function') {
             registration.update().catch(() => null);
