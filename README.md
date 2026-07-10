@@ -4,7 +4,7 @@
 
 ### <img src="https://api.iconify.design/solar/planet-saturn-bold.svg?color=%23F59E0B&width=32&height=32" valign="middle" alt="RAI Logo" /> 智能 AI 聊天助手 | Intelligent AI Chat Assistant
 
-[![Version](https://img.shields.io/badge/Version-0.11.26-F59E0B?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.11.27-F59E0B?style=flat-square)]()
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?style=flat-square&logo=express&logoColor=white)](https://expressjs.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
@@ -22,6 +22,15 @@
 ---
 
 # 最新更新内容
+
+## 2026年7月10日 RAI v0.11.27
+
+- **登录恢复**：修复密码重置后登录页继续保留并提交旧密码，导致新密码被误判为错误的问题。
+- **写入校验**：服务端回读新密码哈希并再次执行 bcrypt 校验，确认新密码确实可匹配后才返回重置成功。
+- **2FA 衔接**：开启 2FA 的账号在重置后直接进入 Authenticator 验证；未开启 2FA 的账号会直接恢复登录态。
+- **敏感信息清理**：重置完成后立即清空登录旧密码、旧 TOTP、邮箱验证码及两次新密码输入。
+
+[Changelog / Release notes](https://github.com/Rick-953/RAI/releases/tag/v0.11.27)
 
 ## 2026年7月10日 RAI v0.11.26
 

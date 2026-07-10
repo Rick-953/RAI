@@ -2164,8 +2164,8 @@ const APP_BASE_PATH = !RAI_IS_TAURI_DESKTOP && (window.location.pathname === '/b
   ? '/beta'
   : '';
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${APP_BASE_PATH}/api`;
-const RAI_APP_VERSION = '0.11.26';
-const RAI_BUILD_ID = '20260710-symmetric-chat-width-v01126';
+const RAI_APP_VERSION = '0.11.27';
+const RAI_BUILD_ID = '20260710-password-reset-login-recovery-v01127';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4901,6 +4901,26 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-10',
+    version: 'v0.11.27',
+    zh: {
+      summary: '修复正确密码仍无法登录及重置后的旧密码残留。',
+      details: [
+        '重置密码后不再继续提交登录页原先残留的旧密码；敏感输入会立即清空。',
+        '后端会回读并验证新密码哈希，确认可匹配后才返回重置成功。',
+        '开启 2FA 的账号在重置后直接进入 Authenticator 验证，未开启 2FA 的账号会安全地直接恢复登录态。'
+      ]
+    },
+    en: {
+      summary: 'Fixed correct-password login failures caused by stale credentials after password reset.',
+      details: [
+        'Password reset no longer leaves the old login-page password ready to be submitted, and sensitive reset inputs are cleared immediately.',
+        'The server reads the new hash back and verifies it before reporting a successful reset.',
+        'Accounts with 2FA continue directly to Authenticator verification, while accounts without 2FA safely regain their signed-in session.'
+      ]
+    }
+  },
   {
     date: '2026-07-10',
     version: 'v0.11.26',
@@ -17190,10 +17210,40 @@ async function confirmPasswordResetWithCode() {
     if (!response.ok || data.success === false) {
       throw new Error(data.error || (isZh ? '重置密码失败' : 'Failed to reset password'));
     }
+
+    const authEmailInput = document.getElementById('authEmail');
+    const authPasswordInput = document.getElementById('authPassword');
+    const authTwoFactorInput = document.getElementById('authTwoFactorCode');
+    if (authEmailInput) authEmailInput.value = email;
+    if (authPasswordInput) authPasswordInput.value = '';
+    if (authTwoFactorInput) authTwoFactorInput.value = '';
+    ['forgotPasswordCode', 'forgotPasswordNewPassword', 'forgotPasswordConfirmPassword'].forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) input.value = '';
+    });
+
     closeForgotPasswordHelp();
-    document.getElementById('authEmail').value = email;
-    document.getElementById('authPassword')?.focus();
-    showToast(isZh ? '密码已重置，请使用新密码登录' : 'Password reset. Log in with your new password.');
+    appState.authMode = 'login';
+    appState.authLoginMethod = 'password';
+    appState.authEmailValidated = true;
+    resetAuthTwoFactorPrecheck();
+    updateAuthMethodUI();
+    updateForgotPasswordVisibility();
+
+    if (await handleAuthServerResponse(data)) {
+      if (data.requiresTwoFactor) {
+        showAuthNotice(localizeServerError(
+          data.message,
+          isZh ? '密码已重置，请输入 Authenticator 验证码完成登录' : 'Password reset. Enter your Authenticator code to finish signing in.'
+        ));
+      }
+      return;
+    }
+
+    // 兼容尚未更新的后端响应：至少清空旧密码，强制用户重新输入刚设置的新密码。
+    showAuthStep('submitStep');
+    authPasswordInput?.focus();
+    showToast(isZh ? '密码已重置，请重新输入新密码登录' : 'Password reset. Re-enter the new password to log in.');
   } catch (error) {
     setForgotPasswordStatus(localizeServerError(error.message, isZh ? '重置密码失败' : 'Failed to reset password'), true);
   } finally {
@@ -17303,6 +17353,7 @@ function beginPendingEmailAuth({ purpose, email, message = '' }) {
 function beginPendingTwoFactor(twoFactorToken) {
   appState.pendingTwoFactorToken = twoFactorToken || '';
   clearPendingEmailAuth({ clearCode: false });
+  hideAuthStep('passwordStep');
   hideAuthStep('emailCodeStep');
   showAuthStep('twoFactorStep');
   showAuthStep('submitStep');

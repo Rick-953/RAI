@@ -10097,6 +10097,7 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
         const normalizedEmail = normalizeEmailForAuth(req.body?.email);
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
         const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
 
         if (!isValidEmailForAuth(normalizedEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
@@ -10107,7 +10108,7 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: newPasswordError });
         }
 
-        const user = await dbGetAsync('SELECT id, email, email_verified FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
+        const user = await dbGetAsync('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
         if (!user || Number(user.email_verified ?? 1) !== 1) {
             return res.status(400).json({ success: false, error: '验证码无效或已过期' });
         }
@@ -10123,9 +10124,40 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
         }
 
         const passwordHash = await bcrypt.hash(newPassword, 10);
-        await dbRunAsync('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, user.id]);
+        const updateResult = await dbRunAsync('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, user.id]);
+        if (Number(updateResult?.changes || 0) !== 1) {
+            throw new Error('password_reset_update_missing');
+        }
+
+        // 重置接口只有在数据库回读的新哈希确实能匹配新密码时才允许返回成功。
+        // 这样不会出现前端提示“已重置”，实际登录却仍命中旧哈希的假成功。
+        const updatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [user.id]);
+        const persistedPasswordMatches = !!updatedUser
+            && await bcrypt.compare(newPassword, updatedUser.password_hash).catch(() => false);
+        if (!persistedPasswordMatches) {
+            throw new Error('password_reset_post_write_verification_failed');
+        }
+
         console.log(` 邮箱验证码重置密码成功: userId=${user.id}`);
-        return res.json({ success: true });
+        const twoFactorEnabled = Number(updatedUser.two_factor_enabled || 0) === 1
+            && !!normalizeTotpSecret(updatedUser.two_factor_secret);
+        if (twoFactorEnabled) {
+            return res.json({
+                success: true,
+                passwordReset: true,
+                requiresTwoFactor: true,
+                twoFactorToken: buildUserLoginTwoFactorToken(updatedUser),
+                message: '密码已重置，请输入 Authenticator 验证码完成登录'
+            });
+        }
+
+        const payload = await buildAuthenticatedUserPayload(updatedUser, req, fingerprint);
+        console.log(' 重置密码后直接登录, 用户ID:', updatedUser.id);
+        return res.json({
+            ...payload,
+            passwordReset: true,
+            message: '密码已重置并已登录'
+        });
     } catch (error) {
         console.error(' 邮箱验证码重置密码失败:', error);
         return res.status(500).json({ success: false, error: '更新密码失败' });
