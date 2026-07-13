@@ -16943,8 +16943,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 .search-box:focus-within,
 .settings-search:focus-within,
 .ask-user-custom:focus-within,
-.chatflow-input-container:focus-within,
-.input-container:focus-within {
+.chatflow-input-container:focus-within {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 2px;
 }

@@ -2084,7 +2084,7 @@ const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
 const RAI_APP_VERSION = '0.11.33';
-const RAI_BUILD_ID = '20260714-model-menu-concentric-radius-v01133';
+const RAI_BUILD_ID = '20260714-composer-outline-reasoning-toggle-v01133';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4743,17 +4743,21 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-07-14',
     version: 'v0.11.33',
     zh: {
-      summary: '统一模型菜单三种模式项的同心圆角。',
+      summary: '完善输入区与模型菜单的视觉一致性。',
       details: [
         '移除快速、思考、研究三行的 8px 后置覆盖，统一为与 20px 外框和 8px 内边距相配的 12px 圆角。',
-        '专项回归现在会直接检查后置 model-mode-item 规则，防止基础规则正确但最终计算样式再次被覆盖。'
+        '主消息输入框聚焦后不再出现灰色外描边，保留原有中性磨砂表面和阴影反馈。',
+        '快速等不支持推理的模式仍显示关闭且禁用的推理开关，推理强度滑块继续保持收起。',
+        '专项回归会检查最终圆角、输入框无描边及推理开关可见性，防止计算样式和状态再次漂移。'
       ]
     },
     en: {
-      summary: 'Aligned the three model-mode rows with the menu concentric radius.',
+      summary: 'Polished visual consistency across the composer and model menu.',
       details: [
         'Removed the trailing 8px override from Fast, Think, and Research so their 12px radius matches the 20px shell with 8px padding.',
-        'The regression now checks the final model-mode-item override directly to prevent computed-style drift.'
+        'The main message composer no longer gains a gray outer outline on focus while retaining its neutral frosted surface and shadow feedback.',
+        'Modes without reasoning support still show the reasoning switch in its off and disabled state while keeping the strength slider collapsed.',
+        'Regression coverage now checks the final radius, outline-free composer, and visible reasoning switch to prevent style and state drift.'
       ]
     }
   },
@@ -10203,12 +10207,16 @@ function updateToolbarUI() {
   const supportsReasoningProfile = supportsThinking && currentModel?.supportsReasoningProfile !== false;
   appState.agentMode = false;
 
+  if (!supportsThinking) {
+    appState.thinkingMode = false;
+    appState.thinkingBudgetOpen = false;
+  }
+
   if (internetToggle) {
     internetToggle.classList.toggle('active', appState.internetMode);
   }
 
   if (thinkingToggle) {
-    thinkingToggle.style.display = supportsThinking ? 'inline-flex' : 'none';
     thinkingToggle.classList.toggle('active', appState.thinkingMode);
     thinkingToggle.classList.toggle('disabled', !supportsThinking);
   }
@@ -10240,7 +10248,7 @@ function updateToolbarUI() {
     }
   }
 
-  const showReasoningItem = supportsThinking;
+  const showReasoningItem = true;
   const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode;
   if (reasoningProfileItem) {
     setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningItem);

@@ -157,6 +157,23 @@ function testNeutralFocus() {
   for (const match of styles.matchAll(focusRule)) {
     assert.doesNotMatch(match[2], /color-saturn-yellow|#ffc107|#f59e0b/i, `orange/yellow focus style remains in: ${match[1].trim()}`);
   }
+
+  const composerFocusRules = Array.from(styles.matchAll(/([^{}]*\.input-container:focus-within[^{}]*)\{([^{}]*)\}/g));
+  assert.ok(composerFocusRules.length > 0, 'missing main composer focus styling');
+  for (const [, selector, declarations] of composerFocusRules) {
+    assert.doesNotMatch(declarations, /\boutline(?:-offset)?\s*:/, `main composer focus outline remains in: ${selector.trim()}`);
+  }
+}
+
+function testReasoningSwitchAvailability() {
+  assert.match(index, /id="thinkingToggle"/);
+  const updateToolbar = extractNamedFunction(app, 'updateToolbarUI');
+  assert.match(updateToolbar, /if \(!supportsThinking\)\s*\{[\s\S]*?appState\.thinkingMode\s*=\s*false;[\s\S]*?appState\.thinkingBudgetOpen\s*=\s*false;/);
+  assert.doesNotMatch(updateToolbar, /thinkingToggle\.style\.display\s*=/, 'reasoning switch must remain visible for unsupported models');
+  assert.match(updateToolbar, /thinkingToggle\.classList\.toggle\('disabled',\s*!supportsThinking\)/);
+  assert.match(updateToolbar, /const showReasoningItem\s*=\s*true;/, 'reasoning row must remain present');
+  assert.match(updateToolbar, /const showReasoningProfile\s*=\s*supportsReasoningProfile\s*&&\s*appState\.thinkingMode;/, 'only the reasoning slider may collapse');
+  assert.match(updateToolbar, /thinkingHeader\.setAttribute\('aria-disabled',\s*supportsThinking \? 'false' : 'true'\)/);
 }
 
 function testChatViewportScrollAndComposerClearance() {
@@ -234,9 +251,9 @@ function testDomainPreparation() {
 function testVersionContract() {
   assert.equal(packageJson.version, '0.11.33');
   assert.match(app, /const RAI_APP_VERSION = '0\.11\.33'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260714-model-menu-concentric-radius-v01133'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260714-composer-outline-reasoning-toggle-v01133'/);
   assert.match(index, /by Rick \u00b7 v0\.11\.33/);
-  assert.match(serviceWorker, /0\.11\.33-20260714-model-menu-concentric-radius-v01133/);
+  assert.match(serviceWorker, /0\.11\.33-20260714-composer-outline-reasoning-toggle-v01133/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
 
@@ -248,6 +265,7 @@ function main() {
     testInternetDefaults,
     testMenuHitAreasAndGeometry,
     testNeutralFocus,
+    testReasoningSwitchAvailability,
     testChatViewportScrollAndComposerClearance,
     testLocalNotificationAsset,
     testDomainPreparation,
@@ -271,6 +289,7 @@ module.exports = {
   testInternetDefaults,
   testMenuHitAreasAndGeometry,
   testNeutralFocus,
+  testReasoningSwitchAvailability,
   testChatViewportScrollAndComposerClearance,
   testLocalNotificationAsset,
   testDomainPreparation,
