@@ -70,6 +70,8 @@
   --border-dark: #44453c;
   --accent-color: #FFFFFF;
   --accent-hover: #E0E0E0;
+  --focus-ring-color: color-mix(in srgb, var(--text-primary) 42%, transparent);
+  --focus-border-color: color-mix(in srgb, var(--text-primary) 28%, var(--border-color));
   --input-bg: #22231f;
   --home-sidebar-bg: #171814;
   --notification-surface-bg: rgba(31, 32, 27, 0.8);
@@ -842,7 +844,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 }
 
 .flow-item-delete:hover {
-  color: var(--color-error);
+  color: var(--error-color);
 }
 
 /* ChatFlow 工作区布局 */
@@ -1155,7 +1157,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 }
 
 .chatflow-input-container:focus-within {
-  border-color: var(--color-saturn-yellow);
+  border-color: var(--focus-border-color);
 }
 
 .chatflow-input-row {
@@ -1299,7 +1301,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--color-error);
+  background: var(--error-color);
   border: none;
   cursor: pointer;
   align-items: center;
@@ -2320,11 +2322,12 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid var(--bg-tertiary);
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--bg-tertiary);
   border-radius: 999px;
-  background: var(--color-error);
+  background: var(--error-color, #ef4444);
+  z-index: 1;
   opacity: 0;
   transform: scale(0.7);
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -3684,7 +3687,7 @@ body.keyboard-open .chat-edge-blur-bottom {
 }
 
 .message-edit-textarea:focus {
-  border-color: var(--accent-color);
+  border-color: var(--focus-border-color);
 }
 
 .message-edit-actions {
@@ -6398,7 +6401,7 @@ body.keyboard-open .chat-edge-blur-bottom {
   background: var(--bg-secondary);
   border: none;
   max-width: min(252px, calc(100vw - 28px));
-  border-radius: 18px;
+  border-radius: 20px;
   box-shadow: var(--floating-menu-shadow);
   z-index: 4000;
   overflow: hidden;
@@ -6439,8 +6442,10 @@ body.keyboard-open .chat-edge-blur-bottom {
 }
 
 .model-menu-item {
+  width: 100%;
   min-height: 56px;
   padding: 10px 12px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
@@ -6450,11 +6455,28 @@ body.keyboard-open .chat-edge-blur-bottom {
   position: relative;
   /* 圆角矩形效果 */
   border-radius: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  appearance: none;
   margin: 0;
 }
 
-.model-menu-item:hover {
+.model-menu-item:hover,
+.model-menu-item:focus-visible {
   background: var(--bg-hover);
+}
+
+.model-menu-item:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.model-dropdown-menu > .model-menu-item ~ .model-menu-item,
+.all-models-section > .model-menu-item ~ .model-menu-item {
+  margin-top: 4px;
 }
 
 .model-menu-item.selected {
@@ -6657,6 +6679,7 @@ body.keyboard-open .chat-edge-blur-bottom {
   min-height: 54px;
   grid-template-columns: minmax(0, 1fr);
   column-gap: 0;
+  padding-left: 48px;
 }
 
 /* 全部模型箭头图标 */
@@ -6672,7 +6695,7 @@ body.keyboard-open .chat-edge-blur-bottom {
 }
 
 .model-menu-item[data-toggle="all-models"] {
-  padding-right: 12px;
+  padding-right: 40px;
 }
 
 .model-menu-item[data-toggle="all-models"].expanded .model-menu-arrow {
@@ -7070,7 +7093,7 @@ body.keyboard-open .chat-edge-blur-bottom {
 }
 
 .system-prompt-input:focus {
-  border-color: var(--accent-color);
+  border-color: var(--focus-border-color);
 }
 
 /* 高级选项样式 */
@@ -9093,12 +9116,12 @@ body {
   box-sizing: border-box;
   background: var(--bg-secondary);
   border: none;
-  border-radius: 18px;
+  border-radius: 20px;
   box-shadow: var(--floating-menu-shadow);
   z-index: 4000;
   overflow: hidden auto;
   display: block;
-  padding: 6px;
+  padding: 8px;
   max-height: min(76vh, 640px);
   pointer-events: none;
   visibility: hidden;
@@ -9132,24 +9155,49 @@ body {
 }
 
 .more-menu-item {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
   cursor: pointer;
   transition: background 0.15s;
   color: var(--text-primary);
+  font: inherit;
   font-size: 14px;
+  text-align: left;
+  appearance: none;
   touch-action: manipulation;
 }
 
-.more-menu-item:hover {
+.more-menu-item:hover,
+.more-menu-item:focus-visible {
   background: var(--bg-hover);
 }
 
 .more-menu-item-static {
+  padding: 0;
   cursor: default;
+}
+
+.more-menu-item-static:hover {
+  background: transparent;
+}
+
+.more-menu-item:focus-visible,
+.reasoning-profile-header:focus-visible,
+.research-mode-header:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.more-menu > .more-menu-item ~ .more-menu-item {
+  margin-top: 4px;
 }
 
 .more-menu-item-icon {
@@ -9204,6 +9252,19 @@ body {
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.reasoning-profile-header:hover,
+.reasoning-profile-header:focus-visible,
+.research-mode-header:hover,
+.research-mode-header:focus-visible {
+  background: var(--bg-hover);
 }
 
 .reasoning-profile-header .more-menu-item-text,
@@ -9216,7 +9277,8 @@ body {
   width: 100%;
   box-sizing: border-box;
   min-width: 0;
-  padding-left: 32px;
+  padding-left: 44px;
+  padding-right: 12px;
   max-height: 160px;
   opacity: 1;
   transform: translateY(0);
@@ -9269,7 +9331,9 @@ body {
   gap: 8px;
   margin-top: 12px;
   padding-top: 10px;
-  padding-left: 32px;
+  padding-left: 44px;
+  padding-right: 12px;
+  padding-bottom: 12px;
   border-top: 1px solid var(--border-color);
   box-sizing: border-box;
   min-width: 0;
@@ -9449,17 +9513,6 @@ body {
   height: 1px;
   background: var(--bg-hover);
   margin: 4px 0;
-}
-
-.more-menu-hint {
-  margin: 2px 6px 6px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(245, 213, 71, 0.1);
-  border: 1px solid rgba(245, 213, 71, 0.35);
-  color: #f5d547;
-  font-size: 12px;
-  line-height: 1.4;
 }
 
 /* ==================== 工具栏按钮悬浮提示 ==================== */
@@ -9868,7 +9921,7 @@ body > svg[id^="mermaid-"][aria-roledescription="error"] {
 }
 
 .admin-input-group input:focus {
-  border-color: var(--color-saturn-yellow);
+  border-color: var(--focus-border-color);
 }
 
 .admin-login-error {
@@ -10576,7 +10629,7 @@ body > svg[id^="mermaid-"][aria-roledescription="error"] {
 }
 
 .admin-search-bar input:focus {
-  border-color: var(--color-saturn-yellow);
+  border-color: var(--focus-border-color);
 }
 
 .admin-search-bar button {
@@ -15897,7 +15950,7 @@ body.chatflow-iframe-mode .message-content::selection {
 }
 
 .admin-broadcast-result.is-error {
-  color: var(--color-error);
+  color: var(--error-color);
 }
 
 .admin-empty {
@@ -16863,4 +16916,31 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   .settings-content.mobile-home .settings-mobile-info-btn {
     top: max(19px, calc(env(safe-area-inset-top) + 13px));
   }
+}
+
+/* Neutral, accessible focus treatment for form controls. Borderless composer
+   inputs expose the ring on their visual container instead of the text glyph box. */
+:where(
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not(#searchInput):not(#settingsSearchInput):not(.ask-user-input),
+  textarea:not(.message-input):not(.chatflow-message-input),
+  select,
+  [contenteditable="true"]
+):focus {
+  outline: 2px solid var(--focus-ring-color) !important;
+  outline-offset: 2px !important;
+  border-color: var(--focus-border-color) !important;
+  box-shadow: none !important;
+}
+
+.search-box:focus-within,
+.settings-search:focus-within,
+.ask-user-custom:focus-within,
+.chatflow-input-container:focus-within,
+.input-container:focus-within {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.chatflow-input-container:focus-within {
+  border-color: var(--focus-border-color);
 }

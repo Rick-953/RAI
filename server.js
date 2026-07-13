@@ -244,10 +244,10 @@ const BRAND_NAME = cleanEnvValue(process.env.RAI_BRAND_NAME) || 'RAI';
 const BRAND_SHORT_NAME = cleanEnvValue(process.env.RAI_BRAND_SHORT_NAME) || BRAND_NAME;
 const BRAND_BADGE = cleanEnvValue(process.env.RAI_BRAND_BADGE);
 const BRAND_TITLE = cleanEnvValue(process.env.RAI_BRAND_TITLE) || [BRAND_NAME, BRAND_BADGE].filter(Boolean).join(' ') || BRAND_NAME;
-const OPENROUTER_HTTP_REFERER = cleanEnvValue(process.env.OPENROUTER_HTTP_REFERER) || PUBLIC_BASE_URL || 'https://rai.000339.xyz';
+const OPENROUTER_HTTP_REFERER = cleanEnvValue(process.env.OPENROUTER_HTTP_REFERER) || PUBLIC_BASE_URL || 'https://rai.rick.sarl';
 const OPENROUTER_APP_TITLE = cleanEnvValue(process.env.OPENROUTER_APP_TITLE) || BRAND_TITLE || 'RAI';
 const DEFAULT_DOMAIN_NOTICE_ENABLED = parseBooleanEnv(process.env.RAI_DEFAULT_DOMAIN_NOTICE_ENABLED, true);
-const DEFAULT_DOMAIN_NOTICE_URL = cleanEnvValue(process.env.RAI_DEFAULT_DOMAIN_NOTICE_URL) || 'https://rai.000339.xyz/';
+const DEFAULT_DOMAIN_NOTICE_URL = cleanEnvValue(process.env.RAI_DEFAULT_DOMAIN_NOTICE_URL) || 'https://rai.rick.sarl/';
 const DEFAULT_DISABLED_MODEL_IDS_RAW = parseCsvEnv(process.env.RAI_DEFAULT_DISABLED_MODELS);
 const CSP_ALLOW_LOCAL_CONNECT = parseBooleanEnv(process.env.RAI_CSP_ALLOW_LOCAL_CONNECT, false);
 const CSP_STRICT_SCRIPT_SRC = parseBooleanEnv(process.env.RAI_CSP_STRICT_SCRIPT_SRC, false);
@@ -293,7 +293,6 @@ const ENV_API_KEYS = {
     DEEPSEEK_API_KEY: cleanEnvValue(process.env.DEEPSEEK_API_KEY),
     SILICONFLOW_API_KEY: cleanEnvValue(process.env.SILICONFLOW_API_KEY),
     GOOGLE_GEMINI_API_KEY: cleanEnvValue(process.env.GOOGLE_GEMINI_API_KEY),
-    POE_API_KEY: cleanEnvValue(process.env.POE_API_KEY),
     OPENROUTER_API_KEY: cleanEnvValue(process.env.OPENROUTER_API_KEY),
     NEWAPI_API_KEY: cleanEnvValue(process.env.NEWAPI_API_KEY)
 };
@@ -609,20 +608,6 @@ function buildUserLoginTwoFactorToken(user) {
     );
 }
 
-const POE_STATIC_MODEL_MAP = {
-    'poe-claude': 'claude-haiku-4.5',
-    'poe-gpt': 'gpt-5-nano',
-    'poe-gemini': 'gemini-3-flash'
-};
-
-const POE_ALIAS_HINTS = {
-    'poe-claude': ['claude', 'haiku'],
-    'poe-gpt': ['gpt', 'nano'],
-    'poe-gemini': ['gemini', 'flash']
-};
-
-const POE_MODEL_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const POE_DAILY_LIMIT_FREE = 3;
 const ADMIN_MODEL_CATALOG = [
     { id: 'deepseek-flash', name: 'DeepSeek Flash / 极速模型', group: '快捷与全部模型' },
     { id: 'deepseek-pro', name: 'DeepSeek Pro / 专家模型', group: '快捷与全部模型' },
@@ -643,19 +628,6 @@ const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['qwen3.6-35b-a3b', 'kimi-k2.6', 'gemin
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
-const poeModelRegistry = {
-    hasSuccessfulSync: false,
-    syncing: false,
-    lastSyncAt: null,
-    lastError: '',
-    modelIds: [],
-    aliasResolvedModels: { ...POE_STATIC_MODEL_MAP },
-    aliasAvailability: Object.keys(POE_STATIC_MODEL_MAP).reduce((acc, alias) => {
-        acc[alias] = true;
-        return acc;
-    }, {})
-};
-
 function getDefaultDomainNoticeSeed() {
     if (!DEFAULT_DOMAIN_NOTICE_ENABLED || !DEFAULT_DOMAIN_NOTICE_URL) return null;
     return {
@@ -664,6 +636,22 @@ function getDefaultDomainNoticeSeed() {
         titleEn: `${BRAND_NAME} domain is changing soon`,
         bodyEn: `${BRAND_NAME} is moving to ${DEFAULT_DOMAIN_NOTICE_URL}. The old domain will stay available during the transition, but please bookmark the new address first.`
     };
+}
+
+function isManagedDefaultDomainNotice(row = {}) {
+    const title = String(row.title || '').trim();
+    const body = String(row.body || '').trim();
+    const expectedTitle = `${BRAND_NAME} 域名即将更换`;
+    const prefix = `${BRAND_NAME} 即将迁移到新域名 `;
+    const suffix = '。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。';
+    if (title !== expectedTitle || !body.startsWith(prefix) || !body.endsWith(suffix)) return false;
+    const candidateUrl = body.slice(prefix.length, body.length - suffix.length).trim();
+    try {
+        const parsed = new URL(candidateUrl);
+        return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch (error) {
+        return false;
+    }
 }
 
 function buildRuntimeConfigPayload() {
@@ -2538,174 +2526,6 @@ function extractOutputTextFromResponseEvent(event = {}) {
         (typeof event.content === 'string' && event.content) ||
         ''
     );
-}
-
-function isPoeModelAlias(modelName = '') {
-    return Object.prototype.hasOwnProperty.call(POE_STATIC_MODEL_MAP, String(modelName || '').trim());
-}
-
-function pickPoeModelByHints(modelIds = [], hints = []) {
-    if (!Array.isArray(modelIds) || modelIds.length === 0) return '';
-    if (!Array.isArray(hints) || hints.length === 0) return '';
-
-    const loweredHints = hints.map((h) => String(h || '').toLowerCase()).filter(Boolean);
-    if (loweredHints.length === 0) return '';
-
-    const fullMatch = modelIds.find((id) => {
-        const text = String(id || '').toLowerCase();
-        return loweredHints.every((hint) => text.includes(hint));
-    });
-    if (fullMatch) return fullMatch;
-
-    return modelIds.find((id) => String(id || '').toLowerCase().includes(loweredHints[0])) || '';
-}
-
-function resolvePoeModelAlias(alias = '') {
-    const key = String(alias || '').trim();
-    const staticModel = POE_STATIC_MODEL_MAP[key];
-    if (!staticModel) {
-        return {
-            alias: key,
-            available: false,
-            model: '',
-            source: 'unknown'
-        };
-    }
-
-    if (!poeModelRegistry.hasSuccessfulSync) {
-        return {
-            alias: key,
-            available: true,
-            model: staticModel,
-            source: 'static'
-        };
-    }
-
-    const available = !!poeModelRegistry.aliasAvailability[key];
-    const resolvedModel = poeModelRegistry.aliasResolvedModels[key] || staticModel;
-    return {
-        alias: key,
-        available,
-        model: resolvedModel,
-        source: available ? 'dynamic' : 'dynamic_unavailable'
-    };
-}
-
-function buildPoeExtraBody(modelAlias, reasoningProfile = 'low', thinkingMode = false) {
-    const alias = String(modelAlias || '').trim();
-    const profile = normalizeReasoningProfile(reasoningProfile);
-
-    if (alias === 'poe-gpt') {
-        return {
-            reasoning_effort: resolveOpenAIChatReasoningEffort(
-                POE_STATIC_MODEL_MAP[alias] || 'gpt-5-nano',
-                !!thinkingMode,
-                profile
-            )
-        };
-    }
-
-    if (alias === 'poe-gemini') {
-        if (!thinkingMode) return null;
-        if (profile === 'mixed') return null;
-        const geminiThinkingMap = {
-            low: 'minimal',
-            medium: 'low',
-            high: 'high'
-        };
-        return {
-            thinking_level: geminiThinkingMap[profile] || 'minimal'
-        };
-    }
-
-    if (alias === 'poe-claude') {
-        if (!thinkingMode) return null;
-        const claudeBudgetMap = {
-            low: 1024,
-            medium: 4096,
-            high: 8192,
-            mixed: 4096
-        };
-        return {
-            thinking_budget: claudeBudgetMap[profile] || 1024
-        };
-    }
-
-    return null;
-}
-
-async function syncPoeModels() {
-    if (poeModelRegistry.syncing) return;
-    if (!ENV_API_KEYS.POE_API_KEY) return;
-
-    poeModelRegistry.syncing = true;
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    try {
-        const response = await fetch('https://api.poe.com/v1/models', {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${ENV_API_KEYS.POE_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`HTTP ${response.status}: ${errText.substring(0, 160)}`);
-        }
-
-        const payload = await response.json();
-        const data = Array.isArray(payload?.data) ? payload.data : [];
-        const modelIds = data
-            .map((item) => String(item?.id || item?.name || '').trim())
-            .filter(Boolean);
-
-        const nextResolvedModels = { ...POE_STATIC_MODEL_MAP };
-        const nextAvailability = {};
-
-        for (const alias of Object.keys(POE_STATIC_MODEL_MAP)) {
-            const staticModel = POE_STATIC_MODEL_MAP[alias];
-            const exactMatch = modelIds.find((id) => id.toLowerCase() === staticModel.toLowerCase());
-            const hintedMatch = pickPoeModelByHints(modelIds, POE_ALIAS_HINTS[alias] || []);
-            const resolvedModel = exactMatch || hintedMatch || staticModel;
-            const available = !!(exactMatch || hintedMatch);
-            nextResolvedModels[alias] = resolvedModel;
-            nextAvailability[alias] = available;
-        }
-
-        poeModelRegistry.modelIds = modelIds;
-        poeModelRegistry.aliasResolvedModels = nextResolvedModels;
-        poeModelRegistry.aliasAvailability = nextAvailability;
-        poeModelRegistry.lastSyncAt = new Date().toISOString();
-        poeModelRegistry.lastError = '';
-        poeModelRegistry.hasSuccessfulSync = true;
-
-        const availableCount = Object.values(nextAvailability).filter(Boolean).length;
-        console.log(` poe_model_sync success models=${modelIds.length} alias_available=${availableCount}/${Object.keys(POE_STATIC_MODEL_MAP).length} elapsed=${Date.now() - startedAt}ms`);
-    } catch (error) {
-        poeModelRegistry.lastSyncAt = new Date().toISOString();
-        poeModelRegistry.lastError = String(error?.message || error);
-        console.warn(` poe_model_sync failed: ${poeModelRegistry.lastError}`);
-    } finally {
-        clearTimeout(timeoutId);
-        poeModelRegistry.syncing = false;
-    }
-}
-
-function startPoeModelSyncJob() {
-    if (!ENV_API_KEYS.POE_API_KEY) return;
-    syncPoeModels().catch((err) => {
-        console.warn(` poe_model_sync startup failed: ${err?.message || err}`);
-    });
-    setInterval(() => {
-        syncPoeModels().catch((err) => {
-            console.warn(` poe_model_sync interval failed: ${err?.message || err}`);
-        });
-    }, POE_MODEL_SYNC_INTERVAL_MS);
 }
 
 const THINKING_BUDGET_MODELS = new Set([
@@ -4758,13 +4578,6 @@ function buildResearchRequest({ modelId, messages, stream = false, thinkingMode 
     if (routing.provider === 'openrouter') {
         applyOpenRouterReasoningParams(body, actualModel, !!thinkingMode, reasoningProfile);
     }
-    if (routing.provider === 'poe') {
-        const poeExtraBody = buildPoeExtraBody(modelId, reasoningProfile, !!thinkingMode);
-        if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
-            body.extra_body = poeExtraBody;
-        }
-    }
-
     return {
         routing,
         providerConfig,
@@ -6645,13 +6458,6 @@ const API_PROVIDERS = {
         isGemini: true,  // 标记这是Gemini API，需要特殊处理
         multimodal: true  // 支持图片/视频等多模态输入
     },
-    // Poe OpenAI-compatible API
-    poe: {
-        apiKey: ENV_API_KEYS.POE_API_KEY,
-        envKey: 'POE_API_KEY',
-        baseURL: 'https://api.poe.com/v1/chat/completions',
-        models: Object.values(POE_STATIC_MODEL_MAP)
-    },
     // OpenRouter OpenAI-compatible API
     openrouter: {
         apiKey: ENV_API_KEYS.OPENROUTER_API_KEY,
@@ -6694,7 +6500,6 @@ function logApiKeyReadiness() {
 }
 
 logApiKeyReadiness();
-startPoeModelSyncJob();
 
 const LEGACY_MODEL_ALIASES = {
     'qwen3-vl': 'qwen3.6-35b-a3b',
@@ -6707,7 +6512,6 @@ const LEGACY_MODEL_ALIASES = {
     'qwen-max': 'auto',
     'qwen2.5-7b': 'auto',
     'grok-4.2': 'auto',
-    'poe-grok': 'auto',
     'deepseek-chat': 'deepseek-pro',
     'deepseek-reasoner': 'deepseek-pro',
     'gpt-5.5': 'auto',
@@ -6726,11 +6530,20 @@ const LEGACY_MODEL_ALIASES = {
     'openrouter/free': 'openrouter-free'
 };
 
+const SUPPORTED_INCOMING_MODEL_IDS = new Set([
+    ...PUBLIC_MODEL_IDS,
+    'auto',
+    'kimi-k2',
+    'claude-haiku',
+    'gemini-3-flash',
+    'openrouter-free'
+]);
+
 function normalizeIncomingModelId(modelId = 'auto') {
     const normalized = String(modelId || 'auto').trim();
     const aliased = LEGACY_MODEL_ALIASES[normalized] || normalized;
     if (String(aliased).startsWith('x-ai/grok-4.20')) return 'auto';
-    return aliased || 'auto';
+    return SUPPORTED_INCOMING_MODEL_IDS.has(aliased) ? aliased : 'auto';
 }
 
 // 模型路由映射 (支持auto模式)
@@ -6845,25 +6658,6 @@ const MODEL_ROUTING = {
         isGemini: true,  // 标记需要特殊处理
         multimodal: true,  // 支持图片/视频等多模态输入
         supportsWebSearch: true  // 支持Tavily联网搜索
-    },
-    // Poe 模型族（静态默认 + 动态同步兜底）
-    'poe-claude': {
-        provider: 'poe',
-        model: POE_STATIC_MODEL_MAP['poe-claude'],
-        supportsThinking: true,
-        supportsWebSearch: true
-    },
-    'poe-gpt': {
-        provider: 'poe',
-        model: POE_STATIC_MODEL_MAP['poe-gpt'],
-        supportsThinking: true,
-        supportsWebSearch: true
-    },
-    'poe-gemini': {
-        provider: 'poe',
-        model: POE_STATIC_MODEL_MAP['poe-gemini'],
-        supportsThinking: true,
-        supportsWebSearch: true
     },
     // 关键修复：将 'auto' 标记为特殊的虚拟路由，表示需要动态选择
     'auto': {
@@ -7012,7 +6806,7 @@ db.serialize(() => {
     presence_penalty REAL DEFAULT 0,
     system_prompt TEXT,
     thinking_mode INTEGER DEFAULT 0,
-    internet_mode INTEGER DEFAULT 0,
+    internet_mode INTEGER DEFAULT 1,
     long_memory_enabled INTEGER DEFAULT 0,
     long_memory_opted_in_at DATETIME,
     short_memory_titles TEXT,
@@ -7254,13 +7048,20 @@ db.serialize(() => {
 
     const defaultNoticeSeed = getDefaultDomainNoticeSeed();
     if (defaultNoticeSeed) {
-        db.get(`SELECT id FROM announcements WHERE title = ? LIMIT 1`, [defaultNoticeSeed.titleZh], (seedErr, row) => {
-            if (seedErr) {
-                console.warn(' 公告种子检查失败:', seedErr.message);
-                return;
-            }
-            if (!row) {
-                db.run(
+        db.all(
+            `SELECT id, title, body
+             FROM announcements
+             WHERE title = ?
+             ORDER BY id ASC`,
+            [defaultNoticeSeed.titleZh],
+            (seedErr, rows = []) => {
+                if (seedErr) {
+                    console.warn(' 公告种子检查失败:', seedErr.message);
+                    return;
+                }
+                const row = rows.find((candidate) => isManagedDefaultDomainNotice(candidate));
+                if (!row) {
+                    db.run(
                     `INSERT INTO announcements (title, body, title_en, body_en, delivery_mode, start_at, end_at, enabled)
                      VALUES (?, ?, ?, ?, 'toast', NULL, NULL, 1)`,
                     [
@@ -7273,24 +7074,31 @@ db.serialize(() => {
                         if (insErr) console.warn(' 公告种子写入失败:', insErr.message);
                         else console.log(' 默认域名公告种子就绪');
                     }
-                );
-            } else {
-                db.run(
+                    );
+                } else {
+                    db.run(
                     `UPDATE announcements
-                     SET title_en = COALESCE(NULLIF(title_en, ''), ?),
-                         body_en = COALESCE(NULLIF(body_en, ''), ?)
+                     SET title = ?,
+                         body = ?,
+                         title_en = ?,
+                         body_en = ?,
+                         updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?`,
                     [
+                        defaultNoticeSeed.titleZh,
+                        defaultNoticeSeed.bodyZh,
                         defaultNoticeSeed.titleEn,
                         defaultNoticeSeed.bodyEn,
                         row.id
                     ],
                     (updErr) => {
-                        if (updErr) console.warn(' 公告英文种子更新失败:', updErr.message);
+                        if (updErr) console.warn(' 默认域名公告种子更新失败:', updErr.message);
+                        else console.log(' 默认域名公告种子已同步');
                     }
-                );
+                    );
+                }
             }
-        });
+        );
     }
 
     //  数据库迁移：添加缺失的列（如果表已存在且列不存在）
@@ -7305,7 +7113,7 @@ db.serialize(() => {
         });
 
         // 添加internet_mode列（如果不存在）
-        db.run(`ALTER TABLE user_configs ADD COLUMN internet_mode INTEGER DEFAULT 0`, (err) => {
+        db.run(`ALTER TABLE user_configs ADD COLUMN internet_mode INTEGER DEFAULT 1`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
                 console.warn(` 添加internet_mode列失败(可能已存在):`, err.message);
             } else if (!err) {
@@ -7761,20 +7569,6 @@ db.serialize(() => {
             }
         });
 
-        // Poe 使用日期（用于 free 每日3次限制）
-        db.run(`ALTER TABLE users ADD COLUMN poe_usage_date DATE`, (err) => {
-            if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加poe_usage_date列失败:`, err.message);
-            }
-        });
-
-        // Poe 使用次数（用于 free 每日3次限制）
-        db.run(`ALTER TABLE users ADD COLUMN poe_usage_count INTEGER DEFAULT 0`, (err) => {
-            if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加poe_usage_count列失败:`, err.message);
-            }
-        });
-
         // 旧限免模型使用日期（保留数据库列兼容历史账号）
         db.run(`ALTER TABLE users ADD COLUMN gpt55_usage_date DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
@@ -7867,7 +7661,7 @@ function setSecurityHeaders(req, res) {
         "default-src 'self'",
         "base-uri 'self'",
         "object-src 'none'",
-        "frame-ancestors 'self' https://rai.rick.quest https://rai.000339.xyz",
+        "frame-ancestors 'self' https://rai.rick.sarl https://rai.rick.quest https://rai.000339.xyz",
         buildScriptSrcPolicy(),
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
@@ -8777,7 +8571,7 @@ function getZtx6dConfigError() {
 function resolvePublicBaseUrl(req) {
     if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL.replace(/\/+$/, '');
     const protocol = req.protocol || 'https';
-    const host = req.get('host') || 'rai.000339.xyz';
+    const host = req.get('host') || 'rai.rick.sarl';
     return `${protocol}://${host}`;
 }
 
@@ -9907,7 +9701,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
       COALESCE(c.presence_penalty, 0) as presence_penalty,
       COALESCE(c.system_prompt, '') as system_prompt,
       COALESCE(c.thinking_mode, 0) as thinking_mode,
-	      COALESCE(c.internet_mode, 0) as internet_mode,
+	      1 as internet_mode,
  	      COALESCE(c.long_memory_enabled, ?) as long_memory_enabled,
           c.long_memory_opted_in_at as long_memory_opted_in_at,
           c.short_memory_titles as short_memory_titles,
@@ -9957,7 +9751,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 presence_penalty: parseFloat(user.presence_penalty) || 0,
                 system_prompt: user.system_prompt || '',  //  关键修复：确保始终返回字符串
                 thinking_mode: user.thinking_mode || 0,
-	                internet_mode: user.internet_mode || 0,
+	                internet_mode: 1,
 	                long_memory_enabled: isMemoryOptedInConfig(user) ? 1 : 0,
                     long_memory_opted_in_at: user.long_memory_opted_in_at || null,
                     short_memory_titles: parseShortMemoryTitles(user.short_memory_titles),
@@ -10439,7 +10233,8 @@ function sanitizeUserConfigPayload(payload = {}) {
         presence_penalty: clampNumber(payload.presence_penalty, -2, 2, 0),
         system_prompt: String(payload.system_prompt ?? '').slice(0, 12000),
         thinking_mode: payload.thinking_mode ? 1 : 0,
-        internet_mode: payload.internet_mode ? 1 : 0,
+        // Internet search is opt-out for the current chat only; it never persists as disabled.
+        internet_mode: 1,
         long_memory_enabled: payload.long_memory_enabled === undefined
             ? null
             : (isLongMemoryEnabledValue(payload.long_memory_enabled) ? 1 : 0),
@@ -12059,7 +11854,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             model: requestedModel = 'auto',  // 默认为auto模式
             thinkingMode: thinkingModeInput = false,
             thinkingBudget = 1024,
-            internetMode = false,
+            internetMode = true,
             agentMode = 'off',
             agentPolicy = AGENT_DEFAULT_POLICY,
             qualityProfile = AGENT_DEFAULT_QUALITY,
@@ -13045,10 +12840,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             'anthropic/claude-sonnet-4.6',
             'anthropic/claude-3-haiku',
             'gemma',
-            'gemini-3-flash',
-            'poe-claude',
-            'poe-gpt',
-            'poe-gemini'
+            'gemini-3-flash'
         ];
 
         // 注意：多模态检测已在上面执行，这里不再重复
@@ -13061,50 +12853,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.warn(` 无效或已关闭模型 ${finalModel},回退到 ${visibleFallbackModel}`);
             finalModel = visibleFallbackModel;
             autoRoutingReason = `无效或已关闭模型,按备用链自动回退到 ${visibleFallbackModel}`;
-        }
-
-        // Poe 路由策略：先做 free 配额与 thinking 强制，再做模型可用性校验
-        if (isPoeModelAlias(finalModel)) {
-            if (normalizedMembershipTier === 'free') {
-                try {
-                    const poeQuotaResult = await checkAndConsumePoeQuota(req.user.userId, 'free');
-                    res.write(`data: ${JSON.stringify({
-                        type: 'quota_info',
-                        provider: 'poe',
-                        poeRemaining: poeQuotaResult.remaining,
-                        poeUsed: poeQuotaResult.used,
-                        poeLimit: poeQuotaResult.limit,
-                        resetAt: poeQuotaResult.resetAt
-                    })}\n\n`);
-
-                    if (!poeQuotaResult.allowed) {
-                        const fallbackModel = resolveFreeFallbackModelId(finalModel);
-                        finalModel = fallbackModel;
-                        autoRoutingReason = `Poe free 配额已用尽，按备用链自动切换到 ${fallbackModel}`;
-                        console.warn(` poe_fallback quota_exceeded -> ${finalModel}`);
-                    } else if (thinkingMode) {
-                        thinkingMode = false;
-                        console.log(' free + Poe 已强制关闭 thinkingMode');
-                    }
-                } catch (poeQuotaError) {
-                    console.warn(` Poe配额检查失败，回退免费模型: ${poeQuotaError.message}`);
-                    const fallbackModel = resolveFreeFallbackModelId(finalModel);
-                    finalModel = fallbackModel;
-                    autoRoutingReason = `Poe配额检查失败，按备用链自动回退到 ${fallbackModel}`;
-                }
-            }
-
-            if (isPoeModelAlias(finalModel)) {
-                const poeResolution = resolvePoeModelAlias(finalModel);
-                if (!poeResolution.available) {
-                    const fallbackModel = resolveFreeFallbackModelId(finalModel);
-                    console.warn(` poe_fallback unavailable alias=${finalModel} -> ${fallbackModel}`);
-                    finalModel = fallbackModel;
-                    autoRoutingReason = `Poe模型暂不可用，按备用链回退到 ${fallbackModel} (${poeResolution.alias})`;
-                } else {
-                    console.log(` poe_model_sync route alias=${finalModel} model=${poeResolution.model} source=${poeResolution.source}`);
-                }
-            }
         }
 
         if (forceFreeModelByQuota && !isFreeModelIdentifier(finalModel)) {
@@ -13156,18 +12904,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`\n 路由配置: provider=${routing.provider}, model=${routing.model}`);
 
         let actualModel = routing.model;
-        if (routing.provider === 'poe') {
-            const poeResolution = resolvePoeModelAlias(finalModel);
-            if (poeResolution.available && poeResolution.model) {
-                actualModel = poeResolution.model;
-            } else {
-                console.warn(` poe_fallback runtime_unavailable alias=${finalModel} -> kimi-k2.6`);
-                finalModel = 'kimi-k2.6';
-                routing = MODEL_ROUTING[finalModel];
-                actualModel = routing.model;
-                autoRoutingReason = 'Poe模型运行期不可用，自动回退到 Kimi K2.6';
-            }
-        }
 
         // DeepSeek Pro 使用 thinking 参数控制深度推理；Flash 保持快速路径。
         if (routing.provider === 'deepseek' && thinkingMode && routing.thinkingModel) {
@@ -13504,14 +13240,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (modelThinkingBudget !== null) {
                 requestBody.thinking_budget = modelThinkingBudget;
                 console.log(` ${actualModel} thinking_budget=${modelThinkingBudget} (${thinkingMode ? '思考模式' : '快速模式'})`);
-            }
-        }
-
-        if (routing.provider === 'poe') {
-            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile, !!thinkingMode);
-            if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
-                requestBody.extra_body = poeExtraBody;
-                console.log(` Poe extra_body 已注入: ${JSON.stringify(poeExtraBody)}`);
             }
         }
 
@@ -14462,41 +14190,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 console.error(`   状态码: ${apiResponse.status}`);
                 console.error(`   响应体: ${errorText.substring(0, 500)}`);
 
-                // Poe 4xx 参数错误：去掉 extra_body 重试一次
-                if (
-                    routing.provider === 'poe' &&
-                    fetchBody?.extra_body &&
-                    apiResponse.status >= 400 &&
-                    apiResponse.status < 500
-                ) {
-                    console.warn(` poe_fallback retry_without_extra_body model=${finalModel} status=${apiResponse.status}`);
-                    const retryBody = { ...requestBody };
-                    delete retryBody.extra_body;
-
-                    try {
-                        apiResponse = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: fetchHeaders,
-                            body: JSON.stringify(retryBody)
-                        });
-                        requestBody = retryBody;
-                        fetchBody = retryBody;
-                    } catch (retryErr) {
-                        sendFinalApiFailure('poe_retry_without_extra_body_failed', retryErr.message, {
-                            status: apiResponse.status,
-                            body: errorText
-                        });
-                        return;
-                    }
-
-                    if (!apiResponse.ok) {
-                        errorText = await apiResponse.text();
-                        console.warn(` poe_fallback retry_failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
-                    } else {
-                        console.log(' Poe 参数回退重试成功（已移除 extra_body）');
-                    }
-                }
-
                 if (!apiResponse.ok) {
                     const fallbackResult = await tryUniversalRuntimeFallback({
                         failedStatus: apiResponse.status,
@@ -14506,68 +14199,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     if (fallbackResult?.response) {
                         apiResponse = fallbackResult.response;
                         errorText = fallbackResult.errorText || '';
-                    }
-                }
-
-                // Poe 模型调用失败：回退到 Kimi K2.6（再由通用余额逻辑兜底）
-                if (
-                    !apiResponse.ok &&
-                    routing.provider === 'poe' &&
-                    apiResponse.status >= 400 &&
-                    apiResponse.status < 500
-                ) {
-                    const fallbackModel = 'kimi-k2.6';
-                    const fallbackRouting = MODEL_ROUTING[fallbackModel];
-                    const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
-
-                    if (fallbackRouting && fallbackProviderConfig?.apiKey) {
-                        console.warn(` poe_fallback to=${fallbackModel} status=${apiResponse.status}`);
-                        routing = fallbackRouting;
-                        providerConfig = fallbackProviderConfig;
-                        finalModel = fallbackModel;
-                        actualModel = fallbackRouting.model;
-                        useStreamingTools = shouldEnableToolsForRoute(fallbackRouting);
-
-                        requestBody = {
-                            model: actualModel,
-                            messages: finalMessages,
-                            max_tokens: parseInt(max_tokens, 10) || 2000,
-                            stream: true,
-                            enable_thinking: !!thinkingMode
-                        };
-                        if (useStreamingTools) {
-                            requestBody.tools = runtimeToolDefinitions;
-                            requestBody.tool_choice = 'auto';
-                        }
-
-                        res.write(`data: ${JSON.stringify({
-                            type: 'model_info',
-                            model: finalModel,
-                            actualModel,
-                            reason: 'poe_fallback_to_kimi',
-                            provider: routing.provider
-                        })}\n\n`);
-
-                        try {
-                            apiResponse = await fetch(providerConfig.baseURL, {
-                                method: 'POST',
-                                headers: buildProviderFetchHeaders(providerConfig, routing.provider),
-                                body: JSON.stringify(requestBody)
-                            });
-                        } catch (fallbackErr) {
-                            sendFinalApiFailure('poe_fallback_to_kimi_network_failed', fallbackErr.message, {
-                                previousStatus: apiResponse.status,
-                                previousBody: errorText
-                            });
-                            return;
-                        }
-
-                        if (!apiResponse.ok) {
-                            errorText = await apiResponse.text();
-                            console.warn(` poe_fallback_to_kimi failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
-                        } else {
-                            console.log(` poe_fallback_to_kimi 成功: ${actualModel}`);
-                        }
                     }
                 }
 
@@ -14722,7 +14353,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             let accumulatedToolCalls = [];  // 累积的工具调用
             let pendingToolCall = null;     // 当前正在累积的工具调用
             let streamFinishReason = null;  // 流结束原因
-            let streamProviderError = null; // 流式事件级错误（HTTP仍可能是200）
             let toolMarkerCarry = '';
             let inToolCallSection = false;
             const TOOL_CALL_SECTION_START = '<|tool_calls_section_begin|>';
@@ -14890,7 +14520,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 const errMessage = typeof errPayload === 'string'
                                     ? errPayload
                                     : (errPayload?.message || JSON.stringify(errPayload));
-                                streamProviderError = errMessage;
                                 console.error(` 流式事件错误(${routing.provider}): ${errMessage}`);
                                 continue;
                             }
@@ -15060,101 +14689,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     console.log(' 流式响应结束');
                     break;
                 }
-            }
-
-            // Poe 在部分错误场景会返回 HTTP 200 + SSE error 事件，导致无正文但不触发HTTP错误分支
-            // 这里做兜底回退，避免前端只看到“生成中断”
-            if (routing.provider === 'poe' && !String(fullContent || '').trim()) {
-                console.warn(` poe_fallback empty_stream -> kimi-k2.6 reason=${streamProviderError || 'empty_stream'}`);
-                const fallbackModel = 'kimi-k2.6';
-                const fallbackRouting = MODEL_ROUTING[fallbackModel];
-                const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
-
-                if (!fallbackRouting || !fallbackProviderConfig?.apiKey) {
-                    sendFinalApiFailure('poe_empty_stream_no_fallback_available', streamProviderError || 'empty_stream', {
-                        fallbackModel
-                    });
-                    return;
-                }
-
-                routing = fallbackRouting;
-                providerConfig = fallbackProviderConfig;
-                finalModel = fallbackModel;
-                actualModel = fallbackRouting.model;
-                useStreamingTools = false;
-
-                res.write(`data: ${JSON.stringify({
-                    type: 'model_info',
-                    model: finalModel,
-                    actualModel,
-                    reason: 'poe_stream_error_fallback_to_kimi',
-                    provider: routing.provider
-                })}\n\n`);
-
-                const fallbackBody = {
-                    model: actualModel,
-                    messages: finalMessages,
-                    max_tokens: parseInt(max_tokens, 10) || 2000,
-                    stream: false,
-                    enable_thinking: !!thinkingMode
-                };
-
-                let fallbackResponse;
-                try {
-                    fallbackResponse = await fetch(providerConfig.baseURL, {
-                        method: 'POST',
-                        headers: buildProviderFetchHeaders(providerConfig, routing.provider),
-                        body: JSON.stringify(fallbackBody)
-                    });
-                } catch (fallbackErr) {
-                    sendFinalApiFailure('poe_empty_stream_fallback_network_failed', fallbackErr.message, {
-                        fallbackModel
-                    });
-                    return;
-                }
-
-                if (!fallbackResponse.ok) {
-                    const fallbackErrorText = await fallbackResponse.text();
-                    sendFinalApiFailure('poe_empty_stream_fallback_http_failed', `HTTP ${fallbackResponse.status}`, {
-                        fallbackModel,
-                        status: fallbackResponse.status,
-                        body: fallbackErrorText
-                    });
-                    return;
-                }
-
-                const fallbackJson = await fallbackResponse.json();
-                let fallbackContent = fallbackJson?.choices?.[0]?.message?.content || '';
-                if (Array.isArray(fallbackContent)) {
-                    fallbackContent = fallbackContent
-                        .map((part) => {
-                            if (typeof part === 'string') return part;
-                            if (part?.text) return part.text;
-                            if (typeof part?.content === 'string') return part.content;
-                            return '';
-                        })
-                        .join('');
-                } else if (typeof fallbackContent !== 'string') {
-                    fallbackContent = String(fallbackContent || '');
-                }
-                const cleanedFallbackContent = sanitizeStreamingContent(fallbackContent);
-                const splitFallbackContent = splitEmbeddedThinkContent(cleanedFallbackContent, !!thinkingMode);
-                if (splitFallbackContent.visible) {
-                    emitStructuredAssistantChunk(splitFallbackContent.visible);
-                }
-
-                const fallbackChoice = fallbackJson?.choices?.[0] || {};
-                const fallbackReasoning = extractReasoningTextFromPayload(fallbackChoice.message || {}, fallbackChoice, fallbackJson);
-                if (splitFallbackContent.reasoning && thinkingMode) {
-                    reasoningContent += String(splitFallbackContent.reasoning);
-                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: String(splitFallbackContent.reasoning) })}\n\n`);
-                }
-                if (fallbackReasoning && thinkingMode) {
-                    reasoningContent += String(fallbackReasoning);
-                    res.write(`data: ${JSON.stringify({ type: 'reasoning', content: String(fallbackReasoning) })}\n\n`);
-                }
-
-                streamFinishReason = 'stop';
             }
 
             const extractFallbackToolCalls = (rawText = '') => {
@@ -15717,13 +15251,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         if (routing.provider === 'openrouter') {
                             applyOpenRouterReasoningParams(continueRequestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
                         }
-                        if (routing.provider === 'poe') {
-                            const poeExtraBody = buildPoeExtraBody(finalModel, normalizedReasoningProfile, !!thinkingMode);
-                            if (poeExtraBody && Object.keys(poeExtraBody).length > 0) {
-                                continueRequestBody.extra_body = poeExtraBody;
-                            }
-                        }
-
                         console.log(` 发起续传流式调用 (round=${toolRound})...`);
                         // 重置工具标记清洗器状态，避免跨轮污染
                         toolMarkerCarry = '';
@@ -18234,7 +17761,6 @@ async function getUserMembershipSnapshot(userId) {
                COALESCE(purchased_points, 0) AS purchased_points,
                purchased_points_expire,
                last_checkin, last_daily_grant,
-               poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count,
                gpt55_usage_date, COALESCE(gpt55_usage_count, 0) AS gpt55_usage_count
         FROM users WHERE id = ?
     `, [userId]);
@@ -18278,8 +17804,6 @@ async function getUserMembershipSnapshot(userId) {
 
     const totalPoints = points + purchasedPoints;
     const canCheckin = user.last_checkin !== today;
-    const poeUsedToday = user.poe_usage_date === today ? Number(user.poe_usage_count || 0) : 0;
-    const poeRemaining = Math.max(0, POE_DAILY_LIMIT_FREE - poeUsedToday);
     const tasks = await getUserTaskSnapshot(user.id);
 
     return {
@@ -18293,10 +17817,6 @@ async function getUserMembershipSnapshot(userId) {
         canCheckin,
         lastCheckin: user.last_checkin,
         createdAt: user.created_at,
-        poeDailyLimit: POE_DAILY_LIMIT_FREE,
-        poeUsedToday,
-        poeRemaining,
-        poeResetAt: buildPoeResetAtISO(),
         tasks
     };
 }
@@ -18594,78 +18114,6 @@ function isFreeModelIdentifier(modelUsed = '') {
     if (!modelText) return false;
 
     return FREE_MODEL_IDENTIFIERS.has(modelText);
-}
-
-function buildPoeResetAtISO() {
-    const now = new Date();
-    const next = new Date(now);
-    next.setHours(24, 0, 0, 0);
-    return next.toISOString();
-}
-
-// free 用户 Poe 每24小时最多3次
-async function checkAndConsumePoeQuota(userId, membership) {
-    const tier = String(membership || 'free').toLowerCase();
-    const limit = POE_DAILY_LIMIT_FREE;
-    const resetAt = buildPoeResetAtISO();
-
-    if (tier !== 'free') {
-        return {
-            allowed: true,
-            limit: null,
-            used: 0,
-            remaining: null,
-            resetAt
-        };
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const row = await dbGetAsync(
-            'SELECT poe_usage_date, COALESCE(poe_usage_count, 0) AS poe_usage_count FROM users WHERE id = ?',
-            [userId]
-        );
-        if (!row) throw new Error('用户不存在');
-
-        const sameDay = row.poe_usage_date === today;
-        const currentUsed = sameDay ? Number(row.poe_usage_count || 0) : 0;
-
-        if (currentUsed >= limit) {
-            await dbRunAsync('COMMIT');
-            console.warn(` poe_quota_consume blocked user=${userId} used=${currentUsed}/${limit}`);
-            return {
-                allowed: false,
-                limit,
-                used: currentUsed,
-                remaining: 0,
-                resetAt
-            };
-        }
-
-        const nextUsed = currentUsed + 1;
-        const result = await dbRunAsync(
-            'UPDATE users SET poe_usage_date = ?, poe_usage_count = ? WHERE id = ?',
-            [today, nextUsed, userId]
-        );
-        if (Number(result?.changes || 0) !== 1) {
-            throw new Error('poe_quota_update_failed');
-        }
-
-        await dbRunAsync('COMMIT');
-        const remaining = Math.max(0, limit - nextUsed);
-        console.log(` poe_quota_consume user=${userId} used=${nextUsed}/${limit} remaining=${remaining}`);
-        return {
-            allowed: true,
-            limit,
-            used: nextUsed,
-            remaining,
-            resetAt
-        };
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
 }
 
 // 辅助函数：检查并扣减点数

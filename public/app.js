@@ -8,7 +8,7 @@ const BRAND_BADGE = String(RAI_RUNTIME_CONFIG.brandBadge || '').trim();
 const BRAND_TITLE = String(RAI_RUNTIME_CONFIG.brandTitle || '').trim() || [BRAND_NAME, BRAND_BADGE].filter(Boolean).join(' ') || BRAND_NAME;
 const RUNTIME_PUBLIC_BASE_URL = String(RAI_RUNTIME_CONFIG.publicBaseUrl || '').trim();
 const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnabled !== false;
-const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.000339.xyz/').trim() || 'https://rai.000339.xyz/';
+const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.rick.sarl/').trim() || 'https://rai.rick.sarl/';
 
 // 存储从父窗口接收的画布上下文
 let chatFlowCanvasContext = '';
@@ -30,8 +30,8 @@ function formatRuntimeText(value) {
   text = text.replaceAll('{{brandTitle}}', BRAND_TITLE);
   text = text.replaceAll('{{brandBadge}}', BRAND_BADGE);
   text = text.replaceAll('{{defaultDomainNoticeUrl}}', DEFAULT_DOMAIN_NOTICE_URL);
-  if (DEFAULT_DOMAIN_NOTICE_URL !== 'https://rai.000339.xyz/') {
-    text = text.replaceAll('https://rai.000339.xyz/', DEFAULT_DOMAIN_NOTICE_URL);
+  if (DEFAULT_DOMAIN_NOTICE_URL !== 'https://rai.rick.sarl/') {
+    text = text.replaceAll('https://rai.rick.sarl/', DEFAULT_DOMAIN_NOTICE_URL);
   }
   return text;
 }
@@ -52,6 +52,7 @@ function applyBrandLabelWithBadge(element, label = BRAND_SHORT_NAME) {
 function getTrustedChatFlowParentOrigins() {
   const origins = new Set([
     window.location.origin,
+    'https://rai.rick.sarl',
     'https://rai.rick.quest',
     'https://rai.000339.xyz'
   ]);
@@ -2066,6 +2067,8 @@ function getSvgIcon(name, className = '', size = 24) {
   return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${size}" height="${size}" fill="${fill}">${content}</svg>`;
 }
 
+// Keep existing desktop clients on the proven API origin until the DNS cutover.
+// RAI_NEW_PUBLIC_ORIGIN is the preconfigured replacement used by web-facing links.
 const RAI_PRODUCTION_ORIGIN = 'https://rai.000339.xyz';
 
 function isTauriDesktopRuntime() {
@@ -2080,12 +2083,11 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.29';
-const RAI_BUILD_ID = '20260713-2fa-token-purpose-hotfix-v01129';
-const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
+const RAI_APP_VERSION = '0.11.30';
+const RAI_BUILD_ID = '20260713-user-ui-domain-r2-v01130';
+const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
-const RAI_DOMAIN_MIGRATION_NOTICE_ID = 'domain-migration-20260609';
 
 function resolveRaiRemoteUrl(value) {
   const raw = String(value || '').trim();
@@ -2783,21 +2785,6 @@ const MODELS = {
     supportsReasoningProfile: true,
     isFree: true
   },
-  'poe-claude': {
-    name: 'Claude (Poe)',
-    provider: 'poe',
-    supportsThinking: true
-  },
-  'poe-gpt': {
-    name: 'ChatGPT (Poe)',
-    provider: 'poe',
-    supportsThinking: true
-  },
-  'poe-gemini': {
-    name: 'Gemini (Poe)',
-    provider: 'poe',
-    supportsThinking: true
-  },
   // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
   'gemini-3-flash': {
     name: 'Gemini 3 Flash',
@@ -2823,7 +2810,6 @@ const LEGACY_MODEL_ALIASES = {
   'qwen-max': 'auto',
   'qwen2.5-7b': 'auto',
   'grok-4.2': 'auto',
-  'poe-grok': 'auto',
   'gpt-5.5': 'auto',
   'deepseek-chat': 'deepseek-pro',
   'deepseek-reasoner': 'deepseek-pro',
@@ -2844,25 +2830,25 @@ const LEGACY_MODEL_ALIASES = {
   'openrouter/free': 'openrouter-free'
 };
 
-const HIDDEN_MODEL_PREFIXES = ['poe-'];
 const ALWAYS_VISIBLE_MODEL_IDS = ['auto'];
 const modelVisibilityState = {
   loaded: false,
   disabled: new Set()
 };
 
-function isHiddenModelId(modelId) {
-  const normalized = String(modelId || '').trim().toLowerCase();
-  if (!normalized) return false;
-  return HIDDEN_MODEL_PREFIXES.some(prefix => normalized.startsWith(prefix));
-}
-
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
   const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
   if (String(normalized).startsWith('x-ai/grok-4.20')) return 'auto';
-  if (!normalized) return normalized;
-  return isHiddenModelId(normalized) ? 'auto' : normalized;
+  if (!normalized || normalized === 'research-mode') return normalized;
+  return MODELS[normalized] ? normalized : 'auto';
+}
+
+function getHistoricalModelDisplayName(modelId) {
+  const raw = String(modelId || '').trim();
+  const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
+  return MODELS[normalized]?.name
+    || (isChineseLanguage(appState.language) ? '历史模型' : 'Legacy model');
 }
 
 function isModelDisabledByAdmin(modelId) {
@@ -2914,11 +2900,6 @@ async function fetchModelAvailability() {
   } catch (error) {
     console.warn(' 获取模型开关失败:', error.message || error);
   }
-}
-
-function isPoeModelSelected(modelId = appState.selectedModel) {
-  const normalized = normalizeSelectedModelId(modelId);
-  return normalized.startsWith('poe-');
 }
 
 function isFreeMembershipUser() {
@@ -2977,10 +2958,6 @@ function getSessionDisplayTitle(session = {}) {
   const markerSource = session?.last_assistant_message || session?.last_message || '';
   const markerTitle = extractTrailingTitleMarker(markerSource).title;
   return markerTitle || rawTitle || (isChineseLanguage(appState.language) ? '新对话' : 'New Chat');
-}
-
-function isFreePoeMode(modelId = appState.selectedModel) {
-  return isPoeModelSelected(modelId) && isFreeMembershipUser();
 }
 
 function isMembershipLockedModel(modelId) {
@@ -3047,61 +3024,6 @@ function updateReasoningProfileControl() {
     }
     updateReasoningProfileSliderVisual(slider);
   }
-}
-
-function updatePoeQuotaHint() {
-  const hintEl = document.getElementById('poeQuotaHint');
-  if (!hintEl) return;
-
-  const isPoe = isPoeModelSelected();
-  if (!isPoe) {
-    hintEl.style.display = 'none';
-    hintEl.textContent = '';
-    return;
-  }
-
-  const isFree = isFreeMembershipUser();
-  const lang = appState.language;
-
-  if (isFree) {
-    const remaining = Number.isFinite(Number(userMembershipState.poeRemaining))
-      ? Number(userMembershipState.poeRemaining)
-      : 0;
-    const limit = Number.isFinite(Number(userMembershipState.poeDailyLimit))
-      ? Number(userMembershipState.poeDailyLimit)
-      : 3;
-    hintEl.textContent = isChineseLanguage(lang)
-      ? `Poe 今日剩余 ${remaining}/${limit} 次（free 强制关闭推理）`
-      : `Poe remaining today: ${remaining}/${limit} (thinking is disabled for free)`;
-    hintEl.style.display = 'block';
-    return;
-  }
-
-  hintEl.textContent = isChineseLanguage(lang)
-    ? 'Poe 模型已启用，可调推理强度'
-    : 'Poe enabled, reasoning profile is available';
-  hintEl.style.display = 'block';
-}
-
-function applyFreePoeThinkingPolicy() {
-  if (isFreePoeMode()) {
-    appState.thinkingMode = false;
-  }
-}
-
-function applyQuotaInfoEvent(payload = {}) {
-  if (payload.provider !== 'poe') return;
-
-  const limit = Number(payload.poeLimit ?? userMembershipState.poeDailyLimit ?? 3);
-  const used = Number(payload.poeUsed ?? userMembershipState.poeUsedToday ?? 0);
-  const remaining = Number(payload.poeRemaining ?? Math.max(0, limit - used));
-
-  userMembershipState.poeDailyLimit = Number.isFinite(limit) ? limit : 3;
-  userMembershipState.poeUsedToday = Number.isFinite(used) ? used : 0;
-  userMembershipState.poeRemaining = Number.isFinite(remaining) ? remaining : 0;
-  userMembershipState.poeResetAt = payload.resetAt || userMembershipState.poeResetAt || null;
-
-  updatePoeQuotaHint();
 }
 
 function handlePointsInfoEvent(payload = {}) {
@@ -3497,7 +3419,7 @@ const i18n = {
     'notifications-open-label': '打开通知',
     'notifications-announcement-kicker': '公告',
     'notifications-domain-title': 'RAI 域名即将更换',
-    'notifications-domain-body': 'RAI 即将迁移到新域名 https://rai.000339.xyz/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。',
+    'notifications-domain-body': 'RAI 即将迁移到新域名 https://rai.rick.sarl/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。',
     'notifications-open-new-domain': '打开新域名',
     'notifications-mark-read': '标记已读',
     'notifications-pause': '暂停红点',
@@ -3742,6 +3664,7 @@ const i18n = {
     'quote-ai': '引用AI',
     // 更多菜单
     'internet-search': '联网搜索',
+    'more-tools': '更多工具',
     'reasoning-mode': '推理模式',
     'reasoning-profile': '推理强度',
     'reasoning-low': '短',
@@ -3951,7 +3874,7 @@ const i18n = {
     'notifications-open-label': 'Open notifications',
     'notifications-announcement-kicker': 'Announcement',
     'notifications-domain-title': 'RAI domain is changing soon',
-    'notifications-domain-body': 'RAI is moving to https://rai.000339.xyz/. The old domain will stay available during the transition, but please bookmark the new address first.',
+    'notifications-domain-body': 'RAI is moving to https://rai.rick.sarl/. The old domain will stay available during the transition, but please bookmark the new address first.',
     'notifications-open-new-domain': 'Open new domain',
     'notifications-mark-read': 'Mark as read',
     'notifications-pause': 'Pause red dot',
@@ -4196,6 +4119,7 @@ const i18n = {
     'quote-ai': 'Quoting AI',
     // More menu
     'internet-search': 'Web Search',
+    'more-tools': 'More tools',
     'reasoning-mode': 'Reasoning Mode',
     'reasoning-profile': 'Reasoning Strength',
     'reasoning-low': 'Low',
@@ -4815,6 +4739,30 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-13',
+    version: 'v0.11.30',
+    zh: {
+      summary: '修复模型、联网、附件菜单和通知图标的用户可见问题。',
+      details: [
+        '完整移除已停用的第三方模型、接口、配额和菜单入口，历史消息仍可安全显示。',
+        '联网搜索默认开启，手动关闭仅限当次请求，不会写入个人设置。',
+        '加号与模型菜单统一内边距、圆角和整行点击范围，研究模式与添加附件可从整行操作。',
+        '输入框改为中性焦点样式，通知入口使用本地 Material Symbols 图标和独立完整红点。',
+        '预配置 rai.rick.sarl 的信任来源、公告链接和服务端安全策略，并在 DNS 切换前保留旧域兼容。'
+      ]
+    },
+    en: {
+      summary: 'Fixed user-visible model, web-search, composer-menu, and notification issues.',
+      details: [
+        'Removed the retired third-party models, API integration, quota logic, and menu entries while keeping historical messages readable.',
+        'Web search starts enabled, and a manual opt-out applies only to the current request instead of being saved to the profile.',
+        'The add and model menus now share consistent spacing and radii, with full-row attachment and research controls.',
+        'Inputs use a neutral focus treatment, while notifications use a local Material Symbols icon with one intact CSS badge.',
+        'Preconfigured rai.rick.sarl trust, notice, and server security settings while retaining old-domain compatibility until DNS cutover.'
+      ]
+    }
+  },
   {
     date: '2026-07-13',
     version: 'v0.11.29',
@@ -6838,7 +6786,7 @@ function getRaiNotifications() {
       deliveryMode: 'silent',
       icon: 'icons/settings/notifications.svg',
       title: i18nText('notifications-domain-title', 'RAI 域名即将更换'),
-      body: i18nText('notifications-domain-body', 'RAI 即将迁移到新域名 https://rai.000339.xyz/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。'),
+      body: i18nText('notifications-domain-body', 'RAI 即将迁移到新域名 https://rai.rick.sarl/。旧域名会在切换期间继续保留一段时间，请优先收藏新地址。'),
       meta: i18nText('notifications-domain-meta', '2026-06-09 发布 · 迁移公告')
     });
   }
@@ -6996,7 +6944,7 @@ function updateNotificationButton() {
   if (icon) {
     icon.src = paused
       ? 'icons/settings/notifications_paused.svg'
-      : (unreadCount > 0 ? 'icons/settings/notifications_unread.svg' : 'icons/settings/notifications.svg');
+      : 'icons/settings/notifications.svg';
   }
 }
 
@@ -7918,6 +7866,7 @@ function updateResearchModeControl() {
   const toggle = document.getElementById('researchModeToggle');
   const switchBtn = document.getElementById('researchModeSwitch');
   const item = document.querySelector('.research-mode-item');
+  const header = item?.querySelector('.research-mode-header');
   const enabled = isResearchModeEnabled();
 
   if (slider) {
@@ -7940,6 +7889,13 @@ function updateResearchModeControl() {
     switchBtn.title = enabled
       ? (isChineseLanguage(appState.language) ? '关闭研究模式' : 'Turn off research mode')
       : (isChineseLanguage(appState.language) ? '开启研究模式' : 'Turn on research mode');
+  }
+
+  if (header) {
+    header.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    header.setAttribute('aria-label', enabled
+      ? (isChineseLanguage(appState.language) ? '关闭研究模式' : 'Turn off research mode')
+      : (isChineseLanguage(appState.language) ? '开启研究模式' : 'Turn on research mode'));
   }
 
   if (item) {
@@ -8074,6 +8030,7 @@ function getModeRequestConfig(mode = '') {
 
 function selectRaiModeFromMenu(mode, event) {
   event?.stopPropagation?.();
+  const restoreMenuFocus = document.getElementById('modelDropdownMenu')?.contains(document.activeElement) === true;
   const config = getModeRequestConfig(mode);
 
   if (config.mode === 'research') {
@@ -8084,7 +8041,6 @@ function selectRaiModeFromMenu(mode, event) {
     appState.lastNonResearchModel = config.model;
     appState.thinkingMode = config.thinkingMode;
     appState.reasoningProfile = config.reasoningProfile;
-    applyFreePoeThinkingPolicy();
     updateResearchModeControl();
     updateModelControls();
     updateReasoningProfileControl();
@@ -8094,8 +8050,8 @@ function selectRaiModeFromMenu(mode, event) {
     persistDefaultModelPreference(appState.selectedModel);
   }
 
-  closeModelModal();
-  preserveMobileInputFocus();
+  closeModelModal({ restoreFocus: restoreMenuFocus });
+  if (!restoreMenuFocus) preserveMobileInputFocus();
 }
 
 function openAvatarPicker() {
@@ -8743,9 +8699,15 @@ function settingsToggleInternetMode() {
   updateSettingsCapabilitiesUI();
 }
 
+function restoreInternetSearchDefault() {
+  appState.internetMode = true;
+  updateToolbarUI();
+  updateSettingsCapabilitiesUI();
+}
+
 function settingsToggleThinkingMode() {
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  if (!currentModel?.supportsThinking || isFreePoeMode()) {
+  if (!currentModel?.supportsThinking) {
     appState.thinkingMode = false;
     updateToolbarUI();
     updateSettingsCapabilitiesUI();
@@ -8771,7 +8733,7 @@ function updateSettingsCapabilitiesUI() {
   const researchSwitch = document.getElementById('settingsResearchSwitch');
   const researchToggle = document.getElementById('settingsResearchToggle');
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  const thinkingAvailable = !!currentModel?.supportsThinking && !isFreePoeMode();
+  const thinkingAvailable = !!currentModel?.supportsThinking;
 
   if (internetSwitch) internetSwitch.setAttribute('aria-pressed', appState.internetMode ? 'true' : 'false');
   if (internetToggle) internetToggle.classList.toggle('active', !!appState.internetMode);
@@ -8973,7 +8935,6 @@ function setLanguage(lang) {
 
   updateReasoningProfileControl();
   updateResearchModeControl();
-  updatePoeQuotaHint();
   updateSettingsMembership();
   updateUserIdentityUI();
   updateSettingsNavigationUI();
@@ -9697,7 +9658,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.29 初始化 (2FA token purpose hotfix)');
+  console.log(' RAI v0.11.30 初始化 (user UI, retired provider removal, domain preparation)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -9818,9 +9779,24 @@ function resolveModelMenuAnchor(anchorOrId = null) {
     return document.getElementById(anchorOrId);
   }
 
-  return document.getElementById(appState.activeModelMenuAnchorId)
-    || document.getElementById('modelSelectCustom')
-    || document.getElementById('mobileModelSelectCustom');
+  const activeAnchor = document.getElementById(appState.activeModelMenuAnchorId);
+  if (isComposerMenuAnchorVisible(activeAnchor)) return activeAnchor;
+
+  const candidateIds = window.innerWidth <= 768
+    ? ['mobileModelSelectCustom', 'modelSelectCustom']
+    : ['modelSelectCustom', 'mobileModelSelectCustom'];
+  return candidateIds
+    .map((id) => document.getElementById(id))
+    .find((anchor) => isComposerMenuAnchorVisible(anchor))
+    || null;
+}
+
+function isComposerMenuAnchorVisible(anchor) {
+  if (!anchor) return false;
+  const style = window.getComputedStyle(anchor);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = anchor.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
 }
 
 function getModelMenuPositionConfig(anchor) {
@@ -9833,11 +9809,14 @@ function getModelMenuPositionConfig(anchor) {
 
 function syncModelMenuTriggerState(activeAnchor = null) {
   document.querySelectorAll('.model-select-custom').forEach((trigger) => {
-    trigger.classList.toggle('open', !!activeAnchor && trigger === activeAnchor);
+    const expanded = !!activeAnchor && trigger === activeAnchor;
+    trigger.classList.toggle('open', expanded);
+    trigger.setAttribute('aria-controls', 'modelDropdownMenu');
+    trigger.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   });
 }
 
-function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above', preserveHorizontal = false) {
+function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') {
   if (!menu || !anchor) return;
 
   if (menu.parentElement !== document.body) {
@@ -9848,10 +9827,8 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above', 
   const gap = 8;
   const anchorRect = anchor.getBoundingClientRect();
 
-  // 测量尺寸：保留水平位置时不动 left，避免 x 轴左右飘
-  if (!preserveHorizontal) {
-    menu.style.left = '0px';
-  }
+  // 每次按当前可见锚点重新计算，确保 resize/横竖屏后仍在视口内。
+  menu.style.left = '0px';
   menu.style.top = '0px';
   menu.style.bottom = 'auto';
   // 限制菜单最大高度为 anchor 上方可用空间
@@ -9862,23 +9839,18 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above', 
 
   const menuRect = menu.getBoundingClientRect();
 
-  const hasFixedLeft = preserveHorizontal && menu.style.left && menu.style.left !== '0px';
-  if (!hasFixedLeft) {
-    // 始终向上弹出（输入框在页面底部）
-    let left;
-    if (align === 'right') {
-      left = anchorRect.right - menuRect.width;
-    } else if (align === 'center') {
-      left = anchorRect.left + ((anchorRect.width - menuRect.width) / 2);
-    } else {
-      left = anchorRect.left;
-    }
-
-    left = Math.max(viewportPadding, Math.min(left, window.innerWidth - menuRect.width - viewportPadding));
-
-    menu.style.setProperty('--menu-origin-x', align === 'right' ? 'right' : align === 'center' ? 'center' : 'left');
-    menu.style.left = `${Math.round(left)}px`;
+  let left;
+  if (align === 'right') {
+    left = anchorRect.right - menuRect.width;
+  } else if (align === 'center') {
+    left = anchorRect.left + ((anchorRect.width - menuRect.width) / 2);
+  } else {
+    left = anchorRect.left;
   }
+
+  left = Math.max(viewportPadding, Math.min(left, window.innerWidth - menuRect.width - viewportPadding));
+  menu.style.setProperty('--menu-origin-x', align === 'right' ? 'right' : align === 'center' ? 'center' : 'left');
+  menu.style.left = `${Math.round(left)}px`;
   menu.style.setProperty('--menu-origin-y', vertical === 'below' ? 'top' : 'bottom');
 
   if (vertical === 'below') {
@@ -9904,14 +9876,16 @@ function repositionComposerMenus() {
   const moreMenu = document.getElementById('moreMenu');
   const moreBtn = document.getElementById('moreBtn');
   if (moreMenu?.classList.contains('active') && moreBtn) {
-    positionFloatingMenu(moreMenu, moreBtn, 'left', 'above', true);
+    positionFloatingMenu(moreMenu, moreBtn, 'left', 'above');
   }
 
   const modelMenu = document.getElementById('modelDropdownMenu');
   const modelBtn = resolveModelMenuAnchor();
   if (modelMenu?.classList.contains('active') && modelBtn) {
+    appState.activeModelMenuAnchorId = modelBtn.id;
+    syncModelMenuTriggerState(modelBtn);
     const { align, vertical } = getModelMenuPositionConfig(modelBtn);
-    positionFloatingMenu(modelMenu, modelBtn, align, vertical, true);
+    positionFloatingMenu(modelMenu, modelBtn, align, vertical);
   }
 }
 
@@ -9933,6 +9907,7 @@ function closeMoreMenu() {
   if (!menu) return;
   menu.classList.remove('active', 'closing');
   menu.setAttribute('aria-hidden', 'true');
+  document.getElementById('moreBtn')?.setAttribute('aria-expanded', 'false');
 }
 
 // 菜单保持 display:block 才能支持 1 秒动画中途反向。
@@ -9946,7 +9921,30 @@ function mountComposerFloatingMenus() {
   });
 }
 
-function toggleMoreMenu() {
+function handleComposerMenuItemKeydown(event) {
+  if (!event || event.target !== event.currentTarget) return;
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  event.currentTarget.click();
+}
+
+function initializeComposerMenuHitTargets() {
+  document.querySelectorAll('#modelDropdownMenu .model-menu-item, #chatflowModelMenu .model-menu-item, .model-select-custom').forEach((item) => {
+    if (!item.hasAttribute('role')) item.setAttribute('role', 'button');
+    if (!item.hasAttribute('tabindex')) item.setAttribute('tabindex', '0');
+    if (item.dataset.keyboardActivationBound === 'true') return;
+    item.dataset.keyboardActivationBound = 'true';
+    item.addEventListener('keydown', handleComposerMenuItemKeydown);
+  });
+}
+
+function focusFirstComposerMenuItem(menu) {
+  const firstItem = menu?.querySelector('[role="button"][tabindex="0"], .model-menu-item[tabindex="0"]');
+  if (!firstItem) return;
+  requestAnimationFrame(() => firstItem.focus({ preventScroll: true }));
+}
+
+function toggleMoreMenu(event = null) {
   mountComposerFloatingMenus();
   const menu = document.getElementById('moreMenu');
   if (!menu) return;
@@ -9960,6 +9958,7 @@ function toggleMoreMenu() {
   menu.classList.remove('closing');
   menu.classList.add('active');
   menu.setAttribute('aria-hidden', 'false');
+  document.getElementById('moreBtn')?.setAttribute('aria-expanded', 'true');
 
   const internetToggle = document.getElementById('internetToggle');
   const thinkingToggle = document.getElementById('thinkingToggle');
@@ -9974,9 +9973,33 @@ function toggleMoreMenu() {
   updateToolbarUI();
   updateReasoningProfileControl();
   updateResearchModeControl();
-  updatePoeQuotaHint();
   positionFloatingMenu(menu, document.getElementById('moreBtn'), 'left');
+  if (event?.detail === 0) focusFirstComposerMenuItem(menu);
 }
+
+function handleComposerMenuEscape(event) {
+  if (event.key !== 'Escape') return;
+  const modelMenu = document.getElementById('modelDropdownMenu');
+  if (modelMenu?.classList.contains('active')) {
+    closeModelModal({ restoreFocus: true });
+    event.preventDefault();
+    return;
+  }
+  const moreMenu = document.getElementById('moreMenu');
+  if (moreMenu?.classList.contains('active')) {
+    closeMoreMenu();
+    document.getElementById('moreBtn')?.focus({ preventScroll: true });
+    event.preventDefault();
+    return;
+  }
+  const chatFlowModelMenu = document.getElementById('chatflowModelMenu');
+  if (chatFlowModelMenu?.classList.contains('active')) {
+    closeChatFlowModelMenu({ restoreFocus: true });
+    event.preventDefault();
+  }
+}
+
+document.addEventListener('keydown', handleComposerMenuEscape);
 
 
 // 点击外部关闭更多菜单
@@ -10016,13 +10039,6 @@ function toggleThinkingFromMenu(event) {
     scheduleComposerMenuReposition(8);
     return;
   }
-  if (isFreePoeMode()) {
-    appState.thinkingMode = false;
-    updateToolbarUI();
-    preserveMobileInputFocus();
-    scheduleComposerMenuReposition(8);
-    return;
-  }
   appState.thinkingMode = !appState.thinkingMode;
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
@@ -10037,8 +10053,7 @@ function toggleThinkingFromMenu(event) {
 
 // 从菜单触发文件上传
 function handleFileUploadFromMenu() {
-  const menu = document.getElementById('moreMenu');
-  menu?.classList.remove('active');
+  closeMoreMenu();
   handleFileUpload();
 }
 
@@ -10109,12 +10124,7 @@ function updateToolbarUI() {
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
   const supportsThinking = !!currentModel?.supportsThinking;
   const supportsReasoningProfile = supportsThinking && currentModel?.supportsReasoningProfile !== false;
-  const forceDisableThinking = isFreePoeMode();
   appState.agentMode = false;
-
-  if (forceDisableThinking) {
-    appState.thinkingMode = false;
-  }
 
   if (internetToggle) {
     internetToggle.classList.toggle('active', appState.internetMode);
@@ -10123,16 +10133,21 @@ function updateToolbarUI() {
   if (thinkingToggle) {
     thinkingToggle.style.display = supportsThinking ? 'inline-flex' : 'none';
     thinkingToggle.classList.toggle('active', appState.thinkingMode);
-    thinkingToggle.classList.toggle('disabled', forceDisableThinking || !supportsThinking);
+    thinkingToggle.classList.toggle('disabled', !supportsThinking);
   }
 
   if (thinkingMenuItem) {
-    thinkingMenuItem.classList.toggle('is-disabled', forceDisableThinking);
+    thinkingMenuItem.classList.toggle('is-disabled', !supportsThinking);
+    const thinkingHeader = thinkingMenuItem.querySelector('.reasoning-profile-header');
+    if (thinkingHeader) {
+      thinkingHeader.setAttribute('aria-disabled', supportsThinking ? 'false' : 'true');
+      thinkingHeader.setAttribute('aria-pressed', appState.thinkingMode ? 'true' : 'false');
+    }
   }
 
   if (thinkingBtn) {
     thinkingBtn.style.display = supportsThinking ? 'inline-flex' : 'none';
-    thinkingBtn.classList.toggle('disabled', forceDisableThinking);
+    thinkingBtn.classList.toggle('disabled', !supportsThinking);
     if (appState.thinkingMode) {
       thinkingBtn.classList.add('active');
     } else {
@@ -10148,8 +10163,8 @@ function updateToolbarUI() {
     }
   }
 
-  const showReasoningItem = supportsThinking && !forceDisableThinking;
-  const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode && !forceDisableThinking;
+  const showReasoningItem = supportsThinking;
+  const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode;
   if (reasoningProfileItem) {
     setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningItem);
   }
@@ -10163,7 +10178,6 @@ function updateToolbarUI() {
     }
   }
   updateResearchModeControl();
-  updatePoeQuotaHint();
   updateSettingsCapabilitiesUI();
   if (document.getElementById('moreMenu')?.classList.contains('active')) {
     scheduleComposerMenuReposition(6);
@@ -10236,7 +10250,6 @@ function updateSettingsUI() {
 // 修复：改进updateModelControls函数，添加null检查
 function updateModelControls() {
   appState.selectedModel = normalizeSelectedModelId(appState.selectedModel);
-  applyFreePoeThinkingPolicy();
   const model = MODELS[appState.selectedModel];
 
   if (!model) {
@@ -10258,7 +10271,7 @@ function updateModelControls() {
   }
 
   if (thinkingExpandBtn) {
-    if (appState.thinkingMode && !isFreePoeMode()) {
+    if (appState.thinkingMode) {
       thinkingExpandBtn.style.display = 'flex';
     } else {
       thinkingExpandBtn.style.display = 'none';
@@ -10319,7 +10332,7 @@ function updateThinkingLine(thinkingId) {
 }
 
 // ==================== 模型选择下拉菜单函数 ====================
-function openModelModal(anchorOrId = null) {
+function openModelModal(anchorOrId = null, event = null) {
   mountComposerFloatingMenus();
   const menu = document.getElementById('modelDropdownMenu');
   const selector = resolveModelMenuAnchor(anchorOrId);
@@ -10338,15 +10351,20 @@ function openModelModal(anchorOrId = null) {
     const { align, vertical } = getModelMenuPositionConfig(selector);
     positionFloatingMenu(menu, selector, align, vertical);
     scheduleComposerMenuReposition();
+    if (event?.detail === 0) focusFirstComposerMenuItem(menu);
   }
 }
 
-function closeModelModal() {
+function closeModelModal({ restoreFocus = false } = {}) {
   const menu = document.getElementById('modelDropdownMenu');
+  const trigger = document.getElementById(appState.activeModelMenuAnchorId);
   syncModelMenuTriggerState(null);
   if (!menu) return;
   menu.classList.remove('active', 'closing');
   menu.setAttribute('aria-hidden', 'true');
+  if (restoreFocus && isComposerMenuAnchorVisible(trigger)) {
+    requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
+  }
 }
 
 function toggleAllModels() {
@@ -10412,6 +10430,7 @@ function updateMenuSelection() {
     const locked = requiredMembership === 'max' && !isMaxMembershipUser();
     item.classList.toggle('membership-locked', locked);
     item.classList.toggle('membership-available', requiredMembership === 'max' && !locked);
+    item.setAttribute('aria-disabled', locked || adminHidden ? 'true' : 'false');
   });
 
   document.querySelectorAll('.model-card').forEach((card) => {
@@ -10491,7 +10510,7 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
       presence_penalty: appState.presencePenalty,
       system_prompt: appState.systemPrompt || '',
       thinking_mode: appState.thinkingMode ? 1 : 0,
-      internet_mode: appState.internetMode ? 1 : 0,
+      internet_mode: 1,
       long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
       font_preference: appState.fontPreference || 'rai',
       tab_title_mode: appState.tabTitleMode || 'default',
@@ -10509,10 +10528,11 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
 }
 
 function selectModelFromMenu(model, displayName, i18nKey) {
+  const restoreMenuFocus = document.getElementById('modelDropdownMenu')?.contains(document.activeElement) === true;
   if (model === 'research-mode') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    closeModelModal();
-    preserveMobileInputFocus();
+    closeModelModal({ restoreFocus: restoreMenuFocus });
+    if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
   }
   if (isModelDisabledByAdmin(model)) {
@@ -10522,7 +10542,7 @@ function selectModelFromMenu(model, displayName, i18nKey) {
     updateSelectedModelText('auto');
     updateModelControls();
     updateMenuSelection();
-    closeModelModal();
+    closeModelModal({ restoreFocus: restoreMenuFocus });
     return;
   }
   if (isMembershipLockedModel(model)) {
@@ -10533,19 +10553,14 @@ function selectModelFromMenu(model, displayName, i18nKey) {
   appState.selectedModel = normalizeSelectedModelId(model);
   appState.lastNonResearchModel = appState.selectedModel;
   appState.thinkingMode = false;
-  if (isHiddenModelId(model)) {
-    console.log(' Poe models are hidden. Fallback to auto model.');
-  }
-  applyFreePoeThinkingPolicy();
   updateSelectedModelText(appState.selectedModel);
 
   updateResearchModeControl();
   updateModelControls();
   updateMenuSelection();
-  updatePoeQuotaHint();
-  closeModelModal();
+  closeModelModal({ restoreFocus: restoreMenuFocus });
   persistDefaultModelPreference(appState.selectedModel);
-  preserveMobileInputFocus();
+  if (!restoreMenuFocus) preserveMobileInputFocus();
 
   console.log(` 已切换模型: ${appState.selectedModel} (${displayName})`);
 }
@@ -10852,7 +10867,7 @@ async function saveSettings(options = {}) {
           presence_penalty: presencePenalty,
           system_prompt: systemPrompt,
           thinking_mode: appState.thinkingMode ? 1 : 0,
-          internet_mode: appState.internetMode ? 1 : 0,
+          internet_mode: 1,
           long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
           font_preference: appState.fontPreference || 'rai',
           tab_title_mode: appState.tabTitleMode || 'default',
@@ -12267,15 +12282,12 @@ function createMessageElement(message) {
       const modelBadge = document.createElement('span');
       modelBadge.className = 'meta-badge';
 
-      // 获取模型显示名称
-      let modelName = message.model;
-      if (MODELS[message.model]) {
-        modelName = MODELS[message.model].name;
-      }
+      // 新老模型标识都保持可读，退役模型不再回到可选菜单。
+      const modelName = getHistoricalModelDisplayName(message.model);
 
       modelBadge.innerHTML = `
             ${getSvgIcon('smart_toy', 'material-symbols-outlined', 24)}
-            <span>${modelName}</span>
+            <span>${escapeHtml(modelName)}</span>
           `;
       metaDiv.appendChild(modelBadge);
     }
@@ -12964,7 +12976,6 @@ async function confirmRegenerate() {
 
   // 保存当前设置
   const originalModel = appState.selectedModel;
-  const originalInternet = appState.internetMode;
   const originalThinking = appState.thinkingMode;
   const originalResearchEnabled = appState.researchModeEnabled;
 
@@ -12973,7 +12984,6 @@ async function confirmRegenerate() {
   appState.researchModeEnabled = false;
   appState.internetMode = internetMode;
   appState.thinkingMode = thinkingMode;
-  applyFreePoeThinkingPolicy();
 
   // 更新UI显示
   updateSelectedModelText(appState.selectedModel);
@@ -12999,11 +13009,10 @@ async function confirmRegenerate() {
 
   appState.selectedModel = originalModel;
   appState.researchModeEnabled = originalResearchEnabled;
-  appState.internetMode = originalInternet;
   appState.thinkingMode = originalThinking;
-  applyFreePoeThinkingPolicy();
   updateSelectedModelText(appState.selectedModel);
   updateModelControls();
+  restoreInternetSearchDefault();
 }
 
 // 触发AI回复
@@ -13262,11 +13271,6 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 	            continue;
 	          }
 
-	          if (parsed.type === 'quota_info') {
-	            applyQuotaInfoEvent(parsed);
-	            continue;
-	          }
-
           if (parsed.type === 'model_info') {
             if (parsed.model) {
               finalModel = parsed.model;
@@ -13342,6 +13346,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     aiMsg.content = isChineseLanguage(appState.language) ? '生成失败，请重试' : 'Generation failed, please retry';
   } finally {
     appState.isStreaming = false;
+    restoreInternetSearchDefault();
 
     //  清理持久的 Mermaid 预览容器（最终渲染会创建正式的容器）
     if (mermaidPreviewContainer) {
@@ -13888,7 +13893,7 @@ async function sendMessage(message = null, options = {}) {
   }
 
   if (!appState.currentSession && appState.currentSessionMemoryMode !== 'classic-temp') {
-    const created = await createNewSession({ focus: false });
+    const created = await createNewSession({ focus: false, preserveInternetMode: true });
     if (!created || !appState.currentSession) return;
   }
 
@@ -15181,13 +15186,6 @@ async function sendMessage(message = null, options = {}) {
 	          else if (parsed.type === 'points_info') {
 	            handlePointsInfoEvent(parsed);
 	          }
-		          else if (parsed.type === 'quota_info') {
-		            applyQuotaInfoEvent(parsed);
-		            const quotaText = isChineseLanguage(appState.language)
-	                ? `Poe配额: 剩余 ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit}`
-	                : `Poe quota: ${userMembershipState.poeRemaining}/${userMembershipState.poeDailyLimit} remaining`;
-	            addProcessTraceItem('info', quotaText);
-	          }
           // 新增：处理搜索来源
           else if (parsed.type === 'sources') {
             if (parsed.sources && Array.isArray(parsed.sources)) {
@@ -15568,9 +15566,8 @@ async function sendMessage(message = null, options = {}) {
     appState.activeResearch = null;
     if (typeof signalReplyReady === 'function') signalReplyReady();
 
-    // 重置联网模式为开启状态（用户关闭仅限本次）
-    appState.internetMode = true;
-    updateToolbarUI();
+    // 用户关闭仅限本次请求；下一次仍默认开启联网。
+    restoreInternetSearchDefault();
 
     // 修复：在流式传输结束后处理标题
     // 提取标题 <<<标题>>> - 匹配回复末尾的三角括号内容
@@ -16169,6 +16166,7 @@ function clearAuthenticatedAppState() {
   appState.sessions = [];
   appState.messages = [];
   appState.currentSession = null;
+  appState.internetMode = true;
 }
 
 function redirectToLoggedOutAuth(extraParams = {}) {
@@ -18080,6 +18078,7 @@ function renderFlowsList(flows) {
 // 创建新 Flow
 async function createNewFlow() {
   try {
+    restoreChatFlowInternetSearchDefault();
     const defaultTitle = isChineseLanguage(appState.language) ? '新 ChatFlow' : 'New ChatFlow';
     const response = await fetch('/api/flows', {
       method: 'POST',
@@ -18114,6 +18113,7 @@ async function openFlow(flowId) {
 
     const flow = await response.json();
     const normalizedCanvasState = normalizeChatFlowCanvasState(flow.canvas_state);
+    restoreChatFlowInternetSearchDefault();
 
     chatFlowState.currentFlowId = flowId;
     chatFlowState.sessionId = flow.session_id || null;
@@ -18174,6 +18174,7 @@ async function openFlow(flowId) {
 
 // 关闭 ChatFlow
 function closeChatFlow() {
+  restoreChatFlowInternetSearchDefault();
   document.getElementById('chatFlowWorkspace').style.display = 'none';
   chatFlowState.currentFlowId = null;
   chatFlowState.sessionId = null;
@@ -18704,19 +18705,40 @@ function canvasResetView() {
 
 
 // 模型菜单切换
-function toggleChatFlowModelMenu() {
+function closeChatFlowModelMenu({ restoreFocus = false } = {}) {
   const menu = document.getElementById('chatflowModelMenu');
-  if (menu) {
-    menu.classList.toggle('active');
+  const trigger = document.getElementById('chatflowModelSelect');
+  menu?.classList.remove('active');
+  menu?.setAttribute('aria-hidden', 'true');
+  trigger?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus && trigger) {
+    requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
   }
+}
+
+function toggleChatFlowModelMenu(event = null) {
+  const menu = document.getElementById('chatflowModelMenu');
+  const trigger = document.getElementById('chatflowModelSelect');
+  if (!menu || !trigger) return;
+
+  if (menu.classList.contains('active')) {
+    closeChatFlowModelMenu();
+    return;
+  }
+
+  menu.classList.add('active');
+  menu.setAttribute('aria-hidden', 'false');
+  trigger.setAttribute('aria-expanded', 'true');
+  if (event?.detail === 0) focusFirstComposerMenuItem(menu);
 }
 
 // 选择模型
 function selectChatFlowModel(modelId, modelName) {
+  const restoreMenuFocus = document.getElementById('chatflowModelMenu')?.contains(document.activeElement) === true;
   if (isModelDisabledByAdmin(modelId)) {
     chatFlowState.selectedModel = 'auto';
     updateChatFlowControlStates();
-    toggleChatFlowModelMenu();
+    closeChatFlowModelMenu({ restoreFocus: restoreMenuFocus });
     return;
   }
   if (isMembershipLockedModel(modelId)) {
@@ -18728,7 +18750,7 @@ function selectChatFlowModel(modelId, modelName) {
   if (display) {
     display.textContent = modelName || getChatFlowModelLabel(modelId);
   }
-  toggleChatFlowModelMenu();
+  closeChatFlowModelMenu({ restoreFocus: restoreMenuFocus });
 }
 
 function getChatFlowModelLabel(modelId = chatFlowState.selectedModel) {
@@ -18756,6 +18778,11 @@ function updateChatFlowControlStates() {
       ? `${label} (MAX)`
       : label;
   }
+}
+
+function restoreChatFlowInternetSearchDefault() {
+  chatFlowState.internetMode = true;
+  updateChatFlowControlStates();
 }
 
 function toggleChatFlowPatchMode() {
@@ -18786,7 +18813,7 @@ function toggleChatFlowThinking(event) {
 // 关闭所有菜单
 function closeChatFlowMenus() {
   document.getElementById('chatflowMoreMenu')?.classList.remove('active');
-  document.getElementById('chatflowModelMenu')?.classList.remove('active');
+  closeChatFlowModelMenu();
 }
 
 // 点击外部关闭菜单
@@ -19255,11 +19282,6 @@ async function sendChatFlowMessage() {
 	            continue;
 	          }
 
-	          if (parsed.type === 'quota_info') {
-	            applyQuotaInfoEvent(parsed);
-	            continue;
-	          }
-
           if (parsed.type === 'search_status') {
             if (parsed.status === 'searching') {
               const queryText = parsed.query ? `: ${parsed.query}` : '';
@@ -19366,6 +19388,9 @@ async function sendChatFlowMessage() {
     document.getElementById('chatflowStopBtn').style.display = 'none';
     chatFlowState.isStreaming = false;
     clearChatFlowActivityNotice();
+
+    // ChatFlow 也仅允许按当次请求关闭联网。
+    restoreChatFlowInternetSearchDefault();
 
     // 保存状态
     chatFlowState.currentRequestId = null;
@@ -21424,7 +21449,7 @@ function buildCurrentConfigPayloadForMemory() {
     presence_penalty: appState.presencePenalty,
     system_prompt: appState.systemPrompt || '',
     thinking_mode: appState.thinkingMode ? 1 : 0,
-    internet_mode: appState.internetMode ? 1 : 0,
+    internet_mode: 1,
     long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
     font_preference: appState.fontPreference || 'rai',
     tab_title_mode: appState.tabTitleMode || 'default',
@@ -21548,6 +21573,7 @@ async function clearAllUserMemories() {
 
 function showClassicTemporaryChat() {
   closeSessionStreamSubscription();
+  restoreInternetSearchDefault();
   appState.currentSession = null;
   appState.currentSessionMemoryMode = 'classic-temp';
   appState.messages = [];
@@ -21640,10 +21666,12 @@ async function handleNewChatClick() {
 async function createNewSession(options = {}) {
   try {
     const shouldFocus = options.focus !== false;
+    const preserveInternetMode = options.preserveInternetMode === true;
     const mode = normalizeNewChatMode(options.mode || 'normal');
     if (mode === 'classic-temp') {
       return showClassicTemporaryChat();
     }
+    if (!preserveInternetMode) restoreInternetSearchDefault();
     const isSavedTemporary = mode === 'saved-temp';
     appState.pendingMobileComposerFocus = shouldFocus && window.innerWidth <= 768;
     const response = await fetch(`${API_BASE}/sessions`, {
@@ -21665,7 +21693,7 @@ async function createNewSession(options = {}) {
 
     if (data.success) {
       await loadSessions();
-      await loadSession(data.sessionId);
+      await loadSession(data.sessionId, { preserveInternetMode });
       appState.currentSessionMemoryMode = isSavedTemporary ? 'saved-temp' : 'normal';
       if (appState.currentSession) {
         appState.currentSession.session_kind = isSavedTemporary ? 'temporary_saved' : 'chat';
@@ -21688,7 +21716,7 @@ async function createNewSession(options = {}) {
   }
 }
 
-async function loadSession(sessionId) {
+async function loadSession(sessionId, options = {}) {
   try {
     console.log(' 加载会话:', sessionId);
 
@@ -21701,6 +21729,9 @@ async function loadSession(sessionId) {
     }
 
     const messages = await response.json();
+
+    // 联网关闭不跨会话传播；进入任何会话都恢复默认开启。
+    if (options.preserveInternetMode !== true) restoreInternetSearchDefault();
 
     appState.currentSession = appState.sessions.find(s => String(s.id) === String(sessionId)) || {
       id: sessionId,
@@ -23522,6 +23553,7 @@ function initMobileTouchNavigation() {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
+  initializeComposerMenuHitTargets();
   mountComposerFloatingMenus();
   window.mobileKeyboardHandler = new MobileKeyboardHandler({
     debug: false
@@ -23553,10 +23585,6 @@ let userMembershipState = {
   totalPoints: 0,
   canCheckin: true,
   createdAt: null,
-  poeDailyLimit: 3,
-  poeUsedToday: 0,
-  poeRemaining: 3,
-  poeResetAt: null,
   tasks: {
     pwaInstall: { completed: false, rewardPoints: PWA_INSTALL_REWARD_POINTS },
     inviteUser: { completed: false, rewardPoints: INVITE_REWARD_POINTS, completedCount: 0, totalRewardPoints: 0 },
@@ -23615,10 +23643,6 @@ function applyUserMembershipData(data = {}) {
     totalPoints: data.totalPoints || 0,
     canCheckin: data.canCheckin,
     createdAt: data.createdAt,
-    poeDailyLimit: Number(data.poeDailyLimit || 3),
-    poeUsedToday: Number(data.poeUsedToday || 0),
-    poeRemaining: Number(data.poeRemaining || 0),
-    poeResetAt: data.poeResetAt || null,
     tasks: normalizeMembershipTasks(data.tasks)
   };
   return userMembershipState;
@@ -23679,7 +23703,6 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
       if (applyPolicy) {
         applyMembershipModelPolicy({ initial, previousMembership });
       }
-      updatePoeQuotaHint();
       updateMenuSelection();
       updateToolbarUI();
       updateUserAreaWithMembership();
