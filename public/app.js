@@ -2083,8 +2083,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.32';
-const RAI_BUILD_ID = '20260713-chat-scroll-clearance-v01132';
+const RAI_APP_VERSION = '0.11.33';
+const RAI_BUILD_ID = '20260714-model-menu-concentric-radius-v01133';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4739,6 +4739,24 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-14',
+    version: 'v0.11.33',
+    zh: {
+      summary: '统一模型菜单三种模式项的同心圆角。',
+      details: [
+        '移除快速、思考、研究三行的 8px 后置覆盖，统一为与 20px 外框和 8px 内边距相配的 12px 圆角。',
+        '专项回归现在会直接检查后置 model-mode-item 规则，防止基础规则正确但最终计算样式再次被覆盖。'
+      ]
+    },
+    en: {
+      summary: 'Aligned the three model-mode rows with the menu concentric radius.',
+      details: [
+        'Removed the trailing 8px override from Fast, Think, and Research so their 12px radius matches the 20px shell with 8px padding.',
+        'The regression now checks the final model-mode-item override directly to prevent computed-style drift.'
+      ]
+    }
+  },
   {
     date: '2026-07-13',
     version: 'v0.11.32',
@@ -9696,7 +9714,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.32 初始化 (user UI, retired provider removal, domain preparation)');
+  console.log(' RAI v0.11.33 初始化 (user UI, retired provider removal, domain preparation)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.32-20260713-chat-scroll-clearance-v01132';
+const RAI_SW_VERSION = '0.11.33-20260714-model-menu-concentric-radius-v01133';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-root-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-root-';
 const RAI_FONT_CACHE_NAME = 'rai-fonts-root-v1';
@@ -9,23 +9,23 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260713-chat-scroll-clearance-v01132',
-  '/styles.css?v=20260713-chat-scroll-clearance-v01132',
-  '/site.webmanifest?v=20260713-chat-scroll-clearance-v01132',
+  '/app.js?v=20260714-model-menu-concentric-radius-v01133',
+  '/styles.css?v=20260714-model-menu-concentric-radius-v01133',
+  '/site.webmanifest?v=20260714-model-menu-concentric-radius-v01133',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
   '/icons/settings/notifications.svg',
   '/icons/settings/notifications_paused.svg',
-  '/lib/marked.min.js?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/purify.min.js?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/katex/katex.min.css?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/katex/katex.min.js?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/katex/contrib/auto-render.min.js?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/mermaid/mermaid.min.js?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/highlight/styles/github-dark.min.css?v=20260713-chat-scroll-clearance-v01132',
-  '/lib/highlight/highlight.min.js?v=20260713-chat-scroll-clearance-v01132'
+  '/lib/marked.min.js?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/purify.min.js?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/katex/katex.min.css?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/katex/katex.min.js?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/katex/contrib/auto-render.min.js?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/mermaid/mermaid.min.js?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/highlight/styles/github-dark.min.css?v=20260714-model-menu-concentric-radius-v01133',
+  '/lib/highlight/highlight.min.js?v=20260714-model-menu-concentric-radius-v01133'
 ];
 
 function isAvatarRequest(url) {

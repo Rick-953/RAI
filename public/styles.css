@@ -16244,7 +16244,8 @@ body.chatflow-iframe-mode .message-content::selection {
 
 .model-mode-item {
   min-height: 48px;
-  border-radius: 8px;
+  /* 20px outer radius - 8px menu padding = 12px concentric inner radius. */
+  border-radius: 12px;
 }
 
 .model-mode-item + .model-mode-item {

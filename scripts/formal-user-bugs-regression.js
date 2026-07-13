@@ -143,6 +143,9 @@ function testMenuHitAreasAndGeometry() {
     const rule = cssRule(selector, 'border-radius: 12px');
     assert.match(rule, /border-radius:\s*12px/);
   }
+  const modelModeRule = cssRule('.model-mode-item', 'min-height: 48px');
+  assert.match(modelModeRule, /border-radius:\s*12px/, 'model mode rows must preserve the concentric 12px radius');
+  assert.doesNotMatch(modelModeRule, /border-radius:\s*8px/, 'model mode rows must not reintroduce the old trailing 8px override');
   assert.match(cssRule('.model-menu-item', 'width: 100%'), /width:\s*100%/);
   assert.match(cssRule('.more-menu-item', 'width: 100%'), /width:\s*100%/);
 }
@@ -229,11 +232,11 @@ function testDomainPreparation() {
 }
 
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.32');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.32'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260713-chat-scroll-clearance-v01132'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.32/);
-  assert.match(serviceWorker, /0\.11\.32-20260713-chat-scroll-clearance-v01132/);
+  assert.equal(packageJson.version, '0.11.33');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.33'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260714-model-menu-concentric-radius-v01133'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.33/);
+  assert.match(serviceWorker, /0\.11\.33-20260714-model-menu-concentric-radius-v01133/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
 
