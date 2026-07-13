@@ -2083,8 +2083,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.30';
-const RAI_BUILD_ID = '20260713-user-ui-domain-r2-v01130';
+const RAI_APP_VERSION = '0.11.31';
+const RAI_BUILD_ID = '20260713-menu-focus-hotfix-v01131';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4739,6 +4739,24 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-13',
+    version: 'v0.11.31',
+    zh: {
+      summary: '补齐主输入区浮层菜单的双向键盘焦点边界。',
+      details: [
+        '从菜单首项按 Shift+Tab 或从末项按 Tab 时会先关闭菜单，再把焦点归还对应触发器。',
+        '避免焦点跳到背景发送按钮而菜单仍保持展开，ARIA 展开状态同步恢复为 false。'
+      ]
+    },
+    en: {
+      summary: 'Completed bidirectional keyboard focus boundaries for the main composer menus.',
+      details: [
+        'Shift+Tab from the first item or Tab from the last item closes the menu and returns focus to its trigger.',
+        'This prevents focus from escaping to the background send button while the menu remains expanded.'
+      ]
+    }
+  },
   {
     date: '2026-07-13',
     version: 'v0.11.30',
@@ -9658,7 +9676,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.30 初始化 (user UI, retired provider removal, domain preparation)');
+  console.log(' RAI v0.11.31 初始化 (user UI, retired provider removal, domain preparation)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -9923,6 +9941,27 @@ function mountComposerFloatingMenus() {
 
 function handleComposerMenuItemKeydown(event) {
   if (!event || event.target !== event.currentTarget) return;
+  if (event.key === 'Tab') {
+    const menu = event.currentTarget.closest('#moreMenu, #modelDropdownMenu, #chatflowModelMenu');
+    if (!menu) return;
+    const focusableItems = Array.from(menu.querySelectorAll('[role="button"][tabindex="0"], button:not([disabled])'))
+      .filter((item) => item.getClientRects().length > 0 && item.getAttribute('aria-hidden') !== 'true');
+    const currentIndex = focusableItems.indexOf(event.currentTarget);
+    const leavingBackward = event.shiftKey && currentIndex === 0;
+    const leavingForward = !event.shiftKey && currentIndex === focusableItems.length - 1;
+    if (!leavingBackward && !leavingForward) return;
+
+    event.preventDefault();
+    if (menu.id === 'moreMenu') {
+      closeMoreMenu();
+      requestAnimationFrame(() => document.getElementById('moreBtn')?.focus({ preventScroll: true }));
+    } else if (menu.id === 'modelDropdownMenu') {
+      closeModelModal({ restoreFocus: true });
+    } else {
+      closeChatFlowModelMenu({ restoreFocus: true });
+    }
+    return;
+  }
   if (event.key !== 'Enter' && event.key !== ' ') return;
   event.preventDefault();
   event.currentTarget.click();

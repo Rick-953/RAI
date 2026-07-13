@@ -116,6 +116,7 @@ function testMenuHitAreasAndGeometry() {
   assert.match(index, /<div class="more-menu-item" role="button" tabindex="0"\s+onclick="handleFileUploadFromMenu\(\)" onkeydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(index, /<div class="research-mode-header" role="button" tabindex="0"\s+onclick="toggleResearchModeFromMenu\(event\)" onkeydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(app, /function\s+handleComposerMenuItemKeydown\(event\)[\s\S]*?event\.key\s*!==\s*'Enter'[\s\S]*?event\.key\s*!==\s*' '[\s\S]*?event\.currentTarget\.click\(\)/);
+  assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeChatFlowModelMenu\(\{ restoreFocus: true \}\)/);
   assert.match(app, /querySelectorAll\('#modelDropdownMenu \.model-menu-item, #chatflowModelMenu \.model-menu-item, \.model-select-custom'\)/);
   assert.match(index, /id="moreBtn"[^>]*data-i18n-aria-label="more-tools"[^>]*aria-controls="moreMenu"[^>]*aria-expanded="false"/);
   assert.match(app, /function\s+handleFileUploadFromMenu\(\)[\s\S]*?closeMoreMenu\(\)[\s\S]*?handleFileUpload\(\)/);
@@ -201,11 +202,11 @@ function testDomainPreparation() {
 }
 
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.30');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.30'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260713-user-ui-domain-r2-v01130'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.30/);
-  assert.match(serviceWorker, /0\.11\.30-20260713-user-ui-domain-r2-v01130/);
+  assert.equal(packageJson.version, '0.11.31');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.31'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260713-menu-focus-hotfix-v01131'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.31/);
+  assert.match(serviceWorker, /0\.11\.31-20260713-menu-focus-hotfix-v01131/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
 
