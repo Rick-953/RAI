@@ -2080,8 +2080,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.28';
-const RAI_BUILD_ID = '20260711-code-cleanup-v01128';
+const RAI_APP_VERSION = '0.11.29';
+const RAI_BUILD_ID = '20260713-2fa-token-purpose-hotfix-v01129';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.000339.xyz';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4815,6 +4815,24 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-13',
+    version: 'v0.11.29',
+    zh: {
+      summary: '修复 2FA 登录挑战令牌可被误当作普通会话令牌的问题。',
+      details: [
+        '新的普通登录令牌带有独立的会话用途标识，2FA 登录和设置挑战不能访问已登录接口。',
+        '现有已登录会话继续兼容，无需重新登录。'
+      ]
+    },
+    en: {
+      summary: 'Fixed 2FA challenge tokens being accepted as normal user sessions.',
+      details: [
+        'New login tokens carry a dedicated session purpose, while 2FA login and setup challenges cannot access authenticated APIs.',
+        'Existing signed-in sessions remain compatible and do not need to sign in again.'
+      ]
+    }
+  },
   {
     date: '2026-07-11',
     version: 'v0.11.28',
@@ -9679,7 +9697,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.28 初始化 (code cleanup release)');
+  console.log(' RAI v0.11.29 初始化 (2FA token purpose hotfix)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

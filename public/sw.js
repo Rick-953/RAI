@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.28-20260711-code-cleanup-v01128';
+const RAI_SW_VERSION = '0.11.29-20260713-2fa-token-purpose-hotfix-v01129';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-root-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-root-';
 const RAI_FONT_CACHE_NAME = 'rai-fonts-root-v1';
@@ -9,21 +9,21 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260711-code-cleanup-v01128',
-  '/styles.css?v=20260711-code-cleanup-v01128',
-  '/site.webmanifest?v=20260711-code-cleanup-v01128',
+  '/app.js?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/styles.css?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/site.webmanifest?v=20260713-2fa-token-purpose-hotfix-v01129',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
-  '/lib/marked.min.js?v=20260711-code-cleanup-v01128',
-  '/lib/purify.min.js?v=20260711-code-cleanup-v01128',
-  '/lib/katex/katex.min.css?v=20260711-code-cleanup-v01128',
-  '/lib/katex/katex.min.js?v=20260711-code-cleanup-v01128',
-  '/lib/katex/contrib/auto-render.min.js?v=20260711-code-cleanup-v01128',
-  '/lib/mermaid/mermaid.min.js?v=20260711-code-cleanup-v01128',
-  '/lib/highlight/styles/github-dark.min.css?v=20260711-code-cleanup-v01128',
-  '/lib/highlight/highlight.min.js?v=20260711-code-cleanup-v01128'
+  '/lib/marked.min.js?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/purify.min.js?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/katex/katex.min.css?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/katex/katex.min.js?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/katex/contrib/auto-render.min.js?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/mermaid/mermaid.min.js?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/highlight/styles/github-dark.min.css?v=20260713-2fa-token-purpose-hotfix-v01129',
+  '/lib/highlight/highlight.min.js?v=20260713-2fa-token-purpose-hotfix-v01129'
 ];
 
 function isAvatarRequest(url) {

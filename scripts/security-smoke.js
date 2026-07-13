@@ -3,6 +3,7 @@
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 
 const BASE_URL = (process.env.RAI_SECURITY_BASE_URL || 'http://127.0.0.1:3029').replace(/\/+$/, '');
@@ -10,6 +11,7 @@ const ADMIN_USERNAME = process.env.RAI_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.RAI_ADMIN_PASSWORD || '';
 const UPLOAD_DIR = process.env.RAI_SECURITY_UPLOAD_DIR || path.resolve(__dirname, '..', 'uploads');
 const SECURITY_DB_PATH = process.env.RAI_SECURITY_DB_PATH || '';
+const SECURITY_JWT_SECRET = process.env.RAI_SECURITY_JWT_SECRET || process.env.JWT_SECRET || '';
 const RUN_ID = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const EXPECTED_APP_VERSION = require('../package.json').version;
 const usersToDelete = [];
@@ -189,6 +191,20 @@ async function main() {
 
     const userA = await registerUser('a');
     const userB = await registerUser('b');
+    assert.strictEqual(decodeJwtPayload(userA.token).type, 'user_session', 'new app tokens must carry the user_session purpose');
+    assert.strictEqual(decodeJwtPayload(userB.token).type, 'user_session', 'all new app tokens must carry the user_session purpose');
+
+    if (SECURITY_JWT_SECRET) {
+      const legacyToken = jwt.sign(
+        { userId: userA.id, email: userA.email },
+        SECURITY_JWT_SECRET,
+        { expiresIn: '5m' }
+      );
+      const legacyVerify = await request('/api/auth/verify', {
+        headers: authHeaders(legacyToken)
+      });
+      assert.strictEqual(legacyVerify.response.status, 200, 'legacy normal tokens without a type must remain valid');
+    }
 
     const profileBeforeEmailChange = await request('/api/user/profile', {
       headers: authHeaders(userA.token)
@@ -268,8 +284,14 @@ async function main() {
     assert.ok(twoFactorSetup.body?.secret, '2FA setup should return manual secret');
     assert.ok(twoFactorSetup.body?.setupToken, '2FA setup should return setup token');
     const setupPayload = decodeJwtPayload(twoFactorSetup.body.setupToken);
+    assert.strictEqual(setupPayload.type, 'user_2fa_setup', '2FA setup token must keep its dedicated purpose');
     assert.strictEqual(setupPayload.secret, undefined, '2FA setup token should not expose the TOTP secret');
     assert.ok(setupPayload.setupId, '2FA setup token should reference a server-side setup challenge');
+
+    const setupTokenAsSession = await request('/api/auth/verify', {
+      headers: authHeaders(twoFactorSetup.body.setupToken)
+    });
+    assert.strictEqual(setupTokenAsSession.response.status, 403, '2FA setup token must not authenticate as a user session');
 
     const enable2fa = await request('/api/user/2fa/enable', {
       method: 'POST',
@@ -290,6 +312,17 @@ async function main() {
     assert.strictEqual(loginNeeds2fa.response.status, 200, '2FA password step should use challenge response');
     assert.strictEqual(loginNeeds2fa.body?.requiresTwoFactor, true, '2FA login should require Authenticator code');
     assert.ok(loginNeeds2fa.body?.twoFactorToken, '2FA login should return short-lived challenge token');
+    assert.strictEqual(decodeJwtPayload(loginNeeds2fa.body.twoFactorToken).type, 'user_login_2fa', '2FA challenge must keep its dedicated purpose');
+
+    const challengeAsSession = await request('/api/auth/verify', {
+      headers: authHeaders(loginNeeds2fa.body.twoFactorToken)
+    });
+    assert.strictEqual(challengeAsSession.response.status, 403, '2FA challenge must not authenticate through protected API middleware');
+
+    const challengeAsStreamSession = await request('/api/sessions/token-purpose-probe/stream-events', {
+      headers: authHeaders(loginNeeds2fa.body.twoFactorToken)
+    });
+    assert.strictEqual(challengeAsStreamSession.response.status, 403, '2FA challenge must not authenticate through the independent stream endpoint');
 
     const loginWith2fa = await request('/api/auth/login/2fa', {
       method: 'POST',
@@ -301,6 +334,7 @@ async function main() {
     });
     assert.strictEqual(loginWith2fa.response.status, 200, '2FA challenge should accept valid TOTP');
     assert.ok(loginWith2fa.body?.token, '2FA challenge should return app token');
+    assert.strictEqual(decodeJwtPayload(loginWith2fa.body.token).type, 'user_session', 'completed 2FA login must return a user_session token');
 
     const disable2fa = await request('/api/user/2fa/disable', {
       method: 'POST',

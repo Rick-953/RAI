@@ -14,6 +14,7 @@ const net = require('net');
 const https = require('https');  // 用于网页搜索
 const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
+const { signUserSessionToken, verifyUserSessionToken } = require('./user-session-token');
 
 const app = express();
 app.disable('x-powered-by');
@@ -8162,13 +8163,13 @@ const authenticateToken = (req, res, next) => {
         return res.status(401).json({ error: '未提供认证令牌' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: '令牌无效或已过期' });
-        }
+    try {
+        const user = verifyUserSessionToken(token, JWT_SECRET);
         req.user = user;
         next();
-    });
+    } catch (error) {
+        return res.status(403).json({ error: '令牌无效或已过期' });
+    }
 };
 
 const sessionStreamStates = new Map();
@@ -9214,10 +9215,10 @@ app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: 'invalid_or_expired_auth_code' });
         }
 
-        const token = jwt.sign(
-            { userId: codeRecord.user_id, email: codeRecord.email, provider: codeRecord.provider || 'ztx6d' },
+        const token = signUserSessionToken(
+            { userId: codeRecord.user_id, email: codeRecord.email },
             JWT_SECRET,
-            { expiresIn: '30d' }
+            { provider: codeRecord.provider || 'ztx6d' }
         );
 
         res.json({
@@ -9244,7 +9245,7 @@ async function buildAuthenticatedUserPayload(user, req, fingerprint = '') {
         });
     }
 
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
+    const token = signUserSessionToken(user, JWT_SECRET);
     const sessionRow = await dbGetAsync('SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ?', [user.id])
         .catch(() => ({ cnt: 0 }));
     const isNewUser = !sessionRow || Number(sessionRow.cnt || 0) === 0;
@@ -10084,11 +10085,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             [req.user.userId]
         );
 
-        const refreshedToken = jwt.sign(
-            { userId: updatedUser.id, email: updatedUser.email },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-        );
+        const refreshedToken = signUserSessionToken(updatedUser, JWT_SECRET);
 
         console.log(` 用户资料已更新: userId=${updatedUser.id}, email=${updatedUser.email}, username=${updatedUser.username}`);
         res.json({
@@ -10119,11 +10116,7 @@ app.post('/api/user/profile/email/verify', authenticateToken, async (req, res) =
             code
         });
 
-        const refreshedToken = jwt.sign(
-            { userId: updatedUser.id, email: updatedUser.email },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-        );
+        const refreshedToken = signUserSessionToken(updatedUser, JWT_SECRET);
 
         console.log(` 用户邮箱变更已确认: userId=${updatedUser.id}, email=${updatedUser.email}`);
         res.json({
@@ -10763,7 +10756,7 @@ app.get('/api/sessions/:id/stream-events', async (req, res) => {
 
     let user;
     try {
-        user = jwt.verify(rawToken, JWT_SECRET);
+        user = verifyUserSessionToken(rawToken, JWT_SECRET);
     } catch (error) {
         return res.status(403).json({ error: '令牌无效或已过期' });
     }

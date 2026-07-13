@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.11.28",
+  "version": "0.11.29",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,7 +9,8 @@
     "desktop:dev": "tauri dev",
     "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "desktop:build": "tauri build",
-    "security:smoke": "node scripts/security-smoke.js"
+    "security:smoke": "node scripts/security-smoke.js",
+    "test:auth-token-purpose": "node scripts/user-session-token-regression.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
