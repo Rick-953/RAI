@@ -112,6 +112,7 @@
   --app-height: 100vh;
   --composer-height: 200px;
   --composer-bottom-gap: 0px;
+  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md));
   --keyboard-offset: 0px;
   --viewport-offset-top: 0px;
 }
@@ -221,8 +222,8 @@ body.mobile-viewport-managed .main-content {
 }
 
 body.mobile-viewport-managed .chat-container {
-  padding-bottom: calc(min(var(--composer-height, 160px), 72px) + var(--spacing-xs) + var(--composer-bottom-gap, 0px) + env(safe-area-inset-bottom, 0px));
-  scroll-padding-bottom: calc(min(var(--composer-height, 160px), 72px) + 24px + var(--composer-bottom-gap, 0px) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-content-bottom-clearance);
+  scroll-padding-bottom: var(--chat-content-bottom-clearance);
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
 }
@@ -2415,15 +2416,20 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 
 .chat-container {
   flex: 1;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
   overflow-y: auto;
   overflow-x: hidden;
   padding: var(--spacing-md);
-  padding-bottom: calc(min(var(--composer-height, 160px), 72px) + var(--spacing-xs) + var(--composer-bottom-gap, 0px));
+  padding-bottom: var(--chat-content-bottom-clearance);
   display: flex;
   flex-direction: column;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
-  scroll-padding-bottom: calc(min(var(--composer-height, 160px), 72px) + 24px + var(--composer-bottom-gap, 0px));
+  scroll-padding-bottom: var(--chat-content-bottom-clearance);
 }
 
 .chat-container::-webkit-scrollbar {
@@ -2743,16 +2749,17 @@ body.keyboard-open .chat-edge-blur-bottom {
 }
 
 .messages-list {
+  flex: 0 0 auto;
   max-width: 800px;
   margin: 0 auto;
   width: 100%;
   min-width: 0;
   padding-top: var(--spacing-lg);
   padding-bottom: var(--spacing-md);
-  overflow-x: hidden;
-  /* 防止 flex 子元素溢出 */
+  overflow: visible;
+  /* 横向裁剪由全宽 chat-container 统一负责，避免这里形成第二个纵向滚动容器。 */
   overflow-wrap: break-word;
-  scroll-margin-bottom: calc(min(var(--composer-height, 160px), 72px) + 24px + var(--composer-bottom-gap, 0px));
+  scroll-margin-bottom: var(--chat-content-bottom-clearance);
 }
 
 .message {
@@ -2764,7 +2771,7 @@ body.keyboard-open .chat-edge-blur-bottom {
   min-width: 0;
   animation: messageSlideIn 0.3s ease-out;
   scroll-margin-top: 24px;
-  scroll-margin-bottom: calc(min(var(--composer-height, 160px), 72px) + 24px + var(--composer-bottom-gap, 0px));
+  scroll-margin-bottom: var(--chat-content-bottom-clearance);
 }
 
 /* 用户消息居右对齐 */
@@ -8256,7 +8263,7 @@ body {
     padding-top: 0;
     padding-left: 0;
     padding-right: 0;
-    padding-bottom: var(--spacing-xs);
+    padding-bottom: var(--chat-content-bottom-clearance);
     height: auto;
     min-height: 0;
   }
@@ -8649,8 +8656,8 @@ body {
   .chat-container {
     padding-left: 8px;
     padding-right: 8px;
-    padding-bottom: 0;
-    scroll-padding-bottom: calc(var(--composer-height, 120px) + var(--spacing-lg));
+    padding-bottom: var(--chat-content-bottom-clearance);
+    scroll-padding-bottom: var(--chat-content-bottom-clearance);
   }
 
   .input-area {

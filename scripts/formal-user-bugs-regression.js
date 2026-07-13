@@ -117,6 +117,7 @@ function testMenuHitAreasAndGeometry() {
   assert.match(index, /<div class="research-mode-header" role="button" tabindex="0"\s+onclick="toggleResearchModeFromMenu\(event\)" onkeydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(app, /function\s+handleComposerMenuItemKeydown\(event\)[\s\S]*?event\.key\s*!==\s*'Enter'[\s\S]*?event\.key\s*!==\s*' '[\s\S]*?event\.currentTarget\.click\(\)/);
   assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeChatFlowModelMenu\(\{ restoreFocus: true \}\)/);
+  assert.match(app, /focusableItems = Array\.from[\s\S]*?!item\.closest\('\[aria-hidden="true"\]'\)/);
   assert.match(app, /querySelectorAll\('#modelDropdownMenu \.model-menu-item, #chatflowModelMenu \.model-menu-item, \.model-select-custom'\)/);
   assert.match(index, /id="moreBtn"[^>]*data-i18n-aria-label="more-tools"[^>]*aria-controls="moreMenu"[^>]*aria-expanded="false"/);
   assert.match(app, /function\s+handleFileUploadFromMenu\(\)[\s\S]*?closeMoreMenu\(\)[\s\S]*?handleFileUpload\(\)/);
@@ -153,6 +154,32 @@ function testNeutralFocus() {
   for (const match of styles.matchAll(focusRule)) {
     assert.doesNotMatch(match[2], /color-saturn-yellow|#ffc107|#f59e0b/i, `orange/yellow focus style remains in: ${match[1].trim()}`);
   }
+}
+
+function testChatViewportScrollAndComposerClearance() {
+  const chatContainerRule = cssRule('.chat-container', 'max-width: none');
+  assert.match(chatContainerRule, /width:\s*100%/);
+  assert.match(chatContainerRule, /max-width:\s*none/);
+  assert.match(chatContainerRule, /overflow-y:\s*auto/);
+  assert.match(chatContainerRule, /padding-bottom:\s*var\(--chat-content-bottom-clearance\)/);
+  assert.match(chatContainerRule, /scroll-padding-bottom:\s*var\(--chat-content-bottom-clearance\)/);
+
+  const messagesRule = cssRule('.messages-list', 'flex: 0 0 auto');
+  assert.match(messagesRule, /flex:\s*0 0 auto/);
+  assert.match(messagesRule, /overflow:\s*visible/);
+  assert.doesNotMatch(messagesRule, /overflow-x:\s*hidden/);
+
+  const scrollElement = extractNamedFunction(app, 'getChatScrollElement');
+  assert.match(scrollElement, /return document\.getElementById\('chatContainer'\)/);
+  assert.doesNotMatch(scrollElement, /messagesList/);
+  const primaryTarget = extractNamedFunction(app, 'isPrimaryChatScrollTarget');
+  assert.match(primaryTarget, /target\.id === 'chatContainer'/);
+  assert.doesNotMatch(primaryTarget, /messagesList/);
+
+  const syncMetrics = app.slice(app.indexOf('syncComposerMetrics() {'), app.indexOf('\n  handleViewportChange()', app.indexOf('syncComposerMetrics() {')));
+  assert.match(syncMetrics, /this\.inputArea\.getBoundingClientRect\(\)\.height/);
+  assert.match(syncMetrics, /heightChanged && appState\.scrollFollowMode === 'following'/);
+  assert.match(syncMetrics, /requestAnimationFrame\(\(\) => scrollToBottom\(false\)\)/);
 }
 
 function testLocalNotificationAsset() {
@@ -202,11 +229,11 @@ function testDomainPreparation() {
 }
 
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.31');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.31'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260713-menu-focus-hotfix-v01131'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.31/);
-  assert.match(serviceWorker, /0\.11\.31-20260713-menu-focus-hotfix-v01131/);
+  assert.equal(packageJson.version, '0.11.32');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.32'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260713-chat-scroll-clearance-v01132'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.32/);
+  assert.match(serviceWorker, /0\.11\.32-20260713-chat-scroll-clearance-v01132/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
 
@@ -218,6 +245,7 @@ function main() {
     testInternetDefaults,
     testMenuHitAreasAndGeometry,
     testNeutralFocus,
+    testChatViewportScrollAndComposerClearance,
     testLocalNotificationAsset,
     testDomainPreparation,
     testVersionContract
@@ -240,6 +268,7 @@ module.exports = {
   testInternetDefaults,
   testMenuHitAreasAndGeometry,
   testNeutralFocus,
+  testChatViewportScrollAndComposerClearance,
   testLocalNotificationAsset,
   testDomainPreparation,
   testVersionContract

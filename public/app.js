@@ -2083,8 +2083,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.31';
-const RAI_BUILD_ID = '20260713-menu-focus-hotfix-v01131';
+const RAI_APP_VERSION = '0.11.32';
+const RAI_BUILD_ID = '20260713-chat-scroll-clearance-v01132';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4739,6 +4739,26 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-13',
+    version: 'v0.11.32',
+    zh: {
+      summary: '修复对话滚动条位置和最后一条消息被输入框遮挡。',
+      details: [
+        '对话只保留全宽主视口滚动，滚动条固定在对话区域最右侧，不再贴着居中的正文。',
+        '底部可滚动留白跟随完整输入区实测高度，来源和操作按钮可完整滚到悬浮输入框上方。',
+        '输入框增高时仅在跟随最新消息模式继续贴底，用户手动上滑时不会抢回底部。'
+      ]
+    },
+    en: {
+      summary: 'Fixed the chat scrollbar position and the final message being covered by the composer.',
+      details: [
+        'The full-width chat viewport is now the only message scroller, keeping its scrollbar at the far edge instead of beside centered text.',
+        'Real bottom clearance follows the measured composer height so sources and action buttons can scroll fully above it.',
+        'Composer growth keeps following chats pinned to the bottom without overriding users who intentionally scrolled up.'
+      ]
+    }
+  },
   {
     date: '2026-07-13',
     version: 'v0.11.31',
@@ -9676,7 +9696,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.31 初始化 (user UI, retired provider removal, domain preparation)');
+  console.log(' RAI v0.11.32 初始化 (user UI, retired provider removal, domain preparation)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -9945,7 +9965,7 @@ function handleComposerMenuItemKeydown(event) {
     const menu = event.currentTarget.closest('#moreMenu, #modelDropdownMenu, #chatflowModelMenu');
     if (!menu) return;
     const focusableItems = Array.from(menu.querySelectorAll('[role="button"][tabindex="0"], button:not([disabled])'))
-      .filter((item) => item.getClientRects().length > 0 && item.getAttribute('aria-hidden') !== 'true');
+      .filter((item) => item.getClientRects().length > 0 && !item.closest('[aria-hidden="true"]'));
     const currentIndex = focusableItems.indexOf(event.currentTarget);
     const leavingBackward = event.shiftKey && currentIndex === 0;
     const leavingForward = !event.shiftKey && currentIndex === focusableItems.length - 1;
@@ -22366,6 +22386,7 @@ class MobileKeyboardHandler {
     this.chatContainer = document.getElementById('chatContainer');
     this.rafId = null;
     this.composerObserver = null;
+    this.lastComposerHeight = 0;
 
     this.handleViewportChange = this.handleViewportChange.bind(this);
     this.handleFocusIn = this.handleFocusIn.bind(this);
@@ -22470,10 +22491,14 @@ class MobileKeyboardHandler {
   syncComposerMetrics() {
     if (!this.inputArea) return;
 
-    const measurementTarget = this.inputArea.querySelector('.input-container, .input-wrapper') || this.inputArea;
-    const composerHeight = Math.ceil(measurementTarget.getBoundingClientRect().height || 0);
+    const composerHeight = Math.ceil(this.inputArea.getBoundingClientRect().height || 0);
     if (composerHeight > 0) {
+      const heightChanged = Math.abs(composerHeight - this.lastComposerHeight) > 1;
+      this.lastComposerHeight = composerHeight;
       this.root.style.setProperty('--composer-height', `${composerHeight}px`);
+      if (heightChanged && appState.scrollFollowMode === 'following') {
+        requestAnimationFrame(() => scrollToBottom(false));
+      }
     }
   }
 
@@ -23030,11 +23055,6 @@ function initDragAndDrop() {
 
 // 获取所有消息（包括用户和AI）
 function getChatScrollElement() {
-  const messagesList = document.getElementById('messagesList');
-  if (messagesList && messagesList.style.display !== 'none') {
-    return messagesList;
-  }
-
   return document.getElementById('chatContainer');
 }
 
@@ -23042,7 +23062,7 @@ function isPrimaryChatScrollTarget(target) {
   return Boolean(
     target &&
     target instanceof Element &&
-    (target.id === 'messagesList' || target.id === 'chatContainer')
+    target.id === 'chatContainer'
   );
 }
 
