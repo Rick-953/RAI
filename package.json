@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.11.33",
+  "version": "0.11.35",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,11 +11,13 @@
     "desktop:build": "tauri build",
     "security:smoke": "node scripts/security-smoke.js",
     "test:auth-token-purpose": "node scripts/user-session-token-regression.js",
+    "test:passkeys": "node scripts/passkey-regression.js",
     "test:formal-poe": "node scripts/formal-poe-removal-regression.js",
     "test:formal-user-bugs": "node scripts/formal-user-bugs-regression.js",
-    "test:formal-audit": "npm run check && npm run test:auth-token-purpose && npm run test:formal-poe && npm run test:formal-user-bugs"
+    "test:formal-audit": "npm run check && npm run test:auth-token-purpose && npm run test:passkeys && npm run test:formal-poe && npm run test:formal-user-bugs"
   },
   "dependencies": {
+    "@simplewebauthn/server": "13.3.2",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "express": "^4.22.2",

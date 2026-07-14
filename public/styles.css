@@ -3358,6 +3358,10 @@ body.keyboard-open .chat-edge-blur-bottom {
   box-sizing: border-box;
 }
 
+.meta-badge[hidden] {
+  display: none !important;
+}
+
 .meta-badge span {
   min-width: 0;
   overflow: hidden;
@@ -7860,6 +7864,74 @@ body {
   border-color: var(--border-dark);
 }
 
+.auth-passkey-entry {
+  margin-top: var(--spacing-md);
+}
+
+.auth-passkey-entry[hidden] {
+  display: none;
+}
+
+.auth-passkey-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.auth-passkey-divider::before,
+.auth-passkey-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+.auth-passkey-btn {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  transition: transform 0.2s ease, opacity 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.auth-passkey-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--border-dark);
+  background: var(--input-bg);
+}
+
+.auth-passkey-btn:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.auth-passkey-btn:focus-visible,
+.settings-passkey-card button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.auth-passkey-hint {
+  margin: 8px 2px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .auth-switch {
   text-align: center;
   margin-top: var(--spacing-lg);
@@ -12311,6 +12383,149 @@ body.chatflow-iframe-mode .message-content::selection {
   background: var(--settings-card-bg);
 }
 
+.settings-passkey-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: var(--settings-card-bg);
+}
+
+.settings-passkey-card:empty {
+  display: none;
+}
+
+.settings-passkey-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-passkey-header > div {
+  min-width: 0;
+}
+
+.settings-passkey-header > .settings-inline-save {
+  flex: 0 0 auto;
+}
+
+.settings-passkey-notice,
+.settings-passkey-empty,
+.settings-passkey-load-error p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-passkey-notice {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--settings-input-bg);
+}
+
+.settings-passkey-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--settings-divider);
+}
+
+.settings-passkey-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  background: var(--settings-card-hover);
+}
+
+.settings-passkey-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.settings-passkey-name-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-passkey-name-row strong {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 740;
+  overflow-wrap: anywhere;
+}
+
+.settings-passkey-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.settings-passkey-status.enabled {
+  background: rgba(255, 255, 255, 0.86);
+  color: #111827;
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.08);
+}
+
+[data-theme="light"] .settings-passkey-status.enabled {
+  background: rgba(17, 24, 39, 0.08);
+  color: #111827;
+}
+
+.settings-passkey-status.pending {
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: color-mix(in srgb, #f59e0b 82%, var(--text-primary));
+}
+
+.settings-passkey-meta {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.settings-passkey-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.settings-passkey-row-actions .settings-inline-save {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-passkey-remove {
+  color: var(--error-color);
+}
+
+.settings-passkey-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .settings-two-factor-header {
   display: flex;
   align-items: flex-start;
@@ -14086,6 +14301,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
 	  .settings-avatar-card,
 	  .settings-two-factor-card,
+	  .settings-passkey-card,
 	  .settings-membership-section,
 	  .ztx6d-binding-card,
 	  .settings-about-card,
@@ -14143,6 +14359,7 @@ body.chatflow-iframe-mode .message-content::selection {
 	  }
 
 	  .settings-two-factor-header,
+	  .settings-passkey-header,
 	  .settings-two-factor-setup-body,
 	  .settings-two-factor-code-row {
 	    grid-template-columns: 1fr;
@@ -14152,7 +14369,12 @@ body.chatflow-iframe-mode .message-content::selection {
 	    display: grid;
 	  }
 
-	  .settings-two-factor-status {
+	  .settings-passkey-header {
+	    display: grid;
+	  }
+
+	  .settings-two-factor-status,
+	  .settings-passkey-status {
 	    justify-self: start;
 	  }
 
@@ -14549,17 +14771,21 @@ body.chatflow-iframe-mode .message-content::selection {
 
 .settings-desktop-logout-link {
   width: 100%;
-  min-height: 40px;
+  min-height: 36px;
   margin-top: auto;
+  padding: 0 10px;
   flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
   border: 0;
   border-radius: 10px;
-  background: var(--settings-card-bg);
-  color: var(--text-primary);
+  background: transparent;
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: left;
   transition: background 0.18s ease, color 0.18s ease;
 }
 
@@ -14703,6 +14929,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
 .settings-avatar-card,
 .settings-two-factor-card,
+.settings-passkey-card,
 .settings-danger-zone,
 .settings-membership-section,
 .ztx6d-binding-card,
@@ -15133,6 +15360,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-avatar-card,
   .settings-two-factor-card,
+  .settings-passkey-card,
   .settings-danger-zone,
   .settings-membership-section,
   .ztx6d-binding-card,
@@ -15158,6 +15386,21 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-section-row {
     align-items: stretch;
+  }
+
+  .settings-passkey-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-passkey-row-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .settings-passkey-row-actions .settings-inline-save,
+  .settings-passkey-header > .settings-inline-save {
+    width: 100%;
   }
 }
 

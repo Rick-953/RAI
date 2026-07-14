@@ -3,6 +3,12 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const {
+    generateAuthenticationOptions,
+    generateRegistrationOptions,
+    verifyAuthenticationResponse,
+    verifyRegistrationResponse
+} = require('@simplewebauthn/server');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const QRCode = require('qrcode');
@@ -64,6 +70,7 @@ app.set('trust proxy', trustProxySetting);
 const PORT = cleanEnvValue(process.env.PORT) || 3009;
 const HOST = (cleanEnvValue(process.env.HOST) || cleanEnvValue(process.env.BIND_HOST) || '127.0.0.1').trim();
 const IS_PRODUCTION = cleanEnvValue(process.env.NODE_ENV).toLowerCase() === 'production';
+const PASSKEY_ALLOW_LOCALHOST = parseBooleanEnv(process.env.RAI_PASSKEY_ALLOW_LOCALHOST, !IS_PRODUCTION);
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
 const MAX_CONCURRENT_REQUESTS_PER_USER = Math.max(
     1,
@@ -244,6 +251,14 @@ const BRAND_NAME = cleanEnvValue(process.env.RAI_BRAND_NAME) || 'RAI';
 const BRAND_SHORT_NAME = cleanEnvValue(process.env.RAI_BRAND_SHORT_NAME) || BRAND_NAME;
 const BRAND_BADGE = cleanEnvValue(process.env.RAI_BRAND_BADGE);
 const BRAND_TITLE = cleanEnvValue(process.env.RAI_BRAND_TITLE) || [BRAND_NAME, BRAND_BADGE].filter(Boolean).join(' ') || BRAND_NAME;
+const PASSKEY_RP_NAME = cleanEnvValue(process.env.RAI_PASSKEY_RP_NAME) || BRAND_TITLE || 'RAI';
+const PASSKEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const PASSKEY_REAUTH_TTL_MS = 5 * 60 * 1000;
+const PASSKEY_RECENT_LOGIN_MAX_AGE_SECONDS = 5 * 60;
+const PASSKEY_LABEL_MAX_LENGTH = 64;
+const PASSKEY_MAX_CREDENTIALS_PER_USER = 10;
+const PASSKEY_LOGIN_COOKIE = 'rai_passkey_login';
+const PASSKEY_ALLOWED_TRANSPORTS = new Set(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']);
 const OPENROUTER_HTTP_REFERER = cleanEnvValue(process.env.OPENROUTER_HTTP_REFERER) || PUBLIC_BASE_URL || 'https://rai.rick.sarl';
 const OPENROUTER_APP_TITLE = cleanEnvValue(process.env.OPENROUTER_APP_TITLE) || BRAND_TITLE || 'RAI';
 const DEFAULT_DOMAIN_NOTICE_ENABLED = parseBooleanEnv(process.env.RAI_DEFAULT_DOMAIN_NOTICE_ENABLED, true);
@@ -373,9 +388,13 @@ function appendRaiRuntimeReport(entry = {}) {
         ''
     ].join('\n');
 
-    fs.promises.mkdir(path.dirname(RAI_RUNTIME_REPORT_PATH), { recursive: true })
+    return fs.promises.mkdir(path.dirname(RAI_RUNTIME_REPORT_PATH), { recursive: true })
         .then(() => fs.promises.appendFile(RAI_RUNTIME_REPORT_PATH, block, 'utf8'))
-        .catch((error) => console.warn(' 写入 RAI 运行报告失败:', error.message));
+        .then(() => true)
+        .catch((error) => {
+            console.warn(' 写入 RAI 运行报告失败:', error.message);
+            return false;
+        });
 }
 
 function buildUserFacingApiFailureMessage() {
@@ -600,9 +619,14 @@ async function consumeUserTwoFactorSetupChallenge({ setupId, userId }) {
     }
 }
 
-function buildUserLoginTwoFactorToken(user) {
+function buildUserLoginTwoFactorToken(user, options = {}) {
     return jwt.sign(
-        { type: 'user_login_2fa', userId: user.id, email: user.email },
+        {
+            type: 'user_login_2fa',
+            userId: user.id,
+            email: user.email,
+            primaryAuth: String(options.primaryAuth || '').trim() || undefined
+        },
         JWT_SECRET,
         { expiresIn: TWO_FACTOR_LOGIN_TTL }
     );
@@ -6736,6 +6760,26 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
+// Passkey 仪式使用独立连接，避免其一次性 challenge 事务与聊天/配额事务交错。
+const passkeyDb = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+        console.error(' Passkey 数据库连接失败:', err);
+        process.exit(1);
+    }
+});
+passkeyDb.serialize(() => {
+    passkeyDb.run('PRAGMA foreign_keys=ON;');
+    passkeyDb.run('PRAGMA busy_timeout=5000;');
+    passkeyDb.run('PRAGMA synchronous=NORMAL;');
+});
+
+let resolveDatabaseSchemaReady;
+let rejectDatabaseSchemaReady;
+const databaseSchemaReady = new Promise((resolve, reject) => {
+    resolveDatabaseSchemaReady = resolve;
+    rejectDatabaseSchemaReady = reject;
+});
+
 // 创建所有表
 db.serialize(() => {
     // 用户表
@@ -7009,6 +7053,58 @@ db.serialize(() => {
     setup_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     secret TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS webauthn_user_handles (
+    user_id INTEGER PRIMARY KEY,
+    user_handle TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    transports_json TEXT NOT NULL DEFAULT '[]',
+    credential_device_type TEXT NOT NULL CHECK (credential_device_type IN ('singleDevice', 'multiDevice')),
+    credential_backed_up INTEGER NOT NULL DEFAULT 0 CHECK (credential_backed_up IN (0, 1)),
+    aaguid TEXT,
+    rp_id TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    label TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    verified_at INTEGER,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS webauthn_challenges (
+    challenge_hash TEXT PRIMARY KEY,
+    challenge TEXT NOT NULL,
+    ceremony TEXT NOT NULL CHECK (ceremony IN ('registration', 'authentication', 'activation')),
+    user_id INTEGER,
+    expected_rp_id TEXT NOT NULL,
+    expected_origin TEXT NOT NULL,
+    user_agent_hash TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS user_reauth_grants (
+    grant_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('passkey:create', 'passkey:delete')),
+    auth_method TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     consumed_at INTEGER,
@@ -7468,6 +7564,18 @@ db.serialize(() => {
             }
         });
 
+        db.run(`CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id, rp_id, created_at DESC)`, (err) => {
+            if (err) console.warn(' 创建 Passkey 用户索引失败:', err.message);
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at, consumed_at)`, (err) => {
+            if (err) console.warn(' 创建 Passkey challenge 索引失败:', err.message);
+        });
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_user_reauth_grants_expiry ON user_reauth_grants(user_id, scope, expires_at, consumed_at)`, (err) => {
+            if (err) console.warn(' 创建重新认证授权索引失败:', err.message);
+        });
+
         db.run(`CREATE INDEX IF NOT EXISTS idx_message_feedback_created ON message_feedback(created_at DESC)`, (err) => {
             if (err) {
                 console.warn(` 创建message_feedback时间索引失败:`, err.message);
@@ -7585,6 +7693,15 @@ db.serialize(() => {
 
         console.log(' VIP会员系统字段就绪');
     });
+
+    db.get('SELECT 1 AS ready', (err) => {
+        if (err) {
+            rejectDatabaseSchemaReady(err);
+            return;
+        }
+        resolveDatabaseSchemaReady(true);
+        console.log(' 数据库结构初始化完成');
+    });
 });
 
 function buildAllowedCorsOrigins() {
@@ -7655,7 +7772,10 @@ function buildScriptSrcPolicy() {
 function setSecurityHeaders(req, res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()');
+    res.setHeader(
+        'Permissions-Policy',
+        'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), publickey-credentials-create=(self), publickey-credentials-get=(self)'
+    );
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     res.setHeader('Content-Security-Policy', [
         "default-src 'self'",
@@ -8480,6 +8600,10 @@ async function deleteUserDataCascade(userId, options = {}) {
         await dbRunAsync('DELETE FROM auth_ztx6d_rt WHERE bind_user_id = ?', [numericUserId]);
         await dbRunAsync('DELETE FROM auth_email_codes WHERE user_id = ? OR LOWER(email) = LOWER(?)', [numericUserId, user.email || '']);
         await dbRunAsync('DELETE FROM user_two_factor_setup_challenges WHERE user_id = ?', [numericUserId]);
+        await dbRunAsync('DELETE FROM user_reauth_grants WHERE user_id = ?', [numericUserId]);
+        await dbRunAsync('DELETE FROM webauthn_challenges WHERE user_id = ?', [numericUserId]);
+        await dbRunAsync('DELETE FROM webauthn_credentials WHERE user_id = ?', [numericUserId]);
+        await dbRunAsync('DELETE FROM webauthn_user_handles WHERE user_id = ?', [numericUserId]);
         await dbRunAsync('UPDATE users SET pending_referrer_id = NULL WHERE pending_referrer_id = ?', [numericUserId]);
 
         const result = await dbRunAsync('DELETE FROM users WHERE id = ?', [numericUserId]);
@@ -9027,7 +9151,7 @@ app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
 });
 
 // ==================== 认证路由 ====================
-async function buildAuthenticatedUserPayload(user, req, fingerprint = '') {
+async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authClaims = {}) {
     await dbRunAsync('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
     if (fingerprint) {
@@ -9039,7 +9163,7 @@ async function buildAuthenticatedUserPayload(user, req, fingerprint = '') {
         });
     }
 
-    const token = signUserSessionToken(user, JWT_SECRET);
+    const token = signUserSessionToken(user, JWT_SECRET, authClaims);
     const sessionRow = await dbGetAsync('SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ?', [user.id])
         .catch(() => ({ cnt: 0 }));
     const isNewUser = !sessionRow || Number(sessionRow.cnt || 0) === 0;
@@ -9134,7 +9258,7 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
     }
 
     const updatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [userId]);
-    const payload = await buildAuthenticatedUserPayload(updatedUser, req, fingerprint);
+    const payload = await buildAuthenticatedUserPayload(updatedUser, req, fingerprint, { auth_method: 'registration' });
     return {
         ...payload,
         isNewUser: true,
@@ -9425,7 +9549,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
                 if (!verifyTotpCode(user.two_factor_secret, inlineTwoFactorCode)) {
                     return res.status(401).json({ success: false, error: 'Authenticator 验证码无效' });
                 }
-                const payload = await buildAuthenticatedUserPayload(user, req, fingerprint);
+                const payload = await buildAuthenticatedUserPayload(user, req, fingerprint, { auth_method: 'password' });
                 console.log(' 登录成功(含二步验证), 用户ID:', user.id);
                 return res.json(payload);
             }
@@ -9433,12 +9557,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
             return res.json({
                 success: false,
                 requiresTwoFactor: true,
-                twoFactorToken: buildUserLoginTwoFactorToken(user),
+                twoFactorToken: buildUserLoginTwoFactorToken(user, { primaryAuth: 'password' }),
                 message: '请输入 Authenticator 验证码'
             });
         }
 
-        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint);
+        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint, { auth_method: 'password' });
         console.log(' 登录成功, 用户ID:', user.id);
         return res.json(payload);
     } catch (error) {
@@ -9519,12 +9643,12 @@ app.post('/api/auth/login/email-code/verify', authLimiter, async (req, res) => {
             return res.json({
                 success: false,
                 requiresTwoFactor: true,
-                twoFactorToken: buildUserLoginTwoFactorToken(user),
+                twoFactorToken: buildUserLoginTwoFactorToken(user, { primaryAuth: 'email_code' }),
                 message: '请输入 Authenticator 验证码'
             });
         }
 
-        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint);
+        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint, { auth_method: 'email_code' });
         console.log(' 邮箱验证码登录成功, 用户ID:', user.id);
         return res.json(payload);
     } catch (error) {
@@ -9615,12 +9739,12 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
                 success: true,
                 passwordReset: true,
                 requiresTwoFactor: true,
-                twoFactorToken: buildUserLoginTwoFactorToken(updatedUser),
+                twoFactorToken: buildUserLoginTwoFactorToken(updatedUser, { primaryAuth: 'password_reset' }),
                 message: '密码已重置，请输入 Authenticator 验证码完成登录'
             });
         }
 
-        const payload = await buildAuthenticatedUserPayload(updatedUser, req, fingerprint);
+        const payload = await buildAuthenticatedUserPayload(updatedUser, req, fingerprint, { auth_method: 'password_reset' });
         console.log(' 重置密码后直接登录, 用户ID:', updatedUser.id);
         return res.json({
             ...payload,
@@ -9663,12 +9787,172 @@ app.post('/api/auth/login/2fa', authLimiter, async (req, res) => {
             return res.status(401).json({ success: false, error: 'Authenticator 验证码无效' });
         }
 
-        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint);
+        const primaryAuth = ['password', 'email_code', 'password_reset', 'passkey'].includes(String(decoded.primaryAuth || ''))
+            ? String(decoded.primaryAuth)
+            : 'password';
+        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint, { auth_method: primaryAuth });
         console.log(' 二步验证登录成功, 用户ID:', user.id);
         return res.json(payload);
     } catch (error) {
         console.error(' 二步验证登录失败:', error);
         res.status(500).json({ success: false, error: '二步验证失败' });
+    }
+});
+
+app.post('/api/auth/passkeys/authentication/options', authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        const context = getPasskeyRequestContext(req);
+        setPasskeyNoStore(res);
+        await cleanupPasskeyEphemeralState();
+
+        const cookies = parseCookieHeader(req);
+        const previousToken = String(cookies[PASSKEY_LOGIN_COOKIE] || '');
+        if (previousToken) {
+            await runPasskeySerialized(() => passkeyDbRunAsync(
+                `UPDATE webauthn_challenges
+                 SET consumed_at = COALESCE(consumed_at, ?)
+                 WHERE challenge_hash = ? AND ceremony = 'authentication'`,
+                [Date.now(), hashOpaquePasskeyToken(previousToken)]
+            )).catch(() => null);
+        }
+
+        const options = await generateAuthenticationOptions({
+            rpID: context.rpID,
+            userVerification: 'required'
+        });
+        const token = createOpaquePasskeyToken();
+        await createPasskeyChallengeRecord({
+            token,
+            challenge: options.challenge,
+            ceremony: 'authentication',
+            context,
+            req
+        });
+        setPasskeyLoginCookie(res, token, context.secure);
+        return res.json({ success: true, options, rpId: context.rpID });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '无法开始通行密钥登录');
+    }
+});
+
+app.post('/api/auth/passkeys/authentication/verify', authLimiter, async (req, res) => {
+    let context = null;
+    try {
+        await databaseSchemaReady;
+        context = getPasskeyRequestContext(req);
+        setPasskeyNoStore(res);
+        clearPasskeyLoginCookie(res, context.secure);
+
+        const token = String(parseCookieHeader(req)[PASSKEY_LOGIN_COOKIE] || '');
+        const response = req.body?.response;
+        if (!token) {
+            throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_authentication_invalid');
+        }
+
+        const challengeRow = await consumePasskeyChallengeAttempt({
+            token,
+            ceremony: 'authentication',
+            context,
+            req
+        });
+        const credentialId = normalizePasskeyCredentialId(response?.id);
+        if (!credentialId || hasDisallowedCrossOriginWebAuthnClientData(response)) {
+            throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_authentication_invalid');
+        }
+
+        const authenticated = await runPasskeyTransaction(async () => {
+            const row = await passkeyDbGetAsync(
+                `SELECT c.*, h.user_handle,
+                        u.id AS account_id, u.email, u.username, u.avatar_url,
+                        u.email_verified, u.two_factor_enabled, u.two_factor_secret
+                 FROM webauthn_credentials c
+                 JOIN webauthn_user_handles h ON h.user_id = c.user_id
+                 JOIN users u ON u.id = c.user_id
+                 WHERE c.credential_id = ? AND c.rp_id = ? AND c.enabled = 1`,
+                [credentialId, context.rpID]
+            );
+            if (!row || Number(row.email_verified ?? 1) !== 1) {
+                throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_credential_unknown');
+            }
+
+            const userHandle = String(response?.response?.userHandle || '');
+            if (!userHandle || !passkeyValuesEqual(userHandle, row.user_handle)) {
+                throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_user_handle_mismatch');
+            }
+
+            let verification;
+            try {
+                verification = await verifyAuthenticationResponse({
+                    response,
+                    expectedChallenge: String(challengeRow.challenge),
+                    expectedOrigin: context.origin,
+                    expectedRPID: context.rpID,
+                    credential: buildStoredPasskeyCredential(row),
+                    requireUserVerification: true
+                });
+            } catch (verificationError) {
+                throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_assertion_rejected');
+            }
+
+            if (!verification?.verified || !verification.authenticationInfo) {
+                throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_assertion_unverified');
+            }
+
+            const info = verification.authenticationInfo;
+            if (
+                info.credentialDeviceType
+                && String(info.credentialDeviceType) !== String(row.credential_device_type)
+            ) {
+                throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_device_type_changed');
+            }
+
+            await passkeyDbRunAsync(
+                `UPDATE webauthn_credentials
+                 SET sign_count = ?, credential_backed_up = ?, last_used_at = ?
+                 WHERE id = ?`,
+                [
+                    Math.max(0, Number(info.newCounter || 0)),
+                    info.credentialBackedUp ? 1 : 0,
+                    Date.now(),
+                    row.id
+                ]
+            );
+
+            return {
+                user: {
+                    id: row.account_id,
+                    email: row.email,
+                    username: row.username,
+                    avatar_url: row.avatar_url,
+                    email_verified: row.email_verified,
+                    two_factor_enabled: row.two_factor_enabled,
+                    two_factor_secret: row.two_factor_secret
+                }
+            };
+        });
+
+        const user = authenticated.user;
+        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
+        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1
+            && !!normalizeTotpSecret(user.two_factor_secret);
+        if (twoFactorEnabled) {
+            return res.json({
+                success: true,
+                requiresTwoFactor: true,
+                twoFactorToken: buildUserLoginTwoFactorToken(user, { primaryAuth: 'passkey' }),
+                message: '请输入 Authenticator 验证码完成登录'
+            });
+        }
+
+        const payload = await buildAuthenticatedUserPayload(user, req, fingerprint, { auth_method: 'passkey' });
+        return res.json(payload);
+    } catch (error) {
+        if (!error?.statusCode) {
+            console.error(' 通行密钥登录验证失败:', error);
+            return res.status(500).json({ success: false, error: '通行密钥登录暂时不可用' });
+        }
+        return sendPasskeyRouteError(res, error, '无法验证通行密钥');
     }
 });
 
@@ -9961,6 +10245,459 @@ app.post('/api/user/profile/email/verify-current', authenticateToken, async (req
     }
 });
 
+app.post('/api/user/passkeys/reauth', authenticateToken, authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        setPasskeyNoStore(res);
+        const scope = String(req.body?.scope || '').trim();
+        if (!['passkey:create', 'passkey:delete'].includes(scope)) {
+            throw buildPasskeyHttpError('安全验证用途无效', 400, 'passkey_reauth_scope_invalid');
+        }
+
+        const user = await dbGetAsync(
+            `SELECT id, email, password_hash, external_provider,
+                    two_factor_enabled, two_factor_secret
+             FROM users WHERE id = ?`,
+            [req.user.userId]
+        );
+        if (!user) {
+            throw buildPasskeyHttpError('用户不存在', 404, 'passkey_user_not_found');
+        }
+
+        const authMethod = await verifyPasskeyReauthentication(req, user, req.body || {});
+        const grant = await createPasskeyReauthGrant(user.id, scope, authMethod);
+        return res.json({ success: true, grant, expiresIn: Math.floor(PASSKEY_REAUTH_TTL_MS / 1000) });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '安全验证失败');
+    }
+});
+
+app.get('/api/user/passkeys', authenticateToken, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        setPasskeyNoStore(res);
+        const rows = await runPasskeySerialized(() => passkeyDbAllAsync(
+            `SELECT id, label, rp_id, enabled, credential_device_type,
+                    credential_backed_up, transports_json, created_at,
+                    verified_at, last_used_at
+             FROM webauthn_credentials
+             WHERE user_id = ?
+             ORDER BY enabled DESC, created_at DESC`,
+            [req.user.userId]
+        ));
+        let currentRpId = null;
+        try {
+            currentRpId = getPasskeyRequestContext(req).rpID;
+        } catch (error) {
+            currentRpId = null;
+        }
+        return res.json({
+            success: true,
+            passkeys: rows.map(formatPublicPasskeyRow),
+            currentRpId
+        });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '获取通行密钥失败');
+    }
+});
+
+app.post('/api/user/passkeys/registration/options', authenticateToken, authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        const context = getPasskeyRequestContext(req);
+        setPasskeyNoStore(res);
+        const grant = String(req.body?.grant || '');
+        if (!grant) {
+            throw buildPasskeyHttpError('请先完成安全验证', 401, 'passkey_reauth_required');
+        }
+        await consumePasskeyReauthGrant({
+            token: grant,
+            userId: req.user.userId,
+            scope: 'passkey:create'
+        });
+
+        const user = await dbGetAsync(
+            'SELECT id, email, username, email_verified FROM users WHERE id = ?',
+            [req.user.userId]
+        );
+        if (!user || Number(user.email_verified ?? 1) !== 1) {
+            throw buildPasskeyHttpError('请先完成邮箱验证', 403, 'passkey_email_verification_required');
+        }
+
+        const total = await runPasskeySerialized(() => passkeyDbGetAsync(
+            'SELECT COUNT(*) AS count FROM webauthn_credentials WHERE user_id = ?',
+            [user.id]
+        ));
+        if (Number(total?.count || 0) >= PASSKEY_MAX_CREDENTIALS_PER_USER) {
+            throw buildPasskeyHttpError(`最多可添加 ${PASSKEY_MAX_CREDENTIALS_PER_USER} 个通行密钥`, 409, 'passkey_limit_reached');
+        }
+
+        const existing = await runPasskeySerialized(() => passkeyDbAllAsync(
+            `SELECT credential_id, transports_json
+             FROM webauthn_credentials
+             WHERE user_id = ? AND rp_id = ?`,
+            [user.id, context.rpID]
+        ));
+        const userHandle = await getOrCreateWebAuthnUserHandle(user.id);
+        const options = await generateRegistrationOptions({
+            rpName: PASSKEY_RP_NAME,
+            rpID: context.rpID,
+            userID: new Uint8Array(Buffer.from(userHandle, 'base64url')),
+            userName: String(user.email || `user-${user.id}`),
+            userDisplayName: String(user.username || user.email || `user-${user.id}`),
+            attestationType: 'none',
+            excludeCredentials: existing.map((credential) => ({
+                id: String(credential.credential_id),
+                transports: parseStoredPasskeyTransports(credential.transports_json)
+            })),
+            authenticatorSelection: {
+                residentKey: 'required',
+                requireResidentKey: true,
+                userVerification: 'required'
+            },
+            supportedAlgorithmIDs: [-7, -257]
+        });
+
+        const token = createOpaquePasskeyToken();
+        await createPasskeyChallengeRecord({
+            token,
+            challenge: options.challenge,
+            ceremony: 'registration',
+            userId: user.id,
+            context,
+            req
+        });
+        return res.json({ success: true, token, options, rpId: context.rpID });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '无法开始创建通行密钥');
+    }
+});
+
+app.post('/api/user/passkeys/registration/verify', authenticateToken, authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        const context = getPasskeyRequestContext(req);
+        setPasskeyNoStore(res);
+        const token = String(req.body?.token || '');
+        const response = req.body?.response;
+        const label = normalizePasskeyLabel(req.body?.label);
+        if (!token) {
+            throw buildPasskeyHttpError('通行密钥创建信息无效', 400, 'passkey_registration_invalid');
+        }
+
+        const challengeRow = await consumePasskeyChallengeAttempt({
+            token,
+            ceremony: 'registration',
+            userId: req.user.userId,
+            context,
+            req
+        });
+        if (!response || !label || hasDisallowedCrossOriginWebAuthnClientData(response)) {
+            throw buildPasskeyHttpError('通行密钥创建信息无效', 400, 'passkey_registration_invalid');
+        }
+
+        let verification;
+        try {
+            verification = await verifyRegistrationResponse({
+                response,
+                expectedChallenge: String(challengeRow.challenge),
+                expectedOrigin: context.origin,
+                expectedRPID: context.rpID,
+                requireUserVerification: true
+            });
+        } catch (verificationError) {
+            throw buildPasskeyHttpError('通行密钥创建验证失败，请重试', 400, 'passkey_registration_rejected');
+        }
+
+        const info = verification?.registrationInfo;
+        const credential = info?.credential;
+        const credentialId = normalizePasskeyCredentialId(credential?.id || response?.id);
+        const deviceType = String(info?.credentialDeviceType || '');
+        if (
+            !verification?.verified
+            || !credentialId
+            || !credential?.publicKey
+            || !['singleDevice', 'multiDevice'].includes(deviceType)
+        ) {
+            throw buildPasskeyHttpError('通行密钥创建验证失败，请重试', 400, 'passkey_registration_unverified');
+        }
+
+        const transports = normalizePasskeyTransports(
+            credential.transports || response?.response?.transports
+        );
+        const passkeyId = await runPasskeyTransaction(async () => {
+            const countRow = await passkeyDbGetAsync(
+                'SELECT COUNT(*) AS count FROM webauthn_credentials WHERE user_id = ?',
+                [req.user.userId]
+            );
+            if (Number(countRow?.count || 0) >= PASSKEY_MAX_CREDENTIALS_PER_USER) {
+                throw buildPasskeyHttpError(`最多可添加 ${PASSKEY_MAX_CREDENTIALS_PER_USER} 个通行密钥`, 409, 'passkey_limit_reached');
+            }
+            const duplicate = await passkeyDbGetAsync(
+                'SELECT id FROM webauthn_credentials WHERE credential_id = ?',
+                [credentialId]
+            );
+            if (duplicate) {
+                throw buildPasskeyHttpError('这个通行密钥已经添加', 409, 'passkey_already_exists');
+            }
+
+            const now = Date.now();
+            const insert = await passkeyDbRunAsync(
+                `INSERT INTO webauthn_credentials
+                 (user_id, credential_id, public_key, sign_count, transports_json,
+                  credential_device_type, credential_backed_up, aaguid,
+                  rp_id, origin, label, enabled, verified_at, created_at, last_used_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL)`,
+                [
+                    req.user.userId,
+                    credentialId,
+                    Buffer.from(credential.publicKey),
+                    Math.max(0, Number(credential.counter || 0)),
+                    JSON.stringify(transports),
+                    deviceType,
+                    info.credentialBackedUp ? 1 : 0,
+                    info.aaguid ? String(info.aaguid) : null,
+                    context.rpID,
+                    context.origin,
+                    label,
+                    now
+                ]
+            );
+            return Number(insert.lastID);
+        });
+
+        return res.json({
+            success: true,
+            passkeyId,
+            requiresActivation: true,
+            message: '请再次验证这个通行密钥后启用'
+        });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '创建通行密钥失败');
+    }
+});
+
+app.post('/api/user/passkeys/:id/activation/options', authenticateToken, authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        const context = getPasskeyRequestContext(req);
+        setPasskeyNoStore(res);
+        const passkeyId = Number(req.params.id);
+        if (!Number.isInteger(passkeyId) || passkeyId <= 0) {
+            throw buildPasskeyHttpError('通行密钥不存在', 404, 'passkey_not_found');
+        }
+
+        const row = await runPasskeySerialized(() => passkeyDbGetAsync(
+            `SELECT id, credential_id, transports_json
+             FROM webauthn_credentials
+             WHERE id = ? AND user_id = ? AND rp_id = ? AND enabled = 0`,
+            [passkeyId, req.user.userId, context.rpID]
+        ));
+        if (!row) {
+            throw buildPasskeyHttpError('待验证的通行密钥不存在或已启用', 404, 'passkey_pending_not_found');
+        }
+
+        const options = await generateAuthenticationOptions({
+            rpID: context.rpID,
+            allowCredentials: [{
+                id: String(row.credential_id),
+                transports: parseStoredPasskeyTransports(row.transports_json)
+            }],
+            userVerification: 'required'
+        });
+        const token = createOpaquePasskeyToken();
+        await createPasskeyChallengeRecord({
+            token,
+            challenge: options.challenge,
+            ceremony: 'activation',
+            userId: req.user.userId,
+            context,
+            req
+        });
+        return res.json({ success: true, token, options });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '无法开始验证通行密钥');
+    }
+});
+
+app.post('/api/user/passkeys/:id/activation/verify', authenticateToken, authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        const context = getPasskeyRequestContext(req);
+        setPasskeyNoStore(res);
+        const passkeyId = Number(req.params.id);
+        const token = String(req.body?.token || '');
+        const response = req.body?.response;
+        if (
+            !Number.isInteger(passkeyId)
+            || passkeyId <= 0
+            || !token
+        ) {
+            throw buildPasskeyHttpError('通行密钥验证信息无效', 400, 'passkey_activation_invalid');
+        }
+
+        const challengeRow = await consumePasskeyChallengeAttempt({
+            token,
+            ceremony: 'activation',
+            userId: req.user.userId,
+            context,
+            req
+        });
+        const responseCredentialId = normalizePasskeyCredentialId(response?.id);
+        if (!responseCredentialId || hasDisallowedCrossOriginWebAuthnClientData(response)) {
+            throw buildPasskeyHttpError('通行密钥验证信息无效', 400, 'passkey_activation_invalid');
+        }
+
+        const activated = await runPasskeyTransaction(async () => {
+            const row = await passkeyDbGetAsync(
+                `SELECT c.*, h.user_handle
+                 FROM webauthn_credentials c
+                 JOIN webauthn_user_handles h ON h.user_id = c.user_id
+                 WHERE c.id = ? AND c.user_id = ? AND c.rp_id = ? AND c.enabled = 0`,
+                [passkeyId, req.user.userId, context.rpID]
+            );
+            if (!row || responseCredentialId !== String(row.credential_id)) {
+                throw buildPasskeyHttpError('待验证的通行密钥不存在', 404, 'passkey_pending_not_found');
+            }
+
+            const userHandle = String(response?.response?.userHandle || '');
+            if (userHandle && !passkeyValuesEqual(userHandle, row.user_handle)) {
+                throw buildPasskeyHttpError('通行密钥验证失败，请重试', 400, 'passkey_user_handle_mismatch');
+            }
+
+            let verification;
+            try {
+                verification = await verifyAuthenticationResponse({
+                    response,
+                    expectedChallenge: String(challengeRow.challenge),
+                    expectedOrigin: context.origin,
+                    expectedRPID: context.rpID,
+                    credential: buildStoredPasskeyCredential(row),
+                    requireUserVerification: true
+                });
+            } catch (verificationError) {
+                throw buildPasskeyHttpError('通行密钥验证失败，请重试', 400, 'passkey_activation_rejected');
+            }
+            const info = verification?.authenticationInfo;
+            if (!verification?.verified || !info) {
+                throw buildPasskeyHttpError('通行密钥验证失败，请重试', 400, 'passkey_activation_unverified');
+            }
+            if (
+                info.credentialDeviceType
+                && String(info.credentialDeviceType) !== String(row.credential_device_type)
+            ) {
+                throw buildPasskeyHttpError('通行密钥验证失败，请重试', 400, 'passkey_device_type_changed');
+            }
+
+            const now = Date.now();
+            const update = await passkeyDbRunAsync(
+                `UPDATE webauthn_credentials
+                 SET enabled = 1, verified_at = ?, sign_count = ?,
+                     credential_backed_up = ?, last_used_at = ?
+                 WHERE id = ? AND user_id = ? AND enabled = 0`,
+                [
+                    now,
+                    Math.max(0, Number(info.newCounter || 0)),
+                    info.credentialBackedUp ? 1 : 0,
+                    now,
+                    passkeyId,
+                    req.user.userId
+                ]
+            );
+            if (Number(update?.changes || 0) !== 1) {
+                throw buildPasskeyHttpError('这个通行密钥已经完成验证', 409, 'passkey_already_activated');
+            }
+
+            const rewardPoints = await awardSecuritySetupRewardWithinTransaction(
+                req.user.userId,
+                USER_TASK_REWARDS.securityPasskey,
+                {
+                    securityMethod: 'passkey',
+                    rpId: context.rpID,
+                    credentialDeviceType: row.credential_device_type
+                }
+            );
+            const updatedPasskey = await passkeyDbGetAsync(
+                `SELECT id, label, rp_id, enabled, credential_device_type,
+                        credential_backed_up, transports_json, created_at,
+                        verified_at, last_used_at
+                 FROM webauthn_credentials WHERE id = ? AND user_id = ?`,
+                [passkeyId, req.user.userId]
+            );
+            return { rewardPoints, passkey: updatedPasskey };
+        });
+
+        return res.json({
+            success: true,
+            passkey: formatPublicPasskeyRow(activated.passkey),
+            rewardPoints: activated.rewardPoints
+        });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '验证通行密钥失败');
+    }
+});
+
+app.patch('/api/user/passkeys/:id', authenticateToken, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        setPasskeyNoStore(res);
+        const passkeyId = Number(req.params.id);
+        const label = normalizePasskeyLabel(req.body?.label);
+        if (!Number.isInteger(passkeyId) || passkeyId <= 0 || !label) {
+            throw buildPasskeyHttpError('通行密钥名称无效', 400, 'passkey_label_invalid');
+        }
+        const row = await runPasskeyTransaction(async () => {
+            const update = await passkeyDbRunAsync(
+                'UPDATE webauthn_credentials SET label = ? WHERE id = ? AND user_id = ?',
+                [label, passkeyId, req.user.userId]
+            );
+            if (Number(update?.changes || 0) !== 1) {
+                throw buildPasskeyHttpError('通行密钥不存在', 404, 'passkey_not_found');
+            }
+            return passkeyDbGetAsync(
+                `SELECT id, label, rp_id, enabled, credential_device_type,
+                        credential_backed_up, transports_json, created_at,
+                        verified_at, last_used_at
+                 FROM webauthn_credentials WHERE id = ? AND user_id = ?`,
+                [passkeyId, req.user.userId]
+            );
+        });
+        return res.json({ success: true, passkey: formatPublicPasskeyRow(row) });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '更新通行密钥失败');
+    }
+});
+
+app.delete('/api/user/passkeys/:id', authenticateToken, authLimiter, async (req, res) => {
+    try {
+        await databaseSchemaReady;
+        setPasskeyNoStore(res);
+        const passkeyId = Number(req.params.id);
+        const grant = String(req.body?.grant || '');
+        if (!Number.isInteger(passkeyId) || passkeyId <= 0 || !grant) {
+            throw buildPasskeyHttpError('请先完成安全验证', 401, 'passkey_reauth_required');
+        }
+        await runPasskeyTransaction(async () => {
+            await consumePasskeyReauthGrantWithinTransaction({
+                token: grant,
+                userId: req.user.userId,
+                scope: 'passkey:delete'
+            });
+            const deletion = await passkeyDbRunAsync(
+                'DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?',
+                [passkeyId, req.user.userId]
+            );
+            if (Number(deletion?.changes || 0) !== 1) {
+                throw buildPasskeyHttpError('通行密钥不存在', 404, 'passkey_not_found');
+            }
+            return deletion;
+        });
+        return res.json({ success: true, deletedPasskeyId: passkeyId });
+    } catch (error) {
+        return sendPasskeyRouteError(res, error, '删除通行密钥失败');
+    }
+});
+
 app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
     try {
         const user = await dbGetAsync(
@@ -10037,20 +10774,34 @@ app.post('/api/user/2fa/enable', authenticateToken, async (req, res) => {
             return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
         }
 
-        await dbRunAsync(
-            `UPDATE users
-             SET two_factor_enabled = 1,
-                 two_factor_secret = ?,
-                 two_factor_confirmed_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [secret, req.user.userId]
-        );
+        await databaseSchemaReady;
+        const rewardPoints = await runPasskeyTransaction(async () => {
+            const update = await passkeyDbRunAsync(
+                `UPDATE users
+                 SET two_factor_enabled = 1,
+                     two_factor_secret = ?,
+                     two_factor_confirmed_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND COALESCE(two_factor_enabled, 0) = 0`,
+                [secret, req.user.userId]
+            );
+            if (Number(update?.changes || 0) !== 1) {
+                throw buildPasskeyHttpError('二步验证状态已变化，请刷新后重试', 409, 'two_factor_state_changed');
+            }
+            return awardSecuritySetupRewardWithinTransaction(
+                req.user.userId,
+                USER_TASK_REWARDS.securityTwoFactor,
+                { securityMethod: 'totp' }
+            );
+        });
 
         console.log(` 用户二步验证已开启: userId=${req.user.userId}`);
-        res.json({ success: true, two_factor_enabled: true });
+        res.json({ success: true, two_factor_enabled: true, rewardPoints });
     } catch (error) {
         console.error(' 开启二步验证失败:', error);
-        res.status(500).json({ success: false, error: '开启二步验证失败' });
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.statusCode ? error.message : '开启二步验证失败'
+        });
     }
 });
 
@@ -12331,6 +13082,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const agentHardDisabled = process.env.AGENT_HARD_DISABLE === '1';
         let pointsAlreadyDeducted = false;
         let forceFreeModelByQuota = false;
+        let freeModelFallbackCause = '';
 
         if (normalizedAgentMode === 'on' && normalizedMembershipTier !== 'max') {
             effectiveAgentMode = 'off';
@@ -12351,11 +13103,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 const agentPoints = await checkAndDeductPoints(req.user.userId, 'kimi-k2.6');
                 if (agentPoints?.useFreeModel) {
                     forceFreeModelByQuota = true;
+                    freeModelFallbackCause = 'user_points_exhausted';
                     effectiveAgentMode = 'off';
                     res.write(`data: ${JSON.stringify({
                         type: 'points_info',
+                        cause: 'user_points_exhausted',
+                        requestId,
                         remainingPoints: 0,
-                        message: agentPoints.message || '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
+                        message: '您的点数不足，可能会路由到其他模型，回答质量可能降低。'
                     })}\n\n`);
                     emitAgentEvent(res, {
                         type: 'agent_status',
@@ -12374,6 +13129,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             } catch (pointsErr) {
                 forceFreeModelByQuota = true;
+                freeModelFallbackCause = 'points_check_unavailable';
                 effectiveAgentMode = 'off';
                 emitAgentEvent(res, {
                     type: 'agent_status',
@@ -12858,10 +13614,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (forceFreeModelByQuota && !isFreeModelIdentifier(finalModel)) {
             const fallbackModel = resolveFreeFallbackModelId(finalModel, { requiresMultimodal: isMultimodalRequest });
             finalModel = fallbackModel;
+            const fallbackReason = freeModelFallbackCause === 'user_points_exhausted'
+                ? `点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`
+                : `点数校验暂时不可用，按安全备用链切换到 ${fallbackModel}`;
             autoRoutingReason = autoRoutingReason
-                ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`
-                : `点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`;
-            console.log(` 点数不足强制免费模型: user=${req.user.userId}`);
+                ? `${autoRoutingReason}; ${fallbackReason}`
+                : fallbackReason;
+            console.log(` 强制免费模型: user=${req.user.userId}, cause=${freeModelFallbackCause || 'unknown'}`);
         } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted) {
             try {
                 const pointsResult = await checkAndDeductPoints(req.user.userId, finalModel);
@@ -12870,8 +13629,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     finalModel = fallbackModel;
                     res.write(`data: ${JSON.stringify({
                         type: 'points_info',
+                        cause: 'user_points_exhausted',
+                        requestId,
                         remainingPoints: 0,
-                        message: pointsResult.message || '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
+                        message: '您的点数不足，可能会路由到其他模型，回答质量可能降低。'
                     })}\n\n`);
                     autoRoutingReason = autoRoutingReason
                         ? `${autoRoutingReason}; 点数不足按备用链自动切换到 ${fallbackModel}，完成任务或签到可增加积分`
@@ -13888,8 +14649,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         };
 
         const tryUniversalRuntimeFallback = async ({ failedStatus, failedBody, reason }) => {
+            const failedModel = finalModel;
+            const failedActualModel = actualModel;
+            const normalizedFailedStatus = String(failedStatus || '').toLowerCase();
+            const upstreamTimedOut = normalizedFailedStatus.includes('timeout')
+                || ['408', '504', '524'].includes(normalizedFailedStatus);
             const candidates = getRuntimeFallbackModelIds(finalModel, { requiresMultimodal: isMultimodalRequest });
-            appendRaiRuntimeReport({
+            const primaryFailureReportPromise = appendRaiRuntimeReport({
                 level: '报错',
                 tag: 'model_api_primary_failed',
                 message: reason || 'primary model API failed, starting ordered fallback',
@@ -14004,6 +14770,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         reason: fallbackReason
                     }
                 });
+                if (upstreamTimedOut && await primaryFailureReportPromise) {
+                    res.write(`data: ${JSON.stringify({
+                        type: 'routing_notice',
+                        cause: 'upstream_timeout',
+                        requestId,
+                        fromModel: failedModel,
+                        fromActualModel: failedActualModel,
+                        toModel: fallbackModel,
+                        supportReported: true,
+                        message: '因上游服务商问题，本次模型会被路由到其他模型，可能会降低质量。已经向 RAI 支持自动反馈，感谢您的理解。'
+                    })}\n\n`);
+                }
                 return { response: fallbackResponse, errorText: '' };
             }
 
@@ -14169,10 +14947,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 clearTimeout(timeoutId); // 清除超时定时器
             } catch (primaryFetchError) {
                 clearTimeout(timeoutId);
+                const primaryFailureStatus = primaryFetchError.name === 'AbortError'
+                    || primaryFetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT'
+                    ? 'timeout'
+                    : 'network';
                 const fallbackResult = await tryUniversalRuntimeFallback({
-                    failedStatus: primaryFetchError.name === 'AbortError' ? 'timeout' : 'network',
+                    failedStatus: primaryFailureStatus,
                     failedBody: primaryFetchError.message,
-                    reason: `${routing.provider}_${actualModel}_${primaryFetchError.name === 'AbortError' ? 'timeout' : 'network_error'}`
+                    reason: `${routing.provider}_${actualModel}_${primaryFailureStatus === 'timeout' ? 'timeout' : 'network_error'}`
                 });
                 if (fallbackResult?.response) {
                     apiResponse = fallbackResult.response;
@@ -15859,7 +16641,9 @@ const USER_TASK_REWARDS = {
     pwaInstall: { key: 'pwa_install', points: 300 },
     inviteUser: { keyPrefix: 'invite_user:', points: 600 },
     inviteeUser: { keyPrefix: 'invitee_user:', points: 600 },
-    bookmarkDomain: { key: 'bookmark_domain', points: 100 }
+    bookmarkDomain: { key: 'bookmark_domain', points: 100 },
+    securityTwoFactor: { key: 'security_2fa', points: 200 },
+    securityPasskey: { key: 'security_passkey', points: 200 }
 };
 
 const NEW_USER_WELCOME_POINTS = 200;
@@ -15889,6 +16673,459 @@ function dbRunAsync(query, params = []) {
             else resolve(this);
         });
     });
+}
+
+function passkeyDbGetAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        passkeyDb.get(query, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
+
+function passkeyDbAllAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        passkeyDb.all(query, params, (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+        });
+    });
+}
+
+function passkeyDbRunAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        passkeyDb.run(query, params, function (err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
+
+let passkeyTransactionTail = Promise.resolve();
+
+function runPasskeySerialized(work) {
+    const operation = passkeyTransactionTail.then(work, work);
+    passkeyTransactionTail = operation.catch(() => null);
+    return operation;
+}
+
+function runPasskeyTransaction(work) {
+    return runPasskeySerialized(async () => {
+        await passkeyDbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+        try {
+            const result = await work();
+            await passkeyDbRunAsync('COMMIT');
+            return result;
+        } catch (error) {
+            await passkeyDbRunAsync('ROLLBACK').catch(() => null);
+            throw error;
+        }
+    });
+}
+
+function createOpaquePasskeyToken() {
+    return crypto.randomBytes(32).toString('base64url');
+}
+
+function hashOpaquePasskeyToken(value) {
+    return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function hashPasskeyUserAgent(req) {
+    return crypto
+        .createHash('sha256')
+        .update(String(req?.headers?.['user-agent'] || ''))
+        .digest('hex');
+}
+
+function normalizePasskeyLabel(value) {
+    const label = String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+    if (!label || label.length > PASSKEY_LABEL_MAX_LENGTH) return '';
+    if (/[<>\u0000-\u001F\u007F]/.test(label)) return '';
+    return label;
+}
+
+function normalizePasskeyTransports(value) {
+    const items = Array.isArray(value) ? value : [];
+    return [...new Set(items
+        .map((item) => String(item || '').trim())
+        .filter((item) => PASSKEY_ALLOWED_TRANSPORTS.has(item)))]
+        .slice(0, PASSKEY_ALLOWED_TRANSPORTS.size);
+}
+
+function parseStoredPasskeyTransports(value) {
+    try {
+        return normalizePasskeyTransports(JSON.parse(String(value || '[]')));
+    } catch (error) {
+        return [];
+    }
+}
+
+function normalizePasskeyCredentialId(value) {
+    const id = String(value || '').trim();
+    return /^[A-Za-z0-9_-]{1,2048}$/.test(id) ? id : '';
+}
+
+function hasDisallowedCrossOriginWebAuthnClientData(response) {
+    try {
+        const encoded = String(response?.response?.clientDataJSON || '');
+        if (!encoded) return true;
+        const clientData = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+        return clientData?.crossOrigin === true || !!clientData?.topOrigin;
+    } catch (error) {
+        return true;
+    }
+}
+
+function buildPasskeyHttpError(message, statusCode = 400, code = 'passkey_error') {
+    const error = new Error(message);
+    error.statusCode = statusCode;
+    error.code = code;
+    return error;
+}
+
+function getPasskeyRequestContext(req) {
+    const rawOrigin = String(req.headers.origin || '').trim();
+    if (!rawOrigin) {
+        throw buildPasskeyHttpError('通行密钥仅支持从网页安全连接使用', 400, 'passkey_origin_required');
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(rawOrigin);
+    } catch (error) {
+        throw buildPasskeyHttpError('通行密钥请求来源无效', 400, 'passkey_origin_invalid');
+    }
+
+    const origin = parsed.origin;
+    if (!allowedCorsOrigins.has(origin)) {
+        throw buildPasskeyHttpError('通行密钥请求来源不受信任', 403, 'passkey_origin_not_allowed');
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    if (isLocalhost && !PASSKEY_ALLOW_LOCALHOST) {
+        throw buildPasskeyHttpError('生产环境不允许使用 localhost 通行密钥', 403, 'passkey_localhost_not_allowed');
+    }
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalhost)) {
+        throw buildPasskeyHttpError('通行密钥需要 HTTPS 安全连接', 400, 'passkey_secure_context_required');
+    }
+
+    if (!hostname || hostname === 'tauri.localhost') {
+        throw buildPasskeyHttpError('桌面端暂不支持通行密钥，请使用浏览器打开正式网站', 400, 'passkey_browser_required');
+    }
+
+    return { origin, rpID: hostname, secure: parsed.protocol === 'https:' };
+}
+
+function parseCookieHeader(req) {
+    const output = {};
+    String(req.headers.cookie || '').split(';').forEach((part) => {
+        const separator = part.indexOf('=');
+        if (separator <= 0) return;
+        const key = part.slice(0, separator).trim();
+        const value = part.slice(separator + 1).trim();
+        if (!key) return;
+        try {
+            output[key] = decodeURIComponent(value);
+        } catch (error) {
+            output[key] = value;
+        }
+    });
+    return output;
+}
+
+function setPasskeyLoginCookie(res, token, secure) {
+    const parts = [
+        `${PASSKEY_LOGIN_COOKIE}=${encodeURIComponent(token)}`,
+        'Path=/api/auth/passkeys',
+        'HttpOnly',
+        'SameSite=Strict',
+        `Max-Age=${Math.floor(PASSKEY_CHALLENGE_TTL_MS / 1000)}`
+    ];
+    if (secure) parts.push('Secure');
+    res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearPasskeyLoginCookie(res, secure) {
+    const parts = [
+        `${PASSKEY_LOGIN_COOKIE}=`,
+        'Path=/api/auth/passkeys',
+        'HttpOnly',
+        'SameSite=Strict',
+        'Max-Age=0'
+    ];
+    if (secure) parts.push('Secure');
+    res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function setPasskeyNoStore(res) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+}
+
+async function cleanupPasskeyEphemeralState() {
+    const now = Date.now();
+    const consumedBefore = now - 24 * 60 * 60 * 1000;
+    await runPasskeySerialized(async () => {
+        await passkeyDbRunAsync(
+            'DELETE FROM webauthn_challenges WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
+            [now, consumedBefore]
+        );
+        await passkeyDbRunAsync(
+            'DELETE FROM user_reauth_grants WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
+            [now, consumedBefore]
+        );
+    }).catch((error) => {
+        console.warn(' Passkey 临时状态清理失败:', error.message);
+    });
+}
+
+async function getOrCreateWebAuthnUserHandle(userId) {
+    const numericUserId = Number(userId);
+    return runPasskeyTransaction(async () => {
+        const existing = await passkeyDbGetAsync(
+            'SELECT user_handle FROM webauthn_user_handles WHERE user_id = ?',
+            [numericUserId]
+        );
+        if (existing?.user_handle) return String(existing.user_handle);
+
+        const userHandle = crypto.randomBytes(32).toString('base64url');
+        await passkeyDbRunAsync(
+            'INSERT INTO webauthn_user_handles (user_id, user_handle, created_at) VALUES (?, ?, ?)',
+            [numericUserId, userHandle, Date.now()]
+        );
+        return userHandle;
+    });
+}
+
+async function createPasskeyChallengeRecord({ token, challenge, ceremony, userId = null, context, req }) {
+    const now = Date.now();
+    await runPasskeySerialized(() => passkeyDbRunAsync(
+        `INSERT INTO webauthn_challenges
+         (challenge_hash, challenge, ceremony, user_id, expected_rp_id, expected_origin, user_agent_hash, created_at, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        [
+            hashOpaquePasskeyToken(token),
+            String(challenge || ''),
+            ceremony,
+            userId || null,
+            context.rpID,
+            context.origin,
+            hashPasskeyUserAgent(req),
+            now,
+            now + PASSKEY_CHALLENGE_TTL_MS
+        ]
+    ));
+}
+
+async function createPasskeyReauthGrant(userId, scope, authMethod) {
+    const token = createOpaquePasskeyToken();
+    const now = Date.now();
+    await cleanupPasskeyEphemeralState();
+    await runPasskeySerialized(() => passkeyDbRunAsync(
+        `INSERT INTO user_reauth_grants
+         (grant_hash, user_id, scope, auth_method, created_at, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+        [hashOpaquePasskeyToken(token), userId, scope, authMethod, now, now + PASSKEY_REAUTH_TTL_MS]
+    ));
+    return token;
+}
+
+function isRecentPasskeyEligibleSession(req, user) {
+    const issuedAt = Number(req.user?.iat || 0);
+    const age = Math.floor(Date.now() / 1000) - issuedAt;
+    if (!Number.isFinite(age) || age < 0 || age > PASSKEY_RECENT_LOGIN_MAX_AGE_SECONDS) return false;
+
+    const sessionProvider = String(req.user?.provider || '').trim();
+    const externalProvider = String(user?.external_provider || '').trim();
+    if (externalProvider && sessionProvider === externalProvider) return true;
+    return String(req.user?.auth_method || '') === 'passkey';
+}
+
+async function verifyPasskeyReauthentication(req, user, body = {}) {
+    const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+    const twoFactorCode = typeof body.twoFactorCode === 'string' ? body.twoFactorCode : '';
+    let authMethod = '';
+
+    if (currentPassword) {
+        if (validatePasswordLength(currentPassword, '当前密码')) {
+            throw buildPasskeyHttpError('当前密码错误', 401, 'passkey_reauth_password_invalid');
+        }
+        const matched = await bcrypt.compare(currentPassword, user.password_hash).catch(() => false);
+        if (!matched) {
+            throw buildPasskeyHttpError('当前密码错误', 401, 'passkey_reauth_password_invalid');
+        }
+        authMethod = 'password';
+    } else if (isRecentPasskeyEligibleSession(req, user)) {
+        authMethod = String(req.user?.auth_method || req.user?.provider || 'recent_login');
+    } else {
+        throw buildPasskeyHttpError(
+            user.external_provider
+                ? '请先重新使用已绑定的登录方式登录，再管理通行密钥'
+                : '请输入当前密码以继续',
+            401,
+            'passkey_reauth_required'
+        );
+    }
+
+    const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1
+        && !!normalizeTotpSecret(user.two_factor_secret);
+    if (twoFactorEnabled && !verifyTotpCode(user.two_factor_secret, twoFactorCode)) {
+        throw buildPasskeyHttpError('Authenticator 验证码无效', 401, 'passkey_reauth_totp_invalid');
+    }
+
+    return authMethod;
+}
+
+async function awardSecuritySetupRewardWithinTransaction(userId, reward, metadata = {}) {
+    const points = Number(reward?.points || 0);
+    const taskKey = String(reward?.key || '').trim();
+    if (!taskKey || points <= 0) return 0;
+
+    const insert = await passkeyDbRunAsync(
+        `INSERT OR IGNORE INTO user_task_rewards (user_id, task_key, points, metadata, completed_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [userId, taskKey, points, JSON.stringify(metadata || {})]
+    );
+    if (Number(insert?.changes || 0) !== 1) return 0;
+
+    await passkeyDbRunAsync(
+        'UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?',
+        [points, userId]
+    );
+    return points;
+}
+
+async function awardSecuritySetupReward(userId, reward, metadata = {}) {
+    await databaseSchemaReady;
+    return runPasskeyTransaction(() => awardSecuritySetupRewardWithinTransaction(userId, reward, metadata));
+}
+
+function passkeyValuesEqual(left, right) {
+    try {
+        const leftText = String(left || '');
+        const rightText = String(right || '');
+        if (!/^[A-Za-z0-9_-]+$/.test(leftText) || !/^[A-Za-z0-9_-]+$/.test(rightText)) return false;
+        const leftBuffer = Buffer.from(leftText, 'base64url');
+        const rightBuffer = Buffer.from(rightText, 'base64url');
+        return leftBuffer.length > 0
+            && leftBuffer.length === rightBuffer.length
+            && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+    } catch (error) {
+        return false;
+    }
+}
+
+async function consumePasskeyChallengeAttempt({ token, ceremony, userId = null, context, req }) {
+    const tokenHash = hashOpaquePasskeyToken(token);
+    const expectedUserId = userId === null ? null : Number(userId);
+    const result = await runPasskeyTransaction(async () => {
+        const row = await passkeyDbGetAsync(
+            'SELECT * FROM webauthn_challenges WHERE challenge_hash = ?',
+            [tokenHash]
+        );
+        if (!row || row.consumed_at) {
+            return { ok: false, reason: 'missing_or_consumed' };
+        }
+
+        const now = Date.now();
+        const update = await passkeyDbRunAsync(
+            `UPDATE webauthn_challenges
+             SET consumed_at = ?
+             WHERE challenge_hash = ? AND consumed_at IS NULL`,
+            [now, tokenHash]
+        );
+        if (Number(update?.changes || 0) !== 1) {
+            return { ok: false, reason: 'consumed_concurrently' };
+        }
+
+        const storedUserId = row.user_id === null ? null : Number(row.user_id);
+        const valid = String(row.ceremony || '') === ceremony
+            && Number(row.expires_at || 0) > now
+            && String(row.expected_rp_id || '') === context.rpID
+            && String(row.expected_origin || '') === context.origin
+            && String(row.user_agent_hash || '') === hashPasskeyUserAgent(req)
+            && storedUserId === expectedUserId;
+        return valid
+            ? { ok: true, row }
+            : { ok: false, reason: 'challenge_context_mismatch' };
+    });
+
+    if (!result.ok) {
+        throw buildPasskeyHttpError('通行密钥验证已过期，请重试', 401, result.reason);
+    }
+    return result.row;
+}
+
+async function consumePasskeyReauthGrantWithinTransaction({ token, userId, scope }) {
+    const grantHash = hashOpaquePasskeyToken(token);
+    const numericUserId = Number(userId);
+    const row = await passkeyDbGetAsync(
+        'SELECT * FROM user_reauth_grants WHERE grant_hash = ?',
+        [grantHash]
+    );
+    if (!row || row.consumed_at) {
+        throw buildPasskeyHttpError('安全验证已过期，请重新验证', 401, 'passkey_reauth_grant_invalid');
+    }
+
+    const now = Date.now();
+    const valid = Number(row.user_id) === numericUserId
+        && String(row.scope || '') === scope
+        && Number(row.expires_at || 0) > now;
+    const update = await passkeyDbRunAsync(
+        `UPDATE user_reauth_grants
+         SET consumed_at = ?
+         WHERE grant_hash = ? AND consumed_at IS NULL`,
+        [now, grantHash]
+    );
+
+    if (!valid || Number(update?.changes || 0) !== 1) {
+        throw buildPasskeyHttpError('安全验证已过期，请重新验证', 401, 'passkey_reauth_grant_invalid');
+    }
+}
+
+async function consumePasskeyReauthGrant(args) {
+    return runPasskeyTransaction(() => consumePasskeyReauthGrantWithinTransaction(args));
+}
+
+function buildStoredPasskeyCredential(row) {
+    return {
+        id: String(row.credential_id || ''),
+        publicKey: new Uint8Array(Buffer.from(row.public_key)),
+        counter: Math.max(0, Number(row.sign_count || 0)),
+        transports: parseStoredPasskeyTransports(row.transports_json)
+    };
+}
+
+function formatPublicPasskeyRow(row) {
+    return {
+        id: Number(row.id),
+        label: String(row.label || ''),
+        domain: String(row.rp_id || ''),
+        enabled: Number(row.enabled || 0) === 1,
+        status: Number(row.enabled || 0) === 1 ? 'active' : 'pending',
+        deviceType: String(row.credential_device_type || ''),
+        backedUp: Number(row.credential_backed_up || 0) === 1,
+        transports: parseStoredPasskeyTransports(row.transports_json),
+        createdAt: Number(row.created_at || 0),
+        verifiedAt: row.verified_at ? Number(row.verified_at) : null,
+        lastUsedAt: row.last_used_at ? Number(row.last_used_at) : null
+    };
+}
+
+function sendPasskeyRouteError(res, error, fallbackMessage) {
+    const statusCode = Number(error?.statusCode || 0);
+    if (statusCode >= 400 && statusCode < 500) {
+        return res.status(statusCode).json({
+            success: false,
+            error: error.message || fallbackMessage,
+            code: error.code || 'passkey_error'
+        });
+    }
+    console.error(` ${fallbackMessage}:`, error);
+    return res.status(500).json({ success: false, error: fallbackMessage, code: 'passkey_internal_error' });
 }
 
 function buildEmailCodeMessage({ purpose, code }) {

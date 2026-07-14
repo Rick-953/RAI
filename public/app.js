@@ -2083,8 +2083,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.33';
-const RAI_BUILD_ID = '20260714-composer-outline-reasoning-toggle-v01133';
+const RAI_APP_VERSION = '0.11.35';
+const RAI_BUILD_ID = '20260714-passkeys-security-routing-v01135';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -2156,6 +2156,8 @@ const appState = {
   newChatDefaultMode: 'ask',
   tabTitleMode: 'default',
   tabTitleCustomText: '',
+  showModelBadge: false,
+  showInternetBadge: false,
   browserNotifyEnabled: (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'),
   currentSessionMemoryMode: 'normal',
   pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
@@ -2169,6 +2171,12 @@ const appState = {
   settingsEmailChangeVerifying: false,
   settingsEmailChangeDialogOpen: false,
   twoFactorSetup: null,
+  passkeys: [],
+  passkeysLoaded: false,
+  passkeysLoading: false,
+  passkeysError: '',
+  passkeyActionPending: '',
+  passkeyLoginPending: false,
   onboardingActive: false,
   touchStartX: 0,
   touchStartY: 0,
@@ -3026,15 +3034,96 @@ function updateReasoningProfileControl() {
   }
 }
 
-function handlePointsInfoEvent(payload = {}) {
-  const message = payload.message || (isChineseLanguage(appState.language)
-    ? '点数不足，请完成任务或签到增加积分'
-    : 'Not enough points. Complete tasks or check in to earn more points.');
-  showToast(message);
-  if (typeof addProcessTraceItem === 'function') {
-    addProcessTraceItem('info', message);
+const RAI_ROUTING_NOTICE_COOLDOWN_KEY = 'rai_routing_notice_cooldowns_v1';
+const RAI_ROUTING_NOTICE_COOLDOWN_MS = 10 * 60 * 1000;
+const shownRoutingNoticeRequests = new Set();
+
+function readRoutingNoticeCooldowns() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(RAI_ROUTING_NOTICE_COOLDOWN_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    return {};
   }
+}
+
+function writeRoutingNoticeCooldowns(cooldowns) {
+  try {
+    sessionStorage.setItem(RAI_ROUTING_NOTICE_COOLDOWN_KEY, JSON.stringify(cooldowns || {}));
+  } catch (error) {
+    // sessionStorage may be unavailable in hardened/private contexts; per-request dedupe still applies.
+  }
+}
+
+function getStructuredRoutingNotice(payload = {}) {
+  if (payload.type === 'points_info' && payload.cause === 'user_points_exhausted') {
+    return {
+      cause: 'user_points_exhausted',
+      message: i18nText(
+        'routing-notice-points-exhausted',
+        isChineseLanguage(appState.language)
+          ? '您的点数不足，可能会路由到其他模型，回答质量可能降低。'
+          : "You don't have enough points. This request may be routed to another model, which may reduce answer quality."
+      )
+    };
+  }
+
+  if (payload.type === 'routing_notice'
+    && payload.cause === 'upstream_timeout'
+    && payload.supportReported === true) {
+    return {
+      cause: 'upstream_timeout',
+      message: i18nText(
+        'routing-notice-upstream-timeout',
+        isChineseLanguage(appState.language)
+          ? '因上游服务商问题，本次模型会被路由到其他模型，可能会降低质量。已经向 RAI 支持自动反馈，感谢您的理解。'
+          : 'Due to an upstream provider issue, this request will be routed to another model and quality may be reduced. A report was automatically sent to RAI Support. Thank you for understanding.'
+      )
+    };
+  }
+
+  return null;
+}
+
+function handleStructuredRoutingNotice(payload = {}, { requestId = '' } = {}) {
+  const notice = getStructuredRoutingNotice(payload);
+  if (!notice) return false;
+
+  const resolvedRequestId = String(
+    payload.requestId
+      || payload.request_id
+      || requestId
+      || appState.currentRequestId
+      || ''
+  ).trim();
+  if (resolvedRequestId) {
+    const requestKey = `${notice.cause}:${resolvedRequestId}`;
+    if (shownRoutingNoticeRequests.has(requestKey)) return false;
+    shownRoutingNoticeRequests.add(requestKey);
+    if (shownRoutingNoticeRequests.size > 500) {
+      shownRoutingNoticeRequests.delete(shownRoutingNoticeRequests.values().next().value);
+    }
+  }
+
+  const now = Date.now();
+  const cooldowns = readRoutingNoticeCooldowns();
+  const lastShownAt = Number(cooldowns[notice.cause] || 0);
+  if (lastShownAt > 0 && now - lastShownAt < RAI_ROUTING_NOTICE_COOLDOWN_MS) return false;
+
+  cooldowns[notice.cause] = now;
+  writeRoutingNoticeCooldowns(cooldowns);
+  showToast(notice.message);
+  return true;
+}
+
+function handlePointsInfoEvent(payload = {}, context = {}) {
+  // Membership data must refresh for every points event, even when the notice is deduped or cooling down.
   fetchUserMembership().catch(() => null);
+  return handleStructuredRoutingNotice(payload, context);
+}
+
+function handleRoutingNoticeEvent(payload = {}, context = {}) {
+  return handleStructuredRoutingNotice(payload, context);
 }
 
 // 获取用户时间上下文（时区、日期时间、时段）
@@ -3277,6 +3366,17 @@ const i18n = {
     'auth-ztx6d-login': 'ZTX6D 登录',
     'auth-rpass-login': 'rPass 登录',
     'auth-coming-soon': '待上线',
+    'auth-passkey-or': '或',
+    'auth-passkey-login': '使用通行密钥登录',
+    'auth-passkey-login-pending': '正在验证通行密钥...',
+    'auth-network-unavailable': '由于网络波动，暂时无法连接到 RAI 服务器，请您稍后再试。',
+    'passkey-web-only': '通行密钥请在 RAI 网页端使用。',
+    'passkey-unavailable': '当前浏览器不支持通行密钥。',
+    'passkey-secure-context-required': '通行密钥需要通过安全的 HTTPS 页面使用。',
+    'passkey-cancelled': '已取消通行密钥操作。',
+    'passkey-auth-failed': '通行密钥验证失败，请重试。',
+    'routing-notice-points-exhausted': '您的点数不足，可能会路由到其他模型，回答质量可能降低。',
+    'routing-notice-upstream-timeout': '因上游服务商问题，本次模型会被路由到其他模型，可能会降低质量。已经向 RAI 支持自动反馈，感谢您的理解。',
     'no-account': '还没有账号?',
     'has-account': '已有账号?',
     'register-link': '立即注册',
@@ -3308,6 +3408,11 @@ const i18n = {
     'tab-title-custom-label': '自定义文字',
     'tab-title-custom-placeholder': 'RAI 后面要显示的文字',
     'tab-title-custom-hint': '仅在“自定义”模式下生效，显示为 RAI + 你的文字。',
+    'message-model-badge-title': '模型标签',
+    'message-model-badge-desc': '在模型回复下显示“模型名 定制版”标签。',
+    'message-internet-badge-title': '联网标签',
+    'message-internet-badge-desc': '在联网回复下显示“联网”标签。',
+    'message-model-custom-edition': '定制版',
     'browser-notify-settings-title': '回复浏览器通知',
     'browser-notify-settings-desc': '当 RAI 回复好而你未查看页面时，浏览器弹出系统通知提醒你。',
     'browser-notify-enable': '开启通知',
@@ -3554,7 +3659,7 @@ const i18n = {
     'confirm-change': '确定',
     'account-settings-title': '账号信息',
     'security-settings-title': '安全',
-    'settings-security-desc': '用 Authenticator 为当前账号增加登录二步验证',
+    'settings-security-desc': '使用二步验证和通行密钥保护当前账号',
     'account-delete-title': '注销账号',
     'account-delete-desc': '永久删除账号、对话、记忆、上传文件和设置，无法恢复。',
     'account-delete-password-label': '当前密码',
@@ -3586,10 +3691,47 @@ const i18n = {
     'two-factor-confirm-disable': '确认关闭',
     'two-factor-setup-failed': '二步验证设置失败',
     'two-factor-enabled-toast': '二步验证已开启',
+    'two-factor-enabled-reward-toast': '二步验证已开启，奖励 +{points} 点。',
     'two-factor-disabled-toast': '二步验证已关闭',
     'two-factor-code-required': '请输入 6 位验证码',
     'two-factor-copy-secret': '复制密钥',
     'two-factor-secret-copied': '密钥已复制',
+    'passkey-settings-title': '通行密钥',
+    'passkey-settings-desc': '使用 Touch ID、Windows Hello、手机或安全密钥登录。',
+    'passkey-add': '添加通行密钥',
+    'passkey-add-pending': '正在添加...',
+    'passkey-empty': '尚未添加通行密钥。',
+    'passkey-loading': '正在加载通行密钥...',
+    'passkey-active': '已启用',
+    'passkey-pending-activation': '待激活',
+    'passkey-activate': '继续激活',
+    'passkey-activating': '正在激活...',
+    'passkey-rename': '改名',
+    'passkey-delete': '删除',
+    'passkey-default-label': '我的通行密钥',
+    'passkey-label-title': '命名通行密钥',
+    'passkey-label-desc': '输入一个容易识别的名称，例如“MacBook Touch ID”。',
+    'passkey-reauth-password-title': '确认当前密码',
+    'passkey-reauth-password-desc': '请输入当前密码。若您刚使用通行密钥或已绑定的登录方式重新登录，可留空继续。',
+    'passkey-reauth-password-required': '请输入当前密码。',
+    'passkey-reauth-2fa-title': '输入 Authenticator 验证码',
+    'passkey-reauth-2fa-desc': '请输入当前 6 位 Authenticator 验证码。',
+    'passkey-created-pending': '通行密钥已创建，请再验证一次以完成激活。',
+    'passkey-activated': '通行密钥已启用。',
+    'passkey-activated-reward': '通行密钥已启用，奖励 +{points} 点。',
+    'passkey-activation-failed': '未能完成激活，可稍后在设置中继续。',
+    'passkey-create-failed': '添加通行密钥失败。',
+    'passkey-load-failed': '加载通行密钥失败。',
+    'passkey-retry': '重试',
+    'passkey-renamed': '通行密钥名称已更新。',
+    'passkey-rename-failed': '修改通行密钥名称失败。',
+    'passkey-delete-confirm': '确定删除这枚通行密钥吗？',
+    'passkey-deleted': '通行密钥已删除。',
+    'passkey-delete-failed': '删除通行密钥失败。',
+    'passkey-created-at': '创建于 {date}',
+    'passkey-last-used': '最近使用 {date}',
+    'passkey-never-used': '尚未使用',
+    'passkey-domain': '站点 {domain}',
     'settings-username-label': '用户名',
     'settings-username-desc': '修改侧边栏显示名称；留空时默认使用邮箱前缀',
     'settings-email-label': '邮箱',
@@ -3732,6 +3874,17 @@ const i18n = {
     'auth-ztx6d-login': 'Log in with ZTX6D',
     'auth-rpass-login': 'Log in with rPass',
     'auth-coming-soon': 'Coming soon',
+    'auth-passkey-or': 'or',
+    'auth-passkey-login': 'Log in with a passkey',
+    'auth-passkey-login-pending': 'Verifying passkey...',
+    'auth-network-unavailable': "Due to network instability, we can't connect to the RAI server right now. Please try again later.",
+    'passkey-web-only': 'Please use passkeys in the RAI web app.',
+    'passkey-unavailable': 'This browser does not support passkeys.',
+    'passkey-secure-context-required': 'Passkeys require a secure HTTPS page.',
+    'passkey-cancelled': 'Passkey operation cancelled.',
+    'passkey-auth-failed': 'Passkey verification failed. Please try again.',
+    'routing-notice-points-exhausted': "You don't have enough points. This request may be routed to another model, which may reduce answer quality.",
+    'routing-notice-upstream-timeout': 'Due to an upstream provider issue, this request will be routed to another model and quality may be reduced. A report was automatically sent to RAI Support. Thank you for understanding.',
     'no-account': "Don't have an account?",
     'has-account': 'Already have an account?',
     'register-link': 'Sign up now',
@@ -3763,6 +3916,11 @@ const i18n = {
     'tab-title-custom-label': 'Custom text',
     'tab-title-custom-placeholder': 'Text to show after RAI',
     'tab-title-custom-hint': 'Only used in Custom mode; shown as RAI + your text.',
+    'message-model-badge-title': 'Model label',
+    'message-model-badge-desc': 'Show a “Model name Custom Edition” label below model replies.',
+    'message-internet-badge-title': 'Web label',
+    'message-internet-badge-desc': 'Show a “Web” label below replies that used web search.',
+    'message-model-custom-edition': 'Custom Edition',
     'browser-notify-settings-title': 'Reply Browser Notification',
     'browser-notify-settings-desc': 'When RAI finishes replying while you are not viewing the page, the browser shows a system notification.',
     'browser-notify-enable': 'Enable notifications',
@@ -4009,7 +4167,7 @@ const i18n = {
     'confirm-change': 'Confirm',
     'account-settings-title': 'Account',
     'security-settings-title': 'Security',
-    'settings-security-desc': 'Add Authenticator two-factor protection to this account',
+    'settings-security-desc': 'Protect this account with two-factor authentication and passkeys',
     'account-delete-title': 'Delete account',
     'account-delete-desc': 'Permanently delete the account, conversations, memories, uploads, and settings. This cannot be undone.',
     'account-delete-password-label': 'Current password',
@@ -4041,10 +4199,47 @@ const i18n = {
     'two-factor-confirm-disable': 'Confirm disable',
     'two-factor-setup-failed': 'Two-factor setup failed',
     'two-factor-enabled-toast': 'Two-factor authentication enabled',
+    'two-factor-enabled-reward-toast': 'Two-factor authentication enabled. +{points} points awarded.',
     'two-factor-disabled-toast': 'Two-factor authentication disabled',
     'two-factor-code-required': 'Enter the 6-digit code',
     'two-factor-copy-secret': 'Copy secret',
     'two-factor-secret-copied': 'Secret copied',
+    'passkey-settings-title': 'Passkeys',
+    'passkey-settings-desc': 'Log in with Touch ID, Windows Hello, your phone, or a security key.',
+    'passkey-add': 'Add passkey',
+    'passkey-add-pending': 'Adding...',
+    'passkey-empty': 'No passkeys have been added yet.',
+    'passkey-loading': 'Loading passkeys...',
+    'passkey-active': 'Active',
+    'passkey-pending-activation': 'Activation needed',
+    'passkey-activate': 'Continue activation',
+    'passkey-activating': 'Activating...',
+    'passkey-rename': 'Rename',
+    'passkey-delete': 'Delete',
+    'passkey-default-label': 'My passkey',
+    'passkey-label-title': 'Name this passkey',
+    'passkey-label-desc': 'Enter a recognizable name, such as “MacBook Touch ID”.',
+    'passkey-reauth-password-title': 'Confirm your current password',
+    'passkey-reauth-password-desc': 'Enter your current password. If you just signed in again with a passkey or linked provider, you may continue without it.',
+    'passkey-reauth-password-required': 'Enter your current password.',
+    'passkey-reauth-2fa-title': 'Enter Authenticator code',
+    'passkey-reauth-2fa-desc': 'Enter the current 6-digit Authenticator code.',
+    'passkey-created-pending': 'Passkey created. Verify it once more to finish activation.',
+    'passkey-activated': 'Passkey enabled.',
+    'passkey-activated-reward': 'Passkey enabled. +{points} points awarded.',
+    'passkey-activation-failed': 'Activation could not be completed. You can continue later in Settings.',
+    'passkey-create-failed': 'Failed to add passkey.',
+    'passkey-load-failed': 'Failed to load passkeys.',
+    'passkey-retry': 'Retry',
+    'passkey-renamed': 'Passkey name updated.',
+    'passkey-rename-failed': 'Failed to rename passkey.',
+    'passkey-delete-confirm': 'Delete this passkey?',
+    'passkey-deleted': 'Passkey deleted.',
+    'passkey-delete-failed': 'Failed to delete passkey.',
+    'passkey-created-at': 'Created {date}',
+    'passkey-last-used': 'Last used {date}',
+    'passkey-never-used': 'Never used',
+    'passkey-domain': 'Site {domain}',
     'settings-username-label': 'Username',
     'settings-username-desc': 'Change the display name shown in the sidebar; if blank, the email prefix will be used.',
     'settings-email-label': 'Email',
@@ -4245,6 +4440,11 @@ Object.assign(i18n['zh-TW'], {
   'settings-about-github-label': 'GitHub',
   'settings-about-author-label': '作者 Rick',
   'logout': '登出',
+  'message-model-badge-title': '模型標籤',
+  'message-model-badge-desc': '在模型回覆下顯示「模型名稱 定製版」標籤。',
+  'message-internet-badge-title': '連網標籤',
+  'message-internet-badge-desc': '在連網回覆下顯示「連網」標籤。',
+  'message-model-custom-edition': '定製版',
   'system-theme': '跟隨系統',
   'settings-update-timeline-title': 'RAI 的成長故事',
   'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
@@ -4253,7 +4453,56 @@ Object.assign(i18n['zh-TW'], {
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
   'settings-install-download-macos': '下載 macOS 桌面版',
-  'sidebar-flows-beta': '測試'
+  'sidebar-flows-beta': '測試',
+  'auth-passkey-or': '或',
+  'auth-passkey-login': '使用通行密鑰登入',
+  'auth-passkey-login-pending': '正在驗證通行密鑰...',
+  'auth-network-unavailable': '由於網路波動，暫時無法連線至 RAI 伺服器，請您稍後再試。',
+  'passkey-web-only': '通行密鑰請在 RAI 網頁版使用。',
+  'passkey-unavailable': '目前瀏覽器不支援通行密鑰。',
+  'passkey-secure-context-required': '通行密鑰需要透過安全的 HTTPS 網頁使用。',
+  'passkey-cancelled': '已取消通行密鑰操作。',
+  'passkey-auth-failed': '通行密鑰驗證失敗，請重試。',
+  'routing-notice-points-exhausted': '您的點數不足，可能會路由至其他模型，回答品質可能降低。',
+  'routing-notice-upstream-timeout': '因上游服務商問題，本次模型會被路由至其他模型，可能會降低品質。已經向 RAI 支援自動回報，感謝您的理解。',
+  'two-factor-enabled-reward-toast': '二步驗證已開啟，獎勵 +{points} 點。',
+  'passkey-settings-title': '通行密鑰',
+  'settings-security-desc': '使用二步驗證和通行密鑰保護目前帳號',
+  'passkey-settings-desc': '使用 Touch ID、Windows Hello、手機或安全密鑰登入。',
+  'passkey-add': '新增通行密鑰',
+  'passkey-add-pending': '正在新增...',
+  'passkey-empty': '尚未新增通行密鑰。',
+  'passkey-loading': '正在載入通行密鑰...',
+  'passkey-active': '已啟用',
+  'passkey-pending-activation': '待啟用',
+  'passkey-activate': '繼續啟用',
+  'passkey-activating': '正在啟用...',
+  'passkey-rename': '重新命名',
+  'passkey-delete': '刪除',
+  'passkey-default-label': '我的通行密鑰',
+  'passkey-label-title': '命名通行密鑰',
+  'passkey-label-desc': '輸入容易辨識的名稱，例如「MacBook Touch ID」。',
+  'passkey-reauth-password-title': '確認目前密碼',
+  'passkey-reauth-password-desc': '請輸入目前密碼。若您剛使用通行密鑰或已綁定的登入方式重新登入，可留空繼續。',
+  'passkey-reauth-password-required': '請輸入目前密碼。',
+  'passkey-reauth-2fa-title': '輸入 Authenticator 驗證碼',
+  'passkey-reauth-2fa-desc': '請輸入目前 6 位 Authenticator 驗證碼。',
+  'passkey-created-pending': '通行密鑰已建立，請再驗證一次以完成啟用。',
+  'passkey-activated': '通行密鑰已啟用。',
+  'passkey-activated-reward': '通行密鑰已啟用，獎勵 +{points} 點。',
+  'passkey-activation-failed': '未能完成啟用，可稍後在設定中繼續。',
+  'passkey-create-failed': '新增通行密鑰失敗。',
+  'passkey-load-failed': '載入通行密鑰失敗。',
+  'passkey-retry': '重試',
+  'passkey-renamed': '通行密鑰名稱已更新。',
+  'passkey-rename-failed': '修改通行密鑰名稱失敗。',
+  'passkey-delete-confirm': '確定刪除這枚通行密鑰嗎？',
+  'passkey-deleted': '通行密鑰已刪除。',
+  'passkey-delete-failed': '刪除通行密鑰失敗。',
+  'passkey-created-at': '建立於 {date}',
+  'passkey-last-used': '最近使用 {date}',
+  'passkey-never-used': '尚未使用',
+  'passkey-domain': '網站 {domain}'
 });
 
 Object.assign(i18n['zh-TW'], {
@@ -4613,15 +4862,14 @@ const AUTH_JSON_HEADERS = {
   'Accept': 'application/json'
 };
 
-function getNonJsonAuthErrorMessage(fallback = '') {
-  return isChineseLanguage(appState.language)
-    ? (fallback || '认证服务暂时不可用，请刷新页面后重试；若仍失败，请联系 Rick。')
-    : (fallback || 'The auth service is temporarily unavailable. Refresh and try again.');
+function getNonJsonAuthErrorMessage() {
+  // A disconnected upstream commonly arrives through the reverse proxy as an HTML
+  // 502/503 page instead of a rejected fetch. Keep every auth entry point on the
+  // same courteous, non-blaming network message for both failure shapes.
+  return getAuthNetworkUnavailableMessage();
 }
 
-async function parseApiJsonResponse(response, options = {}) {
-  const fallback = String(options.fallback || '').trim();
-  const nonJsonFallback = String(options.nonJsonFallback || '').trim();
+async function parseApiJsonResponse(response) {
   let text = '';
   try {
     text = await response.text();
@@ -4633,13 +4881,21 @@ async function parseApiJsonResponse(response, options = {}) {
     });
     return {
       success: false,
-      error: fallback || getNonJsonAuthErrorMessage(),
+      error: getNonJsonAuthErrorMessage(),
       code: 'api_response_read_failed',
       httpStatus: response?.status || 0
     };
   }
 
-  if (!text) return {};
+  if (!text) {
+    if (response?.ok) return {};
+    return {
+      success: false,
+      error: getNonJsonAuthErrorMessage(),
+      code: 'api_empty_error_response',
+      httpStatus: response?.status || 0
+    };
+  }
 
   try {
     return JSON.parse(text);
@@ -4655,9 +4911,7 @@ async function parseApiJsonResponse(response, options = {}) {
     });
     return {
       success: false,
-      error: isHtml
-        ? getNonJsonAuthErrorMessage(nonJsonFallback)
-        : (fallback || getNonJsonAuthErrorMessage()),
+      error: getNonJsonAuthErrorMessage(),
       code: isHtml ? 'api_html_response' : 'api_non_json_response',
       httpStatus: response?.status || 0
     };
@@ -4739,6 +4993,36 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-14',
+    version: 'v0.11.35',
+    zh: {
+      summary: '新增 Passkey 安全登录、安全奖励与温和的路由提示。',
+      details: [
+        '可在登录页使用 Passkey，并在设置 > 账户中添加、二次验证激活、改名或删除。',
+        'Passkey 创建后必须再完成一次验证才能启用；未激活的密钥不能登录。',
+        '首次启用 Passkey 和 Authenticator 二步验证各奖励 200 点，重复开关不会重复发放。',
+        '点数不足或上游超时路由时，仅显示不打扰且去重的质量提示；超时会自动反馈给 RAI 支持。',
+        '登录、注册或 Passkey 连接不到后端时，统一使用网络波动的敬语提示。',
+        '模型回复下的模型标签改为“模型名 定制版”，模型标签与联网标签默认均不显示。',
+        '设置 > 自定义新增两个独立显示开关，开启后立即作用于现有回复并在当前设备持久保存。',
+        'PC 设置侧栏底部的登出入口静止时无按钮底色，改为左对齐并略微缩小；移动端入口保持不变。'
+      ]
+    },
+    en: {
+      summary: 'Added secure passkey sign-in, security rewards, and gentle routing notices.',
+      details: [
+        'Passkeys can now be used from the login screen and managed in Settings > Account, including second-assertion activation, rename, and deletion.',
+        'A newly created passkey must be verified once more before it becomes active; a pending credential cannot sign in.',
+        'Enabling a passkey or Authenticator two-factor authentication awards 200 points once per account, without repeat rewards after toggling.',
+        'Point exhaustion and upstream timeout routing now use deduplicated, low-disruption quality notices; timeout fallbacks are automatically reported to RAI Support.',
+        'Login, registration, and passkey backend connection failures now share a courteous network-instability message.',
+        'Model labels now read “Model name Custom Edition”, while model and web labels are hidden by default.',
+        'Two independent controls in Settings > Custom reveal the labels immediately and remember the choice on this device.',
+        'The desktop settings logout entry is now transparent at rest, left-aligned, and slightly smaller; mobile is unchanged.'
+      ]
+    }
+  },
   {
     date: '2026-07-14',
     version: 'v0.11.33',
@@ -7270,6 +7554,7 @@ function updateUserIdentityUI() {
   }
 
   renderTwoFactorSettings();
+  renderPasskeySettings();
   updateAccountDeletionUi();
   updateSettingsEmailChangeUI();
 }
@@ -7424,6 +7709,7 @@ function openSettingsStepInputDialog({
   description,
   inputType = 'text',
   placeholder = '',
+  value = '',
   inputMode = '',
   autocomplete = 'off',
   maxLength = 128
@@ -7437,7 +7723,7 @@ function openSettingsStepInputDialog({
           <div class="settings-step-dialog-title">${escapeHtml(title || '')}</div>
           <p class="settings-step-dialog-desc">${escapeHtml(description || '')}</p>
           <input class="setting-input settings-step-dialog-input" type="${escapeHtml(inputType)}"
-            placeholder="${escapeHtml(placeholder)}" autocomplete="${escapeHtml(autocomplete)}"
+            placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}" autocomplete="${escapeHtml(autocomplete)}"
             ${inputMode ? `inputmode="${escapeHtml(inputMode)}"` : ''}
             maxlength="${Number(maxLength) || 128}">
           <div class="settings-step-dialog-actions">
@@ -7752,7 +8038,19 @@ async function confirmTwoFactorSetup() {
     appState.user = { ...appState.user, two_factor_enabled: true, twoFactorEnabled: true };
     appState.twoFactorSetup = null;
     renderTwoFactorSettings();
-    showToast(i18nText('two-factor-enabled-toast', '二步验证已开启'));
+    const rewardPoints = Number(data?.rewardPoints || 0);
+    if (rewardPoints > 0) {
+      showToast(interpolateI18n(
+        'two-factor-enabled-reward-toast',
+        isChineseLanguage(appState.language)
+          ? '二步验证已开启，奖励 +{points} 点。'
+          : 'Two-factor authentication enabled. +{points} points awarded.',
+        { points: rewardPoints }
+      ));
+      await fetchUserMembership();
+    } else {
+      showToast(i18nText('two-factor-enabled-toast', '二步验证已开启'));
+    }
   } catch (error) {
     showToast(localizeServerError(error.message, i18nText('two-factor-setup-failed', '二步验证设置失败')));
   }
@@ -7794,6 +8092,600 @@ async function copyTwoFactorSecret() {
     showToast(secret);
   }
 }
+
+// ==================== Passkey / WebAuthn ====================
+function getPasskeyCapability({ registration = false } = {}) {
+  if (RAI_IS_TAURI_DESKTOP) return { available: false, reason: 'tauri' };
+  if (!window.isSecureContext) return { available: false, reason: 'insecure-context' };
+  if (typeof window.PublicKeyCredential !== 'function' || !navigator.credentials?.get) {
+    return { available: false, reason: 'unsupported' };
+  }
+  if (registration && !navigator.credentials?.create) {
+    return { available: false, reason: 'unsupported' };
+  }
+  return { available: true, reason: '' };
+}
+
+function getPasskeyCapabilityMessage(capability = getPasskeyCapability()) {
+  if (capability.reason === 'tauri') {
+    return i18nText('passkey-web-only', isChineseLanguage(appState.language) ? '通行密钥请在 RAI 网页端使用。' : 'Please use passkeys in the RAI web app.');
+  }
+  if (capability.reason === 'insecure-context') {
+    return i18nText('passkey-secure-context-required', isChineseLanguage(appState.language) ? '通行密钥需要通过安全的 HTTPS 页面使用。' : 'Passkeys require a secure HTTPS page.');
+  }
+  return i18nText('passkey-unavailable', isChineseLanguage(appState.language) ? '当前浏览器不支持通行密钥。' : 'This browser does not support passkeys.');
+}
+
+function updatePasskeyLoginEntry() {
+  const entry = document.getElementById('authPasskeyEntry');
+  const button = document.getElementById('authPasskeyBtn');
+  const hint = document.getElementById('authPasskeyHint');
+  if (!entry || !button) return;
+
+  const shouldShow = appState.authMode === 'login' && !appState.pendingTwoFactorToken && !appState.pendingEmailAuth;
+  entry.hidden = !shouldShow;
+  if (!shouldShow) return;
+
+  const capability = getPasskeyCapability();
+  button.disabled = !!appState.passkeyLoginPending;
+  button.dataset.unavailable = capability.available ? 'false' : 'true';
+  if (capability.available) button.removeAttribute('aria-describedby');
+  else button.setAttribute('aria-describedby', 'authPasskeyHint');
+  button.textContent = appState.passkeyLoginPending
+    ? i18nText('auth-passkey-login-pending', isChineseLanguage(appState.language) ? '正在验证通行密钥...' : 'Verifying passkey...')
+    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '使用通行密钥登录' : 'Log in with a passkey');
+
+  if (hint) {
+    hint.hidden = capability.available;
+    hint.textContent = capability.available ? '' : getPasskeyCapabilityMessage(capability);
+  }
+}
+
+function isLikelyAuthNetworkError(error) {
+  const message = String(error?.message || '').trim();
+  return !message || /Failed to fetch|NetworkError|Load failed|fetch failed|network request failed/i.test(message);
+}
+
+function getAuthNetworkUnavailableMessage() {
+  return i18nText(
+    'auth-network-unavailable',
+    isChineseLanguage(appState.language)
+      ? '由于网络波动，暂时无法连接到 RAI 服务器，请您稍后再试。'
+      : "Due to network instability, we can't connect to the RAI server right now. Please try again later."
+  );
+}
+
+function base64UrlToUint8Array(value) {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (Array.isArray(value)) return Uint8Array.from(value);
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function arrayBufferToBase64Url(value) {
+  const bytes = value instanceof Uint8Array
+    ? value
+    : value instanceof ArrayBuffer
+      ? new Uint8Array(value)
+      : ArrayBuffer.isView(value)
+        ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+        : new Uint8Array();
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function preparePasskeyCredentialDescriptors(descriptors) {
+  if (!Array.isArray(descriptors)) return [];
+  return descriptors.map((descriptor) => ({
+    ...descriptor,
+    id: base64UrlToUint8Array(descriptor.id)
+  }));
+}
+
+function preparePasskeyCreationOptions(options, rpId = '') {
+  const source = options?.publicKey || options || {};
+  const publicKey = {
+    ...source,
+    challenge: base64UrlToUint8Array(source.challenge),
+    user: source.user ? { ...source.user, id: base64UrlToUint8Array(source.user.id) } : source.user,
+    excludeCredentials: preparePasskeyCredentialDescriptors(source.excludeCredentials)
+  };
+  if (rpId && publicKey.rp && !publicKey.rp.id) publicKey.rp = { ...publicKey.rp, id: rpId };
+  return publicKey;
+}
+
+function preparePasskeyRequestOptions(options, rpId = '') {
+  const source = options?.publicKey || options || {};
+  const publicKey = {
+    ...source,
+    challenge: base64UrlToUint8Array(source.challenge),
+    allowCredentials: preparePasskeyCredentialDescriptors(source.allowCredentials)
+  };
+  if (rpId && !publicKey.rpId) publicKey.rpId = rpId;
+  return publicKey;
+}
+
+function serializePasskeyExtensionValue(value) {
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return arrayBufferToBase64Url(value);
+  if (Array.isArray(value)) return value.map(serializePasskeyExtensionValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, serializePasskeyExtensionValue(item)]));
+  }
+  return value;
+}
+
+function serializePasskeyCredential(credential) {
+  if (!credential?.response) throw new Error('Missing WebAuthn credential response');
+  const response = credential.response;
+  const base = {
+    id: credential.id,
+    rawId: arrayBufferToBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: serializePasskeyExtensionValue(credential.getClientExtensionResults?.() || {})
+  };
+
+  if ('attestationObject' in response) {
+    return {
+      ...base,
+      response: {
+        clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
+        attestationObject: arrayBufferToBase64Url(response.attestationObject),
+        transports: typeof response.getTransports === 'function' ? response.getTransports() : []
+      }
+    };
+  }
+
+  return {
+    ...base,
+    response: {
+      clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
+      authenticatorData: arrayBufferToBase64Url(response.authenticatorData),
+      signature: arrayBufferToBase64Url(response.signature),
+      userHandle: response.userHandle ? arrayBufferToBase64Url(response.userHandle) : null
+    }
+  };
+}
+
+async function requestPasskeyApi(path, {
+  method = 'GET',
+  body,
+  authenticated = true,
+  allowAuthTransition = false,
+  fallback = ''
+} = {}) {
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (authenticated && appState.token) headers.Authorization = `Bearer ${appState.token}`;
+  const response = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const data = await parseApiJsonResponse(response);
+  if (!response.ok || (!allowAuthTransition && data?.success === false)) {
+    const error = new Error(data?.error || fallback || `HTTP ${response.status}`);
+    error.code = data?.code || '';
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function isPasskeyCeremonyCancelled(error) {
+  return error?.name === 'AbortError' || error?.name === 'NotAllowedError';
+}
+
+function getPasskeyActionError(error, fallbackKey, fallbackText) {
+  if (isPasskeyCeremonyCancelled(error)) {
+    return i18nText('passkey-cancelled', isChineseLanguage(appState.language) ? '已取消通行密钥操作。' : 'Passkey operation cancelled.');
+  }
+  if (isLikelyAuthNetworkError(error)) return getAuthNetworkUnavailableMessage();
+  return localizeServerError(error?.message, i18nText(fallbackKey, fallbackText));
+}
+
+async function loginWithPasskey() {
+  if (appState.passkeyLoginPending || appState.authMode !== 'login') return;
+  const capability = getPasskeyCapability();
+  if (!capability.available) {
+    showAuthNotice(getPasskeyCapabilityMessage(capability));
+    return;
+  }
+
+  hideAuthError();
+  appState.passkeyLoginPending = true;
+  updatePasskeyLoginEntry();
+  try {
+    const optionsData = await requestPasskeyApi('/auth/passkeys/authentication/options', {
+      method: 'POST',
+      body: {},
+      authenticated: false,
+      fallback: i18nText('passkey-auth-failed', isChineseLanguage(appState.language) ? '通行密钥验证失败，请重试。' : 'Passkey verification failed. Please try again.')
+    });
+    const credential = await navigator.credentials.get({
+      publicKey: preparePasskeyRequestOptions(optionsData.options, optionsData.rpId)
+    });
+    if (!credential) throw new DOMException('Passkey authentication cancelled', 'AbortError');
+
+    const data = await requestPasskeyApi('/auth/passkeys/authentication/verify', {
+      method: 'POST',
+      body: { response: serializePasskeyCredential(credential) },
+      authenticated: false,
+      allowAuthTransition: true,
+      fallback: i18nText('passkey-auth-failed', isChineseLanguage(appState.language) ? '通行密钥验证失败，请重试。' : 'Passkey verification failed. Please try again.')
+    });
+    if (!(await handleAuthServerResponse(data))) {
+      throw new Error(data?.error || i18nText('passkey-auth-failed', isChineseLanguage(appState.language) ? '通行密钥验证失败，请重试。' : 'Passkey verification failed. Please try again.'));
+    }
+  } catch (error) {
+    const message = getPasskeyActionError(error, 'passkey-auth-failed', isChineseLanguage(appState.language) ? '通行密钥验证失败，请重试。' : 'Passkey verification failed. Please try again.');
+    if (isPasskeyCeremonyCancelled(error)) showAuthNotice(message);
+    else showAuthError(message);
+  } finally {
+    appState.passkeyLoginPending = false;
+    updatePasskeyLoginEntry();
+  }
+}
+
+function getPasskeyRecordId(passkey) {
+  return String(passkey?.id ?? passkey?.passkeyId ?? passkey?.passkey_id ?? '').trim();
+}
+
+function isPasskeyPendingActivation(passkey) {
+  if (passkey?.requiresActivation === true || passkey?.requires_activation === true) return true;
+  if (passkey?.active === false || passkey?.activated === false || passkey?.enabled === false) return true;
+  const status = String(passkey?.status || '').toLowerCase();
+  return status === 'pending' || status === 'pending_activation' || status === 'requires_activation';
+}
+
+function formatPasskeyDate(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime()) || date.getTime() <= 0) return '';
+  try {
+    return new Intl.DateTimeFormat(normalizeLanguage(appState.language), {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    }).format(date);
+  } catch (error) {
+    return date.toLocaleDateString();
+  }
+}
+
+function interpolateI18n(key, fallback, values = {}) {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+    i18nText(key, fallback)
+  );
+}
+
+function renderPasskeySettings() {
+  const container = document.getElementById('settingsPasskeyCard');
+  if (!container) return;
+
+  const capability = getPasskeyCapability({ registration: true });
+  const authenticationCapability = getPasskeyCapability();
+  const passkeys = Array.isArray(appState.passkeys) ? appState.passkeys : [];
+  const busy = !!appState.passkeyActionPending;
+  const addPending = appState.passkeyActionPending === 'create';
+  const capabilityHtml = capability.available
+    ? ''
+    : `<p class="settings-passkey-notice">${escapeHtml(getPasskeyCapabilityMessage(capability))}</p>`;
+
+  let contentHtml = '';
+  if (appState.passkeysLoading && !appState.passkeysLoaded) {
+    contentHtml = `<p class="settings-passkey-empty">${escapeHtml(i18nText('passkey-loading', isChineseLanguage(appState.language) ? '正在加载通行密钥...' : 'Loading passkeys...'))}</p>`;
+  } else if (appState.passkeysError) {
+    contentHtml = `
+      <div class="settings-passkey-load-error">
+        <p>${escapeHtml(i18nText('passkey-load-failed', isChineseLanguage(appState.language) ? '加载通行密钥失败。' : 'Failed to load passkeys.'))}</p>
+        <button type="button" class="settings-inline-save secondary" data-passkey-retry>${escapeHtml(i18nText('passkey-retry', isChineseLanguage(appState.language) ? '重试' : 'Retry'))}</button>
+      </div>`;
+  } else if (!passkeys.length) {
+    contentHtml = `<p class="settings-passkey-empty">${escapeHtml(i18nText('passkey-empty', isChineseLanguage(appState.language) ? '尚未添加通行密钥。' : 'No passkeys have been added yet.'))}</p>`;
+  } else {
+    contentHtml = `<div class="settings-passkey-list">${passkeys.map((passkey, index) => {
+      const id = getPasskeyRecordId(passkey);
+      const pending = isPasskeyPendingActivation(passkey);
+      const label = String(passkey?.label || passkey?.name || i18nText('passkey-default-label', isChineseLanguage(appState.language) ? '我的通行密钥' : 'My passkey')).trim();
+      const createdAt = formatPasskeyDate(passkey?.createdAt || passkey?.created_at);
+      const lastUsedAt = formatPasskeyDate(passkey?.lastUsedAt || passkey?.last_used_at);
+      const domain = String(passkey?.domain || passkey?.rpId || passkey?.rp_id || '').trim();
+      const usageMeta = lastUsedAt
+        ? interpolateI18n('passkey-last-used', isChineseLanguage(appState.language) ? '最近使用 {date}' : 'Last used {date}', { date: lastUsedAt })
+        : createdAt
+          ? interpolateI18n('passkey-created-at', isChineseLanguage(appState.language) ? '创建于 {date}' : 'Created {date}', { date: createdAt })
+          : i18nText('passkey-never-used', isChineseLanguage(appState.language) ? '尚未使用' : 'Never used');
+      const domainMeta = domain
+        ? interpolateI18n('passkey-domain', isChineseLanguage(appState.language) ? '站点 {domain}' : 'Site {domain}', { domain })
+        : '';
+      const meta = [domainMeta, usageMeta].filter(Boolean).join(' · ');
+      const canActivateOnCurrentRp = !domain || !appState.passkeyRpId || domain === appState.passkeyRpId;
+      const itemBusy = appState.passkeyActionPending.endsWith(`:${id}`);
+      return `
+        <div class="settings-passkey-row">
+          <div class="settings-passkey-row-main">
+            <div class="settings-passkey-name-row">
+              <strong>${escapeHtml(label)}</strong>
+              <span class="settings-passkey-status ${pending ? 'pending' : 'enabled'}">${escapeHtml(i18nText(pending ? 'passkey-pending-activation' : 'passkey-active', pending ? (isChineseLanguage(appState.language) ? '待激活' : 'Activation needed') : (isChineseLanguage(appState.language) ? '已启用' : 'Active')))}</span>
+            </div>
+            <span class="settings-passkey-meta">${escapeHtml(meta)}</span>
+          </div>
+          <div class="settings-passkey-row-actions">
+            ${pending ? `<button type="button" class="settings-inline-save secondary" data-passkey-action="activate" data-passkey-index="${index}" ${(!authenticationCapability.available || !canActivateOnCurrentRp || busy) ? 'disabled' : ''}>${escapeHtml(itemBusy ? i18nText('passkey-activating', isChineseLanguage(appState.language) ? '正在激活...' : 'Activating...') : i18nText('passkey-activate', isChineseLanguage(appState.language) ? '继续激活' : 'Continue activation'))}</button>` : ''}
+            <button type="button" class="settings-inline-save secondary" data-passkey-action="rename" data-passkey-index="${index}" ${busy ? 'disabled' : ''}>${escapeHtml(i18nText('passkey-rename', isChineseLanguage(appState.language) ? '改名' : 'Rename'))}</button>
+            <button type="button" class="settings-inline-save secondary settings-passkey-remove" data-passkey-action="delete" data-passkey-index="${index}" ${busy ? 'disabled' : ''}>${escapeHtml(i18nText('passkey-delete', isChineseLanguage(appState.language) ? '删除' : 'Delete'))}</button>
+          </div>
+        </div>`;
+    }).join('')}</div>`;
+  }
+
+  container.innerHTML = `
+    <div class="settings-passkey-header">
+      <div>
+        <div class="setting-label">${escapeHtml(i18nText('passkey-settings-title', isChineseLanguage(appState.language) ? '通行密钥' : 'Passkeys'))}</div>
+        <p class="setting-description">${escapeHtml(i18nText('passkey-settings-desc', isChineseLanguage(appState.language) ? '使用 Touch ID、Windows Hello、手机或安全密钥登录。' : 'Log in with Touch ID, Windows Hello, your phone, or a security key.'))}</p>
+      </div>
+      <button type="button" class="settings-inline-save" data-passkey-create ${(!capability.available || busy) ? 'disabled' : ''}>${escapeHtml(addPending ? i18nText('passkey-add-pending', isChineseLanguage(appState.language) ? '正在添加...' : 'Adding...') : i18nText('passkey-add', isChineseLanguage(appState.language) ? '添加通行密钥' : 'Add passkey'))}</button>
+    </div>
+    ${capabilityHtml}
+    ${contentHtml}
+  `;
+
+  container.querySelector('[data-passkey-create]')?.addEventListener('click', createUserPasskey);
+  container.querySelector('[data-passkey-retry]')?.addEventListener('click', () => loadUserPasskeys());
+  container.querySelectorAll('[data-passkey-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const passkey = appState.passkeys[Number(button.dataset.passkeyIndex)];
+      if (!passkey) return;
+      if (button.dataset.passkeyAction === 'activate') activateUserPasskey(getPasskeyRecordId(passkey));
+      if (button.dataset.passkeyAction === 'rename') renameUserPasskey(passkey);
+      if (button.dataset.passkeyAction === 'delete') deleteUserPasskey(passkey);
+    });
+  });
+}
+
+async function loadUserPasskeys({ silent = false } = {}) {
+  if (!appState.token || appState.passkeysLoading) return;
+  appState.passkeysLoading = true;
+  appState.passkeysError = '';
+  renderPasskeySettings();
+  try {
+    const data = await requestPasskeyApi('/user/passkeys', {
+      fallback: i18nText('passkey-load-failed', isChineseLanguage(appState.language) ? '加载通行密钥失败。' : 'Failed to load passkeys.')
+    });
+    appState.passkeys = Array.isArray(data) ? data : (Array.isArray(data?.passkeys) ? data.passkeys : []);
+    appState.passkeyRpId = String(data?.currentRpId || '');
+    appState.passkeysLoaded = true;
+  } catch (error) {
+    appState.passkeysError = String(error?.message || 'load_failed');
+    if (!silent) {
+      showToast(getPasskeyActionError(error, 'passkey-load-failed', isChineseLanguage(appState.language) ? '加载通行密钥失败。' : 'Failed to load passkeys.'));
+    }
+  } finally {
+    appState.passkeysLoading = false;
+    renderPasskeySettings();
+  }
+}
+
+async function requestPasskeyReauthGrant(scope) {
+  const isZh = isChineseLanguage(appState.language);
+  const currentPassword = await openSettingsStepInputDialog({
+    title: i18nText('passkey-reauth-password-title', isZh ? '确认当前密码' : 'Confirm your current password'),
+    description: i18nText('passkey-reauth-password-desc', isZh ? '请输入当前密码。若您刚使用通行密钥或已绑定的登录方式重新登录，可留空继续。' : 'Enter your current password. If you just signed in again with a passkey or linked provider, you may continue without it.'),
+    inputType: 'password',
+    placeholder: i18nText('password-current-placeholder', isZh ? '输入当前密码' : 'Enter current password'),
+    autocomplete: 'current-password'
+  });
+  if (currentPassword === null) return null;
+
+  let twoFactorCode = '';
+  if (isTwoFactorEnabled()) {
+    const rawCode = await openSettingsStepInputDialog({
+      title: i18nText('passkey-reauth-2fa-title', isZh ? '输入 Authenticator 验证码' : 'Enter Authenticator code'),
+      description: i18nText('passkey-reauth-2fa-desc', isZh ? '请输入当前 6 位 Authenticator 验证码。' : 'Enter the current 6-digit Authenticator code.'),
+      placeholder: i18nText('two-factor-placeholder', isZh ? '6 位验证码' : '6-digit code'),
+      inputMode: 'numeric',
+      autocomplete: 'one-time-code',
+      maxLength: 6
+    });
+    if (rawCode === null) return null;
+    twoFactorCode = normalizeTwoFactorCode(rawCode);
+    if (!/^\d{6}$/.test(twoFactorCode)) {
+      showToast(i18nText('two-factor-code-required', isZh ? '请输入 6 位验证码' : 'Enter the 6-digit code'));
+      return null;
+    }
+  }
+
+  const data = await requestPasskeyApi('/user/passkeys/reauth', {
+    method: 'POST',
+    body: { scope, currentPassword, twoFactorCode },
+    fallback: i18nText('passkey-auth-failed', isZh ? '账号验证失败，请重试。' : 'Account verification failed. Please try again.')
+  });
+  if (!data?.grant) throw new Error(i18nText('passkey-auth-failed', isZh ? '账号验证失败，请重试。' : 'Account verification failed. Please try again.'));
+  return data.grant;
+}
+
+async function createUserPasskey() {
+  if (appState.passkeyActionPending) return;
+  const capability = getPasskeyCapability({ registration: true });
+  if (!capability.available) {
+    showToast(getPasskeyCapabilityMessage(capability));
+    return;
+  }
+
+  const isZh = isChineseLanguage(appState.language);
+  const rawLabel = await openSettingsStepInputDialog({
+    title: i18nText('passkey-label-title', isZh ? '命名通行密钥' : 'Name this passkey'),
+    description: i18nText('passkey-label-desc', isZh ? '输入一个容易识别的名称，例如“MacBook Touch ID”。' : 'Enter a recognizable name, such as “MacBook Touch ID”.'),
+    placeholder: i18nText('passkey-default-label', isZh ? '我的通行密钥' : 'My passkey'),
+    maxLength: 64
+  });
+  if (rawLabel === null) return;
+  const label = String(rawLabel || i18nText('passkey-default-label', isZh ? '我的通行密钥' : 'My passkey')).trim().slice(0, 64)
+    || i18nText('passkey-default-label', isZh ? '我的通行密钥' : 'My passkey');
+
+  appState.passkeyActionPending = 'create';
+  renderPasskeySettings();
+  try {
+    const grant = await requestPasskeyReauthGrant('passkey:create');
+    if (!grant) return;
+    const optionsData = await requestPasskeyApi('/user/passkeys/registration/options', {
+      method: 'POST',
+      body: { grant },
+      fallback: i18nText('passkey-create-failed', isZh ? '添加通行密钥失败。' : 'Failed to add passkey.')
+    });
+    const credential = await navigator.credentials.create({
+      publicKey: preparePasskeyCreationOptions(optionsData.options, optionsData.rpId)
+    });
+    if (!credential) throw new DOMException('Passkey registration cancelled', 'AbortError');
+    const verifyData = await requestPasskeyApi('/user/passkeys/registration/verify', {
+      method: 'POST',
+      body: {
+        token: optionsData.token,
+        response: serializePasskeyCredential(credential),
+        label
+      },
+      fallback: i18nText('passkey-create-failed', isZh ? '添加通行密钥失败。' : 'Failed to add passkey.')
+    });
+    const passkeyId = String(verifyData?.passkeyId || '').trim();
+    if (!passkeyId) throw new Error(i18nText('passkey-create-failed', isZh ? '添加通行密钥失败。' : 'Failed to add passkey.'));
+
+    await loadUserPasskeys({ silent: true });
+    showToast(i18nText('passkey-created-pending', isZh ? '通行密钥已创建，请再验证一次以完成激活。' : 'Passkey created. Verify it once more to finish activation.'));
+    await activateUserPasskey(passkeyId, { fromCreation: true });
+  } catch (error) {
+    showToast(getPasskeyActionError(error, 'passkey-create-failed', isZh ? '添加通行密钥失败。' : 'Failed to add passkey.'));
+    await loadUserPasskeys({ silent: true });
+  } finally {
+    if (appState.passkeyActionPending === 'create') appState.passkeyActionPending = '';
+    renderPasskeySettings();
+  }
+}
+
+async function activateUserPasskey(passkeyId, { fromCreation = false } = {}) {
+  const id = String(passkeyId || '').trim();
+  if (!id) return false;
+  const capability = getPasskeyCapability();
+  if (!capability.available) {
+    showToast(getPasskeyCapabilityMessage(capability));
+    return false;
+  }
+
+  const isZh = isChineseLanguage(appState.language);
+  appState.passkeyActionPending = `activate:${id}`;
+  renderPasskeySettings();
+  try {
+    const optionsData = await requestPasskeyApi(`/user/passkeys/${encodeURIComponent(id)}/activation/options`, {
+      method: 'POST',
+      body: {},
+      fallback: i18nText('passkey-activation-failed', isZh ? '未能完成激活，可稍后在设置中继续。' : 'Activation could not be completed. You can continue later in Settings.')
+    });
+    const credential = await navigator.credentials.get({
+      publicKey: preparePasskeyRequestOptions(optionsData.options, optionsData.rpId || appState.passkeyRpId)
+    });
+    if (!credential) throw new DOMException('Passkey activation cancelled', 'AbortError');
+    const data = await requestPasskeyApi(`/user/passkeys/${encodeURIComponent(id)}/activation/verify`, {
+      method: 'POST',
+      body: { token: optionsData.token, response: serializePasskeyCredential(credential) },
+      fallback: i18nText('passkey-activation-failed', isZh ? '未能完成激活，可稍后在设置中继续。' : 'Activation could not be completed. You can continue later in Settings.')
+    });
+    const rewardPoints = Number(data?.rewardPoints || 0);
+    await loadUserPasskeys({ silent: true });
+    if (rewardPoints > 0) {
+      showToast(interpolateI18n('passkey-activated-reward', isZh ? '通行密钥已启用，奖励 +{points} 点。' : 'Passkey enabled. +{points} points awarded.', { points: rewardPoints }));
+      await fetchUserMembership();
+    } else {
+      showToast(i18nText('passkey-activated', isZh ? '通行密钥已启用。' : 'Passkey enabled.'));
+    }
+    return true;
+  } catch (error) {
+    const message = fromCreation
+      ? i18nText('passkey-activation-failed', isZh ? '未能完成激活，可稍后在设置中继续。' : 'Activation could not be completed. You can continue later in Settings.')
+      : getPasskeyActionError(error, 'passkey-activation-failed', isZh ? '未能完成激活，可稍后在设置中继续。' : 'Activation could not be completed. You can continue later in Settings.');
+    showToast(message);
+    await loadUserPasskeys({ silent: true });
+    return false;
+  } finally {
+    if (appState.passkeyActionPending === `activate:${id}`) appState.passkeyActionPending = '';
+    renderPasskeySettings();
+  }
+}
+
+async function renameUserPasskey(passkey) {
+  const id = getPasskeyRecordId(passkey);
+  if (!id || appState.passkeyActionPending) return;
+  const isZh = isChineseLanguage(appState.language);
+  const currentLabel = String(passkey?.label || passkey?.name || '').trim();
+  const rawLabel = await openSettingsStepInputDialog({
+    title: i18nText('passkey-label-title', isZh ? '命名通行密钥' : 'Name this passkey'),
+    description: i18nText('passkey-label-desc', isZh ? '输入一个容易识别的名称。' : 'Enter a recognizable name.'),
+    value: currentLabel,
+    maxLength: 64
+  });
+  if (rawLabel === null) return;
+  const label = String(rawLabel || '').trim().slice(0, 64);
+  if (!label || label === currentLabel) return;
+
+  appState.passkeyActionPending = `rename:${id}`;
+  renderPasskeySettings();
+  try {
+    await requestPasskeyApi(`/user/passkeys/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { label },
+      fallback: i18nText('passkey-rename-failed', isZh ? '修改通行密钥名称失败。' : 'Failed to rename passkey.')
+    });
+    showToast(i18nText('passkey-renamed', isZh ? '通行密钥名称已更新。' : 'Passkey name updated.'));
+    await loadUserPasskeys({ silent: true });
+  } catch (error) {
+    showToast(getPasskeyActionError(error, 'passkey-rename-failed', isZh ? '修改通行密钥名称失败。' : 'Failed to rename passkey.'));
+  } finally {
+    appState.passkeyActionPending = '';
+    renderPasskeySettings();
+  }
+}
+
+async function deleteUserPasskey(passkey) {
+  const id = getPasskeyRecordId(passkey);
+  if (!id || appState.passkeyActionPending) return;
+  const isZh = isChineseLanguage(appState.language);
+  if (!window.confirm(i18nText('passkey-delete-confirm', isZh ? '确定删除这枚通行密钥吗？' : 'Delete this passkey?'))) return;
+
+  appState.passkeyActionPending = `delete:${id}`;
+  renderPasskeySettings();
+  try {
+    const grant = await requestPasskeyReauthGrant('passkey:delete');
+    if (!grant) return;
+    await requestPasskeyApi(`/user/passkeys/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      body: { grant },
+      fallback: i18nText('passkey-delete-failed', isZh ? '删除通行密钥失败。' : 'Failed to delete passkey.')
+    });
+    showToast(i18nText('passkey-deleted', isZh ? '通行密钥已删除。' : 'Passkey deleted.'));
+    await loadUserPasskeys({ silent: true });
+  } catch (error) {
+    showToast(getPasskeyActionError(error, 'passkey-delete-failed', isZh ? '删除通行密钥失败。' : 'Failed to delete passkey.'));
+  } finally {
+    appState.passkeyActionPending = '';
+    renderPasskeySettings();
+  }
+}
+
+window.loginWithPasskey = loginWithPasskey;
+window.createUserPasskey = createUserPasskey;
+window.activateUserPasskey = activateUserPasskey;
+window.renameUserPasskey = renameUserPasskey;
+window.deleteUserPasskey = deleteUserPasskey;
 
 function normalizeResearchMode(value) {
   return String(value || '').toLowerCase() === 'deep' ? 'deep' : 'fast';
@@ -8784,6 +9676,37 @@ function settingsToggleResearchMode() {
   updateSettingsCapabilitiesUI();
 }
 
+function settingsToggleModelBadgeVisibility() {
+  appState.showModelBadge = !appState.showModelBadge;
+  persistLocalSettingsPatch({ showModelBadge: appState.showModelBadge });
+  updateMessageBadgeVisibilityUI();
+}
+
+function settingsToggleInternetBadgeVisibility() {
+  appState.showInternetBadge = !appState.showInternetBadge;
+  persistLocalSettingsPatch({ showInternetBadge: appState.showInternetBadge });
+  updateMessageBadgeVisibilityUI();
+}
+
+function updateMessageBadgeVisibilityUI() {
+  const modelSwitch = document.getElementById('settingsModelBadgeSwitch');
+  const modelToggle = document.getElementById('settingsModelBadgeToggle');
+  const internetSwitch = document.getElementById('settingsInternetBadgeSwitch');
+  const internetToggle = document.getElementById('settingsInternetBadgeToggle');
+
+  if (modelSwitch) modelSwitch.setAttribute('aria-pressed', appState.showModelBadge ? 'true' : 'false');
+  if (modelToggle) modelToggle.classList.toggle('active', !!appState.showModelBadge);
+  if (internetSwitch) internetSwitch.setAttribute('aria-pressed', appState.showInternetBadge ? 'true' : 'false');
+  if (internetToggle) internetToggle.classList.toggle('active', !!appState.showInternetBadge);
+
+  document.querySelectorAll('.model-meta-badge').forEach((badge) => {
+    badge.hidden = !appState.showModelBadge;
+  });
+  document.querySelectorAll('.internet-meta-badge').forEach((badge) => {
+    badge.hidden = !appState.showInternetBadge;
+  });
+}
+
 function updateSettingsCapabilitiesUI() {
   const internetSwitch = document.getElementById('settingsInternetSwitch');
   const internetToggle = document.getElementById('settingsInternetToggle');
@@ -8992,6 +9915,8 @@ function setLanguage(lang) {
     authLangText.textContent = getLanguageToggleLabel(lang);
   }
   updateAuthLanguageButtons();
+  updatePasskeyLoginEntry();
+  renderPasskeySettings();
 
   updateReasoningProfileControl();
   updateResearchModeControl();
@@ -9474,6 +10399,7 @@ const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
 function showAuthScreen() {
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
+  updatePasskeyLoginEntry();
   focusEntryTextInput('auth-screen', { delay: 120 });
 }
 
@@ -9718,7 +10644,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.33 初始化 (user UI, retired provider removal, domain preparation)');
+  console.log(' RAI v0.11.35 初始化 (passkeys, security rewards, routing notices, and UI polish)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -10327,6 +11253,7 @@ function updateSettingsUI() {
   renderMemorySettings();
   if (typeof updateTabTitleModeSettingsUI === 'function') updateTabTitleModeSettingsUI();
   if (typeof updateBrowserNotifySettingsUI === 'function') updateBrowserNotifySettingsUI();
+  updateMessageBadgeVisibilityUI();
   updateSettingsCapabilitiesUI();
   renderSettingsTimeline();
   updateSettingsDirtyState();
@@ -10705,6 +11632,7 @@ function openSettings() {
       pushSettingsHistory('home', appState.activeSettingsSection || 'general');
     }
     updateZtx6dBindingUI();
+    loadUserPasskeys({ silent: true }).catch(() => null);
   }
 }
 
@@ -10856,7 +11784,9 @@ async function saveSettings(options = {}) {
     presencePenalty,
     systemPrompt,
     newChatDefaultMode: appState.newChatDefaultMode,
-    fontPreference: appState.fontPreference || 'rai'
+    fontPreference: appState.fontPreference || 'rai',
+    showModelBadge: appState.showModelBadge,
+    showInternetBadge: appState.showInternetBadge
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
@@ -12365,14 +13295,19 @@ function createMessageElement(message) {
     // 显示模型信息
     if (message.model) {
       const modelBadge = document.createElement('span');
-      modelBadge.className = 'meta-badge';
+      modelBadge.className = 'meta-badge model-meta-badge';
+      modelBadge.hidden = !appState.showModelBadge;
 
       // 新老模型标识都保持可读，退役模型不再回到可选菜单。
       const modelName = getHistoricalModelDisplayName(message.model);
+      const customEditionLabel = [
+        modelName,
+        i18nText('message-model-custom-edition', isChineseLanguage(appState.language) ? '定制版' : 'Custom Edition')
+      ].filter(Boolean).join(' ');
 
       modelBadge.innerHTML = `
             ${getSvgIcon('smart_toy', 'material-symbols-outlined', 24)}
-            <span>${escapeHtml(modelName)}</span>
+            <span>${escapeHtml(customEditionLabel)}</span>
           `;
       metaDiv.appendChild(modelBadge);
     }
@@ -12384,7 +13319,8 @@ function createMessageElement(message) {
 
     if (isInternet) {
       const internetBadge = document.createElement('span');
-      internetBadge.className = 'meta-badge';
+      internetBadge.className = 'meta-badge internet-meta-badge';
+      internetBadge.hidden = !appState.showInternetBadge;
       internetBadge.innerHTML = `
             ${getSvgIcon('language', 'material-symbols-outlined', 24)}
             <span>${isChineseLanguage(appState.language) ? '联网' : 'Web'}</span>
@@ -13335,13 +14271,14 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     let reasoningContent = '';
     let sources = null;
     let finalModel = appState.selectedModel;
+    let sseBuffer = '';
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
+      if (value) sseBuffer += decoder.decode(value, { stream: !done });
+      if (done) sseBuffer += decoder.decode();
+      const lines = sseBuffer.split('\n');
+      sseBuffer = done ? '' : (lines.pop() || '');
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
@@ -13352,9 +14289,14 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           const parsed = JSON.parse(data);
 
 	          if (parsed.type === 'points_info') {
-	            handlePointsInfoEvent(parsed);
+	            handlePointsInfoEvent(parsed, { requestId });
 	            continue;
 	          }
+
+              if (parsed.type === 'routing_notice') {
+                handleRoutingNoticeEvent(parsed, { requestId });
+                continue;
+              }
 
           if (parsed.type === 'model_info') {
             if (parsed.model) {
@@ -13420,6 +14362,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           // 忽略解析错误
         }
       }
+      if (done) break;
     }
 
     // 流结束后最终渲染一次（确保完整内容显示）
@@ -15095,11 +16038,10 @@ async function sendMessage(message = null, options = {}) {
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      if (done) buffer += decoder.decode();
       const lines = buffer.split('\n');
-      buffer = lines.pop();
+      buffer = done ? '' : (lines.pop() || '');
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -15269,8 +16211,11 @@ async function sendMessage(message = null, options = {}) {
             }
           }
 	          else if (parsed.type === 'points_info') {
-	            handlePointsInfoEvent(parsed);
+	            handlePointsInfoEvent(parsed, { requestId: appState.currentRequestId });
 	          }
+              else if (parsed.type === 'routing_notice') {
+                handleRoutingNoticeEvent(parsed, { requestId: appState.currentRequestId });
+              }
           // 新增：处理搜索来源
           else if (parsed.type === 'sources') {
             if (parsed.sources && Array.isArray(parsed.sources)) {
@@ -15557,6 +16502,7 @@ async function sendMessage(message = null, options = {}) {
           console.error(' 解析响应错误:', e);
         }
       }
+      if (done) break;
     }
 
     // 确保停止AI头像闪烁
@@ -16251,6 +17197,11 @@ function clearAuthenticatedAppState() {
   appState.sessions = [];
   appState.messages = [];
   appState.currentSession = null;
+  appState.passkeys = [];
+  appState.passkeysLoaded = false;
+  appState.passkeysLoading = false;
+  appState.passkeysError = '';
+  appState.passkeyActionPending = '';
   appState.internetMode = true;
 }
 
@@ -16398,6 +17349,7 @@ function clearTwoFactorLoginChallenge() {
   if (codeInput) codeInput.value = '';
   hideAuthStep('twoFactorStep');
   updateAuthSubmitButtonText();
+  updatePasskeyLoginEntry();
 }
 
 function clearPendingEmailAuth({ clearCode = true } = {}) {
@@ -16408,6 +17360,7 @@ function clearPendingEmailAuth({ clearCode = true } = {}) {
   }
   updateEmailCodeHint();
   updateAuthSubmitButtonText();
+  updatePasskeyLoginEntry();
 }
 
 function getCurrentAuthEmail() {
@@ -16441,7 +17394,7 @@ async function precheckLoginTwoFactor(email) {
       headers: AUTH_JSON_HEADERS,
       body: JSON.stringify({ email: value })
     });
-    const data = await parseApiJsonResponse(response, { fallback: '', nonJsonFallback: '' });
+    const data = await parseApiJsonResponse(response);
     if (token !== authTwoFactorPrecheckToken) return;
     const required = !!(data && data.success && data.twoFactorRequired);
     if (appState.authTwoFactorRequired !== required) {
@@ -16505,6 +17458,7 @@ function updateAuthMethodUI() {
     if (wantsTwoFactor) showAuthStep('twoFactorStep');
     else hideAuthStep('twoFactorStep');
   }
+  updatePasskeyLoginEntry();
 }
 
 function updateEmailCodeHint() {
@@ -16775,10 +17729,7 @@ async function requestPasswordResetCode() {
 	      headers: AUTH_JSON_HEADERS,
 	      body: JSON.stringify({ email })
     });
-	    const data = await parseApiJsonResponse(response, {
-	      fallback: isZh ? '验证码发送失败' : 'Failed to send code',
-	      nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-    });
+	    const data = await parseApiJsonResponse(response);
     if (!response.ok || data.success === false) {
       throw new Error(data.error || (isZh ? '验证码发送失败' : 'Failed to send code'));
     }
@@ -16829,10 +17780,7 @@ async function confirmPasswordResetWithCode() {
 	      headers: AUTH_JSON_HEADERS,
 	      body: JSON.stringify({ email, code, newPassword })
     });
-	    const data = await parseApiJsonResponse(response, {
-	      fallback: isZh ? '重置密码失败' : 'Failed to reset password',
-	      nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-    });
+	    const data = await parseApiJsonResponse(response);
     if (!response.ok || data.success === false) {
       throw new Error(data.error || (isZh ? '重置密码失败' : 'Failed to reset password'));
     }
@@ -16955,6 +17903,7 @@ function switchAuthMode() {
   updateForgotPasswordVisibility();
   updateAuthMethodUI();
   updateAuthSubmitButtonText();
+  updatePasskeyLoginEntry();
 
   // 清除错误信息
   hideAuthError();
@@ -16970,6 +17919,7 @@ function beginPendingEmailAuth({ purpose, email, message = '' }) {
   updateEmailCodeHint();
   showAuthStep('submitStep');
   updateAuthSubmitButtonText();
+  updatePasskeyLoginEntry();
   if (message) {
     showAuthNotice(localizeServerError(message, message));
   }
@@ -16984,6 +17934,7 @@ function beginPendingTwoFactor(twoFactorToken) {
   showAuthStep('twoFactorStep');
   showAuthStep('submitStep');
   updateAuthSubmitButtonText();
+  updatePasskeyLoginEntry();
   setTimeout(() => document.getElementById('authTwoFactorCode')?.focus(), 80);
 }
 
@@ -17019,10 +17970,7 @@ async function requestLoginEmailCode(email) {
 	    headers: AUTH_JSON_HEADERS,
 	    body: JSON.stringify({ email })
   });
-	  const data = await parseApiJsonResponse(response, {
-	    fallback: '验证码邮件发送失败',
-	    nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-  });
+	  const data = await parseApiJsonResponse(response);
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码邮件发送失败');
   }
@@ -17051,10 +17999,7 @@ async function verifyPendingEmailAuth(email, code) {
 	    headers: AUTH_JSON_HEADERS,
 	    body: JSON.stringify({ email, code })
   });
-	  const data = await parseApiJsonResponse(response, {
-	    fallback: '验证码无效或已过期',
-	    nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-  });
+	  const data = await parseApiJsonResponse(response);
   if (await handleAuthServerResponse(data)) return;
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码无效或已过期');
@@ -17086,10 +18031,7 @@ async function resendAuthEmailCode() {
 	        headers: AUTH_JSON_HEADERS,
 	        body: JSON.stringify({ email, password })
 	      });
-	      const data = await parseApiJsonResponse(response, {
-	        fallback: '验证码邮件发送失败',
-	        nonJsonFallback: isZh ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-	      });
+	      const data = await parseApiJsonResponse(response);
 	      if (await handleAuthServerResponse(data)) return;
 	      if (!response.ok || data.success === false) {
 	        throw new Error(data.error || '验证码邮件发送失败');
@@ -17099,7 +18041,9 @@ async function resendAuthEmailCode() {
       await requestLoginEmailCode(email);
     }
   } catch (error) {
-    showAuthError(localizeServerError(error.message, isZh ? '验证码发送失败' : 'Failed to send code'));
+    showAuthError(isLikelyAuthNetworkError(error)
+      ? getAuthNetworkUnavailableMessage()
+      : localizeServerError(error.message, isZh ? '验证码发送失败' : 'Failed to send code'));
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -17121,7 +18065,7 @@ async function handleAuthSubmit() {
   const isPendingEmailAuth = !!appState.pendingEmailAuth;
 
   // 基本验证
-  if (!email || !isValidAuthEmail(email)) {
+  if (!isPendingTwoFactorLogin && (!email || !isValidAuthEmail(email))) {
     showAuthError(isChineseLanguage(appState.language) ? '请输入有效的邮箱地址' : 'Please enter a valid email');
     return;
   }
@@ -17183,10 +18127,7 @@ async function handleAuthSubmit() {
 	        })
 	      });
 	
-	      const data = await parseApiJsonResponse(response, {
-	        fallback: isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code',
-	        nonJsonFallback: isChineseLanguage(appState.language) ? '认证服务暂时不可用，请刷新页面后重试。' : 'The auth service is temporarily unavailable. Refresh and try again.'
-	      });
+	      const data = await parseApiJsonResponse(response);
       if (!(await handleAuthServerResponse(data))) {
         showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code'));
       }
@@ -17216,20 +18157,15 @@ async function handleAuthSubmit() {
 	      body: JSON.stringify(body)
     });
 	
-	    const data = await parseApiJsonResponse(response, {
-	      fallback: isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed',
-	      nonJsonFallback: appState.authMode === 'register'
-	        ? (isChineseLanguage(appState.language) ? '注册服务暂时不可用，请刷新页面后重试。' : 'Registration is temporarily unavailable. Refresh and try again.')
-	        : (isChineseLanguage(appState.language) ? '登录服务暂时不可用，请刷新页面后重试。' : 'Login is temporarily unavailable. Refresh and try again.')
-    });
+	    const data = await parseApiJsonResponse(response);
 
     if (!(await handleAuthServerResponse(data))) {
       showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
   } catch (error) {
-    const fallbackError = isChineseLanguage(appState.language) ? '网络错误,请检查服务器连接' : 'Network error';
+    const fallbackError = getAuthNetworkUnavailableMessage();
     const rawMessage = String(error?.message || '').trim();
-    const isLikelyNetworkError = !rawMessage || /Failed to fetch|NetworkError|Load failed/i.test(rawMessage);
+    const isLikelyNetworkError = isLikelyAuthNetworkError(error);
     showAuthError(isLikelyNetworkError ? fallbackError : localizeServerError(rawMessage, fallbackError));
     console.error(' 认证错误:', error);
   } finally {
@@ -19349,11 +20285,10 @@ async function sendChatFlowMessage() {
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      if (done) buffer += decoder.decode();
       const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      buffer = done ? '' : (lines.pop() || '');
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
@@ -19363,9 +20298,14 @@ async function sendChatFlowMessage() {
         try {
           const parsed = JSON.parse(data);
 	          if (parsed.type === 'points_info') {
-	            handlePointsInfoEvent(parsed);
+	            handlePointsInfoEvent(parsed, { requestId: chatFlowState.currentRequestId });
 	            continue;
 	          }
+
+              if (parsed.type === 'routing_notice') {
+                handleRoutingNoticeEvent(parsed, { requestId: chatFlowState.currentRequestId });
+                continue;
+              }
 
           if (parsed.type === 'search_status') {
             if (parsed.status === 'searching') {
@@ -19443,6 +20383,7 @@ async function sendChatFlowMessage() {
           console.warn(' ChatFlow SSE 解析失败:', e);
         }
       }
+      if (done) break;
     }
 
     if (streamErrorMessage) {
@@ -22370,6 +23311,8 @@ function loadSettings() {
       if (settings.tabTitleMode !== undefined) appState.tabTitleMode = normalizeTabTitleMode(settings.tabTitleMode);
       if (settings.tabTitleCustomText !== undefined) appState.tabTitleCustomText = String(settings.tabTitleCustomText || '').slice(0, 80);
       if (settings.fontPreference !== undefined) applyFontPreference(settings.fontPreference);
+      if (settings.showModelBadge !== undefined) appState.showModelBadge = settings.showModelBadge === true;
+      if (settings.showInternetBadge !== undefined) appState.showInternetBadge = settings.showInternetBadge === true;
       if (settings.browserNotifyEnabled !== undefined) appState.browserNotifyEnabled = settings.browserNotifyEnabled === true;
       if (settings.browserNotifyEnabled === undefined) syncBrowserNotifyStateFromPermission({ persist: true });
       console.log(' 从本地存储加载设置成功');
@@ -22380,6 +23323,7 @@ function loadSettings() {
   } else {
     syncBrowserNotifyStateFromPermission({ persist: true });
   }
+  updateMessageBadgeVisibilityUI();
 }
 
 // 初始化完毕后调用

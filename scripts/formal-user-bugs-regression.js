@@ -264,16 +264,161 @@ function testDomainPreparation() {
   }), false);
 }
 
+function testMessageBadgeVisibilityAndDesktopLogout() {
+  assert.match(app, /showModelBadge:\s*false,/);
+  assert.match(app, /showInternetBadge:\s*false,/);
+  assert.match(index, /id="settingsModelBadgeSwitch"[\s\S]*?settingsToggleModelBadgeVisibility\(\)[\s\S]*?aria-pressed="false"/);
+  assert.match(index, /id="settingsInternetBadgeSwitch"[\s\S]*?settingsToggleInternetBadgeVisibility\(\)[\s\S]*?aria-pressed="false"/);
+
+  const createMessageStart = app.indexOf('function createMessageElement(message)');
+  const createMessageEnd = app.indexOf('// 懒加载消息附件', createMessageStart);
+  assert.ok(createMessageStart >= 0 && createMessageEnd > createMessageStart, 'missing createMessageElement surface');
+  const createMessage = app.slice(createMessageStart, createMessageEnd);
+  assert.match(createMessage, /modelBadge\.className\s*=\s*'meta-badge model-meta-badge'/);
+  assert.match(createMessage, /modelBadge\.hidden\s*=\s*!appState\.showModelBadge/);
+  assert.match(createMessage, /message-model-custom-edition[\s\S]*?'定制版'[\s\S]*?'Custom Edition'/);
+  assert.match(createMessage, /internetBadge\.className\s*=\s*'meta-badge internet-meta-badge'/);
+  assert.match(createMessage, /internetBadge\.hidden\s*=\s*!appState\.showInternetBadge/);
+  assert.match(createMessage, /thinkingBadge\.className\s*=\s*'meta-badge'/, 'thinking badge must stay independent');
+  assert.match(styles, /\.meta-badge\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
+
+  const loadSettingsSource = extractNamedFunction(app, 'loadSettings');
+  assert.match(loadSettingsSource, /settings\.showModelBadge\s*!==\s*undefined[\s\S]*?settings\.showModelBadge\s*===\s*true/);
+  assert.match(loadSettingsSource, /settings\.showInternetBadge\s*!==\s*undefined[\s\S]*?settings\.showInternetBadge\s*===\s*true/);
+  assert.match(loadSettingsSource, /updateMessageBadgeVisibilityUI\(\)/);
+  assert.match(app, /const settings\s*=\s*\{[\s\S]*?showModelBadge:\s*appState\.showModelBadge,[\s\S]*?showInternetBadge:\s*appState\.showInternetBadge/);
+
+  const toggleState = { showModelBadge: false, showInternetBadge: false };
+  const persisted = [];
+  let uiUpdates = 0;
+  const modelToggle = new Function(
+    'appState',
+    'persistLocalSettingsPatch',
+    'updateMessageBadgeVisibilityUI',
+    `${extractNamedFunction(app, 'settingsToggleModelBadgeVisibility')}; return settingsToggleModelBadgeVisibility;`
+  )(toggleState, (patch) => persisted.push(patch), () => { uiUpdates += 1; });
+  const internetToggle = new Function(
+    'appState',
+    'persistLocalSettingsPatch',
+    'updateMessageBadgeVisibilityUI',
+    `${extractNamedFunction(app, 'settingsToggleInternetBadgeVisibility')}; return settingsToggleInternetBadgeVisibility;`
+  )(toggleState, (patch) => persisted.push(patch), () => { uiUpdates += 1; });
+  modelToggle();
+  internetToggle();
+  assert.deepEqual(toggleState, { showModelBadge: true, showInternetBadge: true });
+  assert.deepEqual(persisted, [{ showModelBadge: true }, { showInternetBadge: true }]);
+  assert.equal(uiUpdates, 2);
+
+  const desktopLogoutRule = cssRule('.settings-desktop-logout-link', 'background: transparent');
+  assert.match(desktopLogoutRule, /min-height:\s*36px/);
+  assert.match(desktopLogoutRule, /padding:\s*0 10px/);
+  assert.match(desktopLogoutRule, /appearance:\s*none/);
+  assert.match(desktopLogoutRule, /background:\s*transparent/);
+  assert.match(desktopLogoutRule, /font-size:\s*13px/);
+  assert.match(desktopLogoutRule, /text-align:\s*left/);
+  assert.doesNotMatch(desktopLogoutRule, /background:\s*var\(--settings-card-bg\)/);
+  assert.match(styles, /@media\s*\(max-width:\s*860px\)[\s\S]*?\.settings-desktop-logout-link,[\s\S]*?display:\s*none\s*!important/);
+  assert.match(index, /class="settings-mobile-logout-link"/, 'mobile logout control must remain separate');
+}
+
+function testPasskeySecurityRewardsAndRoutingNotices() {
+  assert.equal(packageJson.dependencies?.['@simplewebauthn/server'], '13.3.2');
+  assert.match(envExample, /^RAI_PASSKEY_RP_NAME=RAI$/m);
+  assert.match(envExample, /^RAI_PASSKEY_ALLOW_LOCALHOST=false$/m);
+
+  assert.match(index, /id="authPasskeyBtn"[\s\S]*?loginWithPasskey\(\)/);
+  assert.match(index, /id="settingsPasskeyCard"/);
+  assert.match(app, /navigator\.credentials\.create\(\{[\s\S]*?preparePasskeyCreationOptions/);
+  assert.ok((app.match(/navigator\.credentials\.get\(\{/g) || []).length >= 2, 'login and activation must each perform an assertion');
+  assert.match(app, /registration\/verify[\s\S]*?activateUserPasskey/);
+  assert.match(server, /registration\/verify[\s\S]*?requiresActivation:\s*true/);
+  assert.match(app, /activation\/verify[\s\S]*?rewardPoints[\s\S]*?fetchUserMembership\(\)/);
+  assert.match(app, /confirmTwoFactorSetup\(\)[\s\S]*?rewardPoints[\s\S]*?two-factor-enabled-reward-toast[\s\S]*?fetchUserMembership\(\)/);
+  assert.match(app, /'passkey-settings-title': '\u901a\u884c\u5bc6\u9470'/, 'Traditional Chinese must use \u901a\u884c\u5bc6\u9470');
+
+  assert.match(server, /CREATE TABLE IF NOT EXISTS webauthn_credentials[\s\S]*?enabled INTEGER NOT NULL DEFAULT 0/);
+  assert.match(server, /CREATE TABLE IF NOT EXISTS webauthn_challenges[\s\S]*?consumed_at INTEGER/);
+  assert.match(server, /CREATE TABLE IF NOT EXISTS user_reauth_grants[\s\S]*?scope TEXT NOT NULL CHECK \(scope IN \('passkey:create', 'passkey:delete'\)\)/);
+  assert.match(server, /registration\/verify[\s\S]*?enabled, verified_at[\s\S]*?VALUES \([\s\S]*?0, NULL/);
+  assert.match(server, /activation\/verify[\s\S]*?SET enabled = 1[\s\S]*?securityPasskey/);
+  assert.match(server, /authentication\/verify[\s\S]*?c\.enabled = 1/);
+  assert.match(server, /userVerification:\s*'required'/);
+  assert.match(server, /requireUserVerification:\s*true/);
+  assert.match(server, /challenge_hash[\s\S]*?expected_rp_id[\s\S]*?expected_origin[\s\S]*?user_agent_hash/);
+  assert.match(server, /securityTwoFactor:\s*\{ key: 'security_2fa', points: 200 \}/);
+  assert.match(server, /securityPasskey:\s*\{ key: 'security_passkey', points: 200 \}/);
+  assert.match(server, /INSERT OR IGNORE INTO user_task_rewards[\s\S]*?UPDATE users SET points = COALESCE\(points, 0\) \+ \?/);
+  assert.match(server, /app\.delete\('\/api\/user\/passkeys\/:id'[\s\S]*?runPasskeyTransaction\(async \(\) => \{[\s\S]*?consumePasskeyReauthGrantWithinTransaction[\s\S]*?DELETE FROM webauthn_credentials/);
+  assert.match(server, /const PASSKEY_ALLOW_LOCALHOST[\s\S]*?isLocalhost && !PASSKEY_ALLOW_LOCALHOST/);
+
+  const pointsCopy = '\u60a8\u7684\u70b9\u6570\u4e0d\u8db3\uff0c\u53ef\u80fd\u4f1a\u8def\u7531\u5230\u5176\u4ed6\u6a21\u578b\uff0c\u56de\u7b54\u8d28\u91cf\u53ef\u80fd\u964d\u4f4e\u3002';
+  const timeoutCopy = '\u56e0\u4e0a\u6e38\u670d\u52a1\u5546\u95ee\u9898\uff0c\u672c\u6b21\u6a21\u578b\u4f1a\u88ab\u8def\u7531\u5230\u5176\u4ed6\u6a21\u578b\uff0c\u53ef\u80fd\u4f1a\u964d\u4f4e\u8d28\u91cf\u3002\u5df2\u7ecf\u5411 RAI \u652f\u6301\u81ea\u52a8\u53cd\u9988\uff0c\u611f\u8c22\u60a8\u7684\u7406\u89e3\u3002';
+  const networkCopy = '\u7531\u4e8e\u7f51\u7edc\u6ce2\u52a8\uff0c\u6682\u65f6\u65e0\u6cd5\u8fde\u63a5\u5230 RAI \u670d\u52a1\u5668\uff0c\u8bf7\u60a8\u7a0d\u540e\u518d\u8bd5\u3002';
+  assert.ok(server.includes(pointsCopy));
+  assert.ok(server.includes(timeoutCopy));
+  assert.ok(app.includes(pointsCopy));
+  assert.ok(app.includes(timeoutCopy));
+  assert.ok(app.includes(networkCopy));
+  assert.match(app, /payload\.type === 'points_info' && payload\.cause === 'user_points_exhausted'/);
+  assert.match(app, /payload\.type === 'routing_notice'[\s\S]*?payload\.cause === 'upstream_timeout'[\s\S]*?payload\.supportReported === true/);
+  assert.match(app, /shownRoutingNoticeRequests[\s\S]*?RAI_ROUTING_NOTICE_COOLDOWN_MS/);
+  const fallbackStart = server.indexOf('const tryUniversalRuntimeFallback = async');
+  const fallbackEnd = server.indexOf('\n        const sendFinalApiFailure', fallbackStart);
+  assert.ok(fallbackStart >= 0 && fallbackEnd > fallbackStart, 'missing universal runtime fallback');
+  const runtimeFallback = server.slice(fallbackStart, fallbackEnd);
+  assert.match(runtimeFallback, /const primaryFailureReportPromise = appendRaiRuntimeReport/);
+  assert.match(runtimeFallback, /upstreamTimedOut && await primaryFailureReportPromise[\s\S]*?supportReported:\s*true/);
+  assert.match(app, /function getNonJsonAuthErrorMessage\(\)[\s\S]*?return getAuthNetworkUnavailableMessage\(\)/);
+  assert.match(app, /async function parseApiJsonResponse\(response\)[\s\S]*?api_response_read_failed[\s\S]*?api_empty_error_response[\s\S]*?api_html_response/);
+  assert.match(app, /async function requestPasskeyApi\([\s\S]*?parseApiJsonResponse\(response\)/);
+  const authSubmit = extractNamedFunction(app, 'handleAuthSubmit');
+  assert.match(authSubmit, /isLikelyAuthNetworkError\(error\)/);
+  assert.match(authSubmit, /getAuthNetworkUnavailableMessage\(\)/);
+  assert.doesNotMatch([app, index, server].join('\n'), /RAI\s*\u95ee\u9898/);
+  assert.doesNotMatch(app, /认证服务暂时不可用|注册服务暂时不可用|登录服务暂时不可用/);
+}
+
+async function testAuthNetworkResponseBehavior() {
+  const parseResponse = new Function(
+    'appState',
+    'i18nText',
+    'isChineseLanguage',
+    'console',
+    `${extractNamedFunction(app, 'getAuthNetworkUnavailableMessage')};
+     ${extractNamedFunction(app, 'getNonJsonAuthErrorMessage')};
+     ${extractNamedFunction(app, 'parseApiJsonResponse').replace(/^function/, 'async function')};
+     return parseApiJsonResponse;`
+  )(
+    { language: 'zh-CN' },
+    (_key, fallback) => fallback,
+    () => true,
+    { warn() {} }
+  );
+  const exact = '由于网络波动，暂时无法连接到 RAI 服务器，请您稍后再试。';
+  const response = (text) => ({
+    ok: false,
+    status: 502,
+    url: 'https://rai.rick.sarl/api/auth/login',
+    headers: { get: () => 'text/html; charset=utf-8' },
+    text: async () => text
+  });
+  assert.equal((await parseResponse(response('<!doctype html><title>Bad Gateway</title>'))).error, exact);
+  assert.equal((await parseResponse(response(''))).error, exact);
+  assert.equal((await parseResponse({ ...response(''), text: async () => { throw new Error('socket closed'); } })).error, exact);
+}
+
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.33');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.33'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260714-composer-outline-reasoning-toggle-v01133'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.33/);
-  assert.match(serviceWorker, /0\.11\.33-20260714-composer-outline-reasoning-toggle-v01133/);
+  assert.equal(packageJson.version, '0.11.35');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.35'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260714-passkeys-security-routing-v01135'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.35/);
+  assert.match(serviceWorker, /0\.11\.35-20260714-passkeys-security-routing-v01135/);
+  assert.match(app, /version:\s*'v0\.11\.35'[\s\S]*?Passkey[\s\S]*?模型名 定制版/);
+  assert.doesNotMatch([app, index, serviceWorker].join('\n'), /0\.11\.34|message-meta-visibility-logout-ui-v01134/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
 
-function main() {
+async function main() {
   assert.equal(packageJson.name, 'rai', `refusing unexpected project: ${packageJson.name || '(unnamed)'}`);
   assert.ok(fs.existsSync(path.join(ROOT, 'server.js')), 'missing formal server entrypoint');
   const tests = [
@@ -285,19 +430,20 @@ function main() {
     testChatViewportScrollAndComposerClearance,
     testLocalNotificationAsset,
     testDomainPreparation,
+    testMessageBadgeVisibilityAndDesktopLogout,
+    testPasskeySecurityRewardsAndRoutingNotices,
+    testAuthNetworkResponseBehavior,
     testVersionContract
   ];
-  tests.forEach((test) => test());
+  for (const test of tests) await test();
   console.log(`formal-user-bugs-regression ok (${tests.length}/${tests.length})`);
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(`formal-user-bugs-regression failed: ${error.stack || error.message}`);
     process.exitCode = 1;
-  }
+  });
 }
 
 module.exports = {
@@ -309,5 +455,8 @@ module.exports = {
   testChatViewportScrollAndComposerClearance,
   testLocalNotificationAsset,
   testDomainPreparation,
+  testMessageBadgeVisibilityAndDesktopLogout,
+  testPasskeySecurityRewardsAndRoutingNotices,
+  testAuthNetworkResponseBehavior,
   testVersionContract
 };
