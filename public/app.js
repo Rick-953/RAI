@@ -10502,7 +10502,7 @@ function updateMenuSelection() {
     item.classList.toggle('admin-model-hidden', adminHidden);
     const selectedMode = isResearchModeEnabled()
       ? 'research'
-      : (appState.selectedModel === 'deepseek-flash' && !appState.thinkingMode ? 'fast' : (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode ? 'think' : ''));
+      : (appState.selectedModel === 'deepseek-flash' ? 'fast' : (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode ? 'think' : ''));
     const selected = modeValue
       ? modeValue === selectedMode
       : modelValue === (isResearchModeEnabled() ? 'research-mode' : appState.selectedModel);
@@ -15710,7 +15710,7 @@ function getSendHoldModes() {
 function getSendHoldModeFromCurrentState() {
   if (isResearchModeEnabled()) return 'research';
   if (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode) return 'think';
-  if (appState.selectedModel === 'deepseek-flash' && !appState.thinkingMode) return 'fast';
+  if (appState.selectedModel === 'deepseek-flash') return 'fast';
   return 'smart';
 }
 

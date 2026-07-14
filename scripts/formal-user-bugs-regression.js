@@ -178,8 +178,13 @@ function testReasoningSwitchAvailability() {
   const fastModel = app.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
   assert.ok(fastModel, 'missing DeepSeek Flash model metadata');
   assert.match(fastModel[1], /supportsThinking:\s*true/, 'Fast must expose DeepSeek reasoning support');
+  const serverFastModel = server.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
+  assert.ok(serverFastModel, 'missing server DeepSeek Flash routing metadata');
+  assert.match(serverFastModel[1], /supportsThinking:\s*true/, 'server Fast metadata must expose DeepSeek reasoning support');
   assert.match(app, /mode:\s*'fast',[\s\S]*?model:\s*'deepseek-flash'/, 'Fast mode must route to DeepSeek Flash');
   assert.match(app, /"auto":\s*\{[\s\S]*?supportsThinking:\s*true/, 'Smart mode must expose reasoning support');
+  assert.match(server, /routing\.provider\s*===\s*'deepseek'[\s\S]*?applyDeepSeekV4ModeParams\(requestBody,\s*!!thinkingMode,\s*normalizedReasoningProfile\)/, 'DeepSeek routes must forward thinking mode');
+  assert.doesNotMatch(app, /selectedModel\s*===\s*'deepseek-flash'\s*&&\s*!appState\.thinkingMode/, 'Fast identity must survive when reasoning is enabled');
   assert.match(updateToolbar, /if \(!supportsThinking\)\s*\{[\s\S]*?appState\.thinkingMode\s*=\s*false;[\s\S]*?appState\.thinkingBudgetOpen\s*=\s*false;/);
   assert.match(updateToolbar, /thinkingToggle\.classList\.toggle\('disabled',\s*!supportsThinking\)/);
   assert.match(updateToolbar, /const showReasoningItem\s*=\s*supportsThinking;/, 'unsupported models must hide the reasoning row');

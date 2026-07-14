@@ -6552,7 +6552,7 @@ const MODEL_ROUTING = {
     'deepseek-flash': {
         provider: 'deepseek',
         model: 'deepseek-v4-flash',
-        supportsThinking: false,
+        supportsThinking: true,
         supportsWebSearch: false,
         multimodal: false
     },
