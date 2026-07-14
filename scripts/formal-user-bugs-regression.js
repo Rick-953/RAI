@@ -161,17 +161,28 @@ function testNeutralFocus() {
   const composerFocusRules = Array.from(styles.matchAll(/([^{}]*\.input-container:focus-within[^{}]*)\{([^{}]*)\}/g));
   assert.ok(composerFocusRules.length > 0, 'missing main composer focus styling');
   for (const [, selector, declarations] of composerFocusRules) {
-    assert.doesNotMatch(declarations, /\boutline(?:-offset)?\s*:/, `main composer focus outline remains in: ${selector.trim()}`);
+    const outlineValues = Array.from(declarations.matchAll(/\boutline\s*:\s*([^;}]+)/gi), (match) => match[1].trim());
+    for (const value of outlineValues) {
+      assert.match(value, /^none(?:\s*!important)?$/i, `main composer focus outline remains in: ${selector.trim()}`);
+    }
+    const offsetValues = Array.from(declarations.matchAll(/\boutline-offset\s*:\s*([^;}]+)/gi), (match) => match[1].trim());
+    for (const value of offsetValues) {
+      assert.match(value, /^0(?:px)?(?:\s*!important)?$/i, `main composer outline offset remains in: ${selector.trim()}`);
+    }
   }
 }
 
 function testReasoningSwitchAvailability() {
   assert.match(index, /id="thinkingToggle"/);
   const updateToolbar = extractNamedFunction(app, 'updateToolbarUI');
+  const fastModel = app.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
+  assert.ok(fastModel, 'missing DeepSeek Flash model metadata');
+  assert.match(fastModel[1], /supportsThinking:\s*true/, 'Fast must expose DeepSeek reasoning support');
+  assert.match(app, /mode:\s*'fast',[\s\S]*?model:\s*'deepseek-flash'/, 'Fast mode must route to DeepSeek Flash');
+  assert.match(app, /"auto":\s*\{[\s\S]*?supportsThinking:\s*true/, 'Smart mode must expose reasoning support');
   assert.match(updateToolbar, /if \(!supportsThinking\)\s*\{[\s\S]*?appState\.thinkingMode\s*=\s*false;[\s\S]*?appState\.thinkingBudgetOpen\s*=\s*false;/);
-  assert.doesNotMatch(updateToolbar, /thinkingToggle\.style\.display\s*=/, 'reasoning switch must remain visible for unsupported models');
   assert.match(updateToolbar, /thinkingToggle\.classList\.toggle\('disabled',\s*!supportsThinking\)/);
-  assert.match(updateToolbar, /const showReasoningItem\s*=\s*true;/, 'reasoning row must remain present');
+  assert.match(updateToolbar, /const showReasoningItem\s*=\s*supportsThinking;/, 'unsupported models must hide the reasoning row');
   assert.match(updateToolbar, /const showReasoningProfile\s*=\s*supportsReasoningProfile\s*&&\s*appState\.thinkingMode;/, 'only the reasoning slider may collapse');
   assert.match(updateToolbar, /thinkingHeader\.setAttribute\('aria-disabled',\s*supportsThinking \? 'false' : 'true'\)/);
 }

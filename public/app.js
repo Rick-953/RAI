@@ -2697,7 +2697,7 @@ const MODELS = {
   'deepseek-flash': {
     name: 'DeepSeek Flash',
     provider: 'deepseek',
-    supportsThinking: false,
+    supportsThinking: true,
     contextWindow: 1000000
   },
   'deepseek-pro': {
@@ -4747,8 +4747,8 @@ const RAI_UPDATE_TIMELINE = [
       details: [
         '移除快速、思考、研究三行的 8px 后置覆盖，统一为与 20px 外框和 8px 内边距相配的 12px 圆角。',
         '主消息输入框聚焦后不再出现灰色外描边，保留原有中性磨砂表面和阴影反馈。',
-        '快速等不支持推理的模式仍显示关闭且禁用的推理开关，推理强度滑块继续保持收起。',
-        '专项回归会检查最终圆角、输入框无描边及推理开关可见性，防止计算样式和状态再次漂移。'
+        '智能与快速使用的 DeepSeek 模型均显示可用的推理开关；真正不支持推理的模型会隐藏整项。',
+        '专项回归会检查最终圆角、输入框无描边，以及智能、快速与不支持模型的推理选项状态。'
       ]
     },
     en: {
@@ -4756,8 +4756,8 @@ const RAI_UPDATE_TIMELINE = [
       details: [
         'Removed the trailing 8px override from Fast, Think, and Research so their 12px radius matches the 20px shell with 8px padding.',
         'The main message composer no longer gains a gray outer outline on focus while retaining its neutral frosted surface and shadow feedback.',
-        'Modes without reasoning support still show the reasoning switch in its off and disabled state while keeping the strength slider collapsed.',
-        'Regression coverage now checks the final radius, outline-free composer, and visible reasoning switch to prevent style and state drift.'
+        'The DeepSeek models used by Smart and Fast both show an enabled reasoning switch, while models without reasoning support hide the entire item.',
+        'Regression coverage now checks the final radius, outline-free composer, and the reasoning-item contract for Smart, Fast, and unsupported models.'
       ]
     }
   },
@@ -10248,7 +10248,7 @@ function updateToolbarUI() {
     }
   }
 
-  const showReasoningItem = true;
+  const showReasoningItem = supportsThinking;
   const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode;
   if (reasoningProfileItem) {
     setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningItem);

@@ -16926,8 +16926,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   }
 }
 
-/* Neutral, accessible focus treatment for form controls. Borderless composer
-   inputs expose the ring on their visual container instead of the text glyph box. */
+/* Neutral, accessible focus treatment for form controls. */
 :where(
   input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not(#searchInput):not(#settingsSearchInput):not(.ask-user-input),
   textarea:not(.message-input):not(.chatflow-message-input),
@@ -16950,4 +16949,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
 .chatflow-input-container:focus-within {
   border-color: var(--focus-border-color);
+}
+
+/* The primary composer intentionally has no sharp focus outline. Keep this
+   explicit final override so future shared focus selectors cannot restore it. */
+.input-container:focus-within {
+  outline: none !important;
+  outline-offset: 0 !important;
 }
