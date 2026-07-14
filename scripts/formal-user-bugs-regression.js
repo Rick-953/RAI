@@ -62,6 +62,13 @@ function testPoeRemoval() {
   assert.doesNotMatch(index, />\s*(?:Claude|ChatGPT|Gemini)\s*\(Poe\)\s*</i);
 }
 
+function testAliyunRemoval() {
+  const executableSurface = [server, envExample].join('\n');
+  assert.doesNotMatch(executableSurface, /aliyun|dashscope|ALIYUN_API_KEY/i);
+  assert.match(server, /'qwen3\.6-35b-a3b':\s*\{\s*provider:\s*'siliconflow'/);
+  assert.match(server, /Qwen\/Qwen3\.6-35B-A3B/);
+}
+
 function testInternetDefaults() {
   assert.match(app, /internetMode:\s*true,\s*\/\/\s*\u9ed8\u8ba4\u5f00\u542f\u8054\u7f51/);
   assert.match(app, /function\s+restoreInternetSearchDefault\(\)\s*\{\s*appState\.internetMode\s*=\s*true;/);
@@ -408,12 +415,12 @@ async function testAuthNetworkResponseBehavior() {
 }
 
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.35');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.35'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260714-passkeys-security-routing-v01135'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.35/);
-  assert.match(serviceWorker, /0\.11\.35-20260714-passkeys-security-routing-v01135/);
-  assert.match(app, /version:\s*'v0\.11\.35'[\s\S]*?Passkey[\s\S]*?模型名 定制版/);
+  assert.equal(packageJson.version, '0.11.36');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.36'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260714-secret-scanner-cleanup-v01136'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.36/);
+  assert.match(serviceWorker, /0\.11\.36-20260714-secret-scanner-cleanup-v01136/);
+  assert.match(app, /version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报[\s\S]*?version:\s*'v0\.11\.35'[\s\S]*?Passkey[\s\S]*?模型名 定制版/);
   assert.doesNotMatch([app, index, serviceWorker].join('\n'), /0\.11\.34|message-meta-visibility-logout-ui-v01134/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
@@ -423,6 +430,7 @@ async function main() {
   assert.ok(fs.existsSync(path.join(ROOT, 'server.js')), 'missing formal server entrypoint');
   const tests = [
     testPoeRemoval,
+    testAliyunRemoval,
     testInternetDefaults,
     testMenuHitAreasAndGeometry,
     testNeutralFocus,
@@ -448,6 +456,7 @@ if (require.main === module) {
 
 module.exports = {
   testPoeRemoval,
+  testAliyunRemoval,
   testInternetDefaults,
   testMenuHitAreasAndGeometry,
   testNeutralFocus,

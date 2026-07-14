@@ -2083,8 +2083,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.35';
-const RAI_BUILD_ID = '20260714-passkeys-security-routing-v01135';
+const RAI_APP_VERSION = '0.11.36';
+const RAI_BUILD_ID = '20260714-secret-scanner-cleanup-v01136';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -4993,6 +4993,28 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-14',
+    version: 'v0.11.36',
+    zh: {
+      summary: '清理秘密扫描误报并完成补丁复核。',
+      details: [
+        'Passkey 动态回归继续为每次运行生成一次性随机测试密码，但不再使用会被通用秘密扫描器误判为硬编码凭据的模板表达式。',
+        '该告警不包含真实管理员密码、TOTP 密钥、访问令牌或生产凭据；默认分支、正式服务器与最新发布已同步到清理后的源码。',
+        '删除已停用的阿里云供应商配置和环境变量；Qwen 3.6 继续只通过硅基流动调用。',
+        '完整正式门禁、Passkey 专项回归与依赖安全审计再次通过。'
+      ]
+    },
+    en: {
+      summary: 'Removed a secret-scanner false positive and revalidated the patch.',
+      details: [
+        'The Passkey regression still creates a one-time random test password for every run, without the template expression that generic scanners could misclassify as a hard-coded credential.',
+        'The alert contained no real administrator password, TOTP secret, access token, or production credential; the default branch, production server, and latest release now share the cleaned source.',
+        'Removed the retired Alibaba Cloud provider configuration and environment variable; Qwen 3.6 continues to run exclusively through SiliconFlow.',
+        'The full formal gate, Passkey regression suite, and dependency security audit were rerun successfully.'
+      ]
+    }
+  },
   {
     date: '2026-07-14',
     version: 'v0.11.35',
@@ -10644,7 +10666,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.35 初始化 (passkeys, security rewards, routing notices, and UI polish)');
+  console.log(' RAI v0.11.36 初始化 (passkeys, security rewards, routing notices, and scanner-safe tests)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

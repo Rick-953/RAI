@@ -304,7 +304,6 @@ const EMAIL_CODE_MAX_LENGTH = Math.max(
 const EMAIL_CODE_ALLOWED_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*_-+=?';
 const ENV_API_KEYS = {
     TAVILY_API_KEY: cleanEnvValue(process.env.TAVILY_API_KEY),
-    ALIYUN_API_KEY: cleanEnvValue(process.env.ALIYUN_API_KEY),
     DEEPSEEK_API_KEY: cleanEnvValue(process.env.DEEPSEEK_API_KEY),
     SILICONFLOW_API_KEY: cleanEnvValue(process.env.SILICONFLOW_API_KEY),
     GOOGLE_GEMINI_API_KEY: cleanEnvValue(process.env.GOOGLE_GEMINI_API_KEY),
@@ -6443,21 +6442,6 @@ async function buildAttachmentPromptContext(attachments, userId) {
 
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
-    aliyun: {
-        apiKey: ENV_API_KEYS.ALIYUN_API_KEY,
-        envKey: 'ALIYUN_API_KEY',
-        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        models: [] // 官方文本模型已下线
-    },
-    // 阿里云多模态模型预留 (支持图片、音频、视频输入和语音输出)
-    aliyun_omni: {
-        apiKey: ENV_API_KEYS.ALIYUN_API_KEY,
-        envKey: 'ALIYUN_API_KEY',
-        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        models: [], // 官方多模态模型已下线
-        multimodal: true,  // 标记支持多模态
-        audioOutput: true  // 支持语音输出
-    },
     deepseek: {
         apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
         envKey: 'DEEPSEEK_API_KEY',
@@ -13861,7 +13845,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (
             !enableResearchDebate &&
             runtimeToolDefinitions.length > 0 &&
-            routing.provider !== 'aliyun' &&
             (routing.supportsWebSearch !== false || imageGenerationRequested || memoryDeleteToolRequested)
         ) {
             console.log(` 工具模式: 启用流式工具调用 (Streaming Function Calling), tools=${runtimeToolDefinitions.length}, internet=${internetMode}, image=${imageGenerationRequested}, memoryDelete=${memoryDeleteToolRequested}`);
@@ -14026,32 +14009,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (isNaN(requestBody.max_tokens) || requestBody.max_tokens < 100 || requestBody.max_tokens > 8000) {
             console.warn(` 无效的max_tokens值: ${max_tokens}，使用默认值2000`);
             requestBody.max_tokens = 2000;
-        }
-
-        // 阿里云兼容思考模式（旧模型兼容）
-        if (thinkingMode && routing.provider === 'aliyun') {
-            requestBody.enable_thinking = true;
-
-            //  思考预算直接放顶层，不用extra_body
-            const budget = parseInt(thinkingBudget);
-            const validBudget = Math.max(256, Math.min(isNaN(budget) ? 1024 : budget, 32768));
-
-            requestBody.thinking_budget = validBudget;  //  改为直接放顶层
-
-            console.log(` 阿里云思考模式已开启, 预算: ${validBudget} tokens`);
-        }
-
-        // 阿里云互联网模式
-        if (internetMode && routing.provider === 'aliyun') {
-            //  修复：确保enable_search是布尔值，不能是其他类型
-            requestBody.enable_search = true;
-            // 新增：启用搜索来源和角标功能
-            requestBody.search_options = {
-                enable_source: true,        // 返回搜索来源列表
-                enable_citation: true,      // 在回答中插入角标
-                citation_format: "[<number>]"  // 角标格式: [1], [2]
-            };
-            console.log(` 阿里云互联网搜索已开启（启Enable角标引用）`);
         }
 
         // DeepSeek参数
@@ -14499,7 +14456,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let isGeminiAPI = providerConfig.isGemini || routing.isGemini;
         const shouldEnableToolsForRoute = (candidateRouting) => !!(
             runtimeToolDefinitions.length > 0 &&
-            candidateRouting?.provider !== 'aliyun' &&
             (candidateRouting?.supportsWebSearch !== false || imageGenerationRequested || memoryDeleteToolRequested)
         );
 
@@ -15043,11 +14999,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     if (!apiResponse.ok) {
                     // SiliconFlow/Kimi 余额不足时，自动回退到备用免费链，避免全站不可用
-                    const canFallbackToAliyun =
+                    const canFallbackFromSiliconflow =
                         isInsufficientBalanceError(apiResponse.status, errorText) &&
                         routing.provider === 'siliconflow';
 
-                    if (canFallbackToAliyun) {
+                    if (canFallbackFromSiliconflow) {
                         const fallbackModel = resolveFreeFallbackModelId(finalModel);
                         const fallbackRouting = MODEL_ROUTING[fallbackModel];
                         const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
@@ -15442,24 +15398,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     streamFinishReason = choice.finish_reason;
                                 }
 
-                                // 处理阿里云原生联网的 search_info
-                                const searchInfo = parsed.search_info || parsed.output?.search_info;
-                                if (searchInfo && searchInfo.search_results && searchInfo.search_results.length > 0) {
-                                    const searchResultSources = searchInfo.search_results.map(r => ({
-                                        title: r.title || '未知来源',
-                                        url: r.url || '',
-                                        favicon: r.icon || '',
-                                        site_name: r.site_name || '',
-                                        provider: 'aliyun_search',
-                                        sourceKind: 'web',
-                                        markerType: 'numeric',
-                                        label: 'Web Search'
-                                    }));
-                                    const sourceAppendResult = appendAnnotatedSources(searchSources, searchResultSources);
-                                    searchSources = sourceAppendResult.merged;
-                                    emitSourcesEvent(res, sourceAppendResult.newlyAdded);
-                                    console.log(` 阿里云search_info: 已发送 ${sourceAppendResult.newlyAdded.length} 个来源`);
-                                }
                             }
                         } catch (e) {
                             console.error(' 解析响应行错误:', e.message);
