@@ -1,11 +1,11 @@
 {
   "name": "rai",
-  "version": "0.11.36",
+  "version": "0.11.37",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check agent/engine.js && node --check agent/prompts.js && node --check agent/plan-parser.js",
+    "check": "node --check server.js && node --check public/app.js && node --check public/selection-explainer.js && node --check agent/engine.js && node --check agent/prompts.js && node --check agent/plan-parser.js",
     "desktop:dev": "tauri dev",
     "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "desktop:build": "tauri build",
@@ -14,7 +14,8 @@
     "test:passkeys": "node scripts/passkey-regression.js",
     "test:formal-poe": "node scripts/formal-poe-removal-regression.js",
     "test:formal-user-bugs": "node scripts/formal-user-bugs-regression.js",
-    "test:formal-audit": "npm run check && npm run test:auth-token-purpose && npm run test:passkeys && npm run test:formal-poe && npm run test:formal-user-bugs"
+    "test:selection-explanations": "node scripts/selection-explanation-regression.js",
+    "test:formal-audit": "npm run check && npm run test:auth-token-purpose && npm run test:passkeys && npm run test:formal-poe && npm run test:formal-user-bugs && npm run test:selection-explanations"
   },
   "dependencies": {
     "@simplewebauthn/server": "13.3.2",

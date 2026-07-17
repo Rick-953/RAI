@@ -415,12 +415,12 @@ async function testAuthNetworkResponseBehavior() {
 }
 
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.36');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.36'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260714-secret-scanner-cleanup-v01136'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.36/);
-  assert.match(serviceWorker, /0\.11\.36-20260714-secret-scanner-cleanup-v01136/);
-  assert.match(app, /version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报[\s\S]*?version:\s*'v0\.11\.35'[\s\S]*?Passkey[\s\S]*?模型名 定制版/);
+  assert.equal(packageJson.version, '0.11.37');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.37'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260717-selection-explanations-clear-fence-v01137'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.37/);
+  assert.match(serviceWorker, /0\.11\.37-20260717-selection-explanations-clear-fence-v01137/);
+  assert.match(app, /version:\s*'v0\.11\.37'[\s\S]*?选词解释[\s\S]*?树状解释记录[\s\S]*?version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报[\s\S]*?version:\s*'v0\.11\.35'[\s\S]*?Passkey[\s\S]*?模型名 定制版/);
   assert.doesNotMatch([app, index, serviceWorker].join('\n'), /0\.11\.34|message-meta-visibility-logout-ui-v01134/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }

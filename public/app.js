@@ -354,21 +354,33 @@ function renderMarkdownWithMath(text, isStreaming = false) {
           trust: false,
           strict: false
         });
-        html = html.replace(new RegExp(id, 'g'), rendered);
+        const encodedFormula = encodeURIComponent(data.formula);
+        const wrapped = data.display
+          ? `<div class="rai-math-source rai-math-source-block" data-rai-latex="${encodedFormula}" data-rai-math-display="block">${rendered}</div>`
+          : `<span class="rai-math-source rai-math-source-inline" data-rai-latex="${encodedFormula}" data-rai-math-display="inline">${rendered}</span>`;
+        html = html.replace(new RegExp(id, 'g'), wrapped);
       } catch (e) {
         console.warn('KaTeX render error for:', data.formula, e);
         // 渲染失败时显示原始公式（用code标签包裹）
         const fallback = data.display
           ? `<pre class="math-error"><code>${escapeHtml(data.formula)}</code></pre>`
           : `<code class="math-error">${escapeHtml(data.formula)}</code>`;
-        html = html.replace(new RegExp(id, 'g'), fallback);
+        const encodedFormula = encodeURIComponent(data.formula);
+        const wrappedFallback = data.display
+          ? `<div class="rai-math-source rai-math-source-block" data-rai-latex="${encodedFormula}" data-rai-math-display="block">${fallback}</div>`
+          : `<span class="rai-math-source rai-math-source-inline" data-rai-latex="${encodedFormula}" data-rai-math-display="inline">${fallback}</span>`;
+        html = html.replace(new RegExp(id, 'g'), wrappedFallback);
       }
     });
   } else {
     // KaTeX未加载，显示原始公式
     mathStore.forEach((data, id) => {
       const original = data.display ? `$$${data.formula}$$` : `$${data.formula}$`;
-      html = html.replace(new RegExp(id, 'g'), `<code>${escapeHtml(original)}</code>`);
+      const encodedFormula = encodeURIComponent(data.formula);
+      const wrappedFallback = data.display
+        ? `<div class="rai-math-source rai-math-source-block" data-rai-latex="${encodedFormula}" data-rai-math-display="block"><code>${escapeHtml(original)}</code></div>`
+        : `<span class="rai-math-source rai-math-source-inline" data-rai-latex="${encodedFormula}" data-rai-math-display="inline"><code>${escapeHtml(original)}</code></span>`;
+      html = html.replace(new RegExp(id, 'g'), wrappedFallback);
     });
   }
 
@@ -2083,8 +2095,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.36';
-const RAI_BUILD_ID = '20260714-secret-scanner-cleanup-v01136';
+const RAI_APP_VERSION = '0.11.37';
+const RAI_BUILD_ID = '20260717-selection-explanations-clear-fence-v01137';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -2156,6 +2168,7 @@ const appState = {
   newChatDefaultMode: 'ask',
   tabTitleMode: 'default',
   tabTitleCustomText: '',
+  selectionExplanationDeleteMode: 'promote_children',
   showModelBadge: false,
   showInternetBadge: false,
   browserNotifyEnabled: (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'),
@@ -3507,6 +3520,57 @@ const i18n = {
     'settings-general-desc': '外观和标签页行为。',
     'settings-capabilities-title': '能力',
     'settings-capabilities-desc': '控制 RAI 在默认对话中可使用的增强能力。',
+    'selection-explain-delete-mode-title': '删除解释卡时',
+    'selection-explain-delete-mode-desc': '选择树状历史中删除节点时如何处理后续分支。',
+    'selection-explain-delete-promote': '保留分支',
+    'selection-explain-delete-subtree': '删除分支',
+    'selection-explain-delete-ask': '每次询问',
+    'selection-explain-delete-mode-saved': '解释卡删除方式已保存',
+    'selection-explain-delete-mode-save-failed': '删除方式保存失败，请重试',
+    'selection-explain-pill': '这是什么意思？',
+    'selection-explain-cost': '· 1点',
+    'selection-explain-dock-label': '解释卡片坞',
+    'selection-explain-all-history': '全部解释记录',
+    'selection-explain-history-title': '解释记录',
+    'selection-explain-history-desc': '独立保存的选词与解释，不会出现在聊天历史中。',
+    'selection-explain-close-history': '关闭解释记录',
+    'selection-explain-search-placeholder': '搜索选词或解释',
+    'selection-explain-clear-history': '清空',
+    'selection-explain-load-more': '加载更多',
+    'selection-explain-delete-dialog-title': '如何处理后续分支？',
+    'selection-explain-delete-dialog-message': '这张卡有 {count} 个后续节点。请选择删除方式。',
+    'selection-explain-delete-fixed-promote-confirm': '这张卡有 {count} 个后续节点。将只删除当前卡，后续分支会提升到上一层。继续吗？',
+    'selection-explain-delete-fixed-subtree-confirm': '这张卡有 {count} 个后续节点。将删除当前卡及全部后续分支。此操作无法撤销，继续吗？',
+    'selection-explain-delete-set-default': '设为以后默认',
+    'selection-explain-delete-promote-action': '只删当前卡，保留分支',
+    'selection-explain-delete-subtree-action': '连同后续分支删除',
+    'selection-explain-card-label': '选词解释',
+    'selection-explain-card-drag-label': '解释卡标题栏。按 Enter 或空格开始键盘移动。',
+    'selection-explain-minimize': '最小化解释卡',
+    'selection-explain-close-card': '关闭解释卡',
+    'selection-explain-stop': '停止生成',
+    'selection-explain-generating': '正在快速解释…',
+    'selection-explain-complete': '解释完成',
+    'selection-explain-partial': '回答中断',
+    'selection-explain-cancelled': '已停止',
+    'selection-explain-error': '暂时无法解释，请稍后再试',
+    'selection-explain-refunded': '未生成可见内容，1 点已退回',
+    'selection-explain-routing': '首选模型不可用，正在切换备用模型',
+    'selection-explain-no-selection': '请先在同一条消息中选择文字',
+    'selection-explain-selection-too-long': '选择内容过长，请缩短后重试',
+    'selection-explain-history-loading': '正在加载解释记录…',
+    'selection-explain-history-empty': '还没有解释记录。选中对话中的词句即可开始。',
+    'selection-explain-history-error': '解释记录加载失败，请稍后重试',
+    'selection-explain-thread-count': '{count} 张卡',
+    'selection-explain-thread-delete': '删除整条解释记录',
+    'selection-explain-node-delete': '删除这张解释卡',
+    'selection-explain-delete-thread-confirm': '确定删除这条解释记录及其中全部卡片吗？',
+    'selection-explain-clear-confirm': '确定清空全部解释记录吗？此操作无法撤销。',
+    'selection-explain-delete-failed': '删除失败，请稍后重试',
+    'selection-explain-history-cleared': '解释记录已清空',
+    'selection-explain-restore-failed': '无法恢复这张解释卡',
+    'selection-explain-incomplete-badge': '中断',
+    'selection-explain-unknown-model': '快速模型',
     'settings-capability-web-desc': '需要实时信息时允许 RAI 联网检索。',
     'settings-capability-thinking-desc': '当前模型支持时，允许更长的内部推理。',
     'settings-personalization-title': '个性化',
@@ -4015,6 +4079,57 @@ const i18n = {
     'settings-general-desc': 'Appearance and browser tab behavior.',
     'settings-capabilities-title': 'Capabilities',
     'settings-capabilities-desc': 'Control the enhanced capabilities RAI can use in default chats.',
+    'selection-explain-delete-mode-title': 'When deleting an explanation',
+    'selection-explain-delete-mode-desc': 'Choose what happens to later branches when a node is deleted from the explanation tree.',
+    'selection-explain-delete-promote': 'Keep branches',
+    'selection-explain-delete-subtree': 'Delete branches',
+    'selection-explain-delete-ask': 'Ask every time',
+    'selection-explain-delete-mode-saved': 'Explanation deletion behavior saved',
+    'selection-explain-delete-mode-save-failed': 'Could not save deletion behavior. Try again.',
+    'selection-explain-pill': 'What does this mean?',
+    'selection-explain-cost': '· 1 point',
+    'selection-explain-dock-label': 'Explanation card dock',
+    'selection-explain-all-history': 'All explanation history',
+    'selection-explain-history-title': 'Explanation history',
+    'selection-explain-history-desc': 'Selected text and explanations are stored separately from chat history.',
+    'selection-explain-close-history': 'Close explanation history',
+    'selection-explain-search-placeholder': 'Search selected text or explanations',
+    'selection-explain-clear-history': 'Clear',
+    'selection-explain-load-more': 'Load more',
+    'selection-explain-delete-dialog-title': 'What should happen to later branches?',
+    'selection-explain-delete-dialog-message': 'This card has {count} later nodes. Choose how to delete it.',
+    'selection-explain-delete-fixed-promote-confirm': 'This card has {count} later nodes. Only this card will be deleted, and later branches will move up one level. Continue?',
+    'selection-explain-delete-fixed-subtree-confirm': 'This card has {count} later nodes. This card and every later branch will be deleted. This cannot be undone. Continue?',
+    'selection-explain-delete-set-default': 'Use this choice by default',
+    'selection-explain-delete-promote-action': 'Delete this card and keep branches',
+    'selection-explain-delete-subtree-action': 'Delete this card and all branches',
+    'selection-explain-card-label': 'Inline explanation',
+    'selection-explain-card-drag-label': 'Explanation card header. Press Enter or Space to start keyboard moving.',
+    'selection-explain-minimize': 'Minimize explanation card',
+    'selection-explain-close-card': 'Close explanation card',
+    'selection-explain-stop': 'Stop generating',
+    'selection-explain-generating': 'Explaining quickly…',
+    'selection-explain-complete': 'Explanation complete',
+    'selection-explain-partial': 'Answer interrupted',
+    'selection-explain-cancelled': 'Stopped',
+    'selection-explain-error': 'Could not explain this right now. Try again later.',
+    'selection-explain-refunded': 'No visible answer was generated. 1 point was refunded.',
+    'selection-explain-routing': 'The preferred model is unavailable. Switching to a fallback model.',
+    'selection-explain-no-selection': 'Select text inside a single message first',
+    'selection-explain-selection-too-long': 'The selection is too long. Shorten it and try again.',
+    'selection-explain-history-loading': 'Loading explanation history…',
+    'selection-explain-history-empty': 'No explanations yet. Select a word or passage in a chat to begin.',
+    'selection-explain-history-error': 'Could not load explanation history. Try again later.',
+    'selection-explain-thread-count': '{count} cards',
+    'selection-explain-thread-delete': 'Delete this explanation thread',
+    'selection-explain-node-delete': 'Delete this explanation card',
+    'selection-explain-delete-thread-confirm': 'Delete this explanation thread and every card in it?',
+    'selection-explain-clear-confirm': 'Clear all explanation history? This cannot be undone.',
+    'selection-explain-delete-failed': 'Delete failed. Try again later.',
+    'selection-explain-history-cleared': 'Explanation history cleared',
+    'selection-explain-restore-failed': 'Could not restore this explanation card',
+    'selection-explain-incomplete-badge': 'Interrupted',
+    'selection-explain-unknown-model': 'Fast model',
     'settings-capability-web-desc': 'Allow RAI to search the web when current information is needed.',
     'settings-capability-thinking-desc': 'Allow longer internal reasoning when the current model supports it.',
     'settings-personalization-title': 'Personalization',
@@ -4523,6 +4638,60 @@ Object.assign(i18n['zh-TW'], {
   'account-delete-failed': '註銷帳號失敗'
 });
 
+Object.assign(i18n['zh-TW'], {
+  'selection-explain-delete-mode-title': '刪除解釋卡時',
+  'selection-explain-delete-mode-desc': '選擇在樹狀歷史中刪除節點時，如何處理後續分支。',
+  'selection-explain-delete-promote': '保留分支',
+  'selection-explain-delete-subtree': '刪除分支',
+  'selection-explain-delete-ask': '每次詢問',
+  'selection-explain-delete-mode-saved': '解釋卡刪除方式已儲存',
+  'selection-explain-delete-mode-save-failed': '刪除方式儲存失敗，請重試',
+  'selection-explain-pill': '這是什麼意思？',
+  'selection-explain-cost': '· 1點',
+  'selection-explain-dock-label': '解釋卡片塢',
+  'selection-explain-all-history': '全部解釋記錄',
+  'selection-explain-history-title': '解釋記錄',
+  'selection-explain-history-desc': '選取文字與解釋會獨立儲存，不會出現在聊天記錄中。',
+  'selection-explain-close-history': '關閉解釋記錄',
+  'selection-explain-search-placeholder': '搜尋選取文字或解釋',
+  'selection-explain-clear-history': '清空',
+  'selection-explain-load-more': '載入更多',
+  'selection-explain-delete-dialog-title': '如何處理後續分支？',
+  'selection-explain-delete-dialog-message': '這張卡有 {count} 個後續節點。請選擇刪除方式。',
+  'selection-explain-delete-fixed-promote-confirm': '這張卡有 {count} 個後續節點。將只刪除目前卡片，後續分支會提升到上一層。要繼續嗎？',
+  'selection-explain-delete-fixed-subtree-confirm': '這張卡有 {count} 個後續節點。將刪除目前卡片及全部後續分支。此操作無法復原，要繼續嗎？',
+  'selection-explain-delete-set-default': '設為往後的預設值',
+  'selection-explain-delete-promote-action': '只刪目前卡片，保留分支',
+  'selection-explain-delete-subtree-action': '連同後續分支刪除',
+  'selection-explain-card-label': '選詞解釋',
+  'selection-explain-card-drag-label': '解釋卡標題列。按 Enter 或空白鍵開始用鍵盤移動。',
+  'selection-explain-minimize': '最小化解釋卡',
+  'selection-explain-close-card': '關閉解釋卡',
+  'selection-explain-stop': '停止生成',
+  'selection-explain-generating': '正在快速解釋…',
+  'selection-explain-complete': '解釋完成',
+  'selection-explain-partial': '回答中斷',
+  'selection-explain-cancelled': '已停止',
+  'selection-explain-error': '目前無法解釋，請稍後再試',
+  'selection-explain-refunded': '未生成可見內容，1 點已退回',
+  'selection-explain-routing': '首選模型無法使用，正在切換備用模型',
+  'selection-explain-no-selection': '請先在同一則訊息中選取文字',
+  'selection-explain-selection-too-long': '選取內容過長，請縮短後重試',
+  'selection-explain-history-loading': '正在載入解釋記錄…',
+  'selection-explain-history-empty': '尚無解釋記錄。選取對話中的詞句即可開始。',
+  'selection-explain-history-error': '解釋記錄載入失敗，請稍後重試',
+  'selection-explain-thread-count': '{count} 張卡',
+  'selection-explain-thread-delete': '刪除整條解釋記錄',
+  'selection-explain-node-delete': '刪除這張解釋卡',
+  'selection-explain-delete-thread-confirm': '確定刪除這條解釋記錄及其中全部卡片嗎？',
+  'selection-explain-clear-confirm': '確定清空全部解釋記錄嗎？此操作無法復原。',
+  'selection-explain-delete-failed': '刪除失敗，請稍後重試',
+  'selection-explain-history-cleared': '解釋記錄已清空',
+  'selection-explain-restore-failed': '無法還原這張解釋卡',
+  'selection-explain-incomplete-badge': '中斷',
+  'selection-explain-unknown-model': '快速模型'
+});
+
 i18n['zh-TW'] = hydrateRuntimeI18nMap(i18n['zh-TW']);
 
 let __raiTitleAnimTimer = null;
@@ -4993,6 +5162,32 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-17',
+    version: 'v0.11.37',
+    zh: {
+      summary: '新增低打扰的选词解释、连续追问与树状解释记录。',
+      details: [
+        '在用户消息、RAI 回复和 ChatFlow 消息中选中文字后，会出现“这是什么意思？”快捷入口；每次解释固定消耗 1 点，并优先使用无思考的 DeepSeek Flash 快速回答。',
+        '解释卡中的专业词汇、复杂句式和数学公式也可继续选中追问，新卡会分层叠放，并支持拖动、最小化和从停靠栏恢复。',
+        '解释记录按账户同步为可搜索的树状历史；卡片位置和展开状态仅保存在当前设备，避免影响其他设备的布局。',
+        '设置 > 能力可选择删除一张解释卡时保留后续分支、连同分支一起删除，或每次询问；默认保留后续分支。',
+        '流式解释若未产生可见内容会自动退回 1 点；已经生成的部分回答会保留并标记为中断。',
+        '清空全部解释记录会先终止清空前的在途请求，再以服务端账本栅栏防止迟到输出或崩溃恢复让旧卡片重新出现。'
+      ]
+    },
+    en: {
+      summary: 'Added unobtrusive selection explanations, follow-up cards, and tree-based history.',
+      details: [
+        'Selecting text in user messages, RAI replies, or ChatFlow messages now reveals a “What does this mean?” action. Each explanation costs exactly 1 point and prefers the no-thinking DeepSeek Flash route for a quick answer.',
+        'Terms, complex phrasing, and formulas inside an explanation can be selected again for a layered follow-up card, with drag, minimize, and dock restore controls.',
+        'Explanation records sync to the account as searchable tree history, while card positions and expansion state remain local to the current device.',
+        'Settings > Capabilities can preserve later branches, delete the whole branch, or ask every time when removing an explanation card; preserving later branches is the default.',
+        'A streamed explanation that produces no visible content automatically refunds its 1 point; any visible partial answer is retained and marked as interrupted.',
+        'Clearing all explanation history now stops requests that began before the clear and uses an authoritative server ledger fence so late output or crash recovery cannot bring deleted cards back.'
+      ]
+    }
+  },
   {
     date: '2026-07-14',
     version: 'v0.11.36',
@@ -9203,6 +9398,12 @@ function updateSettingsOptionButtons() {
   document.querySelectorAll('[data-language-option]').forEach((button) => {
     button.classList.toggle('active', button.getAttribute('data-language-option') === appState.language);
   });
+
+  document.querySelectorAll('[data-selection-explain-delete-mode]').forEach((button) => {
+    const isActive = button.getAttribute('data-selection-explain-delete-mode') === normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode);
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
 }
 
 function syncDesktopSettingsVisibility() {
@@ -9710,6 +9911,44 @@ function settingsToggleInternetBadgeVisibility() {
   updateMessageBadgeVisibilityUI();
 }
 
+function normalizeSelectionExplanationDeleteMode(mode) {
+  const normalized = String(mode || '').trim();
+  return ['promote_children', 'delete_subtree', 'ask_each_time'].includes(normalized)
+    ? normalized
+    : 'promote_children';
+}
+
+async function setSelectionExplanationDeleteMode(mode) {
+  const normalized = normalizeSelectionExplanationDeleteMode(mode);
+  const previous = normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode);
+  if (normalized === previous) return;
+
+  appState.selectionExplanationDeleteMode = normalized;
+  updateSettingsOptionButtons();
+
+  if (!appState.token) return;
+  try {
+    const response = await fetch(`${API_BASE}/user/config`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(buildCurrentConfigPayloadForMemory())
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
+    }
+    showToast(i18nText('selection-explain-delete-mode-saved', isChineseLanguage(appState.language) ? '解释卡删除方式已保存' : 'Explanation deletion behavior saved'));
+  } catch (error) {
+    appState.selectionExplanationDeleteMode = previous;
+    updateSettingsOptionButtons();
+    showToast(i18nText('selection-explain-delete-mode-save-failed', isChineseLanguage(appState.language) ? '删除方式保存失败，请重试' : 'Could not save deletion behavior'));
+    console.warn('保存选词解释删除策略失败:', error);
+  }
+}
+
 function updateMessageBadgeVisibilityUI() {
   const modelSwitch = document.getElementById('settingsModelBadgeSwitch');
   const modelToggle = document.getElementById('settingsModelBadgeToggle');
@@ -9939,6 +10178,7 @@ function setLanguage(lang) {
   updateAuthLanguageButtons();
   updatePasskeyLoginEntry();
   renderPasskeySettings();
+  window.RAISelectionExplainer?.refreshLanguage?.();
 
   updateReasoningProfileControl();
   updateResearchModeControl();
@@ -10666,7 +10906,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.36 初始化 (passkeys, security rewards, routing notices, and scanner-safe tests)');
+  console.log(' RAI v0.11.37 初始化 (selection explanations, nested follow-ups, and tree history)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -11548,7 +11788,8 @@ function persistDefaultModelPreference(modelId = appState.selectedModel) {
       long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
       font_preference: appState.fontPreference || 'rai',
       tab_title_mode: appState.tabTitleMode || 'default',
-      tab_title_custom_text: appState.tabTitleCustomText || ''
+      tab_title_custom_text: appState.tabTitleCustomText || '',
+      selection_explanation_delete_mode: normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode)
     })
   }).then((res) => res.json())
     .then((data) => {
@@ -11908,7 +12149,8 @@ async function saveSettings(options = {}) {
           long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
           font_preference: appState.fontPreference || 'rai',
           tab_title_mode: appState.tabTitleMode || 'default',
-          tab_title_custom_text: appState.tabTitleCustomText || ''
+          tab_title_custom_text: appState.tabTitleCustomText || '',
+          selection_explanation_delete_mode: normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode)
         })
       });
 
@@ -17212,6 +17454,7 @@ async function verifyToken() {
 }
 
 function clearAuthenticatedAppState() {
+  window.RAISelectionExplainer?.clearUserWorkspace?.(appState.user?.id);
   localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
   localStorage.removeItem(RAI_TOKEN_KEY);
   appState.token = null;
@@ -18366,6 +18609,9 @@ async function loadUserData() {
       if (profile.tab_title_custom_text !== undefined) {
         appState.tabTitleCustomText = String(profile.tab_title_custom_text || '').slice(0, 80);
       }
+      if (profile.selection_explanation_delete_mode !== undefined) {
+        appState.selectionExplanationDeleteMode = normalizeSelectionExplanationDeleteMode(profile.selection_explanation_delete_mode);
+      }
       if (profile.font_preference !== undefined) {
         applyFontPreference(profile.font_preference || 'rai');
         persistLocalSettingsPatch({ fontPreference: appState.fontPreference });
@@ -18380,6 +18626,7 @@ async function loadUserData() {
       updateModelControls();
       updateMenuSelection();
       updateToolbarUI();
+      window.RAISelectionExplainer?.onUserReady?.(profile);
       console.log(' 用户配置已加载到UI');
     } else {
       console.warn(' profile对象格式不正确');
@@ -19284,6 +19531,7 @@ async function saveFlowState() {
 function createChatFlowDragHandle() {
   const handle = document.createElement('div');
   handle.className = 'chatflow-message-drag-handle';
+  handle.draggable = true;
   handle.title = isChineseLanguage(appState.language) ? '拖拽到画布' : 'Drag to canvas';
   handle.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="16" height="16" fill="currentColor">
@@ -19297,7 +19545,6 @@ function createChatFlowMessageElement(message, index) {
   const role = message?.role === 'user' ? 'user' : 'assistant';
   const div = document.createElement('div');
   div.className = `chatflow-message message ${role}`;
-  div.draggable = true;
   div.dataset.msgIndex = String(index);
   div.dataset.msgId = getChatFlowMessageId(message) || '';
 
@@ -20836,8 +21083,12 @@ function initChatFlowDragDrop() {
   console.log(' 初始化 ChatFlow 拖拽支持');
 
   messagesContainer.addEventListener('dragstart', (event) => {
-    const msgElement = event.target.closest('.chatflow-message');
-    if (!msgElement) return;
+    const dragHandle = event.target.closest('.chatflow-message-drag-handle');
+    const msgElement = dragHandle?.closest('.chatflow-message');
+    if (!dragHandle || !msgElement) {
+      event.preventDefault();
+      return;
+    }
 
     const messageIndex = Number(msgElement.dataset.msgIndex);
     const rawMessageId = msgElement.dataset.msgId;
@@ -22501,7 +22752,8 @@ function buildCurrentConfigPayloadForMemory() {
     long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
     font_preference: appState.fontPreference || 'rai',
     tab_title_mode: appState.tabTitleMode || 'default',
-    tab_title_custom_text: appState.tabTitleCustomText || ''
+    tab_title_custom_text: appState.tabTitleCustomText || '',
+    selection_explanation_delete_mode: normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode)
   };
 }
 

@@ -26,27 +26,28 @@
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260714-secret-scanner-cleanup-v01136">
+  <link rel="manifest" href="site.webmanifest?v=20260717-selection-explanations-clear-fence-v01137">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260714-secret-scanner-cleanup-v01136"></script>
-  <script defer src="lib/purify.min.js?v=20260714-secret-scanner-cleanup-v01136"></script>
+  <script defer src="lib/marked.min.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
+  <script defer src="lib/purify.min.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260714-secret-scanner-cleanup-v01136">
-  <script defer src="lib/katex/katex.min.js?v=20260714-secret-scanner-cleanup-v01136"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260714-secret-scanner-cleanup-v01136"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260717-selection-explanations-clear-fence-v01137">
+  <script defer src="lib/katex/katex.min.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
 
   <!-- Mermaid.js 图表渲染 -->
-  <script defer src="lib/mermaid/mermaid.min.js?v=20260714-secret-scanner-cleanup-v01136"></script>
+  <script defer src="lib/mermaid/mermaid.min.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260714-secret-scanner-cleanup-v01136">
-  <script defer src="lib/highlight/highlight.min.js?v=20260714-secret-scanner-cleanup-v01136"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260717-selection-explanations-clear-fence-v01137">
+  <script defer src="lib/highlight/highlight.min.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260714-secret-scanner-cleanup-v01136">
+  <link rel="stylesheet" href="styles.css?v=20260717-selection-explanations-clear-fence-v01137">
+  <link rel="stylesheet" href="selection-explainer.css?v=20260717-selection-explanations-clear-fence-v01137">
 </head>
 
 <body>
@@ -342,7 +343,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.11.36</div>
+                <div class="logo-subtitle">by Rick · v0.11.37</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -1234,7 +1235,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" onclick="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260714-secret-scanner-cleanup-v01136" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260717-selection-explanations-clear-fence-v01137" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1295,7 +1296,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               onclick="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260714-secret-scanner-cleanup-v01136" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260717-selection-explanations-clear-fence-v01137" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1305,7 +1306,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               onclick="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260714-secret-scanner-cleanup-v01136" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260717-selection-explanations-clear-fence-v01137" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1498,6 +1499,26 @@
                     onclick="setResearchMode('fast', { enable: true })" data-i18n="research-fast">快速研究</button>
                   <button type="button" class="settings-choice-btn" data-settings-research-mode="deep"
                     onclick="setResearchMode('deep', { enable: true })" data-i18n="research-deep">深度研究</button>
+                </div>
+              </div>
+              <div class="settings-setting-row settings-setting-row-stacked" id="selectionExplainDeleteSettingRow">
+                <div class="settings-setting-row-head">
+                  <div class="settings-setting-copy">
+                    <div class="setting-label" data-i18n="selection-explain-delete-mode-title">删除解释卡时</div>
+                    <p class="setting-description" data-i18n="selection-explain-delete-mode-desc">选择树状历史中删除节点时如何处理后续分支。</p>
+                  </div>
+                </div>
+                <div class="settings-segmented selection-explain-delete-choice" role="group"
+                  data-i18n-aria-label="selection-explain-delete-mode-title" aria-label="删除解释卡时">
+                  <button type="button" class="settings-choice-btn" data-selection-explain-delete-mode="promote_children"
+                    onclick="setSelectionExplanationDeleteMode('promote_children')"
+                    data-i18n="selection-explain-delete-promote">保留分支</button>
+                  <button type="button" class="settings-choice-btn" data-selection-explain-delete-mode="delete_subtree"
+                    onclick="setSelectionExplanationDeleteMode('delete_subtree')"
+                    data-i18n="selection-explain-delete-subtree">删除分支</button>
+                  <button type="button" class="settings-choice-btn" data-selection-explain-delete-mode="ask_each_time"
+                    onclick="setSelectionExplanationDeleteMode('ask_each_time')"
+                    data-i18n="selection-explain-delete-ask">每次询问</button>
                 </div>
               </div>
             </div>
@@ -2085,12 +2106,85 @@
   <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display: none;"
     onchange="handleAvatarSelected(event)">
 
+  <!-- 选词解释：独立于普通对话历史的顶层浮层工作区 -->
+  <div class="selection-explain-root" id="selectionExplainRoot" aria-live="polite">
+    <button type="button" class="selection-explain-pill" id="selectionExplainPill" hidden
+      data-i18n-aria-label="selection-explain-pill" aria-label="这是什么意思？消耗 1 点">
+      <span class="selection-explain-pill-mark" aria-hidden="true">?</span>
+      <span data-i18n="selection-explain-pill">这是什么意思？</span>
+      <span class="selection-explain-pill-cost" data-i18n="selection-explain-cost">· 1点</span>
+    </button>
+
+    <div class="selection-explain-cards" id="selectionExplainCards"></div>
+
+    <div class="selection-explain-dock" id="selectionExplainDock" hidden>
+      <button type="button" class="selection-explain-dock-button" id="selectionExplainDockButton"
+        aria-expanded="false" aria-controls="selectionExplainDockTray"
+        data-i18n-aria-label="selection-explain-dock-label" aria-label="解释卡片坞">
+        <span class="selection-explain-dock-stack" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="selection-explain-dock-count" id="selectionExplainDockCount">0</span>
+      </button>
+      <div class="selection-explain-dock-tray" id="selectionExplainDockTray" hidden>
+        <div class="selection-explain-dock-tray-list" id="selectionExplainDockTrayList"></div>
+        <button type="button" class="selection-explain-history-open" id="selectionExplainHistoryOpen"
+          data-i18n="selection-explain-all-history">全部解释记录</button>
+      </div>
+    </div>
+
+    <div class="selection-explain-history-backdrop" id="selectionExplainHistoryBackdrop" hidden></div>
+    <aside class="selection-explain-history" id="selectionExplainHistoryDrawer" role="dialog" aria-modal="true"
+      aria-labelledby="selectionExplainHistoryTitle" aria-hidden="true">
+      <header class="selection-explain-history-header">
+        <div>
+          <h2 id="selectionExplainHistoryTitle" data-i18n="selection-explain-history-title">解释记录</h2>
+          <p data-i18n="selection-explain-history-desc">独立保存的选词与解释，不会出现在聊天历史中。</p>
+        </div>
+        <button type="button" class="selection-explain-icon-button" id="selectionExplainHistoryClose"
+          data-i18n-aria-label="selection-explain-close-history" aria-label="关闭解释记录">×</button>
+      </header>
+      <div class="selection-explain-history-tools">
+        <label class="selection-explain-search">
+          <span aria-hidden="true">⌕</span>
+          <input type="search" id="selectionExplainHistorySearch"
+            data-i18n-placeholder="selection-explain-search-placeholder" placeholder="搜索选词或解释"
+            data-i18n-aria-label="selection-explain-search-placeholder" aria-label="搜索选词或解释">
+        </label>
+        <button type="button" class="selection-explain-clear-history" id="selectionExplainClearHistory"
+          data-i18n="selection-explain-clear-history">清空</button>
+      </div>
+      <div class="selection-explain-history-list" id="selectionExplainHistoryList"></div>
+      <button type="button" class="selection-explain-load-more" id="selectionExplainHistoryLoadMore" hidden
+        data-i18n="selection-explain-load-more">加载更多</button>
+    </aside>
+
+    <div class="selection-explain-delete-dialog-backdrop" id="selectionExplainDeleteDialogBackdrop" hidden>
+      <section class="selection-explain-delete-dialog" id="selectionExplainDeleteDialog" role="alertdialog"
+        aria-modal="true" aria-labelledby="selectionExplainDeleteDialogTitle"
+        aria-describedby="selectionExplainDeleteDialogMessage">
+        <h3 id="selectionExplainDeleteDialogTitle" data-i18n="selection-explain-delete-dialog-title">如何处理后续分支？</h3>
+        <p id="selectionExplainDeleteDialogMessage"></p>
+        <label class="selection-explain-delete-default">
+          <input type="checkbox" id="selectionExplainDeleteSetDefault">
+          <span data-i18n="selection-explain-delete-set-default">设为以后默认</span>
+        </label>
+        <div class="selection-explain-delete-dialog-actions">
+          <button type="button" data-delete-choice="promote_children"
+            data-i18n="selection-explain-delete-promote-action">只删当前卡，保留分支</button>
+          <button type="button" class="danger" data-delete-choice="delete_subtree"
+            data-i18n="selection-explain-delete-subtree-action">连同后续分支删除</button>
+          <button type="button" data-delete-choice="cancel" data-i18n="cancel">取消</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
   <!-- 粒子背景画布 -->
   <canvas id="particleCanvas"
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script defer src="app.js?v=20260714-secret-scanner-cleanup-v01136"></script>
+  <script defer src="app.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
+  <script defer src="selection-explainer.js?v=20260717-selection-explanations-clear-fence-v01137"></script>
 </body>
 
 </html>

@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.36-20260714-secret-scanner-cleanup-v01136';
+const RAI_SW_VERSION = '0.11.37-20260717-selection-explanations-clear-fence-v01137';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-root-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-root-';
 const RAI_FONT_CACHE_NAME = 'rai-fonts-root-v1';
@@ -9,23 +9,25 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260714-secret-scanner-cleanup-v01136',
-  '/styles.css?v=20260714-secret-scanner-cleanup-v01136',
-  '/site.webmanifest?v=20260714-secret-scanner-cleanup-v01136',
+  '/app.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/styles.css?v=20260717-selection-explanations-clear-fence-v01137',
+  '/selection-explainer.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/selection-explainer.css?v=20260717-selection-explanations-clear-fence-v01137',
+  '/site.webmanifest?v=20260717-selection-explanations-clear-fence-v01137',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
   '/icons/settings/notifications.svg',
   '/icons/settings/notifications_paused.svg',
-  '/lib/marked.min.js?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/purify.min.js?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/katex/katex.min.css?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/katex/katex.min.js?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/katex/contrib/auto-render.min.js?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/mermaid/mermaid.min.js?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/highlight/styles/github-dark.min.css?v=20260714-secret-scanner-cleanup-v01136',
-  '/lib/highlight/highlight.min.js?v=20260714-secret-scanner-cleanup-v01136'
+  '/lib/marked.min.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/purify.min.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/katex/katex.min.css?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/katex/katex.min.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/katex/contrib/auto-render.min.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/mermaid/mermaid.min.js?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/highlight/styles/github-dark.min.css?v=20260717-selection-explanations-clear-fence-v01137',
+  '/lib/highlight/highlight.min.js?v=20260717-selection-explanations-clear-fence-v01137'
 ];
 
 function isAvatarRequest(url) {

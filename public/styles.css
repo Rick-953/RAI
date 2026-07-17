@@ -1414,7 +1414,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   margin-bottom: var(--spacing-lg);
   border-radius: 0;
   position: relative;
-  cursor: grab;
+  cursor: default;
   transition: transform 0.2s, opacity 0.2s;
 }
 
@@ -1425,7 +1425,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 }
 
 .chatflow-message:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .chatflow-message.user {
@@ -1457,6 +1457,16 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   opacity: 0;
   transition: opacity 0.2s;
   color: var(--text-tertiary);
+}
+
+.chatflow-message-drag-handle:active {
+  cursor: grabbing;
+}
+
+.chatflow-message .message-text {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .chatflow-message:hover .chatflow-message-drag-handle {
@@ -4597,6 +4607,16 @@ body.keyboard-open .chat-edge-blur-bottom {
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0.5em 0;
+}
+
+/* Keep the original LaTeX available to selection tools without changing KaTeX output. */
+.rai-math-source-inline {
+  display: inline;
+}
+
+.rai-math-source-block {
+  display: block;
+  max-width: 100%;
 }
 
 .message-text .katex-display>.katex {
