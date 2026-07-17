@@ -21285,30 +21285,29 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
 // 每日签到（所有登录用户每天一次）
 app.post('/api/user/checkin', authenticateToken, async (req, res) => {
     try {
-        const user = await dbGetAsync(
-            'SELECT id, COALESCE(points, 0) AS points, last_checkin FROM users WHERE id = ?',
-            [req.user.userId]
+        const today = getTodayDateString();
+        const pointsGained = MEMBERSHIP_CONFIG.free.checkinPoints;
+        const updateResult = await dbRunAsync(
+            `UPDATE users
+             SET points = COALESCE(points, 0) + ?, last_checkin = ?
+             WHERE id = ? AND COALESCE(last_checkin, '') <> ?`,
+            [pointsGained, today, req.user.userId, today]
         );
 
-        if (!user) {
-            return res.status(404).json({ error: '用户不存在' });
-        }
-
-        const today = getTodayDateString();
-        if (user.last_checkin === today) {
+        if (Number(updateResult.changes || 0) !== 1) {
+            const existingUser = await dbGetAsync(
+                'SELECT id, last_checkin FROM users WHERE id = ?',
+                [req.user.userId]
+            );
+            if (!existingUser) {
+                return res.status(404).json({ error: '用户不存在' });
+            }
             return res.status(400).json({ error: '今日已签到' });
         }
 
-        const pointsGained = MEMBERSHIP_CONFIG.free.checkinPoints;
-        const newPoints = Number(user.points || 0) + pointsGained;
-
-        await dbRunAsync(
-            'UPDATE users SET points = ?, last_checkin = ? WHERE id = ?',
-            [newPoints, today, user.id]
-        );
-
-        const snapshot = await getUserMembershipSnapshot(user.id);
-        console.log(` 用户 ${user.id} 签到成功，获得 ${pointsGained} 点数`);
+        const snapshot = await getUserMembershipSnapshot(req.user.userId);
+        const newPoints = Number(snapshot?.points || 0);
+        console.log(` 用户 ${req.user.userId} 签到成功，获得 ${pointsGained} 点数`);
         res.json({
             success: true,
             pointsGained,

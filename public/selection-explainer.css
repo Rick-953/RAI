@@ -4,6 +4,8 @@
   --selection-explain-surface-strong: color-mix(in srgb, var(--bg-tertiary) 92%, transparent);
   --selection-explain-border: color-mix(in srgb, var(--text-primary) 12%, transparent);
   --selection-explain-shadow: 0 22px 60px rgba(0, 0, 0, 0.34), 0 4px 14px rgba(0, 0, 0, 0.2);
+  --selection-explain-card-shadow: 14px 18px 48px rgba(0, 0, 0, 0.38), 4px 7px 16px rgba(0, 0, 0, 0.22);
+  --selection-explain-card-shadow-active: 17px 22px 56px rgba(0, 0, 0, 0.42), 5px 9px 18px rgba(0, 0, 0, 0.24);
   position: fixed;
   inset: 0;
   z-index: 700;
@@ -24,7 +26,7 @@
   min-height: 34px;
   max-width: min(280px, calc(100vw - 24px));
   padding: 5px 12px 5px 7px;
-  border: 1px solid var(--selection-explain-border);
+  border: 0;
   border-radius: 999px;
   background: var(--selection-explain-surface);
   color: var(--text-primary);
@@ -42,7 +44,6 @@
 }
 
 .selection-explain-pill:hover {
-  border-color: color-mix(in srgb, var(--selection-explain-accent) 44%, var(--selection-explain-border));
   background: var(--selection-explain-surface-strong);
 }
 
@@ -93,11 +94,11 @@
   min-width: min(300px, calc(100vw - 24px));
   max-height: min(580px, calc(100dvh - 28px));
   overflow: hidden;
-  border: 1px solid var(--selection-explain-border);
+  border: 0;
   border-radius: 18px;
   background: var(--selection-explain-surface);
   color: var(--text-primary);
-  box-shadow: var(--selection-explain-shadow);
+  box-shadow: var(--selection-explain-card-shadow);
   backdrop-filter: blur(22px) saturate(135%);
   -webkit-backdrop-filter: blur(22px) saturate(135%);
   pointer-events: auto;
@@ -110,17 +111,18 @@
 }
 
 .selection-explain-card.is-active {
-  border-color: color-mix(in srgb, var(--selection-explain-accent) 38%, var(--selection-explain-border));
+  box-shadow: var(--selection-explain-card-shadow-active);
 }
 
 .selection-explain-card.is-dragging {
   cursor: grabbing;
-  box-shadow: 0 26px 76px rgba(0, 0, 0, 0.42);
+  box-shadow: 20px 26px 68px rgba(0, 0, 0, 0.46), 7px 10px 22px rgba(0, 0, 0, 0.26);
   transition: none;
 }
 
 .selection-explain-card.is-keyboard-dragging {
-  border-color: var(--selection-explain-accent);
+  outline: 2px solid var(--selection-explain-accent);
+  outline-offset: 3px;
 }
 
 @keyframes selectionExplainCardIn {
@@ -344,11 +346,11 @@
   gap: 7px;
   height: 38px;
   padding: 0 11px;
-  border: 1px solid var(--selection-explain-border);
+  border: 0;
   border-radius: 999px;
   background: var(--selection-explain-surface);
   color: var(--text-primary);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  box-shadow: 8px 11px 28px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   cursor: pointer;
@@ -388,10 +390,10 @@
   width: min(286px, calc(100vw - 24px));
   max-height: min(380px, 52vh);
   overflow: hidden;
-  border: 1px solid var(--selection-explain-border);
+  border: 0;
   border-radius: 15px;
   background: var(--selection-explain-surface);
-  box-shadow: var(--selection-explain-shadow);
+  box-shadow: 12px 16px 44px rgba(0, 0, 0, 0.34), 4px 7px 14px rgba(0, 0, 0, 0.2);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
@@ -634,7 +636,7 @@
 .selection-explain-delete-dialog {
   width: min(400px, 100%);
   padding: 20px;
-  border: 1px solid var(--selection-explain-border);
+  border: 0;
   border-radius: 17px;
   background: var(--bg-secondary);
   color: var(--text-primary);

@@ -770,8 +770,14 @@
     const composer = activeComposer();
     const rootRect = root?.getBoundingClientRect();
     const composerRect = composer?.getBoundingClientRect();
+    const dockAnchor = composer?.querySelector('.input-wrapper, .chatflow-input-wrapper') || composer;
+    const dockAnchorRect = dockAnchor?.getBoundingClientRect();
     const bounds = visualBounds();
-    const left = isMobileWorkspace() ? bounds.left + 10 : Math.max(bounds.left + 12, Number(rootRect?.left || 0) + 14);
+    const dockWidth = Number(state.els.dockButton?.getBoundingClientRect().width || 72);
+    const desktopLeft = Number(dockAnchorRect?.left ?? rootRect?.left ?? bounds.left) + 4;
+    const left = isMobileWorkspace()
+      ? bounds.left + 10
+      : clamp(desktopLeft, bounds.left + 12, bounds.right - dockWidth - 12);
     const bottom = composerRect && composerRect.top < bounds.bottom
       ? Math.max(10, bounds.bottom - composerRect.top + 8)
       : 14;

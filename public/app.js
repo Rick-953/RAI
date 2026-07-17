@@ -2095,8 +2095,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.37';
-const RAI_BUILD_ID = '20260717-selection-explanations-clear-fence-v01137';
+const RAI_APP_VERSION = '0.11.38';
+const RAI_BUILD_ID = '20260717-ui-surface-checkin-width-v01138';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -3840,6 +3840,12 @@ const i18n = {
     'checkin-bonus': '签到 +20 ',
     'checkin-done': '今日已签到 ✓',
     'checkin-success': '签到成功！获得 {points} 点数 ',
+    'checkin-success-title': '签到成功',
+    'checkin-success-detail': '+{points} 点数已到账',
+    'checkin-failed-title': '签到失败',
+    'checkin-network-title': '暂时无法签到',
+    'checkin-dialog-confirm': '知道了',
+    'checkin-pending': '签到中…',
     'network-error': '网络错误',
     'cancel': '取消',
     'save-settings': '保存设置',
@@ -4399,6 +4405,12 @@ const i18n = {
     'checkin-bonus': 'Check in +20 ',
     'checkin-done': 'Checked in today ✓',
     'checkin-success': 'Check-in successful! +{points} ',
+    'checkin-success-title': 'Check-in complete',
+    'checkin-success-detail': '+{points} points added',
+    'checkin-failed-title': 'Check-in failed',
+    'checkin-network-title': 'Check-in unavailable',
+    'checkin-dialog-confirm': 'Got it',
+    'checkin-pending': 'Checking in…',
     'network-error': 'Network error',
     'cancel': 'Cancel',
     'save-settings': 'Save Settings',
@@ -5162,6 +5174,30 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-17',
+    version: 'v0.11.38',
+    zh: {
+      summary: '优化 PC 解释浮层、签到反馈与正文宽度。',
+      details: [
+        'PC 端解释卡管理入口改为对齐正文和输入区左缘，不再贴着侧栏分界；移动端位置和安全区保持原样。',
+        '选词解释卡、卡片坞及其托盘移除装饰性外描边，改用向右下方投射的柔和阴影建立浮层层级。',
+        '签到成功、重复签到和失败反馈全部改为 RAI 站内弹窗；设置页与侧边栏共用单一请求栅栏，服务端以条件原子更新保证每天只奖励一次。',
+        'PC 横屏正文和输入区从主区域的 66.67% 温和放宽到 72%，减少两侧空白；移动端布局不变。',
+        'RAI 表面设计规则明确为：浮窗、卡片、菜单和模态面板不随意添加装饰描边，优先使用灰阶色差、留白、圆角与右下阴影表达层级。'
+      ]
+    },
+    en: {
+      summary: 'Refined desktop explanation surfaces, check-in feedback, and content width.',
+      details: [
+        'The desktop explanation manager now aligns with the message and composer lane instead of hugging the sidebar edge, while mobile positioning remains unchanged.',
+        'Explanation cards, the dock, and its tray replace decorative perimeter strokes with soft lower-right shadows.',
+        'Successful, duplicate, and failed check-ins now use an accessible in-app RAI dialog. Both entry points share one request fence, and the server applies an atomic once-per-day reward update.',
+        'The desktop landscape message and composer lane is gently widened from 66.67% to 72% of the main area, reducing side whitespace without changing mobile layout.',
+        'RAI surface guidance now forbids arbitrary decorative borders on floating cards, menus, and dialogs, preferring tonal contrast, spacing, radius, and lower-right shadow.'
+      ]
+    }
+  },
   {
     date: '2026-07-17',
     version: 'v0.11.37',
@@ -10906,7 +10942,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.37 初始化 (selection explanations, nested follow-ups, and tree history)');
+  console.log(' RAI v0.11.38 初始化 (desktop UI surfaces, in-app check-in dialog, and content width)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -25017,41 +25053,203 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
   }
 }
 
-// 用户签到 (设置面板用)
-async function userCheckin() {
-  console.log(' userCheckin() 被调用');
-  try {
-    const token = appState.token;
-    console.log(' Token:', token ? '存在' : '不存在');
-    if (!token) {
-      console.error(' 无token，取消签到');
+let checkinRequestInFlight = null;
+let raiCheckinDialogReturnFocus = null;
+let raiCheckinDialogInertState = [];
+let raiCheckinDialogCloseTimer = null;
+
+function canRestoreRaiDialogFocus(element) {
+  return element instanceof HTMLElement
+    && element.isConnected
+    && !element.hidden
+    && !element.disabled
+    && element.getClientRects().length > 0;
+}
+
+function setRaiCheckinDialogBackgroundInert(shouldInert) {
+  const backdrop = document.getElementById('raiCheckinDialogBackdrop');
+  if (!backdrop) return;
+  if (shouldInert) {
+    raiCheckinDialogInertState = Array.from(document.body.children)
+      .filter((element) => element !== backdrop
+        && element instanceof HTMLElement
+        && !['SCRIPT', 'STYLE', 'LINK'].includes(element.tagName))
+      .map((element) => ({ element, inert: element.inert }));
+    raiCheckinDialogInertState.forEach(({ element }) => { element.inert = true; });
+    return;
+  }
+  raiCheckinDialogInertState.forEach(({ element, inert }) => {
+    if (element.isConnected) element.inert = inert;
+  });
+  raiCheckinDialogInertState = [];
+}
+
+function initRaiCheckinDialog() {
+  const backdrop = document.getElementById('raiCheckinDialogBackdrop');
+  const confirmButton = document.getElementById('raiCheckinDialogConfirm');
+  if (!backdrop || !confirmButton || backdrop.dataset.bound === 'true') return;
+  backdrop.dataset.bound = 'true';
+  backdrop.addEventListener('click', (event) => {
+    if (event.target === backdrop) closeRaiCheckinDialog();
+  });
+  backdrop.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeRaiCheckinDialog();
       return;
     }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      confirmButton.focus();
+    }
+  });
+  confirmButton.addEventListener('click', closeRaiCheckinDialog);
+}
 
-    console.log(' 发送签到请求...');
-    const res = await fetch('/api/user/checkin', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+function showRaiCheckinDialog({ tone = 'success', title = '', message = '', returnFocus = null } = {}) {
+  initRaiCheckinDialog();
+  const backdrop = document.getElementById('raiCheckinDialogBackdrop');
+  const dialog = document.getElementById('raiCheckinDialog');
+  const mark = document.getElementById('raiCheckinDialogMark');
+  const titleElement = document.getElementById('raiCheckinDialogTitle');
+  const messageElement = document.getElementById('raiCheckinDialogMessage');
+  const confirmButton = document.getElementById('raiCheckinDialogConfirm');
+  if (!backdrop || !dialog || !mark || !titleElement || !messageElement || !confirmButton) return;
 
-    console.log(' 响应状态:', res.status);
-    const data = await res.json();
-    console.log(' 响应数据:', data);
+  if (raiCheckinDialogCloseTimer) {
+    clearTimeout(raiCheckinDialogCloseTimer);
+    raiCheckinDialogCloseTimer = null;
+  }
+  if (backdrop.dataset.inertApplied !== 'true') {
+    raiCheckinDialogReturnFocus = returnFocus || document.activeElement;
+    setRaiCheckinDialogBackgroundInert(true);
+    backdrop.dataset.inertApplied = 'true';
+  }
+  dialog.classList.toggle('is-error', tone === 'error');
+  dialog.classList.toggle('is-info', tone === 'info');
+  mark.textContent = tone === 'success' ? '✓' : tone === 'info' ? 'i' : '!';
+  titleElement.textContent = String(title || '');
+  messageElement.textContent = String(message || '');
+  confirmButton.textContent = i18nText('checkin-dialog-confirm', isChineseLanguage(appState.language) ? '知道了' : 'Got it');
+  backdrop.hidden = false;
+  requestAnimationFrame(() => backdrop.classList.add('is-active'));
+  window.setTimeout(() => confirmButton.focus(), 30);
+}
 
-    if (res.ok) {
-      const successTpl = i18nText('checkin-success', '签到成功！获得 {points} 点数 ');
-      alert(successTpl.replace('{points}', data.pointsGained));
+function closeRaiCheckinDialog() {
+  const backdrop = document.getElementById('raiCheckinDialogBackdrop');
+  if (!backdrop || backdrop.hidden) return;
+  backdrop.classList.remove('is-active');
+  setRaiCheckinDialogBackgroundInert(false);
+  backdrop.dataset.inertApplied = 'false';
+  const preferredFocus = raiCheckinDialogReturnFocus;
+  raiCheckinDialogReturnFocus = null;
+  const fallbackFocus = [
+    preferredFocus,
+    document.querySelector('.settings-desktop-close-btn'),
+    document.querySelector('.settings-close-btn'),
+    document.getElementById('sidebarSettingsBtn')
+  ].find(canRestoreRaiDialogFocus);
+  fallbackFocus?.focus();
+  raiCheckinDialogCloseTimer = window.setTimeout(() => {
+    if (!backdrop.classList.contains('is-active')) backdrop.hidden = true;
+    raiCheckinDialogCloseTimer = null;
+  }, 180);
+}
+
+function setCheckinControlsPending(pending) {
+  const pendingLabel = i18nText('checkin-pending', isChineseLanguage(appState.language) ? '签到中…' : 'Checking in…');
+  document.querySelectorAll('#settingsCheckinBtn, .sidebar-checkin-btn').forEach((button) => {
+    if (pending) {
+      button.setAttribute('aria-busy', 'true');
+      button.disabled = true;
+      button.textContent = pendingLabel;
+      return;
+    }
+    button.removeAttribute('aria-busy');
+    if (button.id === 'settingsCheckinBtn') {
+      button.disabled = !userMembershipState.canCheckin;
+      button.textContent = userMembershipState.canCheckin
+        ? i18nText('checkin-bonus', '签到 +20 ')
+        : i18nText('checkin-done', '今日已签到 ✓');
+    } else {
+      button.disabled = false;
+      button.textContent = i18nText('checkin-bonus', '签到 +20 ');
+    }
+  });
+}
+
+async function performUserCheckin() {
+  if (checkinRequestInFlight) return checkinRequestInFlight;
+  const token = appState.token;
+  if (!token) return null;
+  const returnFocus = document.activeElement;
+  setCheckinControlsPending(true);
+
+  checkinRequestInFlight = (async () => {
+    try {
+      const response = await fetch('/api/user/checkin', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const rawError = String(data.error || '');
+        const alreadyCheckedIn = rawError === '今日已签到';
+        if (alreadyCheckedIn) await fetchUserMembership();
+        showRaiCheckinDialog({
+          tone: alreadyCheckedIn ? 'info' : 'error',
+          title: i18nText('checkin-failed-title', isChineseLanguage(appState.language) ? '签到失败' : 'Check-in failed'),
+          message: localizeServerError(rawError, isChineseLanguage(appState.language) ? '签到失败' : 'Check-in failed'),
+          returnFocus
+        });
+        return null;
+      }
+
+      userMembershipState.canCheckin = false;
+      const returnedTotal = Number(data.totalPoints ?? data.currentPoints);
+      if (Number.isFinite(returnedTotal)) userMembershipState.totalPoints = returnedTotal;
+      updateSettingsMembership();
+      updateUserAreaWithMembership();
+      refreshMembershipPlansModal();
       await fetchUserMembership();
       updateSettingsMembership();
       updateUserAreaWithMembership();
       refreshMembershipPlansModal();
-    } else {
-      alert(localizeServerError(data.error, isChineseLanguage(appState.language) ? '签到失败' : 'Check-in failed'));
+
+      const detailTemplate = i18nText('checkin-success-detail', '+{points} 点数已到账');
+      showRaiCheckinDialog({
+        tone: 'success',
+        title: i18nText('checkin-success-title', isChineseLanguage(appState.language) ? '签到成功' : 'Check-in complete'),
+        message: detailTemplate.replace('{points}', String(data.pointsGained || 0)),
+        returnFocus
+      });
+      return data;
+    } catch (error) {
+      console.error(' 签到错误:', error);
+      showRaiCheckinDialog({
+        tone: 'error',
+        title: i18nText('checkin-network-title', isChineseLanguage(appState.language) ? '暂时无法签到' : 'Check-in unavailable'),
+        message: isChineseLanguage(appState.language)
+          ? '网络出现波动，请稍后再试。'
+          : 'The network is unstable. Please try again shortly.',
+        returnFocus
+      });
+      return null;
     }
-  } catch (e) {
-    console.error(' 签到错误:', e);
-    alert(`${i18nText('network-error', '网络错误')}: ${e.message}`);
+  })();
+
+  try {
+    return await checkinRequestInFlight;
+  } finally {
+    checkinRequestInFlight = null;
+    setCheckinControlsPending(false);
   }
+}
+
+// 设置页与侧边栏共用同一个签到请求和站内结果弹窗。
+async function userCheckin() {
+  return performUserCheckin();
 }
 
 function formatMembershipPoints(points) {
@@ -25521,42 +25719,9 @@ function updateUserAreaWithMembership() {
   }
 }
 
-// 侧边栏签到函数 - 签到成功后隐藏按钮
+// 侧边栏签到函数 - 与设置页共用同一个并发栅栏和结果弹窗
 async function sidebarCheckin() {
-  console.log(' sidebarCheckin() 被调用');
-  try {
-    const token = appState.token;
-    console.log(' Token:', token ? '存在' : '不存在');
-    if (!token) {
-      console.error(' 无token，取消签到');
-      return;
-    }
-
-    console.log(' 发送签到请求...');
-    const res = await fetch('/api/user/checkin', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-
-    console.log(' 响应状态:', res.status);
-    const data = await res.json();
-    console.log(' 响应数据:', data);
-
-    if (res.ok) {
-      await fetchUserMembership();
-      updateUserAreaWithMembership();
-      updateSettingsMembership();
-      refreshMembershipPlansModal();
-
-      // 显示成功提示
-      const successTpl = i18nText('checkin-success', '签到成功！获得 {points} 点数 ');
-      showToast(successTpl.replace('{points}', data.pointsGained));
-    } else {
-      showToast(localizeServerError(data.error, isChineseLanguage(appState.language) ? '签到失败' : 'Check-in failed'), 'error');
-    }
-  } catch (e) {
-    showToast(i18nText('network-error', '网络错误'), 'error');
-  }
+  return performUserCheckin();
 }
 
 // 更新设置面板中的会员信息

@@ -414,13 +414,77 @@ async function testAuthNetworkResponseBehavior() {
   assert.equal((await parseResponse({ ...response(''), text: async () => { throw new Error('socket closed'); } })).error, exact);
 }
 
+function testCheckinDialogVisualLanguageAndDesktopWidth() {
+  const userCheckin = extractNamedFunction(app, 'userCheckin');
+  const sidebarCheckin = extractNamedFunction(app, 'sidebarCheckin');
+  const performCheckin = extractNamedFunction(app, 'performUserCheckin');
+  const showDialog = extractNamedFunction(app, 'showRaiCheckinDialog');
+  const closeDialog = extractNamedFunction(app, 'closeRaiCheckinDialog');
+  const initDialog = extractNamedFunction(app, 'initRaiCheckinDialog');
+
+  assert.match(userCheckin, /return performUserCheckin\(\)/);
+  assert.match(sidebarCheckin, /return performUserCheckin\(\)/);
+  assert.equal((app.match(/fetch\(['"]\/api\/user\/checkin/g) || []).length, 1,
+    'settings and sidebar must share exactly one check-in request implementation');
+  assert.doesNotMatch([userCheckin, sidebarCheckin, performCheckin].join('\n'), /\balert\s*\(/,
+    'check-in feedback must never use a browser-native alert');
+  assert.match(performCheckin, /checkinRequestInFlight/,
+    'the shared check-in request must reject duplicate client-side submissions');
+  assert.match(app, /function setCheckinControlsPending[\s\S]{0,900}aria-busy['"], ['"]true[\s\S]{0,500}button\.disabled = true/,
+    'both visible check-in controls must expose pending and disabled state');
+
+  assert.match(index,
+    /id="raiCheckinDialog"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="raiCheckinDialogTitle"[^>]*aria-describedby="raiCheckinDialogMessage"/,
+    'the in-site check-in result must use labelled modal dialog semantics');
+  assert.match(index, /id="raiCheckinDialogBackdrop" hidden/,
+    'the check-in dialog must start hidden');
+  assert.match(showDialog, /titleElement\.textContent[\s\S]{0,240}messageElement\.textContent/,
+    'dialog copy must be assigned as text, never injected as HTML');
+  assert.doesNotMatch(showDialog, /innerHTML/);
+  assert.match(showDialog, /setRaiCheckinDialogBackgroundInert\(true\)/,
+    'opening the check-in dialog must make the background inert');
+  assert.match(closeDialog, /setRaiCheckinDialogBackgroundInert\(false\)[\s\S]{0,600}fallbackFocus\?\.focus/,
+    'closing the check-in dialog must restore background interaction and safe focus');
+  assert.match(closeDialog, /getElementById\('sidebarSettingsBtn'\)/,
+    'check-in focus fallback must target the sidebar settings button, not a generic toolbar control');
+  assert.match(index, /id="sidebarSettingsBtn"[^>]*onclick="openSettings\(\)"/,
+    'sidebar settings button needs a stable focus fallback id');
+  assert.match(initDialog, /event\.key === 'Escape'[\s\S]{0,400}event\.key === 'Tab'[\s\S]{0,220}confirmButton\.focus/,
+    'the modal must trap its sole focus target and close on Escape');
+
+  const dialogRule = cssRule('.rai-checkin-dialog', 'grid-template-columns');
+  assert.match(dialogRule, /border:\s*0\b/,
+    'RAI floating dialogs must not use decorative perimeter borders');
+  const dialogShadow = /box-shadow:\s*(\d+)px\s+(\d+)px/.exec(dialogRule);
+  assert.ok(dialogShadow && Number(dialogShadow[1]) > 0 && Number(dialogShadow[2]) > 0,
+    'the in-site dialog must use a lower-right shadow');
+  assert.match(styles, /RAI surface contract:[\s\S]{0,320}decorative perimeter strokes/,
+    'the no-arbitrary-border design contract must remain next to the design tokens');
+
+  assert.match(styles,
+    /@media\s*\(min-width:\s*769px\)\s*and\s*\(orientation:\s*landscape\)[\s\S]{0,260}calc\(\(100vw - var\(--sidebar-width\)\) \* 0\.72\)/,
+    'desktop landscape content must use the deliberately widened 72 percent lane');
+  assert.doesNotMatch(styles, /\* 0\.6667\)/,
+    'the old overly narrow two-thirds desktop lane must not return');
+
+  const checkinRouteStart = server.indexOf("app.post('/api/user/checkin'");
+  const checkinRouteEnd = server.indexOf("\napp.post(", checkinRouteStart + 1);
+  assert.ok(checkinRouteStart >= 0 && checkinRouteEnd > checkinRouteStart, 'missing check-in route');
+  const checkinRoute = server.slice(checkinRouteStart, checkinRouteEnd);
+  assert.match(checkinRoute,
+    /SET points = COALESCE\(points, 0\) \+ \?, last_checkin = \?[\s\S]{0,180}COALESCE\(last_checkin, ''\) <> \?/,
+    'daily points and last_checkin must update atomically behind a same-day condition');
+  assert.match(checkinRoute, /Number\(updateResult\.changes \|\| 0\) !== 1/,
+    'the atomic check-in update must validate that exactly one user row changed');
+}
+
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.37');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.37'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260717-selection-explanations-clear-fence-v01137'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.37/);
-  assert.match(serviceWorker, /0\.11\.37-20260717-selection-explanations-clear-fence-v01137/);
-  assert.match(app, /version:\s*'v0\.11\.37'[\s\S]*?选词解释[\s\S]*?树状解释记录[\s\S]*?version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报[\s\S]*?version:\s*'v0\.11\.35'[\s\S]*?Passkey[\s\S]*?模型名 定制版/);
+  assert.equal(packageJson.version, '0.11.38');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.38'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260717-ui-surface-checkin-width-v01138'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.38/);
+  assert.match(serviceWorker, /0\.11\.38-20260717-ui-surface-checkin-width-v01138/);
+  assert.match(app, /version:\s*'v0\.11\.38'[\s\S]*?站内弹窗[\s\S]*?72%[\s\S]*?version:\s*'v0\.11\.37'[\s\S]*?选词解释[\s\S]*?树状解释记录[\s\S]*?version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报/);
   assert.doesNotMatch([app, index, serviceWorker].join('\n'), /0\.11\.34|message-meta-visibility-logout-ui-v01134/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
@@ -441,6 +505,7 @@ async function main() {
     testMessageBadgeVisibilityAndDesktopLogout,
     testPasskeySecurityRewardsAndRoutingNotices,
     testAuthNetworkResponseBehavior,
+    testCheckinDialogVisualLanguageAndDesktopWidth,
     testVersionContract
   ];
   for (const test of tests) await test();
@@ -467,5 +532,6 @@ module.exports = {
   testMessageBadgeVisibilityAndDesktopLogout,
   testPasskeySecurityRewardsAndRoutingNotices,
   testAuthNetworkResponseBehavior,
+  testCheckinDialogVisualLanguageAndDesktopWidth,
   testVersionContract
 };

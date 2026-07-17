@@ -918,6 +918,34 @@ function testCardsPointerKeyboardAndLimits() {
   assert.match(explainerStyles, /\.selection-explain-content[\s\S]{0,500}user-select\s*:\s*text/,
     'card answers must remain selectable for follow-up explanations');
 
+  const cardRule = /\.selection-explain-card\s*\{([^{}]*)\}/.exec(explainerStyles);
+  assert.ok(cardRule, 'missing selection explanation card CSS');
+  assert.match(cardRule[1], /border\s*:\s*0\b/,
+    'floating explanation cards must not use a decorative perimeter border');
+  assert.match(cardRule[1], /box-shadow\s*:\s*var\(--selection-explain-card-shadow\)/,
+    'floating explanation cards must use the dedicated lower-right shadow');
+  const activeCardRule = /\.selection-explain-card\.is-active\s*\{([^{}]*)\}/.exec(explainerStyles);
+  assert.ok(activeCardRule, 'missing active selection explanation card CSS');
+  assert.doesNotMatch(activeCardRule[1], /\bborder(?:-color)?\s*:/,
+    'active cards must not reintroduce the yellow perimeter stroke');
+  const cardShadow = /--selection-explain-card-shadow\s*:\s*(\d+)px\s+(\d+)px/.exec(explainerStyles);
+  assert.ok(cardShadow && Number(cardShadow[1]) > 0 && Number(cardShadow[2]) > 0,
+    'the card shadow must visibly project toward the lower-right');
+  for (const selector of ['.selection-explain-dock-button', '.selection-explain-dock-tray']) {
+    const escaped = escapeRegExp(selector);
+    const rule = new RegExp(`${escaped}\\s*\\{([^{}]*)\\}`).exec(explainerStyles);
+    assert.ok(rule, `missing ${selector} CSS`);
+    assert.match(rule[1], /border\s*:\s*0\b/, `${selector} must follow the borderless floating-surface contract`);
+  }
+
+  const dockPosition = sourceBetween(explainer, 'function updateDockPosition', 'function updateDock', 'dock positioning');
+  assertContainsAll(dockPosition, [
+    "composer?.querySelector('.input-wrapper, .chatflow-input-wrapper')",
+    'dockAnchorRect?.left',
+    'bounds.left + 10',
+    'clamp(desktopLeft'
+  ], 'desktop dock alignment');
+
   const rootZ = cssNumericProperty(explainerStyles, '.selection-explain-root', 'z-index');
   const pillZ = cssNumericProperty(explainerStyles, '.selection-explain-pill', 'z-index');
   const dockZ = cssNumericProperty(explainerStyles, '.selection-explain-dock', 'z-index');
