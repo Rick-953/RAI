@@ -2095,8 +2095,8 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.38';
-const RAI_BUILD_ID = '20260717-ui-surface-checkin-width-v01138';
+const RAI_APP_VERSION = '0.11.39';
+const RAI_BUILD_ID = '20260718-selection-dock-zero-hide-v01139';
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -5174,6 +5174,28 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-18',
+    version: 'v0.11.39',
+    zh: {
+      summary: '空解释工作区不再显示“0”卡片坞。',
+      details: [
+        '当前工作区没有打开或最小化的解释卡时，卡片坞会完全隐藏，不再遮挡欢迎页的“写作”等快捷项。',
+        '创建第 1 张解释卡后卡片坞会自动显示正确数量；关闭最后一张后立即再次隐藏。',
+        '进入 0 卡状态时会同步收起托盘，避免下次创建卡片时弹出上次遗留的托盘。',
+        '账号中已保存的树状解释历史、卡片内容和点数账本保持不变。'
+      ]
+    },
+    en: {
+      summary: 'The explanation dock now stays out of empty workspaces.',
+      details: [
+        'When the current workspace has no open or minimized explanation cards, the dock is fully hidden and no longer overlaps welcome-page shortcuts such as Writing.',
+        'Creating the first explanation card restores the dock with the correct count, and closing the last card hides it immediately again.',
+        'Entering the zero-card state also closes the tray so stale expanded state cannot reappear with a later card.',
+        'Saved explanation trees, card content, and point-ledger data remain unchanged.'
+      ]
+    }
+  },
   {
     date: '2026-07-17',
     version: 'v0.11.38',
@@ -10942,7 +10964,7 @@ async function bindZtx6dAccount() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.38 初始化 (desktop UI surfaces, in-app check-in dialog, and content width)');
+  console.log(' RAI v0.11.39 初始化 (hide empty selection-explanation dock)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

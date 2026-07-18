@@ -789,9 +789,14 @@
     const dock = state.els.dock;
     if (!dock) return;
     const cards = Array.from(state.cards.values());
-    dock.hidden = cards.length === 0 && !state.historyKnown;
+    const hasCards = cards.length > 0;
+    dock.hidden = !hasCards;
     state.els.dockCount.textContent = String(cards.length);
     state.els.dockTrayList.innerHTML = '';
+    if (!hasCards) {
+      closeDockTray();
+      return;
+    }
     const minimized = cards.filter((card) => card.minimized).sort((a, b) => b.lastFocused - a.lastFocused);
     if (!minimized.length) {
       const empty = document.createElement('div');

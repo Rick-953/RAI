@@ -479,12 +479,12 @@ function testCheckinDialogVisualLanguageAndDesktopWidth() {
 }
 
 function testVersionContract() {
-  assert.equal(packageJson.version, '0.11.38');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.38'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260717-ui-surface-checkin-width-v01138'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.38/);
-  assert.match(serviceWorker, /0\.11\.38-20260717-ui-surface-checkin-width-v01138/);
-  assert.match(app, /version:\s*'v0\.11\.38'[\s\S]*?站内弹窗[\s\S]*?72%[\s\S]*?version:\s*'v0\.11\.37'[\s\S]*?选词解释[\s\S]*?树状解释记录[\s\S]*?version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报/);
+  assert.equal(packageJson.version, '0.11.39');
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.39'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260718-selection-dock-zero-hide-v01139'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.39/);
+  assert.match(serviceWorker, /0\.11\.39-20260718-selection-dock-zero-hide-v01139/);
+  assert.match(app, /version:\s*'v0\.11\.39'[\s\S]*?0[\s\S]*?卡片坞[\s\S]*?version:\s*'v0\.11\.38'[\s\S]*?站内弹窗[\s\S]*?72%[\s\S]*?version:\s*'v0\.11\.37'[\s\S]*?选词解释[\s\S]*?树状解释记录[\s\S]*?version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报/);
   assert.doesNotMatch([app, index, serviceWorker].join('\n'), /0\.11\.34|message-meta-visibility-logout-ui-v01134/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }

@@ -946,6 +946,14 @@ function testCardsPointerKeyboardAndLimits() {
     'clamp(desktopLeft'
   ], 'desktop dock alignment');
 
+  const dockUpdate = sourceBetween(explainer, 'function updateDock()', 'function closeDockTray', 'dock visibility');
+  assert.match(dockUpdate, /const hasCards = cards\.length > 0;[\s\S]{0,120}dock\.hidden = !hasCards;/,
+    'the explanation dock must be hidden whenever the current workspace has zero cards');
+  assert.doesNotMatch(dockUpdate, /dock\.hidden\s*=[^;\n]*historyKnown/,
+    'account-level explanation history must not force a zero-count dock into the conversation UI');
+  assert.match(dockUpdate, /if \(!hasCards\) \{[\s\S]{0,120}closeDockTray\(\);[\s\S]{0,80}return;/,
+    'hiding the zero-count dock must also close its tray before a later card reopens the dock');
+
   const rootZ = cssNumericProperty(explainerStyles, '.selection-explain-root', 'z-index');
   const pillZ = cssNumericProperty(explainerStyles, '.selection-explain-pill', 'z-index');
   const dockZ = cssNumericProperty(explainerStyles, '.selection-explain-dock', 'z-index');
