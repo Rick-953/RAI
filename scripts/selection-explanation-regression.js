@@ -220,9 +220,11 @@ function testAuthenticatedApiAndChatIsolation() {
 
   assert.doesNotMatch(stream, /checkAndDeductPoints|user_chat_usage|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(?:sessions|messages|flows|user_memories)\b/i,
     'selection explanations must not consume or persist normal chat state');
-  assert.doesNotMatch([threads, thread, nodes, pathRoute, deleteCard, deleteThread, clearAll].join('\n'),
-    /\b(?:sessions|messages|flows|user_memories|user_chat_usage)\b/i,
-    'history APIs must remain independent of normal chat history');
+  assert.doesNotMatch([thread, nodes, pathRoute, deleteCard, deleteThread, clearAll].join('\n'),
+    /\b(?:messages|flows|user_memories|user_chat_usage)\b/i,
+    'history APIs must remain independent of normal chat persistence');
+  assert.match(threads, /session_not_owned[\s\S]*?t\.session_id = \?/, 
+    'thread history may filter by an owned conversation without joining normal chat history');
   assert.match(clearAll, /clearSelectionExplanationHistoryForUser\(req\.user\.userId\)/,
     'clear-all must use the authoritative serialized history transaction');
   assert.match(clearAll,
@@ -484,6 +486,7 @@ async function testConcurrentTransactionsAndDeleteRace() {
       CREATE TABLE selection_explanation_threads (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
+        session_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -508,6 +511,7 @@ async function testConcurrentTransactionsAndDeleteRace() {
       CREATE TABLE selection_explanation_requests (
         request_id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
+        session_id TEXT,
         point_bucket TEXT NOT NULL CHECK (point_bucket IN ('daily', 'purchased')),
         status TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved', 'consumed', 'refunded')),
         points INTEGER NOT NULL DEFAULT 1 CHECK (points = 1),
@@ -1293,10 +1297,12 @@ async function testStartupReadinessAndInvalidSchema() {
   'schema validation must finish before stale reservations or the recovery timer can run');
 
   const httpStartup = sourceBetween(server, 'async function startHttpServer', '// 优雅退出', 'HTTP startup readiness');
-  assert.ok(httpStartup.indexOf('await selectionExplanationStartupReady') >= 0
-      && httpStartup.indexOf('await selectionExplanationStartupReady') < httpStartup.indexOf('app.listen('),
-  'HTTP must not begin listening until selection schema verification and recovery are ready');
-  assert.match(httpStartup, /await selectionExplanationStartupReady[\s\S]{0,160}if \(gracefulShutdownStarted\) return null[\s\S]{0,300}app\.listen\(/,
+  const startupBarrierPattern = /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*transactionDbReady\s*\]\)/;
+  const startupBarrierMatch = httpStartup.match(startupBarrierPattern);
+  assert.ok(startupBarrierMatch
+      && startupBarrierMatch.index < httpStartup.indexOf('app.listen('),
+  'HTTP must not begin listening until selection, authentication, software-client, and isolated transaction readiness complete');
+  assert.match(httpStartup, /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*transactionDbReady\s*\]\)[\s\S]{0,900}if \(gracefulShutdownStarted\) return null[\s\S]{0,300}app\.listen\(/,
     'shutdown requested during initialization must prevent a late HTTP listener');
 
   const selectionClose = sourceBetween(
@@ -1373,8 +1379,10 @@ async function testStartupReadinessAndInvalidSchema() {
       `invalid selection schema must exit with code 1; output:\n${childOutput.slice(-5000)}`);
     assert.equal(listened, false,
       `invalid selection schema must never accept an HTTP connection; output:\n${childOutput.slice(-5000)}`);
-    assert.match(childOutput, /selection_explanation_schema_missing:user_selection_explanation_usage\.usage_count/,
-      'invalid-schema startup must report the exact missing selection table columns');
+    assert.match(childOutput, /hmacSha256/,
+      'invalid-schema startup must emit privacy-safe diagnostic metadata');
+    assert.doesNotMatch(childOutput, /selection_explanation_schema_missing:user_selection_explanation_usage\.usage_count/,
+      'invalid-schema startup must not print internal schema detail as raw text');
     assert.match(childOutput, /RAI 启动失败/,
       'invalid selection schema must reject the top-level startup promise');
     assert.doesNotMatch(childOutput, /RAI v\d[^\n]*已启动/,

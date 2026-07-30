@@ -53,7 +53,7 @@ Let RAI route across the models available to your account, or directly control t
 
 ### Research with multiple perspectives
 
-Fast and Deep Research can plan a task, run up to four specialist sub-agents in parallel, synthesize their findings, and verify the result. Tavily-backed web search adds current sources when freshness matters, while the finance tool can retrieve market quotes and history.
+Fast and Deep Research can plan a task, run up to four specialist sub-agents in parallel, synthesize their findings, and perform a heuristic quality review. That review is not independent fact verification. Tavily-backed web search adds current sources when freshness matters, while the finance tool can retrieve market quotes and history.
 
 ### ChatFlow: conversation becomes structure
 
@@ -65,7 +65,7 @@ Select a term, sentence, or formula inside a message, ChatFlow, or another expla
 
 ### Rich answers on one surface
 
-RAI renders Markdown, syntax-highlighted code, KaTeX mathematics, Mermaid diagrams, images, and cited web results. It can extract context from modern PDF, DOCX, XLSX/CSV, PPTX, text, and code files; compatible multimodal models can also receive images.
+RAI renders Markdown, syntax-highlighted code, KaTeX mathematics, images, and cited web results. In v0.11.41, Mermaid source is displayed as a code block while its full browser dependency closure is being made reproducible. Production accepts plain-text formats (including Markdown, JSON, XML, CSV, logs, YAML, and configuration files); PDF and Office uploads remain disabled until their parser can run inside an operating-system-level sandbox. Compatible multimodal models can still receive validated images.
 
 ### Accounts, memory, and security
 
@@ -96,11 +96,11 @@ The server includes email-based accounts, bcrypt password storage, JWT sessions,
 | Area | Highlights |
 | --- | --- |
 | Conversation | Streaming, stop, edit, quote, regenerate, feedback, mid-generation interjection, synchronized history, temporary chats |
-| Models | Smart routing plus configurable DeepSeek, Qwen, Kimi, OpenRouter, Gemini, Claude, Nemotron, Mimo Code, and Gemma routes |
-| Research | Web search with sources, Fast/Deep multi-agent research, synthesis and verification, Yahoo Finance data |
+| Models | A focused GPT 5.6, DeepSeek v4, and Nemotron 3 Ultra picker, with internal Smart, Fast, Thinking, Research, multimodal, and image-generation routes |
+| Research | Web search with sources, Fast/Deep multi-agent research, synthesis and heuristic quality review, Yahoo Finance data |
 | ChatFlow | Persistent canvases, reviewed AI changes, undo, semantic links, auto-layout, PNG/SVG/Mermaid/JSON export |
 | Understanding | Selection explanation cards, nested follow-ups, drag/minimize, searchable tree history |
-| Content | Markdown, code highlighting, KaTeX, Mermaid, images, and modern document extraction |
+| Content | Markdown, code highlighting, KaTeX, images, plain-text document extraction, and Mermaid source export/display |
 | Personalization | Optional long-term memory, light/dark/system themes, three interface languages, notifications |
 | Access & operations | Email auth, password reset, TOTP 2FA, Passkeys, quotas, points/membership, admin controls and statistics |
 
@@ -117,7 +117,7 @@ Open **[https://rai.rick.sarl](https://rai.rick.sarl)** in a modern browser. The
 - Linux, macOS, or another environment supported by Node.js
 - **Node.js 20.17.0 or newer** and npm
 - Writable persistent storage for `ai_data.db*`, `uploads/`, `avatars/`, and generated images
-- `unzip` for XLSX/PPTX extraction; build tools and Python may be needed if a native dependency has no prebuilt binary for your platform
+- PDF and Office uploads are disabled by default in production. The experimental Office parser uses an isolated `yauzl` worker (no shell `unzip`) and requires Node.js 25+ for network-denying Permission Model enforcement
 - At least one configured chat provider for useful AI responses
 - HTTPS and a real domain for production Passkeys
 
@@ -171,6 +171,7 @@ For local development, replace the official domain defaults in `.env.example` wi
 | Variable | Enables |
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek chat and reasoning routes |
+| `RAI_GPT_GATEWAY_BASE_URL` + `RAI_GPT_GATEWAY_API_KEY_FILE` | Optional OpenAI-compatible `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-image-2`; production requires an explicit HTTPS `/v1` root and a regular 0600 key file |
 | `SILICONFLOW_API_KEY` | Configured Qwen/Kimi routes and image generation |
 | `OPENROUTER_API_KEY` | OpenRouter-backed model routes |
 | `GOOGLE_GEMINI_API_KEY` | Gemini routes |
@@ -199,14 +200,14 @@ Edit `.env` and set at least:
 NODE_ENV=production
 HOST=127.0.0.1
 PORT=3009
-TRUST_PROXY=1
+TRUST_PROXY=loopback
 PUBLIC_BASE_URL=https://rai.example.com
 CORS_ORIGINS=https://rai.example.com
 RAI_PASSKEY_ALLOW_LOCALHOST=false
 RAI_DEFAULT_DOMAIN_NOTICE_ENABLED=false
 ```
 
-Also replace the JWT secrets, administrator hash, provider keys, email settings, callbacks, HTTP referer, and runtime-report path. Use `TRUST_PROXY=1` only when requests reach RAI through exactly one trusted proxy hop.
+Also replace the JWT secrets, administrator hash, provider keys, email settings, callbacks, HTTP referer, and runtime-report path. Set `TRUST_PROXY` to an explicit trusted proxy IP/CIDR or a named range such as `loopback`; do not use hop-count values in production.
 
 ### 2. Run it with systemd
 
@@ -304,7 +305,7 @@ npm run test:formal-audit
 - Never commit `.env`, provider keys, JWT secrets, administrator credentials, databases, uploads, avatars, logs, or runtime reports.
 - Self-hosting controls the RAI server and database, but prompts and files may still be sent to the AI, search, email, finance, and image providers you configure.
 - Bind Node to localhost behind a trusted HTTPS reverse proxy, keep CORS narrow, and enable `TRUST_PROXY` only for a known proxy topology.
-- User uploads are access-controlled; avatars and generated images use static delivery paths. Review that exposure for your deployment.
+- User uploads are access-controlled. Avatars retain their static delivery path; generated images require an authenticated owner check and expire according to their TTL.
 - Configure request limits, upload quotas, provider budgets, and registration policy before serving untrusted users.
 - Back up SQLite together with its WAL state and test restoration—not just backup creation.
 

@@ -53,7 +53,7 @@ RAI 是一款注重**人机交互**、源码公开的对话式 AI 软件。它�
 
 ### 多视角研究
 
-快速研究和深度研究可以规划任务，并行运行最多四个专项子 Agent，再由主模型综合并校验结果。Tavily 联网搜索会在需要新鲜信息时提供来源，财务工具可查询行情与历史数据。
+快速研究和深度研究可以规划任务，并行运行最多四个专项子 Agent，再由主模型综合结果并执行启发式质量复核；该复核不构成独立事实验证。Tavily 联网搜索会在需要新鲜信息时提供来源，财务工具可查询行情与历史数据。
 
 ### ChatFlow：让对话变成结构
 
@@ -65,7 +65,7 @@ ChatFlow 把持久对话和节点画布放在一起。你可以把想法拖进�
 
 ### 一个界面承载丰富回答
 
-RAI 可渲染 Markdown、代码高亮、KaTeX 数学公式、Mermaid 图表、图片和带来源的联网结果。它可以从现代 PDF、DOCX、XLSX/CSV、PPTX、文本和代码文件中提取上下文；兼容的多模态模型还可以接收图片。
+RAI 可渲染 Markdown、代码高亮、KaTeX 数学公式、图片和带来源的联网结果。v0.11.41 会把 Mermaid 源码显示为代码块，等待完整浏览器依赖闭包可重现后再恢复渲染。生产环境支持 Markdown、JSON、XML、CSV、日志、YAML 和配置等纯文本格式；PDF 与 Office 上传在解析器能进入操作系统级沙箱前保持关闭。兼容的多模态模型仍可接收通过校验的图片。
 
 ### 账号、记忆与安全
 
@@ -96,11 +96,11 @@ RAI 可渲染 Markdown、代码高亮、KaTeX 数学公式、Mermaid 图表、�
 | 分类 | 主要能力 |
 | --- | --- |
 | 对话 | 流式输出、停止、编辑、引用、重新生成、评价、生成中插话、同步历史、临时对话 |
-| 模型 | 智能路由，以及可配置的 DeepSeek、Qwen、Kimi、OpenRouter、Gemini、Claude、Nemotron、Mimo Code、Gemma 路由 |
-| 研究 | 带来源的联网搜索、快速/深度多 Agent 研究、综合校验、Yahoo Finance 数据 |
+| 模型 | 聚焦 GPT 5.6、DeepSeek v4 和 Nemotron 3 Ultra 的精简选择器，内部保留智能、快速、思考、研究、多模态与图像生成路由 |
+| 研究 | 带来源的联网搜索、快速/深度多 Agent 研究、综合与启发式质量复核、Yahoo Finance 数据 |
 | ChatFlow | 持久画布、AI 修改审核、撤销、语义连线、自动布局、PNG/SVG/Mermaid/JSON 导出 |
 | 理解 | 选词解释卡、嵌套追问、拖动与最小化、树状搜索历史 |
-| 内容 | Markdown、代码高亮、KaTeX、Mermaid、图片和现代文档解析 |
+| 内容 | Markdown、代码高亮、KaTeX、图片、纯文本文档提取，以及 Mermaid 源码导出/显示 |
 | 个性化 | 可选长期记忆、浅色/深色/跟随系统主题、三种界面语言、浏览器通知 |
 | 账号与运维 | 邮件认证、密码重置、TOTP 两步验证、Passkey、配额、点数/会员、管理与统计 |
 
@@ -117,7 +117,7 @@ RAI 可渲染 Markdown、代码高亮、KaTeX 数学公式、Mermaid 图表、�
 - Linux、macOS 或其他受 Node.js 支持的环境
 - **Node.js 20.17.0 或更高版本**及 npm
 - 可持久写入 `ai_data.db*`、`uploads/`、`avatars/` 和生成图片的磁盘空间
-- 解析 XLSX/PPTX 需要 `unzip`；若当前平台没有原生依赖预编译包，可能还需要构建工具和 Python
+- 生产环境默认关闭 PDF/Office 上传。实验性 Office 解析使用隔离的 `yauzl` worker（不调用系统 `unzip`），并要求 Node.js 25+ 才能通过 Permission Model 确定性禁止解析进程联网
 - 至少配置一个对话模型上游，才能获得可用的 AI 回答
 - 生产环境使用 Passkey 时需要 HTTPS 和真实域名
 
@@ -171,6 +171,7 @@ node -e 'require("bcrypt").hash(process.argv[1], 12).then(console.log)' \
 | 环境变量 | 启用能力 |
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek 对话与推理路由 |
+| `RAI_GPT_GATEWAY_BASE_URL` + `RAI_GPT_GATEWAY_API_KEY_FILE` | 可选 OpenAI 兼容网关，提供 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 与 `gpt-image-2`；生产环境必须显式配置 HTTPS `/v1` 根地址和普通 0600 密钥文件 |
 | `SILICONFLOW_API_KEY` | 已配置的 Qwen/Kimi 路由与图片生成 |
 | `OPENROUTER_API_KEY` | OpenRouter 模型路由 |
 | `GOOGLE_GEMINI_API_KEY` | Gemini 路由 |
@@ -199,14 +200,14 @@ sudo chmod 600 /opt/rai/.env
 NODE_ENV=production
 HOST=127.0.0.1
 PORT=3009
-TRUST_PROXY=1
+TRUST_PROXY=loopback
 PUBLIC_BASE_URL=https://rai.example.com
 CORS_ORIGINS=https://rai.example.com
 RAI_PASSKEY_ALLOW_LOCALHOST=false
 RAI_DEFAULT_DOMAIN_NOTICE_ENABLED=false
 ```
 
-同时替换 JWT 密钥、管理员哈希、模型上游、邮件配置、回调地址、HTTP referer 和运行报告路径。只有当请求恰好经过一层可信反向代理时，才使用 `TRUST_PROXY=1`。
+同时替换 JWT 密钥、管理员哈希、模型上游、邮件配置、回调地址、HTTP referer 和运行报告路径。生产环境应把 `TRUST_PROXY` 配置为明确的可信代理 IP/CIDR，或 `loopback` 等命名范围；不要使用按跳数计数的值。
 
 ### 2. 使用 systemd 运行
 
@@ -304,7 +305,7 @@ npm run test:formal-audit
 - 绝不要提交 `.env`、上游密钥、JWT 密钥、管理员凭据、数据库、上传、头像、日志或运行报告。
 - 自行部署可以控制 RAI 服务端与数据库，但提示词和文件仍可能被发送到你配置的 AI、搜索、邮件、财务和图片服务商。
 - Node 仅监听本机地址并置于可信 HTTPS 反向代理之后；CORS 应尽量收窄，只为已知代理拓扑启用 `TRUST_PROXY`。
-- 用户上传受访问控制；头像和生成图片通过静态路径交付，请按部署场景评估其暴露范围。
+- 用户上传受访问控制。头像仍通过静态路径交付；生成图片必须经过已认证的所有者校验，并按 TTL 到期清理。
 - 向不受信任用户开放服务前，请配置请求限制、上传配额、上游预算与注册策略。
 - 备份 SQLite 时要连同 WAL 状态一起处理，并实际测试恢复，而不只是确认备份文件存在。
 

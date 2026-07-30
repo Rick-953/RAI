@@ -1,0 +1,90 @@
+# Time-bounded exceptions inherited from Tauri 2.11.2's Linux GTK3/WebKitGTK
+# dependency graph. Tauri 2.11.2 is the current upstream release and its own
+# release audit reports the same advisories. RAI's Rust layer does not directly
+# use GTK iterators or any of the listed crates. Re-evaluate on every Tauri
+# update and no later than the date below; do not add unrelated exceptions here.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+ignoreUntil = 2026-10-31
+reason = "glib 0.18 is an upstream Tauri Linux transitive dependency; RAI does not use VariantStrIter"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0411"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0412"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0413"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0414"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0415"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0416"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0417"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0418"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0419"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0420"
+ignoreUntil = 2026-10-31
+reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2026-10-31
+reason = "unmaintained build-time transitive macro dependency inherited from Tauri; no direct RAI usage"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+ignoreUntil = 2026-10-31
+reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+ignoreUntil = 2026-10-31
+reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+ignoreUntil = 2026-10-31
+reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+ignoreUntil = 2026-10-31
+reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+ignoreUntil = 2026-10-31
+reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"

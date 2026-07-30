@@ -408,9 +408,9 @@ function decodeBase32Secret(secret) {
   return Buffer.from(bytes);
 }
 
-function currentTotp(secret) {
+function currentTotp(secret, counterOffset = 0) {
   const key = decodeBase32Secret(secret);
-  const counter = Math.floor(Date.now() / 1000 / 30);
+  const counter = Math.floor(Date.now() / 1000 / 30) + Number(counterOffset || 0);
   const counterBuffer = Buffer.alloc(8);
   counterBuffer.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
   counterBuffer.writeUInt32BE(counter >>> 0, 4);
@@ -452,11 +452,11 @@ async function verifyPasskeyAuthentication(authenticator, optionsResult, overrid
   return { result, response };
 }
 
-async function enableTotp(token) {
+async function enableTotp(token, currentPassword) {
   const setup = await request('/api/user/2fa/setup', {
     method: 'POST',
     token,
-    body: {}
+    body: { currentPassword }
   });
   expectStatus(setup, 200, '2FA setup');
   assert.ok(setup.body?.secret, '2FA setup should return a secret');
@@ -647,6 +647,8 @@ async function main() {
     expectStatus(activationVerify, 200, 'passkey second-assertion activation');
     assert.equal(activationVerify.body?.passkey?.enabled, true, 'activated passkey should be enabled');
     assert.equal(Number(activationVerify.body?.rewardPoints || 0), 200, 'first passkey activation should award 200 points');
+    assert.ok(activationVerify.body?.token, 'passkey activation should replace the revoked session');
+    sessionToken = activationVerify.body.token;
     await assertUserPoints(database, userId, 200, 'passkey activation should add exactly 200 points');
     await assertRewardCount(database, userId, SECURITY_PASSKEY_TASK, 1, 'passkey reward should have one ledger row');
 
@@ -742,8 +744,11 @@ async function main() {
     assert.equal(Boolean(deviceTypeChange.result.body?.token), false, 'device-type change must not issue a session');
     assert.equal(Boolean(deviceTypeChange.result.body?.twoFactorToken), false, 'device-type change must not issue a 2FA challenge');
 
-    const firstTotp = await enableTotp(sessionToken);
+    const firstTotp = await enableTotp(sessionToken, password);
     assert.equal(Number(firstTotp.enabled.body?.rewardPoints || 0), 200, 'first TOTP enable should award 200 points');
+    assert.ok(firstTotp.enabled.body?.token, 'TOTP enable should replace the revoked session');
+    assert.ok(firstTotp.enabled.body?.recoveryCodes?.length >= 4, 'TOTP enable should issue one-time recovery codes');
+    sessionToken = firstTotp.enabled.body.token;
     await assertUserPoints(database, userId, 400, 'Passkey and TOTP rewards should total 400 points');
     await assertRewardCount(database, userId, SECURITY_TOTP_TASK, 1, 'TOTP reward should have one ledger row');
 
@@ -758,7 +763,7 @@ async function main() {
       method: 'POST',
       body: {
         twoFactorToken: twoFactorPasskeyLogin.result.body.twoFactorToken,
-        code: currentTotp(firstTotp.secret)
+        code: currentTotp(firstTotp.secret, 1)
       }
     });
     expectStatus(completedTwoFactorLogin, 200, 'Passkey primary authentication TOTP completion');
@@ -832,7 +837,7 @@ async function main() {
       body: {
         scope: 'passkey:delete',
         currentPassword: password,
-        twoFactorCode: currentTotp(firstTotp.secret)
+        twoFactorCode: firstTotp.enabled.body.recoveryCodes[0]
       }
     });
     expectStatus(deleteReauth, 200, 'passkey delete reauthentication');
@@ -851,6 +856,8 @@ async function main() {
       body: { grant: deleteReauth.body.grant }
     });
     expectStatus(deleted, 200, 'passkey deletion should reuse the rolled-back one-time grant');
+    assert.ok(deleted.body?.token, 'passkey deletion should replace the revoked session');
+    sessionToken = deleted.body.token;
 
     const reusedDeleteGrant = await request(`/api/user/passkeys/${passkeyId}`, {
       method: 'DELETE',
@@ -877,7 +884,7 @@ async function main() {
       body: {
         scope: 'passkey:create',
         currentPassword: password,
-        twoFactorCode: currentTotp(firstTotp.secret)
+        twoFactorCode: firstTotp.enabled.body.recoveryCodes[1]
       }
     });
     expectStatus(replacementReauth, 200, 'replacement passkey create reauthentication');
@@ -938,19 +945,29 @@ async function main() {
     expectStatus(replacementActivation, 200, 'replacement passkey activation');
     assert.equal(replacementActivation.body?.passkey?.enabled, true, 'replacement passkey should be enabled');
     assert.equal(Number(replacementActivation.body?.rewardPoints || 0), 0, 'replacement passkey must not duplicate the reward');
+    assert.ok(replacementActivation.body?.token, 'replacement passkey activation should replace the revoked session');
+    sessionToken = replacementActivation.body.token;
     await assertUserPoints(database, userId, 400, 'replacement Passkey activation must preserve one-time rewards');
     await assertRewardCount(database, userId, SECURITY_PASSKEY_TASK, 1, 'replacement Passkey must keep one reward ledger row');
 
     const disableTotp = await request('/api/user/2fa/disable', {
       method: 'POST',
       token: sessionToken,
-      body: { code: currentTotp(firstTotp.secret) }
+      body: {
+        code: firstTotp.enabled.body.recoveryCodes[2],
+        currentPassword: password
+      }
     });
     expectStatus(disableTotp, 200, 'TOTP disable');
     assert.equal(disableTotp.body?.two_factor_enabled, false);
+    assert.ok(disableTotp.body?.token, 'TOTP disable should replace the revoked session');
+    sessionToken = disableTotp.body.token;
 
-    const secondTotp = await enableTotp(sessionToken);
+    const secondTotp = await enableTotp(sessionToken, password);
     assert.equal(Number(secondTotp.enabled.body?.rewardPoints || 0), 0, 'TOTP re-enable must not duplicate the reward');
+    assert.ok(secondTotp.enabled.body?.token, 'TOTP re-enable should replace the revoked session');
+    assert.ok(secondTotp.enabled.body?.recoveryCodes?.length >= 1, 'TOTP re-enable should rotate recovery codes');
+    sessionToken = secondTotp.enabled.body.token;
     await assertUserPoints(database, userId, 400, 'security rewards must remain one-time after disable and re-enable');
     await assertRewardCount(database, userId, SECURITY_PASSKEY_TASK, 1, 'passkey reward row must remain unique');
     await assertRewardCount(database, userId, SECURITY_TOTP_TASK, 1, 'TOTP reward row must remain unique');
@@ -961,7 +978,7 @@ async function main() {
       body: {
         currentPassword: password,
         confirmation: 'DELETE',
-        twoFactorCode: currentTotp(secondTotp.secret)
+        twoFactorCode: secondTotp.enabled.body.recoveryCodes[0]
       }
     });
     expectStatus(accountDelete, 200, 'account deletion after Passkey and TOTP setup');

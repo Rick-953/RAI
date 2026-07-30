@@ -1,0 +1,9 @@
+* @Rick-953
+
+# Security and release-control files need an explicit owner. Enforcement is
+# supplied by the protected-branch/ruleset configuration in GitHub.
+/.github/workflows/ @Rick-953
+/.github/dependabot.yml @Rick-953
+/package-lock.json @Rick-953
+/src-tauri/Cargo.lock @Rick-953
+/public/lib/vendor-manifest.json @Rick-953

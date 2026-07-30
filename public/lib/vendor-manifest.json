@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 3,
+  "integrityFormat": "For each component, expand every declared root, sort POSIX paths relative to public/lib, and hash the UTF-8 concatenation of path, NUL, lowercase file SHA-256, and newline.",
+  "components": [
+    {
+      "name": "marked",
+      "version": "15.0.12",
+      "purl": "pkg:npm/marked@15.0.12",
+      "license": "MIT",
+      "source": "https://github.com/markedjs/marked/releases/tag/v15.0.12",
+      "npmTarball": "https://registry.npmjs.org/marked/-/marked-15.0.12.tgz",
+      "npmIntegrity": "sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==",
+      "upstreamFiles": {
+        "marked.min.js": "package/marked.min.js",
+        "licenses/marked/LICENSE.md": "package/LICENSE.md"
+      },
+      "upstreamDirectories": {},
+      "roots": ["marked.min.js", "licenses/marked/LICENSE.md"],
+      "entrypoint": "marked.min.js",
+      "entrypointSha256": "3e7e7d7feb3e5d58cb6c804f68ab5c24cc7e5eb6270fd6e5cbb9124739217d0c",
+      "fileCount": 2,
+      "bytes": 42845,
+      "treeSha256": "242d8a59313906ce727e4a07e4b9925129c5886cd8c11483f2c09eef299ffb93"
+    },
+    {
+      "name": "dompurify",
+      "version": "3.4.12",
+      "purl": "pkg:npm/dompurify@3.4.12",
+      "license": "Apache-2.0 OR MPL-2.0",
+      "source": "https://github.com/cure53/DOMPurify/releases/tag/3.4.12",
+      "npmTarball": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.12.tgz",
+      "npmIntegrity": "sha512-zQvGet8Z2sWbQhCmfFz/T5QWH2oBmjnqK3qvOjaqaNLrLEF912WamU+ohnTp0TCep/MFVHpdJuCZEdFOdTnEFg==",
+      "upstreamFiles": {
+        "purify.min.js": "package/dist/purify.min.js",
+        "licenses/dompurify/LICENSE": "package/LICENSE",
+        "licenses/dompurify/LICENSE-MPL": "package/LICENSE-MPL"
+      },
+      "upstreamDirectories": {},
+      "roots": ["purify.min.js", "licenses/dompurify/LICENSE", "licenses/dompurify/LICENSE-MPL"],
+      "entrypoint": "purify.min.js",
+      "entrypointSha256": "c45ba939765574f96cbf35ee9b6d89f73756a17921814425e74b82f7c54603ce",
+      "fileCount": 3,
+      "bytes": 57293,
+      "treeSha256": "10abf916c7ced015b1496568539a2102d5553c0153755d5958907b924bb1036b"
+    },
+    {
+      "name": "@highlightjs/cdn-assets",
+      "version": "11.9.0",
+      "purl": "pkg:npm/%40highlightjs/cdn-assets@11.9.0",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/highlightjs/highlight.js/releases/tag/11.9.0",
+      "npmTarball": "https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.9.0.tgz",
+      "npmIntegrity": "sha512-F1vJKVAkLwj2Uz2ik1PDc+mDbkrecLI6gcBlAxSRUjyDpMPJjeDBanT9Y2B+xpNe1MT6zSG204Ohm/+nUMCApQ==",
+      "upstreamFiles": {
+        "highlight/highlight.min.js": "package/highlight.min.js",
+        "highlight/styles/github-dark.min.css": "package/styles/github-dark.min.css",
+        "licenses/highlight.js/LICENSE": "package/LICENSE"
+      },
+      "upstreamDirectories": {},
+      "roots": ["highlight", "licenses/highlight.js/LICENSE"],
+      "entrypoint": "highlight/highlight.min.js",
+      "entrypointSha256": "837a6fa5b0c736b52bbde2b2b6190f305da3fc9ed41681db5321507057b5c846",
+      "fileCount": 3,
+      "bytes": 124556,
+      "treeSha256": "f63db58a771a73cd424e9b28252b74cbb1db5a7703f4a0792f5427eb33a1c333"
+    },
+    {
+      "name": "katex",
+      "version": "0.16.47",
+      "purl": "pkg:npm/katex@0.16.47",
+      "license": "MIT",
+      "source": "https://github.com/KaTeX/KaTeX/releases/tag/v0.16.47",
+      "npmTarball": "https://registry.npmjs.org/katex/-/katex-0.16.47.tgz",
+      "npmIntegrity": "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==",
+      "upstreamFiles": {
+        "katex/katex.min.css": "package/dist/katex.min.css",
+        "katex/katex.min.js": "package/dist/katex.min.js",
+        "katex/contrib/auto-render.min.js": "package/dist/contrib/auto-render.min.js",
+        "licenses/katex/LICENSE": "package/LICENSE"
+      },
+      "upstreamDirectories": {
+        "katex/fonts": "package/dist/fonts"
+      },
+      "roots": ["katex", "licenses/katex/LICENSE"],
+      "entrypoint": "katex/katex.min.js",
+      "entrypointSha256": "a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48",
+      "fileCount": 64,
+      "bytes": 1377529,
+      "treeSha256": "af0a19ab8e476848eec5382bda14b9377026df82e034ede12ac0e79f2f3e5568"
+    }
+  ]
+}

@@ -98,12 +98,12 @@ function buildModelHarness(serverSource) {
             'qwen3.6-35b-a3b',
             'kimi-k2.6',
             'chatgpt-gpt-oss-120b',
-            'north-mini-code',
             'nemotron-3-ultra',
             'anthropic/claude-sonnet-4.6',
             'anthropic/claude-3-haiku',
             'gemma'
-        ]
+        ],
+        KOLORS_IMAGE_MODEL: 'Kwai-Kolors/Kolors'
     });
     vm.runInContext([
         extractConstDeclaration(serverSource, 'LEGACY_MODEL_ALIASES'),
@@ -155,7 +155,7 @@ function testRetiredRequestsFallBackSafely(serverSource) {
 
 function testChatAndConfigUseGuardedNormalization(serverSource) {
     assert.match(serverSource, /let\s+model\s*=\s*normalizeIncomingModelId\(requestedModel\)/, 'chat requests must normalize retired and unknown IDs');
-    assert.match(serverSource, /const\s+defaultModel\s*=\s*normalizeIncomingModelId\(payload\.default_model\s*\|\|\s*['"]auto['"]\)/, 'stored defaults must normalize retired IDs');
+    assert.match(serverSource, /const\s+safeDefaultModel\s*=\s*['"]auto['"]/, 'stored defaults must always reset to smart auto mode');
     assert.match(serverSource, /else\s+if\s*\(model\s*===\s*['"]auto['"]\)/, 'normalized auto requests must enter the safe automatic route');
 }
 

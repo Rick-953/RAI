@@ -40,6 +40,7 @@
       controller: null,
       generation: 0,
       query: '',
+      sessionId: '',
       nodes: new Map()
     },
     deleteResolver: null,
@@ -1017,6 +1018,7 @@
           uiLanguage: getAppState()?.language || document.documentElement.lang || 'zh-CN',
           threadId: snapshot.threadId || undefined,
           parentCardId: snapshot.parentCardId || undefined,
+          sessionId: getAppState()?.currentSession?.id || undefined,
           clientRequestId
         })
       });
@@ -1115,6 +1117,7 @@
       const params = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
       if (!reset && state.history.cursor) params.set('cursor', state.history.cursor);
       if (state.history.query) params.set('q', state.history.query);
+      if (state.history.sessionId) params.set('sessionId', state.history.sessionId);
       const data = await apiJson(`/api/selection-explanations/threads?${params}`, { signal: owner.controller.signal });
       if (!isOwnedRequestCurrent(owner) || generation !== state.history.generation) return;
       const rawThreads = data.threads || data.items || data.data || [];
@@ -1536,8 +1539,9 @@
     }
   }
 
-  function openHistory() {
+  function openHistory(options = {}) {
     closeDockTray();
+    state.history.sessionId = String(options?.sessionId || '');
     state.els.historyBackdrop.hidden = false;
     state.els.historyDrawer.inert = false;
     state.els.historyDrawer.classList.add('is-open');

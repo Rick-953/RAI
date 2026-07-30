@@ -15,12 +15,71 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const dns = require('dns').promises;
+const {
+    createPrivacyLog,
+    sanitizeReportLabel,
+} = require('./lib/privacy-log');
+const { createRuntimeReportWriter } = require('./lib/runtime-report-writer');
+const {
+    GENERATED_IMAGE_DELETIONS_SCHEMA_SQL,
+    drainGeneratedImageDeletionQueue,
+    stageGeneratedImageDeletionsForMessage,
+    stageGeneratedImageDeletionsForRequest,
+    stageGeneratedImageDeletionsForSession
+} = require('./lib/generated-image-cleanup');
 const net = require('net');
 const https = require('https');  // 用于网页搜索
 const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
-const { signUserSessionToken, verifyUserSessionToken } = require('./user-session-token');
+const { createAuthSessionStore } = require('./lib/auth-session-store');
+const {
+    SOFTWARE_CLIENT_SCOPE,
+    createSoftwareClientAuth
+} = require('./lib/software-client-auth');
+const { runSensitiveAccountMutation } = require('./lib/sensitive-account-session');
+const { parseDocumentFile } = require('./lib/document-parser');
+const {
+    normalizeHostname,
+    requestPinnedHttp,
+    resolveSafeHttpTarget
+} = require('./lib/network-address-policy');
+const { createTotpSecretCipher } = require('./lib/totp-secret-crypto');
+const {
+    sniffRasterImageBuffer,
+    validateGeneratedImageBuffer
+} = require('./lib/generated-image-validation');
+const {
+    adminCredentialVersionMatches,
+    deriveAdminCredentialVersion,
+    isAdminCredentialVersion
+} = require('./lib/admin-session-security');
+const {
+    GPT_GATEWAY_CHAT_MODELS,
+    GPT_GATEWAY_IMAGE_MODEL,
+    applyGatewayChatRequestPolicy,
+    buildGatewayHeaders,
+    buildGatewayImageChatRequest,
+    createExternalRequestAbortError,
+    extractGatewayChatImageSources,
+    joinGatewayEndpoint,
+    normalizeGatewayBaseUrl,
+    postGatewayJson,
+    readBoundedResponseText,
+    readGatewayApiKeyFile,
+    runGatewayImageWithFallback,
+    throwIfExternalRequestAborted
+} = require('./lib/gpt-gateway');
+const {
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    PASSWORD_POLICY_VERSION,
+    checkPasswordCompromise,
+    hashPassword,
+    isCurrentPasswordHash,
+    validateExistingPasswordInput,
+    validateNewPasswordPolicy,
+    verifyPassword
+} = require('./lib/password-policy');
 
 const app = express();
 app.disable('x-powered-by');
@@ -52,25 +111,82 @@ function normalizeResendFromEmail(value) {
     return displayName ? `${displayName} <${email}>` : email;
 }
 
-// 安全默认：本地直连时不信任代理头。反向代理部署时可通过 TRUST_PROXY 显式开启。
-const trustProxyEnv = cleanEnvValue(process.env.TRUST_PROXY);
-let trustProxySetting = false;
-if (trustProxyEnv) {
-    if (trustProxyEnv === 'true') {
-        trustProxySetting = 1;
-    } else if (trustProxyEnv === 'false') {
-        trustProxySetting = false;
-    } else if (/^\d+$/.test(trustProxyEnv)) {
-        trustProxySetting = parseInt(trustProxyEnv, 10);
-    } else {
-        trustProxySetting = trustProxyEnv;
-    }
-}
-app.set('trust proxy', trustProxySetting);
 const PORT = cleanEnvValue(process.env.PORT) || 3009;
 const HOST = (cleanEnvValue(process.env.HOST) || cleanEnvValue(process.env.BIND_HOST) || '127.0.0.1').trim();
 const IS_PRODUCTION = cleanEnvValue(process.env.NODE_ENV).toLowerCase() === 'production';
+
+// 生产环境只信任明确代理来源，不接受依赖路径长度的 hop-count 语义。
+function parseTrustProxySetting(rawValue) {
+    const value = cleanEnvValue(rawValue);
+    if (!value || value === 'false') return false;
+    if (/^\d+$/.test(value) || value === 'true') {
+        if (IS_PRODUCTION) throw new Error('production_trust_proxy_requires_explicit_cidr');
+        return value === 'true' ? 1 : Number.parseInt(value, 10);
+    }
+    const entries = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+    const validNamedRanges = new Set(['loopback', 'linklocal', 'uniquelocal']);
+    const isValidEntry = (entry) => {
+        if (validNamedRanges.has(entry)) return true;
+        const [address, prefix] = entry.split('/');
+        const family = net.isIP(address);
+        if (!family) return false;
+        if (prefix === undefined) return true;
+        const bits = Number(prefix);
+        return Number.isInteger(bits) && bits >= 0 && bits <= (family === 4 ? 32 : 128);
+    };
+    if (entries.length === 0 || entries.some((entry) => !isValidEntry(entry))) {
+        throw new Error('invalid_trust_proxy_cidr');
+    }
+    return entries.length === 1 ? entries[0] : entries;
+}
+
+const trustProxySetting = parseTrustProxySetting(process.env.TRUST_PROXY);
+app.set('trust proxy', trustProxySetting);
 const PASSKEY_ALLOW_LOCALHOST = parseBooleanEnv(process.env.RAI_PASSKEY_ALLOW_LOCALHOST, !IS_PRODUCTION);
+const PASSWORD_BREACH_CHECK_ENABLED = parseBooleanEnv(process.env.RAI_PASSWORD_BREACH_CHECK_ENABLED, IS_PRODUCTION);
+const PASSWORD_BREACH_CHECK_TIMEOUT_MS = Math.max(
+    500,
+    Math.min(parseInt(cleanEnvValue(process.env.RAI_PASSWORD_BREACH_CHECK_TIMEOUT_MS) || '2500', 10) || 2500, 10000)
+);
+// 固定的无特权 bcrypt 占位哈希，仅用于平衡“账号不存在”的登录计算时间。
+const DUMMY_LOGIN_PASSWORD_HASH = '$2b$11$xYF/mQpFTR86DLR2VZc5ge6NpuZcDGVF.HRZHbguzAjOjvkOpXW6q';
+// A deliberately provisioned development account can retain its short test
+// password. This never relaxes verification or password policy for any other
+// account, including accounts whose email merely resembles this address.
+const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1.com';
+// Node <25 的 Permission Model 不限制网络。生产默认关闭不受信文档解析，
+// 直到运行时能提供确定性无网络隔离；开发/回归环境仍可直接测试解析器。
+const DOCUMENT_PARSER_ENABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, !IS_PRODUCTION);
+
+async function validateNewPasswordForAccount(password, context = {}, fieldLabel = '密码') {
+    const localError = validateNewPasswordPolicy(password, context, fieldLabel);
+    if (localError || !PASSWORD_BREACH_CHECK_ENABLED) return localError;
+    const result = await checkPasswordCompromise(password, {
+        timeoutMs: PASSWORD_BREACH_CHECK_TIMEOUT_MS
+    });
+    if (result.compromised) {
+        return `${fieldLabel}已出现在已知泄漏密码库中，请换用全新密码`;
+    }
+    if (!result.checked) {
+        return `暂时无法完成${fieldLabel}泄漏安全检查，请稍后再试`;
+    }
+    return '';
+}
+
+function buildPasswordUpgradeRequiredPayload(email = '') {
+    return {
+        success: false,
+        code: 'password_upgrade_required',
+        passwordUpgradeRequired: true,
+        ...(email ? { email: normalizeEmailForAuth(email) } : {}),
+        error: '当前密码不符合最新安全要求，请使用“忘记密码”设置新密码'
+    };
+}
+
+function isProvisionedTestAccount(user, normalizedEmail) {
+    return normalizeEmailForAuth(normalizedEmail) === PROVISIONED_TEST_ACCOUNT_EMAIL
+        && normalizeEmailForAuth(user?.email) === PROVISIONED_TEST_ACCOUNT_EMAIL;
+}
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
 const MAX_CONCURRENT_REQUESTS_PER_USER = Math.max(
     1,
@@ -78,8 +194,6 @@ const MAX_CONCURRENT_REQUESTS_PER_USER = Math.max(
 );
 const ADMIN_TOKEN_EXPIRES_IN = cleanEnvValue(process.env.ADMIN_TOKEN_EXPIRES_IN) || (IS_PRODUCTION ? '12h' : '30d');
 const ADMIN_TOTP_REQUIRED = parseBooleanEnv(process.env.RAI_ADMIN_TOTP_REQUIRED, IS_PRODUCTION);
-const PASSWORD_MIN_LENGTH = 6;
-const PASSWORD_MAX_LENGTH = 128;
 const EMAIL_MAX_LENGTH = 255;
 const USERNAME_MAX_LENGTH = 80;
 const LONG_MEMORY_DEFAULT_ENABLED = parseBooleanEnv(process.env.RAI_LONG_MEMORY_DEFAULT_ENABLED, false);
@@ -134,16 +248,6 @@ const MEMORY_CATEGORIES = new Set([
     'work',
     'other'
 ]);
-
-function validatePasswordLength(password, fieldLabel = '密码') {
-    if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
-        return `${fieldLabel}至少需要${PASSWORD_MIN_LENGTH}位`;
-    }
-    if (password.length > PASSWORD_MAX_LENGTH) {
-        return `${fieldLabel}不能超过${PASSWORD_MAX_LENGTH}位`;
-    }
-    return '';
-}
 
 function normalizeUsernameForStorage(username) {
     const normalized = String(username || '').trim().replace(/\s+/g, ' ');
@@ -232,9 +336,15 @@ function hashEmailCode({ email, purpose, code }) {
 }
 
 function requireSecretEnv(name, minLength = 32) {
-    const value = cleanEnvValue(process.env[name]);
+    const secretFile = cleanEnvValue(process.env[`${name}_FILE`]);
+    // Prefer the restricted file when configured, even if a process manager still carries
+    // an old inline value during migration. This lets deployments remove JWT material from
+    // PM2 environment snapshots without a destructive process recreation.
+    const value = secretFile
+        ? readRestrictedSecretFile(secretFile, name.toLowerCase())
+        : cleanEnvValue(process.env[name]);
     if (value.length < minLength) {
-        console.error(` 启动失败: ${name} 未配置或长度不足 ${minLength} 字符`);
+        console.error(` 启动失败: ${name}/${name}_FILE 未配置或长度不足 ${minLength} 字符`);
         process.exit(1);
     }
     return value;
@@ -256,8 +366,12 @@ function parseCsvEnv(value) {
 }
 
 const JWT_SECRET = requireSecretEnv('JWT_SECRET', 32);
+const {
+    formatPrivateLogFingerprint,
+    sanitizeReportContext,
+    summarizePrivateValue
+} = createPrivacyLog({ secret: JWT_SECRET });
 const OPENROUTER_BASE_URL = cleanEnvValue(process.env.OPENROUTER_BASE_URL) || 'https://openrouter.ai/api/v1/chat/completions';
-const NEWAPI_BASE_URL = cleanEnvValue(process.env.NEWAPI_BASE_URL) || 'https://api.18363221.xyz/v1/chat/completions';
 const GOOGLE_GEMINI_BASE_URL = cleanEnvValue(process.env.GOOGLE_GEMINI_BASE_URL) || 'https://generativelanguage.googleapis.com/v1beta/models';
 const ZTX6D_APP_ID = cleanEnvValue(process.env.ZTX6D_APP_ID);
 const ZTX6D_APP_KEY = cleanEnvValue(process.env.ZTX6D_APP_KEY);
@@ -284,16 +398,97 @@ const DEFAULT_DOMAIN_NOTICE_ENABLED = parseBooleanEnv(process.env.RAI_DEFAULT_DO
 const DEFAULT_DOMAIN_NOTICE_URL = cleanEnvValue(process.env.RAI_DEFAULT_DOMAIN_NOTICE_URL) || 'https://rai.rick.sarl/';
 const DEFAULT_DISABLED_MODEL_IDS_RAW = parseCsvEnv(process.env.RAI_DEFAULT_DISABLED_MODELS);
 const CSP_ALLOW_LOCAL_CONNECT = parseBooleanEnv(process.env.RAI_CSP_ALLOW_LOCAL_CONNECT, false);
-const CSP_STRICT_SCRIPT_SRC = parseBooleanEnv(process.env.RAI_CSP_STRICT_SCRIPT_SRC, false);
+const CSP_CONNECT_ORIGINS = parseCsvEnv(process.env.RAI_CSP_CONNECT_ORIGINS);
 const ADMIN_USERNAME = cleanEnvValue(process.env.ADMIN_USERNAME) || 'admin';
 const ADMIN_PASSWORD_HASH = requireSecretEnv('ADMIN_PASSWORD_HASH', 50);
 const ADMIN_JWT_SECRET = requireSecretEnv('ADMIN_JWT_SECRET', 32);
+function readRestrictedSecretFile(filePath, label = 'secret') {
+    const resolved = path.resolve(cleanEnvValue(filePath));
+    if (!resolved || !cleanEnvValue(filePath)) return '';
+    const stat = fs.lstatSync(resolved);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024) {
+        throw new Error(`invalid_${label}_file`);
+    }
+    if (IS_PRODUCTION && (stat.mode & 0o077) !== 0) {
+        throw new Error(`${label}_file_permissions_must_be_0600`);
+    }
+    return cleanEnvValue(fs.readFileSync(resolved, 'utf8'));
+}
+const GPT_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(process.env.RAI_GPT_GATEWAY_BASE_URL, {
+    production: IS_PRODUCTION
+});
+const GPT_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_GATEWAY_API_KEY_FILE);
+const GPT_GATEWAY_API_KEY = GPT_GATEWAY_API_KEY_FILE
+    ? readGatewayApiKeyFile(GPT_GATEWAY_API_KEY_FILE)
+    : '';
+const GPT_GATEWAY_CONFIGURED = !!(GPT_GATEWAY_BASE_URL && GPT_GATEWAY_API_KEY);
+if (GPT_GATEWAY_BASE_URL && !GPT_GATEWAY_API_KEY_FILE) {
+    console.warn(' GPT 网关已配置 URL，但未配置 RAI_GPT_GATEWAY_API_KEY_FILE；相关模型将 fail closed');
+}
+if (GPT_GATEWAY_API_KEY_FILE && !GPT_GATEWAY_BASE_URL) {
+    throw new Error('gpt_gateway_api_key_file_requires_explicit_base_url');
+}
+const GPT_IMAGE_BASE_URL = normalizeGatewayBaseUrl(process.env.RAI_GPT_IMAGE_BASE_URL, {
+    production: IS_PRODUCTION
+});
+const GPT_IMAGE_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_IMAGE_API_KEY_FILE);
+const GPT_IMAGE_API_KEY = GPT_IMAGE_API_KEY_FILE
+    ? readGatewayApiKeyFile(GPT_IMAGE_API_KEY_FILE)
+    : '';
+const GPT_IMAGE_CONFIGURED = !!(GPT_IMAGE_BASE_URL && GPT_IMAGE_API_KEY);
+if (GPT_IMAGE_BASE_URL && !GPT_IMAGE_API_KEY_FILE) {
+    console.warn(' GPT 图像网关已配置 URL，但未配置 RAI_GPT_IMAGE_API_KEY_FILE；GPT Image 2 将 fail closed');
+}
+if (GPT_IMAGE_API_KEY_FILE && !GPT_IMAGE_BASE_URL) {
+    throw new Error('gpt_image_api_key_file_requires_explicit_base_url');
+}
+const FAST_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(
+    cleanEnvValue(process.env.RAI_FAST_GATEWAY_BASE_URL) || 'https://fast.000339.xyz/v1',
+    { production: IS_PRODUCTION }
+);
+const FAST_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_FAST_GATEWAY_API_KEY_FILE)
+    || (IS_PRODUCTION ? path.join(__dirname, '.fast-gateway-api-key') : '');
+const FAST_GATEWAY_API_KEY = FAST_GATEWAY_API_KEY_FILE
+    ? readGatewayApiKeyFile(FAST_GATEWAY_API_KEY_FILE)
+    : '';
+const FAST_GATEWAY_CONFIGURED = !!(FAST_GATEWAY_BASE_URL && FAST_GATEWAY_API_KEY);
+if (FAST_GATEWAY_BASE_URL && !FAST_GATEWAY_API_KEY) {
+    console.warn(' Fast OpenAI 兼容网关未配置 RAI_FAST_GATEWAY_API_KEY_FILE；Claude/Gemini 将 fail closed');
+}
+const TOTP_ENCRYPTION_KEY_FILE = cleanEnvValue(process.env.RAI_TOTP_ENCRYPTION_KEY_FILE);
+const TOTP_ENCRYPTION_KEY = TOTP_ENCRYPTION_KEY_FILE
+    ? readRestrictedSecretFile(TOTP_ENCRYPTION_KEY_FILE, 'totp_encryption_key')
+    : cleanEnvValue(process.env.RAI_TOTP_ENCRYPTION_KEY);
+const REFRESH_TOKEN_PEPPER_FILE = cleanEnvValue(process.env.RAI_REFRESH_TOKEN_PEPPER_FILE);
+const REFRESH_TOKEN_PEPPER = REFRESH_TOKEN_PEPPER_FILE
+    ? readRestrictedSecretFile(REFRESH_TOKEN_PEPPER_FILE, 'refresh_token_pepper')
+    : cleanEnvValue(process.env.RAI_REFRESH_TOKEN_PEPPER);
+if (IS_PRODUCTION && !TOTP_ENCRYPTION_KEY_FILE) {
+    throw new Error('production_requires_totp_encryption_key_file');
+}
+if (IS_PRODUCTION && !REFRESH_TOKEN_PEPPER_FILE) {
+    throw new Error('production_requires_refresh_token_pepper_file');
+}
+const TOTP_PREVIOUS_ENCRYPTION_KEYS = parseCsvEnv(process.env.RAI_TOTP_PREVIOUS_ENCRYPTION_KEYS);
+const totpSecretCipher = createTotpSecretCipher([
+    TOTP_ENCRYPTION_KEY,
+    ...TOTP_PREVIOUS_ENCRYPTION_KEYS,
+    ...(!IS_PRODUCTION ? [`${JWT_SECRET}\0${ADMIN_JWT_SECRET}`] : [])
+]);
 const ADMIN_TOTP_SECRET = cleanEnvValue(process.env.ADMIN_TOTP_SECRET).replace(/[\s=:-]/g, '').toUpperCase();
+const ADMIN_CREDENTIAL_VERSION = deriveAdminCredentialVersion({
+    passwordHash: ADMIN_PASSWORD_HASH,
+    totpSecret: ADMIN_TOTP_SECRET,
+    jwtSecret: ADMIN_JWT_SECRET
+});
 const TOTP_ISSUER = cleanEnvValue(process.env.RAI_TOTP_ISSUER) || BRAND_TITLE || 'RAI';
 const ZTX6D_RT_TTL_MS = 10 * 60 * 1000;
 const ZTX6D_AUTH_CODE_TTL_MS = 2 * 60 * 1000;
 const TWO_FACTOR_SETUP_TTL = '10m';
 const TWO_FACTOR_LOGIN_TTL = '5m';
+const INTERMEDIATE_TOKEN_ISSUER = 'rai';
+const TWO_FACTOR_SETUP_AUDIENCE = 'rai-user-2fa-setup';
+const TWO_FACTOR_LOGIN_AUDIENCE = 'rai-user-2fa-login';
 const RESEND_API_KEY = cleanEnvValue(process.env.RESEND_API_KEY || process.env.RAI_RESEND_API_KEY);
 const RESEND_API_URL = cleanEnvValue(process.env.RESEND_API_URL) || 'https://api.resend.com/emails';
 const RESEND_FROM_EMAIL_RAW = cleanEnvValue(process.env.RESEND_FROM_EMAIL || process.env.RAI_EMAIL_FROM) || 'onboarding@resend.dev';
@@ -326,12 +521,12 @@ const ENV_API_KEYS = {
     DEEPSEEK_API_KEY: cleanEnvValue(process.env.DEEPSEEK_API_KEY),
     SILICONFLOW_API_KEY: cleanEnvValue(process.env.SILICONFLOW_API_KEY),
     GOOGLE_GEMINI_API_KEY: cleanEnvValue(process.env.GOOGLE_GEMINI_API_KEY),
-    OPENROUTER_API_KEY: cleanEnvValue(process.env.OPENROUTER_API_KEY),
-    NEWAPI_API_KEY: cleanEnvValue(process.env.NEWAPI_API_KEY)
+    OPENROUTER_API_KEY: cleanEnvValue(process.env.OPENROUTER_API_KEY)
 };
 
 const RAI_RUNTIME_REPORT_PATH = path.resolve(cleanEnvValue(process.env.RAI_RUNTIME_REPORT_PATH) || path.join(__dirname, 'rai运行报告.md'));
 const RAI_RUNTIME_REPORT_CONTACT = 'rick080402@gmail.com';
+const writeRuntimeReportBlock = createRuntimeReportWriter(RAI_RUNTIME_REPORT_PATH);
 
 function buildProviderFetchHeaders(providerConfig, providerName = '') {
     const headers = {
@@ -357,60 +552,38 @@ function buildGeneratedImageMarkdown(result = {}) {
         .join('\n\n');
 }
 
-function maskReportString(value) {
-    let text = String(value || '');
-    text = text.replace(/https:\/\/s3\.siliconflow\.cn\/temporary\/[^\s"']+/g, '[siliconflow_generated_image_url]');
-    text = text.replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=_-]{80,}/g, '[generated_image_base64]');
-    text = text.replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [redacted]');
-    text = text.replace(/\bsk-[A-Za-z0-9._~+/=-]{12,}\b/g, '[redacted_api_key]');
-    text = text.replace(/\bsk-or-[A-Za-z0-9._~+/=-]{12,}\b/g, '[redacted_api_key]');
-    text = text.replace(/\bre_[A-Za-z0-9._~+/=-]{12,}\b/g, '[redacted_resend_key]');
-    text = text.replace(/\bAIza[A-Za-z0-9_-]{20,}\b/g, '[redacted_google_key]');
-    if (text.length > 1600) text = `${text.slice(0, 1600)}...`;
-    return text;
-}
-
-function sanitizeReportContext(value, depth = 0) {
-    if (depth > 4) return '[truncated]';
-    if (value === null || value === undefined) return value;
-    if (typeof value === 'string') return maskReportString(value);
-    if (typeof value === 'number' || typeof value === 'boolean') return value;
-    if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeReportContext(item, depth + 1));
-    if (typeof value === 'object') {
-        const output = {};
-        for (const [key, item] of Object.entries(value).slice(0, 40)) {
-            if (/key|token|secret|password|authorization/i.test(key)) {
-                output[key] = '[redacted]';
-            } else {
-                output[key] = sanitizeReportContext(item, depth + 1);
-            }
-        }
-        return output;
-    }
-    return maskReportString(String(value));
-}
-
 function appendRaiRuntimeReport(entry = {}) {
-    const level = maskReportString(entry.level || '报错');
-    const tag = maskReportString(entry.tag || 'runtime');
-    const message = maskReportString(entry.message || '');
-    const context = sanitizeReportContext(entry.context || {});
-    const block = [
-        '',
-        `## ${new Date().toISOString()} ${level} ${tag}`,
-        message ? `- message: ${message}` : '- message: (empty)',
-        '- context:',
-        '```json',
-        JSON.stringify(context, null, 2),
-        '```',
-        ''
-    ].join('\n');
+    let block;
+    try {
+        const level = sanitizeReportLabel(entry.level, '报错');
+        const tag = sanitizeReportLabel(entry.tag, 'runtime');
+        const message = summarizePrivateValue(entry.message || '', 'message');
+        const context = sanitizeReportContext(entry.context || {});
+        block = [
+            '',
+            `## ${new Date().toISOString()} ${level} ${tag}`,
+            `- message: ${JSON.stringify(message)}`,
+            '- context:',
+            '```json',
+            JSON.stringify(context, null, 2),
+            '```',
+            ''
+        ].join('\n');
+    } catch (error) {
+        console.warn(' RAI 运行报告内容拒绝写入:', {
+            errorName: String(error?.name || 'Error').slice(0, 80),
+            errorCode: String(error?.code || 'sanitize_failed').slice(0, 80)
+        });
+        return Promise.resolve(false);
+    }
 
-    return fs.promises.mkdir(path.dirname(RAI_RUNTIME_REPORT_PATH), { recursive: true })
-        .then(() => fs.promises.appendFile(RAI_RUNTIME_REPORT_PATH, block, 'utf8'))
+    return writeRuntimeReportBlock(block)
         .then(() => true)
         .catch((error) => {
-            console.warn(' 写入 RAI 运行报告失败:', error.message);
+            console.warn(' 写入 RAI 运行报告失败:', {
+                errorName: String(error?.name || 'Error').slice(0, 80),
+                errorCode: String(error?.code || 'write_failed').slice(0, 80)
+            });
             return false;
         });
 }
@@ -422,11 +595,16 @@ function buildUserFacingApiFailureMessage() {
 const KOLORS_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const SILICONFLOW_IMAGE_GENERATION_URL = cleanEnvValue(process.env.SILICONFLOW_IMAGE_GENERATION_URL) || 'https://api.siliconflow.cn/v1/images/generations';
 const KOLORS_IMAGE_SIZES = ['1024x1024', '960x1280', '768x1024', '720x1440', '720x1280'];
+const IMAGE_GENERATION_SIZES = [...new Set([...KOLORS_IMAGE_SIZES, '1024x1536', '1536x1024', 'auto'])];
 const GENERATED_IMAGES_DIR = path.join(__dirname, 'uploads', 'generated-images');
 const GENERATED_IMAGE_PUBLIC_PREFIX = '/generated-images';
 const MAX_GENERATED_IMAGE_BYTES = Math.max(
     1024 * 1024,
     parseInt(cleanEnvValue(process.env.RAI_GENERATED_IMAGE_MAX_BYTES) || String(20 * 1024 * 1024), 10) || 20 * 1024 * 1024
+);
+const GENERATED_IMAGE_TTL_MS = Math.max(
+    60 * 60 * 1000,
+    parseInt(cleanEnvValue(process.env.RAI_GENERATED_IMAGE_TTL_DAYS) || '30', 10) * 24 * 60 * 60 * 1000
 );
 const GENERATED_IMAGE_FETCH_TIMEOUT_MS = Math.max(
     1000,
@@ -441,7 +619,11 @@ const SAFE_IMAGE_FETCH_MAX_REDIRECTS = Math.max(
     Math.min(5, parseInt(cleanEnvValue(process.env.RAI_IMAGE_FETCH_MAX_REDIRECTS) || '3', 10) || 3)
 );
 const GENERATED_IMAGE_ALLOWED_SOURCE_HOSTS = new Set(
-    parseCsvEnv(process.env.RAI_GENERATED_IMAGE_ALLOWED_HOSTS || 'siliconflow.cn')
+    [
+        ...parseCsvEnv(process.env.RAI_GENERATED_IMAGE_ALLOWED_HOSTS || 'siliconflow.cn'),
+        ...(GPT_GATEWAY_BASE_URL ? [new URL(GPT_GATEWAY_BASE_URL).hostname] : []),
+        ...(GPT_IMAGE_BASE_URL ? [new URL(GPT_IMAGE_BASE_URL).hostname] : [])
+    ]
         .map((host) => normalizeHostname(host))
         .filter(Boolean)
 );
@@ -516,30 +698,143 @@ function normalizeTotpCodeInput(code) {
         .slice(0, 12);
 }
 
-function verifyTotpCode(secret, code, options = {}) {
+function findMatchingTotpCounter(secret, code, options = {}) {
     const normalizedCode = normalizeTotpCodeInput(code);
-    if (!/^\d{6}$/.test(normalizedCode)) return false;
+    if (!/^\d{6}$/.test(normalizedCode)) return null;
 
-    const windowSize = Number.isInteger(options.window) ? Math.max(0, options.window) : 2;
+    const windowSize = Number.isInteger(options.window) ? Math.max(0, options.window) : 1;
     const period = Number.isInteger(options.period) ? Math.max(15, options.period) : 30;
-    const currentCounter = Math.floor(Date.now() / 1000 / period);
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const currentCounter = Math.floor(nowMs / 1000 / period);
     const normalizedSecret = normalizeTotpSecret(secret);
-    if (!normalizedSecret) return false;
+    if (!normalizedSecret) return null;
 
     try {
         for (let offset = -windowSize; offset <= windowSize; offset += 1) {
-            const candidate = generateHotpCode(normalizedSecret, currentCounter + offset);
+            const counter = currentCounter + offset;
+            if (counter < 0) continue;
+            const candidate = generateHotpCode(normalizedSecret, counter);
             if (safeCompareText(candidate, normalizedCode)) {
                 if (offset !== 0) {
                     console.warn(` TOTP 验证通过但存在时间漂移: offset=${offset}, period=${period}s`);
                 }
-                return true;
+                return counter;
             }
         }
     } catch (error) {
-        console.warn(' TOTP 校验失败:', error.message);
+        console.warn(' TOTP 校验失败:', sanitizeReportContext(error));
     }
-    return false;
+    return null;
+}
+
+function verifyTotpCode(secret, code, options = {}) {
+    return findMatchingTotpCounter(secret, code, options) !== null;
+}
+
+function decryptUserTotpSecret(storedSecret, userId) {
+    if (!storedSecret) return '';
+    try {
+        return normalizeTotpSecret(totpSecretCipher.decrypt(storedSecret, {
+            purpose: 'user',
+            recordId: String(userId),
+            allowPlaintext: true
+        }));
+    } catch (error) {
+        console.warn(` TOTP 秘钥解密失败: userId=${Number(userId) || 0}`, sanitizeReportContext(error));
+        return '';
+    }
+}
+
+function hasUsableUserTotpSecret(user) {
+    return !!decryptUserTotpSecret(user?.two_factor_secret, user?.id);
+}
+
+async function migratePlaintextUserTotpSecrets() {
+    const rows = await dbAllAsync(
+        `SELECT id, two_factor_secret
+         FROM users
+         WHERE two_factor_secret IS NOT NULL AND LENGTH(TRIM(two_factor_secret)) > 0`
+    );
+    let migrated = 0;
+    for (const row of rows) {
+        const stored = String(row.two_factor_secret || '').trim();
+        if (!stored || totpSecretCipher.isEncrypted(stored)) continue;
+        const encrypted = totpSecretCipher.encrypt(stored, {
+            purpose: 'user',
+            recordId: String(row.id)
+        });
+        const result = await dbRunAsync(
+            'UPDATE users SET two_factor_secret = ? WHERE id = ? AND two_factor_secret = ?',
+            [encrypted, row.id, row.two_factor_secret]
+        );
+        migrated += Number(result?.changes || 0);
+    }
+    if (migrated > 0) console.log(` 已加密迁移 ${migrated} 条历史 TOTP 秘钥`);
+    return migrated;
+}
+
+async function consumeUserTotpCode(user, code, options = {}) {
+    const userId = Number(user?.id);
+    if (!Number.isInteger(userId) || userId <= 0) return false;
+    const secret = decryptUserTotpSecret(user.two_factor_secret, userId);
+    if (!secret) return false;
+    const counter = findMatchingTotpCounter(secret, code, options);
+    if (counter === null) return false;
+    const encryptedSecret = totpSecretCipher.isEncrypted(user.two_factor_secret)
+        ? user.two_factor_secret
+        : totpSecretCipher.encrypt(secret, { purpose: 'user', recordId: String(userId) });
+    const result = await dbRunAsync(
+        `UPDATE users
+         SET two_factor_last_counter = ?, two_factor_secret = ?
+         WHERE id = ? AND COALESCE(two_factor_last_counter, -1) < ?`,
+        [counter, encryptedSecret, userId, counter]
+    );
+    if (Number(result?.changes || 0) !== 1) {
+        console.warn(` TOTP 重放已拒绝: userId=${userId}, counter=${counter}`);
+        return false;
+    }
+    user.two_factor_last_counter = counter;
+    user.two_factor_secret = encryptedSecret;
+    return true;
+}
+
+const RECOVERY_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const RECOVERY_CODE_PEPPER = crypto.createHmac('sha256', JWT_SECRET)
+    .update('rai-two-factor-recovery-code-v1')
+    .digest();
+
+function normalizeRecoveryCode(value) {
+    return String(value || '').normalize('NFKC').toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, '');
+}
+
+function hashRecoveryCode(value) {
+    return crypto.createHmac('sha256', RECOVERY_CODE_PEPPER)
+        .update(normalizeRecoveryCode(value), 'utf8')
+        .digest('base64url');
+}
+
+function generateRecoveryCodes(count = 10) {
+    const codes = new Set();
+    while (codes.size < count) {
+        let raw = '';
+        const bytes = crypto.randomBytes(12);
+        for (const byte of bytes) raw += RECOVERY_CODE_ALPHABET[byte % RECOVERY_CODE_ALPHABET.length];
+        codes.add(`${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`);
+    }
+    return [...codes];
+}
+
+async function consumeUserSecondFactor(user, code, options = {}) {
+    if (await consumeUserTotpCode(user, code, options)) return true;
+    const normalized = normalizeRecoveryCode(code);
+    if (normalized.length !== 12) return false;
+    const result = await dbRunAsync(
+        `UPDATE user_two_factor_recovery_codes
+         SET used_at = ?
+         WHERE user_id = ? AND code_hash = ? AND used_at IS NULL`,
+        [Date.now(), Number(user?.id), hashRecoveryCode(normalized)]
+    );
+    return Number(result?.changes || 0) === 1;
 }
 
 function buildOtpAuthUrl({ issuer = TOTP_ISSUER, accountName = '', secret }) {
@@ -561,7 +856,13 @@ function buildUserTwoFactorSetupToken(user, setupId) {
     return jwt.sign(
         { type: 'user_2fa_setup', userId: user.id, email: user.email, setupId: String(setupId || '') },
         JWT_SECRET,
-        { expiresIn: TWO_FACTOR_SETUP_TTL }
+        {
+            algorithm: 'HS256',
+            issuer: INTERMEDIATE_TOKEN_ISSUER,
+            audience: TWO_FACTOR_SETUP_AUDIENCE,
+            jwtid: crypto.randomBytes(18).toString('base64url'),
+            expiresIn: TWO_FACTOR_SETUP_TTL
+        }
     );
 }
 
@@ -576,7 +877,7 @@ async function cleanupUserTwoFactorSetupChallenges() {
         'DELETE FROM user_two_factor_setup_challenges WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
         [now, consumedBefore]
     ).catch((error) => {
-        console.warn(' 二步验证设置挑战清理失败:', error.message);
+        console.warn(' 二步验证设置挑战清理失败:', sanitizeReportContext(error));
     });
 }
 
@@ -595,7 +896,16 @@ async function createUserTwoFactorSetupChallenge(user, secret) {
         `INSERT INTO user_two_factor_setup_challenges
          (setup_id, user_id, secret, created_at, expires_at, consumed_at)
          VALUES (?, ?, ?, ?, ?, NULL)`,
-        [setupId, user.id, normalizeTotpSecret(secret), now, expiresAt]
+        [
+            setupId,
+            user.id,
+            totpSecretCipher.encrypt(normalizeTotpSecret(secret), {
+                purpose: 'setup',
+                recordId: setupId
+            }),
+            now,
+            expiresAt
+        ]
     );
     return { setupId, expiresAt };
 }
@@ -607,34 +917,27 @@ async function consumeUserTwoFactorSetupChallenge({ setupId, userId }) {
         return null;
     }
 
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const row = await dbGetAsync(
+    return withMainDbTransaction(async (tx) => {
+        const row = await tx.get(
             `SELECT *
              FROM user_two_factor_setup_challenges
              WHERE setup_id = ? AND user_id = ?`,
             [safeSetupId, numericUserId]
         );
         if (!row || row.consumed_at || Number(row.expires_at || 0) <= Date.now()) {
-            await dbRunAsync('COMMIT');
             return null;
         }
-        const result = await dbRunAsync(
+        const result = await tx.run(
             `UPDATE user_two_factor_setup_challenges
              SET consumed_at = ?
              WHERE setup_id = ? AND consumed_at IS NULL`,
             [Date.now(), safeSetupId]
         );
         if (Number(result?.changes || 0) !== 1) {
-            await dbRunAsync('ROLLBACK');
             return null;
         }
-        await dbRunAsync('COMMIT');
         return row;
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
 }
 
 function buildUserLoginTwoFactorToken(user, options = {}) {
@@ -646,17 +949,28 @@ function buildUserLoginTwoFactorToken(user, options = {}) {
             primaryAuth: String(options.primaryAuth || '').trim() || undefined
         },
         JWT_SECRET,
-        { expiresIn: TWO_FACTOR_LOGIN_TTL }
+        {
+            algorithm: 'HS256',
+            issuer: INTERMEDIATE_TOKEN_ISSUER,
+            audience: TWO_FACTOR_LOGIN_AUDIENCE,
+            jwtid: crypto.randomBytes(18).toString('base64url'),
+            expiresIn: TWO_FACTOR_LOGIN_TTL
+        }
     );
 }
 
 const ADMIN_MODEL_CATALOG = [
-    { id: 'deepseek-flash', name: 'DeepSeek Flash / 极速模型', group: '快捷与全部模型' },
+    { id: 'deepseek-flash', name: 'DeepSeek v4 / 快速模型', group: '快捷与全部模型' },
     { id: 'deepseek-pro', name: 'DeepSeek Pro / 专家模型', group: '快捷与全部模型' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol / 多模态', group: '全部模型' },
+    { id: 'gpt-5.6-luna', name: 'GPT 5.6 / 多模态', group: '全部模型' },
+    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5 / 多模态', group: '全部模型' },
+    { id: 'gemini-3.6-flash-low', name: 'Gemini 3.6 / 多模态', group: '全部模型' },
+    { id: 'kolors-free', name: 'Kolors Free / 图像生成', group: '图像生成' },
+    { id: 'gpt-image-2', name: 'GPT Image 2 / 图像生成', group: '图像生成' },
     { id: 'qwen3.6-35b-a3b', name: 'Qwen 3.6 35B / 多模态', group: '全部模型' },
     { id: 'kimi-k2.6', name: 'Kimi K2.6', group: '全部模型' },
     { id: 'chatgpt-gpt-oss-120b', name: 'ChatGPT', group: '全部模型' },
-    { id: 'north-mini-code', name: 'Mimo Code', group: '全部模型' },
     { id: 'nemotron-3-ultra', name: 'Nemotron 3 Ultra', group: '全部模型' },
     { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6', group: 'MAX 模型' },
     { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku', group: 'MAX 模型' },
@@ -665,8 +979,8 @@ const ADMIN_MODEL_CATALOG = [
 
 const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
-const AUTO_MODEL_PREFERENCE = ['deepseek-pro', 'deepseek-flash', 'chatgpt-gpt-oss-120b', 'gemma', 'north-mini-code', 'nemotron-3-ultra', 'qwen3.6-35b-a3b', 'kimi-k2.6'];
-const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['qwen3.6-35b-a3b', 'kimi-k2.6', 'gemini-3-flash', 'anthropic/claude-3-haiku'];
+const AUTO_MODEL_PREFERENCE = ['deepseek-pro', 'gpt-5.6-luna'];
+const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-5.6-luna', 'qwen3.6-35b-a3b', 'kimi-k2.6', 'gemini-3-flash', 'anthropic/claude-3-haiku'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
@@ -1009,6 +1323,28 @@ function toFiniteNumber(value) {
     return Number.isFinite(numeric) ? numeric : null;
 }
 
+function parseStrictBoundedNumber(value, { min, max, fallback, integer = false }) {
+    const raw = typeof value === 'number' ? String(value) : String(value ?? '').trim();
+    if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw)) return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max || (integer && !Number.isInteger(parsed))) {
+        return fallback;
+    }
+    return parsed;
+}
+
+function buildPublicFinanceError(error) {
+    const code = String(error?.code || 'finance_quote_failed');
+    if (code === 'invalid_symbol') return { status: 400, code, message: '证券代码无效' };
+    if (code === 'invalid_range') {
+        return { status: 400, code, message: '行情时间范围无效', details: { allowed: Array.from(FINANCE_ALLOWED_RANGES) } };
+    }
+    if (code === 'invalid_interval') {
+        return { status: 400, code, message: '行情时间间隔无效', details: { allowed: Array.from(FINANCE_ALLOWED_INTERVALS) } };
+    }
+    return { status: 502, code: 'finance_quote_failed', message: '行情服务暂时不可用' };
+}
+
 function toIsoTimestamp(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric <= 0) return '';
@@ -1141,16 +1477,17 @@ async function fetchYahooFinanceQuote({ symbol, range = FINANCE_DEFAULT_RANGE, i
     }
 
     if (!response.ok) {
-        const errText = await response.text();
+        const errText = await readBoundedResponseText(response, 64 * 1024);
         throw createFinanceError(502, 'upstream_bad_status', `Yahoo Finance 返回异常状态: ${response.status}`, {
             status: response.status,
-            preview: errText.slice(0, 200)
+            bodyLength: errText.length
         });
     }
 
     let payload;
     try {
-        payload = await response.json();
+        const payloadText = await readBoundedResponseText(response, 1024 * 1024);
+        payload = JSON.parse(payloadText);
     } catch (error) {
         throw createFinanceError(502, 'upstream_invalid_json', `Yahoo Finance 返回数据无法解析: ${error.message}`);
     }
@@ -1183,14 +1520,14 @@ async function fetchYahooFinanceQuote({ symbol, range = FINANCE_DEFAULT_RANGE, i
 
 
 
-function normalizeKolorsImageArgs(args = {}) {
+function normalizeImageGenerationArgs(args = {}) {
     const prompt = String(args.prompt || args.description || '').trim().slice(0, 2000);
     if (!prompt) {
         throw new Error('图片生成缺少 prompt');
     }
 
     const requestedSize = String(args.image_size || args.size || '').trim();
-    const imageSize = KOLORS_IMAGE_SIZES.includes(requestedSize) ? requestedSize : '1024x1024';
+    const imageSize = IMAGE_GENERATION_SIZES.includes(requestedSize) ? requestedSize : '1024x1024';
     const normalized = {
         prompt,
         image_size: imageSize,
@@ -1199,34 +1536,19 @@ function normalizeKolorsImageArgs(args = {}) {
         guidance_scale: clampNumber(args.guidance_scale, 0, 20, 7.5)
     };
 
-    const image = String(args.image || args.image_url || '').trim();
-    if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(image)) {
-        normalized.image = image;
-    }
+    return normalized;
+}
 
+function normalizeSiliconflowImageArgs(args = {}) {
+    const normalized = { ...args };
+    if (!KOLORS_IMAGE_SIZES.includes(normalized.image_size)) {
+        normalized.image_size = normalized.image_size === '1024x1536' ? '768x1024' : '1024x1024';
+    }
     return normalized;
 }
 
 function sniffImageBuffer(buffer) {
-    if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null;
-    if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
-        return { contentType: 'image/png', ext: 'png' };
-    }
-    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
-        return { contentType: 'image/jpeg', ext: 'jpg' };
-    }
-    const header6 = buffer.subarray(0, 6).toString('ascii');
-    if (header6 === 'GIF87a' || header6 === 'GIF89a') {
-        return { contentType: 'image/gif', ext: 'gif' };
-    }
-    if (
-        buffer.length >= 12 &&
-        buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
-        buffer.subarray(8, 12).toString('ascii') === 'WEBP'
-    ) {
-        return { contentType: 'image/webp', ext: 'webp' };
-    }
-    return null;
+    return sniffRasterImageBuffer(buffer);
 }
 
 function getGeneratedImageExtension(contentType = '', fallbackUrl = '', buffer = null) {
@@ -1253,119 +1575,8 @@ function getGeneratedImageExtension(contentType = '', fallbackUrl = '', buffer =
     return 'png';
 }
 
-function normalizeHostname(hostname = '') {
-    return String(hostname || '')
-        .trim()
-        .toLowerCase()
-        .replace(/^\[|\]$/g, '')
-        .replace(/\.$/, '');
-}
-
-function isHostnameAllowedBySet(hostname = '', allowedHosts = null) {
-    if (!allowedHosts || allowedHosts.size === 0) return true;
-    const host = normalizeHostname(hostname);
-    if (!host) return false;
-    for (const allowed of allowedHosts) {
-        const safeAllowed = normalizeHostname(allowed);
-        if (!safeAllowed) continue;
-        if (host === safeAllowed || host.endsWith(`.${safeAllowed}`)) return true;
-    }
-    return false;
-}
-
-function parseIpv4Address(address = '') {
-    const parts = String(address || '').split('.');
-    if (parts.length !== 4) return null;
-    const numbers = parts.map((part) => {
-        if (!/^\d{1,3}$/.test(part)) return NaN;
-        return Number(part);
-    });
-    if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
-    return numbers;
-}
-
-function isPrivateOrReservedIpv4(address = '') {
-    const parts = parseIpv4Address(address);
-    if (!parts) return false;
-    const [a, b, c, d] = parts;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 192 && b === 0) return true;
-    if (a === 192 && b === 0 && c === 2) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a === 198 && b === 51 && c === 100) return true;
-    if (a === 203 && b === 0 && c === 113) return true;
-    if (a >= 224) return true;
-    if (a === 255 && b === 255 && c === 255 && d === 255) return true;
-    return false;
-}
-
-function isPrivateOrReservedIpv6(address = '') {
-    let ip = normalizeHostname(address);
-    if (!ip) return false;
-    if (ip.startsWith('::ffff:')) {
-        const mapped = ip.slice('::ffff:'.length);
-        if (net.isIP(mapped) === 4) return isPrivateOrReservedIpv4(mapped);
-    }
-    if (ip === '::' || ip === '::1') return true;
-    if (ip.startsWith('fe80:') || ip.startsWith('fe8') || ip.startsWith('fe9') || ip.startsWith('fea') || ip.startsWith('feb')) return true;
-    if (/^f[c-d][0-9a-f]{2}:/i.test(ip)) return true;
-    if (ip.startsWith('2001:db8:')) return true;
-    return false;
-}
-
-function isPrivateOrReservedIp(address = '') {
-    const normalized = normalizeHostname(address);
-    const ipVersion = net.isIP(normalized);
-    if (ipVersion === 4) return isPrivateOrReservedIpv4(normalized);
-    if (ipVersion === 6) return isPrivateOrReservedIpv6(normalized);
-    return false;
-}
-
-async function resolveImageUrlAddresses(urlObj) {
-    const hostname = normalizeHostname(urlObj.hostname);
-    if (!hostname) throw new Error('image_url_missing_host');
-    if (net.isIP(hostname)) return [{ address: hostname, family: net.isIP(hostname) }];
-    const records = await dns.lookup(hostname, { all: true, verbatim: true });
-    if (!records || records.length === 0) {
-        throw new Error('image_url_dns_empty');
-    }
-    return records;
-}
-
 async function assertSafeOutboundImageUrl(rawUrl, options = {}) {
-    const source = String(rawUrl || '').trim();
-    let urlObj;
-    try {
-        urlObj = new URL(source);
-    } catch (error) {
-        throw new Error('image_url_invalid');
-    }
-
-    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-        throw new Error('image_url_protocol_blocked');
-    }
-    if (urlObj.username || urlObj.password) {
-        throw new Error('image_url_credentials_blocked');
-    }
-
-    const hostname = normalizeHostname(urlObj.hostname);
-    if (!hostname) throw new Error('image_url_missing_host');
-    if (!isHostnameAllowedBySet(hostname, options.allowedHosts || null)) {
-        throw new Error('image_url_host_not_allowed');
-    }
-
-    const addresses = await resolveImageUrlAddresses(urlObj);
-    const blocked = addresses.find((record) => isPrivateOrReservedIp(record.address));
-    if (blocked) {
-        const error = new Error('image_url_private_address_blocked');
-        error.address = blocked.address;
-        throw error;
-    }
-    return urlObj;
+    return resolveSafeHttpTarget(rawUrl, options);
 }
 
 function buildRedirectedUrl(locationHeader = '', currentUrlObj) {
@@ -1378,34 +1589,6 @@ function buildRedirectedUrl(locationHeader = '', currentUrlObj) {
     }
 }
 
-async function readResponseBufferWithLimit(response, maxBytes) {
-    const chunks = [];
-    let total = 0;
-    if (!response.body || typeof response.body.getReader !== 'function') {
-        const fallbackBuffer = Buffer.from(await response.arrayBuffer());
-        if (fallbackBuffer.length > maxBytes) throw new Error(`image too large: ${fallbackBuffer.length}`);
-        return fallbackBuffer;
-    }
-
-    const reader = response.body.getReader();
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = Buffer.from(value);
-            total += chunk.length;
-            if (total > maxBytes) {
-                await reader.cancel().catch(() => null);
-                throw new Error(`image too large: ${total}`);
-            }
-            chunks.push(chunk);
-        }
-    } finally {
-        reader.releaseLock();
-    }
-    return Buffer.concat(chunks, total);
-}
-
 function logBlockedGeneratedImageFetch(sourceUrl, error) {
     const hostname = (() => {
         try {
@@ -1414,7 +1597,7 @@ function logBlockedGeneratedImageFetch(sourceUrl, error) {
             return '';
         }
     })();
-    console.warn(` 生成图片下载被安全策略拦截: host=${hostname || 'unknown'}, reason=${error.message}`);
+    console.warn(` 生成图片下载被安全策略拦截: ${formatPrivateLogFingerprint(hostname || '', 'host')}`, sanitizeReportContext(error));
     appendRaiRuntimeReport({
         level: '警告',
         tag: 'generated_image_ssrf_blocked',
@@ -1427,12 +1610,14 @@ function logBlockedGeneratedImageFetch(sourceUrl, error) {
     });
 }
 
-async function fetchGeneratedImageBuffer(sourceUrl) {
+async function fetchGeneratedImageBuffer(sourceUrl, signal) {
+    throwIfExternalRequestAborted(signal);
     let currentUrl = String(sourceUrl || '').trim();
     for (let redirectCount = 0; redirectCount <= SAFE_IMAGE_FETCH_MAX_REDIRECTS; redirectCount += 1) {
-        let urlObj;
+        throwIfExternalRequestAborted(signal);
+        let target;
         try {
-            urlObj = await assertSafeOutboundImageUrl(currentUrl, {
+            target = await assertSafeOutboundImageUrl(currentUrl, {
                 allowedHosts: GENERATED_IMAGE_ALLOWED_SOURCE_HOSTS
             });
         } catch (error) {
@@ -1440,43 +1625,37 @@ async function fetchGeneratedImageBuffer(sourceUrl) {
             throw error;
         }
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), GENERATED_IMAGE_FETCH_TIMEOUT_MS);
-        let imageResponse;
-        try {
-            imageResponse = await fetch(urlObj.href, {
-                redirect: 'manual',
-                signal: controller.signal,
-                headers: {
-                    'User-Agent': 'RAI/1.0 image-cache',
-                    'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1'
-                }
-            });
-        } finally {
-            clearTimeout(timeout);
-        }
+        const imageResponse = await requestPinnedHttp(target, {
+            method: 'GET',
+            timeoutMs: GENERATED_IMAGE_FETCH_TIMEOUT_MS,
+            maxBytes: MAX_GENERATED_IMAGE_BYTES,
+            signal,
+            headers: {
+                'User-Agent': 'RAI/1.0 image-cache',
+                'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1'
+            }
+        });
 
-        if (imageResponse.status >= 300 && imageResponse.status < 400) {
-            const nextUrl = buildRedirectedUrl(imageResponse.headers.get('location') || '', urlObj);
+        if (imageResponse.statusCode >= 300 && imageResponse.statusCode < 400) {
+            const nextUrl = buildRedirectedUrl(imageResponse.headers.location || '', target.url);
             if (!nextUrl) throw new Error('image_redirect_invalid');
             const nextUrlObj = new URL(nextUrl);
-            if (normalizeHostname(nextUrlObj.hostname) !== normalizeHostname(urlObj.hostname)) {
+            if (normalizeHostname(nextUrlObj.hostname) !== normalizeHostname(target.url.hostname)) {
                 throw new Error('image_redirect_cross_host_blocked');
             }
             currentUrl = nextUrl;
             continue;
         }
 
-        if (!imageResponse.ok) {
-            throw new Error(`image download failed with HTTP ${imageResponse.status}`);
+        if (imageResponse.statusCode < 200 || imageResponse.statusCode >= 300) {
+            throw new Error(`image download failed with HTTP ${imageResponse.statusCode}`);
         }
-        const contentType = imageResponse.headers.get('content-type') || '';
-        const contentLength = Number(imageResponse.headers.get('content-length') || 0);
+        const contentType = String(imageResponse.headers['content-type'] || '');
+        const contentLength = Number(imageResponse.headers['content-length'] || 0);
         if (contentLength > MAX_GENERATED_IMAGE_BYTES) {
             throw new Error(`image too large: ${contentLength}`);
         }
-        const buffer = await readResponseBufferWithLimit(imageResponse, MAX_GENERATED_IMAGE_BYTES);
-        return { buffer, contentType };
+        return { buffer: imageResponse.buffer, contentType };
     }
     throw new Error('image_redirect_limit_exceeded');
 }
@@ -1484,39 +1663,38 @@ async function fetchGeneratedImageBuffer(sourceUrl) {
 async function fetchSafeImageHead(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
     let currentUrl = String(imageUrl || '').trim();
     for (let redirectCount = 0; redirectCount <= SAFE_IMAGE_FETCH_MAX_REDIRECTS; redirectCount += 1) {
-        const urlObj = await assertSafeOutboundImageUrl(currentUrl);
-        const controller = new AbortController();
-        const timeoutHandle = setTimeout(() => controller.abort(), timeout);
-        let response;
-        try {
-            response = await fetch(urlObj.href, {
-                method: 'HEAD',
-                redirect: 'manual',
-                signal: controller.signal,
-                headers: {
-                    'User-Agent': 'RAI/1.0 image-url-check',
-                    'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1'
-                }
-            });
-        } finally {
-            clearTimeout(timeoutHandle);
-        }
+        const target = await assertSafeOutboundImageUrl(currentUrl);
+        const response = await requestPinnedHttp(target, {
+            method: 'HEAD',
+            timeoutMs: timeout,
+            maxBytes: 64 * 1024,
+            headers: {
+                'User-Agent': 'RAI/1.0 image-url-check',
+                'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1'
+            }
+        });
 
-        if (response.status >= 300 && response.status < 400) {
-            const nextUrl = buildRedirectedUrl(response.headers.get('location') || '', urlObj);
+        if (response.statusCode >= 300 && response.statusCode < 400) {
+            const nextUrl = buildRedirectedUrl(response.headers.location || '', target.url);
             if (!nextUrl) return false;
             currentUrl = nextUrl;
             continue;
         }
 
-        if (response.status < 200 || response.status >= 300) return false;
-        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        if (response.statusCode < 200 || response.statusCode >= 300) return false;
+        const contentType = String(response.headers['content-type'] || '').toLowerCase();
         return !contentType || contentType.startsWith('image/');
     }
     return false;
 }
 
-async function persistGeneratedImage(imageUrl = '', index = 0) {
+async function persistGeneratedImage(imageUrl = '', index = 0, context = {}) {
+    const externalSignal = context?.signal;
+    throwIfExternalRequestAborted(externalSignal);
+    const userId = Number(context.userId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+        throw new Error('generated_image_owner_required');
+    }
     const sourceUrl = String(imageUrl || '').trim();
     if (!sourceUrl) return null;
 
@@ -1528,7 +1706,7 @@ async function persistGeneratedImage(imageUrl = '', index = 0) {
         contentType = match[1];
         buffer = Buffer.from(match[2], 'base64');
     } else if (/^https?:\/\//i.test(sourceUrl)) {
-        const downloaded = await fetchGeneratedImageBuffer(sourceUrl);
+        const downloaded = await fetchGeneratedImageBuffer(sourceUrl, externalSignal);
         buffer = downloaded.buffer;
         contentType = downloaded.contentType;
     } else {
@@ -1539,200 +1717,400 @@ async function persistGeneratedImage(imageUrl = '', index = 0) {
     if (buffer.length > MAX_GENERATED_IMAGE_BYTES) {
         throw new Error(`image too large: ${buffer.length}`);
     }
-    const sniffed = sniffImageBuffer(buffer);
-    if (contentType && !/^image\//i.test(contentType) && !sniffed) {
-        throw new Error(`image download returned non-image content-type: ${contentType}`);
-    }
-    if (!contentType || !/^image\//i.test(contentType)) {
-        contentType = sniffed?.contentType || '';
-    }
-    if (!contentType || !/^image\//i.test(contentType)) {
-        throw new Error('image download returned unrecognized image bytes');
-    }
+    const sniffed = validateGeneratedImageBuffer(buffer, contentType);
+    contentType = sniffed.contentType;
 
+    throwIfExternalRequestAborted(externalSignal);
     await fs.promises.mkdir(GENERATED_IMAGES_DIR, { recursive: true });
+    throwIfExternalRequestAborted(externalSignal);
     const ext = getGeneratedImageExtension(contentType, sourceUrl, buffer);
-    const filename = `kolors-${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${index + 1}.${ext}`;
+    const filename = `generated-${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${index + 1}.${ext}`;
     const filePath = path.join(GENERATED_IMAGES_DIR, filename);
-    await fs.promises.writeFile(filePath, buffer);
+    await fs.promises.writeFile(filePath, buffer, { flag: 'wx', mode: 0o600 });
+    const createdAt = Date.now();
+    const expiresAt = createdAt + GENERATED_IMAGE_TTL_MS;
+    try {
+        throwIfExternalRequestAborted(externalSignal);
+        await dbRunAsync(
+            `INSERT INTO generated_images
+             (filename, user_id, session_id, request_id, mime_type, size, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                filename,
+                userId,
+                String(context.sessionId || '').slice(0, 160) || null,
+                String(context.requestId || '').slice(0, 160) || null,
+                contentType || `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+                buffer.length,
+                createdAt,
+                expiresAt
+            ]
+        );
+        if (externalSignal?.aborted) {
+            await dbRunAsync(
+                'DELETE FROM generated_images WHERE filename = ? AND user_id = ?',
+                [filename, userId]
+            ).catch(() => null);
+            throw createExternalRequestAbortError();
+        }
+    } catch (error) {
+        await fs.promises.unlink(filePath).catch(() => null);
+        throw error;
+    }
     return {
         url: `${GENERATED_IMAGE_PUBLIC_PREFIX}/${filename}`,
         bytes: buffer.length,
-        content_type: contentType || `image/${ext === 'jpg' ? 'jpeg' : ext}`
+        content_type: contentType || `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+        expires_at: expiresAt
     };
 }
 
-async function generateKolorsImages(rawArgs = {}) {
-    const args = normalizeKolorsImageArgs(rawArgs);
-    const provider = API_PROVIDERS.siliconflow;
-    if (!provider?.apiKey) {
-        throw new Error(`缺少环境变量: ${provider?.envKey || 'SILICONFLOW_API_KEY'}`);
+function linkImageProviderAbort(controller, externalSignal) {
+    if (!externalSignal) return () => undefined;
+    const abort = () => {
+        if (!controller.signal.aborted) controller.abort();
+    };
+    if (externalSignal.aborted) abort();
+    else externalSignal.addEventListener('abort', abort, { once: true });
+    return () => externalSignal.removeEventListener('abort', abort);
+}
+
+function waitForImageRetry(delayMs, externalSignal) {
+    throwIfExternalRequestAborted(externalSignal);
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (callback) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            externalSignal?.removeEventListener?.('abort', onAbort);
+            callback();
+        };
+        const onAbort = () => finish(() => reject(createExternalRequestAbortError()));
+        const timer = setTimeout(() => finish(resolve), delayMs);
+        externalSignal?.addEventListener?.('abort', onAbort, { once: true });
+        if (externalSignal?.aborted) onAbort();
+    });
+}
+
+async function readBoundedImageProviderResponse(response, maxBytes, { parseJson = false } = {}) {
+    const safeMaxBytes = Math.max(1024, Number(maxBytes) || 1024);
+    const declaredLength = Number(response?.headers?.get?.('content-length') || 0);
+    if (declaredLength > safeMaxBytes) throw new Error('image_provider_response_too_large');
+    if (!response?.body?.getReader) {
+        throw new Error('image_provider_response_body_unavailable');
     }
 
-    const requestBody = {
-        model: KOLORS_IMAGE_MODEL,
-        ...args
-    };
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > safeMaxBytes) {
+            await reader.cancel().catch(() => null);
+            throw new Error('image_provider_response_too_large');
+        }
+        chunks.push(Buffer.from(value));
+    }
+    const text = Buffer.concat(chunks, total).toString('utf8');
+    return parseJson ? JSON.parse(text) : text;
+}
 
-    const endpoint = provider.imageGenerationURL || SILICONFLOW_IMAGE_GENERATION_URL;
+async function requestAndPersistGeneratedImages({
+    providerName,
+    model,
+    endpoint,
+    apiKey,
+    requestBody,
+    args,
+    context,
+    extractSources
+}) {
+    if (!apiKey) throw new Error(`image_provider_not_configured:${providerName}`);
+    const externalSignal = context?.signal;
+    throwIfExternalRequestAborted(externalSignal);
     let response;
+    let releaseSelectedAttempt = () => undefined;
     const maxAttempts = 2;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        throwIfExternalRequestAborted(externalSignal);
         const controller = new AbortController();
+        const unlinkExternalAbort = linkImageProviderAbort(controller, externalSignal);
         const timeoutId = setTimeout(() => controller.abort(), 120000);
+        const releaseAttempt = () => {
+            clearTimeout(timeoutId);
+            unlinkExternalAbort();
+        };
         try {
-            response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${provider.apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody),
-                signal: controller.signal
-            });
+            response = providerName === 'rai_gpt_image'
+                ? await postGatewayJson({
+                    baseUrl: GPT_IMAGE_BASE_URL,
+                    endpoint: 'chat/completions',
+                    apiKey,
+                    body: requestBody,
+                    signal: controller.signal
+                })
+                : await fetch(endpoint, {
+                    method: 'POST',
+                    headers: buildGatewayHeaders(apiKey),
+                    body: JSON.stringify(requestBody),
+                    signal: controller.signal
+                });
         } catch (error) {
+            releaseAttempt();
+            if (externalSignal?.aborted) throw createExternalRequestAbortError();
             appendRaiRuntimeReport({
                 level: '报错',
                 tag: 'image_generation_network_failed',
                 message: error.message,
                 context: {
-                    provider: 'siliconflow',
-                    model: KOLORS_IMAGE_MODEL,
-                    endpoint,
+                    provider: providerName,
+                    model,
                     attempt,
                     image_size: args.image_size,
                     batch_size: args.batch_size
                 }
             });
             if (attempt < maxAttempts) {
-                await new Promise((resolve) => setTimeout(resolve, 1200));
+                await waitForImageRetry(1200, externalSignal);
                 continue;
             }
+            error.gatewayImageNetworkFailure = true;
             throw error;
-        } finally {
-            clearTimeout(timeoutId);
         }
 
         if (response.ok || response.status < 500 || attempt >= maxAttempts) {
+            releaseSelectedAttempt = releaseAttempt;
             break;
         }
+        throwIfExternalRequestAborted(externalSignal);
         appendRaiRuntimeReport({
             level: '报错',
             tag: 'image_generation_retry',
-            message: `Kolors image generation HTTP ${response.status}, retrying`,
+            message: `Image generation HTTP ${response.status}, retrying`,
             context: {
-                provider: 'siliconflow',
-                model: KOLORS_IMAGE_MODEL,
-                endpoint,
+                provider: providerName,
+                model,
                 attempt,
                 image_size: args.image_size,
                 batch_size: args.batch_size
             }
         });
-        await response.arrayBuffer().catch(() => null);
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        if (response.body && typeof response.body.cancel === 'function') {
+            await response.body.cancel().catch(() => null);
+        }
+        releaseAttempt();
+        await waitForImageRetry(1200, externalSignal);
     }
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'image_generation_http_failed',
-            message: `Kolors image generation failed with HTTP ${response.status}`,
-            context: {
-                provider: 'siliconflow',
-                model: KOLORS_IMAGE_MODEL,
-                endpoint,
-                status: response.status,
-                body: errorText,
-                image_size: args.image_size,
-                batch_size: args.batch_size
-            }
-        });
-        throw new Error(`图片生成失败 ${response.status}: ${errorText.substring(0, 300)}`);
-    }
-
-    let payload;
     try {
-        payload = await response.json();
-    } catch (error) {
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'image_generation_invalid_json',
-            message: error.message,
-            context: {
-                provider: 'siliconflow',
-                model: KOLORS_IMAGE_MODEL,
-                endpoint
-            }
-        });
-        throw new Error(`图片生成返回无法解析: ${error.message}`);
-    }
+        throwIfExternalRequestAborted(externalSignal);
+        if (!response?.ok) {
+            const errorText = await readBoundedImageProviderResponse(response, 64 * 1024).catch(() => '');
+            throwIfExternalRequestAborted(externalSignal);
+            appendRaiRuntimeReport({
+                level: '报错',
+                tag: 'image_generation_http_failed',
+                message: `Image generation failed with HTTP ${response.status}`,
+                context: {
+                    provider: providerName,
+                    model,
+                    status: response.status,
+                    bodyLength: errorText.length,
+                    image_size: args.image_size,
+                    batch_size: args.batch_size
+                }
+            });
+            const upstreamError = new Error(`图片生成上游服务返回 HTTP ${response.status}`);
+            upstreamError.upstreamStatus = response.status;
+            throw upstreamError;
+        }
 
-    const rawImages = Array.isArray(payload?.images)
-        ? payload.images
-        : (Array.isArray(payload?.data) ? payload.data : []);
-    const images = (await Promise.all(rawImages.map(async (item, index) => {
-        const url = String(item?.url || item?.image_url || '').trim();
-        const b64 = String(item?.b64_json || '').trim();
-        const imageUrl = url || (b64 ? `data:image/png;base64,${b64}` : '');
-        if (!imageUrl) return null;
-
+        let payload;
         try {
-            const persisted = await persistGeneratedImage(imageUrl, index);
-            if (persisted?.url) {
+            payload = await readBoundedImageProviderResponse(
+                response,
+                (MAX_GENERATED_IMAGE_BYTES * 2) + (256 * 1024),
+                { parseJson: true }
+            );
+            throwIfExternalRequestAborted(externalSignal);
+        } catch (error) {
+            if (externalSignal?.aborted || error?.externalRequestAbort) throw createExternalRequestAbortError();
+            appendRaiRuntimeReport({
+                level: '报错',
+                tag: 'image_generation_invalid_json',
+                message: error.message,
+                context: { provider: providerName, model }
+            });
+            throw new Error('图片生成返回无法解析');
+        }
+
+        const rawSources = extractSources(payload);
+        throwIfExternalRequestAborted(externalSignal);
+        const images = (await Promise.all(rawSources.map(async (imageSource, index) => {
+            try {
+                throwIfExternalRequestAborted(externalSignal);
+                const persisted = await persistGeneratedImage(imageSource, index, context);
+                if (!persisted?.url) return null;
                 return {
                     index: index + 1,
                     url: persisted.url,
                     bytes: persisted.bytes,
                     content_type: persisted.content_type
                 };
+            } catch (error) {
+                if (externalSignal?.aborted || error?.externalRequestAbort) throw createExternalRequestAbortError();
+                appendRaiRuntimeReport({
+                    level: '报错',
+                    tag: 'image_generation_persist_failed',
+                    message: error.message,
+                    context: { provider: providerName, model, sourceKind: imageSource.startsWith('data:') ? 'base64' : 'url' }
+                });
+                return null;
             }
-        } catch (error) {
+        }))).filter(Boolean);
+        throwIfExternalRequestAborted(externalSignal);
+
+        if (images.length === 0) {
             appendRaiRuntimeReport({
                 level: '报错',
-                tag: 'image_generation_persist_failed',
-                message: error.message,
+                tag: 'image_generation_empty_result',
+                message: 'Image provider returned no persistable image',
                 context: {
-                    provider: 'siliconflow',
-                    model: KOLORS_IMAGE_MODEL,
-                    sourceUrl: imageUrl
+                    provider: providerName,
+                    model,
+                    resultCount: rawSources.length,
+                    responseKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : []
                 }
             });
+            throw new Error('图片生成没有返回可用图片');
         }
 
-        return null;
-    }))).filter(Boolean);
+        return {
+            provider: providerName,
+            model,
+            endpoint: (() => {
+                try {
+                    return new URL(endpoint).pathname;
+                } catch (error) {
+                    return '/images/generations';
+                }
+            })(),
+            prompt: args.prompt,
+            parameters: {
+                image_size: args.image_size,
+                batch_size: args.batch_size
+            },
+            images,
+            note: 'Generated images were cached by RAI. Use only the local /generated-images/ URLs.'
+        };
+    } finally {
+        releaseSelectedAttempt();
+    }
+}
 
-    if (images.length === 0) {
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'image_generation_empty_result',
-            message: 'Kolors returned no image URL',
-            context: {
-                provider: 'siliconflow',
-                model: KOLORS_IMAGE_MODEL,
-                payload
+async function generateImages(rawArgs = {}, context = {}) {
+    const args = normalizeImageGenerationArgs(rawArgs);
+    const externalSignal = context?.signal;
+    throwIfExternalRequestAborted(externalSignal);
+    const requestedModel = context.requestedImageModel || (context.requireGptGateway ? 'gpt-image-2' : 'auto');
+    const requestId = String(context.requestId || `image_${crypto.randomUUID().replace(/-/g, '')}`);
+
+    const requestSiliconflowFallback = async (gatewayFailure = null) => {
+        throwIfExternalRequestAborted(externalSignal);
+        if (gatewayFailure) {
+            console.warn(' GPT 图片网关不可用，回退到 SiliconFlow:', sanitizeReportContext(gatewayFailure));
+        }
+        const provider = API_PROVIDERS.siliconflow;
+        if (!provider?.apiKey) throw new Error(`缺少环境变量: ${provider?.envKey || 'SILICONFLOW_API_KEY'}`);
+        const siliconflowArgs = normalizeSiliconflowImageArgs(args);
+        const result = await requestAndPersistGeneratedImages({
+            providerName: 'siliconflow',
+            model: KOLORS_IMAGE_MODEL,
+            endpoint: provider.imageGenerationURL || SILICONFLOW_IMAGE_GENERATION_URL,
+            apiKey: provider.apiKey,
+            requestBody: { model: KOLORS_IMAGE_MODEL, ...siliconflowArgs },
+            args: siliconflowArgs,
+            context,
+            extractSources: (payload) => {
+                const rows = Array.isArray(payload?.images) ? payload.images : (Array.isArray(payload?.data) ? payload.data : []);
+                return rows.map((item) => {
+                    const b64 = String(item?.b64_json || '').trim();
+                    return String(item?.url || item?.image_url || '').trim() || (b64 ? `data:image/png;base64,${b64}` : '');
+                }).filter(Boolean);
             }
         });
-        throw new Error('图片生成没有返回图片 URL');
-    }
-
-    return {
-        provider: 'siliconflow',
-        model: KOLORS_IMAGE_MODEL,
-        endpoint,
-        prompt: args.prompt,
-        parameters: {
-            image_size: args.image_size,
-            batch_size: args.batch_size,
-            num_inference_steps: args.num_inference_steps,
-            guidance_scale: args.guidance_scale
-        },
-        images,
-        seed: payload?.seed ?? payload?.timings?.seed ?? null,
-        note: 'Generated images were cached by RAI. Use only the local /generated-images/ URLs.'
+        return { ...result, requestedModel, actualModel: 'kolors-free', routingReason: gatewayFailure?.quotaReason || (gatewayFailure ? 'upstream_fallback' : 'free_model') };
     };
+
+    let reservation = null;
+    try {
+        if (requestedModel === 'kolors-free' || !context?.userId) return await requestSiliconflowFallback();
+        reservation = await reserveImage2Quota(context.userId, requestId);
+        if (!reservation.allowed || !GPT_IMAGE_CONFIGURED) {
+            const quotaReason = reservation.reason || 'gateway_unavailable';
+            const quotaSnapshot = reservation;
+            if (reservation.allowed) {
+                await settleImage2QuotaReservation(requestId, false);
+                reservation = null;
+            }
+            const fallback = await requestSiliconflowFallback({ quotaReason });
+            return { ...fallback, quota: quotaSnapshot, routingReason: quotaReason };
+        }
+        const imagePoints = await checkAndDeductPoints(context.userId, GPT_GATEWAY_IMAGE_MODEL);
+        if (imagePoints.useFreeModel) {
+            await settleImage2QuotaReservation(requestId, false);
+            reservation = null;
+            const fallback = await requestSiliconflowFallback({ quotaReason: 'user_points_exhausted' });
+            return {
+                ...fallback,
+                quota: await getImage2QuotaSnapshot(context.userId),
+                routingReason: 'user_points_exhausted',
+                requiredPoints: imagePoints.requiredPoints,
+                remainingPoints: imagePoints.remainingPoints
+            };
+        }
+        const result = await runGatewayImageWithFallback({
+            primaryRequest: () => requestAndPersistGeneratedImages({
+                providerName: 'rai_gpt_image',
+                model: GPT_GATEWAY_IMAGE_MODEL,
+                endpoint: joinGatewayEndpoint(GPT_IMAGE_BASE_URL, 'chat/completions'),
+                apiKey: GPT_IMAGE_API_KEY,
+                requestBody: buildGatewayImageChatRequest(args),
+                args: { ...args, batch_size: 1 },
+                context,
+                extractSources: extractGatewayChatImageSources
+            }),
+            fallbackRequest: requestSiliconflowFallback,
+            fallbackFrom: GPT_GATEWAY_IMAGE_MODEL,
+            signal: externalSignal
+        });
+        const usedImage2 = result?.provider === 'rai_gpt_image' && !result?.fallbackUsed;
+        await settleImage2QuotaReservation(requestId, usedImage2);
+        reservation = null;
+        return {
+            ...result,
+            requestedModel,
+            actualModel: usedImage2 ? 'gpt-image-2' : 'kolors-free',
+            routingReason: usedImage2 ? 'quota_available' : 'upstream_fallback',
+            pointsDeducted: usedImage2 ? imagePoints.pointsDeducted : 0,
+            remainingPoints: imagePoints.remainingPoints,
+            quota: await getImage2QuotaSnapshot(context.userId)
+        };
+    } catch (error) {
+        if (reservation?.allowed) await settleImage2QuotaReservation(requestId, false).catch(() => null);
+        if (externalSignal?.aborted || error?.externalRequestAbort) {
+            await cleanupFailedChatGeneratedImagesBestEffort({
+                userId: context?.userId,
+                requestId: context?.requestId,
+                cause: 'client_aborted'
+            });
+            throw createExternalRequestAbortError();
+        }
+        throw error;
+    }
 }
 
 // 工具定义 - Kimi K2.6 / Qwen 3.6 等 OpenAI 兼容路由使用
@@ -1756,7 +2134,7 @@ const TOOL_DEFINITIONS = [{
     type: "function",
     function: {
         name: "generate_image",
-        description: "使用硅基流动托管的 Kwai-Kolors/Kolors 文生图。当用户要求画图、生图、生成海报、插画、视觉方案或图片时调用。只传 prompt 和尺寸等参数，不要传 image、image_url 或参考图 URL。服务端会自动把图片展示给用户。",
+        description: "生成图片。当用户要求画图、生图、生成海报、插画、视觉方案或图片时调用。只传 prompt 和尺寸等参数，不要传 image、image_url 或参考图 URL。服务端会使用已配置的首选图片提供商并自动把图片展示给用户。",
         parameters: {
             type: "object",
             required: ["prompt"],
@@ -1768,7 +2146,7 @@ const TOOL_DEFINITIONS = [{
                 },
                 image_size: {
                     type: "string",
-                    enum: KOLORS_IMAGE_SIZES,
+                    enum: IMAGE_GENERATION_SIZES,
                     description: "图片尺寸，默认 1024x1024。"
                 },
                 batch_size: {
@@ -1941,21 +2319,24 @@ function normalizeDeleteMemoryToolArgs(args = {}) {
 const TOOL_EXECUTORS = {
     web_search: async (args, searchDepth = 'basic') => {
         const maxResults = 5;
-        console.log(` 执行工具 web_search: query="${args.query}", depth=${searchDepth}, max=${maxResults}`);
+        const queryText = String(args.query || '');
+        console.log(` 执行工具 web_search: ${formatPrivateLogFingerprint(queryText, 'query')}, depth=${searchDepth}, max=${maxResults}`);
         return await performWebSearch(args.query, maxResults, searchDepth);
     },
     finance_quote: async (args) => {
-        console.log(` 执行工具 finance_quote: symbol="${args.symbol}", range="${args.range || FINANCE_DEFAULT_RANGE}", interval="${args.interval || FINANCE_DEFAULT_INTERVAL}"`);
-        return await fetchYahooFinanceQuote(args);
+        const range = normalizeFinanceRange(args.range || FINANCE_DEFAULT_RANGE);
+        const interval = normalizeFinanceInterval(args.interval || FINANCE_DEFAULT_INTERVAL);
+        console.log(` 执行工具 finance_quote: ${formatPrivateLogFingerprint(args.symbol, 'symbol')}, range=${range}, interval=${interval}`);
+        return await fetchYahooFinanceQuote({ ...args, range, interval });
     },
-    generate_image: async (args) => {
-        const safeArgs = normalizeKolorsImageArgs(args);
-        console.log(` 执行工具 generate_image: model=${KOLORS_IMAGE_MODEL}, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
-        return await generateKolorsImages(safeArgs);
+    generate_image: async (args, context = {}) => {
+        const safeArgs = normalizeImageGenerationArgs(args);
+        console.log(` 执行工具 generate_image: provider=${GPT_IMAGE_CONFIGURED ? 'preferred_gateway' : 'siliconflow_fallback'}, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
+        return await generateImages(safeArgs, context);
     },
     delete_memory: async (args, context = {}) => {
         const safeArgs = normalizeDeleteMemoryToolArgs(args);
-        console.log(` 执行工具 delete_memory: userId=${context?.userId || 'missing'}, ids=${formatMemoryIdList(safeArgs?.memory_ids || safeArgs?.memory_id || []) || 'none'}, target="${safeArgs?.target || ''}"`);
+        console.log(` 执行工具 delete_memory: userId=${context?.userId || 'missing'}, ids=${formatMemoryIdList(safeArgs?.memory_ids || safeArgs?.memory_id || []) || 'none'}, targetLength=${String(safeArgs?.target || '').length}`);
         return await deleteUserMemoryByModel({
             userId: context?.userId,
             memoryId: safeArgs?.memory_id,
@@ -2650,17 +3031,6 @@ function resolveOpenAIChatReasoningEffort(modelName = '', thinkingMode = false, 
     return resolveOpenAIReasoningEffort(profile);
 }
 
-function resolveNewApiReasoningEffort(modelName = '', thinkingMode = false, reasoningProfile = 'low') {
-    const profile = normalizeReasoningProfile(reasoningProfile);
-    const normalizedModel = String(modelName || '').trim().toLowerCase();
-
-    if (normalizedModel.startsWith('gpt-')) {
-        return resolveOpenAIChatReasoningEffort(normalizedModel, thinkingMode, profile);
-    }
-
-    return thinkingMode ? resolveOpenAIReasoningEffort(profile) : null;
-}
-
 function resolveOpenRouterReasoningEffort(actualModel = '', reasoningProfile = 'low') {
     const profile = normalizeReasoningProfile(reasoningProfile);
     const normalizedModel = String(actualModel || '').trim().toLowerCase();
@@ -2675,18 +3045,6 @@ function resolveOpenRouterReasoningEffort(actualModel = '', reasoningProfile = '
     if (profile === 'high') return 'high';
     if (profile === 'medium') return 'medium';
     return 'low';
-}
-
-function applyNewApiModelParams(body, actualModel = '', thinkingMode = false, reasoningProfile = 'low') {
-    if (!body || typeof body !== 'object') return;
-    const effort = resolveNewApiReasoningEffort(actualModel, thinkingMode, reasoningProfile);
-    if (effort) {
-        body.reasoning_effort = effort;
-        delete body.reasoning;
-    } else {
-        delete body.reasoning_effort;
-        delete body.reasoning;
-    }
 }
 
 function applyOpenRouterReasoningParams(body, actualModel = '', thinkingMode = false, reasoningProfile = 'low') {
@@ -2751,10 +3109,10 @@ function buildSiliconflowFreeFallbackRequestBody({
     const body = {
         model: actualModel,
         messages,
-        max_tokens: parseInt(max_tokens, 10) || 2000,
+        max_tokens: parseStrictBoundedNumber(max_tokens, { min: 100, max: 8000, fallback: 2000, integer: true }),
         stream: true,
-        temperature: parseFloat(temperature) || 0.7,
-        top_p: parseFloat(top_p) || 0.9
+        temperature: parseStrictBoundedNumber(temperature, { min: 0, max: 2, fallback: 0.7 }),
+        top_p: parseStrictBoundedNumber(top_p, { min: 0, max: 1, fallback: 0.9 })
     };
 
     const budget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
@@ -2776,6 +3134,15 @@ function buildSiliconflowFreeFallbackRequestBody({
     }
 
     return body;
+}
+
+function applyFastGatewayThinkingPolicy(requestBody, { thinkingMode = false, reasoningEffort = '' } = {}) {
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) return requestBody;
+    delete requestBody.reasoning_effort;
+    if (thinkingMode && ['minimal', 'low', 'medium', 'high', 'xhigh'].includes(String(reasoningEffort || '').trim())) {
+        requestBody.reasoning_effort = String(reasoningEffort).trim();
+    }
+    return requestBody;
 }
 
 
@@ -3166,6 +3533,8 @@ function applyQualityGate({ qualityProfile, content, sources, fingerprint }) {
 
     return {
         pass,
+        reviewKind: 'heuristic_quality_review',
+        independentFactVerification: false,
         metrics: {
             claimCoverage: Number(claimCoverage.toFixed(3)),
             contradictionCount,
@@ -3312,7 +3681,8 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
                 resolve({ results: [], images: [] });
                 return;
             }
-            console.log(` 执行Tavily网页搜索: "${query}" (深度: ${searchDepth})`);
+            const queryText = String(query || '');
+            console.log(` 执行Tavily网页搜索: ${formatPrivateLogFingerprint(queryText, 'query')}, depth=${searchDepth}`);
 
             // 构建请求体
             const requestBody = JSON.stringify({
@@ -3355,7 +3725,8 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
 
                         // 检查API错误
                         if (result.error) {
-                            console.error(' Tavily API错误:', result.error);
+                            const providerErrorCode = String(result.error?.code || result.error?.type || 'provider_error').slice(0, 80);
+                            console.error(` Tavily API错误: ${formatPrivateLogFingerprint(providerErrorCode, 'providerErrorCode')}`);
                             resolve([]);
                             return;
                         }
@@ -3387,18 +3758,18 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
                         // 提取搜索图片
                         const images = result.images || [];
 
-                        console.log(` Tavily搜索完成，获得 ${searchResults.length} 条结果, ${images.length} 张图片 (响应时间: ${result.responseTime || 'N/A'}s)`);
+                        const responseTime = Number(result.responseTime);
+                        console.log(` Tavily搜索完成，获得 ${searchResults.length} 条结果, ${Array.isArray(images) ? images.length : 0} 张图片 (响应时间: ${Number.isFinite(responseTime) ? responseTime : 'N/A'}s)`);
                         resolve({ results: searchResults, images: images });
                     } catch (parseError) {
-                        console.error(' 解析Tavily搜索结果失败:', parseError);
-                        console.error('原始响应:', data);
+                        console.error(` 解析Tavily搜索结果失败: errorName=${parseError?.name || 'Error'}, ${formatPrivateLogFingerprint(data, 'body')}`);
                         resolve([]);
                     }
                 });
             });
 
             req.on('error', (err) => {
-                console.error(' Tavily网页搜索请求失败:', err);
+                console.error(' Tavily网页搜索请求失败:', sanitizeReportContext(err));
                 resolve({ results: [], images: [] });
             });
 
@@ -3413,7 +3784,7 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
             req.write(requestBody);
             req.end();
         } catch (error) {
-            console.error(' Tavily网页搜索异常:', error);
+            console.error(' Tavily网页搜索异常:', sanitizeReportContext(error));
             resolve({ results: [], images: [] });
         }
     });
@@ -3430,7 +3801,7 @@ async function validateImageUrl(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
     try {
         return await fetchSafeImageHead(imageUrl, timeout);
     } catch (error) {
-        console.warn(` 图片URL验证已拒绝: ${error.message}`);
+        console.warn(' 图片URL验证已拒绝:', sanitizeReportContext(error));
         return false;
     }
 }
@@ -3675,13 +4046,19 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             ? result.images.filter((image) => String(image?.url || '').trim().startsWith(GENERATED_IMAGE_PUBLIC_PREFIX + '/')).length
             : 0;
         return {
-            provider: result?.provider || 'siliconflow',
-            model: result?.model || KOLORS_IMAGE_MODEL,
+            provider: result?.provider || 'configured_image_provider',
+            model: result?.model || 'configured_image_model',
+            endpoint: result?.endpoint || '/images/generations',
+            fallback_used: result?.fallbackUsed === true,
+            fallback_from: result?.fallbackFrom || null,
+            fallback_reason: result?.fallbackReason || null,
             prompt: result?.prompt || args.prompt || '',
             parameters: result?.parameters || {},
             image_count: imageCount,
             displayed_by_server: imageCount > 0,
-            display_instruction: 'The server already displayed the generated image to the user. Do not output Markdown images, image URLs, provider URLs, or base64. Reply with only a brief natural-language note.'
+            display_instruction: result?.fallbackUsed
+                ? 'The server already displayed the generated image. Briefly tell the user that the requested image provider was temporarily unavailable and RAI used the named fallback provider/model. Do not output Markdown images, image URLs, provider URLs, endpoints, or base64.'
+                : 'The server already displayed the generated image to the user. Do not output Markdown images, image URLs, provider URLs, endpoints, or base64. Reply with only a brief natural-language note.'
         };
     }
 
@@ -3805,7 +4182,8 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
                     const result = JSON.parse(data);
 
                     if (result.error) {
-                        console.error(' 工具调用API错误:', result.error);
+                        const providerErrorCode = String(result.error?.code || result.error?.type || 'provider_error').slice(0, 80);
+                        console.error(` 工具调用API错误: ${formatPrivateLogFingerprint(providerErrorCode, 'providerErrorCode')}`);
                         resolve({ finish_reason: 'error', tool_calls: null, content: null });
                         return;
                     }
@@ -3818,17 +4196,20 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
                         message: choice?.message
                     };
 
-                    console.log(` 工具调用API响应: finish_reason=${response.finish_reason}, has_tool_calls=${!!response.tool_calls}`);
+                    const safeFinishReason = ['stop', 'length', 'tool_calls', 'content_filter'].includes(String(response.finish_reason))
+                        ? String(response.finish_reason)
+                        : 'other';
+                    console.log(` 工具调用API响应: finish_reason=${safeFinishReason}, has_tool_calls=${!!response.tool_calls}`);
                     resolve(response);
                 } catch (e) {
-                    console.error(' 解析工具调用响应失败:', e);
+                    console.error(' 解析工具调用响应失败:', sanitizeReportContext(e));
                     resolve({ finish_reason: 'error', tool_calls: null, content: null });
                 }
             });
         });
 
         req.on('error', (err) => {
-            console.error(' 工具调用请求失败:', err);
+            console.error(' 工具调用请求失败:', sanitizeReportContext(err));
             resolve({ finish_reason: 'error', tool_calls: null, content: null });
         });
 
@@ -3906,9 +4287,9 @@ function normalizeToolCalls(toolCalls = []) {
         if (toolName === 'generate_image') {
             let normalizedArgs;
             try {
-                normalizedArgs = normalizeKolorsImageArgs(args);
+                normalizedArgs = normalizeImageGenerationArgs(args);
             } catch (error) {
-                console.warn(` 跳过无效 generate_image 参数: ${error.message}`);
+                console.warn(' 跳过无效 generate_image 参数:', sanitizeReportContext(error));
                 continue;
             }
             normalized.push({
@@ -3930,7 +4311,7 @@ function normalizeToolCalls(toolCalls = []) {
             try {
                 normalizedSymbol = resolveFinanceSymbol(rawSymbol);
             } catch (error) {
-                console.warn(` 跳过无效 finance_quote symbol: ${rawSymbol}`);
+                console.warn(` 跳过无效 finance_quote symbol: ${formatPrivateLogFingerprint(rawSymbol, 'symbol')}`);
                 continue;
             }
 
@@ -4060,7 +4441,9 @@ async function executeNormalizedToolCall({
     actualModel,
     thinkingMode,
     userId = null,
-    sessionId = null
+    sessionId = null,
+    requestId = null,
+    signal
 }) {
     const toolName = toolCall?.function?.name;
     const args = toolCall?._args || {};
@@ -4091,7 +4474,7 @@ async function executeNormalizedToolCall({
     }
 
     if (toolName === 'generate_image') {
-        const imageResult = await TOOL_EXECUTORS.generate_image(args);
+        const imageResult = await TOOL_EXECUTORS.generate_image(args, { userId, sessionId, requestId, signal });
         return {
             result: imageResult,
             sources: [],
@@ -4127,6 +4510,10 @@ async function callK2p5Stream({
     res,
     onContent,
     onReasoning,
+    userId = null,
+    sessionId = null,
+    requestId = null,
+    signal,
     requestTimeoutMs = 45000
 }) {
     let conversationMessages = [...messages];
@@ -4137,6 +4524,7 @@ async function callK2p5Stream({
     let searchCount = 0;
 
     for (let round = 0; round <= maxToolRounds; round += 1) {
+        throwIfExternalRequestAborted(signal);
         const requestBody = {
             model: actualModel,
             messages: conversationMessages,
@@ -4158,7 +4546,12 @@ async function callK2p5Stream({
         }
 
         const controller = new AbortController();
+        const unlinkExternalAbort = linkImageProviderAbort(controller, signal);
         const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
+        const releaseRequest = () => {
+            clearTimeout(timeoutId);
+            unlinkExternalAbort();
+        };
         let apiResponse;
         try {
             apiResponse = await fetch(providerConfig.baseURL, {
@@ -4171,17 +4564,19 @@ async function callK2p5Stream({
                 signal: controller.signal
             });
         } catch (error) {
+            releaseRequest();
+            if (signal?.aborted) throw createExternalRequestAbortError();
             if (error.name === 'AbortError') {
                 throw new Error(`Kimi K2 流式调用超时(${requestTimeoutMs}ms)`);
             }
             throw error;
-        } finally {
-            clearTimeout(timeoutId);
         }
 
         if (!apiResponse.ok || !apiResponse.body) {
-            const errText = await apiResponse.text();
-            throw new Error(`Kimi K2 流式调用失败 ${apiResponse.status}: ${errText.substring(0, 300)}`);
+            const errText = await readBoundedResponseText(apiResponse, 64 * 1024);
+            releaseRequest();
+            throwIfExternalRequestAborted(signal);
+            throw new Error(`Kimi K2 流式调用失败 ${apiResponse.status} (bodyLength=${errText.length})`);
         }
 
         const reader = apiResponse.body.getReader();
@@ -4191,8 +4586,10 @@ async function callK2p5Stream({
         const toolCalls = [];
         let roundReasoningContent = '';
 
-        while (true) {
-            const { done, value } = await reader.read();
+        try {
+            while (true) {
+                throwIfExternalRequestAborted(signal);
+                const { done, value } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split(/\r?\n/);
@@ -4253,8 +4650,12 @@ async function callK2p5Stream({
                     }
                 }
             }
+            }
+        } finally {
+            releaseRequest();
         }
 
+        throwIfExternalRequestAborted(signal);
         const normalizedCalls = normalizeToolCalls(toolCalls);
         if (!internetMode || finishReason !== 'tool_calls' || normalizedCalls.length === 0 || round >= maxToolRounds) {
             return {
@@ -4274,7 +4675,11 @@ async function callK2p5Stream({
                 searchBudget,
                 res,
                 actualModel,
-                thinkingMode
+                thinkingMode,
+                userId,
+                sessionId,
+                requestId,
+                signal
             });
             searchCount += Number(toolResult.searchCountInc || 0);
             const sourceAppendResult = appendAnnotatedSources(aggregatedSources, toolResult.sources);
@@ -4326,13 +4731,15 @@ async function callK2p5Stream({
 
 function researchModelLabel(modelId = '') {
     const labels = {
+        'gpt-5.6-sol': 'GPT-5.6 Sol',
+        'gpt-5.6-terra': 'GPT 5.6',
+        'gpt-5.6-luna': 'GPT 5.6',
         'gemma': 'Gemma',
         'qwen3.6-35b-a3b': 'Qwen 3.6 35B',
         'kimi-k2.6': 'Kimi K2.6',
         'chatgpt-gpt-oss-120b': 'ChatGPT OSS 120B',
-        'north-mini-code': 'Mimo Code',
         'nemotron-3-ultra': 'Nemotron 3 Ultra',
-        'deepseek-flash': 'DeepSeek Flash',
+        'deepseek-flash': 'DeepSeek v4',
         'deepseek-pro': 'DeepSeek Pro',
         'gemini-3-flash': 'Gemini 3 Flash',
         'openrouter-free': 'OpenRouter Free'
@@ -4341,11 +4748,13 @@ function researchModelLabel(modelId = '') {
 }
 
 function researchRoleFromModel(modelId = '') {
+    if (modelId === 'gpt-5.6-sol') return 'gpt_sol';
+    if (modelId === 'gpt-5.6-terra') return 'gpt_terra';
+    if (modelId === 'gpt-5.6-luna') return 'gpt_luna';
     if (modelId === 'gemma') return 'gemma';
     if (modelId === 'qwen3.6-35b-a3b') return 'qwen';
     if (modelId === 'kimi-k2.6') return 'kimi';
     if (modelId === 'chatgpt-gpt-oss-120b') return 'chatgpt';
-    if (modelId === 'north-mini-code') return 'mimo';
     if (modelId === 'nemotron-3-ultra') return 'nemotron';
     if (modelId === 'deepseek-flash') return 'deepseek_flash';
     if (modelId === 'deepseek-pro') return 'deepseek';
@@ -4355,13 +4764,13 @@ function researchRoleFromModel(modelId = '') {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
+    ...GPT_GATEWAY_CHAT_MODELS.filter((modelId) => modelId !== 'gpt-5.6-terra'),
     'gemma',
     'qwen3.6-35b-a3b',
     'kimi-k2.6',
     'chatgpt-gpt-oss-120b',
     'deepseek-pro',
     'deepseek-flash',
-    'north-mini-code',
     'nemotron-3-ultra',
     'gemini-3-flash'
 ];
@@ -4429,7 +4838,6 @@ function buildResearchSpeakers(modelIds = []) {
             chatgpt: '检查逻辑漏洞并修正结论',
             deepseek: '检查事实、前提和反例',
             deepseek_flash: '快速检查遗漏与可执行性',
-            mimo: '从代码、工具和实现角度质疑方案',
             nemotron: '从大模型推理和长上下文角度补充反例',
             gemini: '从多模态和常识角度补充边界',
             openrouter: '作为底线模型给出保守检查'
@@ -4638,11 +5046,16 @@ function buildResearchRequest({
     if (routing.provider === 'deepseek') {
         applyDeepSeekV4ModeParams(body, !!thinkingMode, reasoningProfile);
     }
-    if (routing.provider === 'newapi') {
-        applyNewApiModelParams(body, actualModel, !!thinkingMode, reasoningProfile);
-    }
     if (routing.provider === 'openrouter') {
         applyOpenRouterReasoningParams(body, actualModel, !!thinkingMode, reasoningProfile);
+    }
+    if (routing.provider === 'rai_gpt_gateway') {
+        const reasoningEffort = resolveOpenAIChatReasoningEffort(actualModel, !!thinkingMode, reasoningProfile);
+        applyGatewayChatRequestPolicy(body, { thinkingMode: !!thinkingMode, reasoningEffort });
+    }
+    if (routing.provider === 'rai_fast_gateway') {
+        const reasoningEffort = resolveOpenAIChatReasoningEffort(actualModel, !!thinkingMode, reasoningProfile);
+        applyFastGatewayThinkingPolicy(body, { thinkingMode: !!thinkingMode, reasoningEffort });
     }
     return {
         routing,
@@ -4695,11 +5108,17 @@ async function callResearchModelNonStream({
     }
 
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`${researchModelLabel(modelId)} 深度研究调用失败 ${response.status}: ${errorText.substring(0, 260)}`);
+        const errorText = await readBoundedResponseText(response);
+        throw new Error(`${researchModelLabel(modelId)} 深度研究调用失败 ${response.status} (bodyLength=${errorText.length})`);
     }
 
-    const payload = await response.json();
+    const payloadText = await readBoundedResponseText(response, 1024 * 1024);
+    let payload;
+    try {
+        payload = JSON.parse(payloadText);
+    } catch (error) {
+        throw new Error(`${researchModelLabel(modelId)} 深度研究返回无法解析`);
+    }
     const choice = payload?.choices?.[0] || {};
     const message = choice.message || {};
     const rawContent = normalizeResearchMessageContent(message.content || choice.text || '');
@@ -4777,12 +5196,12 @@ async function callResearchModelStream({
     if (!response.ok || !response.body) {
         let errorText = '';
         try {
-            errorText = await response.text();
+            errorText = await readBoundedResponseText(response);
         } finally {
             clearTimeout(timeoutId);
             cleanupExternalSignal();
         }
-        throw new Error(`${researchModelLabel(modelId)} 主控生成失败 ${response.status}: ${errorText.substring(0, 260)}`);
+        throw new Error(`${researchModelLabel(modelId)} 主控生成失败 ${response.status} (bodyLength=${errorText.length})`);
     }
 
     const reader = response.body.getReader();
@@ -4839,6 +5258,7 @@ async function callResearchModelStream({
 
     try {
         while (true) {
+            throwIfExternalRequestAborted(signal);
             const { done, value } = await reader.read();
             if (done) {
                 const flushed = buffer + decoder.decode();
@@ -4863,10 +5283,9 @@ async function callResearchModelStream({
                 }
 
                 if (parsed?.error) {
-                    const errMessage = typeof parsed.error === 'string'
-                        ? parsed.error
-                        : (parsed.error.message || JSON.stringify(parsed.error));
-                    throw new Error(`${researchModelLabel(modelId)} 主控流式事件错误: ${errMessage}`);
+                    const providerError = new Error('research_model_stream_provider_error');
+                    providerError.code = 'research_model_stream_provider_error';
+                    throw providerError;
                 }
 
                 const eventReasoning = extractReasoningTextFromResponseEvent(parsed);
@@ -5069,7 +5488,7 @@ async function runResearchDebateMode({
             try {
                 onAgentEvent(payload);
             } catch (error) {
-                console.warn(` 记录深度研究事件失败: ${error.message}`);
+                console.warn(' 记录深度研究事件失败:', sanitizeReportContext(error));
             }
         }
     };
@@ -5229,7 +5648,7 @@ async function runResearchDebateMode({
                             stepId,
                             taskId,
                             status: 'running',
-                            detail: `${speaker.label} 调用失败，改用 ${fallbackLabel} 继续: ${previousError?.message || 'route unavailable'}`
+                            detail: `${speaker.label} 调用失败，改用 ${fallbackLabel} 继续`
                         });
                         speaker.modelId = fallbackModel;
                         speaker.role = researchRoleFromModel(fallbackModel);
@@ -5363,7 +5782,7 @@ async function runResearchDebateMode({
                     stepId,
                     taskId,
                     status: 'failed',
-                    detail: `${speaker.label} 第${round}轮失败: ${error.message}`,
+                    detail: `${speaker.label} 第${round}轮失败`,
                     durationMs: Date.now() - stepStartedAt
                 });
                 const failedRecord = {
@@ -5374,12 +5793,12 @@ async function runResearchDebateMode({
                     stepId,
                     taskId,
                     content: '',
-                    speech: `本轮调用失败：${error.message}`,
+                    speech: '本轮调用失败，已进入保守回退。',
                     round,
                     debateRound: round,
                     hasBlockingIssue: true,
                     voteOk: false,
-                    error: error.message
+                    error: 'research_model_failed'
                 };
                 emitResearchEvent({
                     type: 'agent_draft',
@@ -5444,7 +5863,7 @@ async function runResearchDebateMode({
                         stepId: `research-r${round}-master-check`,
                         taskId: 900 + round,
                         status: 'running',
-                        detail: `主控 ${researchModelLabel(masterId)} 调用失败，改用 ${researchModelLabel(fallbackModel)} 判定: ${previousError?.message || 'route unavailable'}`
+                        detail: `主控 ${researchModelLabel(masterId)} 调用失败，改用 ${researchModelLabel(fallbackModel)} 判定`
                     });
                 }
             });
@@ -5465,8 +5884,8 @@ async function runResearchDebateMode({
             decisionResult = {
                 ready: round >= roundLimit,
                 reason: round >= roundLimit
-                    ? `主控判定失败且达到上限: ${error.message}`
-                    : `主控判定失败，保守继续一轮: ${error.message}`
+                    ? '主控判定失败且达到上限'
+                    : '主控判定失败，保守继续一轮'
             };
             emitResearchEvent({
                 type: 'agent_status',
@@ -5514,6 +5933,8 @@ async function runResearchDebateMode({
 
         emitResearchEvent({
             type: 'agent_quality',
+            reviewKind: 'model_consensus_review',
+            independentFactVerification: false,
             round,
             pass: masterReadyToAnswer,
             metrics: {
@@ -5589,7 +6010,7 @@ async function runResearchDebateMode({
                 stepId: 'research-master',
                 taskId: 999,
                 status: 'running',
-                detail: `主控 ${researchModelLabel(masterId)} 生成失败，改用 ${researchModelLabel(fallbackModel)} 综合: ${previousError?.message || 'route unavailable'}`
+                detail: `主控 ${researchModelLabel(masterId)} 生成失败，改用 ${researchModelLabel(fallbackModel)} 综合`
             });
         },
         onContent: (chunk) => {
@@ -5664,6 +6085,10 @@ async function runTrueParallelAgentMode({
     qualityProfile,
     maxTokens,
     agentTraceLevel = 'full',
+    userId = null,
+    sessionId = null,
+    requestId = null,
+    signal,
     onAgentEvent = null
 }) {
     const routing = MODEL_ROUTING['kimi-k2.6'];
@@ -5711,7 +6136,7 @@ async function runTrueParallelAgentMode({
             try {
                 onAgentEvent(payload);
             } catch (hookError) {
-                console.warn(' 记录Agent过程事件失败:', hookError.message);
+                console.warn(' 记录Agent过程事件失败:', sanitizeReportContext(hookError));
             }
         }
     };
@@ -5772,6 +6197,10 @@ async function runTrueParallelAgentMode({
                 internetMode: false,
                 maxTokens: 1200,
                 maxToolRounds: 0,
+                userId,
+                sessionId,
+                requestId,
+                signal,
                 searchBudget,
                 taskKey: 'planner',
                 res,
@@ -5848,6 +6277,10 @@ async function runTrueParallelAgentMode({
                 internetMode,
                 maxTokens: Math.min(Math.max(parseInt(maxTokens, 10) || 2000, 800), 6000),
                 maxToolRounds: 2,
+                userId,
+                sessionId,
+                requestId,
+                signal,
                 searchBudget,
                 taskKey: `task-${task.agent_id || 0}`,
                 res,
@@ -5902,6 +6335,10 @@ async function runTrueParallelAgentMode({
                 internetMode,
                 maxTokens: Math.max(parseInt(maxTokens, 10) || 2000, 1200),
                 maxToolRounds: 2,
+                userId,
+                sessionId,
+                requestId,
+                signal,
                 searchBudget,
                 taskKey: 'synthesis',
                 res,
@@ -5996,6 +6433,73 @@ function sanitizeClientAttachments(attachments) {
         .filter(Boolean);
 }
 
+function attachmentTypeFromMime(mimeType, fallback = 'file') {
+    const value = String(mimeType || '').toLowerCase();
+    if (value.startsWith('image/')) return 'image';
+    if (value.startsWith('audio/')) return 'audio';
+    if (value.startsWith('video/')) return 'video';
+    return ['file', 'document'].includes(fallback) ? fallback : 'file';
+}
+
+function uploadedFilenameFromAttachment(attachment = {}) {
+    const direct = path.basename(String(attachment.fileId || attachment.filename || '').trim());
+    if (direct && direct !== '.' && direct !== '..') return direct;
+    const match = String(attachment.filePath || '').match(/\/api\/uploads\/([^/?#]+)(?:[?#]|$)/i);
+    if (!match) return '';
+    try {
+        const decoded = decodeURIComponent(match[1]);
+        const safe = path.basename(decoded);
+        return safe === decoded && safe !== '.' && safe !== '..' ? safe : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+async function canonicalizeOwnedMessageAttachments(messages, userId) {
+    for (const message of messages) {
+        if (message.role !== 'user' || !Array.isArray(message.attachments)) continue;
+        const canonical = [];
+        for (const attachment of message.attachments) {
+            const filename = uploadedFilenameFromAttachment(attachment);
+            if (!filename) {
+                // 纯内联多媒体不依赖服务端文件权限，可保留已限幅的 data。
+                if (attachment.data && !String(attachment.filePath || '').includes('/api/uploads/')) {
+                    canonical.push(attachment);
+                    continue;
+                }
+                const error = new Error('附件引用无效');
+                error.statusCode = 400;
+                throw error;
+            }
+            const row = await dbGetAsync(
+                `SELECT filename, original_name, mime_type, size
+                 FROM file_uploads
+                 WHERE filename = ? AND user_id = ? AND upload_kind = 'attachment'`,
+                [filename, userId]
+            );
+            if (!row) {
+                const error = new Error('附件不存在或无权访问');
+                error.statusCode = 400;
+                throw error;
+            }
+            canonical.push({
+                type: attachmentTypeFromMime(row.mime_type, attachment.type),
+                fileName: String(row.original_name || row.filename).slice(0, 255),
+                originalName: String(row.original_name || row.filename).slice(0, 255),
+                fileId: row.filename,
+                filename: row.filename,
+                filePath: `/api/uploads/${encodeURIComponent(row.filename)}`,
+                mimeType: String(row.mime_type || 'application/octet-stream').slice(0, 120),
+                fileType: String(row.mime_type || 'application/octet-stream').slice(0, 120),
+                size: Math.max(0, Number(row.size || 0)),
+                data: ''
+            });
+        }
+        message.attachments = canonical;
+    }
+    return messages;
+}
+
 function sanitizeClientChatMessages(rawMessages = []) {
     const source = Array.isArray(rawMessages)
         ? rawMessages.slice(-CHAT_CLIENT_MAX_MESSAGES)
@@ -6087,7 +6591,12 @@ function detectMultimodalContent(message) {
 
     // 检查message对象是否有attachments字段（增强防御性检查）
     if (Array.isArray(attachments) && attachments.length > 0) {
-        console.log(` 发现附件:`, attachments.map(a => ({ type: a.type, fileName: a.fileName })));
+        const attachmentTypeCounts = attachments.reduce((counts, attachment) => {
+            const type = ['audio', 'file', 'image', 'video'].includes(attachment?.type) ? attachment.type : 'other';
+            counts[type] = (counts[type] || 0) + 1;
+            return counts;
+        }, {});
+        console.log(` 发现附件: count=${attachments.length}, types=${JSON.stringify(attachmentTypeCounts)}`);
         attachments.forEach(att => {
             if (att.type === 'image') {
                 result.hasMultimodal = true;
@@ -6288,6 +6797,7 @@ function getMultimodalTypeDescription(types) {
 // ==================== 附件解析层：将附件内容转为 prompt 上下文 ====================
 const ATTACHMENT_PARSE_MAX_FILE_CHARS = 60000;   // 单文件字符上限
 const ATTACHMENT_PARSE_TOTAL_CHARS = 80000;       // 总字符上限
+const ATTACHMENT_TEXT_READ_MAX_BYTES = 512 * 1024;
 
 function classifyAttachmentType(fileName, mimeType) {
     const lowerName = String(fileName || '').toLowerCase();
@@ -6320,109 +6830,37 @@ function classifyAttachmentType(fileName, mimeType) {
 }
 
 async function readTextFileContent(filePath) {
+    let handle;
     try {
-        const content = await fs.promises.readFile(filePath, 'utf-8');
-        return content;
-    } catch (err) {
-        console.warn(` 读取文本附件失败: ${filePath}`, err.message);
-        return null;
-    }
-}
-
-async function tryExtractDocxText(filePath) {
-    try {
-        // 尝试使用 mammoth 提取 DOCX 文本
-        const mammoth = require('mammoth');
-        const result = await mammoth.extractRawText({ path: filePath });
-        return (result && result.value) ? result.value.trim() : null;
-    } catch (err) {
-        // mammoth 不可用时回退到原始 ZIP XML 提取
-        try {
-            const { execSync } = require('child_process');
-            const tmpDir = require('os').tmpdir();
-            const dest = `${tmpDir}/_rai_docx_extract_${Date.now()}`;
-            execSync(`unzip -o "${filePath}" -d "${dest}" 2>/dev/null && cat "${dest}/word/document.xml" 2>/dev/null || true`, { timeout: 5000 });
-            const xml = await fs.promises.readFile(`${dest}/word/document.xml`, 'utf-8').catch(() => '');
-            // 简单去除 XML 标签
-            const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            try { execSync(`rm -rf "${dest}"`, { timeout: 2000 }); } catch (cleanupErr) {}
-            return text || null;
-        } catch (e2) {
-            console.warn(` DOCX 文本提取失败: ${filePath}`, e2.message);
-            return null;
+        const noFollow = Number(fs.constants.O_NOFOLLOW || 0);
+        handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow);
+        const stats = await handle.stat();
+        if (!stats.isFile()) return null;
+        const readLimit = Math.min(stats.size, ATTACHMENT_TEXT_READ_MAX_BYTES + 1);
+        const buffer = Buffer.alloc(readLimit);
+        let offset = 0;
+        while (offset < readLimit) {
+            const result = await handle.read(buffer, offset, readLimit - offset, offset);
+            if (!result.bytesRead) break;
+            offset += result.bytesRead;
         }
-    }
-}
-
-async function tryExtractXlsxCsvText(filePath) {
-    try {
-        // XLSX 是 ZIP，尝试提取 shared strings 和 sheet 数据
-        const { execSync } = require('child_process');
-        const tmpDir = require('os').tmpdir();
-        const dest = `${tmpDir}/_rai_xlsx_extract_${Date.now()}`;
-        execSync(`unzip -o "${filePath}" -d "${dest}" 2>/dev/null || true`, { timeout: 5000 });
-        // 读取 shared strings
-        let sharedStrings = '';
-        try { sharedStrings = await fs.promises.readFile(`${dest}/xl/sharedStrings.xml`, 'utf-8'); } catch (e) {}
-        // 读取第一个 sheet
-        let sheet1 = '';
-        try { sheet1 = await fs.promises.readFile(`${dest}/xl/worksheets/sheet1.xml`, 'utf-8'); } catch (e) {}
-        try { execSync(`rm -rf "${dest}"`, { timeout: 2000 }); } catch (cleanupErr) {}
-        // 简单提取文本内容
-        const parts = [];
-        if (sharedStrings) {
-            const texts = sharedStrings.match(/<t[^>]*>([^<]*)<\/t>/g);
-            if (texts) {
-                const cleaned = texts.map(t => t.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
-                parts.push(`[单元格数据]: ${cleaned.join(' | ')}`);
-            }
-        }
-        if (sheet1 && !parts.length) {
-            const text = sheet1.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            if (text) parts.push(`[工作表内容]: ${text}`);
-        }
-        return parts.length > 0 ? parts.join('\n') : null;
+        const content = buffer.subarray(0, Math.min(offset, ATTACHMENT_TEXT_READ_MAX_BYTES)).toString('utf8');
+        return offset > ATTACHMENT_TEXT_READ_MAX_BYTES ? `${content}\n[...文件字节数超过安全读取上限，已截断]` : content;
     } catch (err) {
-        console.warn(` XLSX 文本提取失败: ${filePath}`, err.message);
+        console.warn(` 读取文本附件失败: code=${err.code || 'read_failed'}`);
         return null;
+    } finally {
+        if (handle) await handle.close().catch(() => null);
     }
 }
 
-async function tryExtractPptxText(filePath) {
+async function tryExtractDocumentText(filePath, kind) {
+    if (!DOCUMENT_PARSER_ENABLED) return null;
     try {
-        const { execSync } = require('child_process');
-        const tmpDir = require('os').tmpdir();
-        const dest = `${tmpDir}/_rai_pptx_extract_${Date.now()}`;
-        execSync(`unzip -o "${filePath}" -d "${dest}" 2>/dev/null || true`, { timeout: 5000 });
-        // 读取所有 slide XML 文件
-        const slidesDir = `${dest}/ppt/slides`;
-        let slides = [];
-        try {
-            const files = await fs.promises.readdir(slidesDir);
-            for (const f of files.sort()) {
-                if (f.endsWith('.xml')) {
-                    const xml = await fs.promises.readFile(`${slidesDir}/${f}`, 'utf-8');
-                    const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-                    if (text) slides.push(text);
-                }
-            }
-        } catch (e) {}
-        try { execSync(`rm -rf "${dest}"`, { timeout: 2000 }); } catch (cleanupErr) {}
-        return slides.length > 0 ? slides.map((s, i) => `[幻灯片${i + 1}]: ${s}`).join('\n') : null;
+        const result = await parseDocumentFile(filePath, kind);
+        return String(result?.text || '').trim() || null;
     } catch (err) {
-        console.warn(` PPTX 文本提取失败: ${filePath}`, err.message);
-        return null;
-    }
-}
-
-async function tryExtractPdfText(filePath) {
-    try {
-        const pdfParse = require('pdf-parse');
-        const buffer = await fs.promises.readFile(filePath);
-        const data = await pdfParse(buffer);
-        return (data && data.text) ? data.text.trim() : null;
-    } catch (err) {
-        console.warn(` PDF 文本提取失败 (pdf-parse 不可用): ${filePath}`, err.message);
+        console.warn(` 文档解析被拒绝或失败: kind=${kind}, code=${err.code || 'parse_failed'}`);
         return null;
     }
 }
@@ -6487,17 +6925,17 @@ async function buildAttachmentPromptContext(attachments, userId) {
                 const ext = path.extname(fileName).toLowerCase();
                 let extracted = null;
                 if (ext === '.pdf' || mimeType === 'application/pdf') {
-                    extracted = await tryExtractPdfText(filePath);
+                    extracted = await tryExtractDocumentText(filePath, 'pdf');
                 } else if (ext === '.docx') {
-                    extracted = await tryExtractDocxText(filePath);
+                    extracted = await tryExtractDocumentText(filePath, 'docx');
                 } else if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
                     if (ext === '.csv') {
                         extracted = await readTextFileContent(filePath);
-                    } else {
-                        extracted = await tryExtractXlsxCsvText(filePath);
+                    } else if (ext === '.xlsx') {
+                        extracted = await tryExtractDocumentText(filePath, 'xlsx');
                     }
                 } else if (ext === '.pptx' || ext === '.ppt') {
-                    extracted = await tryExtractPptxText(filePath);
+                    if (ext === '.pptx') extracted = await tryExtractDocumentText(filePath, 'pptx');
                 }
                 if (extracted) {
                     const truncated = extracted.length > ATTACHMENT_PARSE_MAX_FILE_CHARS
@@ -6528,6 +6966,20 @@ async function buildAttachmentPromptContext(attachments, userId) {
 
 // ==================== API配置系统 ====================
 const API_PROVIDERS = {
+    rai_gpt_gateway: {
+        apiKey: GPT_GATEWAY_API_KEY,
+        envKey: 'RAI_GPT_GATEWAY_API_KEY_FILE',
+        baseURL: GPT_GATEWAY_BASE_URL ? joinGatewayEndpoint(GPT_GATEWAY_BASE_URL, 'chat/completions') : '',
+        models: [...GPT_GATEWAY_CHAT_MODELS],
+        optional: true
+    },
+    rai_fast_gateway: {
+        apiKey: FAST_GATEWAY_API_KEY,
+        envKey: 'RAI_FAST_GATEWAY_API_KEY_FILE',
+        baseURL: FAST_GATEWAY_BASE_URL ? joinGatewayEndpoint(FAST_GATEWAY_BASE_URL, 'chat/completions') : '',
+        models: ['claude-sonnet-5', 'gemini-3.6-flash-low'],
+        optional: true
+    },
     deepseek: {
         apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
         envKey: 'DEEPSEEK_API_KEY',
@@ -6562,18 +7014,10 @@ const API_PROVIDERS = {
             'anthropic/claude-3-haiku',
             'openai/gpt-oss-120b:free',
             'google/gemma-4-31b-it:free',
-            'cohere/north-mini-code:free',
             'nvidia/nemotron-3-ultra-550b-a55b:free',
             'openrouter/free'
         ]
     },
-    // NewAPI OpenAI-compatible gateway
-    newapi: {
-        apiKey: ENV_API_KEYS.NEWAPI_API_KEY,
-        envKey: 'NEWAPI_API_KEY',
-        baseURL: NEWAPI_BASE_URL,
-        models: []
-    }
 };
 
 function logApiKeyReadiness() {
@@ -6582,7 +7026,7 @@ function logApiKeyReadiness() {
     Object.values(API_PROVIDERS).forEach((provider) => {
         if (!provider?.envKey || seen.has(provider.envKey)) return;
         seen.add(provider.envKey);
-        if (!provider.apiKey) missing.push(provider.envKey);
+        if (!provider.apiKey && !provider.optional) missing.push(provider.envKey);
     });
     if (!TAVILY_API_KEY) missing.push('TAVILY_API_KEY');
 
@@ -6596,6 +7040,8 @@ function logApiKeyReadiness() {
 logApiKeyReadiness();
 
 const LEGACY_MODEL_ALIASES = {
+    // GPT 5.6 is now backed by Luna. Preserve saved preferences and stale clients.
+    'gpt-5.6-terra': 'gpt-5.6-luna',
     'qwen3-vl': 'qwen3.6-35b-a3b',
     'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
     'Qwen/Qwen3.6-35B-A3B': 'qwen3.6-35b-a3b',
@@ -6618,7 +7064,6 @@ const LEGACY_MODEL_ALIASES = {
     'Pro/moonshotai/Kimi-K2.6': 'kimi-k2.6',
     'claude-haiku': 'anthropic/claude-3-haiku',
     'anthropic/claude-3-haiku:beta': 'anthropic/claude-3-haiku',
-    'cohere/north-mini-code:free': 'north-mini-code',
     'nvidia/nemotron-3-ultra-550b-a55b:free': 'nemotron-3-ultra',
     'google/gemma-4-31b-it:free': 'gemma',
     'openrouter/free': 'openrouter-free'
@@ -6658,6 +7103,57 @@ const MODEL_ROUTING = {
         supportsWebSearch: false,
         multimodal: false
     },
+    'gpt-5.6-sol': {
+        provider: 'rai_gpt_gateway',
+        model: 'gpt-5.6-sol',
+        supportsThinking: true,
+        supportsWebSearch: true,
+        multimodal: true
+    },
+    'gpt-5.6-terra': {
+        provider: 'rai_gpt_gateway',
+        model: 'gpt-5.6-terra',
+        supportsThinking: true,
+        supportsWebSearch: true,
+        multimodal: true
+    },
+    'gpt-5.6-luna': {
+        provider: 'rai_gpt_gateway',
+        model: 'gpt-5.6-luna',
+        supportsThinking: true,
+        supportsWebSearch: true,
+        multimodal: true
+    },
+    'claude-sonnet-5': {
+        provider: 'rai_fast_gateway',
+        model: 'claude-sonnet-5',
+        supportsThinking: true,
+        supportsWebSearch: true,
+        multimodal: true
+    },
+    'gemini-3.6-flash-low': {
+        provider: 'rai_fast_gateway',
+        model: 'gemini-3.6-flash-low',
+        supportsThinking: true,
+        supportsWebSearch: true,
+        multimodal: true
+    },
+    'gpt-image-2': {
+        provider: 'rai_gpt_gateway',
+        model: 'gpt-5.6-sol',
+        supportsThinking: false,
+        supportsWebSearch: false,
+        multimodal: true,
+        imageOnly: true
+    },
+    'kolors-free': {
+        provider: 'siliconflow',
+        model: KOLORS_IMAGE_MODEL,
+        supportsThinking: false,
+        supportsWebSearch: false,
+        multimodal: true,
+        imageOnly: true
+    },
     // Qwen 3.6 35B - 便宜多模态模型
     'qwen3.6-35b-a3b': {
         provider: 'siliconflow',
@@ -6687,13 +7183,6 @@ const MODEL_ROUTING = {
         provider: 'openrouter',
         model: 'openai/gpt-oss-120b:free',
         supportsThinking: true,
-        supportsWebSearch: false,
-        multimodal: false
-    },
-    'north-mini-code': {
-        provider: 'openrouter',
-        model: 'cohere/north-mini-code:free',
-        supportsThinking: false,
         supportsWebSearch: false,
         multimodal: false
     },
@@ -6761,10 +7250,14 @@ const MODEL_ROUTING = {
     }
 };
 
+const MODE_RUNTIME_FALLBACK_MODELS = Object.freeze({
+    'deepseek-pro': ['gpt-5.6-luna'],
+    'deepseek-flash': ['gpt-5.6-luna']
+});
+
 const UNIVERSAL_RUNTIME_FALLBACK_MODELS = [
     'chatgpt-gpt-oss-120b',
     'gemma',
-    'north-mini-code',
     'nemotron-3-ultra',
     'gemini-3-flash',
     'qwen3.6-35b-a3b',
@@ -6775,7 +7268,12 @@ const UNIVERSAL_RUNTIME_FALLBACK_MODELS = [
 function getRuntimeFallbackModelIds(currentModel = '', options = {}) {
     const current = normalizeIncomingModelId(currentModel);
     const requiresMultimodal = options.requiresMultimodal === true;
-    return UNIVERSAL_RUNTIME_FALLBACK_MODELS.filter((modelId) => {
+    const candidates = [
+        ...(MODE_RUNTIME_FALLBACK_MODELS[current] || []),
+        ...UNIVERSAL_RUNTIME_FALLBACK_MODELS
+    ];
+    return candidates.filter((modelId, index, list) => {
+        if (list.indexOf(modelId) !== index) return false;
         if (modelId === current) return false;
         if (!requiresMultimodal) return true;
         return MODEL_ROUTING[modelId]?.multimodal === true;
@@ -6809,18 +7307,18 @@ dirs.forEach(dir => {
 const dbPath = path.resolve(process.env.RAI_DB_PATH || path.join(__dirname, 'ai_data.db'));
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
-        console.error(' 数据库连接失败:', err);
+        console.error(' 数据库连接失败:', sanitizeReportContext(err));
         process.exit(1);
     } else {
         console.log(' 数据库已连接:', dbPath);
 
         // ==================== SQLite 性能优化 ====================
         db.run("PRAGMA foreign_keys=ON;", (err) => {
-            if (err) console.warn(' 外键约束启用失败:', err.message);
+            if (err) console.warn(' 外键约束启用失败:', sanitizeReportContext(err));
             else console.log(' SQLite 外键约束已启用');
         });
         db.run("PRAGMA journal_mode=WAL;", (err) => {
-            if (err) console.warn(' WAL模式设置失败:', err.message);
+            if (err) console.warn(' WAL模式设置失败:', sanitizeReportContext(err));
             else console.log(' SQLite WAL模式已启用');
         });
         db.run("PRAGMA cache_size=10000;");  // 约40MB缓存
@@ -6830,10 +7328,35 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
+const authDb = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+        console.error(' 认证会话数据库连接失败:', sanitizeReportContext(err));
+        process.exit(1);
+    }
+});
+authDb.serialize(() => {
+    authDb.run('PRAGMA foreign_keys=ON;');
+    authDb.run('PRAGMA busy_timeout=5000;');
+    authDb.run('PRAGMA synchronous=NORMAL;');
+});
+
+const authSessionStore = createAuthSessionStore({
+    db: authDb,
+    jwtSecret: JWT_SECRET,
+    refreshPepper: REFRESH_TOKEN_PEPPER || undefined,
+    // Tauri 从 tauri://localhost 访问正式 HTTPS API，需要 Secure + SameSite=None。
+    // refresh 接口同时强制自定义头和受信 Origin，防止跨站表单 CSRF。
+    refreshCookieSameSite: IS_PRODUCTION ? 'None' : 'Strict',
+    refreshCookieName: IS_PRODUCTION ? '__Host-rai_refresh' : 'rai_refresh',
+    refreshCookiePath: IS_PRODUCTION ? '/' : '/api/auth',
+    production: IS_PRODUCTION
+});
+const softwareClientAuth = createSoftwareClientAuth({ db: authDb });
+
 // Passkey 仪式使用独立连接，避免其一次性 challenge 事务与聊天/配额事务交错。
 const passkeyDb = new sqlite3.Database(dbPath, (err) => {
     if (err) {
-        console.error(' Passkey 数据库连接失败:', err);
+        console.error(' Passkey 数据库连接失败:', sanitizeReportContext(err));
         process.exit(1);
     }
 });
@@ -6856,6 +7379,51 @@ const databaseInitializationSettled = new Promise((resolve, reject) => {
     rejectDatabaseInitializationSettled = reject;
 });
 
+// Business transactions must never run on `db`: SQLite transactions belong to
+// the connection, so unrelated requests using that shared connection could be
+// committed or rolled back together. Keep every multi-statement business
+// transaction on one dedicated, FIFO-serialized connection instead.
+let resolveTransactionDbReady;
+let rejectTransactionDbReady;
+const transactionDbReady = new Promise((resolve, reject) => {
+    resolveTransactionDbReady = resolve;
+    rejectTransactionDbReady = reject;
+});
+let transactionDb = null;
+let transactionDbClosing = false;
+let transactionTail = Promise.resolve();
+databaseInitializationSettled.then(() => {
+    if (transactionDbClosing) {
+        const error = new Error('transaction_database_closing');
+        error.code = 'transaction_database_closing';
+        rejectTransactionDbReady(error);
+        return;
+    }
+    transactionDb = new sqlite3.Database(dbPath, (err) => {
+        if (err) {
+            console.error(' 事务数据库连接失败:', sanitizeReportContext(err));
+            rejectTransactionDbReady(err);
+        }
+    });
+    transactionDb.serialize(() => {
+        const rejectPragmaError = (err) => {
+            if (err) rejectTransactionDbReady(err);
+        };
+        transactionDb.run('PRAGMA foreign_keys=ON;', rejectPragmaError);
+        transactionDb.run('PRAGMA busy_timeout=5000;', rejectPragmaError);
+        transactionDb.run('PRAGMA synchronous=NORMAL;', rejectPragmaError);
+        // Bound this extra connection's page cache on the small production VPS.
+        transactionDb.run('PRAGMA cache_size=-1024;', rejectPragmaError);
+        transactionDb.run('PRAGMA temp_store=FILE;', rejectPragmaError);
+        transactionDb.get('SELECT 1 AS ready', (err) => {
+            if (err) rejectTransactionDbReady(err);
+            else resolveTransactionDbReady(true);
+        });
+    });
+}).catch((err) => {
+    rejectTransactionDbReady(err);
+});
+
 // 选词解释写入使用独立连接，并由单 Promise 队列串行化事务。
 let resolveSelectionExplanationDbReady;
 let rejectSelectionExplanationDbReady;
@@ -6873,7 +7441,7 @@ databaseInitializationSettled.then(() => {
     }
     selectionExplanationDb = new sqlite3.Database(dbPath, (err) => {
         if (err) {
-            console.error(' 选词解释数据库连接失败:', err);
+            console.error(' 选词解释数据库连接失败:', sanitizeReportContext(err));
             rejectSelectionExplanationDbReady(err);
         }
     });
@@ -6915,8 +7483,11 @@ db.serialize(() => {
     pending_referrer_id INTEGER,
     external_provider TEXT,
     external_uid TEXT,
+    session_version INTEGER NOT NULL DEFAULT 1,
+    password_policy_version INTEGER NOT NULL DEFAULT 0,
     two_factor_enabled INTEGER DEFAULT 0,
     two_factor_secret TEXT,
+    two_factor_last_counter INTEGER,
     two_factor_confirmed_at DATETIME,
     gpt55_usage_date DATE,
     gpt55_usage_count INTEGER DEFAULT 0,
@@ -6930,7 +7501,10 @@ db.serialize(() => {
     user_id INTEGER NOT NULL,
     title TEXT DEFAULT '新对话',
     model TEXT DEFAULT 'auto',
+    prompt_model_identity TEXT,
+    prompt_language TEXT,
     session_kind TEXT DEFAULT 'chat',
+    messages_revision INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_archived INTEGER DEFAULT 0,
@@ -6943,6 +7517,7 @@ db.serialize(() => {
     session_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
+    request_id TEXT,
     attachments TEXT,
     reasoning_content TEXT,
     model TEXT,
@@ -6971,12 +7546,20 @@ db.serialize(() => {
     long_memory_opted_in_at DATETIME,
     short_memory_titles TEXT,
     short_memory_updated_at DATETIME,
-    font_preference TEXT DEFAULT 'rai',
+    font_preference TEXT DEFAULT 'system',
     tab_title_mode TEXT DEFAULT 'default',
     tab_title_custom_text TEXT,
     selection_explanation_delete_mode TEXT DEFAULT 'promote_children',
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
+
+    // A per-user monotonic revision makes the session manifest cheap to validate.
+    // It contains no private transcript data and is safe to use only as an ETag input.
+    db.run(`CREATE TABLE IF NOT EXISTS conversation_sync_state (
+      user_id INTEGER PRIMARY KEY,
+      revision INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS user_memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6997,6 +7580,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS selection_explanation_threads (
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
+    session_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -7023,6 +7607,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS selection_explanation_requests (
     request_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
+    session_id TEXT,
     point_bucket TEXT NOT NULL CHECK (point_bucket IN ('daily', 'purchased')),
     status TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved', 'consumed', 'refunded')),
     points INTEGER NOT NULL DEFAULT 1 CHECK (points = 1),
@@ -7054,8 +7639,13 @@ db.serialize(() => {
     ].forEach(([columnName, definition]) => {
         db.run(`ALTER TABLE selection_explanation_requests ADD COLUMN ${columnName} ${definition}`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加selection_explanation_requests.${columnName}失败:`, err.message);
+                console.warn(` 添加selection_explanation_requests.${columnName}失败:`, sanitizeReportContext(err));
             }
+        });
+    });
+    ['selection_explanation_threads', 'selection_explanation_requests'].forEach((tableName) => {
+        db.run(`ALTER TABLE ${tableName} ADD COLUMN session_id TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) console.warn(` 添加${tableName}.session_id失败:`, sanitizeReportContext(err));
         });
     });
 
@@ -7177,7 +7767,7 @@ db.serialize(() => {
                 [modelId],
                 (err) => {
                     if (err) {
-                        console.warn(` 默认禁用模型种子写入失败(${modelId}):`, err.message);
+                        console.warn(` 默认禁用模型种子写入失败(${modelId}):`, sanitizeReportContext(err));
                     }
                 }
             );
@@ -7202,13 +7792,13 @@ db.serialize(() => {
 
     db.run(`ALTER TABLE announcements ADD COLUMN title_en TEXT`, (err) => {
         if (err && !err.message.includes('duplicate column')) {
-            console.warn(' 添加公告英文标题列失败:', err.message);
+            console.warn(' 添加公告英文标题列失败:', sanitizeReportContext(err));
         }
     });
 
     db.run(`ALTER TABLE announcements ADD COLUMN body_en TEXT`, (err) => {
         if (err && !err.message.includes('duplicate column')) {
-            console.warn(' 添加公告英文正文列失败:', err.message);
+            console.warn(' 添加公告英文正文列失败:', sanitizeReportContext(err));
         }
     });
 
@@ -7233,6 +7823,25 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS generated_images (
+    filename TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    session_id TEXT,
+    request_id TEXT,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_generated_images_owner ON generated_images(user_id, created_at DESC)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_generated_images_session ON generated_images(session_id, created_at DESC)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_generated_images_expiry ON generated_images(expires_at)');
+    // Keep deletion intent independently of generated_images. If unlink fails,
+    // a later timer or process restart can retry without restoring public ACLs.
+    db.run(GENERATED_IMAGE_DELETIONS_SCHEMA_SQL);
+    db.run('CREATE INDEX IF NOT EXISTS idx_generated_image_deletions_queue ON generated_image_deletions(queued_at, filename)');
 
     db.run(`CREATE TABLE IF NOT EXISTS auth_email_codes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7259,6 +7868,32 @@ db.serialize(() => {
     consumed_at INTEGER,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS user_two_factor_recovery_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    code_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    used_at INTEGER,
+    UNIQUE(user_id, code_hash),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS admin_security_state (
+    username TEXT PRIMARY KEY,
+    totp_last_counter INTEGER,
+    updated_at INTEGER NOT NULL
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS admin_sessions (
+    session_id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    credential_version TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    revoked_at INTEGER
+  )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_admin_sessions_active ON admin_sessions(username, revoked_at, expires_at)');
 
     db.run(`CREATE TABLE IF NOT EXISTS webauthn_user_handles (
     user_id INTEGER PRIMARY KEY,
@@ -7318,7 +7953,7 @@ db.serialize(() => {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`, (err) => {
         if (err) {
-            console.warn(' admin_runtime_settings 表创建失败:', err.message);
+            console.warn(' admin_runtime_settings 表创建失败:', sanitizeReportContext(err));
             return;
         }
         for (const [key, value] of Object.entries(ADMIN_RUNTIME_LIMIT_DEFAULTS)) {
@@ -7353,7 +7988,7 @@ db.serialize(() => {
             [defaultNoticeSeed.titleZh],
             (seedErr, rows = []) => {
                 if (seedErr) {
-                    console.warn(' 公告种子检查失败:', seedErr.message);
+                    console.warn(' 公告种子检查失败:', sanitizeReportContext(seedErr));
                     return;
                 }
                 const row = rows.find((candidate) => isManagedDefaultDomainNotice(candidate));
@@ -7368,7 +8003,7 @@ db.serialize(() => {
                         defaultNoticeSeed.bodyEn
                     ],
                     (insErr) => {
-                        if (insErr) console.warn(' 公告种子写入失败:', insErr.message);
+                        if (insErr) console.warn(' 公告种子写入失败:', sanitizeReportContext(insErr));
                         else console.log(' 默认域名公告种子就绪');
                     }
                     );
@@ -7389,7 +8024,7 @@ db.serialize(() => {
                         row.id
                     ],
                     (updErr) => {
-                        if (updErr) console.warn(' 默认域名公告种子更新失败:', updErr.message);
+                        if (updErr) console.warn(' 默认域名公告种子更新失败:', sanitizeReportContext(updErr));
                         else console.log(' 默认域名公告种子已同步');
                     }
                     );
@@ -7403,7 +8038,7 @@ db.serialize(() => {
         // 添加thinking_mode列（如果不存在）
         db.run(`ALTER TABLE user_configs ADD COLUMN thinking_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加thinking_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加thinking_mode列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加thinking_mode列到user_configs表');
             }
@@ -7412,7 +8047,7 @@ db.serialize(() => {
         // 添加internet_mode列（如果不存在）
         db.run(`ALTER TABLE user_configs ADD COLUMN internet_mode INTEGER DEFAULT 1`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加internet_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加internet_mode列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加internet_mode列到user_configs表');
             }
@@ -7420,7 +8055,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN long_memory_enabled INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加long_memory_enabled列失败(可能已存在):`, err.message);
+                console.warn(` 添加long_memory_enabled列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加long_memory_enabled列到user_configs表');
             }
@@ -7428,7 +8063,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN long_memory_opted_in_at DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加long_memory_opted_in_at列失败(可能已存在):`, err.message);
+                console.warn(` 添加long_memory_opted_in_at列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加long_memory_opted_in_at列到user_configs表');
             }
@@ -7436,7 +8071,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN short_memory_titles TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加short_memory_titles列失败(可能已存在):`, err.message);
+                console.warn(` 添加short_memory_titles列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加short_memory_titles列到user_configs表');
             }
@@ -7444,15 +8079,15 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN short_memory_updated_at DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加short_memory_updated_at列失败(可能已存在):`, err.message);
+                console.warn(` 添加short_memory_updated_at列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加short_memory_updated_at列到user_configs表');
             }
         });
 
-        db.run(`ALTER TABLE user_configs ADD COLUMN font_preference TEXT DEFAULT 'rai'`, (err) => {
+        db.run(`ALTER TABLE user_configs ADD COLUMN font_preference TEXT DEFAULT 'system'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加font_preference列失败(可能已存在):`, err.message);
+                console.warn(` 添加font_preference列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加font_preference列到user_configs表');
             }
@@ -7460,7 +8095,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN tab_title_mode TEXT DEFAULT 'default'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加tab_title_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加tab_title_mode列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加tab_title_mode列到user_configs表');
             }
@@ -7468,7 +8103,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN tab_title_custom_text TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加tab_title_custom_text列失败(可能已存在):`, err.message);
+                console.warn(` 添加tab_title_custom_text列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加tab_title_custom_text列到user_configs表');
             }
@@ -7476,7 +8111,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE user_configs ADD COLUMN selection_explanation_delete_mode TEXT DEFAULT 'promote_children'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加selection_explanation_delete_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加selection_explanation_delete_mode列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加selection_explanation_delete_mode列到user_configs表');
             }
@@ -7486,7 +8121,7 @@ db.serialize(() => {
         // 添加model列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN model TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加model列失败(可能已存在):`, err.message);
+                console.warn(` 添加model列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加model列到messages表');
             }
@@ -7495,7 +8130,7 @@ db.serialize(() => {
         // 添加enable_search列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN enable_search INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加enable_search列失败(可能已存在):`, err.message);
+                console.warn(` 添加enable_search列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加enable_search列到messages表');
             }
@@ -7504,7 +8139,7 @@ db.serialize(() => {
         // 添加thinking_mode列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN thinking_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加thinking_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加thinking_mode列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加thinking_mode列到messages表');
             }
@@ -7513,7 +8148,7 @@ db.serialize(() => {
         // 添加internet_mode列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN internet_mode INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加internet_mode列失败(可能已存在):`, err.message);
+                console.warn(` 添加internet_mode列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加internet_mode列到messages表');
             }
@@ -7522,7 +8157,7 @@ db.serialize(() => {
         // 添加sources列到messages表（如果不存在）- 存储联网搜索来源信息（JSON格式）
         db.run(`ALTER TABLE messages ADD COLUMN sources TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加sources列失败(可能已存在):`, err.message);
+                console.warn(` 添加sources列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加sources列到messages表');
             }
@@ -7531,7 +8166,7 @@ db.serialize(() => {
         // 添加process_trace列到messages表（如果不存在）- 存储Agent过程轨迹（JSON格式）
         db.run(`ALTER TABLE messages ADD COLUMN process_trace TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加process_trace列失败(可能已存在):`, err.message);
+                console.warn(` 添加process_trace列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加process_trace列到messages表');
             }
@@ -7539,7 +8174,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加session_kind列失败(可能已存在):`, err.message);
+                console.warn(` 添加session_kind列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加session_kind列到sessions表');
             }
@@ -7547,7 +8182,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE flows ADD COLUMN session_id TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加session_id列失败(可能已存在):`, err.message);
+                console.warn(` 添加session_id列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加session_id列到flows表');
             }
@@ -7555,7 +8190,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN external_provider TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加external_provider列失败(可能已存在):`, err.message);
+                console.warn(` 添加external_provider列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加external_provider列到users表');
             }
@@ -7563,15 +8198,47 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN external_uid TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加external_uid列失败(可能已存在):`, err.message);
+                console.warn(` 添加external_uid列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加external_uid列到users表');
             }
         });
 
+        db.run(`ALTER TABLE sessions ADD COLUMN messages_revision INTEGER NOT NULL DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加sessions.messages_revision列失败:`, sanitizeReportContext(err));
+            }
+        });
+
+        // Existing manual defaults must not survive this release. Session-level
+        // history intentionally remains untouched.
+        db.run(`UPDATE user_configs SET default_model = 'auto' WHERE COALESCE(default_model, '') != 'auto'`);
+
+        const bumpConversationRevisionSql = (userIdExpression) => `
+          INSERT INTO conversation_sync_state (user_id, revision) VALUES (${userIdExpression}, 1)
+          ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1`;
+        db.run(`CREATE TRIGGER IF NOT EXISTS rai_sync_sessions_insert
+          AFTER INSERT ON sessions BEGIN ${bumpConversationRevisionSql('NEW.user_id')}; END`);
+        db.run(`CREATE TRIGGER IF NOT EXISTS rai_sync_sessions_update
+          AFTER UPDATE ON sessions BEGIN ${bumpConversationRevisionSql('NEW.user_id')}; END`);
+        db.run(`CREATE TRIGGER IF NOT EXISTS rai_sync_sessions_delete
+          AFTER DELETE ON sessions BEGIN ${bumpConversationRevisionSql('OLD.user_id')}; END`);
+        db.run(`CREATE TRIGGER IF NOT EXISTS rai_sync_messages_insert
+          AFTER INSERT ON messages BEGIN
+            UPDATE sessions SET messages_revision = messages_revision + 1 WHERE id = NEW.session_id;
+          END`);
+        db.run(`CREATE TRIGGER IF NOT EXISTS rai_sync_messages_update
+          AFTER UPDATE ON messages BEGIN
+            UPDATE sessions SET messages_revision = messages_revision + 1 WHERE id = NEW.session_id;
+          END`);
+        db.run(`CREATE TRIGGER IF NOT EXISTS rai_sync_messages_delete
+          AFTER DELETE ON messages BEGIN
+            UPDATE sessions SET messages_revision = messages_revision + 1 WHERE id = OLD.session_id;
+          END`);
+
         db.run(`ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 1`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加email_verified列失败(可能已存在):`, err.message);
+                console.warn(` 添加email_verified列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加email_verified列到users表');
             }
@@ -7584,7 +8251,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN email_verified_at DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加email_verified_at列失败(可能已存在):`, err.message);
+                console.warn(` 添加email_verified_at列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加email_verified_at列到users表');
             }
@@ -7597,7 +8264,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN pending_email TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加pending_email列失败(可能已存在):`, err.message);
+                console.warn(` 添加pending_email列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加pending_email列到users表');
             }
@@ -7605,7 +8272,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN pending_email_current_code_hash TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加pending_email_current_code_hash列失败(可能已存在):`, err.message);
+                console.warn(` 添加pending_email_current_code_hash列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加pending_email_current_code_hash列到users表');
             }
@@ -7613,7 +8280,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN pending_email_current_verified_at INTEGER`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加pending_email_current_verified_at列失败(可能已存在):`, err.message);
+                console.warn(` 添加pending_email_current_verified_at列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加pending_email_current_verified_at列到users表');
             }
@@ -7621,7 +8288,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN pending_email_code_hash TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加pending_email_code_hash列失败(可能已存在):`, err.message);
+                console.warn(` 添加pending_email_code_hash列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加pending_email_code_hash列到users表');
             }
@@ -7629,7 +8296,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN pending_email_expires_at INTEGER`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加pending_email_expires_at列失败(可能已存在):`, err.message);
+                console.warn(` 添加pending_email_expires_at列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加pending_email_expires_at列到users表');
             }
@@ -7637,7 +8304,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN pending_referrer_id INTEGER`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加pending_referrer_id列失败(可能已存在):`, err.message);
+                console.warn(` 添加pending_referrer_id列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加pending_referrer_id列到users表');
             }
@@ -7645,7 +8312,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加two_factor_enabled列失败(可能已存在):`, err.message);
+                console.warn(` 添加two_factor_enabled列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加two_factor_enabled列到users表');
             }
@@ -7653,15 +8320,50 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE users ADD COLUMN two_factor_secret TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加two_factor_secret列失败(可能已存在):`, err.message);
+                console.warn(` 添加two_factor_secret列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加two_factor_secret列到users表');
             }
         });
 
+        db.run(`ALTER TABLE users ADD COLUMN two_factor_last_counter INTEGER`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加two_factor_last_counter列失败(可能已存在):`, sanitizeReportContext(err));
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加session_version列失败(可能已存在):`, sanitizeReportContext(err));
+            }
+        });
+
+        db.run(`ALTER TABLE users ADD COLUMN password_policy_version INTEGER NOT NULL DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加password_policy_version列失败(可能已存在):`, sanitizeReportContext(err));
+            }
+        });
+
+        // Generated images already carry the originating request id. Persist the
+        // same opaque id on assistant messages so message deletion can revoke the
+        // exact image ACLs without parsing model text.
+        db.run(`ALTER TABLE messages ADD COLUMN request_id TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加messages.request_id列失败(可能已存在):`, sanitizeReportContext(err));
+            }
+        });
+
+        // 既有管理员会话刻意不回填：NULL 记录在新版认证查询中失效，确保部署后
+        // 只有绑定当前管理员密码哈希、TOTP 种子和签名密钥的新会话可继续使用。
+        db.run(`ALTER TABLE admin_sessions ADD COLUMN credential_version TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加admin_sessions.credential_version列失败(可能已存在):`, sanitizeReportContext(err));
+            }
+        });
+
         db.run(`ALTER TABLE users ADD COLUMN two_factor_confirmed_at DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加two_factor_confirmed_at列失败(可能已存在):`, err.message);
+                console.warn(` 添加two_factor_confirmed_at列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加two_factor_confirmed_at列到users表');
             }
@@ -7669,7 +8371,7 @@ db.serialize(() => {
 
         db.run(`ALTER TABLE auth_ztx6d_rt ADD COLUMN bind_user_id INTEGER`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加ZTX6D bind_user_id列失败(可能已存在):`, err.message);
+                console.warn(` 添加ZTX6D bind_user_id列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加bind_user_id列到auth_ztx6d_rt表');
             }
@@ -7679,7 +8381,7 @@ db.serialize(() => {
         // 注意：索引方向要与查询一致（ASC）
         db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at ASC, id ASC)`, (err) => {
             if (err) {
-                console.warn(` 创建messages索引失败:`, err.message);
+                console.warn(` 创建messages索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' messages表索引就绪');
             }
@@ -7687,7 +8389,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, is_archived, updated_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建sessions索引失败:`, err.message);
+                console.warn(` 创建sessions索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' sessions表索引就绪');
             }
@@ -7695,15 +8397,18 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_kind_updated ON sessions(user_id, session_kind, is_archived, updated_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建sessions(session_kind)索引失败:`, err.message);
+                console.warn(` 创建sessions(session_kind)索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' sessions(session_kind)索引就绪');
             }
         });
+        db.run(`CREATE INDEX IF NOT EXISTS idx_messages_request_id ON messages(request_id)`, (err) => {
+            if (err) console.warn(` 创建messages.request_id索引失败:`, sanitizeReportContext(err));
+        });
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_user_memories_user_active ON user_memories(user_id, deleted_at, updated_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建user_memories(active)索引失败:`, err.message);
+                console.warn(` 创建user_memories(active)索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' user_memories(active)索引就绪');
             }
@@ -7711,7 +8416,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_user_memories_user_key ON user_memories(user_id, memory_key)`, (err) => {
             if (err) {
-                console.warn(` 创建user_memories(key)索引失败:`, err.message);
+                console.warn(` 创建user_memories(key)索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' user_memories(key)索引就绪');
             }
@@ -7719,7 +8424,7 @@ db.serialize(() => {
 
         db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_identity ON users(external_provider, external_uid) WHERE external_provider IS NOT NULL AND external_uid IS NOT NULL`, (err) => {
             if (err) {
-                console.warn(` 创建users外部身份索引失败:`, err.message);
+                console.warn(` 创建users外部身份索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' users外部身份索引就绪');
             }
@@ -7727,7 +8432,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_auth_ztx6d_rt_expires ON auth_ztx6d_rt(expires_at)`, (err) => {
             if (err) {
-                console.warn(` 创建ZTX6D rt索引失败:`, err.message);
+                console.warn(` 创建ZTX6D rt索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' ZTX6D rt索引就绪');
             }
@@ -7735,7 +8440,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_auth_ztx6d_codes_expires ON auth_ztx6d_codes(expires_at)`, (err) => {
             if (err) {
-                console.warn(` 创建ZTX6D auth_code索引失败:`, err.message);
+                console.warn(` 创建ZTX6D auth_code索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' ZTX6D auth_code索引就绪');
             }
@@ -7743,7 +8448,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_auth_email_codes_lookup ON auth_email_codes(email, purpose, consumed_at, expires_at DESC, id DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建邮箱验证码查找索引失败:`, err.message);
+                console.warn(` 创建邮箱验证码查找索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' 邮箱验证码查找索引就绪');
             }
@@ -7751,7 +8456,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_auth_email_codes_expires ON auth_email_codes(expires_at, consumed_at)`, (err) => {
             if (err) {
-                console.warn(` 创建邮箱验证码过期索引失败:`, err.message);
+                console.warn(` 创建邮箱验证码过期索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' 邮箱验证码过期索引就绪');
             }
@@ -7759,7 +8464,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_users_pending_email ON users(pending_email, pending_email_expires_at)`, (err) => {
             if (err) {
-                console.warn(` 创建待确认邮箱索引失败:`, err.message);
+                console.warn(` 创建待确认邮箱索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' 待确认邮箱索引就绪');
             }
@@ -7767,27 +8472,27 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_user_2fa_setup_challenges_user ON user_two_factor_setup_challenges(user_id, expires_at, consumed_at)`, (err) => {
             if (err) {
-                console.warn(` 创建二步验证设置挑战索引失败:`, err.message);
+                console.warn(` 创建二步验证设置挑战索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' 二步验证设置挑战索引就绪');
             }
         });
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id, rp_id, created_at DESC)`, (err) => {
-            if (err) console.warn(' 创建 Passkey 用户索引失败:', err.message);
+            if (err) console.warn(' 创建 Passkey 用户索引失败:', sanitizeReportContext(err));
         });
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at, consumed_at)`, (err) => {
-            if (err) console.warn(' 创建 Passkey challenge 索引失败:', err.message);
+            if (err) console.warn(' 创建 Passkey challenge 索引失败:', sanitizeReportContext(err));
         });
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_user_reauth_grants_expiry ON user_reauth_grants(user_id, scope, expires_at, consumed_at)`, (err) => {
-            if (err) console.warn(' 创建重新认证授权索引失败:', err.message);
+            if (err) console.warn(' 创建重新认证授权索引失败:', sanitizeReportContext(err));
         });
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_message_feedback_created ON message_feedback(created_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建message_feedback时间索引失败:`, err.message);
+                console.warn(` 创建message_feedback时间索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' message_feedback时间索引就绪');
             }
@@ -7795,7 +8500,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_message_feedback_rating_created ON message_feedback(rating, created_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建message_feedback评分索引失败:`, err.message);
+                console.warn(` 创建message_feedback评分索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' message_feedback评分索引就绪');
             }
@@ -7803,7 +8508,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_user_task_rewards_user ON user_task_rewards(user_id, completed_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建user_task_rewards用户索引失败:`, err.message);
+                console.warn(` 创建user_task_rewards用户索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' user_task_rewards用户索引就绪');
             }
@@ -7811,7 +8516,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_file_uploads_user ON file_uploads(user_id, created_at DESC)`, (err) => {
             if (err) {
-                console.warn(` 创建file_uploads用户索引失败:`, err.message);
+                console.warn(` 创建file_uploads用户索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' file_uploads用户索引就绪');
             }
@@ -7819,7 +8524,7 @@ db.serialize(() => {
 
         db.run(`CREATE INDEX IF NOT EXISTS idx_user_chat_usage_user_window ON user_chat_usage(user_id, window_type, window_start)`, (err) => {
             if (err) {
-                console.warn(` 创建user_chat_usage索引失败:`, err.message);
+                console.warn(` 创建user_chat_usage索引失败:`, sanitizeReportContext(err));
             } else {
                 console.log(' user_chat_usage索引就绪');
             }
@@ -7829,7 +8534,7 @@ db.serialize(() => {
         // 会员等级: free / Pro / MAX
         db.run(`ALTER TABLE users ADD COLUMN membership TEXT DEFAULT 'free'`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加membership列失败:`, err.message);
+                console.warn(` 添加membership列失败:`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加membership列到users表');
             }
@@ -7838,21 +8543,21 @@ db.serialize(() => {
         // 会员开始时间
         db.run(`ALTER TABLE users ADD COLUMN membership_start DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加membership_start列失败:`, err.message);
+                console.warn(` 添加membership_start列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 会员结束时间
         db.run(`ALTER TABLE users ADD COLUMN membership_end DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加membership_end列失败:`, err.message);
+                console.warn(` 添加membership_end列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 当前点数（每日发放，用完即止）
         db.run(`ALTER TABLE users ADD COLUMN points INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加points列失败:`, err.message);
+                console.warn(` 添加points列失败:`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加points列到users表');
             }
@@ -7861,42 +8566,42 @@ db.serialize(() => {
         // 上次签到日期（free用户签到用）
         db.run(`ALTER TABLE users ADD COLUMN last_checkin DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加last_checkin列失败:`, err.message);
+                console.warn(` 添加last_checkin列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 购买的点数（长期有效，2年过期）
         db.run(`ALTER TABLE users ADD COLUMN purchased_points INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加purchased_points列失败:`, err.message);
+                console.warn(` 添加purchased_points列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 购买点数过期时间
         db.run(`ALTER TABLE users ADD COLUMN purchased_points_expire DATETIME`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加purchased_points_expire列失败:`, err.message);
+                console.warn(` 添加purchased_points_expire列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 上次每日点数发放日期（Pro/MAX自动发放用）
         db.run(`ALTER TABLE users ADD COLUMN last_daily_grant DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加last_daily_grant列失败:`, err.message);
+                console.warn(` 添加last_daily_grant列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 旧限免模型使用日期（保留数据库列兼容历史账号）
         db.run(`ALTER TABLE users ADD COLUMN gpt55_usage_date DATE`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加gpt55_usage_date列失败:`, err.message);
+                console.warn(` 添加gpt55_usage_date列失败:`, sanitizeReportContext(err));
             }
         });
 
         // 旧限免模型使用次数（保留数据库列兼容历史账号）
         db.run(`ALTER TABLE users ADD COLUMN gpt55_usage_count INTEGER DEFAULT 0`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
-                console.warn(` 添加gpt55_usage_count列失败:`, err.message);
+                console.warn(` 添加gpt55_usage_count列失败:`, sanitizeReportContext(err));
             }
         });
 
@@ -7918,15 +8623,29 @@ databaseSchemaReady
     .then(() => resolveDatabaseInitializationSettled(true))
     .catch((error) => rejectDatabaseInitializationSettled(error));
 
+const authSessionStartupReady = databaseSchemaReady
+    .then(() => authSessionStore.migrate())
+    .then(() => migratePlaintextUserTotpSecrets())
+    .then(() => {
+        console.log(' 可撤销用户会话结构就绪');
+        return true;
+    });
+const softwareClientStartupReady = authSessionStartupReady
+    .then(() => softwareClientAuth.migrate())
+    .then(() => {
+        console.log(' 软件客户端凭据结构就绪');
+        return true;
+    });
+
 async function verifySelectionExplanationSchema() {
     const requiredColumns = {
-        selection_explanation_threads: ['id', 'user_id', 'created_at', 'updated_at'],
+        selection_explanation_threads: ['id', 'user_id', 'session_id', 'created_at', 'updated_at'],
         selection_explanation_cards: [
             'id', 'thread_id', 'parent_id', 'selected_text', 'answer', 'status', 'ui_language',
             'model_id', 'actual_model', 'provider', 'usage_json', 'created_at', 'updated_at'
         ],
         selection_explanation_requests: [
-            'request_id', 'user_id', 'point_bucket', 'status', 'points', 'thread_id', 'card_id',
+            'request_id', 'user_id', 'session_id', 'point_bucket', 'status', 'points', 'thread_id', 'card_id',
             'target_thread_id', 'parent_card_id', 'is_new_thread', 'selected_text', 'answer_draft',
             'ui_language', 'output_started', 'error_code', 'created_at', 'updated_at'
         ],
@@ -7958,14 +8677,14 @@ const selectionExplanationStartupReady = Promise.all([
     selectionExplanationRecoveryTimer = setInterval(() => {
         recoverStaleSelectionExplanationReservations().then((summary) => {
             if (summary.examined > 0) console.log(' 选词解释中断请求已恢复:', summary);
-        }).catch((error) => console.error(' 选词解释中断恢复失败:', error));
+        }).catch((error) => console.error(' 选词解释中断恢复失败:', sanitizeReportContext(error)));
     }, SELECTION_EXPLANATION_STALE_MINUTES * 60 * 1000);
     selectionExplanationRecoveryTimer.unref?.();
     console.log(' 选词解释数据库结构与恢复任务就绪');
     return true;
 });
 selectionExplanationStartupReady.catch((error) => {
-    console.error(' 初始化选词解释恢复任务失败:', error);
+    console.error(' 初始化选词解释恢复任务失败:', sanitizeReportContext(error));
 });
 
 function buildAllowedCorsOrigins() {
@@ -8018,19 +8737,24 @@ function isLocalDevelopmentRequest(req) {
 }
 
 function buildConnectSrcPolicy(req) {
-    const sources = ["'self'", 'https:'];
+    const sources = new Set(["'self'"]);
+    for (const raw of CSP_CONNECT_ORIGINS) {
+        try {
+            const parsed = new URL(raw);
+            if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+                sources.add(parsed.origin);
+            }
+        } catch (error) {
+            console.warn('忽略无效的 RAI_CSP_CONNECT_ORIGINS 项:', sanitizeReportContext(raw));
+        }
+    }
     if (CSP_ALLOW_LOCAL_CONNECT || isLocalDevelopmentRequest(req)) {
-        sources.push('http://127.0.0.1:*', 'http://localhost:*', 'ws://127.0.0.1:*', 'ws://localhost:*');
+        sources.add('http://127.0.0.1:*');
+        sources.add('http://localhost:*');
+        sources.add('ws://127.0.0.1:*');
+        sources.add('ws://localhost:*');
     }
-    return `connect-src ${sources.join(' ')}`;
-}
-
-function buildScriptSrcPolicy() {
-    const sources = ["'self'", 'blob:'];
-    if (!CSP_STRICT_SCRIPT_SRC) {
-        sources.splice(1, 0, "'unsafe-inline'", "'unsafe-eval'");
-    }
-    return `script-src ${sources.join(' ')}`;
+    return `connect-src ${Array.from(sources).join(' ')}`;
 }
 
 function setSecurityHeaders(req, res) {
@@ -8045,21 +8769,21 @@ function setSecurityHeaders(req, res) {
         "default-src 'self'",
         "base-uri 'self'",
         "object-src 'none'",
-        "frame-ancestors 'self' https://rai.rick.sarl https://rai.rick.quest https://rai.000339.xyz",
-        buildScriptSrcPolicy(),
+        "frame-ancestors 'self'",
+        "script-src 'self'",
+        "script-src-attr 'none'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
         "font-src 'self' data:",
         buildConnectSrcPolicy(req),
         "media-src 'self' data: blob: https:",
-        "worker-src 'self' blob:",
+        "worker-src 'self'",
         "manifest-src 'self'",
         "form-action 'self'",
         "frame-src 'self'"
     ].join('; '));
 
-    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
-    if (req.secure || forwardedProto === 'https') {
+    if (req.secure) {
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
     }
 }
@@ -8085,10 +8809,65 @@ app.use((req, res, next) => {
 });
 app.use(express.urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT || '1mb' }));
 
-app.use((req, res, next) => {
-    setSecurityHeaders(req, res);
-    next();
-});
+// An APK-embedded static key can be extracted. It is only a revocable software
+// identity signal, never a user credential, administrator credential, or
+// substitute for authenticateToken and the existing ownership/quota checks.
+async function attachOptionalSoftwareClient(req, res, next) {
+    if (!String(req.path || '').startsWith('/api')) return next();
+    const headerName = 'x-rai-client-key';
+    if (!Object.prototype.hasOwnProperty.call(req.headers, headerName)) return next();
+    const presentedKey = req.headers[headerName];
+    if (typeof presentedKey !== 'string') {
+        return res.status(401).json({
+            success: false,
+            error: '软件客户端凭据无效或已撤销',
+            code: 'software_client_key_invalid'
+        });
+    }
+
+    try {
+        await softwareClientStartupReady;
+        const client = await softwareClientAuth.validate(presentedKey);
+        if (!client) {
+            return res.status(401).json({
+                success: false,
+                error: '软件客户端凭据无效或已撤销',
+                code: 'software_client_key_invalid'
+            });
+        }
+        req.softwareClient = client;
+        if (
+            client.scopes.includes(SOFTWARE_CLIENT_SCOPE)
+            && (req.path === '/api/admin' || req.path.startsWith('/api/admin/'))
+        ) {
+            return res.status(403).json({
+                success: false,
+                error: '普通软件客户端无权访问管理员接口',
+                code: 'software_client_admin_forbidden'
+            });
+        }
+        return next();
+    } catch (error) {
+        console.error(' 软件客户端认证暂时不可用:', sanitizeReportContext(error?.code || error?.message || 'unknown'));
+        return res.status(503).json({
+            success: false,
+            error: '软件客户端认证暂时不可用',
+            code: 'software_client_auth_unavailable'
+        });
+    }
+}
+
+function requireSoftwareClient(req, res, next) {
+    if (req.softwareClient) return next();
+    return res.status(401).json({
+        success: false,
+        error: '需要有效的软件客户端凭据',
+        code: 'software_client_key_required'
+    });
+}
+
+app.use(attachOptionalSoftwareClient);
+
 // 静态资源缓存配置（普通资源 1 天；版本化字体长期缓存）
 const staticCacheOptions = {
     maxAge: '1d',
@@ -8122,14 +8901,6 @@ app.use('/avatars', (req, res, next) => {
     next();
 }, express.static(path.join(__dirname, 'avatars'), avatarStaticOptions));
 
-app.use(GENERATED_IMAGE_PUBLIC_PREFIX, (req, res, next) => {
-    const ext = path.extname(req.path).toLowerCase().slice(1);
-    if (!['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-        return res.status(404).end();
-    }
-    next();
-}, express.static(GENERATED_IMAGES_DIR, avatarStaticOptions));
-
 app.get('/sw.js', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Service-Worker-Allowed', '/');
@@ -8154,7 +8925,7 @@ app.get('/site.webmanifest', (req, res) => {
         manifest.description = `${BRAND_TITLE} personal AI assistant`;
         res.send(JSON.stringify(manifest, null, 2));
     } catch (error) {
-        console.error(' 读取站点清单失败:', error.message);
+        console.error(' 读取站点清单失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '读取站点清单失败' });
     }
 });
@@ -8162,9 +8933,15 @@ app.get('/site.webmanifest', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public'), staticCacheOptions));
 
 // 限流配置
+// 生产上限固定为 20。隔离烟测可显式提高这一项，避免一轮完整认证矩阵
+// 因共用 loopback 地址而误触生产限流；非 test 环境不会读取该覆盖值。
+const AUTH_RATE_LIMIT_MAX = !IS_PRODUCTION
+    && cleanEnvValue(process.env.NODE_ENV).toLowerCase() === 'test'
+    ? parseBoundedInteger(process.env.RAI_AUTH_RATE_LIMIT_MAX, 20, 20, 1000)
+    : 20;
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 20,
+    max: AUTH_RATE_LIMIT_MAX,
     message: { error: '登录尝试过多,请15分钟后再试' }
 });
 
@@ -8263,11 +9040,10 @@ async function checkAndConsumeChatQuota(userId) {
         windowStart: Math.floor(nowSeconds / quota.seconds) * quota.seconds
     }));
 
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
+    return withMainDbTransaction(async (tx) => {
         const currentRows = [];
         for (const quota of windows) {
-            const row = await dbGetAsync(
+            const row = await tx.get(
                 `SELECT usage_count
                  FROM user_chat_usage
                  WHERE user_id = ? AND window_type = ? AND window_start = ?`,
@@ -8284,7 +9060,6 @@ async function checkAndConsumeChatQuota(userId) {
 
         const blocked = currentRows.find((quota) => quota.used >= quota.limit);
         if (blocked) {
-            await dbRunAsync('COMMIT');
             return {
                 allowed: false,
                 blocked,
@@ -8302,7 +9077,7 @@ async function checkAndConsumeChatQuota(userId) {
         const consumedRows = [];
         for (const quota of currentRows) {
             const nextUsed = quota.used + 1;
-            await dbRunAsync(
+            await tx.run(
                 `INSERT INTO user_chat_usage (user_id, window_type, window_start, usage_count, updated_at)
                  VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
                  ON CONFLICT(user_id, window_type, window_start)
@@ -8319,12 +9094,8 @@ async function checkAndConsumeChatQuota(userId) {
             });
         }
 
-        await dbRunAsync('COMMIT');
         return { allowed: true, quotas: consumedRows };
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
 }
 
 function getBearerToken(req) {
@@ -8334,7 +9105,7 @@ function getBearerToken(req) {
 }
 
 // JWT验证中间件
-const authenticateToken = (req, res, next) => {
+const authenticateToken = async (req, res, next) => {
     const token = getBearerToken(req);
 
     if (!token) {
@@ -8342,13 +9113,51 @@ const authenticateToken = (req, res, next) => {
     }
 
     try {
-        const user = verifyUserSessionToken(token, JWT_SECRET);
+        await authSessionStartupReady;
+        const user = await authSessionStore.verifyAccessToken(token);
         req.user = user;
-        next();
+        return next();
     } catch (error) {
-        return res.status(403).json({ error: '令牌无效或已过期' });
+        return res.status(401).json({ error: '令牌无效、已过期或会话已撤销' });
     }
 };
+
+app.get(`${GENERATED_IMAGE_PUBLIC_PREFIX}/:filename`, authenticateToken, async (req, res) => {
+    const filename = path.basename(String(req.params.filename || ''));
+    const ext = path.extname(filename).toLowerCase().slice(1);
+    if (
+        !filename
+        || filename !== req.params.filename
+        || !['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+    ) {
+        return res.status(404).end();
+    }
+    const row = await dbGetAsync(
+        `SELECT filename, mime_type, expires_at
+         FROM generated_images
+         WHERE filename = ? AND user_id = ? AND expires_at > ?`,
+        [filename, req.user.userId, Date.now()]
+    ).catch(() => null);
+    if (!row) return res.status(404).end();
+
+    const rootPath = path.resolve(GENERATED_IMAGES_DIR);
+    const filePath = path.resolve(rootPath, filename);
+    if (!filePath.startsWith(`${rootPath}${path.sep}`)) return res.status(404).end();
+    try {
+        const stat = await fs.promises.lstat(filePath);
+        if (!stat.isFile() || stat.isSymbolicLink()) return res.status(404).end();
+        const etag = makePrivateEtag(`${req.user.userId}:${filename}:${row.expires_at}:${stat.size}:${stat.mtimeMs}`);
+        res.setHeader('ETag', etag);
+        res.setHeader('X-RAI-Asset-Expires-At', String(row.expires_at));
+        if (requestMatchesEtag(req, etag)) return res.status(304).end();
+    } catch (_) {
+        return res.status(404).end();
+    }
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.type(row.mime_type || `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+    return res.sendFile(filePath);
+});
 
 const sessionStreamStates = new Map();
 const sessionStreamSubscribers = new Map();
@@ -8449,7 +9258,7 @@ async function persistSessionStreamDraft(state, force = false) {
             state.status || 'running'
         ]
     ).catch((error) => {
-        console.warn(' 保存流式草稿失败:', error.message);
+        console.warn(' 保存流式草稿失败:', sanitizeReportContext(error));
     });
 }
 
@@ -8471,9 +9280,8 @@ function cleanupSessionStreamState(sessionId, requestId) {
 
 async function registerActiveRequestForUser({ requestId, userId, sessionId, limit }) {
     const numericLimit = Math.max(1, Number(limit || MAX_CONCURRENT_REQUESTS_PER_USER));
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const row = await dbGetAsync(
+    return withMainDbTransaction(async (tx) => {
+        const row = await tx.get(
             `SELECT COUNT(*) AS count
              FROM active_requests
              WHERE user_id = ?
@@ -8483,23 +9291,64 @@ async function registerActiveRequestForUser({ requestId, userId, sessionId, limi
         );
         const active = Number(row?.count || 0);
         if (active >= numericLimit) {
-            await dbRunAsync('COMMIT');
             return { allowed: false, active, limit: numericLimit };
         }
 
-        await dbRunAsync(
+        await tx.run(
             'INSERT INTO active_requests (id, user_id, session_id) VALUES (?, ?, ?)',
             [requestId, userId, sessionId || 'anonymous']
         );
-        await dbRunAsync('COMMIT');
         return { allowed: true, active: active + 1, limit: numericLimit };
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
 }
 
 // 文件上传配置
+const UPLOAD_STORAGE_ROOTS = [
+    path.resolve(__dirname, 'uploads'),
+    path.resolve(__dirname, 'avatars')
+];
+
+function isServerGeneratedUploadPath(filePath) {
+    const resolvedPath = path.resolve(String(filePath || ''));
+    const filename = path.basename(resolvedPath);
+    return UPLOAD_STORAGE_ROOTS.some((root) => path.dirname(resolvedPath) === root)
+        && /^\d{10,17}-[a-f0-9]{12}\.[a-z0-9]{1,10}$/i.test(filename);
+}
+
+function trackRequestUploadPath(req, filePath) {
+    const resolvedPath = path.resolve(String(filePath || ''));
+    if (!isServerGeneratedUploadPath(resolvedPath)) return;
+    if (!(req.raiPendingUploadPaths instanceof Set)) {
+        Object.defineProperty(req, 'raiPendingUploadPaths', {
+            value: new Set(),
+            enumerable: false,
+            configurable: false,
+            writable: false
+        });
+    }
+    req.raiPendingUploadPaths.add(resolvedPath);
+}
+
+async function cleanupRejectedRequestUploads(req) {
+    const targets = new Set(req.raiPendingUploadPaths instanceof Set ? req.raiPendingUploadPaths : []);
+    if (req.file?.path) targets.add(path.resolve(req.file.path));
+    if (Array.isArray(req.files)) {
+        for (const file of req.files) {
+            if (file?.path) targets.add(path.resolve(file.path));
+        }
+    }
+    for (const target of targets) {
+        if (!isServerGeneratedUploadPath(target)) continue;
+        try {
+            await fs.promises.unlink(target);
+        } catch (error) {
+            if (error?.code !== 'ENOENT') {
+                console.warn(' 拒绝上传临时文件清理失败:', sanitizeReportContext(error));
+            }
+        }
+    }
+}
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const uploadPath = file.fieldname === 'avatar' ? 'avatars' : 'uploads';
@@ -8507,6 +9356,10 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
+        const uploadPath = file.fieldname === 'avatar' ? 'avatars' : 'uploads';
+        // Record the target before DiskStorage opens it. On parser failures,
+        // req.file may never be assigned even though bytes already reached disk.
+        trackRequestUploadPath(req, path.join(__dirname, uploadPath, uniqueName));
         cb(null, uniqueName);
     }
 });
@@ -8534,6 +9387,7 @@ const ATTACHMENT_EXTENSIONS = new Set([
     'mp4', 'webm', 'mkv', 'flv', 'wmv', 'avi', 'mov', 'm4v',
     'mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'wma', 'opus'
 ]);
+const DOCUMENT_ATTACHMENT_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']);
 
 function getUploadExtension(file) {
     return path.extname(file.originalname || '').toLowerCase().slice(1);
@@ -8561,6 +9415,12 @@ function validateAttachmentUpload(req, file, cb) {
     if (!ext || filenameHasBlockedExtension(file) || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext)) {
         return cb(new Error('不支持的文件类型'));
     }
+    if (ext === 'pdf') {
+        return cb(new Error('PDF 解析暂停，等待独立操作系统级沙箱'));
+    }
+    if (!DOCUMENT_PARSER_ENABLED && DOCUMENT_ATTACHMENT_EXTENSIONS.has(ext)) {
+        return cb(new Error('安全维护期间暂不支持 PDF 或 Office 文档'));
+    }
     // 仅拒绝真正的可执行 MIME，代码/HTML 文件允许作为文本附件上传
     if (/x-msdownload|x-msdos-program|x-msi/i.test(file.mimetype || '')) {
         return cb(new Error('不支持的文件类型'));
@@ -8569,11 +9429,16 @@ function validateAttachmentUpload(req, file, cb) {
 }
 
 function runUpload(middleware, req, res, next) {
-    middleware(req, res, (err) => {
+    middleware(req, res, async (err) => {
         if (!err) return next();
+        // Wait for every request-owned DiskStorage target to disappear before
+        // returning the rejection; this closes Multer abort races and makes the
+        // no-residue guarantee observable to callers.
+        await cleanupRejectedRequestUploads(req);
         if (err instanceof multer.MulterError) {
+            console.warn(` Multipart 上传已拒绝: code=${String(err.code || 'unknown').slice(0, 80)}, ${formatPrivateLogFingerprint(err.field || '', 'field')}`);
             const message = err.code === 'LIMIT_FILE_SIZE' ? '文件大小超过限制' : '文件上传失败';
-            return res.status(400).json({ error: message });
+            return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: message });
         }
         return res.status(400).json({ error: err.message || '文件上传失败' });
     });
@@ -8635,6 +9500,33 @@ async function validateUploadedFileContent(file, uploadKind) {
         throw error;
     }
 
+    if (ext === 'pdf' && !prefix.slice(0, 5).equals(Buffer.from('%PDF-', 'ascii'))) {
+        const error = new Error('PDF 文件内容与扩展名不匹配');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (['docx', 'xlsx', 'pptx'].includes(ext)) {
+        const zipSignature = prefix.slice(0, 4);
+        const validZip = zipSignature.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+            || zipSignature.equals(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
+            || zipSignature.equals(Buffer.from([0x50, 0x4b, 0x07, 0x08]));
+        if (!validZip) {
+            const error = new Error('Office 文件内容与扩展名不匹配');
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    if (['doc', 'xls', 'ppt'].includes(ext)) {
+        const compoundFileMagic = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+        if (!prefix.slice(0, compoundFileMagic.length).equals(compoundFileMagic)) {
+            const error = new Error('旧版 Office 文件内容与扩展名不匹配');
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
     if (looksLikeActiveWebContent(prefix) && (uploadKind !== 'attachment' || !isTextualAttachmentExtension(ext))) {
         const error = new Error('不支持的文件类型');
         error.statusCode = 400;
@@ -8642,27 +9534,58 @@ async function validateUploadedFileContent(file, uploadKind) {
     }
 }
 
-function normalizeForwardedPrefix(req) {
-    const raw = String(req.headers['x-forwarded-prefix'] || '').trim().replace(/\/+$/, '');
-    if (!raw) return '';
-    if (!/^\/[A-Za-z0-9/_-]{1,80}$/.test(raw) || raw.includes('..')) return '';
-    return raw;
-}
-
-async function recordUploadedFile(req, file, uploadKind = 'attachment') {
-    await dbRunAsync(
-        `INSERT OR REPLACE INTO file_uploads
+async function recordUploadedFileWithinQuota(req, file, uploadKind = 'attachment') {
+    const settings = await getAdminRuntimeSettings();
+    const userId = Number(req.user.userId);
+    const fileSize = Number(file.size || 0);
+    const maxFileBytes = Math.max(1, Number(settings.upload_max_file_mb || 20)) * 1024 * 1024;
+    const maxTotalBytes = Number(settings.upload_user_total_mb || 0) > 0
+        ? Number(settings.upload_user_total_mb) * 1024 * 1024
+        : 0;
+    const maxFiles = Number(settings.upload_user_max_files || 0);
+    const result = await dbRunAsync(
+        `INSERT INTO file_uploads
          (filename, user_id, original_name, mime_type, size, upload_kind, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+         SELECT ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+         WHERE ? <= ?
+           AND (? <= 0 OR (
+                SELECT COUNT(*) FROM file_uploads
+                WHERE user_id = ? AND upload_kind = 'attachment'
+           ) < ?)
+           AND (? <= 0 OR (
+                SELECT COALESCE(SUM(size), 0) FROM file_uploads
+                WHERE user_id = ? AND upload_kind = 'attachment'
+           ) + ? <= ?)`,
         [
             file.filename,
-            req.user.userId,
+            userId,
             String(file.originalname || '').slice(0, 255),
             String(file.mimetype || '').slice(0, 120),
-            Number(file.size || 0),
-            uploadKind
+            fileSize,
+            uploadKind,
+            fileSize,
+            maxFileBytes,
+            maxFiles,
+            userId,
+            maxFiles,
+            maxTotalBytes,
+            userId,
+            fileSize,
+            maxTotalBytes
         ]
     );
+    if (Number(result?.changes || 0) === 1) return;
+
+    const stats = await getUserUploadStats(userId);
+    const error = new Error(
+        fileSize > maxFileBytes
+            ? `单个文件不能超过 ${settings.upload_max_file_mb}MB`
+            : (maxFiles > 0 && stats.fileCount >= maxFiles
+                ? `上传文件数量已达上限（${maxFiles} 个）`
+                : `上传空间已达上限（${settings.upload_user_total_mb}MB）`)
+    );
+    error.statusCode = 413;
+    throw error;
 }
 
 async function checkAndConsumeWindowUsage({ userId, windowType, seconds, limit, label }) {
@@ -8670,49 +9593,42 @@ async function checkAndConsumeWindowUsage({ userId, windowType, seconds, limit, 
     if (numericLimit <= 0) return { allowed: true, limit: numericLimit };
     const nowSeconds = Math.floor(Date.now() / 1000);
     const windowStart = Math.floor(nowSeconds / seconds) * seconds;
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        await dbRunAsync(
-            `INSERT INTO user_chat_usage (user_id, window_type, window_start, usage_count, updated_at)
-             VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP)
-             ON CONFLICT(user_id, window_type, window_start) DO NOTHING`,
-            [userId, windowType, windowStart]
-        );
-        const row = await dbGetAsync(
-            `SELECT usage_count FROM user_chat_usage
-             WHERE user_id = ? AND window_type = ? AND window_start = ?`,
-            [userId, windowType, windowStart]
-        );
-        const used = Number(row?.usage_count || 0);
-        if (used >= numericLimit) {
-            await dbRunAsync('COMMIT');
-            return {
-                allowed: false,
-                label,
-                limit: numericLimit,
-                used,
-                resetAt: buildQuotaResetAt(windowStart, seconds)
-            };
-        }
-        await dbRunAsync(
-            `UPDATE user_chat_usage
-             SET usage_count = usage_count + 1, updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ? AND window_type = ? AND window_start = ?`,
-            [userId, windowType, windowStart]
-        );
-        await dbRunAsync('COMMIT');
+    // A single conditional UPSERT is the quota linearization point. Manual BEGIN/SELECT/
+    // UPDATE sequences on the shared sqlite connection can interleave between concurrent
+    // requests and must not be used here.
+    const result = await dbRunAsync(
+        `INSERT INTO user_chat_usage
+         (user_id, window_type, window_start, usage_count, updated_at)
+         VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id, window_type, window_start) DO UPDATE SET
+           usage_count = user_chat_usage.usage_count + 1,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE user_chat_usage.usage_count < ?`,
+        [userId, windowType, windowStart, numericLimit]
+    );
+    const row = await dbGetAsync(
+        `SELECT usage_count FROM user_chat_usage
+         WHERE user_id = ? AND window_type = ? AND window_start = ?`,
+        [userId, windowType, windowStart]
+    );
+    const used = Number(row?.usage_count || 0);
+    if (Number(result?.changes || 0) !== 1) {
         return {
-            allowed: true,
+            allowed: false,
             label,
             limit: numericLimit,
-            used: used + 1,
-            remaining: Math.max(numericLimit - used - 1, 0),
+            used,
             resetAt: buildQuotaResetAt(windowStart, seconds)
         };
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
     }
+    return {
+        allowed: true,
+        label,
+        limit: numericLimit,
+        used,
+        remaining: Math.max(numericLimit - used, 0),
+        resetAt: buildQuotaResetAt(windowStart, seconds)
+    };
 }
 
 async function getUserUploadStats(userId) {
@@ -8728,51 +9644,12 @@ async function getUserUploadStats(userId) {
     };
 }
 
-async function assertUserUploadQuota(userId, incomingBytes = 0) {
-    const settings = await getAdminRuntimeSettings();
-    const maxFileBytes = Math.max(1, Number(settings.upload_max_file_mb || 20)) * 1024 * 1024;
-    const maxTotalBytes = Number(settings.upload_user_total_mb || 0) > 0
-        ? Number(settings.upload_user_total_mb) * 1024 * 1024
-        : 0;
-    const maxFiles = Number(settings.upload_user_max_files || 0);
-    const incoming = Number(incomingBytes || 0);
-
-    if (incoming > maxFileBytes) {
-        const err = new Error(`单个文件不能超过 ${settings.upload_max_file_mb}MB`);
-        err.statusCode = 413;
-        throw err;
-    }
-
-    const stats = await getUserUploadStats(userId);
-    if (maxFiles > 0 && stats.fileCount + 1 > maxFiles) {
-        const err = new Error(`上传文件数量已达上限（${maxFiles} 个）`);
-        err.statusCode = 429;
-        throw err;
-    }
-    if (maxTotalBytes > 0 && stats.totalSize + incoming > maxTotalBytes) {
-        const err = new Error(`上传空间已达上限（${settings.upload_user_total_mb}MB）`);
-        err.statusCode = 413;
-        throw err;
-    }
-}
-
 async function userCanAccessUploadedFile(filename, userId) {
     const owner = await dbGetAsync(
         'SELECT user_id FROM file_uploads WHERE filename = ?',
         [filename]
     );
-    if (owner) return Number(owner.user_id) === Number(userId);
-
-    // Legacy fallback for files uploaded before file_uploads existed.
-    const referenced = await dbGetAsync(
-        `SELECT 1 AS ok
-         FROM messages m
-         JOIN sessions s ON m.session_id = s.id
-         WHERE s.user_id = ? AND instr(COALESCE(m.attachments, ''), ?) > 0
-         LIMIT 1`,
-        [userId, filename]
-    );
-    return Boolean(referenced);
+    return Boolean(owner) && Number(owner.user_id) === Number(userId);
 }
 
 const ACCOUNT_DELETE_CONFIRMATIONS = new Set([
@@ -8786,7 +9663,9 @@ const ACCOUNT_DELETE_CONFIRMATIONS = new Set([
 function addOwnedFileDeleteTarget(targets, rootDir, filename) {
     const safeFilename = path.basename(String(filename || ''));
     if (!safeFilename || safeFilename === '.' || safeFilename === '..') return;
-    const safeRoot = rootDir === 'avatars' ? 'avatars' : 'uploads';
+    const safeRoot = rootDir === 'avatars'
+        ? 'avatars'
+        : (rootDir === 'generated-images' ? 'generated-images' : 'uploads');
     targets.set(`${safeRoot}:${safeFilename}`, { rootDir: safeRoot, filename: safeFilename });
 }
 
@@ -8801,7 +9680,9 @@ function addAvatarDeleteTargetFromUrl(targets, avatarUrl) {
 async function unlinkOwnedUserFiles(fileTargets) {
     let deletedFiles = 0;
     for (const target of fileTargets) {
-        const rootPath = path.resolve(__dirname, target.rootDir);
+        const rootPath = target.rootDir === 'generated-images'
+            ? path.resolve(GENERATED_IMAGES_DIR)
+            : path.resolve(__dirname, target.rootDir);
         const filePath = path.resolve(rootPath, path.basename(target.filename || ''));
         if (!filePath.startsWith(`${rootPath}${path.sep}`)) continue;
         try {
@@ -8809,11 +9690,129 @@ async function unlinkOwnedUserFiles(fileTargets) {
             deletedFiles += 1;
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                console.warn(` 删除用户文件失败: ${target.rootDir}/${target.filename}`, error.message);
+                console.warn(` 删除用户文件失败: ${target.rootDir}/${target.filename}`, sanitizeReportContext(error));
             }
         }
     }
     return deletedFiles;
+}
+
+async function enqueueGeneratedImageDeletion(tx, filename, queuedAt = Date.now()) {
+    await tx.run(
+        `INSERT INTO generated_image_deletions (filename, queued_at)
+         VALUES (?, ?)
+         ON CONFLICT(filename) DO NOTHING`,
+        [String(filename || ''), Number(queuedAt)]
+    );
+}
+
+let generatedImageDeletionDrainTail = Promise.resolve();
+function drainQueuedGeneratedImageDeletions(limit = 200) {
+    const run = generatedImageDeletionDrainTail
+        .catch(() => undefined)
+        .then(() => drainGeneratedImageDeletionQueue({
+            rootDir: GENERATED_IMAGES_DIR,
+            limit,
+            dbAll: dbAllAsync,
+            dbRun: dbRunAsync,
+            onError(error, row) {
+                console.warn(
+                    ` 生成图片延迟删除失败: ${formatPrivateLogFingerprint(row?.filename || '', 'image')}`,
+                    sanitizeReportContext(error)
+                );
+            }
+        }));
+    generatedImageDeletionDrainTail = run.catch(() => undefined);
+    return run;
+}
+
+async function drainQueuedGeneratedImageDeletionsBestEffort() {
+    try {
+        return await drainQueuedGeneratedImageDeletions();
+    } catch (error) {
+        console.warn(' 生成图片延迟删除队列暂时无法清空:', sanitizeReportContext(error));
+        return null;
+    }
+}
+
+async function cleanupFailedChatGeneratedImagesBestEffort({ userId, requestId, cause = 'request_failed' } = {}) {
+    const numericUserId = Number(userId);
+    const normalizedRequestId = String(requestId || '').trim();
+    if (!Number.isInteger(numericUserId) || numericUserId <= 0 || !normalizedRequestId) return 0;
+
+    const safeCause = new Set(['request_failed', 'client_aborted', 'user_cancelled'])
+        .has(String(cause || ''))
+        ? String(cause)
+        : 'request_failed';
+    try {
+        const stagedCount = await withMainDbTransaction((tx) => stageGeneratedImageDeletionsForRequest({
+            tx,
+            userId: numericUserId,
+            requestId: normalizedRequestId
+        }));
+        if (stagedCount <= 0) return 0;
+
+        const drainResult = await drainQueuedGeneratedImageDeletionsBestEffort();
+        if (!drainResult || Number(drainResult.failed || 0) > 0) {
+            await appendRaiRuntimeReport({
+                level: '警告',
+                tag: 'generated_image_failed_request_cleanup_deferred',
+                message: 'failed chat generated image cleanup remains durably queued',
+                context: {
+                    cause: safeCause,
+                    userId: numericUserId,
+                    request: formatPrivateLogFingerprint(normalizedRequestId, 'request'),
+                    stagedCount,
+                    failedCount: Number(drainResult?.failed || stagedCount)
+                }
+            });
+        }
+        return stagedCount;
+    } catch (cleanupError) {
+        console.warn(' 失败聊天的生成图片清理未能入队:', sanitizeReportContext(cleanupError));
+        await appendRaiRuntimeReport({
+            level: '报错',
+            tag: 'generated_image_failed_request_cleanup_failed',
+            message: cleanupError?.code || cleanupError?.message || 'generated image cleanup failed',
+            context: {
+                cause: safeCause,
+                userId: numericUserId,
+                request: formatPrivateLogFingerprint(normalizedRequestId, 'request')
+            }
+        }).catch(() => false);
+        return 0;
+    }
+}
+
+function extractGeneratedImageFilenamesFromMessage(content) {
+    const filenames = new Set();
+    const pattern = /\/generated-images\/([A-Za-z0-9][A-Za-z0-9._-]{0,254})/g;
+    const value = String(content || '');
+    let match;
+    while ((match = pattern.exec(value)) !== null) filenames.add(match[1]);
+    return [...filenames];
+}
+
+async function cleanupExpiredGeneratedImages(limit = 200) {
+    const now = Date.now();
+    const boundedLimit = Math.max(1, Math.min(Number(limit) || 200, 1000));
+    const expiredCount = await withMainDbTransaction(async (tx) => {
+        const rows = await tx.all(
+            'SELECT filename FROM generated_images WHERE expires_at <= ? ORDER BY expires_at ASC LIMIT ?',
+            [now, boundedLimit]
+        );
+        for (const row of rows) {
+            await enqueueGeneratedImageDeletion(tx, row.filename, now);
+            await tx.run(
+                'DELETE FROM generated_images WHERE filename = ? AND expires_at <= ?',
+                [row.filename, now]
+            );
+        }
+        return rows.length;
+    });
+    // Also retries work left by a previous process after an unlink failure.
+    await drainQueuedGeneratedImageDeletions(boundedLimit);
+    return expiredCount;
 }
 
 async function deleteUserDataCascade(userId, options = {}) {
@@ -8874,6 +9873,14 @@ async function deleteUserDataCascade(userId, options = {}) {
             await tx.run('DELETE FROM user_task_rewards WHERE user_id = ?', [numericUserId]);
             await tx.run('DELETE FROM user_chat_usage WHERE user_id = ?', [numericUserId]);
             await tx.run('DELETE FROM file_uploads WHERE user_id = ?', [numericUserId]);
+            const generatedImages = await tx.all(
+                'SELECT filename FROM generated_images WHERE user_id = ?',
+                [numericUserId]
+            );
+            for (const image of generatedImages) {
+                await enqueueGeneratedImageDeletion(tx, image.filename);
+            }
+            await tx.run('DELETE FROM generated_images WHERE user_id = ?', [numericUserId]);
             await tx.run('DELETE FROM auth_ztx6d_codes WHERE user_id = ?', [numericUserId]);
             await tx.run('DELETE FROM auth_ztx6d_rt WHERE bind_user_id = ?', [numericUserId]);
             await tx.run('DELETE FROM auth_email_codes WHERE user_id = ? OR LOWER(email) = LOWER(?)', [numericUserId, user.email || '']);
@@ -8894,6 +9901,7 @@ async function deleteUserDataCascade(userId, options = {}) {
     }
 
     const deletedFiles = await unlinkOwnedUserFiles(fileTargets.values());
+    await drainQueuedGeneratedImageDeletions();
     return {
         success: true,
         actor: options.actor || 'system',
@@ -8905,13 +9913,33 @@ async function deleteUserDataCascade(userId, options = {}) {
 
 const avatarUpload = multer({
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: {
+        // Busboy 1.6 内部将每个 part header 限制为 16 KiB / 2000 pairs；
+        // 它不接受 headerPairs 配置，依赖回归会固定并验证这两个有效上限。
+        fileSize: 5 * 1024 * 1024,
+        files: 1,
+        fields: 0,
+        // Multer/Busboy 的 parts 限制在解析下一个边界时计数；2 才能正常接收唯一文件。
+        parts: 2,
+        fieldNameSize: 32,
+        fieldSize: 0,
+        fieldNestingDepth: 0
+    },
     fileFilter: validateAvatarUpload
 });
 
 const attachmentUpload = multer({
     storage: storage,
-    limits: { fileSize: ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES },
+    limits: {
+        // 见 avatarUpload：part header 的真实边界由固定的 Busboy 1.6 实现提供。
+        fileSize: ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES,
+        files: 1,
+        fields: 0,
+        parts: 2,
+        fieldNameSize: 32,
+        fieldSize: 0,
+        fieldNestingDepth: 0
+    },
     fileFilter: validateAttachmentUpload
 });
 
@@ -8944,12 +9972,13 @@ app.get('/api/quote/:symbol', financeQuoteLimiter, async (req, res) => {
         });
         res.json(quote);
     } catch (error) {
-        const statusCode = Number(error?.statusCode || 502);
-        res.status(statusCode).json({
+        const publicError = buildPublicFinanceError(error);
+        console.warn(' 行情请求失败:', sanitizeReportContext(error));
+        res.status(publicError.status).json({
             error: {
-                code: error?.code || 'finance_quote_failed',
-                message: error?.message || '获取行情失败',
-                details: error?.details || null
+                code: publicError.code,
+                message: publicError.message,
+                details: publicError.details || null
             }
         });
     }
@@ -8986,7 +10015,7 @@ function resolveZtx6dCallbackUrl(req) {
                 return `${publicBase}/api/auth/ztx6d/callback`;
             }
         } catch (error) {
-            console.warn(` ZTX6D_CALLBACK_URL格式无效，使用PUBLIC_BASE_URL生成回调: ${error.message}`);
+            console.warn(' ZTX6D_CALLBACK_URL格式无效，使用PUBLIC_BASE_URL生成回调:', sanitizeReportContext(error));
             return `${publicBase}/api/auth/ztx6d/callback`;
         }
         return ZTX6D_CALLBACK_URL;
@@ -9027,19 +10056,18 @@ async function fetchZtx6dOpenApi(action, payload) {
     });
 
     let data = null;
-    const text = await response.text();
+    const text = await readBoundedResponseText(response, 256 * 1024);
     if (text) {
         try {
             data = JSON.parse(text);
         } catch (error) {
-            throw new Error(`ztx6d_invalid_json:${text.substring(0, 160)}`);
+            throw new Error(`ztx6d_invalid_json:bodyLength=${text.length}`);
         }
     }
 
     if (!response.ok || data?.error) {
-        const code = data?.error || `http_${response.status}`;
-        const error = new Error(`ztx6d_${action}_${code}`);
-        error.code = code;
+        const error = new Error('ztx6d_upstream_failed');
+        error.code = 'ztx6d_upstream_failed';
         error.statusCode = response.status || 502;
         throw error;
     }
@@ -9054,36 +10082,29 @@ async function cleanupExpiredZtx6dRt() {
             [Date.now(), Date.now() - 24 * 60 * 60 * 1000]
         );
     } catch (error) {
-        console.warn(` ZTX6D rt清理失败: ${error.message}`);
+        console.warn(' ZTX6D rt清理失败:', sanitizeReportContext(error));
     }
 }
 
 async function consumeZtx6dRt(rt) {
     const authRt = String(rt || '').trim();
     if (!authRt) return null;
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const row = await dbGetAsync('SELECT * FROM auth_ztx6d_rt WHERE rt = ?', [authRt]);
+    return withMainDbTransaction(async (tx) => {
+        const row = await tx.get('SELECT * FROM auth_ztx6d_rt WHERE rt = ?', [authRt]);
         if (!row || row.consumed_at || Number(row.expires_at || 0) < Date.now()) {
-            await dbRunAsync('COMMIT');
             return null;
         }
 
-        const result = await dbRunAsync(
+        const result = await tx.run(
             'UPDATE auth_ztx6d_rt SET consumed_at = ? WHERE rt = ? AND consumed_at IS NULL',
             [Date.now(), authRt]
         );
         if (Number(result?.changes || 0) !== 1) {
-            await dbRunAsync('ROLLBACK');
             return null;
         }
 
-        await dbRunAsync('COMMIT');
         return row;
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
 }
 
 async function cleanupExpiredZtx6dAuthCodes() {
@@ -9093,7 +10114,7 @@ async function cleanupExpiredZtx6dAuthCodes() {
             [Date.now(), Date.now() - 24 * 60 * 60 * 1000]
         );
     } catch (error) {
-        console.warn(` ZTX6D auth_code清理失败: ${error.message}`);
+        console.warn(' ZTX6D auth_code清理失败:', sanitizeReportContext(error));
     }
 }
 
@@ -9119,33 +10140,26 @@ async function consumeZtx6dAuthCode(code) {
     const authCode = String(code || '').trim();
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(authCode)) return null;
 
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const row = await dbGetAsync(
+    return withMainDbTransaction(async (tx) => {
+        const row = await tx.get(
             'SELECT * FROM auth_ztx6d_codes WHERE code = ?',
             [authCode]
         );
 
         if (!row || row.consumed_at || Number(row.expires_at || 0) < Date.now()) {
-            await dbRunAsync('COMMIT');
             return null;
         }
 
-        const result = await dbRunAsync(
+        const result = await tx.run(
             'UPDATE auth_ztx6d_codes SET consumed_at = ? WHERE code = ? AND consumed_at IS NULL',
             [Date.now(), authCode]
         );
         if (Number(result?.changes || 0) !== 1) {
-            await dbRunAsync('ROLLBACK');
             return null;
         }
 
-        await dbRunAsync('COMMIT');
         return row;
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
 }
 
 async function findOrCreateZtx6dUser(uid) {
@@ -9170,25 +10184,32 @@ async function findOrCreateZtx6dUser(uid) {
         );
 
         if (existingSyntheticUser) {
-            await dbRunAsync(
-                'UPDATE users SET external_provider = ?, external_uid = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?',
-                [provider, externalUid, existingSyntheticUser.id]
-            );
+            await withSensitiveAccountMutation(existingSyntheticUser.id, async (tx) => {
+                const changed = await tx.run(
+                    'UPDATE users SET external_provider = ?, external_uid = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?',
+                    [provider, externalUid, existingSyntheticUser.id]
+                );
+                if (Number(changed?.changes || 0) !== 1) {
+                    throw new Error('ztx6d_synthetic_bind_state_changed');
+                }
+                return true;
+            });
+            await purgeStaleAuthSessionsAfterSensitiveChange(existingSyntheticUser.id, 'external_provider_recovered');
             user = { ...existingSyntheticUser, username: existingSyntheticUser.username || username };
         } else {
-            const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+            const passwordHash = await hashPassword(crypto.randomBytes(32).toString('hex'));
             const result = await dbRunAsync(
                 `INSERT INTO users
-                 (email, password_hash, username, email_verified, email_verified_at, external_provider, external_uid, last_login)
-                 VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)`,
-                [syntheticEmail, passwordHash, username, provider, externalUid]
+                 (email, password_hash, password_policy_version, username, email_verified, email_verified_at, external_provider, external_uid, last_login)
+                 VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)`,
+                [syntheticEmail, passwordHash, PASSWORD_POLICY_VERSION, username, provider, externalUid]
             );
             await dbRunAsync('INSERT OR IGNORE INTO user_configs (user_id, long_memory_enabled) VALUES (?, 0)', [result.lastID]);
             await dbRunAsync(
                 `UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?`,
                 [NEW_USER_WELCOME_POINTS, result.lastID]
             ).catch((error) => {
-                console.warn(` ztx6d新用户欢迎点数发放失败 userId=${result.lastID}:`, error.message);
+                console.warn(` ztx6d新用户欢迎点数发放失败 userId=${result.lastID}:`, sanitizeReportContext(error));
             });
             user = {
                 id: result.lastID,
@@ -9222,41 +10243,47 @@ async function bindZtx6dUser(userId, uid) {
         throw error;
     }
 
-    const existingBinding = await dbGetAsync(
-        'SELECT id, email, username, avatar_url FROM users WHERE external_provider = ? AND external_uid = ?',
-        [provider, externalUid]
-    );
+    const mutation = await withSensitiveAccountMutation(targetUserId, async (tx) => {
+        const existingBinding = await tx.get(
+            'SELECT id FROM users WHERE external_provider = ? AND external_uid = ?',
+            [provider, externalUid]
+        );
+        if (existingBinding && Number(existingBinding.id) !== targetUserId) {
+            const error = new Error('ztx6d_uid_already_bound');
+            error.code = 'already_bound';
+            throw error;
+        }
 
-    if (existingBinding && Number(existingBinding.id) !== targetUserId) {
-        const error = new Error('ztx6d_uid_already_bound');
-        error.code = 'already_bound';
-        throw error;
-    }
+        const user = await tx.get(
+            'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
+            [targetUserId]
+        );
+        if (!user) {
+            const error = new Error('bind_user_not_found');
+            error.code = 'user_not_found';
+            throw error;
+        }
 
-    const user = await dbGetAsync(
-        'SELECT id, email, username, avatar_url, external_provider, external_uid FROM users WHERE id = ?',
-        [targetUserId]
-    );
+        const currentProvider = String(user.external_provider || '').trim();
+        const currentUid = String(user.external_uid || '').trim();
+        if (currentProvider && (currentProvider !== provider || currentUid !== externalUid)) {
+            const error = new Error('local_user_already_bound');
+            error.code = 'user_already_bound';
+            throw error;
+        }
 
-    if (!user) {
-        const error = new Error('bind_user_not_found');
-        error.code = 'user_not_found';
-        throw error;
-    }
-
-    const currentProvider = String(user.external_provider || '').trim();
-    const currentUid = String(user.external_uid || '').trim();
-    if (currentProvider && (currentProvider !== provider || currentUid !== externalUid)) {
-        const error = new Error('local_user_already_bound');
-        error.code = 'user_already_bound';
-        throw error;
-    }
-
-    await dbRunAsync(
-        'UPDATE users SET external_provider = ?, external_uid = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?',
-        [provider, externalUid, targetUserId]
-    );
-    await dbRunAsync('INSERT OR IGNORE INTO user_configs (user_id, long_memory_enabled) VALUES (?, 0)', [targetUserId]);
+        const changed = await tx.run(
+            'UPDATE users SET external_provider = ?, external_uid = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?',
+            [provider, externalUid, targetUserId]
+        );
+        if (Number(changed?.changes || 0) !== 1) {
+            throw new Error('ztx6d_bind_state_changed');
+        }
+        await tx.run('INSERT OR IGNORE INTO user_configs (user_id, long_memory_enabled) VALUES (?, 0)', [targetUserId]);
+        return user;
+    });
+    await purgeStaleAuthSessionsAfterSensitiveChange(targetUserId, 'external_provider_bound');
+    const user = mutation.value;
 
     return {
         id: user.id,
@@ -9312,8 +10339,8 @@ app.get('/api/auth/ztx6d/start', authLimiter, async (req, res) => {
         loginUrl.searchParams.set('rt', rt);
         res.redirect(loginUrl.toString());
     } catch (error) {
-        console.error(` ZTX6D create_rt失败: ${error.message}`);
-        res.status(502).json({ success: false, error: error.code || 'ztx6d_create_rt_failed' });
+        console.error(' ZTX6D create_rt失败:', sanitizeReportContext(error));
+        res.status(502).json({ success: false, error: 'ztx6d_create_rt_failed' });
     }
 });
 
@@ -9344,8 +10371,8 @@ app.post('/api/auth/ztx6d/bind/start', authenticateToken, authLimiter, async (re
         loginUrl.searchParams.set('rt', rt);
         res.json({ success: true, redirectUrl: loginUrl.toString() });
     } catch (error) {
-        console.error(` ZTX6D bind create_rt失败: ${error.message}`);
-        res.status(502).json({ success: false, error: error.code || 'ztx6d_create_rt_failed' });
+        console.error(' ZTX6D bind create_rt失败:', sanitizeReportContext(error));
+        res.status(502).json({ success: false, error: 'ztx6d_create_rt_failed' });
     }
 });
 
@@ -9391,13 +10418,14 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
             auth_provider: 'ztx6d'
         }));
     } catch (error) {
-        console.error(` ZTX6D callback失败: ${error.message}`);
-        res.redirect(redirectZtx6dError(req, returnPath, error.code || 'callback_failed'));
+        console.error(' ZTX6D callback失败:', sanitizeReportContext(error));
+        res.redirect(redirectZtx6dError(req, returnPath, 'callback_failed'));
     }
 });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
     const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
+    const fingerprint = readAuthDeviceFingerprint(req);
     if (!authCode) {
         return res.status(400).json({ success: false, error: 'missing_auth_code' });
     }
@@ -9408,44 +10436,234 @@ app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: 'invalid_or_expired_auth_code' });
         }
 
-        const token = signUserSessionToken(
-            { userId: codeRecord.user_id, email: codeRecord.email },
-            JWT_SECRET,
-            { provider: codeRecord.provider || 'ztx6d' }
-        );
+        await authSessionStartupReady;
+        const session = await authSessionStore.createSession({
+            userId: codeRecord.user_id,
+            authMethod: codeRecord.provider || 'ztx6d',
+            fingerprint,
+            ...buildAuthSessionDeviceMetadata(req),
+            additionalClaims: { provider: codeRecord.provider || 'ztx6d' }
+        });
+        res.setHeader('Set-Cookie', session.refreshCookie.header);
 
         res.json({
             success: true,
-            token,
+            token: session.accessToken,
+            tokenExpiresAt: session.accessTokenExpiresAt,
             auth_provider: codeRecord.provider || 'ztx6d'
         });
     } catch (error) {
-        console.error(` ZTX6D auth_code交换失败: ${error.message}`);
+        console.error(' ZTX6D auth_code交换失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: 'auth_code_exchange_failed' });
     }
 });
+
+function requireTrustedRefreshRequest(req, res, next) {
+    const marker = String(req.headers['x-rai-refresh'] || '');
+    const origin = String(req.headers.origin || '').trim();
+    if (marker !== '1') {
+        return res.status(403).json({ success: false, error: '刷新请求缺少安全标识' });
+    }
+    if (origin && !allowedCorsOrigins.has(origin)) {
+        return res.status(403).json({ success: false, error: '刷新请求来源不受信任' });
+    }
+    res.setHeader('Vary', 'Origin');
+    return next();
+}
+
+app.post('/api/auth/refresh', authLimiter, requireTrustedRefreshRequest, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+        await authSessionStartupReady;
+        const refreshToken = authSessionStore.readRefreshTokenCookie(req.headers.cookie || '');
+        if (!refreshToken) {
+            res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+            return res.status(401).json({ success: false, error: '刷新会话不存在' });
+        }
+        const fingerprint = readAuthDeviceFingerprint(req);
+        const refreshed = await authSessionStore.refresh(refreshToken, {
+            fingerprint,
+            ...buildAuthSessionDeviceMetadata(req)
+        });
+        res.setHeader('Set-Cookie', refreshed.refreshCookie.header);
+        return res.json({
+            success: true,
+            token: refreshed.accessToken,
+            tokenExpiresAt: refreshed.accessTokenExpiresAt
+        });
+    } catch (error) {
+        res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+        return res.status(401).json({ success: false, error: '刷新会话已失效' });
+    }
+});
+
+app.get('/api/client/capabilities', requireSoftwareClient, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const client = req.softwareClient;
+    return res.json({
+        success: true,
+        packageVersion: PACKAGE_VERSION,
+        client: {
+            keyId: client.keyId,
+            name: client.name,
+            platform: client.platform,
+            scopes: client.scopes,
+            packageName: client.packageName,
+            createdAt: client.createdAt,
+            lastUsedAt: client.lastUsedAt
+        },
+        userSessionRequired: true,
+        adminAllowed: false,
+        credentialPurpose: 'revocable_software_identity',
+        embeddedKeyExtractable: true
+    });
+});
+
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+    await authSessionStore.logoutCurrent({
+        sessionId: req.user.sid,
+        userId: req.user.userId
+    }).catch(() => false);
+    res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+    return res.json({ success: true });
+});
+
+app.get('/api/user/devices', authenticateToken, async (req, res) => {
+    try {
+        await authSessionStartupReady;
+        const devices = await authSessionStore.listUserSessions(req.user.userId, {
+            currentSessionId: req.user.sid,
+            historyLimit: 50
+        });
+        return res.json({ success: true, ...devices });
+    } catch (error) {
+        console.error(' 获取登录设备失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: '无法获取登录设备' });
+    }
+});
+
+app.post('/api/auth/logout-all', authenticateToken, async (req, res) => {
+    await authSessionStore.logoutAll(req.user.userId, 'user_logout_all');
+    res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+    return res.json({ success: true });
+});
+
+function readAuthRequestText(req, bodyField, headerName, maxLength, { normalizeUnicode = false } = {}) {
+    const bodyValue = req?.body?.[bodyField];
+    const headerValue = req?.headers?.[headerName];
+    const candidates = [bodyValue, Array.isArray(headerValue) ? headerValue[0] : headerValue];
+    for (const candidate of candidates) {
+        if (typeof candidate !== 'string') continue;
+        const normalized = (normalizeUnicode ? candidate.normalize('NFKC') : candidate)
+            .replace(/[\u0000-\u001F\u007F]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, maxLength);
+        if (normalized) return normalized;
+    }
+    return '';
+}
+
+function readAuthDeviceFingerprint(req) {
+    return readAuthRequestText(req, 'fingerprint', 'x-rai-device-fingerprint', 160);
+}
+
+function readAuthDeviceName(req) {
+    return readAuthRequestText(req, 'deviceName', 'x-rai-device-name', 120, { normalizeUnicode: true });
+}
+
+function buildAuthSessionDeviceMetadata(req) {
+    const userAgent = String(req?.headers?.['user-agent'] || '').slice(0, 500);
+    const lower = userAgent.toLowerCase();
+    const requestedDeviceName = readAuthDeviceName(req);
+    let deviceName = 'Unknown device';
+    let osName = 'Unknown system';
+    let osVersion = '';
+    if (/iphone|ipod/.test(lower)) deviceName = 'iPhone';
+    else if (/ipad/.test(lower)) deviceName = 'iPad';
+    else if (/android/.test(lower)) deviceName = /mobile/.test(lower) ? 'Android phone' : 'Android tablet';
+    else if (/windows/.test(lower)) deviceName = 'Windows PC';
+    else if (/macintosh|mac os x/.test(lower)) deviceName = 'Mac';
+    else if (/linux/.test(lower)) deviceName = 'Linux device';
+
+    const platformMatch = (pattern, name) => {
+        const match = userAgent.match(pattern);
+        if (!match) return false;
+        osName = name;
+        osVersion = String(match[1] || '').replace(/_/g, '.').slice(0, 40);
+        return true;
+    };
+    if (!platformMatch(/(?:iPhone|CPU) OS ([0-9_]+)/i, 'iOS')) {
+        if (!platformMatch(/Android[ /]([0-9.]+)/i, 'Android')) {
+            if (!platformMatch(/Windows NT ([0-9.]+)/i, 'Windows')) {
+                platformMatch(/Mac OS X ([0-9_]+)/i, 'macOS');
+            }
+        }
+    }
+    const windowsBuild = userAgent.match(/\bWindowsBuild\/([0-9]+(?:\.[0-9]+){1,5})\b/i);
+    if (osName === 'Windows' && windowsBuild) {
+        osVersion = String(windowsBuild[1] || '').slice(0, 40);
+    }
+    if (!osVersion && /linux/i.test(userAgent)) osName = 'Linux';
+
+    const browserCandidates = [
+        [/EdgA\/([\d.]+)/i, 'Edge'],
+        [/EdgiOS\/([\d.]+)/i, 'Edge'],
+        [/Edg\/([\d.]+)/i, 'Edge'],
+        [/Edge\/([\d.]+)/i, 'Edge HTML'],
+        [/OPR\/([\d.]+)/i, 'Opera'],
+        [/SamsungBrowser\/([\d.]+)/i, 'Samsung Internet'],
+        [/FxiOS\/([\d.]+)/i, 'Firefox'],
+        [/Firefox\/([\d.]+)/i, 'Firefox'],
+        [/CriOS\/([\d.]+)/i, 'Chrome'],
+        [/Chrome\/([\d.]+)/i, 'Chrome'],
+        [/Version\/([\d.]+).*Safari\//i, 'Safari']
+    ];
+    let browserName = 'Unknown browser';
+    let browserVersion = '';
+    for (const [pattern, name] of browserCandidates) {
+        const match = userAgent.match(pattern);
+        if (!match) continue;
+        browserName = name;
+        browserVersion = String(match[1] || '').slice(0, 40);
+        break;
+    }
+
+    const city = String(req?.headers?.['cf-ipcity'] || req?.headers?.['x-vercel-ip-city'] || '')
+        .replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 80);
+    const region = String(req?.headers?.['cf-region'] || req?.headers?.['x-vercel-ip-country-region'] || '')
+        .replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 80);
+    const country = String(req?.headers?.['cf-ipcountry'] || req?.headers?.['x-vercel-ip-country'] || '')
+        .replace(/[^A-Za-z -]/g, '').trim().slice(0, 80);
+    const locationLabel = [city, region, country].filter((value, index, values) => value && values.indexOf(value) === index).join(', ')
+        || 'Unknown location';
+    if (requestedDeviceName) deviceName = requestedDeviceName;
+    return { deviceName, locationLabel, browserName, browserVersion, osName, osVersion };
+}
 
 // ==================== 认证路由 ====================
 async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authClaims = {}) {
     await dbRunAsync('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
-    if (fingerprint) {
-        await dbRunAsync(
-            'INSERT OR REPLACE INTO device_fingerprints (user_id, fingerprint, device_name, last_used) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-            [user.id, fingerprint, req.headers['user-agent'] || 'Unknown']
-        ).catch((error) => {
-            console.warn(` 设备指纹记录失败 userId=${user.id}:`, error.message);
-        });
-    }
-
-    const token = signUserSessionToken(user, JWT_SECRET, authClaims);
+    await authSessionStartupReady;
+    const authMethod = String(authClaims.auth_method || authClaims.provider || 'password');
+    const sessionFingerprint = String(fingerprint || '').trim() || readAuthDeviceFingerprint(req);
+    const session = await authSessionStore.createSession({
+        userId: user.id,
+        authMethod,
+        fingerprint: sessionFingerprint,
+        ...buildAuthSessionDeviceMetadata(req),
+        additionalClaims: authClaims
+    });
+    req.res?.setHeader('Set-Cookie', session.refreshCookie.header);
     const sessionRow = await dbGetAsync('SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ?', [user.id])
         .catch(() => ({ cnt: 0 }));
     const isNewUser = !sessionRow || Number(sessionRow.cnt || 0) === 0;
 
     return {
         success: true,
-        token,
+        token: session.accessToken,
+        tokenExpiresAt: session.accessTokenExpiresAt,
         isNewUser,
         user: {
             id: user.id,
@@ -9478,7 +10696,7 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
         `UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ? AND email_verified = 1`,
         [NEW_USER_WELCOME_POINTS, userId]
     ).catch((error) => {
-        console.warn(` 新用户欢迎点数发放失败 userId=${userId}:`, error.message);
+        console.warn(` 新用户欢迎点数发放失败 userId=${userId}:`, sanitizeReportContext(error));
     });
     console.log(` 新用户欢迎点数已发放 userId=${userId}, points=+${NEW_USER_WELCOME_POINTS}`);
 
@@ -9486,7 +10704,7 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
         sendWelcomeEmail({ email: user.email, username: user.username })
             .then(() => { console.log(` 欢迎邮件已发送 userId=${userId}`); })
             .catch((error) => {
-                console.warn(` 欢迎邮件发送失败 userId=${userId}:`, error.message);
+                console.warn(` 欢迎邮件发送失败 userId=${userId}:`, sanitizeReportContext(error));
                 appendRaiRuntimeReport({
                     level: '警告',
                     tag: 'welcome_email_failed',
@@ -9504,7 +10722,7 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
            AND consumed_at IS NULL`,
         [Date.now(), user.email || '']
     ).catch((error) => {
-        console.warn(` 注册邮箱验证码清理失败 userId=${userId}:`, error.message);
+        console.warn(` 注册邮箱验证码清理失败 userId=${userId}:`, sanitizeReportContext(error));
     });
 
     let inviteReward = null;
@@ -9515,7 +10733,7 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
                 console.log(` 邀请奖励成功: referrer=${pendingReferrer}, invited=${userId}, referrerPoints=${inviteReward.pointsGained || 0}, inviteePoints=${inviteReward.inviteePointsGained || 0}`);
             }
         } catch (inviteError) {
-            console.warn(` 邀请奖励失败 referrer=${pendingReferrer}, invited=${userId}:`, inviteError.message);
+            console.warn(` 邀请奖励失败 referrer=${pendingReferrer}, invited=${userId}:`, sanitizeReportContext(inviteError));
         }
     }
 
@@ -9533,6 +10751,17 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
     }
 
     const updatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [userId]);
+    if (Number(updatedUser?.password_policy_version || 0) < PASSWORD_POLICY_VERSION) {
+        await authSessionStore.logoutAll(userId, 'legacy_password_upgrade_required');
+        req.res?.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+        return {
+            ...buildPasswordUpgradeRequiredPayload(updatedUser?.email || user.email || ''),
+            email_verified: true,
+            isNewUser: true,
+            inviteReward,
+            emailVerificationBypassed: !!bypassReason
+        };
+    }
     const payload = await buildAuthenticatedUserPayload(updatedUser, req, fingerprint, { auth_method: 'registration' });
     return {
         ...payload,
@@ -9552,7 +10781,10 @@ app.post('/api/auth/register', authLimiter, emailAuthLimiter, async (req, res) =
         const normalizedReferrerId = normalizeReferralUserId(referrerId || referralCode || ref);
         const normalizedEmail = normalizeEmailForAuth(email);
         const normalizedUsername = typeof username === 'string' ? username.trim() : '';
-        const passwordError = validatePasswordLength(password);
+        const passwordError = await validateNewPasswordForAccount(password, {
+            email: normalizedEmail,
+            username: normalizedUsername
+        });
 
         if (!normalizedEmail || !password) {
             return res.status(400).json({ success: false, error: '邮箱和密码不能为空' });
@@ -9579,7 +10811,7 @@ app.post('/api/auth/register', authLimiter, emailAuthLimiter, async (req, res) =
         }
 
         if (user) {
-            const validPendingPassword = await bcrypt.compare(password, user.password_hash).catch(() => false);
+            const validPendingPassword = await verifyPassword(password, user.password_hash).catch(() => false);
             if (!validPendingPassword) {
                 return res.status(400).json({ success: false, error: '该邮箱已被注册' });
             }
@@ -9591,12 +10823,12 @@ app.post('/api/auth/register', authLimiter, emailAuthLimiter, async (req, res) =
                 [finalUsername, normalizedReferrerId || null, user.id]
             );
         } else {
-            const passwordHash = await bcrypt.hash(password, 10);
+            const passwordHash = await hashPassword(password);
             const result = await dbRunAsync(
                 `INSERT INTO users
-                 (email, password_hash, username, email_verified, pending_referrer_id)
-                 VALUES (?, ?, ?, 0, ?)`,
-                [normalizedEmail, passwordHash, finalUsername, normalizedReferrerId || null]
+                 (email, password_hash, password_policy_version, username, email_verified, pending_referrer_id)
+                 VALUES (?, ?, ?, ?, 0, ?)`,
+                [normalizedEmail, passwordHash, PASSWORD_POLICY_VERSION, finalUsername, normalizedReferrerId || null]
             );
             await dbRunAsync('INSERT INTO user_configs (user_id, long_memory_enabled) VALUES (?, 0)', [result.lastID]);
             user = {
@@ -9640,7 +10872,7 @@ app.post('/api/auth/register', authLimiter, emailAuthLimiter, async (req, res) =
             message: '验证码已发送到邮箱'
         });
     } catch (error) {
-        console.error(' 注册错误:', error);
+        console.error(' 注册错误:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
@@ -9650,7 +10882,7 @@ app.post('/api/auth/register/resend', authLimiter, emailAuthLimiter, async (req,
         const normalizedEmail = normalizeEmailForAuth(req.body?.email);
         const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
-        if (!isValidEmailForAuth(normalizedEmail) || validatePasswordLength(password)) {
+        if (!isValidEmailForAuth(normalizedEmail) || validateExistingPasswordInput(password)) {
             return res.status(400).json({ success: false, error: '邮箱和密码不能为空' });
         }
 
@@ -9659,7 +10891,7 @@ app.post('/api/auth/register/resend', authLimiter, emailAuthLimiter, async (req,
             return res.status(400).json({ success: false, error: '该邮箱已被注册' });
         }
 
-        const validPendingPassword = await bcrypt.compare(password, user.password_hash).catch(() => false);
+        const validPendingPassword = await verifyPassword(password, user.password_hash).catch(() => false);
         if (!validPendingPassword) {
             return res.status(400).json({ success: false, error: '该邮箱已被注册' });
         }
@@ -9691,7 +10923,7 @@ app.post('/api/auth/register/resend', authLimiter, emailAuthLimiter, async (req,
 	        }
         return res.json({ success: true, requiresEmailVerification: true, email: normalizedEmail });
     } catch (error) {
-        console.error(' 重发注册验证码失败:', error);
+        console.error(' 重发注册验证码失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
@@ -9700,19 +10932,15 @@ app.post('/api/auth/register/verify', authLimiter, async (req, res) => {
     try {
         const normalizedEmail = normalizeEmailForAuth(req.body?.email);
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
-        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
+        const fingerprint = readAuthDeviceFingerprint(req);
 
         if (!isValidEmailForAuth(normalizedEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
         }
 
         const user = await dbGetAsync('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
-        if (!user) {
-            return res.status(404).json({ success: false, error: '用户不存在' });
-        }
-
-        if (Number(user.email_verified ?? 1) === 1) {
-            return res.status(409).json({ success: false, error: '邮箱已验证，请直接登录' });
+        if (!user || Number(user.email_verified ?? 1) === 1) {
+            return res.status(400).json({ success: false, error: '验证码无效或已过期' });
         }
 
         const verification = await verifyAndConsumeEmailCode({
@@ -9733,30 +10961,14 @@ app.post('/api/auth/register/verify', authLimiter, async (req, res) => {
 	        });
 	        return res.json(payload);
     } catch (error) {
-        console.error(' 注册邮箱验证失败:', error);
+        console.error(' 注册邮箱验证失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '邮箱验证失败' });
     }
 });
 
 app.post('/api/auth/login/precheck', authLimiter, async (req, res) => {
-    try {
-        const normalizedEmail = normalizeEmailForAuth(req.body?.email);
-        if (!isValidEmailForAuth(normalizedEmail)) {
-            return res.json({ success: true, twoFactorRequired: false });
-        }
-        const user = await dbGetAsync(
-            'SELECT email_verified, two_factor_enabled, two_factor_secret FROM users WHERE LOWER(email) = LOWER(?)',
-            [normalizedEmail]
-        );
-        if (!user || Number(user.email_verified ?? 1) !== 1) {
-            return res.json({ success: true, twoFactorRequired: false });
-        }
-        const twoFactorRequired = Number(user.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(user.two_factor_secret);
-        return res.json({ success: true, twoFactorRequired });
-    } catch (error) {
-        console.error(' 登录预检失败:', error);
-        return res.json({ success: true, twoFactorRequired: false });
-    }
+    // 兼容旧客户端，但登录前不再查询或泄露账号 2FA 状态。
+    return res.json({ success: true, twoFactorRequired: false });
 });
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
@@ -9768,18 +10980,47 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: '邮箱和密码不能为空' });
         }
 
-        if (!isValidEmailForAuth(normalizedEmail) || validatePasswordLength(password)) {
+        if (!isValidEmailForAuth(normalizedEmail) || validateExistingPasswordInput(password)) {
             return res.status(401).json({ success: false, error: '邮箱或密码错误' });
         }
 
         const user = await dbGetAsync('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
         if (!user) {
+            await verifyPassword(password, DUMMY_LOGIN_PASSWORD_HASH).catch(() => false);
             return res.status(401).json({ success: false, error: '邮箱或密码错误' });
         }
 
-        const validPassword = await bcrypt.compare(password, user.password_hash);
+        const provisionedTestAccount = isProvisionedTestAccount(user, normalizedEmail);
+
+        const validPassword = await verifyPassword(password, user.password_hash);
         if (!validPassword) {
             return res.status(401).json({ success: false, error: '邮箱或密码错误' });
+        }
+
+        // 先计算历史密码强度，但让尚未验证邮箱的账号完成原注册验证流程。
+        // 强历史密码可以安全迁移；弱历史密码保持旧策略版本，注册验证完成后仍会
+        // 被 completeRegistrationEmailVerification 导向邮箱重置而不会获得会话。
+        const legacyPasswordPolicyError = validateNewPasswordPolicy(password, {
+            email: user.email,
+            username: user.username
+        });
+        if (!provisionedTestAccount && legacyPasswordPolicyError && Number(user.password_policy_version || 0) !== 0) {
+            await dbRunAsync(
+                'UPDATE users SET password_policy_version = 0 WHERE id = ?',
+                [user.id]
+            );
+            user.password_policy_version = 0;
+        }
+
+        // 仍符合当前强度要求的历史 bcrypt 账号在成功登录后透明迁移到无 72-byte
+        // 截断的版本化预哈希格式；弱历史密码绝不被这种格式迁移“洗白”。
+        if (!legacyPasswordPolicyError && !isCurrentPasswordHash(user.password_hash)) {
+            const migratedHash = await hashPassword(password);
+            await dbRunAsync(
+                'UPDATE users SET password_hash = ?, password_policy_version = ? WHERE id = ? AND password_hash = ?',
+                [migratedHash, PASSWORD_POLICY_VERSION, user.id, user.password_hash]
+            ).catch(() => null);
+            user.password_hash = migratedHash;
         }
 
 	        if (Number(user.email_verified ?? 1) !== 1) {
@@ -9817,11 +11058,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
             });
         }
 
-        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(user.two_factor_secret);
+        // 已验证邮箱的弱历史密码必须先走邮箱验证码重置。该响应不包含任何会话、
+        // 2FA challenge 或 refresh cookie。
+        if (legacyPasswordPolicyError && !provisionedTestAccount) {
+            return res.status(403).json(buildPasswordUpgradeRequiredPayload(user.email));
+        }
+
+        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && hasUsableUserTotpSecret(user);
         if (twoFactorEnabled) {
             const inlineTwoFactorCode = typeof twoFactorCode === 'string' ? twoFactorCode.trim() : '';
             if (inlineTwoFactorCode) {
-                if (!verifyTotpCode(user.two_factor_secret, inlineTwoFactorCode)) {
+                if (!await consumeUserSecondFactor(user, inlineTwoFactorCode)) {
                     return res.status(401).json({ success: false, error: 'Authenticator 验证码无效' });
                 }
                 const payload = await buildAuthenticatedUserPayload(user, req, fingerprint, { auth_method: 'password' });
@@ -9841,13 +11088,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         console.log(' 登录成功, 用户ID:', user.id);
         return res.json(payload);
     } catch (error) {
-        console.error(' 登录错误:', error);
+        console.error(' 登录错误:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
 
 app.post('/api/auth/login/email-code/request', authLimiter, emailAuthLimiter, async (req, res) => {
     try {
+        const genericResponse = { success: true, message: '如果邮箱存在，验证码会发送到该邮箱' };
         const normalizedEmail = normalizeEmailForAuth(req.body?.email);
         if (!isValidEmailForAuth(normalizedEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
@@ -9855,35 +11103,26 @@ app.post('/api/auth/login/email-code/request', authLimiter, emailAuthLimiter, as
 
         const user = await dbGetAsync('SELECT id, email, email_verified, pending_referrer_id FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
         if (!user) {
-            return res.json({ success: true, message: '如果邮箱存在，验证码会发送到该邮箱' });
+            return res.json(genericResponse);
         }
 
-        if (Number(user.email_verified ?? 1) !== 1) {
-            const sent = await sendEmailCodeOrReport({
-                email: normalizedEmail,
-                userId: user.id,
-                purpose: 'register',
-                metadata: { referrerId: user.pending_referrer_id || '' },
-                req
-            });
-            if (!sent.ok) {
-                return res.status(502).json({ success: false, error: '验证邮件发送失败，请稍后再试' });
-            }
-            return res.json({ success: true, requiresEmailVerification: true, email: normalizedEmail, message: '请先验证注册邮箱' });
-        }
-
-        const sent = await sendEmailCodeOrReport({
+        const pendingRegistration = Number(user.email_verified ?? 1) !== 1;
+        void sendEmailCodeOrReport({
             email: normalizedEmail,
             userId: user.id,
-            purpose: 'login',
+            purpose: pendingRegistration ? 'register' : 'login',
+            metadata: pendingRegistration ? { referrerId: user.pending_referrer_id || '' } : undefined,
             req
+        }).then((sent) => {
+            if (!sent.ok) {
+                console.warn(' 邮箱验证码发送失败，对外保持统一响应:', sanitizeReportContext(sent.error));
+            }
+        }).catch((error) => {
+            console.warn(' 邮箱验证码后台任务失败:', sanitizeReportContext(error));
         });
-        if (!sent.ok) {
-            return res.status(502).json({ success: false, error: '验证码邮件发送失败，请稍后再试' });
-        }
-        return res.json({ success: true, email: normalizedEmail, message: '验证码已发送到邮箱' });
+        return res.json(genericResponse);
     } catch (error) {
-        console.error(' 登录邮箱验证码发送失败:', error);
+        console.error(' 登录邮箱验证码发送失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
@@ -9892,28 +11131,39 @@ app.post('/api/auth/login/email-code/verify', authLimiter, async (req, res) => {
     try {
         const normalizedEmail = normalizeEmailForAuth(req.body?.email);
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
-        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
+        const fingerprint = readAuthDeviceFingerprint(req);
 
         if (!isValidEmailForAuth(normalizedEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
         }
 
         const user = await dbGetAsync('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
-        if (!user || Number(user.email_verified ?? 1) !== 1) {
+        if (!user) {
             return res.status(401).json({ success: false, error: '验证码无效或已过期' });
         }
 
+        const pendingRegistration = Number(user.email_verified ?? 1) !== 1;
         const verification = await verifyAndConsumeEmailCode({
             email: normalizedEmail,
-            purpose: 'login',
+            purpose: pendingRegistration ? 'register' : 'login',
             code,
             userId: user.id
         });
         if (!verification.ok) {
-            return res.status(400).json({ success: false, error: verification.error || '验证码无效或已过期' });
+            return res.status(401).json({ success: false, error: '验证码无效或已过期' });
         }
 
-        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(user.two_factor_secret);
+        if (pendingRegistration) {
+            const payload = await completeRegistrationEmailVerification({
+                user,
+                req,
+                fingerprint,
+                referrerId: user.pending_referrer_id || verification.metadata?.referrerId || ''
+            });
+            return res.json(payload);
+        }
+
+        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && hasUsableUserTotpSecret(user);
         if (twoFactorEnabled) {
             return res.json({
                 success: false,
@@ -9927,37 +11177,50 @@ app.post('/api/auth/login/email-code/verify', authLimiter, async (req, res) => {
         console.log(' 邮箱验证码登录成功, 用户ID:', user.id);
         return res.json(payload);
     } catch (error) {
-        console.error(' 邮箱验证码登录失败:', error);
+        console.error(' 邮箱验证码登录失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '服务器错误' });
     }
 });
 
-app.post('/api/auth/password/reset/request', authLimiter, emailAuthLimiter, async (req, res) => {
-    try {
-        const normalizedEmail = normalizeEmailForAuth(req.body?.email);
-        if (!isValidEmailForAuth(normalizedEmail)) {
-            return res.status(400).json({ success: false, error: '邮件格式不正确' });
+function queuePasswordResetEmail(normalizedEmail, req) {
+    // 捕获最小请求上下文，避免后台任务持有完整 body；无论账号是否存在，路由都只
+    // 调用这一个 detached callback 并立即返回完全相同的公开响应。
+    const requestContext = {
+        ip: String(req?.ip || '').slice(0, 128),
+        headers: {
+            'user-agent': String(req?.headers?.['user-agent'] || '').slice(0, 500)
         }
-
-        const user = await dbGetAsync('SELECT id, email, email_verified FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
-        if (!user || Number(user.email_verified ?? 1) !== 1) {
-            return res.json({ success: true, message: '如果邮箱存在，验证码会发送到该邮箱' });
-        }
-
-        const sent = await sendEmailCodeOrReport({
-            email: normalizedEmail,
-            userId: user.id,
-            purpose: 'password_reset',
-            req
+    };
+    setImmediate(() => {
+        void (async () => {
+            const user = await dbGetAsync(
+                'SELECT id, email, email_verified FROM users WHERE LOWER(email) = LOWER(?)',
+                [normalizedEmail]
+            );
+            if (!user || Number(user.email_verified ?? 1) !== 1) return;
+            const sent = await sendEmailCodeOrReport({
+                email: normalizedEmail,
+                userId: user.id,
+                purpose: 'password_reset',
+                req: requestContext
+            });
+            if (!sent.ok) {
+                console.warn(' 重置密码验证码后台发送失败，对外保持统一响应:', sanitizeReportContext(sent.error));
+            }
+        })().catch((error) => {
+            console.warn(' 重置密码验证码后台任务失败，对外保持统一响应:', sanitizeReportContext(error));
         });
-        if (!sent.ok) {
-            return res.status(502).json({ success: false, error: '验证码邮件发送失败，请稍后再试' });
-        }
-        return res.json({ success: true, email: normalizedEmail, message: '验证码已发送到邮箱' });
-    } catch (error) {
-        console.error(' 重置密码验证码发送失败:', error);
-        return res.status(500).json({ success: false, error: '服务器错误' });
+    });
+}
+
+app.post('/api/auth/password/reset/request', authLimiter, emailAuthLimiter, (req, res) => {
+    const normalizedEmail = normalizeEmailForAuth(req.body?.email);
+    if (!isValidEmailForAuth(normalizedEmail)) {
+        return res.status(400).json({ success: false, error: '邮件格式不正确' });
     }
+
+    queuePasswordResetEmail(normalizedEmail, req);
+    return res.json({ success: true, message: '如果邮箱存在，验证码会发送到该邮箱' });
 });
 
 app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
@@ -9965,13 +11228,15 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
         const normalizedEmail = normalizeEmailForAuth(req.body?.email);
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
         const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
-        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
+        const fingerprint = readAuthDeviceFingerprint(req);
 
         if (!isValidEmailForAuth(normalizedEmail)) {
             return res.status(400).json({ success: false, error: '邮件格式不正确' });
         }
 
-        const newPasswordError = validatePasswordLength(newPassword, '新密码');
+        const newPasswordError = validateNewPasswordPolicy(newPassword, {
+            email: normalizedEmail
+        }, '新密码');
         if (newPasswordError) {
             return res.status(400).json({ success: false, error: newPasswordError });
         }
@@ -9981,34 +11246,64 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
             return res.status(400).json({ success: false, error: '验证码无效或已过期' });
         }
 
-        const verification = await verifyAndConsumeEmailCode({
+        const proof = await verifyEmailCodeProof({
             email: normalizedEmail,
             purpose: 'password_reset',
             code,
             userId: user.id
         });
-        if (!verification.ok) {
-            return res.status(400).json({ success: false, error: verification.error || '验证码无效或已过期' });
+        if (!proof.ok) {
+            return res.status(400).json({ success: false, error: '验证码无效或已过期' });
         }
 
-        const passwordHash = await bcrypt.hash(newPassword, 10);
-        const updateResult = await dbRunAsync('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, user.id]);
-        if (Number(updateResult?.changes || 0) !== 1) {
-            throw new Error('password_reset_update_missing');
+        const accountPasswordError = await validateNewPasswordForAccount(newPassword, {
+            email: user.email,
+            username: user.username
+        }, '新密码');
+        if (accountPasswordError) {
+            return res.status(400).json({ success: false, error: accountPasswordError });
         }
 
-        // 重置接口只有在数据库回读的新哈希确实能匹配新密码时才允许返回成功。
-        // 这样不会出现前端提示“已重置”，实际登录却仍命中旧哈希的假成功。
-        const updatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [user.id]);
-        const persistedPasswordMatches = !!updatedUser
-            && await bcrypt.compare(newPassword, updatedUser.password_hash).catch(() => false);
-        if (!persistedPasswordMatches) {
+        const passwordHash = await hashPassword(newPassword);
+        if (!await verifyPassword(newPassword, passwordHash).catch(() => false)) {
             throw new Error('password_reset_post_write_verification_failed');
         }
+        const mutation = await withSensitiveAccountMutation(user.id, async (tx) => {
+            const finalProof = await verifyAndConsumeEmailCodeWithinTransaction(tx, {
+                email: normalizedEmail,
+                purpose: 'password_reset',
+                code,
+                userId: user.id
+            });
+            if (!finalProof.ok || Number(finalProof.row?.id) !== Number(proof.rowId)) {
+                const error = new Error('password_reset_proof_invalid');
+                error.code = 'password_reset_proof_invalid';
+                error.statusCode = 400;
+                throw error;
+            }
+            const updateResult = await tx.run(
+                `UPDATE users
+                 SET password_hash = ?, password_policy_version = ?
+                 WHERE id = ? AND password_hash = ?`,
+                [passwordHash, PASSWORD_POLICY_VERSION, user.id, user.password_hash]
+            );
+            if (Number(updateResult?.changes || 0) !== 1) {
+                throw new Error('password_reset_update_missing');
+            }
+            const persisted = await tx.get('SELECT * FROM users WHERE id = ?', [user.id]);
+            if (!persisted || persisted.password_hash !== passwordHash) {
+                throw new Error('password_reset_post_write_verification_failed');
+            }
+            return persisted;
+        });
+        const updatedUser = { ...mutation.value, session_version: mutation.sessionVersion };
+
+        await purgeStaleAuthSessionsAfterSensitiveChange(user.id, 'password_reset');
+        res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
 
         console.log(` 邮箱验证码重置密码成功: userId=${user.id}`);
         const twoFactorEnabled = Number(updatedUser.two_factor_enabled || 0) === 1
-            && !!normalizeTotpSecret(updatedUser.two_factor_secret);
+            && hasUsableUserTotpSecret(updatedUser);
         if (twoFactorEnabled) {
             return res.json({
                 success: true,
@@ -10027,7 +11322,10 @@ app.post('/api/auth/password/reset/confirm', authLimiter, async (req, res) => {
             message: '密码已重置并已登录'
         });
     } catch (error) {
-        console.error(' 邮箱验证码重置密码失败:', error);
+        console.error(' 邮箱验证码重置密码失败:', sanitizeReportContext(error));
+        if (error?.code === 'password_reset_proof_invalid') {
+            return res.status(400).json({ success: false, error: '验证码无效或已过期' });
+        }
         return res.status(500).json({ success: false, error: '更新密码失败' });
     }
 });
@@ -10036,7 +11334,7 @@ app.post('/api/auth/login/2fa', authLimiter, async (req, res) => {
     try {
         const twoFactorToken = typeof req.body?.twoFactorToken === 'string' ? req.body.twoFactorToken : '';
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
-        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
+        const fingerprint = readAuthDeviceFingerprint(req);
 
         if (!twoFactorToken || !code) {
             return res.status(400).json({ success: false, error: '二步验证码不能为空' });
@@ -10044,7 +11342,11 @@ app.post('/api/auth/login/2fa', authLimiter, async (req, res) => {
 
         let decoded;
         try {
-            decoded = jwt.verify(twoFactorToken, JWT_SECRET);
+            decoded = jwt.verify(twoFactorToken, JWT_SECRET, {
+                algorithms: ['HS256'],
+                issuer: INTERMEDIATE_TOKEN_ISSUER,
+                audience: TWO_FACTOR_LOGIN_AUDIENCE
+            });
         } catch (error) {
             return res.status(401).json({ success: false, error: '二步验证已过期，请重新登录' });
         }
@@ -10054,11 +11356,11 @@ app.post('/api/auth/login/2fa', authLimiter, async (req, res) => {
         }
 
         const user = await dbGetAsync('SELECT * FROM users WHERE id = ?', [decoded.userId]);
-        if (!user || Number(user.two_factor_enabled || 0) !== 1 || !normalizeTotpSecret(user.two_factor_secret)) {
+        if (!user || Number(user.two_factor_enabled || 0) !== 1 || !hasUsableUserTotpSecret(user)) {
             return res.status(401).json({ success: false, error: '二步验证状态已变化，请重新登录' });
         }
 
-        if (!verifyTotpCode(user.two_factor_secret, code)) {
+        if (!await consumeUserSecondFactor(user, code)) {
             return res.status(401).json({ success: false, error: 'Authenticator 验证码无效' });
         }
 
@@ -10069,7 +11371,7 @@ app.post('/api/auth/login/2fa', authLimiter, async (req, res) => {
         console.log(' 二步验证登录成功, 用户ID:', user.id);
         return res.json(payload);
     } catch (error) {
-        console.error(' 二步验证登录失败:', error);
+        console.error(' 二步验证登录失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '二步验证失败' });
     }
 });
@@ -10208,9 +11510,9 @@ app.post('/api/auth/passkeys/authentication/verify', authLimiter, async (req, re
         });
 
         const user = authenticated.user;
-        const fingerprint = typeof req.body?.fingerprint === 'string' ? req.body.fingerprint : '';
+        const fingerprint = readAuthDeviceFingerprint(req);
         const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1
-            && !!normalizeTotpSecret(user.two_factor_secret);
+            && hasUsableUserTotpSecret(user);
         if (twoFactorEnabled) {
             return res.json({
                 success: true,
@@ -10224,7 +11526,7 @@ app.post('/api/auth/passkeys/authentication/verify', authLimiter, async (req, re
         return res.json(payload);
     } catch (error) {
         if (!error?.statusCode) {
-            console.error(' 通行密钥登录验证失败:', error);
+            console.error(' 通行密钥登录验证失败:', sanitizeReportContext(error));
             return res.status(500).json({ success: false, error: '通行密钥登录暂时不可用' });
         }
         return sendPasskeyRouteError(res, error, '无法验证通行密钥');
@@ -10265,7 +11567,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
           c.long_memory_opted_in_at as long_memory_opted_in_at,
           c.short_memory_titles as short_memory_titles,
           c.short_memory_updated_at as short_memory_updated_at,
-          COALESCE(c.font_preference, 'rai') as font_preference,
+          COALESCE(c.font_preference, 'system') as font_preference,
           COALESCE(c.tab_title_mode, 'default') as tab_title_mode,
           c.tab_title_custom_text as tab_title_custom_text,
           COALESCE(c.selection_explanation_delete_mode, 'promote_children') as selection_explanation_delete_mode
@@ -10275,7 +11577,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
         [LONG_MEMORY_DEFAULT_ENABLED ? 1 : 0, req.user.userId],
         (err, user) => {
             if (err) {
-                console.error(' 获取用户信息失败:', err);
+                console.error(' 获取用户信息失败:', sanitizeReportContext(err));
                 return res.status(500).json({ success: false, error: '获取用户资料失败' });
             }
 
@@ -10303,7 +11605,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 created_at: user.created_at,
                 last_login: user.last_login,
                 theme: user.theme || 'dark',
-                default_model: user.default_model || 'auto',
+                default_model: 'auto',
                 temperature: parseFloat(user.temperature) || 0.7,
                 top_p: parseFloat(user.top_p) || 0.9,
                 max_tokens: parseInt(user.max_tokens, 10) || 2000,
@@ -10315,7 +11617,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
 	                long_memory_enabled: isMemoryOptedInConfig(user) ? 1 : 0,
                     long_memory_opted_in_at: user.long_memory_opted_in_at || null,
                     short_memory_titles: parseShortMemoryTitles(user.short_memory_titles),
-                    font_preference: user.font_preference || 'rai',
+                    font_preference: user.font_preference || 'system',
                     tab_title_mode: user.tab_title_mode || 'default',
                     tab_title_custom_text: user.tab_title_custom_text || '',
                     selection_explanation_delete_mode: SELECTION_EXPLANATION_DELETE_MODES.has(user.selection_explanation_delete_mode)
@@ -10323,7 +11625,13 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                         : 'promote_children'
             };
 
-            console.log(' 返回用户信息, ID:', user.id, 'Username:', profile.username, 'SystemPromptLen:', profile.system_prompt.length);
+            console.log(
+                ' 返回用户信息, ID:',
+                user.id,
+                formatPrivateLogFingerprint(profile.username, 'username'),
+                'SystemPromptLen:',
+                profile.system_prompt.length
+            );
             res.json(profile);
         }
     );
@@ -10375,18 +11683,18 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
                 return res.status(409).json({ success: false, error: '该邮箱已被其他账号使用' });
             }
 
-            const currentPasswordError = validatePasswordLength(currentPassword, '当前密码');
+            const currentPasswordError = validateExistingPasswordInput(currentPassword, '当前密码');
             if (currentPasswordError) {
                 return res.status(400).json({ success: false, error: '修改邮箱需要输入当前密码' });
             }
 
-            const passwordMatched = await bcrypt.compare(currentPassword, existingUser.password_hash).catch(() => false);
+            const passwordMatched = await verifyPassword(currentPassword, existingUser.password_hash).catch(() => false);
             if (!passwordMatched) {
                 return res.status(400).json({ success: false, error: '当前密码错误' });
             }
 
-            const twoFactorEnabled = Number(existingUser.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(existingUser.two_factor_secret);
-            if (twoFactorEnabled && !verifyTotpCode(existingUser.two_factor_secret, twoFactorCode)) {
+            const twoFactorEnabled = Number(existingUser.two_factor_enabled || 0) === 1 && hasUsableUserTotpSecret(existingUser);
+            if (twoFactorEnabled && !await consumeUserSecondFactor(existingUser, twoFactorCode)) {
                 return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
             }
 
@@ -10401,7 +11709,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
                     req
                 });
             } catch (emailError) {
-                console.error(' 修改邮箱验证码发送失败:', emailError);
+                console.error(` 修改邮箱验证码发送失败: code=${String(emailError?.code || emailError?.name || 'send_failed').slice(0, 80)}`);
                 return res.status(503).json({
                     success: false,
                     error: '验证码发送失败，邮箱尚未变更，请稍后重试'
@@ -10413,7 +11721,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
                 [req.user.userId]
             );
 
-            console.log(` 用户邮箱变更待验证: userId=${existingUser.id}, old=${existingUser.email}, pending=${rawEmail}`);
+            console.log(` 用户邮箱变更待验证: userId=${existingUser.id}`);
             return res.json({
 	                success: true,
 	                email_change_verification_required: true,
@@ -10442,12 +11750,9 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             [req.user.userId]
         );
 
-        const refreshedToken = signUserSessionToken(updatedUser, JWT_SECRET);
-
-        console.log(` 用户资料已更新: userId=${updatedUser.id}, email=${updatedUser.email}, username=${updatedUser.username}`);
+        console.log(` 用户资料已更新: userId=${updatedUser.id}`);
         res.json({
             success: true,
-            token: refreshedToken,
             user: {
                 id: updatedUser.id,
                 email: updatedUser.email,
@@ -10458,7 +11763,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error(' 更新用户资料失败:', error);
+        console.error(' 更新用户资料失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '更新用户资料失败' });
     }
 });
@@ -10473,12 +11778,19 @@ app.post('/api/user/profile/email/verify', authenticateToken, async (req, res) =
             code
         });
 
-        const refreshedToken = signUserSessionToken(updatedUser, JWT_SECRET);
+        await purgeStaleAuthSessionsAfterSensitiveChange(updatedUser.id, 'email_changed');
+        const replacement = await buildAuthenticatedUserPayload(
+            updatedUser,
+            req,
+            '',
+            { auth_method: 'email_change' }
+        );
 
-        console.log(` 用户邮箱变更已确认: userId=${updatedUser.id}, email=${updatedUser.email}`);
+        console.log(` 用户邮箱变更已确认: userId=${updatedUser.id}`);
         res.json({
             success: true,
-            token: refreshedToken,
+            token: replacement.token,
+            tokenExpiresAt: replacement.tokenExpiresAt,
             user: {
                 id: updatedUser.id,
                 email: updatedUser.email,
@@ -10489,7 +11801,7 @@ app.post('/api/user/profile/email/verify', authenticateToken, async (req, res) =
             }
         });
     } catch (error) {
-        console.error(' 确认邮箱变更失败:', error.message);
+        console.error(' 确认邮箱变更失败:', sanitizeReportContext(error));
         res.status(error.statusCode || 500).json({
             success: false,
             error: error.statusCode ? error.message : '确认邮箱变更失败'
@@ -10516,7 +11828,7 @@ app.post('/api/user/profile/email/verify-current', authenticateToken, async (req
             pending_email_stage: pending.pending_email_stage
         });
     } catch (error) {
-        console.error(' 确认旧邮箱验证码失败:', error.message);
+        console.error(' 确认旧邮箱验证码失败:', sanitizeReportContext(error));
         res.status(error.statusCode || 500).json({
             success: false,
             error: error.statusCode ? error.message : '确认旧邮箱验证码失败'
@@ -10827,8 +12139,8 @@ app.post('/api/user/passkeys/:id/activation/verify', authenticateToken, authLimi
             throw buildPasskeyHttpError('通行密钥验证信息无效', 400, 'passkey_activation_invalid');
         }
 
-        const activated = await runPasskeyTransaction(async () => {
-            const row = await passkeyDbGetAsync(
+        const activationMutation = await withSensitiveAccountMutation(req.user.userId, async (tx) => {
+            const row = await tx.get(
                 `SELECT c.*, h.user_handle
                  FROM webauthn_credentials c
                  JOIN webauthn_user_handles h ON h.user_id = c.user_id
@@ -10869,7 +12181,7 @@ app.post('/api/user/passkeys/:id/activation/verify', authenticateToken, authLimi
             }
 
             const now = Date.now();
-            const update = await passkeyDbRunAsync(
+            const update = await tx.run(
                 `UPDATE webauthn_credentials
                  SET enabled = 1, verified_at = ?, sign_count = ?,
                      credential_backed_up = ?, last_used_at = ?
@@ -10887,7 +12199,8 @@ app.post('/api/user/passkeys/:id/activation/verify', authenticateToken, authLimi
                 throw buildPasskeyHttpError('这个通行密钥已经完成验证', 409, 'passkey_already_activated');
             }
 
-            const rewardPoints = await awardSecuritySetupRewardWithinTransaction(
+            const rewardPoints = await awardSecuritySetupRewardUsingTransaction(
+                tx,
                 req.user.userId,
                 USER_TASK_REWARDS.securityPasskey,
                 {
@@ -10896,7 +12209,7 @@ app.post('/api/user/passkeys/:id/activation/verify', authenticateToken, authLimi
                     credentialDeviceType: row.credential_device_type
                 }
             );
-            const updatedPasskey = await passkeyDbGetAsync(
+            const updatedPasskey = await tx.get(
                 `SELECT id, label, rp_id, enabled, credential_device_type,
                         credential_backed_up, transports_json, created_at,
                         verified_at, last_used_at
@@ -10905,11 +12218,23 @@ app.post('/api/user/passkeys/:id/activation/verify', authenticateToken, authLimi
             );
             return { rewardPoints, passkey: updatedPasskey };
         });
+        const activated = activationMutation.value;
+
+        await purgeStaleAuthSessionsAfterSensitiveChange(req.user.userId, 'passkey_activated');
+        const activatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [req.user.userId]);
+        const replacement = await buildAuthenticatedUserPayload(
+            activatedUser,
+            req,
+            '',
+            { auth_method: req.user.auth_method || 'passkey_management' }
+        );
 
         return res.json({
             success: true,
             passkey: formatPublicPasskeyRow(activated.passkey),
-            rewardPoints: activated.rewardPoints
+            rewardPoints: activated.rewardPoints,
+            token: replacement.token,
+            tokenExpiresAt: replacement.tokenExpiresAt
         });
     } catch (error) {
         return sendPasskeyRouteError(res, error, '验证通行密钥失败');
@@ -10956,13 +12281,13 @@ app.delete('/api/user/passkeys/:id', authenticateToken, authLimiter, async (req,
         if (!Number.isInteger(passkeyId) || passkeyId <= 0 || !grant) {
             throw buildPasskeyHttpError('请先完成安全验证', 401, 'passkey_reauth_required');
         }
-        await runPasskeyTransaction(async () => {
-            await consumePasskeyReauthGrantWithinTransaction({
+        await withSensitiveAccountMutation(req.user.userId, async (tx) => {
+            await consumePasskeyReauthGrantUsingTransaction(tx, {
                 token: grant,
                 userId: req.user.userId,
                 scope: 'passkey:delete'
             });
-            const deletion = await passkeyDbRunAsync(
+            const deletion = await tx.run(
                 'DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?',
                 [passkeyId, req.user.userId]
             );
@@ -10971,7 +12296,20 @@ app.delete('/api/user/passkeys/:id', authenticateToken, authLimiter, async (req,
             }
             return deletion;
         });
-        return res.json({ success: true, deletedPasskeyId: passkeyId });
+        await purgeStaleAuthSessionsAfterSensitiveChange(req.user.userId, 'passkey_deleted');
+        const updatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [req.user.userId]);
+        const replacement = await buildAuthenticatedUserPayload(
+            updatedUser,
+            req,
+            '',
+            { auth_method: 'passkey_management' }
+        );
+        return res.json({
+            success: true,
+            deletedPasskeyId: passkeyId,
+            token: replacement.token,
+            tokenExpiresAt: replacement.tokenExpiresAt
+        });
     } catch (error) {
         return sendPasskeyRouteError(res, error, '删除通行密钥失败');
     }
@@ -10980,7 +12318,9 @@ app.delete('/api/user/passkeys/:id', authenticateToken, authLimiter, async (req,
 app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
     try {
         const user = await dbGetAsync(
-            'SELECT id, email, username, two_factor_enabled FROM users WHERE id = ?',
+            `SELECT id, email, username, password_hash, external_provider,
+                    two_factor_enabled, two_factor_secret
+             FROM users WHERE id = ?`,
             [req.user.userId]
         );
 
@@ -10991,6 +12331,8 @@ app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
         if (Number(user.two_factor_enabled || 0) === 1) {
             return res.status(409).json({ success: false, error: '二步验证已开启' });
         }
+
+        await verifyPasskeyReauthentication(req, user, req.body || {});
 
         const secret = generateTotpSecret();
         const setupChallenge = await createUserTwoFactorSetupChallenge(user, secret);
@@ -11011,8 +12353,11 @@ app.post('/api/user/2fa/setup', authenticateToken, async (req, res) => {
             expiresAt: setupChallenge.expiresAt
         });
     } catch (error) {
-        console.error(' 创建二步验证设置失败:', error);
-        res.status(500).json({ success: false, error: '创建二步验证失败' });
+        console.error(' 创建二步验证设置失败:', sanitizeReportContext(error));
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.statusCode ? error.message : '创建二步验证失败'
+        });
     }
 });
 
@@ -11027,7 +12372,11 @@ app.post('/api/user/2fa/enable', authenticateToken, async (req, res) => {
 
         let decoded;
         try {
-            decoded = jwt.verify(setupToken, JWT_SECRET);
+            decoded = jwt.verify(setupToken, JWT_SECRET, {
+                algorithms: ['HS256'],
+                issuer: INTERMEDIATE_TOKEN_ISSUER,
+                audience: TWO_FACTOR_SETUP_AUDIENCE
+            });
         } catch (error) {
             return res.status(401).json({ success: false, error: '二步验证设置已过期，请重新生成' });
         }
@@ -11044,39 +12393,87 @@ app.post('/api/user/2fa/enable', authenticateToken, async (req, res) => {
             setupId: decoded.setupId,
             userId: req.user.userId
         });
-        const secret = normalizeTotpSecret(setupChallenge?.secret);
+        let secret = '';
+        try {
+            secret = normalizeTotpSecret(totpSecretCipher.decrypt(setupChallenge?.secret, {
+                purpose: 'setup',
+                recordId: String(decoded.setupId),
+                allowPlaintext: true
+            }));
+        } catch (_) {
+            secret = '';
+        }
         if (!secret) {
             return res.status(401).json({ success: false, error: '二步验证设置已过期，请重新生成' });
         }
 
-        if (!verifyTotpCode(secret, code)) {
+        const acceptedCounter = findMatchingTotpCounter(secret, code);
+        if (acceptedCounter === null) {
             return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
         }
 
         await databaseSchemaReady;
-        const rewardPoints = await runPasskeyTransaction(async () => {
-            const update = await passkeyDbRunAsync(
+        const recoveryCodes = generateRecoveryCodes();
+        const twoFactorMutation = await withSensitiveAccountMutation(req.user.userId, async (tx) => {
+            const update = await tx.run(
                 `UPDATE users
                  SET two_factor_enabled = 1,
                      two_factor_secret = ?,
+                     two_factor_last_counter = ?,
                      two_factor_confirmed_at = CURRENT_TIMESTAMP
                  WHERE id = ? AND COALESCE(two_factor_enabled, 0) = 0`,
-                [secret, req.user.userId]
+                [
+                    totpSecretCipher.encrypt(secret, {
+                        purpose: 'user',
+                        recordId: String(req.user.userId)
+                    }),
+                    acceptedCounter,
+                    req.user.userId
+                ]
             );
             if (Number(update?.changes || 0) !== 1) {
                 throw buildPasskeyHttpError('二步验证状态已变化，请刷新后重试', 409, 'two_factor_state_changed');
             }
-            return awardSecuritySetupRewardWithinTransaction(
+            await tx.run(
+                'DELETE FROM user_two_factor_recovery_codes WHERE user_id = ?',
+                [req.user.userId]
+            );
+            for (const recoveryCode of recoveryCodes) {
+                await tx.run(
+                    `INSERT INTO user_two_factor_recovery_codes
+                     (user_id, code_hash, created_at, used_at)
+                     VALUES (?, ?, ?, NULL)`,
+                    [req.user.userId, hashRecoveryCode(recoveryCode), Date.now()]
+                );
+            }
+            return awardSecuritySetupRewardUsingTransaction(
+                tx,
                 req.user.userId,
                 USER_TASK_REWARDS.securityTwoFactor,
                 { securityMethod: 'totp' }
             );
         });
+        const rewardPoints = twoFactorMutation.value;
 
+        await purgeStaleAuthSessionsAfterSensitiveChange(req.user.userId, 'two_factor_enabled');
+        const updatedUser = await dbGetAsync('SELECT * FROM users WHERE id = ?', [req.user.userId]);
+        const replacement = await buildAuthenticatedUserPayload(
+            updatedUser,
+            req,
+            '',
+            { auth_method: 'two_factor_setup' }
+        );
         console.log(` 用户二步验证已开启: userId=${req.user.userId}`);
-        res.json({ success: true, two_factor_enabled: true, rewardPoints });
+        res.json({
+            success: true,
+            two_factor_enabled: true,
+            rewardPoints,
+            recoveryCodes,
+            token: replacement.token,
+            tokenExpiresAt: replacement.tokenExpiresAt
+        });
     } catch (error) {
-        console.error(' 开启二步验证失败:', error);
+        console.error(' 开启二步验证失败:', sanitizeReportContext(error));
         res.status(error.statusCode || 500).json({
             success: false,
             error: error.statusCode ? error.message : '开启二步验证失败'
@@ -11092,7 +12489,9 @@ app.post('/api/user/2fa/disable', authenticateToken, async (req, res) => {
         }
 
         const user = await dbGetAsync(
-            'SELECT id, two_factor_enabled, two_factor_secret FROM users WHERE id = ?',
+            `SELECT id, email, password_hash, external_provider,
+                    two_factor_enabled, two_factor_secret, two_factor_last_counter
+             FROM users WHERE id = ?`,
             [req.user.userId]
         );
 
@@ -11100,28 +12499,53 @@ app.post('/api/user/2fa/disable', authenticateToken, async (req, res) => {
             return res.status(404).json({ success: false, error: '用户不存在' });
         }
 
-        if (Number(user.two_factor_enabled || 0) !== 1 || !normalizeTotpSecret(user.two_factor_secret)) {
+        if (Number(user.two_factor_enabled || 0) !== 1 || !hasUsableUserTotpSecret(user)) {
             return res.status(409).json({ success: false, error: '二步验证尚未开启' });
         }
 
-        if (!verifyTotpCode(user.two_factor_secret, code)) {
-            return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
-        }
+        await verifyPasskeyReauthentication(req, user, {
+            ...(req.body || {}),
+            twoFactorCode: code
+        });
 
-        await dbRunAsync(
-            `UPDATE users
-             SET two_factor_enabled = 0,
-                 two_factor_secret = NULL,
-                 two_factor_confirmed_at = NULL
-             WHERE id = ?`,
-            [req.user.userId]
+        const mutation = await withSensitiveAccountMutation(req.user.userId, async (tx) => {
+            const disabled = await tx.run(
+                `UPDATE users
+                 SET two_factor_enabled = 0,
+                     two_factor_secret = NULL,
+                     two_factor_last_counter = NULL,
+                     two_factor_confirmed_at = NULL
+                 WHERE id = ? AND COALESCE(two_factor_enabled, 0) = 1`,
+                [req.user.userId]
+            );
+            if (Number(disabled?.changes || 0) !== 1) {
+                throw buildPasskeyHttpError('二步验证状态已变化，请刷新后重试', 409, 'two_factor_state_changed');
+            }
+            await tx.run('DELETE FROM user_two_factor_recovery_codes WHERE user_id = ?', [req.user.userId]);
+            return tx.get('SELECT * FROM users WHERE id = ?', [req.user.userId]);
+        });
+
+        await purgeStaleAuthSessionsAfterSensitiveChange(req.user.userId, 'two_factor_disabled');
+        const updatedUser = { ...mutation.value, session_version: mutation.sessionVersion };
+        const replacement = await buildAuthenticatedUserPayload(
+            updatedUser,
+            req,
+            '',
+            { auth_method: 'password' }
         );
-
         console.log(` 用户二步验证已关闭: userId=${req.user.userId}`);
-        res.json({ success: true, two_factor_enabled: false });
+        res.json({
+            success: true,
+            two_factor_enabled: false,
+            token: replacement.token,
+            tokenExpiresAt: replacement.tokenExpiresAt
+        });
     } catch (error) {
-        console.error(' 关闭二步验证失败:', error);
-        res.status(500).json({ success: false, error: '关闭二步验证失败' });
+        console.error(' 关闭二步验证失败:', sanitizeReportContext(error));
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.statusCode ? error.message : '关闭二步验证失败'
+        });
     }
 });
 
@@ -11134,13 +12558,25 @@ app.put('/api/user/password', authenticateToken, async (req, res) => {
             return res.status(400).json({ success: false, error: '当前密码不能为空' });
         }
 
-        const currentPasswordError = validatePasswordLength(currentPassword, '当前密码');
-        const newPasswordError = validatePasswordLength(newPassword, '新密码');
+        const currentPasswordError = validateExistingPasswordInput(currentPassword, '当前密码');
 
         if (currentPasswordError) {
             return res.status(400).json({ success: false, error: currentPasswordError });
         }
 
+        const user = await dbGetAsync(
+            'SELECT id, email, username, password_hash FROM users WHERE id = ?',
+            [req.user.userId]
+        );
+
+        if (!user) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+
+        const newPasswordError = await validateNewPasswordForAccount(newPassword, {
+            email: user.email,
+            username: user.username
+        }, '新密码');
         if (newPasswordError) {
             return res.status(400).json({ success: false, error: newPasswordError });
         }
@@ -11149,30 +12585,45 @@ app.put('/api/user/password', authenticateToken, async (req, res) => {
             return res.status(400).json({ success: false, error: '新密码不能与当前密码相同' });
         }
 
-        const user = await dbGetAsync(
-            'SELECT id, email, password_hash FROM users WHERE id = ?',
-            [req.user.userId]
-        );
-
-        if (!user) {
-            return res.status(404).json({ success: false, error: '用户不存在' });
-        }
-
-        const passwordMatched = await bcrypt.compare(currentPassword, user.password_hash);
+        const passwordMatched = await verifyPassword(currentPassword, user.password_hash);
         if (!passwordMatched) {
             return res.status(400).json({ success: false, error: '当前密码错误' });
         }
 
-        const nextPasswordHash = await bcrypt.hash(newPassword, 10);
-        await dbRunAsync(
-            'UPDATE users SET password_hash = ? WHERE id = ?',
-            [nextPasswordHash, user.id]
+        const nextPasswordHash = await hashPassword(newPassword);
+        if (!await verifyPassword(newPassword, nextPasswordHash).catch(() => false)) {
+            throw new Error('password_change_hash_verification_failed');
+        }
+        const mutation = await withSensitiveAccountMutation(user.id, async (tx) => {
+            const changed = await tx.run(
+                `UPDATE users
+                 SET password_hash = ?, password_policy_version = ?
+                 WHERE id = ? AND password_hash = ?`,
+                [nextPasswordHash, PASSWORD_POLICY_VERSION, user.id, user.password_hash]
+            );
+            if (Number(changed?.changes || 0) !== 1) {
+                throw new Error('password_change_state_changed');
+            }
+            return tx.get('SELECT * FROM users WHERE id = ?', [user.id]);
+        });
+
+        await purgeStaleAuthSessionsAfterSensitiveChange(user.id, 'password_changed');
+        const updatedUser = { ...mutation.value, session_version: mutation.sessionVersion };
+        const replacement = await buildAuthenticatedUserPayload(
+            updatedUser,
+            req,
+            '',
+            { auth_method: 'password' }
         );
 
-        console.log(` 用户密码已更新: userId=${user.id}, email=${user.email}`);
-        res.json({ success: true });
+        console.log(` 用户密码已更新: userId=${user.id}`);
+        res.json({
+            success: true,
+            token: replacement.token,
+            tokenExpiresAt: replacement.tokenExpiresAt
+        });
     } catch (error) {
-        console.error(' 更新用户密码失败:', error);
+        console.error(' 更新用户密码失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '更新密码失败' });
     }
 });
@@ -11200,13 +12651,13 @@ app.delete('/api/user/account', authenticateToken, async (req, res) => {
             return res.status(404).json({ success: false, error: '用户不存在' });
         }
 
-        const passwordMatched = await bcrypt.compare(currentPassword, user.password_hash).catch(() => false);
+        const passwordMatched = await verifyPassword(currentPassword, user.password_hash).catch(() => false);
         if (!passwordMatched) {
             return res.status(400).json({ success: false, error: '当前密码错误' });
         }
 
-        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && !!normalizeTotpSecret(user.two_factor_secret);
-        if (twoFactorEnabled && !verifyTotpCode(user.two_factor_secret, twoFactorCode)) {
+        const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1 && hasUsableUserTotpSecret(user);
+        if (twoFactorEnabled && !await consumeUserSecondFactor(user, twoFactorCode)) {
             return res.status(400).json({ success: false, error: 'Authenticator 验证码无效' });
         }
 
@@ -11215,7 +12666,7 @@ app.delete('/api/user/account', authenticateToken, async (req, res) => {
             return res.status(404).json({ success: false, error: '用户不存在' });
         }
 
-        console.log(` 用户自助注销完成: userId=${user.id}, email=${user.email}, uploads=${result.deletedUploads}, files=${result.deletedFiles}`);
+        console.log(` 用户自助注销完成: userId=${user.id}, uploads=${result.deletedUploads}, files=${result.deletedFiles}`);
         return res.json({
             success: true,
             deletedUserId: result.deletedUserId,
@@ -11223,7 +12674,7 @@ app.delete('/api/user/account', authenticateToken, async (req, res) => {
             deletedFiles: result.deletedFiles
         });
     } catch (error) {
-        console.error(' 用户自助注销失败:', error);
+        console.error(' 用户自助注销失败:', sanitizeReportContext(error));
         return res.status(error.statusCode || 500).json({ success: false, error: '注销账号失败' });
     }
 });
@@ -11242,11 +12693,10 @@ function sanitizeUserConfigPayload(payload = {}) {
     const theme = ['light', 'dark', 'system'].includes(String(payload.theme || '').trim())
         ? String(payload.theme).trim()
         : 'dark';
-    const defaultModel = normalizeIncomingModelId(payload.default_model || 'auto');
-    const safeDefaultModel = defaultModel === 'auto' || PUBLIC_MODEL_IDS.includes(defaultModel) || MODEL_ROUTING[defaultModel]
-        ? defaultModel
-        : 'auto';
-    const fontPreference = String(payload.font_preference || '').trim().toLowerCase() === 'system' ? 'system' : 'rai';
+    // The account preference is deliberately no longer a routing choice. Manual
+    // choices remain request/session-local on clients that support them.
+    const safeDefaultModel = 'auto';
+    const fontPreference = String(payload.font_preference || '').trim().toLowerCase() === 'rai-v1' ? 'rai-v1' : 'system';
     const allowedTabTitleModes = ['default', 'static', 'marquee', 'greeting', 'title', 'custom'];
     const tabTitleMode = allowedTabTitleModes.includes(String(payload.tab_title_mode || '').trim())
         ? String(payload.tab_title_mode).trim()
@@ -11351,7 +12801,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
             selection_explanation_delete_mode: effectiveSelectionExplanationDeleteMode
         });
     } catch (err) {
-        console.error(' 保存配置失败:', err);
+        console.error(' 保存配置失败:', sanitizeReportContext(err));
         res.status(500).json({ error: '保存失败' });
     }
 });
@@ -11365,7 +12815,7 @@ app.get('/api/user/memories', authenticateToken, async (req, res) => {
             : [];
         res.json({ success: true, enabled, memories, shortTermMemory });
     } catch (error) {
-        console.error(' 获取用户记忆失败:', error);
+        console.error(' 获取用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '获取记忆失败' });
     }
 });
@@ -11389,7 +12839,7 @@ app.post('/api/user/memories', authenticateToken, async (req, res) => {
         const memories = await listActiveUserMemories(req.user.userId, 200);
         res.json({ success: true, memories });
     } catch (error) {
-        console.error(' 新增用户记忆失败:', error);
+        console.error(' 新增用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '保存记忆失败' });
     }
 });
@@ -11404,7 +12854,7 @@ app.post('/api/user/memories/clear', authenticateToken, async (req, res) => {
         );
         res.json({ success: true, memories: [] });
     } catch (error) {
-        console.error(' 清空用户记忆失败:', error);
+        console.error(' 清空用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '清空记忆失败' });
     }
 });
@@ -11434,7 +12884,7 @@ app.patch('/api/user/memories/:id', authenticateToken, async (req, res) => {
         const memories = await listActiveUserMemories(req.user.userId, 200);
         res.json({ success: true, memories });
     } catch (error) {
-        console.error(' 更新用户记忆失败:', error);
+        console.error(' 更新用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '更新记忆失败' });
     }
 });
@@ -11449,7 +12899,7 @@ app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
         const memories = await listActiveUserMemories(req.user.userId, 200);
         res.json({ success: true, memories });
     } catch (error) {
-        console.error(' 删除用户记忆失败:', error);
+        console.error(' 删除用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '删除记忆失败' });
     }
 });
@@ -11467,7 +12917,7 @@ app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(av
     const avatarUrl = `/avatars/${req.file.filename}`;
     db.run('UPDATE users SET avatar_url = ? WHERE id = ?', [avatarUrl, req.user.userId], (err) => {
         if (err) {
-            console.error(' 更新头像失败:', err);
+            console.error(' 更新头像失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '更新失败' });
         }
         res.json({ success: true, avatar_url: avatarUrl });
@@ -11475,6 +12925,327 @@ app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(av
 });
 
 // ==================== 会话管理路由 ====================
+app.get('/api/conversation-folders', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const folders = await dbAllAsync(
+            `SELECT f.id, f.name, f.created_at, f.updated_at, COUNT(m.session_id) AS session_count
+             FROM conversation_folders f
+             LEFT JOIN conversation_folder_sessions m ON m.folder_id = f.id AND m.user_id = f.user_id
+             WHERE f.user_id = ? GROUP BY f.id ORDER BY f.updated_at DESC, f.id DESC`,
+            [req.user.userId]
+        );
+        return res.json({ folders: folders.map((folder) => ({
+            id: folder.id, name: folder.name, createdAt: folder.created_at, updatedAt: folder.updated_at,
+            sessionCount: Number(folder.session_count || 0)
+        })) });
+    } catch (error) {
+        console.error(' 获取会话文件夹失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '获取文件夹失败' });
+    }
+});
+
+app.post('/api/conversation-folders', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const folder = await withMainDbTransaction(async (tx) => {
+            const id = `folder_${crypto.randomUUID().replace(/-/g, '')}`;
+            const name = normalizeFolderName(req.body?.name);
+            await tx.run('INSERT INTO conversation_folders (id, user_id, name) VALUES (?, ?, ?)', [id, req.user.userId, name]);
+            return { id, name };
+        });
+        return res.status(201).json({ success: true, folder });
+    } catch (error) {
+        if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: '已有同名文件夹' });
+        console.error(' 创建会话文件夹失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '创建文件夹失败' });
+    }
+});
+
+app.patch('/api/conversation-folders/:folderId', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const name = normalizeFolderName(req.body?.name);
+        const result = await dbRunAsync(
+            'UPDATE conversation_folders SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+            [name, req.params.folderId, req.user.userId]
+        );
+        if (Number(result?.changes || 0) !== 1) return res.status(404).json({ error: '文件夹不存在' });
+        return res.json({ success: true, folder: { id: req.params.folderId, name } });
+    } catch (error) {
+        if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: '已有同名文件夹' });
+        return res.status(500).json({ error: '重命名文件夹失败' });
+    }
+});
+
+app.delete('/api/conversation-folders/:folderId', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const result = await withMainDbTransaction(async (tx) => {
+            const folder = await tx.get('SELECT id FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+            if (!folder) return false;
+            await tx.run('DELETE FROM conversation_folder_sessions WHERE folder_id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+            await tx.run('DELETE FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+            return true;
+        });
+        if (!result) return res.status(404).json({ error: '文件夹不存在' });
+        return res.json({ success: true });
+    } catch (error) {
+        return res.status(500).json({ error: '删除文件夹失败' });
+    }
+});
+
+app.get('/api/conversation-folders/:folderId/sessions', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
+        const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
+        const folder = await dbGetAsync('SELECT id FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+        if (!folder) return res.status(404).json({ error: '文件夹不存在' });
+        const rows = await dbAllAsync(
+            `SELECT s.id, s.title, s.model, s.session_kind, s.updated_at, s.created_at,
+                    CASE WHEN p.session_id IS NULL THEN 0 ELSE 1 END AS pinned, p.position AS pin_position
+             FROM conversation_folder_sessions m JOIN sessions s ON s.id = m.session_id
+             LEFT JOIN session_pins p ON p.session_id = s.id AND p.user_id = s.user_id
+             WHERE m.folder_id = ? AND m.user_id = ? AND s.user_id = ? AND s.is_archived = 0
+             ORDER BY pinned DESC, p.position ASC, s.updated_at DESC, s.id DESC LIMIT ? OFFSET ?`,
+            [req.params.folderId, req.user.userId, req.user.userId, limit, offset]
+        );
+        return res.json({ sessions: rows, hasMore: rows.length === limit, offset, limit });
+    } catch (error) {
+        return res.status(500).json({ error: '获取文件夹对话失败' });
+    }
+});
+
+app.get('/api/sessions/:sessionId/conversation-folders', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const session = await dbGetAsync('SELECT id FROM sessions WHERE id = ? AND user_id = ?', [req.params.sessionId, req.user.userId]);
+        if (!session) return res.status(404).json({ error: '对话不存在' });
+        const rows = await dbAllAsync(
+            `SELECT m.folder_id
+             FROM conversation_folder_sessions m
+             JOIN conversation_folders f ON f.id = m.folder_id AND f.user_id = m.user_id
+             WHERE m.session_id = ? AND m.user_id = ?
+             ORDER BY f.created_at ASC, f.id ASC`,
+            [req.params.sessionId, req.user.userId]
+        );
+        return res.json({ folderIds: rows.map((row) => row.folder_id) });
+    } catch (error) {
+        return res.status(500).json({ error: '获取对话文件夹失败' });
+    }
+});
+
+app.route('/api/conversation-folders/:folderId/sessions/:sessionId')
+    .put(authenticateToken, async (req, res) => {
+        try {
+            await ensureConversationOrganizationSchema();
+            const result = await withMainDbTransaction(async (tx) => {
+                const folder = await tx.get('SELECT id FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+                if (!folder) return { missingFolder: true };
+                const session = await tx.get('SELECT id FROM sessions WHERE id = ? AND user_id = ?', [req.params.sessionId, req.user.userId]);
+                if (!session) return { missingSession: true };
+                const inserted = await tx.run(
+                    'INSERT OR IGNORE INTO conversation_folder_sessions (folder_id, session_id, user_id) VALUES (?, ?, ?)',
+                    [req.params.folderId, req.params.sessionId, req.user.userId]
+                );
+                if (Number(inserted?.changes || 0) > 0) {
+                    await tx.run('UPDATE conversation_folders SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+                }
+                return { success: true, assigned: true, changed: Number(inserted?.changes || 0) > 0 };
+            });
+            if (result.missingFolder) return res.status(404).json({ error: '文件夹不存在' });
+            if (result.missingSession) return res.status(404).json({ error: '对话不存在' });
+            return res.json(result);
+        } catch (error) {
+            return res.status(500).json({ error: '添加文件夹成员失败' });
+        }
+    })
+    .delete(authenticateToken, async (req, res) => {
+        try {
+            await ensureConversationOrganizationSchema();
+            const result = await withMainDbTransaction(async (tx) => {
+                const folder = await tx.get('SELECT id FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+                if (!folder) return { missingFolder: true };
+                const session = await tx.get('SELECT id FROM sessions WHERE id = ? AND user_id = ?', [req.params.sessionId, req.user.userId]);
+                if (!session) return { missingSession: true };
+                const removed = await tx.run(
+                    'DELETE FROM conversation_folder_sessions WHERE folder_id = ? AND session_id = ? AND user_id = ?',
+                    [req.params.folderId, req.params.sessionId, req.user.userId]
+                );
+                if (Number(removed?.changes || 0) > 0) {
+                    await tx.run('UPDATE conversation_folders SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+                }
+                return { success: true, assigned: false, changed: Number(removed?.changes || 0) > 0 };
+            });
+            if (result.missingFolder) return res.status(404).json({ error: '文件夹不存在' });
+            if (result.missingSession) return res.status(404).json({ error: '对话不存在' });
+            return res.json(result);
+        } catch (error) {
+            return res.status(500).json({ error: '移除文件夹成员失败' });
+        }
+    });
+
+app.put('/api/conversation-folders/:folderId/sessions', authenticateToken, async (req, res) => {
+    const sessionIds = [...new Set(Array.isArray(req.body?.sessionIds) ? req.body.sessionIds.map((id) => String(id || '').trim()).filter(Boolean) : [])];
+    if (sessionIds.length > 200) return res.status(400).json({ error: '单次最多提交 200 条对话' });
+    try {
+        await ensureConversationOrganizationSchema();
+        const result = await withMainDbTransaction(async (tx) => {
+            const folder = await tx.get('SELECT id FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+            if (!folder) return { missing: true };
+            const owned = sessionIds.length ? await tx.all(
+                `SELECT id FROM sessions WHERE user_id = ? AND id IN (${sessionIds.map(() => '?').join(',')})`,
+                [req.user.userId, ...sessionIds]
+            ) : [];
+            if (owned.length !== sessionIds.length) return { invalid: true };
+            await tx.run('DELETE FROM conversation_folder_sessions WHERE folder_id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+            for (const sessionId of sessionIds) {
+                await tx.run('INSERT INTO conversation_folder_sessions (folder_id, session_id, user_id) VALUES (?, ?, ?)', [req.params.folderId, sessionId, req.user.userId]);
+            }
+            await tx.run('UPDATE conversation_folders SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
+            return { success: true };
+        });
+        if (result.missing) return res.status(404).json({ error: '文件夹不存在' });
+        if (result.invalid) return res.status(403).json({ error: '只能归类自己的对话' });
+        return res.json(result);
+    } catch (error) {
+        return res.status(500).json({ error: '更新文件夹成员失败' });
+    }
+});
+
+app.post('/api/sessions/:id/pin', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const requested = req.body?.pinned;
+        const outcome = await withMainDbTransaction(async (tx) => {
+            const session = await tx.get('SELECT id FROM sessions WHERE id = ? AND user_id = ?', [req.params.id, req.user.userId]);
+            if (!session) return { missing: true };
+            const existing = await tx.get('SELECT position FROM session_pins WHERE user_id = ? AND session_id = ?', [req.user.userId, req.params.id]);
+            const pinned = requested === undefined ? !existing : Boolean(requested);
+            if (pinned && !existing) {
+                const tail = await tx.get('SELECT COALESCE(MAX(position), -1) AS position FROM session_pins WHERE user_id = ?', [req.user.userId]);
+                await tx.run('INSERT INTO session_pins (user_id, session_id, position) VALUES (?, ?, ?)', [req.user.userId, req.params.id, Number(tail.position) + 1]);
+            } else if (!pinned && existing) {
+                await tx.run('DELETE FROM session_pins WHERE user_id = ? AND session_id = ?', [req.user.userId, req.params.id]);
+                const remaining = await tx.all('SELECT session_id FROM session_pins WHERE user_id = ? ORDER BY position, session_id', [req.user.userId]);
+                for (const [position, row] of remaining.entries()) await tx.run('UPDATE session_pins SET position = ? WHERE user_id = ? AND session_id = ?', [position, req.user.userId, row.session_id]);
+            }
+            return { success: true, pinned };
+        });
+        if (outcome.missing) return res.status(404).json({ error: '对话不存在' });
+        return res.json(outcome);
+    } catch (error) { return res.status(500).json({ error: '更新置顶失败' }); }
+});
+
+app.put('/api/sessions/pins/order', authenticateToken, async (req, res) => {
+    const sessionIds = [...new Set(Array.isArray(req.body?.sessionIds) ? req.body.sessionIds.map((id) => String(id || '').trim()).filter(Boolean) : [])];
+    try {
+        await ensureConversationOrganizationSchema();
+        const outcome = await withMainDbTransaction(async (tx) => {
+            const current = await tx.all('SELECT session_id FROM session_pins WHERE user_id = ? ORDER BY position', [req.user.userId]);
+            const expected = new Set(current.map((row) => row.session_id));
+            if (sessionIds.length !== expected.size || sessionIds.some((id) => !expected.has(id))) return { conflict: true };
+            for (const [position, sessionId] of sessionIds.entries()) {
+                await tx.run('UPDATE session_pins SET position = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND session_id = ?', [position, req.user.userId, sessionId]);
+            }
+            return { success: true, sessionIds };
+        });
+        if (outcome.conflict) return res.status(409).json({ error: '置顶列表已变化，请刷新后重试' });
+        return res.json(outcome);
+    } catch (error) { return res.status(500).json({ error: '保存置顶顺序失败' }); }
+});
+
+function normalizeSessionPromptModelIdentity(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (['smart', 'fast', 'think', 'research'].includes(raw)) return raw;
+    if (!raw.startsWith('model:')) return null;
+    const modelId = normalizeIncomingModelId(raw.slice('model:'.length));
+    return MODEL_ROUTING[modelId] ? `model:${modelId}` : null;
+}
+
+function normalizeSessionPromptLanguage(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'en' || raw === 'en-us' || raw === 'en-gb') return 'en';
+    return raw.startsWith('zh') ? 'zh-CN' : null;
+}
+
+function makePrivateEtag(value) {
+    return `"rai-${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 32)}"`;
+}
+
+function requestMatchesEtag(req, etag) {
+    return String(req.get('if-none-match') || '')
+        .split(',')
+        .map((value) => value.trim())
+        .includes(etag);
+}
+
+function extractMessageAttachmentRefs(rawAttachments, content = '') {
+    const refs = new Set();
+    const addRef = (value) => {
+        const raw = String(value || '').trim();
+        const match = raw.match(/(?:^|https?:\/\/[^/]+)(\/api\/uploads\/[A-Za-z0-9][A-Za-z0-9._-]{0,254}|\/generated-images\/[A-Za-z0-9][A-Za-z0-9._-]{0,254})/);
+        if (match) refs.add(match[1]);
+    };
+    const visit = (value) => {
+        if (typeof value === 'string') return addRef(value);
+        if (Array.isArray(value)) return value.forEach(visit);
+        if (value && typeof value === 'object') Object.values(value).forEach(visit);
+    };
+    try { visit(typeof rawAttachments === 'string' ? JSON.parse(rawAttachments) : rawAttachments); } catch (_) { /* legacy/base64 attachment payloads stay uncached */ }
+    String(content || '').replace(/(?:^|[('"\s])((?:\/generated-images\/)[A-Za-z0-9][A-Za-z0-9._-]{0,254})/g, (_, value) => {
+        addRef(value);
+        return _;
+    });
+    return [...refs];
+}
+
+async function buildConversationManifestForUser(userId) {
+    await ensureConversationOrganizationSchema();
+    await dbRunAsync('INSERT OR IGNORE INTO conversation_sync_state (user_id, revision) VALUES (?, 1)', [userId]);
+    const [state, sessions] = await Promise.all([
+        dbGetAsync('SELECT revision FROM conversation_sync_state WHERE user_id = ?', [userId]),
+        dbAllAsync(
+            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind,
+                    s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision,
+                    CASE WHEN p.session_id IS NULL THEN 0 ELSE 1 END AS pinned, p.position AS pin_position,
+                    GROUP_CONCAT(DISTINCT m.folder_id) AS folder_ids
+             FROM sessions s
+             LEFT JOIN session_pins p ON p.user_id = s.user_id AND p.session_id = s.id
+             LEFT JOIN conversation_folder_sessions m ON m.user_id = s.user_id AND m.session_id = s.id
+             WHERE s.user_id = ? AND s.is_archived = 0
+               AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
+             GROUP BY s.id
+             ORDER BY CASE WHEN p.session_id IS NULL THEN 1 ELSE 0 END, p.position ASC, s.updated_at DESC, s.id DESC`,
+            [userId]
+        )
+    ]);
+    return {
+        revision: Number(state?.revision || 0),
+        sessions: sessions.map((session) => ({
+            ...session,
+            pinned: Number(session.pinned || 0) === 1,
+            folder_ids: String(session.folder_ids || '').split(',').filter(Boolean)
+        }))
+    };
+}
+
+app.get('/api/sessions/manifest', authenticateToken, async (req, res) => {
+    try {
+        const manifest = await buildConversationManifestForUser(req.user.userId);
+        const etag = makePrivateEtag(JSON.stringify(manifest));
+        res.setHeader('Cache-Control', 'private, no-cache');
+        res.setHeader('ETag', etag);
+        res.setHeader('X-RAI-Manifest-Revision', String(manifest.revision));
+        if (requestMatchesEtag(req, etag)) return res.status(304).end();
+        return res.json(manifest);
+    } catch (error) {
+        console.error(' 获取会话清单失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '获取会话清单失败' });
+    }
+});
+
 app.get('/api/sessions', authenticateToken, async (req, res) => {
     try {
         await ensureSessionKindColumn();
@@ -11483,33 +13254,23 @@ app.get('/api/sessions', authenticateToken, async (req, res) => {
         const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
         const limit = parseBoundedInteger(req.query.limit, 20, 1, 100);
 
-        // 优化：简化查询，移除慢速子查询（message_count, recent_attachments）
-        // 只保留 last_message 用于侧边栏预览
-        db.all(
-            `SELECT s.id, s.title, s.model, s.session_kind, s.updated_at, s.created_at,
-          (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message,
-          (SELECT content FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY created_at DESC, id DESC LIMIT 1) as last_assistant_message
-        FROM sessions s
-        WHERE s.user_id = ? AND s.is_archived = 0 AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
-        ORDER BY s.updated_at DESC
-        LIMIT ? OFFSET ?`,
-            [req.user.userId, limit, offset],
-            (err, sessions) => {
-                if (err) {
-                    console.error(' 获取会话列表失败:', err);
-                    return res.status(500).json({ error: '数据库错误' });
-                }
-                // 返回带有分页信息的响应
-                res.json({
-                    sessions: sessions,
-                    hasMore: sessions.length === limit,
-                    offset: offset,
-                    limit: limit
-                });
-            }
+        await ensureConversationOrganizationSchema();
+        const pinned = await dbAllAsync(
+            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 1 AS pinned, p.position AS pin_position
+             FROM session_pins p JOIN sessions s ON s.id = p.session_id AND s.user_id = p.user_id
+             WHERE p.user_id = ? AND s.is_archived = 0 AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
+             ORDER BY p.position ASC, s.id ASC`, [req.user.userId]
         );
+        const sessions = await dbAllAsync(
+            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 0 AS pinned, NULL AS pin_position
+             FROM sessions s WHERE s.user_id = ? AND s.is_archived = 0
+               AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
+               AND NOT EXISTS (SELECT 1 FROM session_pins p WHERE p.user_id = s.user_id AND p.session_id = s.id)
+             ORDER BY s.updated_at DESC, s.id DESC LIMIT ? OFFSET ?`, [req.user.userId, limit, offset]
+        );
+        return res.json({ pinned, sessions, hasMore: sessions.length === limit, offset, limit });
     } catch (error) {
-        console.error(' 确保sessions表结构失败:', error);
+        console.error(' 确保sessions表结构失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '数据库结构初始化失败' });
     }
 });
@@ -11519,27 +13280,58 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
         await ensureSessionKindColumn();
 
         const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-        const { title, model, session_kind: sessionKind = 'chat' } = req.body;
+        const { title, model, prompt_model_identity: promptModelIdentity, session_kind: sessionKind = 'chat' } = req.body;
         const requestedTitle = String(title || '').trim();
         const fallbackTitle = String(sessionKind || 'chat') === 'temporary_saved' ? '临时对话' : '新对话';
         const safeTitle = sanitizeGeneratedConversationTitle(requestedTitle)
             || (requestedTitle && GENERIC_SESSION_TITLE_RE.test(requestedTitle) ? requestedTitle : fallbackTitle);
 
         db.run(
-            'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
-            [sessionId, req.user.userId, safeTitle, model || 'deepseek-pro', sessionKind || 'chat'],
+            'INSERT INTO sessions (id, user_id, title, model, prompt_model_identity, session_kind) VALUES (?, ?, ?, ?, ?, ?)',
+            [sessionId, req.user.userId, safeTitle, model || 'auto', normalizeSessionPromptModelIdentity(promptModelIdentity), sessionKind || 'chat'],
             (err) => {
                 if (err) {
-                    console.error(' 创建会话失败:', err);
+                    console.error(' 创建会话失败:', sanitizeReportContext(err));
                     return res.status(500).json({ error: '创建失败' });
                 }
                 console.log(' 创建会话成功:', sessionId);
-                res.json({ success: true, sessionId });
+                res.json({ success: true, sessionId, prompt_model_identity: normalizeSessionPromptModelIdentity(promptModelIdentity) });
             }
         );
     } catch (error) {
-        console.error(' 确保sessions表结构失败:', error);
+        console.error(' 确保sessions表结构失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '数据库结构初始化失败' });
+    }
+});
+
+app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res) => {
+    try {
+        await ensureSessionKindColumn();
+        const requestedIdentity = normalizeSessionPromptModelIdentity(req.body?.prompt_model_identity);
+        if (!requestedIdentity) return res.status(400).json({ error: '模型提示词身份无效' });
+        const requestedLanguage = normalizeSessionPromptLanguage(req.body?.prompt_language) || 'zh-CN';
+
+        const updated = await dbRunAsync(
+            `UPDATE sessions
+             SET prompt_model_identity = COALESCE(NULLIF(prompt_model_identity, ''), ?),
+                 prompt_language = COALESCE(NULLIF(prompt_language, ''), ?)
+             WHERE id = ? AND user_id = ?`,
+            [requestedIdentity, requestedLanguage, req.params.id, req.user.userId]
+        );
+        if (Number(updated?.changes || 0) !== 1) return res.status(404).json({ error: '对话不存在' });
+
+        const session = await dbGetAsync(
+            'SELECT prompt_model_identity, prompt_language FROM sessions WHERE id = ? AND user_id = ?',
+            [req.params.id, req.user.userId]
+        );
+        return res.json({
+            success: true,
+            prompt_model_identity: session?.prompt_model_identity || requestedIdentity,
+            prompt_language: session?.prompt_language || requestedLanguage
+        });
+    } catch (error) {
+        console.error(' 锁定会话模型提示词失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '无法锁定会话模型提示词' });
     }
 });
 
@@ -11552,7 +13344,7 @@ app.put('/api/sessions/:id', authenticateToken, (req, res) => {
         [safeTitle, model, is_archived, req.params.id, req.user.userId],
         (err) => {
             if (err) {
-                console.error(' 更新会话失败:', err);
+                console.error(' 更新会话失败:', sanitizeReportContext(err));
                 return res.status(500).json({ error: '更新失败' });
             }
             res.json({ success: true });
@@ -11560,21 +13352,53 @@ app.put('/api/sessions/:id', authenticateToken, (req, res) => {
     );
 });
 
-app.delete('/api/sessions/:id', authenticateToken, (req, res) => {
-    db.run('DELETE FROM sessions WHERE id = ? AND user_id = ?', [req.params.id, req.user.userId], (err) => {
-        if (err) {
-            console.error(' 删除会话失败:', err);
-            return res.status(500).json({ error: '删除失败' });
-        }
+app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
+    try {
+        await ensureConversationOrganizationSchema();
+        const deleted = await withMainDbTransaction(async (tx) => {
+            const existing = await tx.get(
+                'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
+                [req.params.id, req.user.userId]
+            );
+            if (!existing) return false;
+            await stageGeneratedImageDeletionsForSession({
+                tx,
+                sessionId: req.params.id,
+                userId: req.user.userId
+            });
+            await tx.run(
+                'UPDATE selection_explanation_threads SET session_id = NULL WHERE user_id = ? AND session_id = ?',
+                [req.user.userId, req.params.id]
+            );
+            await tx.run(
+                'UPDATE selection_explanation_requests SET session_id = NULL WHERE user_id = ? AND session_id = ?',
+                [req.user.userId, req.params.id]
+            );
+            const result = await tx.run(
+                'DELETE FROM sessions WHERE id = ? AND user_id = ?',
+                [req.params.id, req.user.userId]
+            );
+            if (Number(result?.changes || 0) !== 1) {
+                const error = new Error('session_delete_target_changed');
+                error.code = 'session_delete_target_changed';
+                throw error;
+            }
+            return true;
+        });
+        if (!deleted) return res.status(404).json({ error: '会话不存在' });
+        await drainQueuedGeneratedImageDeletionsBestEffort();
         console.log(' 删除会话成功:', req.params.id);
-        res.json({ success: true });
-    });
+        return res.json({ success: true });
+    } catch (error) {
+        console.error(' 删除会话失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '删除失败' });
+    }
 });
 
 app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
-    db.get('SELECT user_id FROM sessions WHERE id = ?', [req.params.id], (err, session) => {
+    db.get('SELECT user_id, COALESCE(messages_revision, 0) AS messages_revision FROM sessions WHERE id = ?', [req.params.id], (err, session) => {
         if (err) {
-            console.error(' 查询会话失败:', err);
+            console.error(' 查询会话失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -11585,35 +13409,47 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
         // 优化：只查询必要字段，避免加载大的attachments Base64数据
         // 附件数据可以按需加载（懒加载）
         db.all(
-            `SELECT id, session_id, role, content, reasoning_content, model, 
+            `SELECT id, session_id, role, content, request_id, reasoning_content, model, attachments,
                     enable_search, thinking_mode, internet_mode, sources, process_trace, created_at,
-                    CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]' 
+                    CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
                          THEN 1 ELSE 0 END as has_attachments
              FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
             [req.params.id],
             (err, messages) => {
                 if (err) {
-                    console.error(' 获取消息失败:', err);
+                    console.error(' 获取消息失败:', sanitizeReportContext(err));
                     return res.status(500).json({ error: '数据库错误' });
                 }
-                res.json(messages);
+                // Keep the historical array response contract. attachment_refs is
+                // additive and contains only private server assets, never Base64.
+                const payload = messages.map((message) => {
+                    const attachment_refs = extractMessageAttachmentRefs(message.attachments, message.content);
+                    delete message.attachments;
+                    return { ...message, attachment_refs };
+                });
+                const etag = makePrivateEtag(`${req.user.userId}:${req.params.id}:${session.messages_revision}`);
+                res.setHeader('Cache-Control', 'private, no-cache');
+                res.setHeader('ETag', etag);
+                res.setHeader('X-RAI-Messages-Revision', String(session.messages_revision));
+                if (requestMatchesEtag(req, etag)) return res.status(304).end();
+                res.json(payload);
             }
         );
     });
 });
 
 app.get('/api/sessions/:id/stream-events', async (req, res) => {
-    const bearerToken = getBearerToken(req);
-    const rawToken = bearerToken || String(req.query.token || '').trim();
+    const rawToken = getBearerToken(req);
     if (!rawToken) {
         return res.status(401).json({ error: '未提供认证令牌' });
     }
 
     let user;
     try {
-        user = verifyUserSessionToken(rawToken, JWT_SECRET);
+        await authSessionStartupReady;
+        user = await authSessionStore.verifyAccessToken(rawToken);
     } catch (error) {
-        return res.status(403).json({ error: '令牌无效或已过期' });
+        return res.status(401).json({ error: '令牌无效、已过期或会话已撤销' });
     }
 
     const sessionId = String(req.params.id || '').trim();
@@ -11623,7 +13459,7 @@ app.get('/api/sessions/:id/stream-events', async (req, res) => {
             return res.status(403).json({ error: '无权访问此会话' });
         }
     } catch (error) {
-        console.error(' 查询会话流权限失败:', error);
+        console.error(' 查询会话流权限失败:', sanitizeReportContext(error));
         return res.status(500).json({ error: '数据库错误' });
     }
 
@@ -11651,8 +13487,19 @@ app.get('/api/sessions/:id/stream-events', async (req, res) => {
         });
     }
 
-    const keepAlive = setInterval(() => {
-        sendSessionStreamEvent(res, { type: 'session_stream_ping', ts: Date.now() });
+    let authCheckRunning = false;
+    const keepAlive = setInterval(async () => {
+        if (authCheckRunning) return;
+        authCheckRunning = true;
+        try {
+            await authSessionStore.verifyAccessToken(rawToken);
+            sendSessionStreamEvent(res, { type: 'session_stream_ping', ts: Date.now() });
+        } catch (_) {
+            sendSessionStreamEvent(res, { type: 'session_stream_auth_expired' });
+            res.end();
+        } finally {
+            authCheckRunning = false;
+        }
     }, 25000);
 
     req.on('close', () => {
@@ -11808,7 +13655,7 @@ function parseCanvasPatchPayload(rawPatchText = '') {
         return {
             canvasPatch: null,
             canvasPatchRaw: raw,
-            canvasPatchParseError: error.message
+            canvasPatchParseError: 'invalid_canvas_patch_json'
         };
     }
 }
@@ -11975,13 +13822,13 @@ async function generateFallbackConversationTitleWithModel({ modelId, userContent
             }),
             signal: controller.signal
         });
-        const payloadText = await response.text();
+        const payloadText = await readBoundedResponseText(response, 256 * 1024);
         if (!response.ok) {
             appendRaiRuntimeReport({
                 level: '报错',
                 tag: 'title_fallback_http_failed',
                 message: `Title fallback HTTP ${response.status}`,
-                context: { modelId, provider: routing.provider, body: payloadText.slice(0, 600) }
+                context: { modelId, provider: routing.provider, bodyLength: payloadText.length }
             });
             return null;
         }
@@ -12044,13 +13891,13 @@ async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId,
 
     if (flowId) {
         await syncFlowTitle(flowId, userId, trimmedTitle);
-        console.log(` Flow标题已更新: "${trimmedTitle}"`);
+        console.log(` Flow标题已更新: ${formatPrivateLogFingerprint(trimmedTitle, 'title')}`);
     } else {
         await dbRunAsync(
             'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [trimmedTitle, sessionId]
         );
-        console.log(` 会话标题已更新: "${trimmedTitle}"`);
+        console.log(` 会话标题已更新: ${formatPrivateLogFingerprint(trimmedTitle, 'title')}`);
     }
 
     if (res && !res.writableEnded && !res.destroyed) {
@@ -12079,9 +13926,9 @@ function scheduleFallbackConversationTitleUpdate({ sessionId, flowId, userId, us
                 userId,
                 title: fallbackTitle
             });
-            console.log(` 后台标题兜底已更新: "${fallbackTitle}"`);
+            console.log(` 后台标题兜底已更新: ${formatPrivateLogFingerprint(fallbackTitle, 'title')}`);
         } catch (error) {
-            console.warn(` 后台标题兜底失败: ${error.message}`);
+            console.warn(' 后台标题兜底失败:', sanitizeReportContext(error));
             appendRaiRuntimeReport({
                 level: '报错',
                 tag: 'title_fallback_background_failed',
@@ -12210,10 +14057,11 @@ function shouldHoldAssistantVisibleContent(rawText = '', visibleText = '') {
     return !String(visibleText || '').trim() && raw.length < 4096;
 }
 
-async function createSessionRecord({ userId, title, model = 'auto', sessionKind = 'chat' }) {
-    await ensureSessionKindColumn();
+async function createSessionRecord({ userId, title, model = 'auto', sessionKind = 'chat', tx = null }) {
+    if (!tx) await ensureSessionKindColumn();
     const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    await dbRunAsync(
+    const run = tx?.run || dbRunAsync;
+    await run(
         'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
         [sessionId, userId, title || '新对话', model || 'auto', sessionKind || 'chat']
     );
@@ -12235,22 +14083,39 @@ async function getSessionMessagesBySessionId(sessionId) {
 
 async function migrateLegacyFlowRow(flowRow, userId) {
     await ensureChatFlowSchemaColumns();
-    const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const legacyMessages = normalizeLegacyFlowMessages(flowRow.chat_history);
-    const normalizedCanvasState = normalizeFlowCanvasState(flowRow.canvas_state);
-    const insertedMessageIds = [];
+    const flowId = String(flowRow?.id || '').trim();
+    if (!flowId) return null;
 
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        await dbRunAsync(
+    return withMainDbTransaction(async (tx) => {
+        // The caller's row was read before entering the FIFO. Re-read here so two
+        // concurrent legacy GETs cannot each create a session from the same stale row.
+        const currentFlow = await tx.get(
+            'SELECT * FROM flows WHERE id = ? AND user_id = ?',
+            [flowId, userId]
+        );
+        if (!currentFlow) return null;
+        if (currentFlow.session_id) {
+            const linkedSession = await tx.get(
+                'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
+                [currentFlow.session_id, userId]
+            );
+            if (linkedSession) return currentFlow;
+        }
+
+        const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const legacyMessages = normalizeLegacyFlowMessages(currentFlow.chat_history);
+        const normalizedCanvasState = normalizeFlowCanvasState(currentFlow.canvas_state);
+        const insertedMessageIds = [];
+
+        await tx.run(
             'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
-            [sessionId, userId, flowRow.title || '新 ChatFlow', 'auto', 'flow']
+            [sessionId, userId, currentFlow.title || '新 ChatFlow', 'auto', 'flow']
         );
 
         for (let index = 0; index < legacyMessages.length; index += 1) {
             const legacyMessage = legacyMessages[index];
             const createdAt = new Date(Date.now() + index).toISOString();
-            const insertResult = await dbRunAsync(
+            const insertResult = await tx.run(
                 'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
                 [sessionId, legacyMessage.role, legacyMessage.content, createdAt]
             );
@@ -12272,26 +14137,22 @@ async function migrateLegacyFlowRow(flowRow, userId) {
             })
         });
 
-        await dbRunAsync(
+        const updateResult = await tx.run(
             'UPDATE flows SET session_id = ?, canvas_state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-            [sessionId, JSON.stringify(migratedCanvasState), flowRow.id, userId]
+            [sessionId, JSON.stringify(migratedCanvasState), currentFlow.id, userId]
         );
-
-        await dbRunAsync('COMMIT');
+        if (Number(updateResult?.changes || 0) !== 1) {
+            const error = new Error('legacy_flow_migration_target_changed');
+            error.code = 'legacy_flow_migration_target_changed';
+            throw error;
+        }
 
         return {
-            ...flowRow,
+            ...currentFlow,
             session_id: sessionId,
             canvas_state: JSON.stringify(migratedCanvasState)
         };
-    } catch (error) {
-        try {
-            await dbRunAsync('ROLLBACK');
-        } catch (rollbackError) {
-            console.warn(' 回滚旧Flow迁移事务失败:', rollbackError.message);
-        }
-        throw error;
-    }
+    });
 }
 
 async function ensureFlowRecord(flowId, userId) {
@@ -12306,9 +14167,11 @@ async function ensureFlowRecord(flowId, userId) {
         );
         if (!linkedSession) {
             flowRow = await migrateLegacyFlowRow(flowRow, userId);
+            if (!flowRow) return null;
         }
     } else {
         flowRow = await migrateLegacyFlowRow(flowRow, userId);
+        if (!flowRow) return null;
     }
 
     const normalizedCanvasState = normalizeFlowCanvasState(flowRow.canvas_state);
@@ -12406,14 +14269,14 @@ app.get('/api/flows', authenticateToken, async (req, res) => {
             [req.user.userId],
             (err, rows) => {
                 if (err) {
-                    console.error(' 获取Flow列表失败:', err);
+                    console.error(' 获取Flow列表失败:', sanitizeReportContext(err));
                     return res.status(500).json({ error: '获取Flow列表失败' });
                 }
                 res.json(rows);
             }
         );
     } catch (error) {
-        console.error(' 确保Flow表结构失败:', error);
+        console.error(' 确保Flow表结构失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '数据库结构初始化失败' });
     }
 });
@@ -12425,20 +14288,22 @@ app.post('/api/flows', authenticateToken, async (req, res) => {
 
     try {
         await ensureChatFlowSchemaColumns();
-        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-        const sessionId = await createSessionRecord({
-            userId: req.user.userId,
-            title,
-            model: 'auto',
-            sessionKind: 'flow'
+        const sessionId = await withMainDbTransaction(async (tx) => {
+            const createdSessionId = await createSessionRecord({
+                userId: req.user.userId,
+                title,
+                model: 'auto',
+                sessionKind: 'flow',
+                tx
+            });
+            await tx.run(
+                `INSERT INTO flows (id, user_id, title, session_id) VALUES (?, ?, ?, ?)`,
+                [id, req.user.userId, title, createdSessionId]
+            );
+            return createdSessionId;
         });
-        await dbRunAsync(
-            `INSERT INTO flows (id, user_id, title, session_id) VALUES (?, ?, ?, ?)`,
-            [id, req.user.userId, title, sessionId]
-        );
-        await dbRunAsync('COMMIT');
 
-        console.log(' 创建ChatFlow成功:', id);
+        console.log(` 创建ChatFlow成功: ${formatPrivateLogFingerprint(id, 'flowId')}`);
         res.json({
             id,
             title,
@@ -12446,13 +14311,8 @@ app.post('/api/flows', authenticateToken, async (req, res) => {
             created_at: new Date().toISOString()
         });
     } catch (error) {
-        try {
-            await dbRunAsync('ROLLBACK');
-        } catch (rollbackError) {
-            console.warn(' 回滚创建Flow事务失败:', rollbackError.message);
-        }
-        console.error(' 创建Flow失败:', error);
-        res.status(500).json({ error: error.message });
+        console.error(' 创建Flow失败:', sanitizeReportContext(error));
+        res.status(500).json({ error: '创建 ChatFlow 暂时不可用', code: 'flow_create_failed' });
     }
 });
 
@@ -12470,8 +14330,8 @@ app.get('/api/flows/:id', authenticateToken, async (req, res) => {
             session_id: flow.session_id || null
         });
     } catch (error) {
-        console.error(' 获取Flow详情失败:', error);
-        res.status(500).json({ error: error.message });
+        console.error(' 获取Flow详情失败:', sanitizeReportContext(error));
+        res.status(500).json({ error: '获取 ChatFlow 暂时不可用', code: 'flow_read_failed' });
     }
 });
 
@@ -12518,14 +14378,14 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
         }
 
         if (chat_history !== undefined) {
-            console.warn(` Flow ${req.params.id} 收到废弃字段 chat_history，已忽略`);
+            console.warn(` Flow 收到废弃字段 chat_history，已忽略: ${formatPrivateLogFingerprint(req.params.id, 'flowId')}`);
         }
 
-        console.log(' 更新ChatFlow成功:', req.params.id);
+        console.log(` 更新ChatFlow成功: ${formatPrivateLogFingerprint(req.params.id, 'flowId')}`);
         res.json({ success: true });
     } catch (error) {
-        console.error(' 更新Flow失败:', error);
-        res.status(500).json({ error: error.message });
+        console.error(' 更新Flow失败:', sanitizeReportContext(error));
+        res.status(500).json({ error: '更新 ChatFlow 暂时不可用', code: 'flow_update_failed' });
     }
 });
 
@@ -12533,37 +14393,50 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
 app.delete('/api/flows/:id', authenticateToken, async (req, res) => {
     try {
         await ensureChatFlowSchemaColumns();
-        const flow = await dbGetAsync(
-            'SELECT id, session_id FROM flows WHERE id = ? AND user_id = ?',
-            [req.params.id, req.user.userId]
-        );
-        if (!flow) {
+        const deletedFlow = await withMainDbTransaction(async (tx) => {
+            // Re-read under the write transaction: a concurrent legacy migration
+            // may have attached a session after a pre-transaction read.
+            const flow = await tx.get(
+                'SELECT id, session_id FROM flows WHERE id = ? AND user_id = ?',
+                [req.params.id, req.user.userId]
+            );
+            if (!flow) return null;
+
+            if (flow.session_id) {
+                await stageGeneratedImageDeletionsForSession({
+                    tx,
+                    sessionId: flow.session_id,
+                    userId: req.user.userId
+                });
+            }
+            const deleteResult = await tx.run(
+                'DELETE FROM flows WHERE id = ? AND user_id = ?',
+                [req.params.id, req.user.userId]
+            );
+            if (Number(deleteResult?.changes || 0) !== 1) {
+                const error = new Error('flow_delete_target_changed');
+                error.code = 'flow_delete_target_changed';
+                throw error;
+            }
+            if (flow.session_id) {
+                await tx.run(
+                    'DELETE FROM sessions WHERE id = ? AND user_id = ? AND COALESCE(session_kind, ?) = ?',
+                    [flow.session_id, req.user.userId, 'flow', 'flow']
+                );
+            }
+            return flow;
+        });
+        if (!deletedFlow) {
             return res.status(404).json({ error: 'Flow not found' });
         }
 
-        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-        await dbRunAsync(
-            'DELETE FROM flows WHERE id = ? AND user_id = ?',
-            [req.params.id, req.user.userId]
-        );
-        if (flow.session_id) {
-            await dbRunAsync(
-                'DELETE FROM sessions WHERE id = ? AND user_id = ? AND COALESCE(session_kind, ?) = ?',
-                [flow.session_id, req.user.userId, 'flow', 'flow']
-            );
-        }
-        await dbRunAsync('COMMIT');
+        if (deletedFlow.session_id) await drainQueuedGeneratedImageDeletionsBestEffort();
 
-        console.log(' 删除ChatFlow成功:', req.params.id);
+        console.log(` 删除ChatFlow成功: ${formatPrivateLogFingerprint(req.params.id, 'flowId')}`);
         res.json({ success: true });
     } catch (error) {
-        try {
-            await dbRunAsync('ROLLBACK');
-        } catch (rollbackError) {
-            console.warn(' 回滚删除Flow事务失败:', rollbackError.message);
-        }
-        console.error(' 删除Flow失败:', error);
-        res.status(500).json({ error: error.message });
+        console.error(' 删除Flow失败:', sanitizeReportContext(error));
+        res.status(500).json({ error: '删除 ChatFlow 暂时不可用', code: 'flow_delete_failed' });
     }
 });
 
@@ -12581,7 +14454,7 @@ app.get('/api/messages/:messageId/attachments', authenticateToken, (req, res) =>
         [messageId],
         (err, row) => {
             if (err) {
-                console.error(' 获取附件失败:', err);
+                console.error(' 获取附件失败:', sanitizeReportContext(err));
                 return res.status(500).json({ error: '数据库错误' });
             }
 
@@ -12609,35 +14482,46 @@ app.get('/api/messages/:messageId/attachments', authenticateToken, (req, res) =>
 });
 
 // 删除单条消息
-app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req, res) => {
+app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, async (req, res) => {
     const { sessionId, messageId } = req.params;
-
-    // 验证会话归属
-    db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
-        if (err) {
-            console.error(' 查询会话失败:', err);
-            return res.status(500).json({ error: '数据库错误' });
-        }
-
-        if (!session || session.user_id !== req.user.userId) {
-            return res.status(403).json({ error: '无权访问此会话' });
-        }
-
-        // 删除指定消息
-        db.run('DELETE FROM messages WHERE id = ? AND session_id = ?', [messageId, sessionId], function (err) {
-            if (err) {
-                console.error(' 删除消息失败:', err);
-                return res.status(500).json({ error: '删除失败' });
+    try {
+        const result = await withMainDbTransaction(async (tx) => {
+            const session = await tx.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId]);
+            if (!session || Number(session.user_id) !== Number(req.user.userId)) {
+                return { forbidden: true };
             }
-
-            if (this.changes === 0) {
-                return res.status(404).json({ error: '消息不存在' });
+            const message = await tx.get(
+                'SELECT id, content, request_id FROM messages WHERE id = ? AND session_id = ?',
+                [messageId, sessionId]
+            );
+            if (!message) return { notFound: true };
+            await stageGeneratedImageDeletionsForMessage({
+                tx,
+                sessionId,
+                userId: req.user.userId,
+                requestId: message.request_id,
+                filenames: extractGeneratedImageFilenamesFromMessage(message.content)
+            });
+            const deletion = await tx.run(
+                'DELETE FROM messages WHERE id = ? AND session_id = ?',
+                [messageId, sessionId]
+            );
+            if (Number(deletion?.changes || 0) !== 1) {
+                const error = new Error('message_delete_target_changed');
+                error.code = 'message_delete_target_changed';
+                throw error;
             }
-
-            console.log(` 已删除消息 ID: ${messageId}`);
-            res.json({ success: true, deletedId: messageId });
+            return { deleted: true };
         });
-    });
+        if (result.forbidden) return res.status(403).json({ error: '无权访问此会话' });
+        if (result.notFound) return res.status(404).json({ error: '消息不存在' });
+        await drainQueuedGeneratedImageDeletionsBestEffort();
+        console.log(` 已删除消息 ID: ${messageId}`);
+        return res.json({ success: true, deletedId: messageId });
+    } catch (error) {
+        console.error(' 删除消息失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '删除失败' });
+    }
 });
 
 // 编辑消息内容
@@ -12652,7 +14536,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
     // 验证会话归属
     db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
         if (err) {
-            console.error(' 查询会话失败:', err);
+            console.error(' 查询会话失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -12665,7 +14549,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
             [content, messageId, sessionId],
             function (err) {
                 if (err) {
-                    console.error(' 更新消息失败:', err);
+                    console.error(' 更新消息失败:', sanitizeReportContext(err));
                     return res.status(500).json({ error: '更新失败' });
                 }
 
@@ -12733,7 +14617,7 @@ app.patch('/api/sessions/:sessionId/messages/:messageId/regeneration', authentic
 
         res.json({ success: true, messageId, process_trace: serialized });
     } catch (error) {
-        console.error(' 标记重新生成旧回复失败:', error);
+        console.error(' 标记重新生成旧回复失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '标记失败' });
     }
 });
@@ -12745,7 +14629,7 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
     // 验证会话归属
     db.get('SELECT user_id FROM sessions WHERE id = ?', [sessionId], (err, session) => {
         if (err) {
-            console.error(' 查询会话失败:', err);
+            console.error(' 查询会话失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '数据库错误' });
         }
 
@@ -12767,7 +14651,7 @@ app.get('/api/sessions/:sessionId/messages-before/:messageId', authenticateToken
                     [sessionId, targetMsg.created_at],
                     (err, messages) => {
                         if (err) {
-                            console.error(' 获取消息失败:', err);
+                            console.error(' 获取消息失败:', sanitizeReportContext(err));
                             return res.status(500).json({ error: '数据库错误' });
                         }
                         res.json(messages);
@@ -12861,6 +14745,7 @@ function parseSelectionExplanationPayload(body = {}) {
     const rawParentCardId = body.parentCardId ?? body.parent_card_id;
     const threadId = normalizeSelectionExplanationId(rawThreadId);
     const parentCardId = normalizeSelectionExplanationId(rawParentCardId);
+    const sessionId = String(body.sessionId ?? body.session_id ?? '').trim();
     const rawFormulas = Array.isArray(body.formulas) ? body.formulas : [];
     const formulas = rawFormulas
         .map((formula) => {
@@ -12888,6 +14773,7 @@ function parseSelectionExplanationPayload(body = {}) {
     if (rawParentCardId !== undefined && rawParentCardId !== null && String(rawParentCardId).trim() && !parentCardId) {
         return { error: '父解释卡 ID 无效', code: 'invalid_parent_card_id' };
     }
+    if (sessionId.length > 180) return { error: '对话 ID 无效', code: 'invalid_session_id' };
 
     return {
         selectedText,
@@ -12896,6 +14782,7 @@ function parseSelectionExplanationPayload(body = {}) {
         uiLanguage: normalizeSelectionExplanationLanguage(body.uiLanguage ?? body.ui_language),
         threadId,
         parentCardId,
+        sessionId: sessionId || null,
         clientRequestId: normalizeSelectionExplanationId(body.clientRequestId ?? body.client_request_id, 96)
     };
 }
@@ -13129,12 +15016,13 @@ async function reserveSelectionExplanationPoint(
 
         await tx.run(
             `INSERT INTO selection_explanation_requests
-                (request_id, user_id, point_bucket, status, points, target_thread_id,
+                (request_id, user_id, session_id, point_bucket, status, points, target_thread_id,
                  parent_card_id, is_new_thread, selected_text, answer_draft, ui_language, output_started)
-             VALUES (?, ?, ?, 'reserved', ?, ?, ?, ?, ?, '', ?, 0)`,
+             VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?, '', ?, 0)`,
             [
                 requestId,
                 userId,
+                payload.sessionId || null,
                 pointBucket,
                 SELECTION_EXPLANATION_POINT_COST,
                 target.threadId,
@@ -13312,7 +15200,7 @@ async function getSelectionExplanationRequestLifecycle(userId, requestId) {
     ));
 }
 
-async function resolveSelectionExplanationTarget(userId, threadId, parentCardId) {
+async function resolveSelectionExplanationTarget(userId, threadId, parentCardId, sessionId = null) {
     if (parentCardId) {
         const parent = await dbGetAsync(
             `SELECT c.id, c.thread_id
@@ -13325,7 +15213,7 @@ async function resolveSelectionExplanationTarget(userId, threadId, parentCardId)
         if (threadId && threadId !== parent.thread_id) {
             return { error: '父解释卡不属于指定线程', status: 400, code: 'thread_parent_mismatch' };
         }
-        return { threadId: parent.thread_id, parentCardId: parent.id, isNewThread: false };
+        return { threadId: parent.thread_id, parentCardId: parent.id, isNewThread: false, sessionId };
     }
 
     if (threadId) {
@@ -13334,13 +15222,14 @@ async function resolveSelectionExplanationTarget(userId, threadId, parentCardId)
             [threadId, userId]
         );
         if (!thread) return { error: '解释线程不存在', status: 404, code: 'thread_not_found' };
-        return { threadId: thread.id, parentCardId: null, isNewThread: false };
+        return { threadId: thread.id, parentCardId: null, isNewThread: false, sessionId };
     }
 
     return {
         threadId: `selthread_${crypto.randomUUID().replace(/-/g, '')}`,
         parentCardId: null,
-        isNewThread: true
+        isNewThread: true,
+        sessionId
     };
 }
 
@@ -13375,6 +15264,7 @@ async function saveAndSettleSelectionExplanationCardInTransaction(tx, {
     answer,
     status,
     uiLanguage,
+    sessionId = null,
     modelResult
 }) {
     const reservation = await tx.get(
@@ -13400,8 +15290,8 @@ async function saveAndSettleSelectionExplanationCardInTransaction(tx, {
 
     if (isNewThread) {
         await tx.run(
-            `INSERT INTO selection_explanation_threads (id, user_id) VALUES (?, ?)`,
-            [threadId, userId]
+            `INSERT INTO selection_explanation_threads (id, user_id, session_id) VALUES (?, ?, ?)`,
+            [threadId, userId, sessionId]
         );
     } else {
         const thread = await tx.get(
@@ -13639,7 +15529,7 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
                     attemptedModels
                 };
             }
-            attemptedModels.push({ modelId: candidate, status: 'failed', error: String(error.message || '').slice(0, 240) });
+            attemptedModels.push({ modelId: candidate, status: 'failed', errorCode: 'selection_model_failed' });
             if (signal?.aborted || error.code === 'selection_explanation_cancelled') {
                 error.code = 'selection_explanation_cancelled';
                 error.partialContent = candidateContent;
@@ -13736,11 +15626,16 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         if (payload.error) {
             return res.status(400).json({ success: false, error: payload.error, code: payload.code });
         }
+        if (payload.sessionId) {
+            const ownedSession = await dbGetAsync('SELECT id FROM sessions WHERE id = ? AND user_id = ?', [payload.sessionId, req.user.userId]);
+            if (!ownedSession) return res.status(403).json({ success: false, error: '无权访问此对话', code: 'session_not_owned' });
+        }
 
         target = await resolveSelectionExplanationTarget(
             req.user.userId,
             payload.threadId,
-            payload.parentCardId
+            payload.parentCardId,
+            payload.sessionId
         );
         if (target.error) {
             return res.status(target.status || 400).json({ success: false, error: target.error, code: target.code });
@@ -13987,6 +15882,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
             answer: visibleAnswer,
             status: 'complete',
             uiLanguage: payload.uiLanguage,
+            sessionId: target.sessionId,
             modelResult: finalModelResult
         });
         pointReserved = false;
@@ -14029,7 +15925,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         } else if (pointReserved && shutdownAborted) {
             if (answer && lastDraftLength !== answer.length) {
                 await persistSelectionExplanationDraft(req.user.userId, requestId, answer).catch((draftError) => {
-                    console.warn(' 服务器退出前保存选词解释草稿失败:', draftError.message);
+                    console.warn(' 服务器退出前保存选词解释草稿失败:', sanitizeReportContext(draftError));
                 });
             }
             writeSelectionExplanationEvent(res, {
@@ -14047,7 +15943,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                     lastDraftLength = answer.length;
                 }
             } catch (draftError) {
-                console.warn(' 选词解释最终草稿刷新失败:', draftError.message);
+                console.warn(' 选词解释最终草稿刷新失败:', sanitizeReportContext(draftError));
             }
 
             try {
@@ -14063,6 +15959,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                         answer: visibleAnswer,
                         status: 'partial',
                         uiLanguage: payload?.uiLanguage || normalizeSelectionExplanationLanguage(req.body?.uiLanguage ?? req.body?.ui_language),
+                        sessionId: target?.sessionId || payload?.sessionId || null,
                         modelResult: error.modelResult || finalModelResult
                     });
                 }
@@ -14097,7 +15994,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                     });
                     sendDone({ status: 'discarded', threadId: target?.threadId || null, cardId: null });
                 } else {
-                    console.error(' 保存选词解释中断内容失败:', saveError);
+                    console.error(' 保存选词解释中断内容失败:', sanitizeReportContext(saveError));
                     try {
                         await consumeSelectionExplanationReservation(
                             req.user.userId,
@@ -14106,7 +16003,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                         );
                         pointReserved = false;
                     } catch (settleError) {
-                        console.error(' 选词解释中断扣点结算失败，保留给恢复任务:', settleError);
+                        console.error(' 选词解释中断扣点结算失败，保留给恢复任务:', sanitizeReportContext(settleError));
                     }
                     writeSelectionExplanationEvent(res, {
                         type: 'error',
@@ -14158,7 +16055,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                 });
                 sendDone({ status: 'failed' });
             } catch (refundError) {
-                console.error(' 选词解释退款失败:', refundError);
+                console.error(' 选词解释退款失败:', sanitizeReportContext(refundError));
                 writeSelectionExplanationEvent(res, {
                     type: 'error',
                     requestId,
@@ -14194,7 +16091,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
             }
             sendDone({ status: 'cancelled' });
         } else if (!res.headersSent) {
-            console.error(' 选词解释请求失败:', error);
+            console.error(' 选词解释请求失败:', sanitizeReportContext(error));
             return res.status(500).json({
                 success: false,
                 error: '选词解释暂时不可用',
@@ -14202,7 +16099,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
             });
         }
         } catch (handlingError) {
-            console.error(' 处理选词解释终态失败，交由恢复任务核对:', handlingError);
+            console.error(' 处理选词解释终态失败，交由恢复任务核对:', sanitizeReportContext(handlingError));
             writeSelectionExplanationEvent(res, {
                 type: 'error',
                 requestId,
@@ -14215,7 +16112,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
             if (!res.writableEnded) res.end();
         }
         if (!cancelled) {
-            console.error(' 选词解释失败:', error);
+            console.error(' 选词解释失败:', sanitizeReportContext(error));
         }
     } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -14259,7 +16156,7 @@ app.post('/api/selection-explanations/:requestId/stop', authenticateToken, apiLi
         }
         return res.json({ success: true, requestId, message: '已发送停止信号' });
     } catch (error) {
-        console.error(' 停止选词解释失败:', error);
+        console.error(' 停止选词解释失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '停止失败' });
     }
 });
@@ -14270,6 +16167,7 @@ app.get('/api/selection-explanations/threads', authenticateToken, apiLimiter, as
         const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 50));
         const cursor = decodeSelectionExplanationCursor(req.query.cursor);
         const query = String(req.query.q || '').trim().slice(0, 100);
+        const sessionId = String(req.query.sessionId ?? req.query.session_id ?? '').trim();
         const conditions = ['t.user_id = ?'];
         const params = [req.user.userId];
 
@@ -14285,9 +16183,15 @@ app.get('/api/selection-explanations/threads', authenticateToken, apiLimiter, as
             )`);
             params.push(`%${query}%`, `%${query}%`);
         }
+        if (sessionId) {
+            const ownedSession = await dbGetAsync('SELECT id FROM sessions WHERE id = ? AND user_id = ?', [sessionId, req.user.userId]);
+            if (!ownedSession) return res.status(403).json({ success: false, error: '无权访问此对话', code: 'session_not_owned' });
+            conditions.push('t.session_id = ?');
+            params.push(sessionId);
+        }
 
         const rows = await dbAllAsync(
-            `SELECT t.id, t.created_at, t.updated_at,
+            `SELECT t.id, t.session_id, t.created_at, t.updated_at,
                 (SELECT COUNT(*) FROM selection_explanation_cards c WHERE c.thread_id = t.id) AS card_count,
                 (SELECT COUNT(*) FROM selection_explanation_cards c WHERE c.thread_id = t.id AND c.parent_id IS NULL) AS root_count,
                 (SELECT COUNT(*) FROM selection_explanation_cards c WHERE c.thread_id = t.id AND c.status = 'partial') AS partial_count,
@@ -14309,6 +16213,7 @@ app.get('/api/selection-explanations/threads', authenticateToken, apiLimiter, as
         const pageRows = hasMore ? rows.slice(0, limit) : rows;
         const items = pageRows.map((row) => ({
             id: row.id,
+            sessionId: row.session_id || null,
             title: row.title || '',
             createdAt: row.created_at,
             updatedAt: row.updated_at,
@@ -14324,7 +16229,7 @@ app.get('/api/selection-explanations/threads', authenticateToken, apiLimiter, as
             nextCursor: hasMore ? encodeSelectionExplanationCursor(pageRows[pageRows.length - 1]) : null
         });
     } catch (error) {
-        console.error(' 获取选词解释历史失败:', error);
+        console.error(' 获取选词解释历史失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '获取解释历史失败' });
     }
 });
@@ -14361,7 +16266,7 @@ app.get('/api/selection-explanations/threads/:threadId', authenticateToken, apiL
             }
         });
     } catch (error) {
-        console.error(' 获取解释线程失败:', error);
+        console.error(' 获取解释线程失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '获取解释线程失败' });
     }
 });
@@ -14419,7 +16324,7 @@ app.get('/api/selection-explanations/threads/:threadId/nodes', authenticateToken
             nextCursor: hasMore ? encodeSelectionExplanationNodeCursor(pageRows[pageRows.length - 1]) : null
         });
     } catch (error) {
-        console.error(' 获取解释树节点失败:', error);
+        console.error(' 获取解释树节点失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '获取解释节点失败' });
     }
 });
@@ -14466,7 +16371,7 @@ app.get('/api/selection-explanations/cards/:cardId/path', authenticateToken, api
             descendantCount: Number(descendantRow?.descendant_count || 0)
         });
     } catch (error) {
-        console.error(' 获取解释卡路径失败:', error);
+        console.error(' 获取解释卡路径失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '获取解释路径失败' });
     }
 });
@@ -14589,7 +16494,7 @@ app.delete('/api/selection-explanations/cards/:cardId', authenticateToken, apiLi
         }
         return res.json(outcome);
     } catch (error) {
-        console.error(' 删除解释卡失败:', error);
+        console.error(' 删除解释卡失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '删除解释卡失败' });
     }
 });
@@ -14607,7 +16512,7 @@ app.delete('/api/selection-explanations/threads/:threadId', authenticateToken, a
         }
         return res.json({ success: true, threadId });
     } catch (error) {
-        console.error(' 删除解释线程失败:', error);
+        console.error(' 删除解释线程失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '删除解释线程失败' });
     }
 });
@@ -14631,7 +16536,7 @@ app.delete('/api/selection-explanations', authenticateToken, apiLimiter, async (
             cancelledRequests: outcome.cancelledRequestIds.length
         });
     } catch (error) {
-        console.error(' 清空选词解释历史失败:', error);
+        console.error(' 清空选词解释历史失败:', sanitizeReportContext(error));
         return res.status(500).json({ success: false, error: '清空解释历史失败' });
     }
 });
@@ -14656,8 +16561,9 @@ async function enforceUploadPreflight(req, res, next) {
             });
         }
         const contentLength = Number(req.headers['content-length'] || 0);
-        if (contentLength > 0) {
-            await assertUserUploadQuota(req.user.userId, contentLength);
+        // Content-Length 包含 multipart 开销且不可信，只用于请求级硬上限早拒绝。
+        if (contentLength > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES + 1024 * 1024) {
+            return res.status(413).json({ error: '文件大小超过限制' });
         }
         next();
     } catch (error) {
@@ -14669,24 +16575,22 @@ app.post('/api/upload', authenticateToken, enforceUploadPreflight, (req, res, ne
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
 
     try {
-        await assertUserUploadQuota(req.user.userId, Number(req.file.size || 0));
         await validateUploadedFileContent(req.file, 'attachment');
-        await recordUploadedFile(req, req.file, 'attachment');
-        const forwardedPrefix = normalizeForwardedPrefix(req);
+        await recordUploadedFileWithinQuota(req, req.file, 'attachment');
         console.log(' 文件上传成功:', req.file.filename);
         res.json({
             success: true,
             file: {
                 filename: req.file.filename,
                 originalName: req.file.originalname,
-                filePath: `${forwardedPrefix}/api/uploads/${req.file.filename}`,
+                filePath: `/api/uploads/${req.file.filename}`,
                 fileType: req.file.mimetype,
                 size: req.file.size
             }
         });
     } catch (error) {
         fs.unlink(req.file.path, () => null);
-        console.error(' 记录上传文件归属失败:', error.message);
+        console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
         res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : '文件上传失败' });
     }
 });
@@ -14714,6 +16618,12 @@ app.get('/api/uploads/:filename', authenticateToken, async (req, res) => {
             return res.status(404).json({ error: '文件不存在' });
         }
 
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile()) return res.status(404).json({ error: '文件不存在' });
+        const etag = makePrivateEtag(`${req.user.userId}:${filename}:${stat.size}:${stat.mtimeMs}`);
+        res.setHeader('ETag', etag);
+        if (requestMatchesEtag(req, etag)) return res.status(304).end();
+        res.setHeader('Cache-Control', 'private, no-cache');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.download(filePath, filename, (err) => {
             if (err && !res.headersSent) {
@@ -14721,7 +16631,7 @@ app.get('/api/uploads/:filename', authenticateToken, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error(' 校验上传文件归属失败:', error.message);
+        console.error(' 校验上传文件归属失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '文件下载失败' });
     }
 });
@@ -14763,6 +16673,34 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
     let requestId = null;  //  关键修复：在函数开始声明requestId
     let liveStreamState = null;
+    let chatRequestSucceeded = false;
+    let clientAborted = false;
+    let chatRequestCancelled = false;
+    const chatAbortControllers = new Set();
+
+    const createChatAbortController = () => {
+        const controller = new AbortController();
+        chatAbortControllers.add(controller);
+        if (clientAborted) controller.abort();
+        return controller;
+    };
+
+    const handleClientAbort = () => {
+        if (chatRequestSucceeded || res.writableEnded) return;
+        clientAborted = true;
+        for (const controller of chatAbortControllers) {
+            if (!controller.signal.aborted) controller.abort();
+        }
+        if (requestId) {
+            db.run(
+                'UPDATE active_requests SET is_cancelled = 1 WHERE id = ? AND user_id = ?',
+                [requestId, req.user.userId],
+                () => undefined
+            );
+        }
+    };
+    req.once('aborted', handleClientAbort);
+    res.once('close', handleClientAbort);
 
     try {
         const {
@@ -14802,9 +16740,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let activeSessionKind = '';
         let thinkingMode = !!thinkingModeInput;
         let model = normalizeIncomingModelId(requestedModel);
+        let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;
+        if (gptImageModelSelected) thinkingMode = false;
         const shouldSkipUserSave = skipUserSave === true || skipUserSave === 1 || skipUserSave === '1';
         let normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
-        const normalizedResearchMode = normalizeResearchMode(researchMode);
+        const normalizedResearchMode = gptImageModelSelected ? 'off' : normalizeResearchMode(researchMode);
         const rawResearchAgentModels = Array.isArray(researchAgentModels)
             ? researchAgentModels
             : (typeof researchAgentModels === 'string' ? researchAgentModels.split(',') : []);
@@ -14821,14 +16761,40 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             )
         );
         const normalizedPromptTimeContext = normalizePromptTimeContext(promptTimeContext);
+        const normalizedTemperature = parseStrictBoundedNumber(temperature, {
+            min: 0,
+            max: 2,
+            fallback: 0.7
+        });
+        const normalizedTopP = parseStrictBoundedNumber(top_p, {
+            min: 0,
+            max: 1,
+            fallback: 0.9
+        });
+        const normalizedMaxTokens = parseStrictBoundedNumber(max_tokens, {
+            min: 100,
+            max: 8000,
+            fallback: 2000,
+            integer: true
+        });
 
         const sanitizedChatInput = sanitizeClientChatMessages(rawMessages);
-        const messages = sanitizedChatInput.messages;
+        let messages;
+        try {
+            messages = await canonicalizeOwnedMessageAttachments(
+                sanitizedChatInput.messages,
+                req.user.userId
+            );
+        } catch (attachmentError) {
+            return res.status(attachmentError.statusCode || 400).json({
+                error: attachmentError.message || '附件引用无效'
+            });
+        }
         if (!Array.isArray(messages) || messages.length === 0) {
             return res.status(400).json({ error: '消息不能为空' });
         }
         if (sanitizedChatInput.rejectedRoles.length > 0) {
-            console.warn(` 已拒绝客户端消息角色: ${[...new Set(sanitizedChatInput.rejectedRoles)].join(', ')}`);
+            console.warn(` 已拒绝客户端消息角色: count=${sanitizedChatInput.rejectedRoles.length}, ${formatPrivateLogFingerprint([...new Set(sanitizedChatInput.rejectedRoles)].join(','), 'roles')}`);
         }
 
         if (normalizedResearchMode === 'fast') {
@@ -14838,21 +16804,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             normalizedReasoningProfile = 'mixed';
         }
 
-        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${internetMode}, agentMode=${agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${agentPolicy}, quality=${qualityProfile}, trace=${agentTraceLevel}, reasoningProfile=${normalizedReasoningProfile}`);
+        const normalizedTraceLogValue = ['off', 'summary', 'full'].includes(String(agentTraceLevel))
+            ? String(agentTraceLevel)
+            : 'invalid';
+        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${!!internetMode}, agentMode=${!!agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${normalizeAgentPolicy(agentPolicy)}, quality=${normalizeQualityProfile(qualityProfile)}, trace=${normalizedTraceLogValue}, reasoningProfile=${normalizedReasoningProfile}`);
         if (requestedModel !== model) {
-            console.log(` 已将旧模型ID ${requestedModel} 归一化为 ${model}`);
+            console.log(` 已归一化旧模型ID: ${formatPrivateLogFingerprint(requestedModel, 'requestedModel')}, normalized=${model}`);
         }
 
-        //  调试：打印收到的消息结构
-        console.log(` 收到 ${messages.length} 条消息:`);
-        messages.forEach((m, i) => {
-            const messageItem = m || {};
-            const hasValidAttachments = Array.isArray(messageItem.attachments);
-            console.log(`   [${i}] role=${messageItem.role}, hasAttachments=${hasValidAttachments}, attachmentsCount=${hasValidAttachments ? messageItem.attachments.length : 0}`);
-            if (hasValidAttachments && messageItem.attachments.length > 0) {
-                console.log(`       附件详情:`, messageItem.attachments.map(a => ({ type: a.type, fileName: a.fileName, hasData: !!a.data, fileId: a.fileId })));
-            }
-        });
+        const attachmentCount = messages.reduce((total, item) => (
+            total + (Array.isArray(item?.attachments) ? item.attachments.length : 0)
+        ), 0);
+        console.log(` 收到消息结构: count=${messages.length}, attachments=${attachmentCount}`);
 
         //  附件解析层：将最后一条用户消息的附件内容转为文本上下文追加到 prompt
         if (messages.length > 0) {
@@ -14865,7 +16828,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         console.log(` 已注入附件上下文到用户消息 (${attachmentContext.length} 字符)`);
                     }
                 } catch (attCtxErr) {
-                    console.warn(' 构建附件上下文失败:', attCtxErr.message);
+                    console.warn(' 构建附件上下文失败:', sanitizeReportContext(attCtxErr));
                 }
             }
         }
@@ -14943,7 +16906,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     conversationMemoryInstruction = await buildConversationMemoryPrompt(req.user.userId);
                 }
             } catch (promptUserProfileError) {
-                console.warn(` 获取Prompt用户信息失败，使用令牌回退: ${promptUserProfileError.message}`);
+                console.warn(' 获取Prompt用户信息失败，使用令牌回退:', sanitizeReportContext(promptUserProfileError));
                 promptUserProfile = await getPromptUserProfile(null, req.user.email);
             }
         } else {
@@ -14969,6 +16932,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         if (model !== 'auto' && await isPublicModelDisabled(model)) {
             console.warn(` 模型 ${model} 已被管理员关闭，回退到 智能模型`);
             model = 'auto';
+            gptImageModelSelected = false;
         }
 
         //  防御性检查：验证 messages 存在且非空
@@ -14994,13 +16958,35 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             windows: chatQuota.quotas || []
         })}\n\n`);
 
+        const requestedGptModelUnavailable = GPT_GATEWAY_CHAT_MODELS.includes(model)
+            ? !GPT_GATEWAY_CONFIGURED
+            : (['claude-sonnet-5', 'gemini-3.6-flash-low'].includes(model)
+                ? !FAST_GATEWAY_CONFIGURED
+                : (model === GPT_GATEWAY_IMAGE_MODEL && !GPT_IMAGE_CONFIGURED));
+        if (requestedGptModelUnavailable) {
+            appendRaiRuntimeReport({
+                level: '报错',
+                tag: 'gpt_gateway_not_configured',
+                message: 'Requested GPT gateway model is not configured',
+                context: { requestId, sessionId, model }
+            });
+            res.write(`data: ${JSON.stringify({
+                type: 'error',
+                code: 'gpt_gateway_not_configured',
+                error: '该 GPT 模型当前未配置，已安全拒绝请求。'
+            })}\n\n`);
+            res.end();
+            await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]).catch(() => null);
+            return;
+        }
+
         //  预设答案快速通道：在所有路由逻辑之前检查，确保所有模式都能生效
         const lastUserMsg = messages[messages.length - 1];
         const rawUserContent = typeof lastUserMsg.content === 'string'
             ? lastUserMsg.content
             : JSON.stringify(lastUserMsg.content);
         const userContent = stripInlinePromptTimeHint(rawUserContent);
-        const imageGenerationRequested = detectImageGenerationNeed(userContent);
+        const imageGenerationRequested = gptImageModelSelected || detectImageGenerationNeed(userContent);
         const memoryDeleteToolArgs = !memoryModeOff
             ? buildMemoryDeleteToolArgsFromConversation(userContent, messages)
             : null;
@@ -15025,10 +17011,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
-        console.log(` 分析消息: "${userContent.substring(0, 100)}${userContent.length > 100 ? '...' : ''}"`);
+        console.log(` 分析消息: ${formatPrivateLogFingerprint(userContent, 'content')}`);
 
         if (memoryDeleteToolArgs && sessionId && !flowId && !shouldSkipUserSave) {
-            console.log(` 记忆删除直达路径: userId=${req.user.userId}, args=${JSON.stringify(memoryDeleteToolArgs)}`);
+            console.log(` 记忆删除直达路径: userId=${req.user.userId}, ids=${formatMemoryIdList(memoryDeleteToolArgs.memory_ids || memoryDeleteToolArgs.memory_id || []) || 'none'}, ${formatPrivateLogFingerprint(memoryDeleteToolArgs.target || '', 'target')}, ${formatPrivateLogFingerprint(memoryDeleteToolArgs.reason || '', 'reason')}`);
             res.write(`data: ${JSON.stringify({
                 type: 'tool_status',
                 tool: 'delete_memory',
@@ -15098,6 +17084,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 memories: updatedMemories
             })}\n\n`);
             res.write(`data: ${JSON.stringify({ type: 'content', content: assistantReply })}\n\n`);
+            chatRequestSucceeded = true;
             res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
             res.end();
             console.log(` 记忆删除直达完成: success=${!!deleteResult?.success}, deleted=${Number(deleteResult?.deletedCount || 0)}`);
@@ -15129,7 +17116,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const presetAnswer = presetAnswers[trimmedContent] || presetAnswers[userContent.trim()]; // 兼容原始大小写
 
         if (presetAnswer) {
-            console.log(`\n 命中预设答案: "${userContent.trim()}" -> 直接返回，无需调用AI`);
+            console.log(`\n 命中预设答案: ${formatPrivateLogFingerprint(userContent.trim(), 'input')} -> 直接返回，无需调用AI`);
 
             // SSE头已在前面设置，直接发送预设答案
             res.write(`data: ${JSON.stringify({ type: 'content', content: presetAnswer })}\n\n`);
@@ -15144,7 +17131,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
                         [sessionId, 'user', userContent],
                         (err) => {
-                            if (err) console.error(' 保存用户消息失败:', err);
+                            if (err) console.error(' 保存用户消息失败:', sanitizeReportContext(err));
                             else console.log(` 用户消息已保存 (${userContent.length}字符)`);
                             resolve();
                         }
@@ -15157,7 +17144,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode, process_trace) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                         [sessionId, 'assistant', presetAnswer, 'preset', 0, 0, 0, promptContextTrace ? JSON.stringify(promptContextTrace) : null],
                         (err) => {
-                            if (err) console.error(' 保存预设答案失败:', err);
+                            if (err) console.error(' 保存预设答案失败:', sanitizeReportContext(err));
                             else console.log(` 预设答案已保存 (${presetAnswer.length}字符)`);
                             resolve();
                         }
@@ -15170,7 +17157,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                         [sessionId],
                         (err) => {
-                            if (err) console.error(' 更新会话时间戳失败:', err);
+                            if (err) console.error(' 更新会话时间戳失败:', sanitizeReportContext(err));
                             else console.log(' 会话时间戳已更新');
                             resolve();
                         }
@@ -15198,6 +17185,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             }
 
+            chatRequestSucceeded = true;
             res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
             res.end();
             db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
@@ -15240,7 +17228,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const membershipStatus = await getUserMembershipSnapshot(req.user.userId);
             userMembershipTier = String(membershipStatus?.membership || 'free');
         } catch (tierErr) {
-            console.warn(` 读取会员等级失败，按free处理: ${tierErr.message}`);
+            console.warn(' 读取会员等级失败，按free处理:', sanitizeReportContext(tierErr));
             userMembershipTier = 'free';
         }
         const normalizedMembershipTier = String(userMembershipTier || 'free').toLowerCase();
@@ -15276,8 +17264,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         type: 'points_info',
                         cause: 'user_points_exhausted',
                         requestId,
-                        remainingPoints: 0,
-                        message: '您的点数不足，可能会路由到其他模型，回答质量可能降低。'
+                        remainingPoints: pointsResult.remainingPoints,
+                        requiredPoints: pointsResult.requiredPoints,
+                        message: pointsResult.message
                     })}\n\n`);
                     emitAgentEvent(res, {
                         type: 'agent_status',
@@ -15306,7 +17295,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     status: 'failed',
                     detail: '点数检查失败，已回退免费模型路径'
                 });
-                console.error(` Agent点数检查失败，回退免费模型: ${pointsErr.message}`);
+                console.error(' Agent点数检查失败，回退免费模型:', sanitizeReportContext(pointsErr));
             }
         }
 
@@ -15449,6 +17438,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     };
 
                     console.log('\n 启用真并行 Multi-Agent 模式 (K2.6)\n');
+                    const agentRequestController = createChatAbortController();
                     const agentResult = await runTrueParallelAgentMode({
                         res,
                         messages,
@@ -15469,6 +17459,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         qualityProfile,
                         maxTokens: max_tokens,
                         agentTraceLevel,
+                        userId: req.user.userId,
+                        sessionId,
+                        requestId,
+                        signal: agentRequestController.signal,
                         onAgentEvent
                     });
 
@@ -15540,11 +17534,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         const sourcesJson = searchSources.length > 0 ? JSON.stringify(searchSources) : null;
                         await new Promise((resolve, reject) => {
                             db.run(
-                                'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                                 [
                                     sessionId,
                                     'assistant',
                                     contentToSave || '(生成中断)',
+                                    requestId,
                                     reasoningToSave || null,
                                     finalModel,
                                     internetMode ? 1 : 0,
@@ -15616,12 +17611,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         cleanupSessionStreamState(sessionId, requestId);
                     }
 
+                    chatRequestSucceeded = true;
                     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
                     res.end();
                     console.log('\n 真并行 Multi-Agent 处理完成\n');
                     return;
                 } catch (agentPipelineError) {
-                    console.error(' 真并行Agent流程失败，回退单模型路径:', agentPipelineError.message);
+                    console.error(' 真并行Agent流程失败，回退单模型路径:', sanitizeReportContext(agentPipelineError));
                     emitAgentEvent(res, {
                         type: 'agent_status',
                         role: 'master',
@@ -15645,7 +17641,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 qualityProfile
             });
         } catch (agentError) {
-            console.error(' Multi-Agent 编排初始化失败，回退单模型路径:', agentError.message);
+            console.error(' Multi-Agent 编排初始化失败，回退单模型路径:', sanitizeReportContext(agentError));
             emitAgentEvent(res, {
                 type: 'agent_status',
                 role: 'master',
@@ -15752,11 +17748,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const VALID_MODELS = [
             'deepseek-flash',
             'deepseek-pro',
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+            'gpt-5.6-luna',
+            'claude-sonnet-5',
+            'gemini-3.6-flash-low',
+            'gpt-image-2',
             'qwen3.6-35b-a3b',
             'kimi-k2.6',
             'kimi-k2',
             'chatgpt-gpt-oss-120b',
-            'north-mini-code',
             'nemotron-3-ultra',
             'openrouter-free',
             'claude-haiku',
@@ -15788,7 +17789,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 ? `${autoRoutingReason}; ${fallbackReason}`
                 : fallbackReason;
             console.log(` 强制免费模型: user=${req.user.userId}, cause=${freeModelFallbackCause || 'unknown'}`);
-        } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted) {
+        } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted && finalModel !== GPT_GATEWAY_IMAGE_MODEL) {
             try {
                 const pointsResult = await checkAndDeductPoints(req.user.userId, finalModel);
                 if (pointsResult?.useFreeModel && !isFreeModelIdentifier(finalModel)) {
@@ -15815,7 +17816,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 autoRoutingReason = autoRoutingReason
                     ? `${autoRoutingReason}; 点数检查失败，按备用链回退到 ${fallbackModel}`
                     : `点数检查失败，按备用链回退到 ${fallbackModel}`;
-                console.error(` 点数检查失败，回退免费模型: ${pointsErr.message}`);
+                console.error(' 点数检查失败，回退免费模型:', sanitizeReportContext(pointsErr));
             }
         }
 
@@ -15847,7 +17848,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         //  关键修复：验证提供商配置存在（防止404错误）
         let providerConfig = API_PROVIDERS[routing.provider];
-        if (!providerConfig || !providerConfig.apiKey) {
+        if ((!providerConfig || !providerConfig.apiKey)
+            && routing.provider !== 'rai_gpt_gateway'
+            && routing.provider !== 'rai_fast_gateway') {
             const fallbackModel = findAvailableRuntimeFallbackModelId(finalModel);
             if (fallbackModel) {
                 const missingReason = !providerConfig
@@ -15961,7 +17964,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     })}\n\n`);
                 }
             } catch (searchError) {
-                console.warn(` 深度研究预检索失败，继续无联网上下文: ${searchError.message}`);
+                console.warn(' 深度研究预检索失败，继续无联网上下文:', sanitizeReportContext(searchError));
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
                     status: 'no_results',
@@ -16014,7 +18017,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     console.log(' DeepSeek 服务端预检索无结果');
                 }
             } catch (searchError) {
-                console.warn(` DeepSeek 服务端预检索失败，继续无联网上下文: ${searchError.message}`);
+                console.warn(' DeepSeek 服务端预检索失败，继续无联网上下文:', sanitizeReportContext(searchError));
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
                     status: 'no_results',
@@ -16070,7 +18073,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”，请至少调用一次 web_search 再回答；涉及天气、新闻、股价、时效数据时也应按需调用，并可在必要时再次调用。');
             }
             if (imageGenerationRequested) {
-                toolHints.push(`用户正在请求生成图片。请调用 generate_image 工具，模型固定为 ${KOLORS_IMAGE_MODEL}；只传 prompt/image_size/batch_size 等文生图参数，禁止传 image、image_url、示例图片 URL 或上游临时 URL。服务端会先展示本站短链接图片，后续回复只需简短说明。`);
+                toolHints.push(`用户正在请求生成图片。请调用 generate_image 工具；只传 prompt/image_size/batch_size 等文生图参数，禁止传 image、image_url、示例图片 URL 或上游临时 URL。服务端会选择已配置的图片提供商、优先生成并展示本站短链接图片，后续回复只需简短说明。`);
             }
             const toolHint = `\n\n[系统提示] ${toolHints.join(' ')}`;
             systemContent = systemContent ? `${systemContent}${toolHint}` : toolHint.trim();
@@ -16134,7 +18137,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let requestBody = {
             model: actualModel,
             messages: finalMessages,
-            max_tokens: parseInt(max_tokens, 10) || 2000,
+            max_tokens: normalizedMaxTokens,
             stream: true
         };
         if (routing.provider === 'openrouter' && Array.isArray(routing.fallbackModels) && routing.fallbackModels.length > 1) {
@@ -16160,8 +18163,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             requestBody.thinking = { type: 'disabled' };
             console.log(' Qwen 3.6 多模态路径已关闭 thinking，避免正文为空和额外成本');
         } else {
-            requestBody.temperature = parseFloat(temperature) || 0.7;
-            requestBody.top_p = parseFloat(top_p) || 0.9;
+            requestBody.temperature = normalizedTemperature;
+            requestBody.top_p = normalizedTopP;
 
             const modelThinkingBudget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
             if (modelThinkingBudget !== null) {
@@ -16178,21 +18181,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 已为流式调用添加工具定义: ${runtimeToolDefinitions.length}个工具`);
         }
 
-        //  防御性检查：确保数值解析成功
-        if (Object.prototype.hasOwnProperty.call(requestBody, 'temperature') &&
-            (isNaN(requestBody.temperature) || requestBody.temperature < 0 || requestBody.temperature > 2)) {
-            console.warn(` 无效的temperature值: ${temperature}，使用默认值0.7`);
-            requestBody.temperature = 0.7;
-        }
-        if (Object.prototype.hasOwnProperty.call(requestBody, 'top_p') &&
-            (isNaN(requestBody.top_p) || requestBody.top_p < 0 || requestBody.top_p > 1)) {
-            console.warn(` 无效的top_p值: ${top_p}，使用默认值0.9`);
-            requestBody.top_p = 0.9;
-        }
-        if (isNaN(requestBody.max_tokens) || requestBody.max_tokens < 100 || requestBody.max_tokens > 8000) {
-            console.warn(` 无效的max_tokens值: ${max_tokens}，使用默认值2000`);
-            requestBody.max_tokens = 2000;
-        }
+        // 客户端采样参数已通过完整字符串语法和边界校验；不记录原始输入。
 
         // DeepSeek参数
         if (routing.provider === 'deepseek') {
@@ -16212,18 +18201,28 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
-        if (routing.provider === 'newapi') {
-            applyNewApiModelParams(requestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
-            if (requestBody.reasoning_effort) {
-                console.log(` NewAPI ${actualModel} reasoning_effort=${requestBody.reasoning_effort}`);
-            }
-        }
-
         if (routing.provider === 'openrouter') {
             applyOpenRouterReasoningParams(requestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
             if (requestBody.reasoning) {
                 console.log(` OpenRouter ${actualModel} reasoning=${JSON.stringify(requestBody.reasoning)}`);
             }
+        }
+
+        if (routing.provider === 'rai_gpt_gateway') {
+            const reasoningEffort = resolveOpenAIChatReasoningEffort(
+                actualModel,
+                !!thinkingMode,
+                normalizedReasoningProfile
+            );
+            applyGatewayChatRequestPolicy(requestBody, { thinkingMode: !!thinkingMode, reasoningEffort });
+        }
+        if (routing.provider === 'rai_fast_gateway') {
+            const reasoningEffort = resolveOpenAIChatReasoningEffort(
+                actualModel,
+                !!thinkingMode,
+                normalizedReasoningProfile
+            );
+            applyFastGatewayThinkingPolicy(requestBody, { thinkingMode: !!thinkingMode, reasoningEffort });
         }
 
         console.log(` 请求体摘要: messages=${requestBody.messages?.length || 0}, tools=${requestBody.tools?.length || 0}, stream=${!!requestBody.stream}`);
@@ -16267,7 +18266,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         console.log(`   API密钥: 已配置`);
 
         //  修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
-        const controller = new AbortController();
+        const controller = createChatAbortController();
         let timeoutId = setTimeout(() => controller.abort(), 120000);
 
         //  关键修复：将变量声明移到try块外部，避免作用域问题
@@ -16558,11 +18557,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     });
 
                     await dbRunAsync(
-                        'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                         [
                             sessionId,
                             'assistant',
                             contentToSave,
+                            requestId,
                             (reasoningContent || researchResult.reasoningContent || '').trim() || null,
                             finalModel,
                             internetMode ? 1 : 0,
@@ -16611,12 +18611,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     }
                 }
 
+                chatRequestSucceeded = true;
                 res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
                 res.end();
                 console.log(`\n ${normalizedResearchMode === 'deep' ? '深度研究' : '快速研究'}讨论处理完成\n`);
                 return;
             } catch (researchError) {
-                console.error(' 研究讨论失败:', researchError.message);
+                console.error(' 研究讨论失败:', sanitizeReportContext(researchError));
                 emitAgentEvent(res, {
                     type: 'agent_status',
                     role: 'master',
@@ -16627,7 +18628,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 });
                 enableResearchDebate = false;
                 if (String(fullContent || '').trim()) {
-                    res.write(`data: ${JSON.stringify({ type: 'error', error: `研究模式中断: ${researchError.message}` })}\n\n`);
+                    res.write(`data: ${JSON.stringify({ type: 'error', error: '研究模式暂时中断', code: 'research_mode_failed' })}\n\n`);
                     res.end();
                     return;
                 }
@@ -16664,10 +18665,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const body = {
                 model: fallbackActualModel,
                 messages: finalMessages,
-                max_tokens: parseInt(max_tokens, 10) || 2000,
+                max_tokens: normalizedMaxTokens,
                 stream: true,
-                temperature: parseFloat(temperature) || 0.7,
-                top_p: parseFloat(top_p) || 0.9
+                temperature: normalizedTemperature,
+                top_p: normalizedTopP
             };
 
             if (
@@ -16764,9 +18765,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const fetchBody = {
                 contents: geminiContents,
                 generationConfig: {
-                    temperature: parseFloat(temperature) || 0.7,
-                    topP: parseFloat(top_p) || 0.9,
-                    maxOutputTokens: Math.min(parseInt(max_tokens, 10) || 2000, attemptRouting.maxOutputTokens || 8000)
+                    temperature: normalizedTemperature,
+                    topP: normalizedTopP,
+                    maxOutputTokens: Math.min(normalizedMaxTokens, attemptRouting.maxOutputTokens || 8000)
                 }
             };
 
@@ -16827,7 +18828,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     fallbackRequestBody
                 );
 
-                const fallbackController = new AbortController();
+                const fallbackController = createChatAbortController();
                 const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 120000);
                 let fallbackResponse;
                 try {
@@ -16843,7 +18844,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     });
                 } catch (fallbackErr) {
                     clearTimeout(fallbackTimeoutId);
-                    console.warn(` runtime_fallback network_failed model=${fallbackModel} error=${fallbackErr.message}`);
+                    console.warn(` runtime_fallback network_failed model=${fallbackModel}`, sanitizeReportContext(fallbackErr));
                     appendRaiRuntimeReport({
                         level: '报错',
                         tag: 'model_api_fallback_network_failed',
@@ -16861,8 +18862,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 clearTimeout(fallbackTimeoutId);
 
                 if (!fallbackResponse.ok) {
-                    const fallbackErrorText = await fallbackResponse.text();
-                    console.warn(` runtime_fallback failed model=${fallbackModel} status=${fallbackResponse.status} body=${fallbackErrorText.substring(0, 220)}`);
+                    const fallbackErrorText = await readBoundedResponseText(fallbackResponse);
+                    console.warn(` runtime_fallback failed model=${fallbackModel} status=${fallbackResponse.status} bodyLength=${fallbackErrorText.length}`);
                     appendRaiRuntimeReport({
                         level: '报错',
                         tag: 'model_api_fallback_http_failed',
@@ -16896,7 +18897,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     reason: `runtime_fallback:${fallbackReason}`,
                     provider: routing.provider
                 })}\n\n`);
-                console.warn(` runtime_fallback success model=${fallbackModel} actual=${actualModel} from_status=${failedStatus || 'network'} body=${String(failedBody || '').substring(0, 160)}`);
+                console.warn(` runtime_fallback success model=${fallbackModel} actual=${actualModel} from_status=${failedStatus || 'network'} failedBodyLength=${String(failedBody || '').length}`);
                 appendRaiRuntimeReport({
                     level: '恢复',
                     tag: 'model_api_fallback_success',
@@ -17044,9 +19045,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 fetchBody = {
                     contents: geminiContents,
                     generationConfig: {
-                        temperature: parseFloat(temperature) || 0.7,
-                        topP: parseFloat(top_p) || 0.9,
-                        maxOutputTokens: Math.min(parseInt(max_tokens, 10) || 2000, routing.maxOutputTokens || 8000)
+                        temperature: normalizedTemperature,
+                        topP: normalizedTopP,
+                        maxOutputTokens: Math.min(normalizedMaxTokens, routing.maxOutputTokens || 8000)
                     }
                 };
 
@@ -17102,14 +19103,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             }
 
-            console.log(` API响应状态: ${apiResponse.status} ${apiResponse.statusText}`);
+            console.log(` API响应状态: ${apiResponse.status}`);
 
             //  修复错误处理
             if (!apiResponse.ok) {
-                let errorText = await apiResponse.text();
+                let errorText = await readBoundedResponseText(apiResponse);
                 console.error(` API返回错误:`);
                 console.error(`   状态码: ${apiResponse.status}`);
-                console.error(`   响应体: ${errorText.substring(0, 500)}`);
+                console.error(`   响应体已省略: length=${errorText.length}`);
 
                 if (!apiResponse.ok) {
                     const fallbackResult = await tryUniversalRuntimeFallback({
@@ -17142,10 +19143,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 model: actualModel,
                                 models: routing.fallbackModels,
                                 messages: finalMessages,
-                                max_tokens: parseInt(max_tokens, 10) || 2000,
+                                max_tokens: normalizedMaxTokens,
                                 stream: true,
-                                temperature: parseFloat(temperature) || 0.7,
-                                top_p: parseFloat(top_p) || 0.9
+                                temperature: normalizedTemperature,
+                                top_p: normalizedTopP
                             };
                             applyOpenRouterReasoningParams(requestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
 
@@ -17172,8 +19173,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             }
 
                             if (!apiResponse.ok) {
-                                errorText = await apiResponse.text();
-                                console.warn(` gemma_google_api_fallback failed status=${apiResponse.status} body=${errorText.substring(0, 200)}`);
+                                errorText = await readBoundedResponseText(apiResponse);
+                                console.warn(` gemma_google_api_fallback failed status=${apiResponse.status} bodyLength=${errorText.length}`);
                             } else {
                                 console.log(` Gemma Google API fallback connected: ${actualModel}`);
                             }
@@ -17216,7 +19217,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 provider: routing.provider
                             })}\n\n`);
 
-                            const fallbackController = new AbortController();
+                            const fallbackController = createChatAbortController();
                             const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 120000);
                             try {
                                 apiResponse = await fetch(fallbackPayload.apiUrl, {
@@ -17235,8 +19236,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             clearTimeout(fallbackTimeoutId);
 
                             if (!apiResponse.ok) {
-                                const fallbackErrorText = await apiResponse.text();
-                                console.error(` 备用模型也失败: ${apiResponse.status} ${fallbackErrorText.substring(0, 300)}`);
+                                const fallbackErrorText = await readBoundedResponseText(apiResponse);
+                                console.error(` 备用模型也失败: status=${apiResponse.status}, bodyLength=${fallbackErrorText.length}`);
                                 sendFinalApiFailure('siliconflow_balance_fallback_http_failed', `fallback failed with HTTP ${apiResponse.status}`, {
                                     fallbackModel,
                                     status: apiResponse.status,
@@ -17412,10 +19413,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 const isCancelled = await checkCancellation();
                 if (isCancelled) {
                     console.log(` 请求被用户取消: ${requestId}`);
+                    chatRequestCancelled = true;
                     res.write(`data: ${JSON.stringify({ type: 'cancelled' })}\n\n`);
                     res.end();
-                    reader.cancel();
-                    break;
+                    await reader.cancel().catch(() => undefined);
+                    const cancellationError = new Error('chat_request_cancelled');
+                    cancellationError.code = 'chat_request_cancelled';
+                    throw cancellationError;
                 }
 
                 const { done, value } = await reader.read();
@@ -17441,7 +19445,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 const errMessage = typeof errPayload === 'string'
                                     ? errPayload
                                     : (errPayload?.message || JSON.stringify(errPayload));
-                                console.error(` 流式事件错误(${routing.provider}): ${errMessage}`);
+                                console.error(` 流式事件错误(${routing.provider}): ${formatPrivateLogFingerprint(errMessage, 'providerError')}`);
                                 continue;
                             }
 
@@ -17583,7 +19587,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                             }
                         } catch (e) {
-                            console.error(' 解析响应行错误:', e.message);
+                            console.error(' 解析响应行错误:', sanitizeReportContext(e));
                         }
                     }
                 }
@@ -17634,7 +19638,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 arguments: JSON.parse(argumentText)
                             });
                         } catch (e) {
-                            console.warn(' 无法解析工具参数(JSON):', argumentText);
+                            console.warn(` 无法解析工具参数(JSON): function=${functionName}, ${formatPrivateLogFingerprint(argumentText, 'argument')}`);
                         }
                     }
                 }
@@ -17723,7 +19727,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     if (toolName === 'generate_image') {
                         let normalizedArgs;
                         try {
-                            normalizedArgs = normalizeKolorsImageArgs(args);
+                            normalizedArgs = normalizeImageGenerationArgs(args);
                         } catch (error) {
                             continue;
                         }
@@ -17848,7 +19852,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             const toolName = toolCall.function.name;
                             const args = toolCall._args;
 
-                            console.log(` 执行工具: ${toolName}, args=${JSON.stringify(args)}`);
+                            console.log(` 执行工具: ${toolName}, argKeys=${Object.keys(args || {}).sort().join(',')}`);
                             const isSearchTool = toolName === 'web_search';
                             const isImageTool = toolName === 'generate_image';
                             const isMemoryDeleteTool = toolName === 'delete_memory';
@@ -17897,7 +19901,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             try {
                                 if (isImageTool) {
                                     const waitingLinePromise = buildImageWaitingLineFromUserPrompt(userContent);
-                                    const resultPromise = executor(args);
+                                    const resultPromise = executor(args, {
+                                        userId: req.user.userId,
+                                        sessionId,
+                                        requestId,
+                                        requireGptGateway: gptImageModelSelected,
+                                        requestedImageModel: gptImageModelSelected ? 'gpt-image-2' : (model === 'kolors-free' ? 'kolors-free' : 'auto'),
+                                        signal: controller.signal
+                                    });
                                     const firstImageEvent = await Promise.race([
                                         waitingLinePromise.then((line) => ({ kind: 'line', line })).catch(() => ({ kind: 'line', line: '' })),
                                         resultPromise.then((value) => ({ kind: 'result', value }), (error) => ({ kind: 'error', error })),
@@ -18046,7 +20057,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         args
                                     })
                                 });
-                                console.log(` 工具执行完成: finance_quote symbol=${result?.resolvedSymbol || args.symbol}`);
+                                console.log(` 工具执行完成: finance_quote ${formatPrivateLogFingerprint(result?.resolvedSymbol || args.symbol, 'symbol')}`);
                             } else if (isImageTool) {
                                 const imageMarkdown = buildGeneratedImageMarkdown(result);
                                 if (imageMarkdown) {
@@ -18065,9 +20076,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     type: 'tool_status',
                                     tool: 'generate_image',
                                     status: 'complete',
-                                    message: `生成 ${result?.images?.length || 0} 张图片`
+                                    provider: result?.provider || '',
+                                    requestedModel: result?.requestedModel || selectedModel || '',
+                                    model: result?.actualModel || result?.model || '',
+                                    fallbackUsed: result?.fallbackUsed === true,
+                                    routingReason: result?.routingReason || '',
+                                    message: result?.fallbackUsed
+                                        ? `GPT Image 2 暂时不可用，已使用 ${result?.provider || '备用线路'} / ${result?.model || '备用图像模型'} 生成 ${result?.images?.length || 0} 张图片`
+                                        : result?.routingReason === 'user_points_exhausted'
+                                            ? `点数不足（需要 ${result?.requiredPoints || 20} 点，当前 ${result?.remainingPoints || 0} 点），已使用免费生图`
+                                        : result?.routingReason === 'quota_exhausted'
+                                            ? '额度已用完，已使用免费生图'
+                                            : `使用 ${result?.actualModel || result?.model || '图像模型'} 生成 ${result?.images?.length || 0} 张图片`
                                 })}\n\n`);
-                                console.log(` 工具执行完成: generate_image count=${result?.images?.length || 0}`);
+                                console.log(` 工具执行完成: generate_image provider=${result?.provider || 'unknown'}, model=${result?.model || 'unknown'}, fallback=${result?.fallbackUsed === true}, count=${result?.images?.length || 0}`);
                             } else if (isMemoryDeleteTool) {
                                 executedToolResults.push({
                                     toolCall,
@@ -18122,7 +20144,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         const continueRequestBody = {
                             model: actualModel,
                             messages: conversationMessages,
-                            max_tokens: parseInt(max_tokens, 10) || 2000,
+                            max_tokens: normalizedMaxTokens,
                             stream: true,
                             tools: runtimeToolDefinitions,
                             tool_choice: "auto"
@@ -18138,8 +20160,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 continueRequestBody.thinking = { type: thinkingMode ? 'enabled' : 'disabled' };
                             }
                         } else {
-                            continueRequestBody.temperature = parseFloat(temperature) || 0.7;
-                            continueRequestBody.top_p = parseFloat(top_p) || 0.9;
+                            continueRequestBody.temperature = normalizedTemperature;
+                            continueRequestBody.top_p = normalizedTopP;
                             const continueThinkingBudget = resolveThinkingBudgetForModel(actualModel, !!thinkingMode, thinkingBudget);
                             if (continueThinkingBudget !== null) {
                                 continueRequestBody.thinking_budget = continueThinkingBudget;
@@ -18148,11 +20170,30 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         if (routing.provider === 'deepseek') {
                             applyDeepSeekV4ModeParams(continueRequestBody, !!thinkingMode, normalizedReasoningProfile);
                         }
-                        if (routing.provider === 'newapi') {
-                            applyNewApiModelParams(continueRequestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
-                        }
                         if (routing.provider === 'openrouter') {
                             applyOpenRouterReasoningParams(continueRequestBody, actualModel, !!thinkingMode, normalizedReasoningProfile);
+                        }
+                        if (routing.provider === 'rai_gpt_gateway') {
+                            const continueReasoningEffort = resolveOpenAIChatReasoningEffort(
+                                actualModel,
+                                !!thinkingMode,
+                                normalizedReasoningProfile
+                            );
+                            applyGatewayChatRequestPolicy(continueRequestBody, {
+                                thinkingMode: !!thinkingMode,
+                                reasoningEffort: continueReasoningEffort
+                            });
+                        }
+                        if (routing.provider === 'rai_fast_gateway') {
+                            const continueReasoningEffort = resolveOpenAIChatReasoningEffort(
+                                actualModel,
+                                !!thinkingMode,
+                                normalizedReasoningProfile
+                            );
+                            applyFastGatewayThinkingPolicy(continueRequestBody, {
+                                thinkingMode: !!thinkingMode,
+                                reasoningEffort: continueReasoningEffort
+                            });
                         }
                         console.log(` 发起续传流式调用 (round=${toolRound})...`);
                         // 重置工具标记清洗器状态，避免跨轮污染
@@ -18161,33 +20202,38 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         thinkTagCarry = '';
                         inThinkSection = false;
 
-                        const continueResponse = await fetch(providerConfig.baseURL, {
-                            method: 'POST',
-                            headers: buildProviderFetchHeaders(providerConfig, routing.provider),
-                            body: JSON.stringify(continueRequestBody)
-                        });
-
-                        if (!continueResponse.ok) {
-                            const continueErr = await continueResponse.text();
-                            console.error(` 续传请求失败: ${continueResponse.status} ${continueErr.substring(0, 300)}`);
-                            break;
-                        }
-
-                        const continueReader = continueResponse.body.getReader();
-                        const continueDecoder = new TextDecoder('utf-8');
-                        let continueBuffer = '';
                         let continueRawToolContent = '';
                         let continueStreamFinishReason = null;
                         const continueAccumulatedToolCalls = [];
+                        const continueController = createChatAbortController();
+                        const continueTimeoutId = setTimeout(() => continueController.abort(), 120000);
 
-                        while (true) {
-                            const { done: continueDone, value: continueValue } = await continueReader.read();
-                            if (continueDone) {
-                                const continueFlushed = continueBuffer + continueDecoder.decode();
-                                continueBuffer = continueFlushed ? (continueFlushed + '\n') : '';
-                            } else {
-                                continueBuffer += continueDecoder.decode(continueValue, { stream: true });
+                        try {
+                            const continueResponse = await fetch(providerConfig.baseURL, {
+                                method: 'POST',
+                                headers: buildProviderFetchHeaders(providerConfig, routing.provider),
+                                body: JSON.stringify(continueRequestBody),
+                                signal: continueController.signal
+                            });
+
+                            if (!continueResponse.ok) {
+                                const continueErr = await readBoundedResponseText(continueResponse);
+                                console.error(` 续传请求失败: status=${continueResponse.status}, bodyLength=${continueErr.length}`);
+                                break;
                             }
+
+                            const continueReader = continueResponse.body.getReader();
+                            const continueDecoder = new TextDecoder('utf-8');
+                            let continueBuffer = '';
+
+                            while (true) {
+                                const { done: continueDone, value: continueValue } = await continueReader.read();
+                                if (continueDone) {
+                                    const continueFlushed = continueBuffer + continueDecoder.decode();
+                                    continueBuffer = continueFlushed ? (continueFlushed + '\n') : '';
+                                } else {
+                                    continueBuffer += continueDecoder.decode(continueValue, { stream: true });
+                                }
 
                             const continueLines = continueBuffer.split(/\r?\n/);
                             continueBuffer = continueDone ? '' : (continueLines.pop() || '');
@@ -18299,9 +20345,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 }
                             }
 
-                            if (continueDone) {
-                                break;
+                                if (continueDone) {
+                                    break;
+                                }
                             }
+                        } finally {
+                            clearTimeout(continueTimeoutId);
                         }
 
                         // 续传流 fallback：处理文本型工具调用标记
@@ -18323,7 +20372,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         }
 
                         pendingToolCalls = normalizeToolCalls(continueAccumulatedToolCalls);
-                        console.log(` 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${continueStreamFinishReason || 'unknown'}`);
+                        const safeContinueFinishReason = ['stop', 'length', 'tool_calls', 'content_filter'].includes(String(continueStreamFinishReason))
+                            ? String(continueStreamFinishReason)
+                            : 'other';
+                        console.log(` 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${safeContinueFinishReason}`);
                     }
 
                     if (toolRound >= maxToolRounds && pendingToolCalls.length > 0) {
@@ -18334,19 +20386,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         } catch (fetchError) {
 
             clearTimeout(timeoutId);
-            if (fetchError.name === 'AbortError') {
+            if (clientAborted || chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
+                console.log(` 聊天请求已中止: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
+            } else if (fetchError.name === 'AbortError') {
                 console.error(' API请求超时 (120s)');
                 sendFinalApiFailure('model_api_timeout', fetchError.message, {
                     errorName: fetchError.name
                 });
             } else if (fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT') {
-                console.error(' 连接超时:', fetchError.message);
+                console.error(' 连接超时:', sanitizeReportContext(fetchError));
                 console.error('   可能原因: 1) 网络不稳定 2) API服务响应慢 3) 防火墙阻止');
                 sendFinalApiFailure('model_api_connect_timeout', fetchError.message, {
                     causeCode: fetchError.cause?.code
                 });
             } else {
-                console.error(' Fetch错误:', fetchError);
+                console.error(' Fetch错误:', sanitizeReportContext(fetchError));
                 sendFinalApiFailure('model_api_fetch_error', fetchError.message, {
                     errorName: fetchError.name,
                     causeCode: fetchError.cause?.code
@@ -18370,13 +20424,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     type: 'agent_status',
                     role: 'verifier',
                     status: 'start',
-                    detail: '开始质量审查'
+                    detail: '开始启发式质量复核（非独立事实验证）'
                 });
                 emitAgentEvent(res, {
                     type: 'agent_status',
                     role: 'verifier',
                     status: 'running',
-                    detail: '执行事实与一致性校验'
+                    detail: '执行覆盖率、引用与表面一致性启发式检查'
                 });
 
                 let qualityResult = runVerifier({
@@ -18388,6 +20442,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                 emitAgentEvent(res, {
                     type: 'agent_quality',
+                    reviewKind: qualityResult.reviewKind,
+                    independentFactVerification: qualityResult.independentFactVerification,
                     pass: qualityResult.pass,
                     profile: agentRuntime.qualityProfile,
                     metrics: qualityResult.metrics,
@@ -18419,6 +20475,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     emitAgentEvent(res, {
                         type: 'agent_quality',
+                        reviewKind: qualityResult.reviewKind,
+                        independentFactVerification: qualityResult.independentFactVerification,
                         pass: qualityResult.pass,
                         profile: agentRuntime.qualityProfile,
                         metrics: qualityResult.metrics,
@@ -18431,7 +20489,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     type: 'agent_status',
                     role: 'verifier',
                     status: 'done',
-                    detail: qualityResult.pass ? '质量门控通过' : '质量门控未通过，已降级保守输出'
+                    detail: qualityResult.pass
+                        ? '启发式质量复核通过（不代表事实已被独立证实）'
+                        : '启发式质量复核未通过，已降级保守输出'
                 });
             } else {
                 const qualityResult = runVerifier({
@@ -18442,6 +20502,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 });
                 emitAgentEvent(res, {
                     type: 'agent_quality',
+                    reviewKind: qualityResult.reviewKind,
+                    independentFactVerification: qualityResult.independentFactVerification,
                     pass: qualityResult.pass,
                     profile: agentRuntime.qualityProfile,
                     metrics: qualityResult.metrics,
@@ -18497,7 +20559,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         [sessionId, 'user', userContent, attachmentsJson, userMsgTimestamp],
                         (err) => {
                             if (err) {
-                                console.error(' 保存用户消息失败:', err);
+                                console.error(' 保存用户消息失败:', sanitizeReportContext(err));
                                 reject(err);
                             } else {
                                 console.log(` 用户消息已保存 (${userContent.length}字符${attachmentsJson ? ', 含附件' : ''})`);
@@ -18522,7 +20584,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
             const directTitle = sanitizeGeneratedConversationTitle(structuredAssistantOutput.extractedTitle || '', uiLanguage);
             if (directTitle) {
-                console.log(` 已取得会话标题: "${directTitle}"`);
+                console.log(` 已取得会话标题: ${formatPrivateLogFingerprint(directTitle, 'title')}`);
             }
 
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
@@ -18534,11 +20596,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const aiMsgTimestamp = new Date().toISOString();
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO messages (session_id, role, content, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp],
+                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp],
                     (err) => {
                         if (err) {
-                            console.error(' 保存AI消息失败:', err);
+                            console.error(' 保存AI消息失败:', sanitizeReportContext(err));
                             reject(err);
                         } else {
                             console.log(` AI回复已保存:`);
@@ -18591,7 +20653,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                     [sessionId],
                     (err) => {
-                        if (err) console.error(' 更新会话时间戳失败:', err);
+                        if (err) console.error(' 更新会话时间戳失败:', sanitizeReportContext(err));
                         else console.log(' 会话时间戳已更新');
                         resolve();
                     }
@@ -18628,13 +20690,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             });
         }
 
+        chatRequestSucceeded = true;
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
         res.end();
 
         console.log('\n 聊天处理完成\n');
 
     } catch (error) {
-        console.error(' 聊天错误:', error);
+        console.error(' 聊天错误:', sanitizeReportContext(error));
         if (liveStreamState && liveStreamState.status === 'running') {
             liveStreamState.status = 'failed';
             liveStreamState.updatedAt = Date.now();
@@ -18643,23 +20706,38 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             cleanupSessionStreamState(liveStreamState.sessionId, requestId);
         }
         try {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'error', error: '聊天请求暂时不可用', code: 'chat_request_failed' })}\n\n`);
             res.end();
         } catch (writeError) {
-            console.error(' 写入响应错误:', writeError);
+            console.error(' 写入响应错误:', sanitizeReportContext(writeError));
         }
     } finally {
         if (liveStreamState && liveStreamState.status === 'running') {
-            liveStreamState.status = 'failed';
-            liveStreamState.updatedAt = Date.now();
-            await persistSessionStreamDraft(liveStreamState, true);
-            broadcastSessionStreamState(liveStreamState, 'session_stream_failed');
-            cleanupSessionStreamState(liveStreamState.sessionId, requestId);
+            try {
+                liveStreamState.status = 'failed';
+                liveStreamState.updatedAt = Date.now();
+                await persistSessionStreamDraft(liveStreamState, true);
+                broadcastSessionStreamState(liveStreamState, 'session_stream_failed');
+                cleanupSessionStreamState(liveStreamState.sessionId, requestId);
+            } catch (streamCleanupError) {
+                console.warn(' 聊天流状态收尾失败:', sanitizeReportContext(streamCleanupError));
+            }
+        }
+        req.off('aborted', handleClientAbort);
+        res.off('close', handleClientAbort);
+        if (requestId && (!chatRequestSucceeded || clientAborted || chatRequestCancelled)) {
+            await cleanupFailedChatGeneratedImagesBestEffort({
+                userId: req.user.userId,
+                requestId,
+                cause: clientAborted
+                    ? 'client_aborted'
+                    : (chatRequestCancelled ? 'user_cancelled' : 'request_failed')
+            });
         }
         //  关键修复：添加null检查
         if (requestId) {
             activeRequestInterjections.delete(requestId);
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
+            await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]).catch(() => undefined);
         }
     }
 });
@@ -18732,7 +20810,7 @@ app.post('/api/chat/interject', authenticateToken, (req, res) => {
                 [sessionId],
                 (updateErr) => {
                     if (updateErr) {
-                        console.warn(` 更新讨论插话会话时间失败，但已进入当前研究上下文: ${updateErr.message}`);
+                        console.warn(' 更新讨论插话会话时间失败，但已进入当前研究上下文:', sanitizeReportContext(updateErr));
                     }
                     res.json({
                         success: true,
@@ -18759,10 +20837,10 @@ const MEMBERSHIP_CONFIG = {
 };
 
 const USER_TASK_REWARDS = {
-    pwaInstall: { key: 'pwa_install', points: 300 },
-    inviteUser: { keyPrefix: 'invite_user:', points: 600 },
-    inviteeUser: { keyPrefix: 'invitee_user:', points: 600 },
-    bookmarkDomain: { key: 'bookmark_domain', points: 100 },
+    pwaInstall: { key: 'pwa_install', points: 10 },
+    inviteUser: { keyPrefix: 'invite_user:', points: 50 },
+    inviteeUser: { keyPrefix: 'invitee_user:', points: 50 },
+    bookmarkDomain: { key: 'bookmark_domain', points: 10 },
     securityTwoFactor: { key: 'security_2fa', points: 200 },
     securityPasskey: { key: 'security_passkey', points: 200 }
 };
@@ -18794,6 +20872,116 @@ function dbRunAsync(query, params = []) {
             else resolve(this);
         });
     });
+}
+
+function transactionDbGetAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        transactionDb.get(query, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
+
+function transactionDbAllAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        transactionDb.all(query, params, (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+        });
+    });
+}
+
+function transactionDbRunAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        transactionDb.run(query, params, function (err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
+
+function enqueueMainDbTransaction(operation) {
+    if (transactionDbClosing) {
+        const error = new Error('transaction_database_closing');
+        error.code = 'transaction_database_closing';
+        return Promise.reject(error);
+    }
+    const run = transactionTail
+        .catch(() => undefined)
+        .then(async () => {
+            await Promise.all([databaseSchemaReady, transactionDbReady]);
+            return operation();
+        });
+    // A rejected transaction must not poison the FIFO for later requests.
+    transactionTail = run.catch(() => undefined);
+    return run;
+}
+
+function withMainDbTransaction(operation) {
+    return enqueueMainDbTransaction(async () => {
+        let began = false;
+        try {
+            await transactionDbRunAsync('BEGIN IMMEDIATE TRANSACTION');
+            began = true;
+            const result = await operation({
+                get: transactionDbGetAsync,
+                all: transactionDbAllAsync,
+                run: transactionDbRunAsync
+            });
+            await transactionDbRunAsync('COMMIT');
+            began = false;
+            return result;
+        } catch (error) {
+            if (began) {
+                try {
+                    await transactionDbRunAsync('ROLLBACK');
+                } catch (rollbackError) {
+                    console.error(' 独立事务连接回滚失败:', sanitizeReportContext(rollbackError));
+                }
+            }
+            throw error;
+        }
+    });
+}
+
+function withSensitiveAccountMutation(userId, mutate) {
+    return runSensitiveAccountMutation({
+        withTransaction: withMainDbTransaction,
+        userId,
+        mutate
+    });
+}
+
+async function purgeStaleAuthSessionsAfterSensitiveChange(userId, reason) {
+    try {
+        return await authSessionStore.purgeStaleSessions(userId);
+    } catch (error) {
+        // The committed users.session_version is the authorization boundary.
+        // This deletion is deliberately idempotent, post-commit housekeeping.
+        console.warn(
+            ` 敏感账户变更后的旧会话清理待重试: reason=${String(reason || 'sensitive_change').slice(0, 64)}, userId=${Number(userId) || 0}`,
+            sanitizeReportContext(error)
+        );
+        return { deleted: 0, cleanupPending: true };
+    }
+}
+
+async function closeTransactionDb() {
+    transactionDbClosing = true;
+    await transactionTail.catch(() => undefined);
+    if (!transactionDb) {
+        await transactionDbReady.catch(() => undefined);
+    }
+    if (!transactionDb) return;
+    await new Promise((resolve) => {
+        transactionDb.close((err) => {
+            if (err) console.error(' 关闭事务数据库失败:', sanitizeReportContext(err));
+            else console.log(' 事务数据库已关闭');
+            resolve();
+        });
+    });
+    transactionDb = null;
 }
 
 function selectionExplanationDbGetAsync(query, params = []) {
@@ -18878,7 +21066,7 @@ async function closeSelectionExplanationDb() {
     if (!selectionExplanationDb) return;
     await new Promise((resolve) => {
         selectionExplanationDb.close((err) => {
-            if (err) console.error(' 关闭选词解释数据库失败:', err);
+            if (err) console.error(' 关闭选词解释数据库失败:', sanitizeReportContext(err));
             else console.log(' 选词解释数据库已关闭');
             resolve();
         });
@@ -19088,7 +21276,7 @@ async function cleanupPasskeyEphemeralState() {
             [now, consumedBefore]
         );
     }).catch((error) => {
-        console.warn(' Passkey 临时状态清理失败:', error.message);
+        console.warn(' Passkey 临时状态清理失败:', sanitizeReportContext(error));
     });
 }
 
@@ -19160,10 +21348,10 @@ async function verifyPasskeyReauthentication(req, user, body = {}) {
     let authMethod = '';
 
     if (currentPassword) {
-        if (validatePasswordLength(currentPassword, '当前密码')) {
+        if (validateExistingPasswordInput(currentPassword, '当前密码')) {
             throw buildPasskeyHttpError('当前密码错误', 401, 'passkey_reauth_password_invalid');
         }
-        const matched = await bcrypt.compare(currentPassword, user.password_hash).catch(() => false);
+        const matched = await verifyPassword(currentPassword, user.password_hash).catch(() => false);
         if (!matched) {
             throw buildPasskeyHttpError('当前密码错误', 401, 'passkey_reauth_password_invalid');
         }
@@ -19181,31 +21369,40 @@ async function verifyPasskeyReauthentication(req, user, body = {}) {
     }
 
     const twoFactorEnabled = Number(user.two_factor_enabled || 0) === 1
-        && !!normalizeTotpSecret(user.two_factor_secret);
-    if (twoFactorEnabled && !verifyTotpCode(user.two_factor_secret, twoFactorCode)) {
+        && hasUsableUserTotpSecret(user);
+    if (twoFactorEnabled && !await consumeUserSecondFactor(user, twoFactorCode)) {
         throw buildPasskeyHttpError('Authenticator 验证码无效', 401, 'passkey_reauth_totp_invalid');
     }
 
     return authMethod;
 }
 
-async function awardSecuritySetupRewardWithinTransaction(userId, reward, metadata = {}) {
+async function awardSecuritySetupRewardUsingTransaction(tx, userId, reward, metadata = {}) {
     const points = Number(reward?.points || 0);
     const taskKey = String(reward?.key || '').trim();
     if (!taskKey || points <= 0) return 0;
 
-    const insert = await passkeyDbRunAsync(
+    const insert = await tx.run(
         `INSERT OR IGNORE INTO user_task_rewards (user_id, task_key, points, metadata, completed_at)
          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [userId, taskKey, points, JSON.stringify(metadata || {})]
     );
     if (Number(insert?.changes || 0) !== 1) return 0;
 
-    await passkeyDbRunAsync(
+    await tx.run(
         'UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?',
         [points, userId]
     );
     return points;
+}
+
+async function awardSecuritySetupRewardWithinTransaction(userId, reward, metadata = {}) {
+    return awardSecuritySetupRewardUsingTransaction(
+        { run: passkeyDbRunAsync },
+        userId,
+        reward,
+        metadata
+    );
 }
 
 async function awardSecuritySetupReward(userId, reward, metadata = {}) {
@@ -19269,10 +21466,10 @@ async function consumePasskeyChallengeAttempt({ token, ceremony, userId = null, 
     return result.row;
 }
 
-async function consumePasskeyReauthGrantWithinTransaction({ token, userId, scope }) {
+async function consumePasskeyReauthGrantUsingTransaction(tx, { token, userId, scope }) {
     const grantHash = hashOpaquePasskeyToken(token);
     const numericUserId = Number(userId);
-    const row = await passkeyDbGetAsync(
+    const row = await tx.get(
         'SELECT * FROM user_reauth_grants WHERE grant_hash = ?',
         [grantHash]
     );
@@ -19284,7 +21481,7 @@ async function consumePasskeyReauthGrantWithinTransaction({ token, userId, scope
     const valid = Number(row.user_id) === numericUserId
         && String(row.scope || '') === scope
         && Number(row.expires_at || 0) > now;
-    const update = await passkeyDbRunAsync(
+    const update = await tx.run(
         `UPDATE user_reauth_grants
          SET consumed_at = ?
          WHERE grant_hash = ? AND consumed_at IS NULL`,
@@ -19294,6 +21491,13 @@ async function consumePasskeyReauthGrantWithinTransaction({ token, userId, scope
     if (!valid || Number(update?.changes || 0) !== 1) {
         throw buildPasskeyHttpError('安全验证已过期，请重新验证', 401, 'passkey_reauth_grant_invalid');
     }
+}
+
+async function consumePasskeyReauthGrantWithinTransaction(args) {
+    return consumePasskeyReauthGrantUsingTransaction(
+        { get: passkeyDbGetAsync, run: passkeyDbRunAsync },
+        args
+    );
 }
 
 async function consumePasskeyReauthGrant(args) {
@@ -19334,7 +21538,7 @@ function sendPasskeyRouteError(res, error, fallbackMessage) {
             code: error.code || 'passkey_error'
         });
     }
-    console.error(` ${fallbackMessage}:`, error);
+    console.error(` ${fallbackMessage}:`, sanitizeReportContext(error));
     return res.status(500).json({ success: false, error: fallbackMessage, code: 'passkey_internal_error' });
 }
 
@@ -19474,7 +21678,7 @@ async function issuePendingEmailChangeCode({ userId, currentEmail, email, req })
         throw error;
     }
 
-    console.log(` 修改邮箱旧邮箱验证码已发送: userId=${userId}, currentDomain=${normalizedCurrentEmail.split('@')[1] || ''}, pendingDomain=${normalizedEmail.split('@')[1] || ''}`);
+    console.log(` 修改邮箱旧邮箱验证码已发送: userId=${userId}, ${formatPrivateLogFingerprint(normalizedCurrentEmail.split('@')[1] || '', 'currentDomain')}, ${formatPrivateLogFingerprint(normalizedEmail.split('@')[1] || '', 'pendingDomain')}`);
     return { pending_email: normalizedEmail, pending_email_expires_at: expiresAt, pending_email_stage: 'current' };
 }
 
@@ -19493,9 +21697,8 @@ async function verifyPendingEmailCurrentCodeAndIssueNewCode({ userId, email = ''
     const expiresAt = Date.now() + EMAIL_CODE_TTL_MS;
     let user;
 
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        user = await dbGetAsync(
+    await withMainDbTransaction(async (tx) => {
+        user = await tx.get(
             `SELECT id, email, pending_email, pending_email_current_code_hash, pending_email_expires_at
              FROM users
              WHERE id = ?`,
@@ -19530,19 +21733,23 @@ async function verifyPendingEmailCurrentCodeAndIssueNewCode({ userId, email = ''
             throw error;
         }
 
-        await dbRunAsync(
+        const updateResult = await tx.run(
             `UPDATE users
              SET pending_email_current_verified_at = ?,
                  pending_email_code_hash = ?,
                  pending_email_expires_at = ?
-             WHERE id = ?`,
-            [Date.now(), newCodeHash, expiresAt, numericUserId]
+             WHERE id = ?
+               AND pending_email = ?
+               AND pending_email_current_code_hash = ?`,
+            [Date.now(), newCodeHash, expiresAt, numericUserId, pendingEmail, user.pending_email_current_code_hash]
         );
-        await dbRunAsync('COMMIT');
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+        if (Number(updateResult?.changes || 0) !== 1) {
+            const error = new Error('邮箱验证状态已变化，请重试');
+            error.statusCode = 409;
+            error.code = 'pending_email_state_changed';
+            throw error;
+        }
+    });
 
     const message = buildEmailChangeCodeMessage({
         email: normalizedEmail,
@@ -19579,7 +21786,7 @@ async function verifyPendingEmailCurrentCodeAndIssueNewCode({ userId, email = ''
         throw error;
     }
 
-    console.log(` 修改邮箱新邮箱验证码已发送: userId=${numericUserId}, pendingDomain=${normalizedEmail.split('@')[1] || ''}`);
+    console.log(` 修改邮箱新邮箱验证码已发送: userId=${numericUserId}, ${formatPrivateLogFingerprint(normalizedEmail.split('@')[1] || '', 'pendingDomain')}`);
     return { pending_email: normalizedEmail, pending_email_expires_at: expiresAt, pending_email_stage: 'new' };
 }
 
@@ -19593,9 +21800,8 @@ async function verifyPendingEmailChange({ userId, email = '', code = '' }) {
         throw error;
     }
 
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const user = await dbGetAsync(
+    const mutation = await withSensitiveAccountMutation(numericUserId, async (tx) => {
+        const user = await tx.get(
             `SELECT id, email, username, avatar_url, external_provider, external_uid,
                     pending_email, pending_email_current_verified_at, pending_email_code_hash, pending_email_expires_at
              FROM users
@@ -19635,7 +21841,7 @@ async function verifyPendingEmailChange({ userId, email = '', code = '' }) {
             throw error;
         }
 
-        const duplicate = await dbGetAsync(
+        const duplicate = await tx.get(
             'SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?',
             [pendingEmail, numericUserId]
         );
@@ -19645,7 +21851,7 @@ async function verifyPendingEmailChange({ userId, email = '', code = '' }) {
             throw error;
         }
 
-        await dbRunAsync(
+        const updateResult = await tx.run(
             `UPDATE users
              SET email = ?,
                  email_verified = 1,
@@ -19658,7 +21864,12 @@ async function verifyPendingEmailChange({ userId, email = '', code = '' }) {
              WHERE id = ?`,
             [pendingEmail, numericUserId]
         );
-        await dbRunAsync('COMMIT');
+        if (Number(updateResult?.changes || 0) !== 1) {
+            const error = new Error('邮箱验证状态已变化，请重试');
+            error.statusCode = 409;
+            error.code = 'pending_email_state_changed';
+            throw error;
+        }
 
         return {
             ...user,
@@ -19669,10 +21880,8 @@ async function verifyPendingEmailChange({ userId, email = '', code = '' }) {
             pending_email_code_hash: null,
             pending_email_expires_at: null
         };
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
+    return { ...mutation.value, session_version: mutation.sessionVersion };
 }
 
 async function sendResendEmail({ to, subject, html, text }) {
@@ -19720,12 +21929,12 @@ async function sendResendEmail({ to, subject, html, text }) {
         clearTimeout(timeout);
     }
 
-    const rawBody = await response.text().catch(() => '');
+    const rawBody = await readBoundedResponseText(response, 256 * 1024).catch(() => '');
     let parsedBody = null;
     try {
         parsedBody = rawBody ? JSON.parse(rawBody) : null;
     } catch (error) {
-        parsedBody = { raw: rawBody.slice(0, 500) };
+        parsedBody = null;
     }
 
 	    if (!response.ok) {
@@ -19754,14 +21963,14 @@ async function sendWelcomeEmail({ email, username }) {
         '<ul style="margin:0 0 14px;padding-left:20px;color:#374151">',
         '<li>用「智能模型」日常问答、写作、写代码</li>',
         '<li>开启「研究模式」让多个子模型辩论，得到更全面的答案</li>',
-        '<li>上传图片 / 文档，AI 帮你读图、读表、读 PDF</li>',
+        '<li>上传图片、文本或代码附件，AI 帮你结合内容分析</li>',
         '<li>每日签到领点数，完成小任务额外得奖励</li>',
         '</ul>',
         '<p style="margin:0 0 14px">遇到问题随时在设置里反馈，我们会持续更新。</p>',
         `<p style="margin:18px 0 0;color:#6b7280;font-size:13px">— ${safeBrand} 团队</p>`,
         '</div>'
     ].join('');
-    const text = `欢迎来到 ${BRAND_TITLE || BRAND_NAME}！\n\n你的账号已创建成功，我们已为你发放 200 点数，可以直接开始对话。\n\n你可以试试：\n- 智能模型日常问答、写作、写代码\n- 研究模式多模型辩论\n- 上传图片 / 文档\n- 每日签到领点数\n\n— ${BRAND_TITLE || BRAND_NAME} 团队`;
+    const text = `欢迎来到 ${BRAND_TITLE || BRAND_NAME}！\n\n你的账号已创建成功，我们已为你发放 200 点数，可以直接开始对话。\n\n你可以试试：\n- 智能模型日常问答、写作、写代码\n- 研究模式多模型辩论\n- 上传图片、文本或代码附件\n- 每日签到领点数\n\n— ${BRAND_TITLE || BRAND_NAME} 团队`;
     return sendResendEmail({ to: email, subject, html, text });
 }
 
@@ -19772,7 +21981,7 @@ async function cleanupEmailCodes() {
         'DELETE FROM auth_email_codes WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)',
         [now, consumedBefore]
     ).catch((error) => {
-        console.warn(' 邮箱验证码清理失败:', error.message);
+        console.warn(' 邮箱验证码清理失败:', sanitizeReportContext(error));
     });
 }
 
@@ -19821,14 +22030,13 @@ async function issueEmailCode({ email, userId = null, purpose, metadata = {}, re
     });
 }
 
-async function verifyAndConsumeEmailCode({ email, purpose, code, userId = null }) {
+async function verifyAndConsumeEmailCodeWithinTransaction(tx, { email, purpose, code, userId = null }) {
     const normalizedEmail = normalizeEmailForAuth(email);
     const normalizedCode = normalizeEmailCodeInput(code);
     if (!isValidEmailForAuth(normalizedEmail) || !EMAIL_CODE_PURPOSES.has(purpose) || !isValidEmailCodeInput(normalizedCode)) {
         return { ok: false, error: '验证码无效或已过期' };
     }
 
-    await cleanupEmailCodes();
     const params = [normalizedEmail, purpose, Date.now()];
     let userFilter = '';
     if (userId) {
@@ -19836,7 +22044,7 @@ async function verifyAndConsumeEmailCode({ email, purpose, code, userId = null }
         params.push(userId);
     }
 
-    const row = await dbGetAsync(
+    const row = await tx.get(
         `SELECT *
          FROM auth_email_codes
          WHERE LOWER(email) = LOWER(?)
@@ -19854,17 +22062,23 @@ async function verifyAndConsumeEmailCode({ email, purpose, code, userId = null }
     }
 
     if (Number(row.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) {
-        await dbRunAsync('UPDATE auth_email_codes SET consumed_at = ? WHERE id = ?', [Date.now(), row.id]);
+        await tx.run('UPDATE auth_email_codes SET consumed_at = ? WHERE id = ?', [Date.now(), row.id]);
         return { ok: false, error: '验证码尝试次数过多，请重新获取' };
     }
 
     const expectedHash = hashEmailCode({ email: normalizedEmail, purpose, code: normalizedCode });
     if (!safeCompareText(expectedHash, row.code_hash)) {
-        await dbRunAsync('UPDATE auth_email_codes SET attempts = attempts + 1 WHERE id = ?', [row.id]);
+        await tx.run('UPDATE auth_email_codes SET attempts = attempts + 1 WHERE id = ?', [row.id]);
         return { ok: false, error: '验证码无效或已过期' };
     }
 
-    await dbRunAsync('UPDATE auth_email_codes SET consumed_at = ? WHERE id = ?', [Date.now(), row.id]);
+    const consumed = await tx.run(
+        'UPDATE auth_email_codes SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL',
+        [Date.now(), row.id]
+    );
+    if (Number(consumed?.changes || 0) !== 1) {
+        return { ok: false, error: '验证码无效或已过期' };
+    }
 
     let metadata = {};
     try {
@@ -19874,6 +22088,55 @@ async function verifyAndConsumeEmailCode({ email, purpose, code, userId = null }
     }
 
     return { ok: true, row, metadata };
+}
+
+async function verifyEmailCodeProof({ email, purpose, code, userId = null }) {
+    const normalizedEmail = normalizeEmailForAuth(email);
+    const normalizedCode = normalizeEmailCodeInput(code);
+    if (!isValidEmailForAuth(normalizedEmail) || !EMAIL_CODE_PURPOSES.has(purpose) || !isValidEmailCodeInput(normalizedCode)) {
+        return { ok: false, error: '验证码无效或已过期' };
+    }
+
+    await cleanupEmailCodes();
+    return withMainDbTransaction(async (tx) => {
+        const params = [normalizedEmail, purpose, Date.now()];
+        let userFilter = '';
+        if (userId) {
+            userFilter = ' AND (user_id = ? OR user_id IS NULL)';
+            params.push(userId);
+        }
+        const row = await tx.get(
+            `SELECT *
+             FROM auth_email_codes
+             WHERE LOWER(email) = LOWER(?)
+               AND purpose = ?
+               AND consumed_at IS NULL
+               AND expires_at > ?
+               ${userFilter}
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            params
+        );
+        if (!row) return { ok: false, error: '验证码无效或已过期' };
+        if (Number(row.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) {
+            await tx.run('UPDATE auth_email_codes SET consumed_at = ? WHERE id = ?', [Date.now(), row.id]);
+            return { ok: false, error: '验证码尝试次数过多，请重新获取' };
+        }
+        const expectedHash = hashEmailCode({ email: normalizedEmail, purpose, code: normalizedCode });
+        if (!safeCompareText(expectedHash, row.code_hash)) {
+            await tx.run('UPDATE auth_email_codes SET attempts = attempts + 1 WHERE id = ?', [row.id]);
+            return { ok: false, error: '验证码无效或已过期' };
+        }
+        // Deliberately do not consume a valid proof yet.  Account-context
+        // password policy and hash generation happen next; final consumption,
+        // password write, and session-version bump share one later transaction.
+        return { ok: true, rowId: Number(row.id) };
+    });
+}
+
+async function verifyAndConsumeEmailCode(args) {
+    await cleanupEmailCodes();
+    return withMainDbTransaction((tx) => verifyAndConsumeEmailCodeWithinTransaction(tx, args));
 }
 
 async function sendEmailCodeOrReport(args) {
@@ -19923,7 +22186,7 @@ async function getAdminRuntimeSettings() {
             }
         }
     } catch (error) {
-        console.warn(' 读取管理员运行限制失败，使用默认值:', error.message);
+        console.warn(' 读取管理员运行限制失败，使用默认值:', sanitizeReportContext(error));
     }
     return settings;
 }
@@ -19964,7 +22227,7 @@ function buildTaskMetadata(req, metadata = {}) {
     return JSON.stringify({
         ...metadata,
         userAgent: String(req?.headers?.['user-agent'] || '').slice(0, 300),
-        ip: String(req?.ip || req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 80)
+        ip: String(req?.ip || '').trim().slice(0, 80)
     });
 }
 
@@ -20020,12 +22283,8 @@ async function getUserTaskSnapshot(userId) {
 }
 
 async function awardUserTaskPoints({ userId, taskKey, points, metadata = null }) {
-    let inTransaction = false;
-    try {
-        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-        inTransaction = true;
-
-        const insertResult = await dbRunAsync(
+    return withMainDbTransaction(async (tx) => {
+        const insertResult = await tx.run(
             `INSERT OR IGNORE INTO user_task_rewards (user_id, task_key, points, metadata)
              VALUES (?, ?, ?, ?)`,
             [userId, taskKey, points, metadata]
@@ -20033,25 +22292,19 @@ async function awardUserTaskPoints({ userId, taskKey, points, metadata = null })
         const awarded = Number(insertResult?.changes || 0) > 0;
 
         if (awarded) {
-            await dbRunAsync(
+            const pointsResult = await tx.run(
                 'UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?',
                 [points, userId]
             );
-        }
-
-        await dbRunAsync('COMMIT');
-        inTransaction = false;
-        return { awarded, pointsGained: awarded ? points : 0 };
-    } catch (error) {
-        if (inTransaction) {
-            try {
-                await dbRunAsync('ROLLBACK');
-            } catch (rollbackError) {
-                console.error(' 任务积分回滚失败:', rollbackError);
+            if (Number(pointsResult?.changes || 0) !== 1) {
+                const error = new Error('task_reward_user_not_found');
+                error.code = 'task_reward_user_not_found';
+                throw error;
             }
         }
-        throw error;
-    }
+
+        return { awarded, pointsGained: awarded ? points : 0 };
+    });
 }
 
 async function awardInviteReferralIfValid(referrerId, invitedUserId, req) {
@@ -20279,7 +22532,7 @@ app.post('/api/messages/:messageId/feedback', authenticateToken, async (req, res
             }
         });
     } catch (error) {
-        console.error('保存消息反馈失败:', error);
+        console.error('保存消息反馈失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '保存反馈失败' });
     }
 });
@@ -20292,7 +22545,7 @@ app.get('/api/model-availability', async (req, res) => {
             disabledModels: models.filter((model) => !model.enabled).map((model) => model.id)
         });
     } catch (error) {
-        console.error(' 获取模型可见性失败:', error);
+        console.error(' 获取模型可见性失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取模型可见性失败' });
     }
 });
@@ -20321,6 +22574,8 @@ async function ensureSessionKindColumn() {
     if (!ensureSessionKindColumnPromise) {
         ensureSessionKindColumnPromise = (async () => {
             await ensureColumnExists('sessions', 'session_kind', `ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`);
+            await ensureColumnExists('sessions', 'prompt_model_identity', `ALTER TABLE sessions ADD COLUMN prompt_model_identity TEXT`);
+            await ensureColumnExists('sessions', 'prompt_language', `ALTER TABLE sessions ADD COLUMN prompt_language TEXT`);
             await dbRunAsync(`CREATE INDEX IF NOT EXISTS idx_sessions_user_kind_updated ON sessions(user_id, session_kind, is_archived, updated_at DESC)`);
         })().catch((error) => {
             ensureSessionKindColumnPromise = null;
@@ -20345,6 +22600,146 @@ async function ensureFlowSessionIdColumn() {
 async function ensureChatFlowSchemaColumns() {
     await ensureSessionKindColumn();
     await ensureFlowSessionIdColumn();
+}
+
+let ensureConversationOrganizationSchemaPromise = null;
+async function ensureConversationOrganizationSchema() {
+    if (!ensureConversationOrganizationSchemaPromise) {
+        ensureConversationOrganizationSchemaPromise = (async () => {
+            await ensureSessionKindColumn();
+            await dbRunAsync(`CREATE TABLE IF NOT EXISTS conversation_folders (
+                id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, name), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )`);
+            await dbRunAsync(`CREATE TABLE IF NOT EXISTS conversation_folder_sessions (
+                folder_id TEXT NOT NULL, session_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(folder_id, session_id),
+                FOREIGN KEY (folder_id) REFERENCES conversation_folders(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )`);
+            await dbRunAsync(`CREATE TABLE IF NOT EXISTS session_pins (
+                user_id INTEGER NOT NULL, session_id TEXT NOT NULL, position INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(user_id, session_id), UNIQUE(user_id, position),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )`);
+            await dbRunAsync(`CREATE TABLE IF NOT EXISTS image_quota_daily_usage (
+                user_id INTEGER NOT NULL, usage_date TEXT NOT NULL, model_id TEXT NOT NULL,
+                used_count INTEGER NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(user_id, usage_date, model_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )`);
+            await dbRunAsync(`CREATE TABLE IF NOT EXISTS image_quota_reservations (
+                request_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, usage_date TEXT NOT NULL,
+                model_id TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('reserved','consumed','released')),
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )`);
+            await ensureColumnExists('selection_explanation_threads', 'session_id', 'ALTER TABLE selection_explanation_threads ADD COLUMN session_id TEXT');
+            await ensureColumnExists('selection_explanation_requests', 'session_id', 'ALTER TABLE selection_explanation_requests ADD COLUMN session_id TEXT');
+            await dbRunAsync('CREATE INDEX IF NOT EXISTS idx_conversation_folders_user_updated ON conversation_folders(user_id, updated_at DESC, id)');
+            await dbRunAsync('CREATE INDEX IF NOT EXISTS idx_folder_sessions_user_folder ON conversation_folder_sessions(user_id, folder_id, session_id)');
+            await dbRunAsync('CREATE INDEX IF NOT EXISTS idx_session_pins_user_position ON session_pins(user_id, position ASC)');
+            await dbRunAsync('CREATE INDEX IF NOT EXISTS idx_image_quota_reservations_lookup ON image_quota_reservations(user_id, usage_date, model_id, status)');
+            await dbRunAsync('CREATE INDEX IF NOT EXISTS idx_selection_explanation_threads_session ON selection_explanation_threads(user_id, session_id, updated_at DESC)');
+            const bump = (userIdExpression) => `INSERT INTO conversation_sync_state (user_id, revision) VALUES (${userIdExpression}, 1) ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1`;
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_pins_insert AFTER INSERT ON session_pins BEGIN ${bump('NEW.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_pins_update AFTER UPDATE ON session_pins BEGIN ${bump('NEW.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_pins_delete AFTER DELETE ON session_pins BEGIN ${bump('OLD.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_folder_members_insert AFTER INSERT ON conversation_folder_sessions BEGIN ${bump('NEW.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_folder_members_delete AFTER DELETE ON conversation_folder_sessions BEGIN ${bump('OLD.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_folders_insert AFTER INSERT ON conversation_folders BEGIN ${bump('NEW.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_folders_update AFTER UPDATE ON conversation_folders BEGIN ${bump('NEW.user_id')}; END`);
+            await dbRunAsync(`CREATE TRIGGER IF NOT EXISTS rai_sync_folders_delete AFTER DELETE ON conversation_folders BEGIN ${bump('OLD.user_id')}; END`);
+        })().catch((error) => {
+            ensureConversationOrganizationSchemaPromise = null;
+            throw error;
+        });
+    }
+    return ensureConversationOrganizationSchemaPromise;
+}
+
+function normalizeFolderName(value, fallback = '收纳文件夹') {
+    const name = String(value || '').replace(/\s+/g, ' ').trim() || fallback;
+    return Array.from(name).slice(0, 80).join('');
+}
+
+function getShanghaiUsageDate(now = new Date()) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(now);
+}
+
+function getShanghaiResetAt(now = new Date()) {
+    const date = getShanghaiUsageDate(now);
+    // Shanghai has no DST. This UTC calculation is deliberately independent of host timezone.
+    return new Date(`${date}T16:00:00.000Z`).toISOString();
+}
+
+function image2LimitForMembership(membership) {
+    return membership === 'MAX' ? 10 : membership === 'Pro' ? 3 : 0;
+}
+
+const conversationOrganizationStartupReady = databaseInitializationSettled
+    .then(() => ensureConversationOrganizationSchema())
+    .then(() => {
+        console.log(' 对话文件夹、置顶和图片配额结构就绪');
+        return true;
+    });
+
+async function reserveImage2Quota(userId, requestId) {
+    await ensureConversationOrganizationSchema();
+    const usageDate = getShanghaiUsageDate();
+    const now = Date.now();
+    return withMainDbTransaction(async (tx) => {
+        await tx.run(`UPDATE image_quota_reservations SET status = 'released', updated_at = ?
+                      WHERE status = 'reserved' AND created_at < ?`, [now, now - 15 * 60 * 1000]);
+        const user = await tx.get('SELECT COALESCE(membership, \'free\') AS membership, membership_end FROM users WHERE id = ?', [userId]);
+        const activeMembership = user?.membership !== 'free' && user?.membership_end && new Date(user.membership_end) > new Date()
+            ? user.membership : 'free';
+        const limit = image2LimitForMembership(activeMembership);
+        const usage = await tx.get('SELECT COALESCE(used_count, 0) AS used FROM image_quota_daily_usage WHERE user_id = ? AND usage_date = ? AND model_id = ?', [userId, usageDate, 'gpt-image-2']);
+        const reserved = await tx.get("SELECT COUNT(*) AS count FROM image_quota_reservations WHERE user_id = ? AND usage_date = ? AND model_id = ? AND status = 'reserved'", [userId, usageDate, 'gpt-image-2']);
+        const used = Number(usage?.used || 0);
+        const pending = Number(reserved?.count || 0);
+        if (!limit || used + pending >= limit) {
+            return { allowed: false, limit, used, remaining: Math.max(0, limit - used - pending), resetAt: getShanghaiResetAt(), reason: limit ? 'quota_exhausted' : 'membership_required' };
+        }
+        await tx.run(`INSERT INTO image_quota_reservations (request_id, user_id, usage_date, model_id, status, created_at, updated_at)
+                      VALUES (?, ?, ?, 'gpt-image-2', 'reserved', ?, ?)`, [requestId, userId, usageDate, now, now]);
+        return { allowed: true, usageDate, limit, used, remaining: limit - used - pending - 1, resetAt: getShanghaiResetAt() };
+    });
+}
+
+async function settleImage2QuotaReservation(requestId, consume) {
+    if (!requestId) return;
+    await withMainDbTransaction(async (tx) => {
+        const row = await tx.get("SELECT user_id, usage_date, status FROM image_quota_reservations WHERE request_id = ?", [requestId]);
+        if (!row || row.status !== 'reserved') return;
+        if (consume) {
+            await tx.run(`INSERT INTO image_quota_daily_usage (user_id, usage_date, model_id, used_count, updated_at)
+                          VALUES (?, ?, 'gpt-image-2', 1, CURRENT_TIMESTAMP)
+                          ON CONFLICT(user_id, usage_date, model_id) DO UPDATE SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP`, [row.user_id, row.usage_date]);
+            await tx.run("UPDATE image_quota_reservations SET status = 'consumed', updated_at = ? WHERE request_id = ? AND status = 'reserved'", [Date.now(), requestId]);
+        } else {
+            await tx.run("UPDATE image_quota_reservations SET status = 'released', updated_at = ? WHERE request_id = ? AND status = 'reserved'", [Date.now(), requestId]);
+        }
+    });
+}
+
+async function getImage2QuotaSnapshot(userId) {
+    await ensureConversationOrganizationSchema();
+    const usageDate = getShanghaiUsageDate();
+    const user = await dbGetAsync('SELECT COALESCE(membership, \'free\') AS membership, membership_end FROM users WHERE id = ?', [userId]);
+    const membership = user?.membership !== 'free' && user?.membership_end && new Date(user.membership_end) > new Date() ? user.membership : 'free';
+    const limit = image2LimitForMembership(membership);
+    const usedRow = await dbGetAsync('SELECT COALESCE(used_count, 0) AS used FROM image_quota_daily_usage WHERE user_id = ? AND usage_date = ? AND model_id = ?', [userId, usageDate, 'gpt-image-2']);
+    const pendingRow = await dbGetAsync("SELECT COUNT(*) AS count FROM image_quota_reservations WHERE user_id = ? AND usage_date = ? AND model_id = ? AND status = 'reserved'", [userId, usageDate, 'gpt-image-2']);
+    const used = Number(usedRow?.used || 0);
+    const pending = Number(pendingRow?.count || 0);
+    return { limit, used, remaining: Math.max(0, limit - used - pending), resetAt: getShanghaiResetAt() };
 }
 
 function getTodayDateString() {
@@ -20834,7 +23229,7 @@ function parseMemoryActionsFromModelText(text) {
         actions.forEach((action) => pushMemoryAction(normalized, action));
         return normalized;
     } catch (error) {
-        console.warn(' 记忆提取 JSON 解析失败:', error.message);
+        console.warn(' 记忆提取 JSON 解析失败:', sanitizeReportContext(error));
         return [];
     }
 }
@@ -20895,13 +23290,13 @@ async function callMemoryExtractionModel({ userText, assistantText = '', existin
             }),
             signal: controller.signal
         });
-        const payloadText = await response.text();
+        const payloadText = await readBoundedResponseText(response, 256 * 1024);
         if (!response.ok) {
             appendRaiRuntimeReport({
                 level: '报错',
                 tag: 'memory_extraction_http_failed',
                 message: `Memory extraction HTTP ${response.status}`,
-                context: { modelId, provider: routing.provider, body: payloadText.slice(0, 600) }
+                context: { modelId, provider: routing.provider, bodyLength: payloadText.length }
             });
             return [];
         }
@@ -21175,7 +23570,7 @@ async function processConversationMemory({ userId, sessionId, userContent, assis
 function scheduleConversationMemoryProcessing(payload) {
     setTimeout(() => {
         processConversationMemory(payload).catch((error) => {
-            console.warn(' 长期记忆处理失败:', error.message);
+            console.warn(' 长期记忆处理失败:', sanitizeReportContext(error));
             appendRaiRuntimeReport({
                 level: '报错',
                 tag: 'memory_processing_failed',
@@ -21275,9 +23670,9 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        res.json(snapshot);
+        res.json({ ...snapshot, image2Quota: await getImage2QuotaSnapshot(req.user.userId) });
     } catch (error) {
-        console.error(' 获取会员状态失败:', error);
+        console.error(' 获取会员状态失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取会员状态失败' });
     }
 });
@@ -21317,7 +23712,7 @@ app.post('/api/user/checkin', authenticateToken, async (req, res) => {
             canCheckin: snapshot?.canCheckin ?? false
         });
     } catch (error) {
-        console.error(' 签到失败:', error);
+        console.error(' 签到失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '签到失败' });
     }
 });
@@ -21364,7 +23759,7 @@ app.post('/api/user/tasks/pwa-install/complete', authenticateToken, async (req, 
             ...snapshot
         });
     } catch (error) {
-        console.error(' 完成桌面App任务失败:', error);
+        console.error(' 完成桌面App任务失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '完成任务失败' });
     }
 });
@@ -21395,7 +23790,7 @@ app.post('/api/user/tasks/bookmark-domain/complete', authenticateToken, async (r
             ...snapshot
         });
     } catch (error) {
-        console.error(' 完成收藏新域名任务失败:', error);
+        console.error(' 完成收藏新域名任务失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '完成任务失败' });
     }
 });
@@ -21416,7 +23811,7 @@ app.get('/api/announcements', async (req, res) => {
         );
         res.json({ announcements: rows.map((row) => serializeAnnouncement(row, { language })) });
     } catch (error) {
-        console.error(' 获取公告失败:', error);
+        console.error(' 获取公告失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取公告失败' });
     }
 });
@@ -21428,101 +23823,97 @@ app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: '无效的会员档位' });
     }
 
-    let inTransaction = false;
-
     try {
-        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-        inTransaction = true;
+        const redemption = await withMainDbTransaction(async (tx) => {
+            const user = await tx.get(`
+                SELECT id,
+                       membership, membership_start, membership_end,
+                       COALESCE(points, 0) AS points,
+                       COALESCE(purchased_points, 0) AS purchased_points,
+                       purchased_points_expire
+                FROM users WHERE id = ?
+            `, [req.user.userId]);
 
-        const user = await dbGetAsync(`
-            SELECT id,
-                   membership, membership_start, membership_end,
-                   COALESCE(points, 0) AS points,
-                   COALESCE(purchased_points, 0) AS purchased_points,
-                   purchased_points_expire
-            FROM users WHERE id = ?
-        `, [req.user.userId]);
-
-        if (!user) {
-            await dbRunAsync('ROLLBACK');
-            inTransaction = false;
-            return res.status(404).json({ error: '用户不存在' });
-        }
-
-        const currentMembership = String(user.membership || 'free');
-        const currentMembershipEnd = user.membership_end ? new Date(user.membership_end) : null;
-        const hasActiveMembership = currentMembership !== 'free' &&
-            currentMembershipEnd &&
-            !Number.isNaN(currentMembershipEnd.getTime()) &&
-            currentMembershipEnd > new Date();
-
-        if (currentMembership === 'MAX' && tier === 'Pro' && hasActiveMembership) {
-            await dbRunAsync('ROLLBACK');
-            inTransaction = false;
-            return res.status(400).json({ error: '当前已是更高档位，请直接续期当前会员' });
-        }
-
-        let points = Number(user.points || 0);
-        let purchasedPoints = Number(user.purchased_points || 0);
-        let purchasedPointsExpire = user.purchased_points_expire || null;
-
-        if (purchasedPoints > 0 && purchasedPointsExpire) {
-            const expireDate = new Date(purchasedPointsExpire);
-            if (!Number.isNaN(expireDate.getTime()) && expireDate < new Date()) {
-                purchasedPoints = 0;
-                purchasedPointsExpire = null;
-                await dbRunAsync(
-                    'UPDATE users SET purchased_points = 0, purchased_points_expire = NULL WHERE id = ?',
-                    [user.id]
-                );
+            if (!user) {
+                return { error: '用户不存在', statusCode: 404 };
             }
+
+            const currentMembership = String(user.membership || 'free');
+            const currentMembershipEnd = user.membership_end ? new Date(user.membership_end) : null;
+            const hasActiveMembership = currentMembership !== 'free' &&
+                currentMembershipEnd &&
+                !Number.isNaN(currentMembershipEnd.getTime()) &&
+                currentMembershipEnd > new Date();
+
+            if (currentMembership === 'MAX' && tier === 'Pro' && hasActiveMembership) {
+                return { error: '当前已是更高档位，请直接续期当前会员', statusCode: 400 };
+            }
+
+            let points = Number(user.points || 0);
+            let purchasedPoints = Number(user.purchased_points || 0);
+            let purchasedPointsExpire = user.purchased_points_expire || null;
+
+            if (purchasedPoints > 0 && purchasedPointsExpire) {
+                const expireDate = new Date(purchasedPointsExpire);
+                if (!Number.isNaN(expireDate.getTime()) && expireDate < new Date()) {
+                    purchasedPoints = 0;
+                    purchasedPointsExpire = null;
+                    await tx.run(
+                        'UPDATE users SET purchased_points = 0, purchased_points_expire = NULL WHERE id = ?',
+                        [user.id]
+                    );
+                }
+            }
+
+            const totalPoints = points + purchasedPoints;
+            if (totalPoints < config.redeemCost) {
+                return { error: '点数不足，请完成任务或签到增加积分', statusCode: 400 };
+            }
+
+            let remainingCost = config.redeemCost;
+            if (points >= remainingCost) {
+                points -= remainingCost;
+            } else {
+                remainingCost -= points;
+                points = 0;
+                purchasedPoints -= remainingCost;
+            }
+
+            const membershipStart = new Date().toISOString();
+            const membershipEnd = buildMembershipEndISO(user.membership_end, config.durationDays);
+            const updateResult = await tx.run(`
+                UPDATE users SET
+                    membership = ?,
+                    membership_start = ?,
+                    membership_end = ?,
+                    points = ?,
+                    purchased_points = ?,
+                    purchased_points_expire = ?,
+                    last_daily_grant = NULL
+                WHERE id = ?
+            `, [
+                tier,
+                membershipStart,
+                membershipEnd,
+                points,
+                purchasedPoints,
+                purchasedPoints > 0 ? purchasedPointsExpire : null,
+                user.id
+            ]);
+            if (Number(updateResult?.changes || 0) !== 1) {
+                const error = new Error('membership_redeem_target_changed');
+                error.code = 'membership_redeem_target_changed';
+                throw error;
+            }
+            return { userId: user.id };
+        });
+
+        if (redemption.error) {
+            return res.status(redemption.statusCode).json({ error: redemption.error });
         }
 
-        const totalPoints = points + purchasedPoints;
-        if (totalPoints < config.redeemCost) {
-            await dbRunAsync('ROLLBACK');
-            inTransaction = false;
-            return res.status(400).json({ error: '点数不足，请完成任务或签到增加积分' });
-        }
-
-        let remainingCost = config.redeemCost;
-        if (points >= remainingCost) {
-            points -= remainingCost;
-            remainingCost = 0;
-        } else {
-            remainingCost -= points;
-            points = 0;
-            purchasedPoints -= remainingCost;
-        }
-
-        const membershipStart = new Date().toISOString();
-        const membershipEnd = buildMembershipEndISO(user.membership_end, config.durationDays);
-
-        await dbRunAsync(`
-            UPDATE users SET
-                membership = ?,
-                membership_start = ?,
-                membership_end = ?,
-                points = ?,
-                purchased_points = ?,
-                purchased_points_expire = ?,
-                last_daily_grant = NULL
-            WHERE id = ?
-        `, [
-            tier,
-            membershipStart,
-            membershipEnd,
-            points,
-            purchasedPoints,
-            purchasedPoints > 0 ? purchasedPointsExpire : null,
-            user.id
-        ]);
-
-        await dbRunAsync('COMMIT');
-        inTransaction = false;
-
-        const snapshot = await getUserMembershipSnapshot(user.id);
-        console.log(` 用户 ${user.id} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`);
+        const snapshot = await getUserMembershipSnapshot(redemption.userId);
+        console.log(` 用户 ${redemption.userId} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`);
         res.json({
             success: true,
             tier,
@@ -21530,14 +23921,7 @@ app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
             ...snapshot
         });
     } catch (error) {
-        if (inTransaction) {
-            try {
-                await dbRunAsync('ROLLBACK');
-            } catch (rollbackError) {
-                console.error(' 兑换会员回滚失败:', rollbackError);
-            }
-        }
-        console.error(' 兑换会员失败:', error);
+        console.error(' 兑换会员失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '兑换会员失败' });
     }
 });
@@ -21545,12 +23929,10 @@ const FREE_MODEL_IDENTIFIERS = new Set([
     'chatgpt-gpt-oss-120b',
     'gemma',
     'gemma-4-31b-it',
-    'north-mini-code',
     'nemotron-3-ultra',
     'openrouter-free',
     'openai/gpt-oss-120b:free',
     'google/gemma-4-31b-it:free',
-    'cohere/north-mini-code:free',
     'nvidia/nemotron-3-ultra-550b-a55b:free',
     'openrouter/free'
 ]);
@@ -21562,11 +23944,27 @@ function isFreeModelIdentifier(modelUsed = '') {
     return FREE_MODEL_IDENTIFIERS.has(modelText);
 }
 
+const MODEL_POINT_COSTS = Object.freeze({
+    'deepseek-flash': 1,
+    'deepseek-pro': 1,
+    'gpt-5.6-sol': 5,
+    'gpt-5.6-terra': 5,
+    'gpt-5.6-luna': 5,
+    'claude-sonnet-5': 10,
+    'gemini-3.6-flash-low': 3,
+    'gpt-image-2': 20
+});
+
+function getModelPointCost(modelId = '') {
+    const model = normalizeIncomingModelId(modelId);
+    if (isFreeModelIdentifier(model)) return 0;
+    return Math.max(1, Number(MODEL_POINT_COSTS[model] || 1));
+}
+
 // 辅助函数：检查并扣减点数
 async function checkAndDeductPoints(userId, modelUsed) {
-    await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-    try {
-        const user = await dbGetAsync(`
+    return withMainDbTransaction(async (tx) => {
+        const user = await tx.get(`
             SELECT id, membership, points, purchased_points, purchased_points_expire
             FROM users WHERE id = ?
         `, [userId]);
@@ -21579,14 +23977,14 @@ async function checkAndDeductPoints(userId, modelUsed) {
             const expireDate = new Date(user.purchased_points_expire);
             if (Number.isFinite(expireDate.getTime()) && expireDate < new Date()) {
                 purchasedPoints = 0;
-                await dbRunAsync('UPDATE users SET purchased_points = 0 WHERE id = ?', [userId]);
+                await tx.run('UPDATE users SET purchased_points = 0 WHERE id = ?', [userId]);
             }
         }
 
         const totalPoints = points + purchasedPoints;
 
-        if (isFreeModelIdentifier(modelUsed)) {
-            await dbRunAsync('COMMIT');
+        const pointCost = getModelPointCost(modelUsed);
+        if (pointCost === 0) {
             return {
                 allowed: true,
                 pointsDeducted: 0,
@@ -21595,27 +23993,31 @@ async function checkAndDeductPoints(userId, modelUsed) {
             };
         }
 
-        if (totalPoints <= 0) {
-            await dbRunAsync('COMMIT');
+        if (totalPoints < pointCost) {
             return {
                 allowed: true,
                 pointsDeducted: 0,
-                remainingPoints: 0,
+                remainingPoints: totalPoints,
                 useFreeModel: true,
-                message: '点数不足，已自动切换到免费模型。完成任务或签到可增加积分。'
+                requiredPoints: pointCost,
+                message: `点数不足（本次需要 ${pointCost} 点，当前 ${totalPoints} 点），已自动切换到免费模型。完成任务或签到可增加积分。`
             };
         }
 
         let newPoints = points;
         let newPurchasedPoints = purchasedPoints;
+        let remainingCost = pointCost;
 
-        if (points > 0) {
-            newPoints = points - 1;
-        } else {
-            newPurchasedPoints = purchasedPoints - 1;
+        if (newPoints > 0) {
+            const deducted = Math.min(newPoints, remainingCost);
+            newPoints -= deducted;
+            remainingCost -= deducted;
+        }
+        if (remainingCost > 0) {
+            newPurchasedPoints -= remainingCost;
         }
 
-        const result = await dbRunAsync(
+        const result = await tx.run(
             'UPDATE users SET points = ?, purchased_points = ? WHERE id = ?',
             [newPoints, newPurchasedPoints, userId]
         );
@@ -21623,35 +24025,125 @@ async function checkAndDeductPoints(userId, modelUsed) {
             throw new Error('points_update_failed');
         }
 
-        await dbRunAsync('COMMIT');
         return {
             allowed: true,
-            pointsDeducted: 1,
+            pointsDeducted: pointCost,
             remainingPoints: newPoints + newPurchasedPoints,
             useFreeModel: false
         };
-    } catch (error) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        throw error;
-    }
+    });
 }
 
 // ==================== 管理员后台系统 ====================
 
+const ADMIN_TOKEN_ISSUER = 'rai';
+const ADMIN_TOKEN_AUDIENCE = 'rai-admin-api';
+
+function durationStringToSeconds(value, fallback = 12 * 60 * 60) {
+    const match = String(value || '').trim().match(/^(\d+)([smhd])$/i);
+    if (!match) return fallback;
+    const amount = Number(match[1]);
+    const multiplier = { s: 1, m: 60, h: 3600, d: 86400 }[match[2].toLowerCase()];
+    const seconds = amount * multiplier;
+    return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : fallback;
+}
+
+const ADMIN_TOKEN_TTL_SECONDS = durationStringToSeconds(ADMIN_TOKEN_EXPIRES_IN);
+
+async function createAdminSession() {
+    const sessionId = crypto.randomBytes(24).toString('base64url');
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = now + ADMIN_TOKEN_TTL_SECONDS;
+    await dbRunAsync(
+        'DELETE FROM admin_sessions WHERE expires_at <= ? OR (revoked_at IS NOT NULL AND revoked_at <= ?)',
+        [now - (7 * 24 * 60 * 60), now - (7 * 24 * 60 * 60)]
+    );
+    const token = jwt.sign(
+        {
+            type: 'admin_session',
+            sid: sessionId,
+            cv: ADMIN_CREDENTIAL_VERSION
+        },
+        ADMIN_JWT_SECRET,
+        {
+            algorithm: 'HS256',
+            issuer: ADMIN_TOKEN_ISSUER,
+            audience: ADMIN_TOKEN_AUDIENCE,
+            subject: ADMIN_USERNAME,
+            jwtid: crypto.randomBytes(18).toString('base64url'),
+            expiresIn: ADMIN_TOKEN_TTL_SECONDS,
+            header: { typ: 'JWT' }
+        }
+    );
+    await dbRunAsync(
+        `INSERT INTO admin_sessions
+         (session_id, username, credential_version, created_at, expires_at, revoked_at)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+        [sessionId, ADMIN_USERNAME, ADMIN_CREDENTIAL_VERSION, now, expiresAt]
+    );
+    return { token, sessionId, expiresAt };
+}
+
+async function consumeAdminTotpCode(code) {
+    const counter = findMatchingTotpCounter(ADMIN_TOTP_SECRET, code);
+    if (counter === null) return false;
+    await dbRunAsync(
+        `INSERT INTO admin_security_state (username, totp_last_counter, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(username) DO NOTHING`,
+        [ADMIN_USERNAME, -1, Date.now()]
+    );
+    const result = await dbRunAsync(
+        `UPDATE admin_security_state
+         SET totp_last_counter = ?, updated_at = ?
+         WHERE username = ? AND COALESCE(totp_last_counter, -1) < ?`,
+        [counter, Date.now(), ADMIN_USERNAME, counter]
+    );
+    return Number(result?.changes || 0) === 1;
+}
+
 // 管理员认证中间件
-const authenticateAdmin = (req, res, next) => {
+const authenticateAdmin = async (req, res, next) => {
     const token = req.headers['x-admin-token'];
     if (!token) {
         return res.status(401).json({ error: '需要管理员令牌' });
     }
     try {
-        const decoded = jwt.verify(token, ADMIN_JWT_SECRET);
-        if (decoded.isAdmin) {
-            req.isAdmin = true;
-            next();
-        } else {
-            res.status(403).json({ error: '无效的管理员令牌' });
+        const verified = jwt.verify(token, ADMIN_JWT_SECRET, {
+            algorithms: ['HS256'],
+            issuer: ADMIN_TOKEN_ISSUER,
+            audience: ADMIN_TOKEN_AUDIENCE,
+            subject: ADMIN_USERNAME,
+            complete: true
+        });
+        const decoded = verified?.payload;
+        const tokenLifetime = Number(decoded?.exp) - Number(decoded?.iat);
+        if (
+            verified?.header?.typ !== 'JWT'
+            || decoded?.type !== 'admin_session'
+            || !/^[A-Za-z0-9_-]{32}$/.test(String(decoded.sid || ''))
+            || !/^[A-Za-z0-9_-]{24}$/.test(String(decoded.jti || ''))
+            || !isAdminCredentialVersion(decoded.cv)
+            || !adminCredentialVersionMatches(decoded.cv, ADMIN_CREDENTIAL_VERSION)
+            || !Number.isSafeInteger(tokenLifetime)
+            || tokenLifetime <= 0
+            || tokenLifetime > ADMIN_TOKEN_TTL_SECONDS
+        ) {
+            return res.status(403).json({ error: '无效的管理员令牌' });
         }
+        const session = await dbGetAsync(
+            `SELECT session_id FROM admin_sessions
+             WHERE session_id = ?
+               AND username = ?
+               AND credential_version = ?
+               AND revoked_at IS NULL
+               AND expires_at > ?`,
+            [decoded.sid, ADMIN_USERNAME, ADMIN_CREDENTIAL_VERSION, Math.floor(Date.now() / 1000)]
+        );
+        if (!session) return res.status(403).json({ error: '管理员会话已撤销' });
+        req.isAdmin = true;
+        req.adminSessionId = decoded.sid;
+        return next();
     } catch (e) {
         res.status(403).json({ error: '管理员令牌已过期或无效' });
     }
@@ -21665,7 +24157,7 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
         const usernameOk = String(username || '').trim() === ADMIN_USERNAME;
         const passwordInput = typeof password === 'string' ? password : '';
         const passwordOk = usernameOk
-            && !validatePasswordLength(passwordInput)
+            && !validateExistingPasswordInput(passwordInput)
             && await bcrypt.compare(passwordInput, ADMIN_PASSWORD_HASH);
 
         if (passwordOk) {
@@ -21677,7 +24169,7 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
                 });
             }
 
-            if ((ADMIN_TOTP_REQUIRED || ADMIN_TOTP_SECRET) && !verifyTotpCode(ADMIN_TOTP_SECRET, totpCode)) {
+            if ((ADMIN_TOTP_REQUIRED || ADMIN_TOTP_SECRET) && !await consumeAdminTotpCode(totpCode)) {
                 console.log(' 管理员二步验证失败尝试');
                 return res.status(401).json({
                     error: 'Authenticator 验证码无效',
@@ -21685,23 +24177,30 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
                 });
             }
 
-            const token = jwt.sign({ isAdmin: true, username: ADMIN_USERNAME, loginTime: Date.now() }, ADMIN_JWT_SECRET, { expiresIn: ADMIN_TOKEN_EXPIRES_IN });
+            const session = await createAdminSession();
             console.log(' 管理员登录成功');
-            return res.json({ success: true, token, expiresIn: ADMIN_TOKEN_EXPIRES_IN });
+            return res.json({ success: true, token: session.token, expiresAt: session.expiresAt });
         }
 
         console.log(' 管理员登录失败尝试');
         return res.status(401).json({ error: '管理员凭据无效' });
     } catch (err) {
-        console.error(' 管理员登录校验失败:', err.message);
+        console.error(' 管理员登录校验失败:', sanitizeReportContext(err));
         return res.status(401).json({ error: '管理员凭据无效' });
     }
 });
 
 // 验证管理员Token
 app.get('/api/admin/verify', authenticateAdmin, (req, res) => {
-    const token = jwt.sign({ isAdmin: true, username: ADMIN_USERNAME, loginTime: Date.now() }, ADMIN_JWT_SECRET, { expiresIn: ADMIN_TOKEN_EXPIRES_IN });
-    res.json({ success: true, isAdmin: true, token, expiresIn: ADMIN_TOKEN_EXPIRES_IN });
+    res.json({ success: true, isAdmin: true });
+});
+
+app.post('/api/admin/logout', authenticateAdmin, async (req, res) => {
+    await dbRunAsync(
+        'UPDATE admin_sessions SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL',
+        [Math.floor(Date.now() / 1000), req.adminSessionId]
+    );
+    return res.json({ success: true });
 });
 
 app.get('/api/admin/runtime-settings', authenticateAdmin, async (req, res) => {
@@ -21709,7 +24208,7 @@ app.get('/api/admin/runtime-settings', authenticateAdmin, async (req, res) => {
         const settings = await getAdminRuntimeSettings();
         res.json({ settings });
     } catch (error) {
-        console.error(' 获取管理员运行限制失败:', error);
+        console.error(' 获取管理员运行限制失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取运行限制失败' });
     }
 });
@@ -21719,7 +24218,7 @@ app.put('/api/admin/runtime-settings', authenticateAdmin, async (req, res) => {
         const settings = await setAdminRuntimeSettings(req.body || {});
         res.json({ success: true, settings });
     } catch (error) {
-        console.error(' 保存管理员运行限制失败:', error);
+        console.error(' 保存管理员运行限制失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '保存运行限制失败' });
     }
 });
@@ -21729,7 +24228,7 @@ app.get('/api/admin/models', authenticateAdmin, async (req, res) => {
         const models = await getModelVisibilityPayload({ forceRefresh: true });
         res.json({ models });
     } catch (error) {
-        console.error(' 管理员获取模型开关失败:', error);
+        console.error(' 管理员获取模型开关失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取模型开关失败' });
     }
 });
@@ -21754,7 +24253,7 @@ app.put('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
         const models = await getModelVisibilityPayload({ forceRefresh: true });
         res.json({ success: true, modelId, enabled, models });
     } catch (error) {
-        console.error(' 管理员更新模型开关失败:', error);
+        console.error(' 管理员更新模型开关失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '更新模型开关失败' });
     }
 });
@@ -21769,7 +24268,7 @@ app.get('/api/admin/announcements', authenticateAdmin, async (req, res) => {
         );
         res.json({ announcements: rows.map(serializeAnnouncement) });
     } catch (error) {
-        console.error(' 管理员获取公告失败:', error);
+        console.error(' 管理员获取公告失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取公告失败' });
     }
 });
@@ -21789,7 +24288,7 @@ app.post('/api/admin/announcements', authenticateAdmin, async (req, res) => {
         const row = await dbGetAsync('SELECT * FROM announcements WHERE id = ?', [result.lastID]);
         res.json({ success: true, announcement: serializeAnnouncement(row) });
     } catch (error) {
-        console.error(' 管理员创建公告失败:', error);
+        console.error(' 管理员创建公告失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '创建公告失败' });
     }
 });
@@ -21818,7 +24317,7 @@ app.put('/api/admin/announcements/:id', authenticateAdmin, async (req, res) => {
         const row = await dbGetAsync('SELECT * FROM announcements WHERE id = ?', [id]);
         res.json({ success: true, announcement: serializeAnnouncement(row) });
     } catch (error) {
-        console.error(' 管理员更新公告失败:', error);
+        console.error(' 管理员更新公告失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '更新公告失败' });
     }
 });
@@ -21836,7 +24335,7 @@ app.delete('/api/admin/announcements/:id', authenticateAdmin, async (req, res) =
         await dbRunAsync('DELETE FROM announcements WHERE id = ?', [id]);
         res.json({ success: true, id });
     } catch (error) {
-        console.error(' 管理员删除公告失败:', error);
+        console.error(' 管理员删除公告失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '删除公告失败' });
     }
 });
@@ -21882,7 +24381,7 @@ app.post('/api/admin/broadcast', authenticateAdmin, async (req, res) => {
             return res.status(400).json({ success: false, error: '群发需要显式确认' });
         }
         const rows = await dbAllAsync(
-            `SELECT email, username FROM users WHERE email_verified = 1 AND email NOT LIKE '%@passport.ztx6d.local' AND email NOT LIKE '%@ztx6d.local'`
+            `SELECT id, email FROM users WHERE email_verified = 1 AND email NOT LIKE '%@passport.ztx6d.local' AND email NOT LIKE '%@ztx6d.local'`
         );
         let sent = 0;
         let failed = 0;
@@ -21894,8 +24393,9 @@ app.post('/api/admin/broadcast', authenticateAdmin, async (req, res) => {
                 await new Promise((r) => setTimeout(r, 200));
             } catch (error) {
                 failed += 1;
-                if (failures.length < 20) failures.push({ email: row.email, error: error.message });
-                console.warn(` broadcast 发送失败 ${row.email}:`, error.message);
+                const errorCode = String(error?.code || error?.name || 'send_failed').slice(0, 80);
+                if (failures.length < 20) failures.push({ userId: Number(row.id), errorCode: 'send_failed' });
+                console.warn(` broadcast 发送失败: userId=${Number(row.id)}, ${formatPrivateLogFingerprint(errorCode, 'errorCode')}`);
             }
         }
         appendRaiRuntimeReport({
@@ -21906,8 +24406,8 @@ app.post('/api/admin/broadcast', authenticateAdmin, async (req, res) => {
         });
         res.json({ success: true, mode: 'broadcast', sent, failed, total: rows.length, failures });
     } catch (error) {
-        console.error(' 管理员群发邮件失败:', error);
-        res.status(500).json({ success: false, error: '群发失败: ' + error.message });
+        console.error(' 管理员群发邮件失败:', sanitizeReportContext(error));
+        res.status(500).json({ success: false, error: '群发暂时不可用' });
     }
 });
 
@@ -22012,7 +24512,7 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
         });
 
     } catch (error) {
-        console.error(' 获取统计数据失败:', error);
+        console.error(' 获取统计数据失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取统计数据失败' });
     }
 });
@@ -22085,7 +24585,7 @@ app.get('/api/admin/feedback', authenticateAdmin, async (req, res) => {
             limit
         });
     } catch (error) {
-        console.error(' 获取反馈列表失败:', error);
+        console.error(' 获取反馈列表失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取反馈列表失败' });
     }
 });
@@ -22110,7 +24610,7 @@ app.get('/api/admin/users', authenticateAdmin, (req, res) => {
         LIMIT ? OFFSET ?
     `, [limit, offset], (err, users) => {
         if (err) {
-            console.error(' 获取用户列表失败:', err);
+            console.error(' 获取用户列表失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '获取用户列表失败' });
         }
         res.json({ users, offset, limit });
@@ -22128,23 +24628,39 @@ app.put('/api/admin/users/:userId/password', authenticateAdmin, async (req, res)
         return res.status(400).json({ error: '无效的用户ID' });
     }
 
-    const passwordError = validatePasswordLength(newPassword, '新密码');
-    if (passwordError) {
-        return res.status(400).json({ error: passwordError });
-    }
-
     try {
-        const user = await dbGetAsync('SELECT id, email FROM users WHERE id = ?', [userId]);
+        const user = await dbGetAsync('SELECT id, email, username FROM users WHERE id = ?', [userId]);
         if (!user) {
             return res.status(404).json({ error: '用户不存在' });
         }
 
-        const nextPasswordHash = await bcrypt.hash(newPassword, 10);
-        await dbRunAsync('UPDATE users SET password_hash = ? WHERE id = ?', [nextPasswordHash, user.id]);
-        console.log(` 管理员已重置用户密码: userId=${user.id}, email=${user.email}`);
+        const passwordError = await validateNewPasswordForAccount(newPassword, {
+            email: user.email,
+            username: user.username
+        }, '新密码');
+        if (passwordError) {
+            return res.status(400).json({ error: passwordError });
+        }
+
+        const nextPasswordHash = await hashPassword(newPassword);
+        if (!await verifyPassword(newPassword, nextPasswordHash).catch(() => false)) {
+            throw new Error('admin_password_reset_hash_verification_failed');
+        }
+        await withSensitiveAccountMutation(user.id, async (tx) => {
+            const changed = await tx.run(
+                'UPDATE users SET password_hash = ?, password_policy_version = ? WHERE id = ?',
+                [nextPasswordHash, PASSWORD_POLICY_VERSION, user.id]
+            );
+            if (Number(changed?.changes || 0) !== 1) {
+                throw new Error('admin_password_reset_update_missing');
+            }
+            return true;
+        });
+        await purgeStaleAuthSessionsAfterSensitiveChange(user.id, 'admin_password_reset');
+        console.log(` 管理员已重置用户密码: userId=${user.id}`);
         return res.json({ success: true, userId: user.id });
     } catch (error) {
-        console.error(' 管理员重置用户密码失败:', error);
+        console.error(' 管理员重置用户密码失败:', sanitizeReportContext(error));
         return res.status(500).json({ error: '重置密码失败' });
     }
 });
@@ -22195,7 +24711,7 @@ app.get('/api/admin/users/:userId/detail', authenticateAdmin, async (req, res) =
 
         res.json({ user, sessions });
     } catch (error) {
-        console.error(' 获取用户详情失败:', error);
+        console.error(' 获取用户详情失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取用户详情失败' });
     }
 });
@@ -22250,7 +24766,7 @@ app.get('/api/admin/sessions/:sessionId/messages', authenticateAdmin, async (req
 
         res.json({ session, messages, totalCount, offset, limit });
     } catch (error) {
-        console.error(' 获取会话消息失败:', error);
+        console.error(' 获取会话消息失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取会话消息失败' });
     }
 });
@@ -22271,7 +24787,7 @@ app.get('/api/admin/users/:userId/messages', authenticateAdmin, (req, res) => {
         LIMIT ? OFFSET ?
     `, [userId, limit, offset], (err, messages) => {
         if (err) {
-            console.error(' 获取用户消息失败:', err);
+            console.error(' 获取用户消息失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '获取用户消息失败' });
         }
         res.json({ messages, offset, limit });
@@ -22295,7 +24811,7 @@ app.delete('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
             deletedFiles: result.deletedFiles
         });
     } catch (err) {
-        console.error(' 删除用户失败:', err);
+        console.error(' 删除用户失败:', sanitizeReportContext(err));
         return res.status(500).json({ error: '删除用户失败' });
     }
 });
@@ -22328,7 +24844,7 @@ app.put('/api/admin/users/:userId/membership', authenticateAdmin, (req, res) => 
         WHERE id = ?
     `, [membership, membershipStart, membershipEnd, userId], function (err) {
         if (err) {
-            console.error(' 设置会员失败:', err);
+            console.error(' 设置会员失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '设置会员失败' });
         }
         if (this.changes === 0) {
@@ -22365,7 +24881,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             WHERE id = ?
         `, [points, expireDate, userId], function (err) {
             if (err) {
-                console.error(' 添加购买点数失败:', err);
+                console.error(' 添加购买点数失败:', sanitizeReportContext(err));
                 return res.status(500).json({ error: '添加点数失败' });
             }
             if (this.changes === 0) {
@@ -22380,7 +24896,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             UPDATE users SET points = COALESCE(points, 0) + ? WHERE id = ?
         `, [points, userId], function (err) {
             if (err) {
-                console.error(' 添加每日点数失败:', err);
+                console.error(' 添加每日点数失败:', sanitizeReportContext(err));
                 return res.status(500).json({ error: '添加点数失败' });
             }
             if (this.changes === 0) {
@@ -22424,7 +24940,7 @@ app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
 
     db.all(query, params, (err, messages) => {
         if (err) {
-            console.error(' 获取消息列表失败:', err);
+            console.error(' 获取消息列表失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '获取消息列表失败' });
         }
         res.json({ messages, offset, limit });
@@ -22432,20 +24948,37 @@ app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
 });
 
 // 删除消息
-app.delete('/api/admin/messages/:messageId', authenticateAdmin, (req, res) => {
+app.delete('/api/admin/messages/:messageId', authenticateAdmin, async (req, res) => {
     const { messageId } = req.params;
-
-    db.run('DELETE FROM messages WHERE id = ?', [messageId], function (err) {
-        if (err) {
-            console.error(' 删除消息失败:', err);
-            return res.status(500).json({ error: '删除消息失败' });
-        }
-        if (this.changes === 0) {
-            return res.status(404).json({ error: '消息不存在' });
-        }
+    try {
+        const deleted = await withMainDbTransaction(async (tx) => {
+            const message = await tx.get(
+                'SELECT id, session_id, content, request_id FROM messages WHERE id = ?',
+                [messageId]
+            );
+            if (!message) return false;
+            await stageGeneratedImageDeletionsForMessage({
+                tx,
+                sessionId: message.session_id,
+                requestId: message.request_id,
+                filenames: extractGeneratedImageFilenamesFromMessage(message.content)
+            });
+            const deletion = await tx.run('DELETE FROM messages WHERE id = ?', [messageId]);
+            if (Number(deletion?.changes || 0) !== 1) {
+                const error = new Error('admin_message_delete_target_changed');
+                error.code = 'admin_message_delete_target_changed';
+                throw error;
+            }
+            return true;
+        });
+        if (!deleted) return res.status(404).json({ error: '消息不存在' });
+        await drainQueuedGeneratedImageDeletionsBestEffort();
         console.log(` 管理员删除消息 ID: ${messageId}`);
-        res.json({ success: true, deletedMessageId: messageId });
-    });
+        return res.json({ success: true, deletedMessageId: messageId });
+    } catch (error) {
+        console.error(' 删除消息失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '删除消息失败' });
+    }
 });
 
 // 获取所有会话
@@ -22463,7 +24996,7 @@ app.get('/api/admin/sessions', authenticateAdmin, (req, res) => {
         LIMIT ? OFFSET ?
     `, [limit, offset], (err, sessions) => {
         if (err) {
-            console.error(' 获取会话列表失败:', err);
+            console.error(' 获取会话列表失败:', sanitizeReportContext(err));
             return res.status(500).json({ error: '获取会话列表失败' });
         }
         res.json({ sessions, offset, limit });
@@ -22475,19 +25008,27 @@ app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, async (req, res)
     const { sessionId } = req.params;
 
     try {
-        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
-        await dbRunAsync('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-        const result = await dbRunAsync('DELETE FROM sessions WHERE id = ?', [sessionId]);
-        if (result.changes === 0) {
-            await dbRunAsync('ROLLBACK');
+        const deleted = await withMainDbTransaction(async (tx) => {
+            const existing = await tx.get('SELECT id FROM sessions WHERE id = ?', [sessionId]);
+            if (!existing) return false;
+            await stageGeneratedImageDeletionsForSession({ tx, sessionId });
+            await tx.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
+            const result = await tx.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
+            if (Number(result?.changes || 0) !== 1) {
+                const error = new Error('admin_session_delete_target_changed');
+                error.code = 'admin_session_delete_target_changed';
+                throw error;
+            }
+            return true;
+        });
+        if (!deleted) {
             return res.status(404).json({ error: '会话不存在' });
         }
-        await dbRunAsync('COMMIT');
+        await drainQueuedGeneratedImageDeletionsBestEffort();
         console.log(` 管理员删除会话 ID: ${sessionId}`);
         return res.json({ success: true, deletedSessionId: sessionId });
     } catch (err) {
-        await dbRunAsync('ROLLBACK').catch(() => null);
-        console.error(' 删除会话失败:', err);
+        console.error(' 删除会话失败:', sanitizeReportContext(err));
         return res.status(500).json({ error: '删除会话失败' });
     }
 });
@@ -22513,7 +25054,7 @@ app.use((err, req, res, next) => {
         });
     }
 
-    console.error(' 服务器错误:', err);
+    console.error(' 服务器错误:', sanitizeReportContext(err));
     const isProd = process.env.NODE_ENV === 'production';
     const payload = {
         error: '服务器内部错误',
@@ -22528,9 +25069,35 @@ app.use((err, req, res, next) => {
 // ==================== 启动服务器 ====================
 let httpServer = null;
 let gracefulShutdownStarted = false;
+let generatedImageCleanupTimer = null;
+let authSessionCleanupTimer = null;
 
 async function startHttpServer() {
-    await selectionExplanationStartupReady;
+    await Promise.all([
+        selectionExplanationStartupReady,
+        authSessionStartupReady,
+        softwareClientStartupReady,
+        transactionDbReady
+    ]);
+    await conversationOrganizationStartupReady;
+    await cleanupExpiredGeneratedImages().catch((error) => {
+        console.warn(' 过期生成图片初始清理失败:', sanitizeReportContext(error));
+    });
+    generatedImageCleanupTimer = setInterval(() => {
+        cleanupExpiredGeneratedImages().catch((error) => {
+            console.warn(' 过期生成图片清理失败:', sanitizeReportContext(error));
+        });
+    }, 60 * 60 * 1000);
+    generatedImageCleanupTimer.unref?.();
+    await authSessionStore.cleanupExpiredSessions().catch((error) => {
+        console.warn(' 过期认证会话初始清理失败:', sanitizeReportContext(error));
+    });
+    authSessionCleanupTimer = setInterval(() => {
+        authSessionStore.cleanupExpiredSessions().catch((error) => {
+            console.warn(' 过期认证会话清理失败:', sanitizeReportContext(error));
+        });
+    }, 6 * 60 * 60 * 1000);
+    authSessionCleanupTimer.unref?.();
     if (gracefulShutdownStarted) return null;
     await new Promise((resolve, reject) => {
         const server = app.listen(PORT, HOST, () => {
@@ -22567,7 +25134,7 @@ async function startHttpServer() {
 function closeSqliteConnection(connection, label) {
     return new Promise((resolve) => {
         connection.close((err) => {
-            if (err) console.error(` 关闭${label}失败:`, err);
+            if (err) console.error(` 关闭${label}失败:`, sanitizeReportContext(err));
             else console.log(` ${label}已关闭`);
             resolve();
         });
@@ -22580,6 +25147,8 @@ async function gracefulShutdown(signalName, exitCode = 0) {
     selectionExplanationDbClosing = true;
     console.log(` 收到${signalName}信号,准备关闭服务器`);
     if (selectionExplanationRecoveryTimer) clearInterval(selectionExplanationRecoveryTimer);
+    if (generatedImageCleanupTimer) clearInterval(generatedImageCleanupTimer);
+    if (authSessionCleanupTimer) clearInterval(authSessionCleanupTimer);
     const httpClosePromise = !httpServer?.listening
         ? Promise.resolve(true)
         : new Promise((resolve) => {
@@ -22607,8 +25176,11 @@ async function gracefulShutdown(signalName, exitCode = 0) {
 
     await databaseInitializationSettled.catch(() => undefined);
     await selectionExplanationStartupReady.catch(() => undefined);
+    await generatedImageDeletionDrainTail.catch(() => undefined);
     await closeSelectionExplanationDb();
+    await closeTransactionDb();
     await Promise.all([
+        closeSqliteConnection(authDb, '认证会话数据库'),
         closeSqliteConnection(passkeyDb, 'Passkey数据库'),
         closeSqliteConnection(db, '数据库')
     ]);
@@ -22617,21 +25189,21 @@ async function gracefulShutdown(signalName, exitCode = 0) {
 
 process.on('SIGTERM', () => {
     gracefulShutdown('SIGTERM').catch((error) => {
-        console.error(' SIGTERM优雅退出失败:', error);
+        console.error(' SIGTERM优雅退出失败:', sanitizeReportContext(error));
         process.exit(1);
     });
 });
 process.on('SIGINT', () => {
     gracefulShutdown('SIGINT').catch((error) => {
-        console.error(' SIGINT优雅退出失败:', error);
+        console.error(' SIGINT优雅退出失败:', sanitizeReportContext(error));
         process.exit(1);
     });
 });
 
 startHttpServer().catch((error) => {
-    console.error(' RAI 启动失败:', error);
+    console.error(' RAI 启动失败:', sanitizeReportContext(error));
     gracefulShutdown('STARTUP_FAILURE', 1).catch((shutdownError) => {
-        console.error(' 启动失败后的资源清理失败:', shutdownError);
+        console.error(' 启动失败后的资源清理失败:', sanitizeReportContext(shutdownError));
         process.exit(1);
     });
 });

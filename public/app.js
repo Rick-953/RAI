@@ -2,6 +2,7 @@
 // 检测是否在 ChatFlow iframe 模式下运行
 const isChatFlowIframeMode = new URLSearchParams(window.location.search).get('mode') === 'chatflow';
 const RAI_RUNTIME_CONFIG = window.__RAI_RUNTIME_CONFIG || {};
+const RAI_EVENT_BINDING_TOKEN = String(globalThis.__RAI_DYNAMIC_EVENT_TOKEN__ || '');
 const BRAND_NAME = String(RAI_RUNTIME_CONFIG.brandName || 'RAI').trim() || 'RAI';
 const BRAND_SHORT_NAME = String(RAI_RUNTIME_CONFIG.brandShortName || BRAND_NAME).trim() || BRAND_NAME;
 const BRAND_BADGE = String(RAI_RUNTIME_CONFIG.brandBadge || '').trim();
@@ -9,6 +10,7 @@ const BRAND_TITLE = String(RAI_RUNTIME_CONFIG.brandTitle || '').trim() || [BRAND
 const RUNTIME_PUBLIC_BASE_URL = String(RAI_RUNTIME_CONFIG.publicBaseUrl || '').trim();
 const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnabled !== false;
 const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.rick.sarl/').trim() || 'https://rai.rick.sarl/';
+const USER_PASSWORD_MIN_LENGTH = 8;
 
 // 存储从父窗口接收的画布上下文
 let chatFlowCanvasContext = '';
@@ -95,7 +97,7 @@ if (isChatFlowIframeMode) {
       // 接收画布数据
       if (e.data.action === 'canvas-data') {
         chatFlowCanvasContext = String(e.data.canvas || '').slice(0, 20000);
-        console.log(' 收到画布上下文:', chatFlowCanvasContext.substring(0, 100) + '...');
+        console.log(` 收到画布上下文: length=${chatFlowCanvasContext.length}`);
 
         // 如果有等待的回调，执行它
         if (pendingCanvasCallback) {
@@ -116,7 +118,7 @@ if (isChatFlowIframeMode) {
           source: 'chatflow-iframe'
         }));
         e.dataTransfer.effectAllowed = 'copy';
-        console.log(' 拖拽选中文本:', selection.substring(0, 50) + (selection.length > 50 ? '...' : ''));
+        console.log(` 拖拽选中文本: length=${selection.length}`);
       } else {
         // 没有选中文本时阻止拖拽
         e.preventDefault();
@@ -195,9 +197,13 @@ const RAI_SANITIZE_CONFIG = {
   ],
   ALLOWED_ATTR: [
     'alt', 'aria-hidden', 'aria-label', 'class', 'data-lang', 'data-mermaid-code',
-    'data-mermaid-index', 'data-src', 'href', 'id', 'loading', 'rel', 'role', 'src', 'target', 'title'
+    'data-mermaid-index', 'data-src', 'data-rai-latex', 'data-rai-math-display', 'href', 'id', 'loading', 'rel', 'role', 'src', 'target', 'title'
   ],
-  ALLOW_DATA_ATTR: true,
+  ADD_ATTR: ['data-lang', 'data-mermaid-code', 'data-mermaid-index', 'data-src', 'data-rai-latex', 'data-rai-math-display'],
+  ADD_URI_SAFE_ATTR: ['data-lang', 'data-mermaid-code', 'data-mermaid-index', 'data-src', 'data-rai-latex', 'data-rai-math-display'],
+  // Only the explicitly listed data attributes survive untrusted Markdown. In particular,
+  // user/model content must never be able to create a data-rai-* application action.
+  ALLOW_DATA_ATTR: false,
   FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'svg', 'math'],
   FORBID_ATTR: ['style'],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#|data:image\/(?:png|jpeg|gif|webp);base64,)/i
@@ -308,6 +314,22 @@ function sanitizeAssistantDisplayText(text = '') {
   return output.replace(/\n{3,}/g, '\n\n').trimEnd();
 }
 
+function resolvePrivateGeneratedImageUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.startsWith('blob:') || raw.startsWith('data:')) return '';
+
+  try {
+    const apiOrigin = new URL(API_BASE, window.location.origin).origin;
+    const baseOrigin = RAI_IS_TAURI_DESKTOP ? apiOrigin : window.location.origin;
+    const url = new URL(raw, baseOrigin);
+    if (url.origin !== apiOrigin || !url.pathname.startsWith('/generated-images/')) return '';
+    if (url.username || url.password) return '';
+    return url.href;
+  } catch (error) {
+    return '';
+  }
+}
+
 function renderMarkdownWithMath(text, isStreaming = false) {
   if (!text) return '';
 
@@ -360,7 +382,7 @@ function renderMarkdownWithMath(text, isStreaming = false) {
           : `<span class="rai-math-source rai-math-source-inline" data-rai-latex="${encodedFormula}" data-rai-math-display="inline">${rendered}</span>`;
         html = html.replace(new RegExp(id, 'g'), wrapped);
       } catch (e) {
-        console.warn('KaTeX render error for:', data.formula, e);
+        console.warn(`KaTeX render error: formulaLength=${String(data.formula || '').length}, errorName=${e?.name || 'Error'}`);
         // 渲染失败时显示原始公式（用code标签包裹）
         const fallback = data.display
           ? `<pre class="math-error"><code>${escapeHtml(data.formula)}</code></pre>`
@@ -390,6 +412,13 @@ function renderMarkdownWithMath(text, isStreaming = false) {
     html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)>/g, (match, before, src, after) => {
       // 跳过已处理的图片
       if (match.includes('streaming-image-container')) return match;
+      const privateGeneratedUrl = resolvePrivateGeneratedImageUrl(src);
+      if (privateGeneratedUrl) {
+        return `<div class="streaming-image-container" data-src="${escapeHtml(privateGeneratedUrl)}">
+            <div class="streaming-image-skeleton"></div>
+            <img${before}data-src="${escapeHtml(privateGeneratedUrl)}"${after} loading="eager">
+          </div>`;
+      }
       return `<div class="streaming-image-container" data-src="${src}">
             <div class="streaming-image-skeleton"></div>
             <img${before}src="${src}"${after} loading="eager">
@@ -398,13 +427,17 @@ function renderMarkdownWithMath(text, isStreaming = false) {
   } else {
     // 非流式模式：直接显示图片，添加错误处理
     html = html.replace(/<img([^>]*)src="([^"]+)"([^>]*)>/g, (match, before, src, after) => {
-      return `<img${before}src="${src}"${after} loading="lazy" onerror="this.style.display='none'; this.insertAdjacentHTML('afterend', '<span class=\\'image-error\\'>图片有版权等原因不能加载，见谅 ＞﹏＜ </span>')">`;
+      const privateGeneratedUrl = resolvePrivateGeneratedImageUrl(src);
+      if (privateGeneratedUrl) {
+        return `<img${before}data-src="${escapeHtml(privateGeneratedUrl)}"${after} class="rai-hide-image-on-error rai-image-error-copy" loading="lazy">`;
+      }
+      return `<img${before}src="${src}"${after} class="rai-hide-image-on-error rai-image-error-copy" loading="lazy">`;
     });
   }
 
   // 6.  Mermaid 图表处理：检测并转换 mermaid 代码块为渲染容器
   //  流式模式下跳过转换（使用独立的 mermaidLivePreview 容器实时渲染）
-  if (!isStreaming) {
+  if (!isStreaming && MERMAID_RENDERING_ENABLED) {
     html = html.replace(
       /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
       (match, code) => {
@@ -430,6 +463,10 @@ function renderMarkdownWithMath(text, isStreaming = false) {
 
 function removeGeneratedImageElement(img) {
   if (!img) return;
+  if (img.__raiGeneratedImageObjectUrl) {
+    URL.revokeObjectURL(img.__raiGeneratedImageObjectUrl);
+    img.__raiGeneratedImageObjectUrl = '';
+  }
   const parent = img.parentElement;
   img.remove();
   if (
@@ -442,18 +479,81 @@ function removeGeneratedImageElement(img) {
   }
 }
 
+async function hydratePrivateGeneratedImage(img, sourceUrl, handleImageError) {
+  if (!img || ['1', 'loaded'].includes(img.dataset.raiPrivateImageLoading)) return;
+  const generatedUrl = resolvePrivateGeneratedImageUrl(sourceUrl);
+  const context = captureConversationCacheContext();
+  if (!generatedUrl || !isConversationCacheContextCurrent(context)) {
+    if (img.isConnected && !context.token) handleImageError();
+    return;
+  }
+
+  img.dataset.raiPrivateImageLoading = '1';
+  img.removeAttribute('src');
+  let controller = null;
+  try {
+    const cache = window.RAIConversationCache;
+    const cached = await cache?.getAsset?.(generatedUrl);
+    if (!isConversationCacheContextCurrent(context)) return;
+    let blob = cached?.blob || null;
+    if (!blob) {
+      controller = new AbortController();
+      appState.conversationAssetControllers.add(controller);
+      const response = await fetch(generatedUrl, {
+        headers: { Authorization: `Bearer ${context.token}` },
+        credentials: RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin', cache: 'no-store', signal: controller.signal
+      });
+      if (!isConversationCacheContextCurrent(context)) return;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.startsWith('image/')) throw new Error('Unexpected generated image content type');
+      blob = await response.blob();
+      if (!isConversationCacheContextCurrent(context)) return;
+      await cache?.putAsset?.(generatedUrl, blob, {
+        etag: response.headers.get('ETag'), expiresAt: Number(response.headers.get('X-RAI-Asset-Expires-At') || 0)
+      });
+    }
+    if (!isConversationCacheContextCurrent(context) || !blob.size || !img.isConnected) return;
+
+    const objectUrl = URL.createObjectURL(blob);
+    img.__raiGeneratedImageObjectUrl = objectUrl;
+    let releaseTimer = null;
+    const releaseObjectUrl = () => {
+      if (img.__raiGeneratedImageObjectUrl !== objectUrl) return;
+      if (releaseTimer) clearTimeout(releaseTimer);
+      URL.revokeObjectURL(objectUrl);
+      img.__raiGeneratedImageObjectUrl = '';
+    };
+    releaseTimer = setTimeout(releaseObjectUrl, 60000);
+    img.addEventListener('load', releaseObjectUrl, { once: true });
+    img.addEventListener('error', releaseObjectUrl, { once: true });
+    img.dataset.raiPrivateImageLoading = 'loaded';
+    img.src = objectUrl;
+  } catch (error) {
+    if (error?.name !== 'AbortError' && isConversationCacheContextCurrent(context) && img.isConnected) {
+      handleImageError();
+    }
+  } finally {
+    if (controller) appState.conversationAssetControllers.delete(controller);
+    if (img.dataset.raiPrivateImageLoading === '1') {
+      delete img.dataset.raiPrivateImageLoading;
+    }
+  }
+}
+
 function hydrateRenderedImages(container) {
   if (!container) return;
   const seenGenerated = new Set();
   container.querySelectorAll('img').forEach((img) => {
-    const src = img.getAttribute('src') || '';
-    const isGeneratedImage = src.startsWith('/generated-images/') || src.includes('/generated-images/');
+    const src = img.getAttribute('data-src') || img.getAttribute('src') || '';
+    const generatedUrl = resolvePrivateGeneratedImageUrl(src);
+    const isGeneratedImage = !!generatedUrl;
     if (isGeneratedImage) {
-      if (seenGenerated.has(src)) {
+      if (seenGenerated.has(generatedUrl)) {
         removeGeneratedImageElement(img);
         return;
       }
-      seenGenerated.add(src);
+      seenGenerated.add(generatedUrl);
     }
 
     const handleImageError = () => {
@@ -473,6 +573,10 @@ function hydrateRenderedImages(container) {
     };
 
     img.addEventListener('error', handleImageError, { once: true });
+    if (isGeneratedImage) {
+      hydratePrivateGeneratedImage(img, generatedUrl, handleImageError);
+      return;
+    }
     const verify = () => {
       if (img.isConnected && img.complete && img.naturalWidth === 0) {
         handleImageError();
@@ -644,9 +748,11 @@ function restoreMermaidPlaceholders(html, blocks, isStreaming = false) {
   blocks.forEach((blockCode, index) => {
     const token = `@@MERMAIDBLOCK${index}@@`;
     const normalizedCode = normalizeMermaidCode(blockCode);
-    const replacement = isStreaming
-      ? `<div class="mermaid-inline-wrapper" data-mermaid-index="${index}" data-mermaid-code="${encodeURIComponent(normalizedCode)}"><div class="mermaid-preview-container"><div class="mermaid-loading"><span>图表 ${index + 1} 渲染中...</span></div></div></div>`
-      : `<div class="mermaid-container" id="mermaid-${Math.random().toString(36).slice(2, 11)}" data-mermaid-code="${encodeURIComponent(normalizedCode)}"></div>`;
+    const replacement = !MERMAID_RENDERING_ENABLED
+      ? `<pre><code class="language-mermaid">${escapeHtml(normalizedCode)}</code></pre>`
+      : (isStreaming
+        ? `<div class="mermaid-inline-wrapper" data-mermaid-index="${index}" data-mermaid-code="${encodeURIComponent(normalizedCode)}"><div class="mermaid-preview-container"><div class="mermaid-loading"><span>图表 ${index + 1} 渲染中...</span></div></div></div>`
+        : `<div class="mermaid-container" id="mermaid-${Math.random().toString(36).slice(2, 11)}" data-mermaid-code="${encodeURIComponent(normalizedCode)}"></div>`);
     restoredHtml = restoredHtml.replace(new RegExp(token, 'g'), replacement);
   });
 
@@ -950,7 +1056,7 @@ function renderSourcesList(sources, language) {
       }
       const safeFaviconUrl = normalizeSafeImageUrl(source.favicon || '');
       const faviconHtml = safeFaviconUrl
-        ? `<img class="source-favicon" src="${escapeHtml(safeFaviconUrl)}" alt="" onerror="this.style.display='none'">`
+        ? `<img class="source-favicon rai-hide-image-on-error" src="${escapeHtml(safeFaviconUrl)}" alt="">`
         : `<div class="source-favicon-placeholder"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></div>`;
       const metaLine = group.kind === 'finance'
         ? `${escapeHtml(source.label || 'Yahoo Finance')} · ${escapeHtml(source.symbol || '')} · ${escapeHtml(source.range || '')}/${escapeHtml(source.interval || '')}`
@@ -1261,7 +1367,7 @@ function processCodeBlocks(container) {
           </svg>
           <span>复制</span>
         `;
-    copyBtn.onclick = () => copyCodeBlock(copyBtn, codeElement);
+    copyBtn.addEventListener('click', () => copyCodeBlock(copyBtn, codeElement));
 
     header.appendChild(langLabel);
     header.appendChild(copyBtn);
@@ -1388,7 +1494,7 @@ function processCodeBlocksStreaming(container) {
           </svg>
           <span>复制</span>
         `;
-    copyBtn.onclick = () => copyCodeBlock(copyBtn, codeElement);
+    copyBtn.addEventListener('click', () => copyCodeBlock(copyBtn, codeElement));
 
     header.appendChild(langLabel);
     header.appendChild(copyBtn);
@@ -1405,8 +1511,14 @@ function processCodeBlocksStreaming(container) {
 
 // ==================== Mermaid 图表功能 ====================
 
+// Mermaid 11.15.0 的预构建 UMD bundle 内嵌了多项无法独立审计/升级的依赖，
+// 包括受影响的 DOMPurify 3.4.0 与 js-yaml 4.1.1。发布版在获得完整、可扫描
+// 的依赖闭包构建前 fail closed：不加载/执行该 bundle，Mermaid 内容显示为代码块。
+const MERMAID_RENDERING_ENABLED = false;
+
 // Mermaid 初始化配置
 function initMermaid() {
+  if (!MERMAID_RENDERING_ENABLED) return;
   if (typeof mermaid !== 'undefined') {
     const isDark = document.documentElement.dataset.theme !== 'light';
     mermaid.initialize({
@@ -1428,7 +1540,7 @@ function initMermaid() {
 }
 
 async function renderMermaidSvg(code, renderId) {
-  if (typeof mermaid === 'undefined') {
+  if (!MERMAID_RENDERING_ENABLED || typeof mermaid === 'undefined') {
     throw new Error('Mermaid library not loaded');
   }
 
@@ -1462,10 +1574,7 @@ async function renderMermaidSvg(code, renderId) {
 
 // 渲染页面中的所有 Mermaid 图表
 async function renderMermaidCharts() {
-  if (typeof mermaid === 'undefined') {
-    console.warn('Mermaid library not loaded; skip rendering.');
-    return;
-  }
+  if (!MERMAID_RENDERING_ENABLED || typeof mermaid === 'undefined') return;
 
   cleanupStrayMermaidErrorArtifacts();
 
@@ -1489,7 +1598,7 @@ async function renderMermaidCharts() {
 
       addMermaidToolbar(container);
 
-      console.log(`Mermaid chart rendered: ${container.id}`);
+      console.log('Mermaid chart rendered');
     } catch (err) {
       console.error('Mermaid render failed:', err);
       cleanupStrayMermaidErrorArtifacts();
@@ -1662,19 +1771,19 @@ function bindMermaidFullscreenEvents() {
   const wrapper = document.getElementById('mermaidFullscreenWrapper');
 
   // 关闭按钮
-  document.getElementById('mermaidCloseBtn').onclick = closeMermaidFullscreen;
+  document.getElementById('mermaidCloseBtn').addEventListener('click', closeMermaidFullscreen);
 
   // 查看代码
-  document.getElementById('mermaidViewCodeBtn').onclick = toggleMermaidCodeView;
+  document.getElementById('mermaidViewCodeBtn').addEventListener('click', toggleMermaidCodeView);
 
   // 复制代码
-  document.getElementById('mermaidCopyBtn').onclick = () => {
+  document.getElementById('mermaidCopyBtn').addEventListener('click', () => {
     navigator.clipboard.writeText('```mermaid\n' + mermaidFullscreenState.currentCode + '\n```');
     console.log(' Mermaid 代码已复制');
-  };
+  });
 
   // 下载
-  document.getElementById('mermaidDownloadBtn').onclick = () => {
+  document.getElementById('mermaidDownloadBtn').addEventListener('click', () => {
     const svg = wrapper.querySelector('svg');
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -1685,12 +1794,12 @@ function bindMermaidFullscreenEvents() {
     a.download = 'mermaid-chart.svg';
     a.click();
     URL.revokeObjectURL(url);
-  };
+  });
 
   // 缩放按钮
-  document.getElementById('mermaidZoomInBtn').onclick = () => zoomMermaid(0.2);
-  document.getElementById('mermaidZoomOutBtn').onclick = () => zoomMermaid(-0.2);
-  document.getElementById('mermaidResetBtn').onclick = resetMermaidView;
+  document.getElementById('mermaidZoomInBtn').addEventListener('click', () => zoomMermaid(0.2));
+  document.getElementById('mermaidZoomOutBtn').addEventListener('click', () => zoomMermaid(-0.2));
+  document.getElementById('mermaidResetBtn').addEventListener('click', resetMermaidView);
 
   // 鼠标拖拽
   wrapper.addEventListener('mousedown', startDrag);
@@ -1911,20 +2020,20 @@ function addMermaidToolbar(container) {
   const toolbar = document.createElement('div');
   toolbar.className = 'mermaid-toolbar';
   toolbar.innerHTML = `
-        <button onclick="copyMermaidCode('${container.id}')" title="复制代码">
+        <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="copyMermaidCode('${container.id}')" title="复制代码">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="9" y="9" width="13" height="13" rx="2"/>
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
         </button>
-        <button onclick="downloadMermaidSVG('${container.id}')" title="下载SVG">
+        <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="downloadMermaidSVG('${container.id}')" title="下载SVG">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
         </button>
-        <button onclick="toggleMermaidFullscreen('${container.id}')" title="全屏查看">
+        <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="toggleMermaidFullscreen('${container.id}')" title="全屏查看">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
           </svg>
@@ -1971,6 +2080,7 @@ const ICON_PATHS = {
 
   //  上传文件图标 - 用于新建对话按钮、新建空间按钮、附件上传按钮
   'add': { viewBox: '0 -960 960 960', content: '<path d="M440-280h80v-168l64 64 56-56-160-160-160 160 56 56 64-64v168ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z"/>' },
+  'add_simple': '<path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>',
 
   // 文件夹图标 - 用于侧边栏空间分组标题
   'folder': '<path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>',
@@ -1983,6 +2093,9 @@ const ICON_PATHS = {
 
   // 对话气泡图标 - 用于侧边栏对话分组标题
   'chat': '<path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/>',
+
+  // 三点菜单图标 - 用于对话和文件夹操作菜单
+  'more_vert': '<circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/>',
 
   // 设置齿轮图标 - 用于侧边栏用户信息区域的设置按钮
   'settings': '<path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.58 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>',
@@ -2095,8 +2208,16 @@ function isTauriDesktopRuntime() {
 const RAI_IS_TAURI_DESKTOP = isTauriDesktopRuntime();
 document.documentElement.classList.toggle('is-tauri-desktop', RAI_IS_TAURI_DESKTOP);
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : '/api';
-const RAI_APP_VERSION = '0.11.39';
-const RAI_BUILD_ID = '20260718-selection-dock-zero-hide-v01139';
+const RAI_APP_VERSION = '0.11.58';
+const RAI_BUILD_ID = '20260729-release-safety-password-v01158';
+const RAI_FONT_VERSION = 'v1';
+const RAI_FONT_ASSETS = [
+  ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
+  ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-Italic-VariableFont_wght.ttf`, { weight: '100 900', style: 'italic' }],
+  ['RAI Noto Sans SC', `fonts/noto-sans-sc/${RAI_FONT_VERSION}/NotoSansSC-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
+  ['RAI Noto Sans TC', `fonts/noto-sans-tc/${RAI_FONT_VERSION}/NotoSansTC-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }]
+];
+let raiFontLoadPromise = null;
 const RAI_NEW_PUBLIC_ORIGIN = 'https://rai.rick.sarl';
 const RAI_NOTIFICATION_READ_KEY = 'rai_notification_read_ids';
 const RAI_NOTIFICATION_PAUSED_KEY = 'rai_notifications_paused';
@@ -2105,7 +2226,12 @@ function resolveRaiRemoteUrl(value) {
   const raw = String(value || '').trim();
   if (!raw || !RAI_IS_TAURI_DESKTOP) return raw;
   if (/^(https?:|data:|blob:|mailto:|tel:)/i.test(raw)) return raw;
-  if (raw.startsWith('/api/') || raw.startsWith('/avatars/') || raw.startsWith('/uploads/')) {
+  if (
+    raw.startsWith('/api/')
+    || raw.startsWith('/avatars/')
+    || raw.startsWith('/uploads/')
+    || raw.startsWith('/generated-images/')
+  ) {
     return `${RAI_PRODUCTION_ORIGIN}${raw}`;
   }
   return raw;
@@ -2137,6 +2263,7 @@ const appState = {
   currentRequestId: null,
   isStreaming: false,
   selectedModel: 'auto',  // 默认 rAI 预览版模型
+  modelPromptIdentity: 'smart', // 区分模式入口与手动模型选择，仅用于系统提示词中的展示名
   lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
   thinkingMode: false,  // 默认关闭推理模式
@@ -2189,6 +2316,10 @@ const appState = {
   passkeysLoading: false,
   passkeysError: '',
   passkeyActionPending: '',
+  securityDevices: { active: [], history: [] },
+  securityDevicesLoading: false,
+  securityDevicesError: '',
+  securityLogoutAllPending: false,
   passkeyLoginPending: false,
   onboardingActive: false,
   touchStartX: 0,
@@ -2202,7 +2333,7 @@ const appState = {
   activeModelMenuAnchorId: 'modelSelectCustom',
   theme: 'dark',
   themePreference: 'dark',
-  fontPreference: 'rai',
+  fontPreference: 'system',
   systemThemeListenerBound: false,
   language: 'zh-CN',
   languageToggleChinese: 'zh-CN',
@@ -2236,10 +2367,23 @@ const appState = {
   syncPollTimer: null,
   syncInFlight: false,
   lastSyncAt: 0,
+  authState: 'checking',
+  authEpoch: 0,
+  manifestEtag: '',
+  sessionLoadController: null,
+  sessionsListController: null,
+  sessionsListRequest: null,
+  sessionNavigationGeneration: 0,
+  sessionRefreshes: new Map(),
+  confirmedCacheUserId: null,
+  conversationCacheEpoch: 0,
+  conversationSyncController: null,
+  conversationAssetControllers: new Set(),
   sessionStreamSource: null,
   sessionStreamSessionId: null,
   sessionStreamRetryTimer: null,
   liveStreamRenderTimer: null,
+  liveStreamRenderContext: null,
   // 引用功能状态
   currentQuote: null,  // 当前引用的消息 { role: 'user'|'assistant', content: string }
   // 会话列表分页状态
@@ -2255,9 +2399,9 @@ let deferredPwaInstallPrompt = null;
 let pwaInstallSupportInitialized = false;
 const RAI_PWA_INSTALLED_HINT_KEY = 'rai_pwa_installed_hint';
 const RAI_INVITE_REF_KEY = 'rai_invite_referrer_id';
-const PWA_INSTALL_REWARD_POINTS = 300;
-const INVITE_REWARD_POINTS = 600;
-const BOOKMARK_DOMAIN_REWARD_POINTS = 100;
+const PWA_INSTALL_REWARD_POINTS = 10;
+const INVITE_REWARD_POINTS = 50;
+const BOOKMARK_DOMAIN_REWARD_POINTS = 10;
 const PWA_INSTALL_CLAIM_SOURCE = 'already-installed-claim';
 let pwaInstallTaskReportPending = false;
 let pwaRewardPromptDismissedThisSession = false;
@@ -2355,14 +2499,14 @@ function renderPwaRewardPrompt() {
   const overlay = ensurePwaRewardPrompt();
   overlay.innerHTML = `
     <div class="pwa-reward-card" role="dialog" aria-modal="true" aria-labelledby="pwaRewardTitle">
-      <button type="button" class="pwa-reward-close" onclick="closePwaRewardPrompt({ dismiss: true })" aria-label="${isZh ? '关闭' : 'Close'}">×</button>
+      <button type="button" class="pwa-reward-close" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closePwaRewardPrompt({ dismiss: true })" aria-label="${isZh ? '关闭' : 'Close'}">×</button>
       <div class="pwa-reward-icon" aria-hidden="true"></div>
       <h2 id="pwaRewardTitle">${isZh ? '添加 RAI 到 App' : 'Add RAI as an app'}</h2>
       <p>${isZh ? `添加RAI到app获得积分${PWA_INSTALL_REWARD_POINTS}！` : `Add RAI as an app to earn ${PWA_INSTALL_REWARD_POINTS} points.`}</p>
       <div class="pwa-reward-actions">
-        <button type="button" class="pwa-reward-primary" onclick="handlePwaRewardInstallAction()">${isZh ? '立即添加' : 'Add now'}</button>
-        <button type="button" class="pwa-reward-secondary" onclick="claimAlreadyInstalledPwaReward()">${isZh ? '已添加，领取积分' : 'Already added, claim points'}</button>
-        <button type="button" class="pwa-reward-secondary" onclick="closePwaRewardPrompt({ dismiss: true })">${isZh ? '稍后' : 'Later'}</button>
+        <button type="button" class="pwa-reward-primary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="handlePwaRewardInstallAction()">${isZh ? '立即添加' : 'Add now'}</button>
+        <button type="button" class="pwa-reward-secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="claimAlreadyInstalledPwaReward()">${isZh ? '已添加，领取积分' : 'Already added, claim points'}</button>
+        <button type="button" class="pwa-reward-secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closePwaRewardPrompt({ dismiss: true })">${isZh ? '稍后' : 'Later'}</button>
       </div>
     </div>
   `;
@@ -2508,7 +2652,7 @@ function getPwaInstallCopy() {
     firefox: 'Firefox',
     other: isZh ? '当前浏览器' : 'This browser'
   }[context.browser] || (isZh ? '当前浏览器' : 'This browser');
-  const actionLabel = i18nText('settings-install-action', isZh ? '安装 RAI' : 'Install RAI');
+  const actionLabel = i18nText('settings-platform-download', isZh ? '下载' : 'Download');
 
   if (context.installed) {
     storePwaInstallHint();
@@ -2687,18 +2831,6 @@ function initPwaInstallSupport() {
     updatePwaInstallUI();
   });
 
-  if ('serviceWorker' in navigator && window.isSecureContext) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' })
-        .then((registration) => {
-          if (typeof registration.update === 'function') {
-            registration.update().catch(() => null);
-          }
-        })
-        .catch((error) => console.warn('Service Worker 注册失败:', error));
-    });
-  }
-
   updatePwaInstallUI();
 }
 
@@ -2716,7 +2848,7 @@ const MODELS = {
     supportsThinking: true
   },
   'deepseek-flash': {
-    name: 'DeepSeek Flash',
+    name: 'DeepSeek v4',
     provider: 'deepseek',
     supportsThinking: true,
     contextWindow: 1000000
@@ -2726,6 +2858,67 @@ const MODELS = {
     provider: 'deepseek',
     supportsThinking: true,
     maxTokens: 128000
+  },
+  'gpt-5.6-sol': {
+    name: 'GPT-5.6 Sol',
+    provider: 'rai_openai_gateway',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    supportsVision: true,
+    supportsTools: true,
+    multimodal: true
+  },
+  'gpt-5.6-terra': {
+    name: 'GPT 5.6',
+    provider: 'rai_openai_gateway',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    supportsVision: true,
+    supportsTools: true,
+    multimodal: true
+  },
+  'gpt-5.6-luna': {
+    name: 'GPT 5.6',
+    provider: 'rai_openai_gateway',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    supportsVision: true,
+    supportsTools: true,
+    multimodal: true
+  },
+  'claude-sonnet-5': {
+    name: 'Claude Sonnet 5',
+    provider: 'rai_fast_gateway',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    supportsVision: true,
+    supportsTools: true,
+    multimodal: true
+  },
+  'gemini-3.6-flash-low': {
+    name: 'Gemini 3.6',
+    provider: 'rai_fast_gateway',
+    supportsThinking: true,
+    supportsReasoningProfile: true,
+    supportsVision: true,
+    supportsTools: true,
+    multimodal: true
+  },
+  'gpt-image-2': {
+    name: 'GPT Image 2',
+    provider: 'rai_openai_gateway',
+    supportsThinking: false,
+    supportsVision: true,
+    supportsTools: false,
+    imageGeneration: true
+  },
+  'kolors-free': {
+    name: 'Kolors Free',
+    provider: 'siliconflow',
+    supportsThinking: false,
+    supportsVision: true,
+    supportsTools: false,
+    imageGeneration: true
   },
   'qwen3.6-35b-a3b': {
     name: 'Qwen 3.6',
@@ -2756,13 +2949,6 @@ const MODELS = {
     provider: 'openrouter',
     supportsThinking: true,
     supportsReasoningProfile: true,
-    isFree: true
-  },
-  'north-mini-code': {
-    name: 'Mimo Code',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsReasoningProfile: false,
     isFree: true
   },
   'nemotron-3-ultra': {
@@ -2821,6 +3007,8 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
+  // GPT 5.6 now routes to Luna; normalize saved preferences from the prior route.
+  'gpt-5.6-terra': 'gpt-5.6-luna',
   'qwen3-vl': 'qwen3.6-35b-a3b',
   'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
   'Qwen/Qwen3.6-35B-A3B': 'qwen3.6-35b-a3b',
@@ -2842,7 +3030,6 @@ const LEGACY_MODEL_ALIASES = {
   'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.6': 'kimi-k2.6',
   'openai/gpt-oss-120b:free': 'chatgpt-gpt-oss-120b',
-  'cohere/north-mini-code:free': 'north-mini-code',
   'nvidia/nemotron-3-ultra-550b-a55b:free': 'nemotron-3-ultra',
   'claude-haiku': 'anthropic/claude-3-haiku',
   'anthropic/claude-3-haiku:beta': 'anthropic/claude-3-haiku',
@@ -2865,6 +3052,66 @@ function normalizeSelectedModelId(modelId) {
   return MODELS[normalized] ? normalized : 'auto';
 }
 
+function getSessionPromptLanguage() {
+  const locked = String(appState.currentSession?.prompt_language || '').trim().toLowerCase();
+  if (locked === 'en') return 'en';
+  return String(appState.language || '').toLowerCase().startsWith('en') ? 'en' : 'zh-CN';
+}
+
+function getModelPromptIdentity(promptLanguage = getSessionPromptLanguage()) {
+  const storedIdentity = String(appState.currentSession?.prompt_model_identity || '').trim().toLowerCase();
+  const identity = storedIdentity || String(appState.modelPromptIdentity || '').trim().toLowerCase();
+  const english = promptLanguage === 'en';
+  if (identity === 'smart') return english ? 'Smart model' : '智能模型';
+  if (identity === 'fast') return english ? 'Fast model' : '快速模型';
+  if (identity === 'think') return english ? 'Thinking model' : '思考模型';
+
+  const modelId = identity.startsWith('model:')
+    ? normalizeSelectedModelId(identity.slice('model:'.length))
+    : (identity === 'research'
+    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')
+    : normalizeSelectedModelId(appState.selectedModel || 'auto'));
+  return MODELS[modelId]?.name || (english ? 'Smart model' : '智能模型');
+}
+
+function getPromptModelIdentityForSession() {
+  const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
+  if (['smart', 'fast', 'think'].includes(identity)) return identity;
+  if (identity === 'research') {
+    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')}`;
+  }
+  return `model:${normalizeSelectedModelId(appState.selectedModel || 'auto')}`;
+}
+
+async function ensureCurrentSessionPromptIdentity() {
+  const session = appState.currentSession;
+  if (!session?.id || appState.currentSessionMemoryMode === 'classic-temp') return;
+  if (String(session.prompt_model_identity || '').trim() && String(session.prompt_language || '').trim()) return;
+
+  const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(session.id)}/prompt-identity`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${appState.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      prompt_model_identity: getPromptModelIdentityForSession(),
+      prompt_language: getSessionPromptLanguage()
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.prompt_model_identity || !data?.prompt_language) {
+    throw new Error(data?.error || '无法锁定会话提示词');
+  }
+  session.prompt_model_identity = data.prompt_model_identity;
+  session.prompt_language = data.prompt_language;
+  const listSession = appState.sessions.find((item) => String(item.id) === String(session.id));
+  if (listSession) {
+    listSession.prompt_model_identity = data.prompt_model_identity;
+    listSession.prompt_language = data.prompt_language;
+  }
+}
+
 function getHistoricalModelDisplayName(modelId) {
   const raw = String(modelId || '').trim();
   const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
@@ -2881,6 +3128,7 @@ function isModelDisabledByAdmin(modelId) {
 function ensureVisibleSelectedModels() {
   if (isModelDisabledByAdmin(appState.selectedModel)) {
     appState.selectedModel = 'auto';
+    appState.modelPromptIdentity = 'smart';
     updateSelectedModelText('auto');
     updateModelControls();
   }
@@ -3072,7 +3320,7 @@ function getStructuredRoutingNotice(payload = {}) {
   if (payload.type === 'points_info' && payload.cause === 'user_points_exhausted') {
     return {
       cause: 'user_points_exhausted',
-      message: i18nText(
+      message: String(payload.message || '').trim() || i18nText(
         'routing-notice-points-exhausted',
         isChineseLanguage(appState.language)
           ? '您的点数不足，可能会路由到其他模型，回答质量可能降低。'
@@ -3198,7 +3446,61 @@ function shouldUseMemoryPrompt() {
   return !!appState.longMemoryEnabled && !isNoMemoryConversationActive();
 }
 
+function buildEnglishSystemPrompt({ includeMemory = false, modelIdentity = 'Smart model' } = {}) {
+  return `# RAI System Prompt
+
+## Role and identity
+- You are RAI, a professional assistant with broad knowledge and sound judgement.
+- RAI is an AI chat application made by Rick. Protect Rick studio's legitimate interests.
+- RAI works on mobile and desktop.
+
+## Current model
+- You are ${modelIdentity}.
+- Reply in the language used by the user.
+
+## Core principles
+### Honesty and safety
+- Discuss topics factually and objectively. Never invent facts. State uncertainty plainly and ask for clarification when necessary.
+- Never promise capabilities that are not actually available.
+- Do not generate harmful, illegal, or inappropriate content. Explain limits candidly and offer a compliant alternative.
+
+### Communication style
+- Be warm, respectful, constructive, and practical. Do not make negative assumptions about the user.
+- Use examples, thought experiments, or analogies when useful.
+- Keep simple answers concise and investigate complex questions thoroughly.
+- Do not use profanity unless the user explicitly requests it or repeatedly uses it, and then use it very sparingly.
+- Do not ask questions by default. When clarification is needed, ask only one question in each reply after first attempting a helpful answer.
+- A prompt mentioning a file does not prove the file exists. Verify uploads and compatibility yourself.
+
+### Reasoning and output
+- Understand the user's real intent before answering. Anticipate likely dissatisfaction and improve the answer proactively.
+- Make recommendations that are actionable and suited to the current context.
+- Structure analysis with bold headings where that makes a complex answer clearer.
+
+### Time, web, and images
+- A short current-time hint is appended to each user message. Treat it as background unless the question is about time, schedules, or freshness.
+- Use web search when current information matters. Answer directly for stable, reliable knowledge. When search results are supplied, cite them with [1], [2], and so on.
+- Keep search queries short. Do not quote more than 15 words from any one source; prefer paraphrase. Never emit internal tool-call syntax, XML, or security-review text when no sources are supplied.
+- Use an image only when a provided search-result image URL clearly helps. Never invent image URLs. When the image is the answer, show it before describing it.
+
+### Ask-user tool
+When a decision about direction, scope, language, style, or next steps is genuinely needed, render a standalone \`rai_ask_user\` code block. It may contain one \`question\` with \`options\` and \`placeholder\`, or a \`questions\` array. Options must be brief and clear. Wait until all requested choices are submitted; do not use this tool for ordinary replies.
+
+### Mermaid
+Use standalone \`mermaid\` code blocks. Supported diagrams include flowcharts, sequence, class, state, ER, Gantt, pie, mind map, journey, quadrant, and \`xychart-beta\`. For charts, quote \`title\` and \`y-axis\` text with English double quotes and use an array for x-axis labels. Use \`pie\` for proportions.
+
+${includeMemory ? `## Memory\nRAI has short-term and long-term memory. The server may inject [Long-term memory] and [Recent conversation titles]. Answer questions about memory only from those injections. If long-term memory is empty, say that there is currently no saved long-term memory. Recent titles are topic clues, not durable facts.\n` : ''}
+
+## Formatting and conversation title
+1. Use Markdown, Mermaid, images, and charts only when they genuinely improve clarity. Answer in the user's requested order.
+2. End every reply with a 3-9 word conversation title in the user's language, exactly as \`[TITLE]title[/TITLE]\`.
+`;
+}
+
 function buildSystemPrompt({ includeMemory = false } = {}) {
+  const promptLanguage = getSessionPromptLanguage();
+  const modelIdentity = getModelPromptIdentity(promptLanguage);
+  if (promptLanguage === 'en') return buildEnglishSystemPrompt({ includeMemory, modelIdentity });
   return `# RAI 主系统提示词
 
 ## 角色与身份
@@ -3206,6 +3508,10 @@ function buildSystemPrompt({ includeMemory = false } = {}) {
 - RAI 由 Rick 开发，维护 Rick studio 的正当权益。
 - RAI 的名字意思是 Rick 做的 AI 对话软件。
 - RAI 适配移动端和桌面端。
+
+## 当前模型
+- 你是${modelIdentity}。
+- 请用用户使用的语言回答。
 
 ## 核心原则
 
@@ -3279,7 +3585,7 @@ ${includeMemory ? `\n${buildMemoryCapabilityPrompt()}\n` : ''}
 - 第一行必须精确使用 \`\`\`rai_ask_user；不要用 \`\`\`json、无语言代码块或普通文本 JSON 代替。
 
 ## Mermaid 图表
-你可以使用 Mermaid 语法生成各类图表，用户界面会自动渲染。使用 \`\`\`mermaid 代码块。
+你可以使用 Mermaid 语法表达图表；当前安全版本会把它显示为可复制代码块，不执行浏览器端渲染。使用 \`\`\`mermaid 代码块。
 
 ### Mermaid 基本规范
 - Mermaid 必须以独立一行的 \`\`\`mermaid 开始，并以独立一行的 \`\`\` 结束。
@@ -3330,8 +3636,11 @@ function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt, option
     ? shouldUseMemoryPrompt()
     : !!options.includeMemory;
   const promptBase = buildSystemPrompt({ includeMemory });
+  const customHeading = getSessionPromptLanguage() === 'en'
+    ? 'The following are the user\'s personal preferences. Follow them where appropriate:'
+    : '以下是用户个人偏好，请参考：';
   return trimmedCustomPrompt
-    ? `${promptBase}\n\n以下是用户个人偏好，请参考：\n${trimmedCustomPrompt}`
+    ? `${promptBase}\n\n${customHeading}\n${trimmedCustomPrompt}`
     : promptBase;
 }
 
@@ -3345,7 +3654,7 @@ const i18n = {
     'email-label': '邮箱',
     'password-label': '密码',
     'username-label': '用户名 (可选)',
-    'password-placeholder': '至少6位字符',
+    'password-placeholder': '输入密码',
     'username-placeholder': '您的昵称',
     'login-btn': '登录',
     'register-btn': '注册',
@@ -3479,8 +3788,8 @@ const i18n = {
     'light-theme': '浅色',
     'system-theme': '跟随系统',
     'font-label': '字体',
-    'font-desc': '选择界面字体',
-    'font-rai': 'RAI 默认',
+    'font-desc': '默认使用系统字体；RAI 字体按需下载并长期缓存',
+    'font-rai': '使用 RAI 字体',
     'font-system': '系统默认',
     'language-label': '语言',
     'language-desc': '选择界面语言',
@@ -3507,6 +3816,7 @@ const i18n = {
     'settings-nav-language': '语言 / English',
     'settings-nav-subscription': '会员',
     'settings-nav-account': '账号',
+    'settings-nav-security': '安全',
     'settings-nav-appearance': '外观',
     'settings-nav-custom': '自定义',
     'settings-nav-advanced': '高级',
@@ -3612,10 +3922,11 @@ const i18n = {
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
     'settings-replay-onboarding': '重新观看欢迎引导',
-    'settings-install-title': '添加到桌面',
-    'settings-install-desc': '在 Windows、macOS、iPhone 和 iPad 上把 RAI 作为独立应用打开。',
-    'settings-install-action': '安装 RAI',
-    'settings-install-download-macos': '下载 macOS 桌面版',
+    'settings-macos-title': 'macOS',
+    'settings-windows-title': 'Windows 10 / 11（Phone）',
+    'settings-platform-download': '下载',
+    'settings-windows-certificate': '安装证书',
+    'settings-install-tutorial': '使用教程',
     'settings-install-ready': '当前浏览器可直接安装。',
     'settings-install-installed': 'RAI 已在应用模式中打开。',
     'settings-install-manual': '当前浏览器需要使用浏览器菜单添加。',
@@ -3724,6 +4035,27 @@ const i18n = {
     'account-settings-title': '账号信息',
     'security-settings-title': '安全',
     'settings-security-desc': '使用二步验证和通行密钥保护当前账号',
+    'security-devices-title': '登录设备',
+    'security-devices-desc': '查看当前登录设备；位置为网络提供的粗略地区。',
+    'security-devices-loading': '正在加载登录设备...',
+    'security-devices-empty': '暂无可用的登录设备记录。',
+    'security-devices-history-empty': '暂无历史登录设备。',
+    'security-devices-history-title': '登录历史',
+    'security-devices-logout-all': '退出全部设备',
+    'security-devices-logging-out': '退出中...',
+    'security-devices-logout-all-confirm': '这会退出当前账号在所有设备上的登录状态，是否继续？',
+    'security-devices-logout-failed': '退出全部设备失败',
+    'security-devices-load-failed': '无法加载登录设备',
+    'security-device-current': '当前设备',
+    'security-device-active': '在线',
+    'security-device-signed-out': '已退出',
+    'security-device-last-active': '最近活跃',
+    'security-device-ended-at': '结束于',
+    'security-device-unknown': '未知设备',
+    'security-device-location-unknown': '未知位置',
+    'security-device-browser': '浏览器',
+    'security-device-system': '系统',
+    'security-device-time-unknown': '时间未知',
     'account-delete-title': '注销账号',
     'account-delete-desc': '永久删除账号、对话、记忆、上传文件和设置，无法恢复。',
     'account-delete-password-label': '当前密码',
@@ -3831,7 +4163,7 @@ const i18n = {
     'password-new-label': '新密码',
     'password-confirm-label': '确认新密码',
     'password-current-placeholder': '输入当前密码',
-    'password-new-placeholder': '至少6位字符',
+    'password-new-placeholder': '至少 8 位字符',
     'password-confirm-placeholder': '再次输入新密码',
     'membership-status-title': '会员状态',
     'upgrade-points-link': '点数兑换会员',
@@ -3861,7 +4193,7 @@ const i18n = {
     'password-current-required-error': '修改密码时必须输入当前密码',
     'password-new-required-error': '请输入新密码',
     'password-confirm-required-error': '请再次输入新密码',
-    'password-too-short-error': '新密码至少需要 6 位字符',
+    'password-too-short-error': '新密码至少需要 8 位字符',
     'password-confirm-mismatch-error': '两次输入的新密码不一致',
     'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
@@ -3879,10 +4211,10 @@ const i18n = {
     'more-tools': '更多工具',
     'reasoning-mode': '推理模式',
     'reasoning-profile': '推理强度',
-    'reasoning-low': '短',
+    'reasoning-low': '低',
     'reasoning-medium': '中',
-    'reasoning-high': '长',
-    'reasoning-mixed': '自适应',
+    'reasoning-high': '高',
+    'reasoning-mixed': '自动',
     'research-mode': '研究',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
@@ -3910,7 +4242,7 @@ const i18n = {
     'email-label': 'Email',
     'password-label': 'Password',
     'username-label': 'Username (optional)',
-    'password-placeholder': 'At least 6 characters',
+    'password-placeholder': 'Enter password',
     'username-placeholder': 'Your nickname',
     'login-btn': 'Login',
     'register-btn': 'Register',
@@ -4044,8 +4376,8 @@ const i18n = {
     'light-theme': 'Light',
     'system-theme': 'System',
     'font-label': 'Font',
-    'font-desc': 'Choose interface font',
-    'font-rai': 'RAI Default',
+    'font-desc': 'System fonts are the default; RAI fonts download once and stay cached.',
+    'font-rai': 'Use RAI fonts',
     'font-system': 'System',
     'language-label': 'Language',
     'language-desc': 'Choose interface language',
@@ -4072,6 +4404,7 @@ const i18n = {
     'settings-nav-language': 'Language / 中文',
     'settings-nav-subscription': 'Membership',
     'settings-nav-account': 'Account',
+    'settings-nav-security': 'Security',
     'settings-nav-appearance': 'Appearance',
     'settings-nav-custom': 'Custom',
     'settings-nav-advanced': 'Advanced',
@@ -4177,10 +4510,11 @@ const i18n = {
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
     'settings-replay-onboarding': 'Replay welcome guide',
-    'settings-install-title': 'Add to Desktop',
-    'settings-install-desc': 'Open RAI as a standalone app on Windows, macOS, iPhone, and iPad.',
-    'settings-install-action': 'Install RAI',
-    'settings-install-download-macos': 'Download macOS desktop app',
+    'settings-macos-title': 'macOS',
+    'settings-windows-title': 'Windows 10 / 11 (Phone)',
+    'settings-platform-download': 'Download',
+    'settings-windows-certificate': 'Install certificate',
+    'settings-install-tutorial': 'Instructions',
     'settings-install-ready': 'This browser can install RAI directly.',
     'settings-install-installed': 'RAI is already open in app mode.',
     'settings-install-manual': 'Use this browser menu to add RAI manually.',
@@ -4289,6 +4623,27 @@ const i18n = {
     'account-settings-title': 'Account',
     'security-settings-title': 'Security',
     'settings-security-desc': 'Protect this account with two-factor authentication and passkeys',
+    'security-devices-title': 'Signed-in devices',
+    'security-devices-desc': 'Review current sign-ins. Location is a coarse network-provided region.',
+    'security-devices-loading': 'Loading signed-in devices...',
+    'security-devices-empty': 'No active sign-in records yet.',
+    'security-devices-history-empty': 'No sign-in history yet.',
+    'security-devices-history-title': 'Sign-in history',
+    'security-devices-logout-all': 'Sign out all devices',
+    'security-devices-logging-out': 'Signing out...',
+    'security-devices-logout-all-confirm': 'This signs the account out on every device, including this one. Continue?',
+    'security-devices-logout-failed': 'Could not sign out all devices',
+    'security-devices-load-failed': 'Could not load signed-in devices',
+    'security-device-current': 'This device',
+    'security-device-active': 'Active',
+    'security-device-signed-out': 'Signed out',
+    'security-device-last-active': 'Last active',
+    'security-device-ended-at': 'Ended',
+    'security-device-unknown': 'Unknown device',
+    'security-device-location-unknown': 'Unknown location',
+    'security-device-browser': 'Browser',
+    'security-device-system': 'System',
+    'security-device-time-unknown': 'Unknown time',
     'account-delete-title': 'Delete account',
     'account-delete-desc': 'Permanently delete the account, conversations, memories, uploads, and settings. This cannot be undone.',
     'account-delete-password-label': 'Current password',
@@ -4396,7 +4751,7 @@ const i18n = {
     'password-new-label': 'New Password',
     'password-confirm-label': 'Confirm New Password',
     'password-current-placeholder': 'Enter current password',
-    'password-new-placeholder': 'At least 6 characters',
+    'password-new-placeholder': 'At least 8 characters',
     'password-confirm-placeholder': 'Enter new password again',
     'membership-status-title': 'Membership Status',
     'upgrade-points-link': 'Redeem membership with points',
@@ -4426,7 +4781,7 @@ const i18n = {
     'password-current-required-error': 'Current password is required to change password',
     'password-new-required-error': 'Please enter a new password',
     'password-confirm-required-error': 'Please confirm the new password',
-    'password-too-short-error': 'New password must be at least 6 characters',
+    'password-too-short-error': 'New password must be at least 8 characters',
     'password-confirm-mismatch-error': 'The new passwords do not match',
     'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
@@ -4447,7 +4802,7 @@ const i18n = {
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
-    'reasoning-mixed': 'Adaptive',
+    'reasoning-mixed': 'Auto',
     'research-mode': 'Research',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
@@ -4579,7 +4934,13 @@ Object.assign(i18n['zh-TW'], {
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
-  'settings-install-download-macos': '下載 macOS 桌面版',
+  'settings-macos-title': 'macOS',
+  'settings-windows-title': 'Windows 10 / 11（Phone）',
+  'settings-platform-download': '下載',
+  'settings-windows-certificate': '安裝憑證',
+  'settings-install-tutorial': '使用教學',
+  'security-device-browser': '瀏覽器',
+  'security-device-system': '系統',
   'sidebar-flows-beta': '測試',
   'auth-passkey-or': '或',
   'auth-passkey-login': '使用通行密鑰登入',
@@ -4862,7 +5223,10 @@ function __raiFireReplyNotification(title) {
       tag: 'rai-reply-ready',
       renotify: true
     });
-    n.onclick = function () { window.focus(); this.close(); };
+    n.addEventListener('click', () => {
+      window.focus();
+      n.close();
+    });
     setTimeout(() => { try { n.close(); } catch (e) {} }, 8000);
   } catch (e) { /* ignore */ }
 }
@@ -5050,6 +5414,15 @@ function getNonJsonAuthErrorMessage() {
   return getAuthNetworkUnavailableMessage();
 }
 
+function getSafeResponsePath(response) {
+  try {
+    const parsed = new URL(String(response?.url || ''), globalThis.location?.origin || 'http://localhost');
+    return parsed.pathname;
+  } catch {
+    return '';
+  }
+}
+
 async function parseApiJsonResponse(response) {
   let text = '';
   try {
@@ -5057,7 +5430,7 @@ async function parseApiJsonResponse(response) {
   } catch (error) {
     console.warn(' API response body read failed:', {
       status: response?.status,
-      url: response?.url,
+      path: getSafeResponsePath(response),
       error: error?.message || String(error)
     });
     return {
@@ -5082,13 +5455,13 @@ async function parseApiJsonResponse(response) {
     return JSON.parse(text);
   } catch (error) {
     const contentType = response?.headers?.get?.('content-type') || '';
-    const preview = text.slice(0, 240).replace(/\s+/g, ' ').trim();
     const isHtml = /html/i.test(contentType) || /^\s*</.test(text) || /<!doctype html/i.test(text);
     console.warn(' API returned non-JSON response:', {
       status: response?.status,
       contentType,
-      url: response?.url,
-      preview
+      path: getSafeResponsePath(response),
+      bodyLength: text.length,
+      bodyLooksHtml: isHtml
     });
     return {
       success: false,
@@ -5099,13 +5472,70 @@ async function parseApiJsonResponse(response) {
   }
 }
 
-async function downloadAttachment(att = {}) {
+function resolveAttachmentUrl(att = {}) {
   const filePath = String(att.filePath || '').trim();
-  if (!filePath) return;
+  if (!filePath) return '';
   const apiRoot = String(API_BASE || '').replace(/\/api\/?$/, '');
-  const url = /^https?:\/\//i.test(filePath)
+  return /^https?:\/\//i.test(filePath)
     ? filePath
     : `${apiRoot}${filePath.startsWith('/') ? filePath : `/${filePath}`}`;
+}
+
+async function hydratePrivateAttachmentImage(img, att = {}) {
+  const url = resolveAttachmentUrl(att);
+  const context = captureConversationCacheContext();
+  if (!img || !url || !isConversationCacheContextCurrent(context)) return false;
+
+  let controller = null;
+  try {
+    const cache = window.RAIConversationCache;
+    const cached = await cache?.getAsset?.(url);
+    if (!isConversationCacheContextCurrent(context)) return false;
+    let blob = cached?.blob || null;
+    if (!blob) {
+      controller = new AbortController();
+      appState.conversationAssetControllers.add(controller);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${context.token}` },
+        credentials: RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin', cache: 'no-store', signal: controller.signal
+      });
+      if (!isConversationCacheContextCurrent(context)) return false;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.startsWith('image/')) throw new Error('Unexpected attachment content type');
+      blob = await response.blob();
+      if (!isConversationCacheContextCurrent(context)) return false;
+      await cache?.putAsset?.(url, blob, { etag: response.headers.get('ETag') });
+    }
+    if (!isConversationCacheContextCurrent(context) || !blob.size || !img.isConnected) return false;
+
+    const objectUrl = URL.createObjectURL(blob);
+    img.__raiAttachmentObjectUrl = objectUrl;
+    img.addEventListener('load', () => {
+      if (img.__raiAttachmentObjectUrl !== objectUrl) return;
+      URL.revokeObjectURL(objectUrl);
+      img.__raiAttachmentObjectUrl = '';
+    }, { once: true });
+    img.addEventListener('error', () => {
+      if (img.__raiAttachmentObjectUrl !== objectUrl) return;
+      URL.revokeObjectURL(objectUrl);
+      img.__raiAttachmentObjectUrl = '';
+    }, { once: true });
+    img.src = objectUrl;
+    return true;
+  } catch (error) {
+    if (error?.name !== 'AbortError' && isConversationCacheContextCurrent(context)) {
+      console.warn('附件图片预览加载失败:', error?.message || error);
+    }
+    return false;
+  } finally {
+    if (controller) appState.conversationAssetControllers.delete(controller);
+  }
+}
+
+async function downloadAttachment(att = {}) {
+  const url = resolveAttachmentUrl(att);
+  if (!url) return;
 
   try {
     const response = await fetch(url, {
@@ -5141,16 +5571,24 @@ function getAttachmentTypeLabel(type) {
 }
 
 function createAttachmentListItem(att = {}) {
-  const isInlineImage = att.type === 'image' && att.data;
+  const isImage = att.type === 'image' && (att.data || att.filePath);
   const itemDiv = document.createElement('div');
-  itemDiv.className = `message-attachment-item ${isInlineImage ? 'image-attachment' : 'media-attachment'}`;
+  itemDiv.className = `message-attachment-item ${isImage ? 'image-attachment' : 'media-attachment'}`;
 
-  if (isInlineImage) {
+  if (isImage) {
     const img = document.createElement('img');
-    img.src = att.data;
     img.alt = att.fileName || '图片';
     img.loading = 'lazy';
-    img.onclick = () => window.open(att.data, '_blank');
+    if (att.data) {
+      img.src = att.data;
+      img.addEventListener('click', () => window.open(att.data, '_blank', 'noopener'));
+    } else {
+      img.classList.add('protected-attachment-image');
+      img.addEventListener('error', () => itemDiv.classList.add('attachment-preview-error'), { once: true });
+      hydratePrivateAttachmentImage(img, att).then((loaded) => {
+        if (!loaded) itemDiv.classList.add('attachment-preview-error');
+      });
+    }
     itemDiv.appendChild(img);
     return itemDiv;
   }
@@ -5174,6 +5612,312 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-07-29',
+    version: 'v0.11.58',
+    zh: {
+      summary: '首次发送保留已选模型，文件夹归类改为单条安全更新，密码最低长度调整为 8 位。',
+      details: [
+        '空白新对话首次发送时保留当前模型、推理模式和提示词身份；文件夹保存不再整体覆盖成员列表。',
+        '密码继续执行常见口令、账号信息和泄漏库检查；正式门禁补入网络地址策略测试并升级 node-tar。'
+      ]
+    },
+    en: {
+      summary: 'First send preserves the selected model, folder membership updates are atomic, and the password minimum is now 8 characters.',
+      details: [
+        'Sending from a blank new chat keeps the current model, reasoning mode, and prompt identity; folder saves no longer replace complete member lists.',
+        'Common-password, account-derived, and breach checks remain active; the formal gate now includes network address policy tests and an updated node-tar.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-29',
+    version: 'v0.11.57',
+    zh: {
+      summary: '消息入场恢复柔和渐入，侧栏标题、分组与会话菜单更紧凑清楚。',
+      details: [
+        '透明度渐变只在消息节点首次出现时播放；流式尾部按帧快速排空，回答完成不重播动画或突然切换格式。',
+        '本地后台默认预热最近 50 条对话；新会话直接使用用户首句作为标题，日期分组和紧凑菜单更清楚。'
+      ]
+    },
+    en: {
+      summary: 'Message entrance fading is back, with clearer conversation titles, groups, and compact menus.',
+      details: [
+        'The opacity fade runs only when a message node first enters; stream tails drain per frame so completion neither replays motion nor changes formatting abruptly.',
+        'The 50 most recent conversations are prewarmed locally; new chats use the first user question as their title, with clearer groups and compact menus.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-29',
+    version: 'v0.11.56',
+    zh: {
+      summary: '缓存对话与回答完成不再通过亮度变化或重复重建造成闪动。',
+      details: [
+        '历史消息入场只保留轻微位移，不再从透明到不透明；系统减少动态效果时完全停用。',
+        '流式完成先合并待显示字符，并仅在最终内容真正变化时更新正文节点。'
+      ]
+    },
+    en: {
+      summary: 'Cached conversations and completed replies no longer flash through opacity changes or repeated rebuilding.',
+      details: [
+        'History entrance keeps only a small translation without fading, and is fully disabled by reduced-motion preferences.',
+        'Stream completion merges queued characters first and updates the live text node only when final content actually changed.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-29',
+    version: 'v0.11.55',
+    zh: {
+      summary: '对话缓存与流式完成现在只会更新变化的消息，不再让整段对话重新闪动。',
+      details: [
+        '打开已缓存对话仍保留首次入场动效，后台同步复用既有消息节点。',
+        '跨设备流、服务端请求 ID 和后台刷新按消息键合并；切换对话或账号会取消旧请求。'
+      ]
+    },
+    en: {
+      summary: 'Conversation cache and stream completion now update only changed messages instead of replaying the whole conversation.',
+      details: [
+        'Opening a cached conversation keeps its first entrance animation, while background sync reuses existing message nodes.',
+        'Cross-device streams, server request IDs, and background refreshes reconcile by message key; switching conversations or accounts cancels stale work.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-28',
+    version: 'v0.11.54',
+    zh: {
+      summary: '启动认证、本地对话缓存和默认智能模型已统一优化。',
+      details: [
+        '登录启动使用中性壳层，只有服务端明确拒绝认证才显示登录页。',
+        '已确认身份后先呈现本地对话缓存，后台按版本同步；新对话默认为智能模型。'
+      ]
+    },
+    en: {
+      summary: 'Startup authentication, local conversation cache, and the default Smart model are now coordinated.',
+      details: [
+        'Startup uses a neutral shell and shows the login page only after the server explicitly rejects authentication.',
+        'Confirmed identities see local conversation cache first and revision-based background sync afterward; new chats default to Smart.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-28',
+    version: 'v0.11.51',
+    zh: {
+      summary: '新增可撤销的软件客户端身份，为 Android 与后续多端原生应用提供统一授权边界。',
+      details: [
+        '每个平台客户端使用独立 key，可单独创建、轮换和吊销；数据库只保存 key 哈希。',
+        '软件客户端仍必须使用用户登录会话，不能访问管理员接口，也不会绕过数据归属、会员、点数或配额。'
+      ]
+    },
+    en: {
+      summary: 'Revocable software-client identities now provide one authorization boundary for Android and future native clients.',
+      details: [
+        'Each platform receives an independent key that can be created, rotated, or revoked without affecting another client; only hashes are stored.',
+        'Software clients still require a user session, cannot access administrator APIs, and never bypass ownership, membership, points, or quotas.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-27',
+    version: 'v0.11.50',
+    zh: {
+      summary: '关于页合并平台下载卡，安全页补全设备信息。',
+      details: [
+        'macOS 保留浏览器安装入口，Windows 10 / 11（Phone）继续提供应用包和安装证书。',
+        '两种平台入口现在位于同一圆角卡片，使用教程可按需展开；安全设备会显示浏览器、系统和版本。'
+      ]
+    },
+    en: {
+      summary: 'The About page combines platform downloads, and Security shows fuller device details.',
+      details: [
+        'macOS keeps the browser install entry, while Windows 10 / 11 (Phone) keeps both the app package and install certificate.',
+        'Platform actions share one rounded card, with instructions available on demand; device records show browser and system versions.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-27',
+    version: 'v0.11.49',
+    zh: {
+      summary: '英文系统提示词按会话语言锁定，安全设置独立展示登录设备。',
+      details: [
+        '英语界面在首条消息时锁定英文系统提示词；之后切换界面语言不会改写该对话的提示词前缀。',
+        '安全页集中二步验证、通行密钥和设备会话，可查看当前设备与可折叠历史，并一键退出全部设备。'
+      ]
+    },
+    en: {
+      summary: 'English system prompts now lock per conversation, with signed-in device management in Security.',
+      details: [
+        'The first message locks the English prompt for an English session. Changing the UI language later never rewrites that conversation prefix.',
+        'Security now brings together two-factor authentication, passkeys, current devices, collapsible history, and sign-out from every device.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-27',
+    version: 'v0.11.48',
+    zh: {
+      summary: '系统提示词会标明当前所选模型，并按用户语言回答。',
+      details: [
+        '智能、快速和思考模式会分别注入对应的简短模型身份；手动选择模型时注入其展示名，不暴露内部模型 ID。',
+        '每次回复会遵循用户使用的语言，原有模型路由与功能保持不变。'
+      ]
+    },
+    en: {
+      summary: 'System prompts now identify the selected model and answer in the user language.',
+      details: [
+        'Smart, Fast, and Think modes inject a concise identity, while manual selections inject the displayed model name without exposing internal IDs.',
+        'Responses now follow the language used by the user; model routing and capabilities are unchanged.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-26',
+    version: 'v0.11.48',
+    zh: {
+      summary: '关于页新增 Windows Phone / Windows 10 / 11 应用下载。',
+      details: [
+        'Windows 用户现在可以直接下载 RAI 应用包，并在同一位置获取首次安装所需的 .cer 证书。',
+        '下载入口指向 CX-RAI v1.1.1 的官方 GitHub Release，桌面 PWA 安装方式保持不变。'
+      ]
+    },
+    en: {
+      summary: 'Adds Windows Phone / Windows 10 / 11 downloads to About.',
+      details: [
+        'Windows users can now download the RAI app package and the .cer certificate needed for first-time installation from the same place.',
+        'The links point to the official CX-RAI v1.1.1 GitHub Release, while the desktop PWA install flow remains unchanged.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-25',
+    version: 'v0.11.48',
+    zh: {
+      summary: '恢复对话更新时间，并修复已上传图片在消息中的预览。',
+      details: [
+        '侧栏对话保留标题和最后更新时间，不显示消息摘要、附件缩略图或日期分组。',
+        '已上传图片会在当前登录会话内以受保护的 Blob 预览显示，AI 读取和文件归属校验保持不变。'
+      ]
+    },
+    en: {
+      summary: 'Restores conversation timestamps and previews uploaded images in messages.',
+      details: [
+        'Conversation rows retain their title and last-updated timestamp without message previews, attachment thumbnails, or date groups.',
+        'Uploaded images now render from an authenticated Blob preview while AI input and file ownership checks remain unchanged.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-24',
+    version: 'v0.11.44',
+    zh: {
+      summary: '补充受控测试账号的登录支持。',
+      details: [
+        '仅已由后台预置的测试账号可使用其既有测试凭据；其他账号继续执行邮箱验证和当前密码安全策略。'
+      ]
+    },
+    en: {
+      summary: 'Adds controlled sign-in support for a provisioned test account.',
+      details: [
+        'Only the server-provisioned test account can retain its existing test credentials; email verification and the current password policy continue to apply to every other account.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-23',
+    version: 'v0.11.43',
+    zh: {
+      summary: '精简模型界面，修复 GPT Image 2 专用网关并改善移动交互。',
+      details: [
+        '模型选择器只保留 GPT 5.6、DeepSeek v4 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
+        '智能模式使用 DeepSeek Pro / GPT 5.6 Terra，快速模式使用 DeepSeek Flash / GPT 5.6 Luna，思考模式在智能链上开启多档 Thinking。',
+        'GPT Image 2 改用独立 0600 密钥文件和 chat/completions 图像协议，仍保留 SiliconFlow 故障回退。',
+        '移动端从主界面任意横向起点右滑即可打开侧边栏；推理档位改为低、中、高、自动四个等距锚点。'
+      ]
+    },
+    en: {
+      summary: 'Focuses the model UI, repairs the dedicated GPT Image 2 gateway, and improves mobile controls.',
+      details: [
+        'The visible picker now contains only GPT 5.6, DeepSeek v4, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
+        'Smart uses DeepSeek Pro with GPT 5.6 Terra fallback, Fast uses DeepSeek Flash with GPT 5.6 Luna fallback, and Think enables multi-level reasoning on the Smart chain.',
+        'GPT Image 2 now uses a separate 0600 key file and its chat-completions image protocol while retaining the SiliconFlow outage fallback.',
+        'A right swipe from any non-interactive point in the mobile main view opens the sidebar, and the Low, Medium, High, and Auto reasoning labels align directly below four equal stops.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-22',
+    version: 'v0.11.42',
+    zh: {
+      summary: '完成认证、文件生命周期、网络边界与发布链的收尾加固。',
+      details: [
+        '遗留弱密码账号现在必须通过统一的邮箱重置流程升级；管理员会话绑定当前凭据版本，凭据变更后立即失效。',
+        '出站请求同时校验实际 socket 地址；生成图片删除改为可持久化、可重试队列，消息、会话和账号删除不再遗留文件。',
+        '新增显式 HTTPS OpenAI 兼容网关，可选 GPT-5.6 Sol、Terra、Luna 三个多模态模型和 GPT Image 2；密钥仅从 0600 文件读取，图片继续使用本站权限、TTL 与失败清理链。',
+        '畸形 multipart 和超量文件请求在拒绝前会等待清理全部请求级临时文件，并由隔离烟测验证零残留和服务健康。',
+        '发布门禁增加独立双构建字节比较、启发式 AI 校验边界合约与隐私日志回归，仅验证过的制品可进入 provenance、SBOM 和 Release。'
+      ]
+    },
+    en: {
+      summary: 'Completes the authentication, file-lifecycle, network-boundary, and release-chain hardening work.',
+      details: [
+        'Legacy weak-password accounts must now upgrade through the uniform email reset flow, while administrator sessions are bound to the active credential version and expire immediately after credential changes.',
+        'Outbound requests verify the actual socket address, and generated-image deletion now uses a durable retry queue so message, session, and account deletion cannot silently leave files behind.',
+        'An explicit HTTPS OpenAI-compatible gateway can now expose GPT-5.6 Sol, Terra, and Luna as multimodal models plus GPT Image 2; its key is read only from a 0600 file, while generated images retain RAI ownership, TTL, and failed-request cleanup.',
+        'Malformed multipart and excess-file requests wait for all request-owned temporary files to be removed before rejection, with isolated smoke coverage for zero residue and continued service health.',
+        'The release gate now compares two independent builds byte for byte, enforces the heuristic AI-review boundary and privacy-log contracts, and permits only verified artifacts to feed provenance, SBOM, and Release jobs.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-21',
+    version: 'v0.11.41',
+    zh: {
+      summary: '修复新披露的 Node.js 与前端供应链安全问题。',
+      details: [
+        '将全部 node-tar 依赖统一锁定到 7.5.20，覆盖新披露的解压资源耗尽、负长度死循环、PAX 路径异常等问题。',
+        '将 body-parser 锁定到 1.20.6，避免无效请求体大小限制导致的边界失效。',
+        'DOMPurify 升级到 3.4.12，KaTeX 升级到 0.16.47，修复清理绕过与公式宏展开资源耗尽问题。',
+        '四个启用中的本地浏览器库现有完整许可证、npm 来源、目录哈希和独立 SBOM，并在正式制品生成前接受 OSV 扫描；含隐藏依赖闭包的 Mermaid bundle 已停用并移除。',
+        '运行报告中的自由文本改为默认不落原文；控制台短值使用从当前文件密钥派生且分域的 HMAC，避免可枚举的无密钥稳定哈希。'
+      ]
+    },
+    en: {
+      summary: 'Fixes newly disclosed security issues across the Node.js and browser supply chains.',
+      details: [
+        'All node-tar paths are pinned to 7.5.20, covering the newly disclosed expansion exhaustion, negative-size loop, and PAX parsing issues.',
+        'body-parser is pinned to 1.20.6 so invalid request-size limits cannot silently weaken enforcement.',
+        'DOMPurify is updated to 3.4.12 and KaTeX to 0.16.47, addressing sanitizer bypasses and formula macro-expansion resource exhaustion.',
+        'The four enabled local browser libraries now have complete licenses, npm provenance, directory digests, a dedicated SBOM, and an OSV gate before release packaging; the Mermaid bundle with a hidden dependency closure is disabled and removed.',
+        'Runtime reports now omit free-form text by default, while short console values use domain-separated HMACs derived from the active file-backed secret instead of an enumerable unkeyed hash.'
+      ]
+    }
+  },
+  {
+    date: '2026-07-20',
+    version: 'v0.11.40',
+    zh: {
+      summary: '完成附件、会话、二步验证与桌面端的系统性安全加固。',
+      details: [
+        '生产环境默认暂停 PDF/Office 上传解析；Office 解析器已拒绝符号链接、路径逃逸、特殊文件和危险归档，待具备确定性无网络隔离后再启用。',
+        '登录改为 15 分钟访问令牌与可撤销、每次轮换的 HttpOnly 刷新会话；密码或安全设置变更会立即使旧会话失效。',
+        'TOTP 秘钥使用 AES-256-GCM 加密，验证码防重放，并新增仅显示一次的恢复码；新密码至少 8 个字符并检查已知泄漏库。',
+        '网页和 Tauri 已启用严格脚本 CSP；生成图片改为账号私有、限时保存并随会话或账号删除。'
+      ]
+    },
+    en: {
+      summary: 'System-wide hardening for attachments, sessions, two-factor authentication, and desktop builds.',
+      details: [
+        'Production now pauses PDF and Office uploads by default; the Office parser rejects links, path escapes, special files, and unsafe archive expansion, and will be re-enabled only with deterministic network isolation.',
+        'Sign-in now uses 15-minute access tokens backed by revocable, rotating HttpOnly refresh sessions; password and security-setting changes immediately invalidate older sessions.',
+        'TOTP seeds are protected with AES-256-GCM, codes are replay-resistant, one-time recovery codes are available, and new passwords require at least 8 characters plus breach screening.',
+        'Web and Tauri now enforce a strict script CSP, while generated images are private to their owner, expire automatically, and are removed with their session or account.'
+      ]
+    }
+  },
   {
     date: '2026-07-18',
     version: 'v0.11.39',
@@ -6342,7 +7086,7 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '附件现在是所有模型都能真正"看见"的内容了。',
       details: [
-        '附件支持全面重构：文本、代码、HTML、PDF、Word、Excel、PPT 上传后自动提取内容并注入到模型上下文，所有模型（ChatGPT、DeepSeek、Kimi、Claude、Gemma 等）都能收到同一份附件文本。',
+        '该历史版曾增加文本、代码、HTML、PDF、Word、Excel、PPT 的附件提取；当前生产版已因隔离要求暂停 PDF/Office 上传解析，文本与代码附件仍可用。',
         '图片/视频/音频在支持多模态的模型上继续原生传递，在不支持多模态的模型上则转述为文字描述，确保用户选任何模型都有附件的感知。',
         '通知列表和公告不再在图标上区分已读/未读颜色，统一使用中性灰阶图标，未读状态仅通过小灰点提示，侧边栏红点保留作为入口提醒。',
         '代码文件（HTML/JS/PHP/SQL/Shell 等）现在可以作为文本附件安全上传，后端自动防止内联执行，下载时强制作为附件保存。'
@@ -6352,7 +7096,7 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: 'Attachments are now contents that every model can actually "see".',
       details: [
-        'A rebuilt attachment pipeline now extracts text from uploaded code, documents, and data files — PDF, Word, Excel, PPT, HTML, CSV, and more — and injects it directly into the prompt, so all models receive the same attachment context regardless of native multimodality.',
+        'That historical release introduced extraction for code, documents, and data files. The current production build pauses PDF and Office uploads pending deterministic isolation; text and code attachments remain available.',
         'Images, video, and audio are still delivered natively to multimodal models, while a textual description fallback ensures that even non-multimodal models remain aware of media attachments.',
         'The notification list and announcements no longer differentiate read/unread with colored icons; all items use the same neutral grey-scale icon, with only a tiny dot marking unread status. The sidebar badge stays for entry awareness.',
         'Code files (HTML, JavaScript, PHP, SQL, Shell, etc.) can now be safely uploaded as text attachments — the server prevents inline execution and forces download-as-attachment for every code file.'
@@ -7830,6 +8574,7 @@ function updateUserIdentityUI() {
 
   renderTwoFactorSettings();
   renderPasskeySettings();
+  renderSecurityDevices();
   updateAccountDeletionUi();
   updateSettingsEmailChangeUI();
 }
@@ -7845,6 +8590,132 @@ function getTwoFactorAuthHeaders() {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${appState.token}`
   };
+}
+
+function formatSecurityDeviceTime(value) {
+  const timestamp = Number(value || 0) * 1000;
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return i18nText('security-device-time-unknown', '时间未知');
+  return new Intl.DateTimeFormat(isChineseLanguage(appState.language) ? 'zh-CN' : 'en-US', {
+    dateStyle: 'medium', timeStyle: 'short'
+  }).format(new Date(timestamp));
+}
+
+function renderSecurityDeviceRow(device, { history = false } = {}) {
+  const current = !!device?.isCurrent;
+  const status = current
+    ? i18nText('security-device-current', '当前设备')
+    : (history ? i18nText('security-device-signed-out', '已退出') : i18nText('security-device-active', '在线'));
+  const timeLabel = history
+    ? i18nText('security-device-ended-at', '结束于')
+    : i18nText('security-device-last-active', '最近活跃');
+  const endTime = history ? (device?.revokedAt || device?.lastUsedAt) : device?.lastUsedAt;
+  const browser = [device?.browserName, device?.browserVersion].filter(Boolean).join(' ')
+    || i18nText('security-device-unknown', '未知设备');
+  const system = [device?.osName, device?.osVersion].filter(Boolean).join(' ')
+    || i18nText('security-device-unknown', '未知设备');
+  return `
+    <div class="settings-device-row">
+      <div class="settings-device-row-main">
+        <div class="settings-device-name-row">
+          <strong>${escapeHtml(device?.deviceName || i18nText('security-device-unknown', '未知设备'))}</strong>
+          <span class="settings-device-status ${current ? 'current' : ''}">${escapeHtml(status)}</span>
+        </div>
+        <span class="settings-device-meta">${escapeHtml(`${i18nText('security-device-browser', '浏览器')} ${browser}`)}</span>
+        <span class="settings-device-meta">${escapeHtml(`${i18nText('security-device-system', '系统')} ${system}`)}</span>
+        <span class="settings-device-meta">${escapeHtml(`${timeLabel} ${formatSecurityDeviceTime(endTime)}`)}</span>
+        <span class="settings-device-meta">${escapeHtml(device?.location || i18nText('security-device-location-unknown', '未知位置'))}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderSecurityDevices() {
+  const container = document.getElementById('settingsDeviceCard');
+  if (!container) return;
+  const devices = appState.securityDevices || { active: [], history: [] };
+  const active = Array.isArray(devices.active) ? devices.active : [];
+  const history = Array.isArray(devices.history) ? devices.history : [];
+  const activeContent = appState.securityDevicesLoading
+    ? `<p class="settings-device-notice">${escapeHtml(i18nText('security-devices-loading', '正在加载登录设备...'))}</p>`
+    : active.length
+      ? `<div class="settings-device-list">${active.map((device) => renderSecurityDeviceRow(device)).join('')}</div>`
+      : `<p class="settings-device-notice">${escapeHtml(i18nText('security-devices-empty', '暂无可用的登录设备记录。'))}</p>`;
+  const error = appState.securityDevicesError
+    ? `<p class="settings-device-error">${escapeHtml(appState.securityDevicesError)}</p>`
+    : '';
+  const historyContent = history.length
+    ? `<div class="settings-device-list">${history.map((device) => renderSecurityDeviceRow(device, { history: true })).join('')}</div>`
+    : `<p class="settings-device-notice">${escapeHtml(i18nText('security-devices-history-empty', '暂无历史登录设备。'))}</p>`;
+  container.innerHTML = `
+    <div class="settings-device-header">
+      <div>
+        <div class="setting-label">${escapeHtml(i18nText('security-devices-title', '登录设备'))}</div>
+        <p class="setting-description">${escapeHtml(i18nText('security-devices-desc', '查看当前登录设备；位置为网络提供的粗略地区。'))}</p>
+      </div>
+      <button type="button" class="settings-inline-save settings-device-logout-all" ${appState.securityLogoutAllPending ? 'disabled' : ''}
+        data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="logoutAllSecurityDevices()">${escapeHtml(appState.securityLogoutAllPending ? i18nText('security-devices-logging-out', '退出中...') : i18nText('security-devices-logout-all', '退出全部设备'))}</button>
+    </div>
+    ${activeContent}
+    ${error}
+    <details class="settings-device-history" ${history.length ? '' : 'hidden'}>
+      <summary>${escapeHtml(i18nText('security-devices-history-title', '登录历史'))}</summary>
+      ${historyContent}
+    </details>
+  `;
+}
+
+async function loadSecurityDevices({ silent = false } = {}) {
+  if (!appState.token || appState.securityDevicesLoading) return;
+  appState.securityDevicesLoading = true;
+  appState.securityDevicesError = '';
+  renderSecurityDevices();
+  try {
+    const response = await fetch(`${API_BASE}/user/devices`, {
+      headers: { Authorization: `Bearer ${appState.token}` },
+      credentials: 'include',
+      cache: 'no-store'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) throw new Error(data?.error || i18nText('security-devices-load-failed', '无法加载登录设备'));
+    appState.securityDevices = {
+      active: Array.isArray(data.active) ? data.active : [],
+      history: Array.isArray(data.history) ? data.history : []
+    };
+  } catch (error) {
+    appState.securityDevicesError = error.message || i18nText('security-devices-load-failed', '无法加载登录设备');
+    if (!silent) showToast(appState.securityDevicesError);
+  } finally {
+    appState.securityDevicesLoading = false;
+    renderSecurityDevices();
+  }
+}
+
+async function logoutAllSecurityDevices() {
+  if (appState.securityLogoutAllPending) return;
+  const message = i18nText(
+    'security-devices-logout-all-confirm',
+    isChineseLanguage(appState.language) ? '这会退出当前账号在所有设备上的登录状态，是否继续？' : 'This signs the account out on every device, including this one. Continue?'
+  );
+  if (!window.confirm(message)) return;
+  appState.securityLogoutAllPending = true;
+  renderSecurityDevices();
+  try {
+    const request = () => fetch(`${API_BASE}/auth/logout-all`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${appState.token}` },
+      credentials: 'include',
+      cache: 'no-store'
+    });
+    let response = await request();
+    if (response.status === 401 && await refreshUserAccessToken()) response = await request();
+    if (!response.ok) throw new Error(await getApiErrorMessage(response, i18nText('security-devices-logout-failed', '退出全部设备失败')));
+    clearAuthenticatedAppState();
+    redirectToLoggedOutAuth({ rai_logout_all: 1 });
+  } catch (error) {
+    showToast(error.message || i18nText('security-devices-logout-failed', '退出全部设备失败'));
+    appState.securityLogoutAllPending = false;
+    renderSecurityDevices();
+  }
 }
 
 function renderTwoFactorSettings() {
@@ -7864,8 +8735,8 @@ function renderTwoFactorSettings() {
         <p class="setting-description">${escapeHtml(i18nText('two-factor-disable-desc', '输入当前验证码后关闭二步验证。'))}</p>
         <div class="settings-two-factor-code-row">
           <label class="setting-label" for="settingsTwoFactorDisableCode">${escapeHtml(i18nText('two-factor-code-label', '验证码'))}</label>
-          <input type="text" class="setting-input" id="settingsTwoFactorDisableCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="${escapeHtml(i18nText('two-factor-placeholder', '6 位验证码'))}">
-          <button type="button" class="settings-inline-save" onclick="disableTwoFactor()">${escapeHtml(i18nText('two-factor-confirm-disable', '确认关闭'))}</button>
+          <input type="text" class="setting-input" id="settingsTwoFactorDisableCode" maxlength="14" autocomplete="one-time-code" placeholder="${escapeHtml(isChineseLanguage(appState.language) ? '6 位验证码或恢复码' : '6-digit or recovery code')}">
+          <button type="button" class="settings-inline-save" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="disableTwoFactor()">${escapeHtml(i18nText('two-factor-confirm-disable', '确认关闭'))}</button>
         </div>
       </div>
     `;
@@ -7878,21 +8749,21 @@ function renderTwoFactorSettings() {
           <div class="settings-two-factor-secret">
             <span>${escapeHtml(i18nText('two-factor-secret-label', '手动密钥'))}</span>
             <code>${escapeHtml(setup.secret || '')}</code>
-            <button type="button" class="settings-inline-save" onclick="copyTwoFactorSecret()">${escapeHtml(i18nText('two-factor-copy-secret', '复制密钥'))}</button>
+            <button type="button" class="settings-inline-save" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="copyTwoFactorSecret()">${escapeHtml(i18nText('two-factor-copy-secret', '复制密钥'))}</button>
           </div>
         </div>
         <div class="settings-two-factor-code-row">
           <label class="setting-label" for="settingsTwoFactorEnableCode">${escapeHtml(i18nText('two-factor-code-label', '验证码'))}</label>
           <input type="text" class="setting-input" id="settingsTwoFactorEnableCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="${escapeHtml(i18nText('two-factor-placeholder', '6 位验证码'))}">
-          <button type="button" class="settings-inline-save" onclick="confirmTwoFactorSetup()">${escapeHtml(i18nText('two-factor-confirm-enable', '确认开启'))}</button>
-          <button type="button" class="settings-inline-confirm settings-two-factor-secondary" onclick="cancelTwoFactorSetup()">${escapeHtml(i18nText('two-factor-cancel', '取消'))}</button>
+          <button type="button" class="settings-inline-save" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="confirmTwoFactorSetup()">${escapeHtml(i18nText('two-factor-confirm-enable', '确认开启'))}</button>
+          <button type="button" class="settings-inline-confirm settings-two-factor-secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="cancelTwoFactorSetup()">${escapeHtml(i18nText('two-factor-cancel', '取消'))}</button>
         </div>
       </div>
     `;
   } else {
     actionHtml = `
       <div class="settings-two-factor-actions">
-        <button type="button" class="settings-inline-save" onclick="startTwoFactorSetup()">${escapeHtml(i18nText('two-factor-setup', '开启二步验证'))}</button>
+        <button type="button" class="settings-inline-save" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="startTwoFactorSetup()">${escapeHtml(i18nText('two-factor-setup', '开启二步验证'))}</button>
       </div>
     `;
   }
@@ -7930,6 +8801,17 @@ function updateAccountDeletionUi() {
 
 function normalizeTwoFactorCode(value) {
   return String(value || '').replace(/\D/g, '').slice(0, 6);
+}
+
+function normalizeUserSecondFactorCode(value) {
+  const compact = String(value || '').normalize('NFKC').toUpperCase().replace(/[\s-]+/g, '');
+  if (/^\d{6}$/.test(compact)) return compact;
+  if (/^[2-9A-HJ-NP-Z]{12}$/.test(compact)) return compact;
+  return compact.slice(0, 32);
+}
+
+function isValidUserSecondFactorCode(value) {
+  return /^(?:\d{6}|[2-9A-HJ-NP-Z]{12})$/.test(normalizeUserSecondFactorCode(value));
 }
 
 function normalizeEmailVerificationCode(value) {
@@ -8118,10 +9000,7 @@ async function verifyProfileEmailChange(pendingEmail, code) {
     throw new Error(data?.error || i18nText('settings-email-change-verify-failed', '邮箱验证码确认失败'));
   }
 
-  if (data.token) {
-    appState.token = data.token;
-    localStorage.setItem(RAI_TOKEN_KEY, data.token);
-  }
+  applyUserAccessTokenFromResponse(data);
   if (data.user) {
     appState.user = {
       ...appState.user,
@@ -8269,12 +9148,77 @@ async function confirmSettingsEmailChangeCode() {
 window.startSettingsEmailChangeFlow = startSettingsEmailChangeFlow;
 window.confirmSettingsEmailChangeCode = confirmSettingsEmailChangeCode;
 
+function promptCurrentPasswordForTwoFactor(action) {
+  const isZh = isChineseLanguage(appState.language);
+  return openSettingsStepInputDialog({
+    title: isZh ? '确认当前密码' : 'Confirm your current password',
+    description: isZh
+      ? `请输入当前密码以${action}。如果你刚用通行密钥或已绑定的登录方式重新登录，可留空继续。`
+      : `Enter your current password to ${action}. If you just signed in with a passkey or linked provider, you may continue without it.`,
+    inputType: 'password',
+    placeholder: isZh ? '输入当前密码' : 'Enter current password',
+    autocomplete: 'current-password',
+    maxLength: 128
+  });
+}
+
+function showTwoFactorRecoveryCodesDialog(recoveryCodes) {
+  const codes = Array.isArray(recoveryCodes)
+    ? recoveryCodes.map((code) => String(code || '').trim()).filter(Boolean)
+    : [];
+  if (!codes.length) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const isZh = isChineseLanguage(appState.language);
+    const overlay = document.createElement('div');
+    overlay.className = 'settings-step-dialog-overlay active';
+    overlay.innerHTML = `
+      <div class="settings-step-dialog" role="dialog" aria-modal="true" aria-labelledby="twoFactorRecoveryTitle">
+        <div class="settings-step-dialog-title" id="twoFactorRecoveryTitle">${escapeHtml(isZh ? '立即保存恢复码' : 'Save your recovery codes now')}</div>
+        <p class="settings-step-dialog-desc">${escapeHtml(isZh
+          ? '每个恢复码只能使用一次，且关闭后不会再显示。请存入密码管理器，不要发送给他人。'
+          : 'Each recovery code works once and will not be shown again after this dialog closes. Save them in a password manager and never share them.')}</p>
+        <textarea class="setting-input settings-step-dialog-input" rows="10" readonly aria-label="${escapeHtml(isZh ? '二步验证恢复码' : 'Two-factor recovery codes')}"></textarea>
+        <div class="settings-step-dialog-actions">
+          <button type="button" class="settings-inline-save secondary" data-recovery-copy>${escapeHtml(isZh ? '复制恢复码' : 'Copy recovery codes')}</button>
+          <button type="button" class="settings-inline-save" data-recovery-saved>${escapeHtml(isZh ? '我已安全保存' : 'I saved them safely')}</button>
+        </div>
+      </div>`;
+
+    const textarea = overlay.querySelector('textarea');
+    if (textarea) textarea.value = codes.join('\n');
+    overlay.querySelector('[data-recovery-copy]')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(codes.join('\n'));
+        showToast(isZh ? '恢复码已复制' : 'Recovery codes copied');
+      } catch (error) {
+        textarea?.focus();
+        textarea?.select();
+      }
+    });
+    overlay.querySelector('[data-recovery-saved]')?.addEventListener('click', () => {
+      if (textarea) textarea.value = '';
+      codes.fill('');
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 160);
+      resolve();
+    });
+    document.body.appendChild(overlay);
+    setTimeout(() => textarea?.focus(), 30);
+  });
+}
+
 async function startTwoFactorSetup() {
   if (!appState.token) return;
+  const currentPassword = await promptCurrentPasswordForTwoFactor(
+    isChineseLanguage(appState.language) ? '开启二步验证' : 'enable two-factor authentication'
+  );
+  if (currentPassword === null) return;
   try {
     const response = await fetch(`${API_BASE}/user/2fa/setup`, {
       method: 'POST',
-      headers: getTwoFactorAuthHeaders()
+      headers: getTwoFactorAuthHeaders(),
+      body: JSON.stringify({ currentPassword })
     });
     const data = await response.json();
     if (!response.ok || !data?.success) {
@@ -8310,9 +9254,13 @@ async function confirmTwoFactorSetup() {
     if (!response.ok || !data?.success) {
       throw new Error(data?.error || i18nText('two-factor-setup-failed', '二步验证设置失败'));
     }
+    applyUserAccessTokenFromResponse(data);
     appState.user = { ...appState.user, two_factor_enabled: true, twoFactorEnabled: true };
     appState.twoFactorSetup = null;
     renderTwoFactorSettings();
+    await showTwoFactorRecoveryCodesDialog(data.recoveryCodes);
+    if (Array.isArray(data.recoveryCodes)) data.recoveryCodes.fill('');
+    delete data.recoveryCodes;
     const rewardPoints = Number(data?.rewardPoints || 0);
     if (rewardPoints > 0) {
       showToast(interpolateI18n(
@@ -8332,22 +9280,28 @@ async function confirmTwoFactorSetup() {
 }
 
 async function disableTwoFactor() {
-  const code = normalizeTwoFactorCode(document.getElementById('settingsTwoFactorDisableCode')?.value);
-  if (!/^\d{6}$/.test(code)) {
-    showToast(i18nText('two-factor-code-required', '请输入 6 位验证码'));
+  const code = normalizeUserSecondFactorCode(document.getElementById('settingsTwoFactorDisableCode')?.value);
+  if (!isValidUserSecondFactorCode(code)) {
+    showToast(isChineseLanguage(appState.language) ? '请输入 6 位验证码或恢复码' : 'Enter a 6-digit code or recovery code');
     return;
   }
+
+  const currentPassword = await promptCurrentPasswordForTwoFactor(
+    isChineseLanguage(appState.language) ? '关闭二步验证' : 'disable two-factor authentication'
+  );
+  if (currentPassword === null) return;
 
   try {
     const response = await fetch(`${API_BASE}/user/2fa/disable`, {
       method: 'POST',
       headers: getTwoFactorAuthHeaders(),
-      body: JSON.stringify({ code })
+      body: JSON.stringify({ code, currentPassword })
     });
     const data = await response.json();
     if (!response.ok || !data?.success) {
       throw new Error(data?.error || i18nText('two-factor-setup-failed', '二步验证设置失败'));
     }
+    applyUserAccessTokenFromResponse(data);
     appState.user = { ...appState.user, two_factor_enabled: false, twoFactorEnabled: false };
     appState.twoFactorSetup = null;
     renderTwoFactorSettings();
@@ -8875,6 +9829,7 @@ async function activateUserPasskey(passkeyId, { fromCreation = false } = {}) {
       body: { token: optionsData.token, response: serializePasskeyCredential(credential) },
       fallback: i18nText('passkey-activation-failed', isZh ? '未能完成激活，可稍后在设置中继续。' : 'Activation could not be completed. You can continue later in Settings.')
     });
+    applyUserAccessTokenFromResponse(data);
     const rewardPoints = Number(data?.rewardPoints || 0);
     await loadUserPasskeys({ silent: true });
     if (rewardPoints > 0) {
@@ -8941,11 +9896,12 @@ async function deleteUserPasskey(passkey) {
   try {
     const grant = await requestPasskeyReauthGrant('passkey:delete');
     if (!grant) return;
-    await requestPasskeyApi(`/user/passkeys/${encodeURIComponent(id)}`, {
+    const data = await requestPasskeyApi(`/user/passkeys/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       body: { grant },
       fallback: i18nText('passkey-delete-failed', isZh ? '删除通行密钥失败。' : 'Failed to delete passkey.')
     });
+    applyUserAccessTokenFromResponse(data);
     showToast(i18nText('passkey-deleted', isZh ? '通行密钥已删除。' : 'Passkey deleted.'));
     await loadUserPasskeys({ silent: true });
   } catch (error) {
@@ -8967,13 +9923,14 @@ function normalizeResearchMode(value) {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'gpt-5.6-luna', label: 'GPT 5.6' },
   { id: 'gemma', label: 'Gemma' },
   { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
   { id: 'kimi-k2.6', label: 'Kimi K2.6' },
   { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
   { id: 'deepseek-pro', label: 'DeepSeek Pro' },
-  { id: 'deepseek-flash', label: 'DeepSeek Flash' },
-  { id: 'north-mini-code', label: 'Mimo Code' },
+  { id: 'deepseek-flash', label: 'DeepSeek v4' },
   { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
   { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
 ];
@@ -9144,7 +10101,7 @@ function renderResearchModelControls() {
         <button type="button"
           class="research-model-chip ${selected ? 'selected' : ''}"
           data-research-agent-model="${escapeHtml(option.id)}"
-          onclick="toggleResearchAgentModel('${escapeHtml(option.id)}', event)">
+          data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="toggleResearchAgentModel('${escapeHtml(option.id)}', event)">
           ${escapeHtml(option.label)}
         </button>
       `;
@@ -9262,9 +10219,11 @@ function selectRaiModeFromMenu(mode, event) {
 
   if (config.mode === 'research') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
+    appState.modelPromptIdentity = 'research';
   } else {
     appState.researchModeEnabled = false;
     appState.selectedModel = config.model;
+    appState.modelPromptIdentity = config.mode;
     appState.lastNonResearchModel = config.model;
     appState.thinkingMode = config.thinkingMode;
     appState.reasoningProfile = config.reasoningProfile;
@@ -9324,7 +10283,6 @@ async function handleAvatarSelected(event) {
       body: formData
     });
     const data = await response.json();
-
     if (!response.ok || !data?.success || !data.avatar_url) {
       throw new Error(data?.error || i18nText('avatar-upload-failed', isChineseLanguage(appState.language) ? '头像上传失败' : 'Avatar upload failed'));
     }
@@ -9359,6 +10317,7 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   language: 'settings-nav-language',
   subscription: 'settings-nav-subscription',
   account: 'settings-nav-account',
+  security: 'settings-nav-security',
   capabilities: 'settings-nav-capabilities',
   personalization: 'settings-nav-personalization',
   memory: 'settings-nav-memory',
@@ -10092,20 +11051,6 @@ function setTheme(themePreference) {
   document.documentElement.setAttribute('data-theme-preference', normalizedPreference);
   localStorage.setItem('rai_theme', normalizedPreference);
 
-  // 更新移动端图标
-  const mobileIcon = document.getElementById('mobileThemeIcon');
-  if (mobileIcon) {
-    const newIconName = effectiveTheme === 'dark' ? 'light_mode' : 'dark_mode';
-    mobileIcon.outerHTML = getSvgIcon(newIconName, 'material-symbols-outlined', 24).replace('<svg', '<svg id="mobileThemeIcon"');
-  }
-
-  // 更新PC侧边栏图标
-  const sidebarIcon = document.getElementById('sidebarThemeIcon');
-  if (sidebarIcon) {
-    const newIconName = effectiveTheme === 'dark' ? 'light_mode' : 'dark_mode';
-    sidebarIcon.outerHTML = getSvgIcon(newIconName, 'material-symbols-outlined', 24).replace('<svg', '<svg id="sidebarThemeIcon"');
-  }
-
   // 更新meta theme-color
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) {
@@ -10116,14 +11061,28 @@ function setTheme(themePreference) {
 }
 
 function normalizeFontPreference(fontPreference) {
-  return String(fontPreference || '').trim().toLowerCase() === 'system' ? 'system' : 'rai';
+  return String(fontPreference || '').trim().toLowerCase() === 'rai-v1' ? 'rai-v1' : 'system';
 }
 
-function applyFontPreference(fontPreference = appState.fontPreference || 'rai') {
+function loadRaiFontsOnDemand() {
+  if (raiFontLoadPromise || !('FontFace' in window) || !document.fonts) return raiFontLoadPromise || Promise.resolve();
+  raiFontLoadPromise = Promise.all(RAI_FONT_ASSETS.map(async ([family, source, descriptors]) => {
+    const font = new FontFace(family, `url("${source}")`, { ...descriptors, display: 'swap' });
+    await font.load();
+    document.fonts.add(font);
+  })).catch((error) => {
+    raiFontLoadPromise = null;
+    console.warn('RAI 字体下载失败，将继续使用系统字体:', error.message);
+  });
+  return raiFontLoadPromise;
+}
+
+function applyFontPreference(fontPreference = appState.fontPreference || 'system') {
   const normalizedPreference = normalizeFontPreference(fontPreference);
   appState.fontPreference = normalizedPreference;
   document.documentElement.setAttribute('data-font-preference', normalizedPreference);
   localStorage.setItem('rai_font_preference', normalizedPreference);
+  if (normalizedPreference === 'rai-v1') loadRaiFontsOnDemand();
   updateSettingsOptionButtons();
 }
 
@@ -10212,28 +11171,13 @@ function setLanguage(lang) {
     button.textContent = LANGUAGE_OPTION_LABELS[option]?.[lang] || option;
   });
 
-  // 更新移动端语言按钮文本
-  const mobileLangText = document.getElementById('mobileLangText');
-  if (mobileLangText) {
-    mobileLangText.textContent = getLanguageToggleLabel(lang);
-  }
-
-  // 更新PC侧边栏语言按钮文本
-  const sidebarLangText = document.getElementById('sidebarLangText');
-  if (sidebarLangText) {
-    sidebarLangText.textContent = getLanguageToggleLabel(lang);
-  }
-  document.querySelectorAll('.language-toggle-btn').forEach((button) => {
-    button.setAttribute('aria-label', i18nText('language-toggle-label', 'Language'));
-    button.setAttribute('title', i18nText('language-toggle-label', 'Language'));
-  });
-
   // 更新登录页面语言按钮文本
   const authLangText = document.getElementById('authLangText');
   if (authLangText) {
     authLangText.textContent = getLanguageToggleLabel(lang);
   }
   updateAuthLanguageButtons();
+  configureAuthSecondFactorInput();
   updatePasskeyLoginEntry();
   renderPasskeySettings();
   window.RAISelectionExplainer?.refreshLanguage?.();
@@ -10268,24 +11212,12 @@ function initThemeAndLanguage() {
   const savedTheme = localStorage.getItem('rai_theme') || 'dark';
   setTheme(savedTheme);
 
-  applyFontPreference(localStorage.getItem('rai_font_preference') || readLocalSettingsObject().fontPreference || 'rai');
+  applyFontPreference(localStorage.getItem('rai_font_preference') || readLocalSettingsObject().fontPreference || 'system');
 
   // 加载保存的语言
   const savedLanguage = normalizeLanguage(localStorage.getItem('rai_language') || 'zh-CN');
   appState.languageToggleChinese = normalizeLanguage(localStorage.getItem('rai_language_chinese_variant') || (isChineseLanguage(savedLanguage) ? savedLanguage : 'zh-CN'));
   setLanguage(savedLanguage);
-
-  // 初始化PC侧边栏按钮状态
-  const sidebarThemeIcon = document.getElementById('sidebarThemeIcon');
-  if (sidebarThemeIcon) {
-    const newIconName = appState.theme === 'dark' ? 'light_mode' : 'dark_mode';
-    sidebarThemeIcon.outerHTML = getSvgIcon(newIconName, 'material-symbols-outlined', 24).replace('<svg', '<svg id="sidebarThemeIcon"');
-  }
-
-  const sidebarLangText = document.getElementById('sidebarLangText');
-  if (sidebarLangText) {
-    sidebarLangText.textContent = getLanguageToggleLabel(savedLanguage);
-  }
 
   const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: light)');
   if (systemThemeQuery && !appState.systemThemeListenerBound) {
@@ -10715,8 +11647,362 @@ function initEntryAutofocus() {
 // ==================== ZTX6D SSO 配置 ====================
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
+const RAI_SESSION_FETCH = window.fetch.bind(window);
+const RAI_ACCESS_REFRESH_LEEWAY_MS = 60 * 1000;
+let userTokenRefreshEntry = null;
+let userTokenRefreshTimer = null;
+const userAuthRequestControllers = new Set();
+
+function decodeUserAccessTokenPayload(token) {
+  const segments = String(token || '').split('.');
+  if (segments.length !== 3) return null;
+  try {
+    const base64 = segments[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded));
+    return payload && typeof payload === 'object' ? payload : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function captureUserAuthContext(token = appState.token) {
+  return {
+    epoch: Number(appState.authEpoch || 0),
+    token: String(token || '')
+  };
+}
+
+function isUserAuthContextCurrent(context) {
+  return Boolean(
+    context &&
+    Number(context.epoch) === Number(appState.authEpoch || 0) &&
+    String(context.token || '') === String(appState.token || '')
+  );
+}
+
+function isProfileBoundToAuthContext(profile, context) {
+  if (!isUserAuthContextCurrent(context) || !profile?.id) return false;
+  const tokenSubject = String(decodeUserAccessTokenPayload(context.token)?.sub || '');
+  return !tokenSubject || tokenSubject === String(profile.id);
+}
+
+function trackUserAuthRequest(controller) {
+  if (controller) userAuthRequestControllers.add(controller);
+  return () => userAuthRequestControllers.delete(controller);
+}
+
+function invalidateUserAuthAsyncWork() {
+  appState.authEpoch = Number(appState.authEpoch || 0) + 1;
+  userTokenRefreshEntry?.controller?.abort?.();
+  userTokenRefreshEntry = null;
+  userAuthRequestControllers.forEach((controller) => controller?.abort?.());
+  userAuthRequestControllers.clear();
+}
+
+function getUserAccessTokenExpiryMs(token = appState.token, expiresAt = 0) {
+  const suppliedExpiry = Number(expiresAt || 0);
+  if (Number.isFinite(suppliedExpiry) && suppliedExpiry > 0) {
+    return suppliedExpiry < 1e12 ? suppliedExpiry * 1000 : suppliedExpiry;
+  }
+  const exp = Number(decodeUserAccessTokenPayload(token)?.exp || 0);
+  return Number.isFinite(exp) && exp > 0 ? exp * 1000 : 0;
+}
+
+function clearUserAccessToken() {
+  invalidateUserAuthAsyncWork();
+  if (userTokenRefreshTimer) {
+    clearTimeout(userTokenRefreshTimer);
+    userTokenRefreshTimer = null;
+  }
+  try {
+    localStorage.removeItem(RAI_TOKEN_KEY);
+    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+  } catch (error) {
+    // Storage may be unavailable in hardened/private browser contexts.
+  }
+  appState.token = null;
+}
+
+function scheduleUserAccessTokenRefresh(expiresAt = 0, { retryDelayMs = 0 } = {}) {
+  if (userTokenRefreshTimer) clearTimeout(userTokenRefreshTimer);
+  userTokenRefreshTimer = null;
+  if (!appState.token) return;
+
+  const expiryMs = getUserAccessTokenExpiryMs(appState.token, expiresAt);
+  if (!expiryMs) return;
+  const delay = retryDelayMs > 0
+    ? Math.max(1000, Math.min(0x7fffffff, retryDelayMs))
+    : Math.max(1000, Math.min(0x7fffffff, expiryMs - Date.now() - RAI_ACCESS_REFRESH_LEEWAY_MS));
+  const scheduledToken = appState.token;
+  userTokenRefreshTimer = setTimeout(async () => {
+    userTokenRefreshTimer = null;
+    if (!appState.token || appState.token !== scheduledToken) return;
+    const refreshed = await refreshUserAccessToken();
+    if (refreshed || appState.token !== scheduledToken) return;
+
+    if (getUserAccessTokenExpiryMs(scheduledToken) > Date.now()) {
+      const remainingMs = getUserAccessTokenExpiryMs(scheduledToken) - Date.now();
+      scheduleUserAccessTokenRefresh(0, { retryDelayMs: Math.min(30000, remainingMs) });
+      return;
+    }
+    clearAuthenticatedAppState();
+    showAuthScreen();
+  }, delay);
+}
+
+function storeUserAccessToken(token, { expiresAt = 0 } = {}) {
+  const normalized = String(token || '').trim();
+  if (!normalized) {
+    clearUserAccessToken();
+    return '';
+  }
+  appState.token = normalized;
+  try {
+    localStorage.setItem(RAI_TOKEN_KEY, normalized);
+    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+  } catch (error) {
+    console.warn('Unable to persist the current sign-in session.');
+  }
+  scheduleUserAccessTokenRefresh(expiresAt);
+  return normalized;
+}
+
+function applyUserAccessTokenFromResponse(data) {
+  if (!data?.token) return false;
+  storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
+  return true;
+}
+
+function getPersistedUserAccessToken() {
+  try {
+    return String(localStorage.getItem(RAI_TOKEN_KEY) || '').trim();
+  } catch (error) {
+    return '';
+  }
+}
+
+function adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh) {
+  const candidate = getPersistedUserAccessToken();
+  if (
+    !candidate
+    || candidate === tokenBeforeRefresh
+    || getUserAccessTokenExpiryMs(candidate) <= Date.now() + RAI_ACCESS_REFRESH_LEEWAY_MS
+  ) {
+    return false;
+  }
+  storeUserAccessToken(candidate);
+  return true;
+}
+
+async function performUserAccessTokenRefresh(context, controller) {
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await RAI_SESSION_FETCH(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'X-RAI-Refresh': '1'
+      },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success || !data?.token) return false;
+    if (!isUserAuthContextCurrent(context)) return false;
+    storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
+    return true;
+  } catch (error) {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function refreshUserAccessToken() {
+  const context = captureUserAuthContext();
+  const tokenBeforeRefresh = appState.token || getPersistedUserAccessToken();
+  if (userTokenRefreshEntry && isUserAuthContextCurrent(userTokenRefreshEntry.context)) {
+    return userTokenRefreshEntry.promise;
+  }
+  const controller = new AbortController();
+  const entry = { context, controller, promise: null };
+  entry.promise = (async () => {
+    if (navigator.locks?.request) {
+      try {
+        return await navigator.locks.request('rai-auth-refresh', { mode: 'exclusive' }, async () => {
+          if (!isUserAuthContextCurrent(context)) return false;
+          if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
+          return performUserAccessTokenRefresh(context, controller);
+        });
+      } catch (error) {
+        // Fall through for browsers that expose but disable the Web Locks API.
+      }
+    }
+    if (!isUserAuthContextCurrent(context)) return false;
+    if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
+    return performUserAccessTokenRefresh(context, controller);
+  })().finally(() => {
+    if (userTokenRefreshEntry === entry) userTokenRefreshEntry = null;
+  });
+  userTokenRefreshEntry = entry;
+  return entry.promise;
+}
+
+function getFetchAuthorizationToken(resource, init) {
+  try {
+    const headers = new Headers(
+      init?.headers !== undefined
+        ? init.headers
+        : (resource instanceof Request ? resource.headers : undefined)
+    );
+    const value = String(headers.get('Authorization') || '');
+    const match = value.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1].trim() : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function getProtectedUserRequestUrl(resource) {
+  try {
+    let raw = resource instanceof Request ? resource.url : String(resource || '');
+    if (RAI_IS_TAURI_DESKTOP && /^\/api(?:\/|$)/.test(raw)) {
+      raw = `${RAI_PRODUCTION_ORIGIN}${raw}`;
+    }
+    const url = new URL(raw, window.location.origin);
+    const apiUrl = new URL(API_BASE, window.location.origin);
+    if (url.origin !== apiUrl.origin) return null;
+
+    const isPrivateImage = url.pathname.startsWith('/generated-images/');
+    const isApiRequest = url.pathname === apiUrl.pathname || url.pathname.startsWith(`${apiUrl.pathname.replace(/\/$/, '')}/`);
+    if (!isPrivateImage && !isApiRequest) return null;
+    if (url.pathname.startsWith('/api/admin/') || url.pathname.startsWith('/api/auth/')) return null;
+    return url;
+  } catch (error) {
+    return null;
+  }
+}
+
+function isRaiServerResource(resource) {
+  try {
+    const raw = resource instanceof Request ? resource.url : String(resource || '');
+    if (RAI_IS_TAURI_DESKTOP && /^\/api(?:\/|$)/.test(raw)) return true;
+    const url = new URL(raw, window.location.origin);
+    const apiUrl = new URL(API_BASE, window.location.origin);
+    return url.origin === apiUrl.origin
+      && (
+        url.pathname === apiUrl.pathname
+        || url.pathname.startsWith(`${apiUrl.pathname.replace(/\/$/, '')}/`)
+        || url.pathname.startsWith('/generated-images/')
+      );
+  } catch (error) {
+    return false;
+  }
+}
+
+window.fetch = async function raiUserSessionFetch(resource, init) {
+  const protectedUrl = getProtectedUserRequestUrl(resource);
+  const requestInit = RAI_IS_TAURI_DESKTOP && isRaiServerResource(resource) && !init?.credentials
+    ? { ...init, credentials: 'include' }
+    : init;
+  const requestToken = getFetchAuthorizationToken(resource, requestInit);
+  let retryResource = resource;
+  if (resource instanceof Request) {
+    try {
+      retryResource = resource.clone();
+    } catch (error) {
+      retryResource = null;
+    }
+  }
+
+  const response = await RAI_SESSION_FETCH(resource, requestInit);
+  if (
+    response.status !== 401
+    || !protectedUrl
+    || !requestToken
+    || !appState.token
+    || !retryResource
+  ) {
+    return response;
+  }
+
+  const tokenBeforeRefresh = appState.token;
+  const alreadyRotated = requestToken !== appState.token;
+  const refreshed = alreadyRotated || await refreshUserAccessToken();
+  if (!refreshed && appState.token === tokenBeforeRefresh) return response;
+  if (!appState.token) return response;
+
+  const retryHeaders = new Headers(
+    requestInit?.headers !== undefined
+      ? requestInit.headers
+      : (retryResource instanceof Request ? retryResource.headers : undefined)
+  );
+  retryHeaders.set('Authorization', `Bearer ${appState.token}`);
+  return RAI_SESSION_FETCH(retryResource, {
+    ...requestInit,
+    headers: retryHeaders,
+    credentials: requestInit?.credentials || (RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin')
+  });
+};
+
+window.addEventListener('online', () => {
+  if (appState.token && getUserAccessTokenExpiryMs() - Date.now() <= 2 * RAI_ACCESS_REFRESH_LEEWAY_MS) {
+    refreshUserAccessToken();
+  }
+});
+
+window.addEventListener('storage', (event) => {
+  if (event.key !== RAI_TOKEN_KEY) return;
+  const nextToken = String(event.newValue || '').trim();
+  if (nextToken) {
+    if (nextToken !== appState.token) {
+      const nextSubject = String(decodeUserAccessTokenPayload(nextToken)?.sub || '');
+      const currentSubject = String(
+        appState.user?.id ||
+        appState.confirmedCacheUserId ||
+        decodeUserAccessTokenPayload(appState.token)?.sub ||
+        ''
+      );
+      const accountChanged = !!currentSubject && !!nextSubject && currentSubject !== nextSubject;
+      if (accountChanged) {
+        invalidateUserAuthAsyncWork();
+        abortConversationAsyncWork();
+        window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);
+        window.RAISelectionExplainer?.clearUserWorkspace?.(appState.user?.id);
+        appState.confirmedCacheUserId = null;
+        appState.user = null;
+        appState.sessions = [];
+        appState.messages = [];
+        appState.currentSession = null;
+      }
+      storeUserAccessToken(nextToken);
+      if (!appState.user) {
+        verifyToken({ allowRefresh: false }).catch(() => showAuthScreen());
+      }
+    }
+    return;
+  }
+  if (appState.token || appState.user) {
+    clearAuthenticatedAppState();
+    showAuthScreen();
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (
+    document.visibilityState === 'visible'
+    && appState.token
+    && getUserAccessTokenExpiryMs() - Date.now() <= 2 * RAI_ACCESS_REFRESH_LEEWAY_MS
+  ) {
+    refreshUserAccessToken();
+  }
+});
 
 function showAuthScreen() {
+  appState.authState = 'anonymous';
+  document.documentElement.dataset.raiAuthState = 'anonymous';
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
   updatePasskeyLoginEntry();
@@ -10736,21 +12022,17 @@ async function exchangeZtx6dAuthCode(authCode) {
   return data.token;
 }
 
-async function handleRaiTokenCallback() {
+async function handleRaiAuthCallback() {
   const url = new URL(window.location.href);
-  const tokenFromUrl = url.searchParams.get('rai_token') || url.searchParams.get('token');
   const authCode = url.searchParams.get('auth_code');
   const authError = url.searchParams.get('auth_error');
 
-  if (tokenFromUrl) {
-    console.log(' 从旧版 SSO 回调获取到 RAI token');
-    localStorage.setItem(RAI_TOKEN_KEY, tokenFromUrl);
-    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+  if (url.searchParams.has('rai_token') || url.searchParams.has('token')) {
     url.searchParams.delete('rai_token');
     url.searchParams.delete('token');
     url.searchParams.delete('auth_provider');
     window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
-    return tokenFromUrl;
+    console.warn(' 已拒绝并清理 URL 中的旧版长期 token 回调');
   }
 
   if (authCode) {
@@ -10761,8 +12043,8 @@ async function handleRaiTokenCallback() {
     try {
       const token = await exchangeZtx6dAuthCode(authCode);
       console.log(' 已通过 SSO auth_code 换取 RAI token');
-      localStorage.setItem(RAI_TOKEN_KEY, token);
-      localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+      invalidateUserAuthAsyncWork();
+      storeUserAccessToken(token);
       return token;
     } catch (error) {
       const message = isChineseLanguage(appState.language)
@@ -10813,11 +12095,7 @@ async function syncTauriAuthStateFromStorage() {
 
   if (!storedToken) {
     if (appState.token || appState.user) {
-      appState.token = null;
-      appState.user = null;
-      appState.sessions = [];
-      appState.messages = [];
-      appState.currentSession = null;
+      clearAuthenticatedAppState();
       showAuthScreen();
     }
     return false;
@@ -10832,8 +12110,7 @@ async function syncTauriAuthStateFromStorage() {
 
   tauriAuthSyncPending = true;
   try {
-    appState.token = storedToken;
-    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
+    storeUserAccessToken(storedToken);
     const valid = await verifyToken();
     if (!valid) {
       showAuthScreen();
@@ -10963,8 +12240,87 @@ async function bindZtx6dAccount() {
   }
 }
 
+async function requestStartupRefresh() {
+  const context = captureUserAuthContext();
+  const controller = new AbortController();
+  const untrack = trackUserAuthRequest(controller);
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await RAI_SESSION_FETCH(`${API_BASE}/auth/refresh`, {
+      method: 'POST', credentials: 'include', cache: 'no-store', signal: controller.signal,
+      headers: { Accept: 'application/json', 'X-RAI-Refresh': '1' }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data?.success && data?.token) {
+      if (!isUserAuthContextCurrent(context)) return 'checking';
+      storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
+      return 'authenticated';
+    }
+    return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
+  } catch (_) {
+    return 'checking';
+  } finally {
+    clearTimeout(timeout);
+    untrack();
+  }
+}
+
+async function resolveStartupAuthentication() {
+  let token = await handleRaiAuthCallback();
+  if (!token) token = getPersistedUserAccessToken();
+  if (token) storeUserAccessToken(token);
+  if (appState.token && getUserAccessTokenExpiryMs() > Date.now() + RAI_ACCESS_REFRESH_LEEWAY_MS) {
+    const context = captureUserAuthContext();
+    const controller = new AbortController();
+    const untrack = trackUserAuthRequest(controller);
+    try {
+      const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
+        headers: { Authorization: `Bearer ${context.token}` }, credentials: 'include', cache: 'no-store', signal: controller.signal
+      });
+      const profile = await response.json().catch(() => ({}));
+      if (response.ok && isProfileBoundToAuthContext(profile, context)) {
+        showApp();
+        if (await loadUserData(profile, { authContext: context })) return 'authenticated';
+        return 'checking';
+      }
+      if (!isUserAuthContextCurrent(context)) return 'checking';
+      if (response.status !== 401 && response.status !== 403) return 'checking';
+    } catch (_) {
+      return 'checking';
+    } finally {
+      untrack();
+    }
+  }
+  const refreshState = await requestStartupRefresh();
+  if (refreshState !== 'authenticated') return refreshState;
+  try {
+    const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
+      headers: { Authorization: `Bearer ${appState.token}` }, credentials: 'include', cache: 'no-store'
+    });
+    const profile = await response.json().catch(() => ({}));
+    if (response.ok && profile?.id) {
+      showApp();
+      await loadUserData(profile);
+      return 'authenticated';
+    }
+    return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
+  } catch (_) {
+    return 'checking';
+  }
+}
+
+let startupAuthRetryPromise = null;
+function retryStartupAuthentication() {
+  if (appState.authState !== 'checking' || startupAuthRetryPromise) return startupAuthRetryPromise;
+  startupAuthRetryPromise = resolveStartupAuthentication().then((state) => {
+    if (state === 'anonymous') showAuthScreen();
+    return state;
+  }).finally(() => { startupAuthRetryPromise = null; });
+  return startupAuthRetryPromise;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log(' RAI v0.11.39 初始化 (hide empty selection-explanation dock)');
+  console.log(' RAI v0.11.58 初始化 (release-safety-password)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -10983,34 +12339,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   startAppVersionMonitor();
   startConversationSyncMonitor();
   fetchRaiAnnouncements();
-  await fetchModelAvailability();
-  await loadZtx6dSsoStatus();
+  fetchModelAvailability();
+  loadZtx6dSsoStatus();
 
-  // ==================== 认证流程 ====================
-  // 1. 检测 URL 中是否有服务端 SSO 回调返回的一次性 auth_code 或旧 token
-  let token = await handleRaiTokenCallback();
-
-  // 2. 如果 URL 中没有 token，检查 localStorage
-  if (!token) {
-    token = localStorage.getItem(RAI_TOKEN_KEY);
-  }
-
-  // 3. 如果有 token，验证它
-  if (token) {
-    appState.token = token;
-    localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
-    const valid = await verifyToken();
-    if (!valid) {
-      showAuthScreen();
-    }
-  } else {
-    // 4. 没有 token，显示本地登录；如 ZTX6D 已配置，会显示 SSO 按钮
-    console.log(' 未找到有效 token，显示登录界面');
-    showAuthScreen();
+  // The neutral app shell is visible during checking. Login is revealed only by
+  // an explicit refresh/profile 401 or 403, never by HTML defaults or outages.
+  document.documentElement.dataset.raiAuthState = 'checking';
+  showWelcome();
+  const startupState = await resolveStartupAuthentication();
+  if (startupState === 'anonymous') showAuthScreen();
+  if (startupState === 'checking') {
+    window.addEventListener('online', retryStartupAuthentication);
+    window.addEventListener('focus', retryStartupAuthentication);
   }
 
   loadSettings();
   initSettingsInteractions();
+  initConversationCacheSettings();
   initBrowserNotifySettingControl();
   updateBrowserNotifySettingsUI();
   updateModelControls();
@@ -11823,53 +13168,32 @@ function updateSelectedModelText(modelId = appState.selectedModel) {
 }
 
 function persistDefaultModelPreference(modelId = appState.selectedModel) {
-  const membership = String(userMembershipState?.membership || 'free');
-  if (!appState.token || membership === 'free') return;
+  // Kept as a compatibility no-op for older event paths. Manual choices are
+  // intentionally scoped to the active composer and never become an account default.
+  appState.profileDefaultModel = 'auto';
+}
 
-  fetch(`${API_BASE}/user/config`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${appState.token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      theme: appState.themePreference || appState.theme,
-      default_model: normalizeSelectedModelId(modelId),
-      temperature: appState.temperature,
-      top_p: appState.topP,
-      max_tokens: appState.maxTokens,
-      frequency_penalty: appState.frequencyPenalty,
-      presence_penalty: appState.presencePenalty,
-      system_prompt: appState.systemPrompt || '',
-      thinking_mode: appState.thinkingMode ? 1 : 0,
-      internet_mode: 1,
-      long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
-      font_preference: appState.fontPreference || 'rai',
-      tab_title_mode: appState.tabTitleMode || 'default',
-      tab_title_custom_text: appState.tabTitleCustomText || '',
-      selection_explanation_delete_mode: normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode)
-    })
-  }).then((res) => res.json())
-    .then((data) => {
-      if (data?.success) {
-        appState.profileDefaultModel = normalizeSelectedModelId(modelId);
-      } else if (data?.error) {
-        console.warn(' 保存默认模型失败:', data.error);
-      }
-    })
-    .catch((err) => console.error(' 保存默认模型网络错误:', err));
+function resetModelToSmart() {
+  appState.selectedModel = 'auto';
+  appState.modelPromptIdentity = 'smart';
+  appState.profileDefaultModel = 'auto';
+  updateSelectedModelText('auto');
+  updateModelControls();
+  updateMenuSelection();
 }
 
 function selectModelFromMenu(model, displayName, i18nKey) {
   const restoreMenuFocus = document.getElementById('modelDropdownMenu')?.contains(document.activeElement) === true;
   if (model === 'research-mode') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
+    appState.modelPromptIdentity = 'research';
     closeModelModal({ restoreFocus: restoreMenuFocus });
     if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
   }
   if (isModelDisabledByAdmin(model)) {
     appState.selectedModel = 'auto';
+    appState.modelPromptIdentity = 'smart';
     appState.researchModeEnabled = false;
     appState.lastNonResearchModel = 'auto';
     updateSelectedModelText('auto');
@@ -11884,6 +13208,7 @@ function selectModelFromMenu(model, displayName, i18nKey) {
   }
   appState.researchModeEnabled = false;
   appState.selectedModel = normalizeSelectedModelId(model);
+  appState.modelPromptIdentity = 'manual';
   appState.lastNonResearchModel = appState.selectedModel;
   appState.thinkingMode = false;
   updateSelectedModelText(appState.selectedModel);
@@ -11896,18 +13221,6 @@ function selectModelFromMenu(model, displayName, i18nKey) {
   if (!restoreMenuFocus) preserveMobileInputFocus();
 
   console.log(` 已切换模型: ${appState.selectedModel} (${displayName})`);
-}
-
-function selectModelFromModal(model, displayName) {
-  if (isMembershipLockedModel(model)) {
-    selectModelFromMenu(model, displayName || model, null);
-    return;
-  }
-  selectModelFromMenu(model, displayName || model, null);
-  const modelModal = document.getElementById('modelModal');
-  if (modelModal) {
-    modelModal.classList.remove('active');
-  }
 }
 
 // 点击页面其他地方关闭下拉菜单
@@ -11954,6 +13267,7 @@ function openSettings() {
     }
     updateZtx6dBindingUI();
     loadUserPasskeys({ silent: true }).catch(() => null);
+    loadSecurityDevices({ silent: true }).catch(() => null);
   }
 }
 
@@ -12073,8 +13387,8 @@ async function saveSettings(options = {}) {
       confirmPasswordInput?.focus();
       return;
     }
-    if (newPassword.length < 6) {
-      showToast(i18nText('password-too-short-error', isChineseLanguage(appState.language) ? '新密码至少需要 6 位字符' : 'New password must be at least 6 characters'));
+    if (newPassword.length < USER_PASSWORD_MIN_LENGTH) {
+      showToast(i18nText('password-too-short-error', isChineseLanguage(appState.language) ? '新密码至少需要 8 位字符' : 'New password must be at least 8 characters'));
       newPasswordInput?.focus();
       return;
     }
@@ -12140,6 +13454,7 @@ async function saveSettings(options = {}) {
           throw new Error(passwordData?.error || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
         }
 
+        applyUserAccessTokenFromResponse(passwordData);
         passwordUpdated = true;
         console.log(' 用户密码已更新');
       }
@@ -12162,10 +13477,7 @@ async function saveSettings(options = {}) {
           throw new Error(profileData?.error || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
         }
 
-        if (profileData.token) {
-          appState.token = profileData.token;
-          localStorage.setItem(RAI_TOKEN_KEY, profileData.token);
-        }
+        applyUserAccessTokenFromResponse(profileData);
 
         if (profileData.user) {
           appState.user = {
@@ -12195,7 +13507,7 @@ async function saveSettings(options = {}) {
         },
         body: JSON.stringify({
           theme: appState.themePreference || appState.theme,
-          default_model: appState.selectedModel,
+          default_model: 'auto',
           temperature,
           top_p: topP,
           max_tokens: maxTokens,
@@ -12205,7 +13517,7 @@ async function saveSettings(options = {}) {
           thinking_mode: appState.thinkingMode ? 1 : 0,
           internet_mode: 1,
           long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
-          font_preference: appState.fontPreference || 'rai',
+          font_preference: appState.fontPreference || 'system',
           tab_title_mode: appState.tabTitleMode || 'default',
           tab_title_custom_text: appState.tabTitleCustomText || '',
           selection_explanation_delete_mode: normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode)
@@ -12262,6 +13574,223 @@ async function saveSettings(options = {}) {
 
 // 修复事件处理器中inline onclick处理和事件委托问题，避免undefined引用
 
+const raiMessageClientKeys = new WeakMap();
+let raiMessageClientKeyCounter = 0;
+
+function getMessageRenderKey(message) {
+  if (!message || typeof message !== 'object') return '';
+  const requestId = String(message.stream_request_id || message.request_id || '').trim();
+  if (requestId) return `request:${requestId}:${String(message.role || '')}`;
+  if (message.id !== undefined && message.id !== null && String(message.id)) {
+    return `id:${String(message.id)}`;
+  }
+  let clientKey = raiMessageClientKeys.get(message);
+  if (!clientKey) {
+    raiMessageClientKeyCounter += 1;
+    clientKey = `${String(message.role || 'message')}:${Date.now()}:${raiMessageClientKeyCounter}`;
+    raiMessageClientKeys.set(message, clientKey);
+  }
+  return `client:${clientKey}`;
+}
+
+function normalizeMessageRenderField(value) {
+  if (typeof value !== 'string') return value ?? null;
+  const trimmed = value.trim();
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch (_) {
+    return value;
+  }
+}
+
+function getMessageRenderSnapshot(message) {
+  if (!message || typeof message !== 'object') return '';
+  return JSON.stringify({
+    role: message.role || '',
+    content: message.content || '',
+    reasoningContent: message.reasoning_content || null,
+    model: message.model || null,
+    internetMode: message.internet_mode === true || Number(message.internet_mode) === 1,
+    enableSearch: message.enable_search === true || Number(message.enable_search) === 1,
+    sources: normalizeMessageRenderField(message.sources),
+    processTrace: normalizeMessageRenderField(message.process_trace),
+    attachments: normalizeMessageRenderField(message.attachments || message.attachment_refs),
+    hasAttachments: message.has_attachments === true || Number(message.has_attachments) === 1,
+    feedbackRating: message.feedback_rating || null,
+    renderContext: {
+      language: appState.language,
+      avatarUrl: appState.user?.avatar_url || '',
+      showModelBadge: appState.showModelBadge === true,
+      showInternetBadge: appState.showInternetBadge === true
+    }
+  });
+}
+
+function applyMessageNodeMetadata(element, message, renderKey = getMessageRenderKey(message), snapshot = getMessageRenderSnapshot(message)) {
+  if (!element) return null;
+  if (element.__raiMessage && element.__raiMessage !== message) {
+    Object.assign(element.__raiMessage, message);
+  } else {
+    element.__raiMessage = message;
+  }
+  if (renderKey) element.dataset.raiMessageKey = renderKey;
+  element.dataset.raiMessageSnapshot = snapshot;
+  if (message.id !== undefined && message.id !== null && String(message.id)) {
+    element.dataset.messageId = String(message.id);
+    element.querySelectorAll('.feedback-btn').forEach((button) => {
+      button.dataset.feedbackMessageId = String(message.id);
+    });
+  } else {
+    delete element.dataset.messageId;
+  }
+  return element;
+}
+
+function armMessageEntranceAnimation(element) {
+  if (!element) return null;
+  element.classList.add('message-entering');
+  let cleared = false;
+  const clear = () => {
+    if (cleared) return;
+    cleared = true;
+    element.classList.remove('message-entering');
+  };
+  element.addEventListener('animationend', clear, { once: true });
+  setTimeout(clear, 600);
+  return element;
+}
+
+function prepareMessageElement(message, { animate = true } = {}) {
+  const element = createMessageElement(message);
+  if (!element) return null;
+  element.__raiMessage = message;
+  applyMessageNodeMetadata(element, message);
+  return animate ? armMessageEntranceAnimation(element) : element;
+}
+
+function syncMessageNodeShell(existingNode, replacementNode) {
+  if (!existingNode || !replacementNode) return null;
+  const entranceAnimationActive = existingNode.classList.contains('message-entering');
+  Array.from(existingNode.attributes).forEach((attribute) => {
+    if (attribute.name !== 'class') existingNode.removeAttribute(attribute.name);
+  });
+  Array.from(replacementNode.attributes).forEach((attribute) => {
+    if (attribute.name !== 'class') existingNode.setAttribute(attribute.name, attribute.value);
+  });
+
+  const replacementClasses = new Set(Array.from(replacementNode.classList));
+  Array.from(existingNode.classList).forEach((className) => {
+    if (className === 'message-entering' && entranceAnimationActive) return;
+    if (!replacementClasses.has(className)) existingNode.classList.remove(className);
+  });
+  replacementClasses.forEach((className) => existingNode.classList.add(className));
+  return existingNode;
+}
+
+function updateMessageNodeInPlace(existingNode, message) {
+  if (!existingNode) return null;
+  const replacement = prepareMessageElement(message, { animate: false });
+  if (!replacement) return null;
+  syncMessageNodeShell(existingNode, replacement);
+  existingNode.replaceChildren(...Array.from(replacement.childNodes));
+  existingNode.__raiMessage = replacement.__raiMessage;
+  return existingNode;
+}
+
+function finishMessageNodeInPlace(existingNode, message, options = {}) {
+  const expectedSessionId = String(options.sessionId ?? appState.currentSession?.id ?? '');
+  const currentSessionId = String(appState.currentSession?.id ?? '');
+  if (!existingNode?.isConnected || expectedSessionId !== currentSessionId) return null;
+  if (
+    options.generation !== undefined &&
+    Number(options.generation) !== Number(appState.sessionNavigationGeneration)
+  ) return null;
+  const finalizedTemplate = prepareMessageElement(message, { animate: false });
+  if (!finalizedTemplate) return null;
+
+  // A completed stream already owns a rendered .message-text node. Replacing the
+  // template here makes its text and image descendants disappear for one frame.
+  // Keep that live subtree and only graft the finalized, non-content affordances.
+  syncMessageNodeShell(existingNode, finalizedTemplate);
+
+  let existingContent = Array.from(existingNode.children).find((child) =>
+    child.classList?.contains('message-content')
+  ) || null;
+  const finalizedContent = Array.from(finalizedTemplate.children).find((child) =>
+    child.classList?.contains('message-content')
+  ) || null;
+  if (!finalizedContent) return null;
+  if (!existingContent) {
+    existingNode.appendChild(finalizedContent);
+    existingContent = finalizedContent;
+  }
+
+  let existingText = Array.from(existingContent.children).find((child) =>
+    child.classList?.contains('message-text')
+  ) || null;
+  const finalizedText = Array.from(finalizedContent.children).find((child) =>
+    child.classList?.contains('message-text')
+  ) || null;
+  const existingMeta = Array.from(existingContent.children).filter((child) =>
+    child.classList?.contains('message-meta')
+  );
+  existingMeta.forEach((meta) => meta.remove());
+
+  if (!existingText && finalizedText) {
+    const insertBefore = Array.from(existingContent.children).find((child) =>
+      child.classList?.contains('message-meta')
+    ) || null;
+    existingContent.insertBefore(finalizedText, insertBefore);
+    existingText = finalizedText;
+  }
+  if (existingText) existingText.removeAttribute('id');
+
+  Array.from(existingContent.children).forEach((child) => {
+    if (child.dataset?.raiFinalizedSupplement === '1') child.remove();
+  });
+  Array.from(finalizedContent.children).forEach((child) => {
+    if (child === finalizedText || child.classList?.contains('message-meta')) return;
+    const isLiveStructure = child.classList?.contains('thinking-timeline')
+      || child.classList?.contains('rai-reasoning-block')
+      || child.classList?.contains('previous-reply-toggle');
+    if (isLiveStructure) {
+      const hasEquivalent = Array.from(existingContent.children).some((existingChild) =>
+        Array.from(child.classList || []).some((className) => existingChild.classList?.contains(className))
+      );
+      if (!hasEquivalent) existingContent.insertBefore(child, existingText || null);
+      return;
+    }
+    if (child.classList?.contains('ask-user-card') && existingText?.querySelector('.ask-user-card')) return;
+    child.dataset.raiFinalizedSupplement = '1';
+    existingContent.appendChild(child);
+  });
+  const finalizedMeta = Array.from(finalizedContent.children).find((child) =>
+    child.classList?.contains('message-meta')
+  );
+  if (finalizedMeta) existingContent.appendChild(finalizedMeta);
+
+  applyMessageNodeMetadata(existingNode, message);
+  setTimeout(() => processCodeBlocks(existingNode), 0);
+  setTimeout(() => renderMermaidCharts(), 0);
+  setTimeout(() => renderChatIndexTimeline(), 0);
+  return existingNode;
+}
+
+function bindAssistantStreamRequestId(response, message, element, { sessionId, generation } = {}) {
+  const requestId = String(response?.headers?.get?.('X-Request-ID') || '').trim();
+  if (!requestId || !message) return '';
+  message.request_id = requestId;
+  if (
+    element?.isConnected &&
+    String(appState.currentSession?.id || '') === String(sessionId || '') &&
+    Number(generation) === Number(appState.sessionNavigationGeneration)
+  ) {
+    applyMessageNodeMetadata(element, message);
+  }
+  return requestId;
+}
+
 // 修复：改进renderMessages，防止事件处理中的undefined错误
 function renderMessages(options = {}) {
   const container = document.getElementById('messagesList');
@@ -12269,6 +13798,7 @@ function renderMessages(options = {}) {
   const preserveScroll = options.preserveScroll === true;
   const scrollElement = preserveScroll ? getChatScrollElement() : null;
   const previousScrollTop = scrollElement ? scrollElement.scrollTop : 0;
+  const sessionRenderKey = String(appState.currentSession?.id || appState.currentSessionMemoryMode || 'new-chat');
 
   if (!container || !welcome) {
     console.error(' 消息容器或欢迎屏幕未找到');
@@ -12276,6 +13806,8 @@ function renderMessages(options = {}) {
   }
 
   if (appState.messages.length === 0) {
+    container.replaceChildren();
+    container.dataset.raiSessionId = sessionRenderKey;
     showWelcome();
     return;
   }
@@ -12284,14 +13816,30 @@ function renderMessages(options = {}) {
   welcome.style.display = 'none';
   document.body?.classList.remove('home-screen-active');
   container.style.display = 'block';
-  container.innerHTML = '';
-
+  if (
+    container.children.length > 0 &&
+    container.dataset.raiSessionId === sessionRenderKey &&
+    options.forceFull !== true
+  ) {
+    patchMessagesById(appState.messages, { preserveScroll });
+    if (preserveScroll && scrollElement) {
+      setScrollFollowMode('pausedByUser');
+    } else {
+      setScrollFollowMode('following');
+      scrollToBottom(true);
+    }
+    return;
+  }
+  container.replaceChildren();
+  container.dataset.raiSessionId = sessionRenderKey;
+  const fragment = document.createDocumentFragment();
   appState.messages.forEach(msg => {
-    const messageDiv = createMessageElement(msg);
+    const messageDiv = prepareMessageElement(msg);
     if (messageDiv) {
-      container.appendChild(messageDiv);
+      fragment.appendChild(messageDiv);
     }
   });
+  container.appendChild(fragment);
 
   if (preserveScroll && scrollElement) {
     scrollElement.scrollTop = previousScrollTop;
@@ -13043,8 +14591,7 @@ function formatResearchAgentLabel(role = '') {
     gpt55: 'ChatGPT',
     chatgpt: 'ChatGPT',
     deepseek: 'DeepSeek Pro',
-    deepseek_flash: 'DeepSeek Flash',
-    mimo: 'Mimo Code',
+    deepseek_flash: 'DeepSeek v4',
     nemotron: 'Nemotron 3 Ultra'
   };
   return labelMap[String(role || '').toLowerCase()] || formatAgentRole(role || 'agent');
@@ -13206,6 +14753,7 @@ function createMessageElement(message) {
 
   const div = document.createElement('div');
   div.className = `message ${message.role}`;
+  if (message.id !== undefined && message.id !== null) div.dataset.messageId = String(message.id);
 
   const avatar = document.createElement('div');
   avatar.className = 'message-avatar';
@@ -13537,7 +15085,7 @@ function createMessageElement(message) {
       lazyDiv.className = 'message-attachments lazy-attachments';
       lazyDiv.dataset.messageId = message.id;
       lazyDiv.innerHTML = `
-            <div class="lazy-attachment-placeholder" onclick="loadMessageAttachments(${message.id}, this.parentElement)">
+            <div class="lazy-attachment-placeholder" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadMessageAttachments(${message.id}, this.parentElement)">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
                 <circle cx="8.5" cy="8.5" r="1.5"/>
@@ -13829,7 +15377,7 @@ async function loadMessageAttachments(messageId, containerElement) {
   } catch (error) {
     console.error(' 加载附件失败:', error);
     containerElement.innerHTML = `
-          <div class="lazy-attachment-placeholder error" onclick="loadMessageAttachments(${messageId}, this.parentElement)">
+          <div class="lazy-attachment-placeholder error" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadMessageAttachments(${messageId}, this.parentElement)">
             <span>${isChineseLanguage(appState.language) ? '加载失败，点击重试' : 'Failed, click to retry'}</span>
           </div>
         `;
@@ -13908,10 +15456,17 @@ async function deleteSession(event, sessionId) {
     }
 
     if (appState.currentSession?.id === sessionId) {
+      abortConversationSessionRefresh(sessionId);
+      appState.sessionNavigationGeneration += 1;
+      appState.sessionLoadController?.abort?.();
+      appState.sessionLoadController = null;
+      closeSessionStreamSubscription();
       appState.currentSession = null;
       appState.messages = [];
-      showWelcome();
+      renderMessages();
     }
+
+    await window.RAIConversationCache?.deleteConversation?.(sessionId);
 
     await loadSessions();
   } catch (error) {
@@ -13999,7 +15554,7 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
         );
         if (msgIndex !== -1 && appState.messages[msgIndex].id) {
           message.id = appState.messages[msgIndex].id;
-          console.log(` 已获取消息ID: ${message.id}`);
+          console.log(' 消息记录已恢复');
         } else {
           console.error(' 无法找到消息ID');
           alert(isChineseLanguage(appState.language) ? '消息尚未保存，请稍后重试' : 'Message not saved yet, please try again');
@@ -14029,7 +15584,7 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
     }
 
     const result = await response.json();
-    console.log(' 消息已更新:', result);
+    console.log(' 消息已更新');
 
     // 更新本地状态
     message.content = newContent;
@@ -14109,7 +15664,7 @@ async function ensureMessageHasId(message) {
     if (foundMsg && foundMsg.id) {
       // 更新本地消息数组
       appState.messages = dbMessages;
-      console.log(` 已获取消息ID: ${foundMsg.id}`);
+      console.log(' 消息记录已恢复');
       return foundMsg;
     } else {
       console.error(' 无法在数据库中找到该消息');
@@ -14143,12 +15698,175 @@ async function deleteMessageFromDB(message) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    console.log(` 已从数据库删除消息 ID: ${msgWithId.id}`);
+    console.log(' 消息已从数据库删除');
     return true;
   } catch (error) {
     console.error(' 删除消息失败:', error);
     return false;
   }
+}
+
+function captureMessageScrollAnchor(container, scrollElement) {
+  if (!container || !scrollElement || typeof scrollElement.getBoundingClientRect !== 'function') return null;
+  const scrollRect = scrollElement.getBoundingClientRect();
+  if (!scrollRect) return null;
+  const anchorNode = Array.from(container.children).find((node) => {
+    const rect = node.getBoundingClientRect?.();
+    return rect && rect.bottom >= scrollRect.top + 1;
+  });
+  const anchorRect = anchorNode?.getBoundingClientRect?.();
+  return {
+    key: anchorNode?.dataset?.raiMessageKey || '',
+    top: anchorRect?.top || 0,
+    previousScrollTop: Number(scrollElement.scrollTop || 0),
+    expectedScrollTop: Number(scrollElement.scrollTop || 0),
+    generation: appState.sessionNavigationGeneration,
+    sessionId: String(appState.currentSession?.id || '')
+  };
+}
+
+function restoreMessageScrollAnchor(container, scrollElement, anchor) {
+  if (!container || !scrollElement || !anchor) return false;
+  if (
+    anchor.generation !== appState.sessionNavigationGeneration ||
+    anchor.sessionId !== String(appState.currentSession?.id || '')
+  ) return false;
+  if (Math.abs(Number(scrollElement.scrollTop || 0) - Number(anchor.expectedScrollTop || 0)) > 2) return false;
+  const nextAnchor = anchor.key
+    ? Array.from(container.children).find((node) => node.dataset?.raiMessageKey === anchor.key)
+    : null;
+  if (nextAnchor?.isConnected) {
+    const nextRect = nextAnchor.getBoundingClientRect?.();
+    if (!nextRect) return false;
+    scrollElement.scrollTop += nextRect.top - anchor.top;
+  } else {
+    scrollElement.scrollTop = anchor.previousScrollTop;
+  }
+  anchor.expectedScrollTop = Number(scrollElement.scrollTop || 0);
+  return true;
+}
+
+function stabilizeMessageScrollAnchor(container, scrollElement, anchor, changedNodes) {
+  if (!restoreMessageScrollAnchor(container, scrollElement, anchor)) return;
+  const restore = () => restoreMessageScrollAnchor(container, scrollElement, anchor);
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(restore));
+  }
+  if (typeof ResizeObserver === 'function' && changedNodes.length > 0) {
+    const observer = new ResizeObserver(restore);
+    changedNodes.forEach((node) => { if (node?.isConnected) observer.observe(node); });
+    setTimeout(() => observer.disconnect(), 800);
+  }
+}
+
+function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
+  const container = document.getElementById('messagesList');
+  const welcome = document.getElementById('welcomeScreen');
+  const messages = Array.isArray(nextMessages)
+    ? nextMessages.filter((message) => message && typeof message === 'object')
+    : [];
+  if (!container || !welcome) return false;
+  if (messages.length === 0) {
+    const hadMessages = container.children.length > 0;
+    Array.from(container.children).forEach((node) => node.remove());
+    appState.messages = [];
+    showWelcome();
+    return hadMessages;
+  }
+  if (!container.children.length || !welcome.classList.contains('hidden')) {
+    appState.messages = messages;
+    renderMessages({ preserveScroll, forceFull: true });
+    return true;
+  }
+
+  const scrollElement = preserveScroll ? getChatScrollElement() : null;
+  const scrollAnchor = captureMessageScrollAnchor(container, scrollElement);
+  const directChildren = Array.from(container.children);
+  const current = new Map();
+  directChildren.forEach((node) => {
+    const key = node.dataset?.raiMessageKey;
+    if (key && !current.has(key)) current.set(key, node);
+  });
+  const desiredNodes = [];
+  const claimedNodes = new Set();
+  const keyOccurrences = new Map();
+  const changedNodes = [];
+  let changed = false;
+
+  messages.forEach((message, index) => {
+    const baseKey = getMessageRenderKey(message);
+    const occurrence = Number(keyOccurrences.get(baseKey) || 0);
+    keyOccurrences.set(baseKey, occurrence + 1);
+    const key = occurrence === 0 ? baseKey : `${baseKey}:duplicate:${occurrence}`;
+    const snapshot = getMessageRenderSnapshot(message);
+    let existing = current.get(key);
+    if (existing && claimedNodes.has(existing)) existing = null;
+
+    if (!existing) {
+      const positionalCandidate = directChildren[index];
+      if (
+        positionalCandidate &&
+        !claimedNodes.has(positionalCandidate) &&
+        positionalCandidate.dataset?.raiMessageSnapshot === snapshot
+      ) {
+        existing = positionalCandidate;
+      }
+    }
+
+    if (existing?.dataset?.raiMessageSnapshot === snapshot) {
+      applyMessageNodeMetadata(existing, message, key, snapshot);
+      desiredNodes.push(existing);
+      claimedNodes.add(existing);
+      return;
+    }
+
+    if (existing) {
+      const updated = updateMessageNodeInPlace(existing, message);
+      if (updated) {
+        applyMessageNodeMetadata(updated, message, key, snapshot);
+        desiredNodes.push(updated);
+        claimedNodes.add(updated);
+        changedNodes.push(updated);
+        changed = true;
+      }
+      return;
+    }
+
+    const node = prepareMessageElement(message);
+    if (node) {
+      applyMessageNodeMetadata(node, message, key, snapshot);
+      desiredNodes.push(node);
+      claimedNodes.add(node);
+      changedNodes.push(node);
+      changed = true;
+    }
+  });
+
+  desiredNodes.forEach((node, index) => {
+    const nodeAtIndex = container.children[index] || null;
+    if (nodeAtIndex !== node) {
+      container.insertBefore(node, nodeAtIndex);
+      changed = true;
+    }
+  });
+  const desiredSet = new Set(desiredNodes);
+  Array.from(container.children).forEach((node) => {
+    if (!desiredSet.has(node) && node.dataset?.raiStreamActive !== '1') {
+      node.remove();
+      changed = true;
+    }
+  });
+
+  appState.messages = messages;
+  if (scrollElement && scrollAnchor) {
+    stabilizeMessageScrollAnchor(container, scrollElement, scrollAnchor, changedNodes);
+  }
+  if (changed) {
+    setTimeout(() => changedNodes.forEach((node) => processCodeBlocks(node)), 0);
+    setTimeout(() => renderMermaidCharts(), 0);
+    setTimeout(() => renderChatIndexTimeline(), 0);
+  }
+  return changed;
 }
 
 // 删除消息
@@ -14224,7 +15942,7 @@ function updateQuoteUI() {
           </div>
           <div class="quote-preview-text">${contentPreview}</div>
         </div>
-        <button class="quote-preview-remove" onclick="removeQuote()" title="${isChineseLanguage(appState.language) ? '取消引用' : 'Remove quote'}">
+        <button class="quote-preview-remove" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="removeQuote()" title="${isChineseLanguage(appState.language) ? '取消引用' : 'Remove quote'}">
           ${getSvgIcon('close', 'remove-icon', 16)}
         </button>
       `;
@@ -14294,7 +16012,7 @@ async function confirmRegenerate() {
         if (foundMsg && foundMsg.id) {
           appState.messages = dbMessages;
           currentTarget = foundMsg;
-          console.log(` 已获取消息ID: ${foundMsg.id}`);
+          console.log(' 消息记录已恢复');
         } else {
           console.warn(' Regenerate target has no saved ID yet; continuing with local message state.');
         }
@@ -14319,11 +16037,13 @@ async function confirmRegenerate() {
 
   // 保存当前设置
   const originalModel = appState.selectedModel;
+  const originalModelPromptIdentity = appState.modelPromptIdentity;
   const originalThinking = appState.thinkingMode;
   const originalResearchEnabled = appState.researchModeEnabled;
 
   // 临时应用新设置
   appState.selectedModel = normalizeSelectedModelId(selectedModel || 'auto') || 'auto';
+  appState.modelPromptIdentity = appState.selectedModel === 'auto' ? 'smart' : 'manual';
   appState.researchModeEnabled = false;
   appState.internetMode = internetMode;
   appState.thinkingMode = thinkingMode;
@@ -14351,6 +16071,7 @@ async function confirmRegenerate() {
   }
 
   appState.selectedModel = originalModel;
+  appState.modelPromptIdentity = originalModelPromptIdentity;
   appState.researchModeEnabled = originalResearchEnabled;
   appState.thinkingMode = originalThinking;
   updateSelectedModelText(appState.selectedModel);
@@ -14362,10 +16083,12 @@ async function confirmRegenerate() {
 async function triggerAIResponse(messages, options = {}) {
   if (appState.isStreaming) return { success: false, message: null };
 
+  const requestId = String(options.requestId || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
   // 创建AI消息占位符
   const aiMsg = {
     role: 'assistant',
     content: '',
+    request_id: requestId,
     created_at: new Date().toISOString()
   };
   const requestedIndex = Number.isInteger(options.insertIndex) ? options.insertIndex : appState.messages.length;
@@ -14374,7 +16097,7 @@ async function triggerAIResponse(messages, options = {}) {
   renderMessages();
 
   // 调用现有的流式聊天逻辑（通过sendMessage部分逻辑）
-  return await streamAIResponse(messages, aiMsg, options);
+  return await streamAIResponse(messages, aiMsg, { ...options, requestId });
 }
 
 // 流式AI回复（优化版：增量更新DOM，不重新渲染整个消息列表）
@@ -14384,7 +16107,9 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
   let savedAssistantMessage = null;
 
   const sessionId = appState.currentSession?.id;
-  const requestId = `req_${Date.now()}`;
+  const generation = appState.sessionNavigationGeneration;
+  let requestId = String(options.requestId || aiMsg.request_id || `req_${Date.now()}`);
+  aiMsg.request_id = requestId;
 
   // 找到AI消息在列表中的位置并获取对应的DOM元素
   const msgIndex = appState.messages.indexOf(aiMsg);
@@ -14432,7 +16157,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
   // 从原始文本中提取 Mermaid 代码并尝试实时渲染
   async function tryRenderMermaidFromText(fullText) {
-    if (typeof mermaid === 'undefined' || !mermaidPreviewContainer) return;
+    if (!MERMAID_RENDERING_ENABLED || typeof mermaid === 'undefined' || !mermaidPreviewContainer) return;
 
     // 提取 mermaid 代码块（支持未闭合和少一个反引号的情况）
     const mermaidBlocks = extractMermaidBlocks(fullText).blocks;
@@ -14494,7 +16219,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     const existingContainers = textDiv.querySelectorAll('.streaming-image-container.loaded');
     existingContainers.forEach(container => {
       const src = container.getAttribute('data-src');
-      if (src) {
+      if (src && !resolvePrivateGeneratedImageUrl(src)) {
         // 克隆容器以保留完整状态
         loadedImageContainers.set(src, container.cloneNode(true));
       }
@@ -14508,7 +16233,8 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     const newContainers = textDiv.querySelectorAll('.streaming-image-container');
     newContainers.forEach(container => {
       const src = container.getAttribute('data-src');
-      if (src && loadedImageContainers.has(src)) {
+      const isPrivateGeneratedImage = !!resolvePrivateGeneratedImageUrl(src);
+      if (src && !isPrivateGeneratedImage && loadedImageContainers.has(src)) {
         // 直接用已加载的容器替换
         container.replaceWith(loadedImageContainers.get(src).cloneNode(true));
       } else {
@@ -14518,7 +16244,9 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           const markImageLoaded = function () {
             if (!img.isConnected && !container.isConnected) return;
             container.classList.add('loaded');
-            loadedImageContainers.set(src, container.cloneNode(true));
+            if (!isPrivateGeneratedImage) {
+              loadedImageContainers.set(src, container.cloneNode(true));
+            }
           };
           const markImageFailed = function () {
             if (!img.isConnected && !container.isConnected) return;
@@ -14534,8 +16262,8 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
               markImageFailed();
             }
           };
-          img.onload = markImageLoaded;
-          img.onerror = markImageFailed;
+          img.addEventListener('load', markImageLoaded, { once: true });
+          img.addEventListener('error', markImageFailed, { once: true });
           verifyImageState();
           setTimeout(verifyImageState, 0);
           setTimeout(verifyImageState, 250);
@@ -14551,6 +16279,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
   }
 
   try {
+    await ensureCurrentSessionPromptIdentity();
     const response = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
       headers: {
@@ -14586,6 +16315,12 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
+
+    const responseRequestId = bindAssistantStreamRequestId(response, aiMsg, aiMsgElement, {
+      sessionId,
+      generation
+    });
+    if (responseRequestId) requestId = responseRequestId;
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -14704,23 +16439,38 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
       mermaidPreviewContainer = null;
     }
 
-    // 最终完整渲染一次，确保所有内容正确显示（包括来源、模型标签等）
-    renderMessages();
-    // 重新加载消息以获取数据库ID
-    if (sessionId) {
+    // 只将正在流式更新的节点原位转为最终消息。
+    if (
+      String(appState.currentSession?.id || '') === String(sessionId || '') &&
+      generation === appState.sessionNavigationGeneration
+    ) {
+      finishMessageNodeInPlace(aiMsgElement, aiMsg, { sessionId, generation });
+    }
+    // 获取数据库 ID 时仍只协调有变化的节点。
+    if (sessionId && streamSucceeded) {
       try {
-        const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
-          headers: { 'Authorization': `Bearer ${appState.token}` }
-        });
-        if (resp.ok) {
-          const refreshedMessages = await resp.json();
-          if (aiMsg.content) {
+        const refreshed = await fetchSessionMessagesWithCache(sessionId);
+        const refreshedMessages = Array.isArray(refreshed.messages)
+          ? refreshed.messages
+          : (Array.isArray(refreshed.cached?.messages) ? refreshed.cached.messages : null);
+        if (refreshedMessages) {
+          savedAssistantMessage = [...refreshedMessages].reverse().find((item) =>
+            item.role === 'assistant' &&
+            String(item.request_id || '') === requestId
+          ) || null;
+          if (!savedAssistantMessage && aiMsg.content) {
             savedAssistantMessage = [...refreshedMessages].reverse().find((item) =>
               item.role === 'assistant' && item.content === aiMsg.content
             ) || null;
           }
-          appState.messages = refreshedMessages;
-          renderMessages();
+          if (
+            String(appState.currentSession?.id || '') === String(sessionId) &&
+            generation === appState.sessionNavigationGeneration
+          ) {
+            const shouldFollow = appState.scrollFollowMode === 'following' && isNearBottom();
+            patchMessagesById(refreshedMessages, { preserveScroll: !shouldFollow });
+            if (shouldFollow) scrollToBottom(true);
+          }
         }
       } catch (e) {
         console.warn(' 重新加载消息失败:', e);
@@ -14913,7 +16663,7 @@ function __raiSessionTimeGroup(session, isChinese) {
   };
 }
 
-function getSessionListRenderSignature(sessions = [], hasMore = false, currentSessionId = null) {
+function getSessionListRenderSignature(sessions = [], hasMore = false, currentSessionId = null, pinnedSessions = []) {
   const normalized = [...(Array.isArray(sessions) ? sessions : [])]
     .sort((a, b) => {
       const timeDiff = new Date(b?.updated_at || b?.created_at || 0).getTime()
@@ -14937,8 +16687,337 @@ function getSessionListRenderSignature(sessions = [], hasMore = false, currentSe
   return JSON.stringify({
     currentSessionId: String(currentSessionId || ''),
     hasMore: Boolean(hasMore),
+    pinned: (Array.isArray(pinnedSessions) ? pinnedSessions : []).map((session) => String(session?.id || '')),
     sessions: normalized
   });
+}
+
+function formatSessionListTimestamp(session = {}) {
+  const updated = new Date(session.updated_at || session.created_at || 0);
+  if (Number.isNaN(updated.getTime())) return '';
+  const now = new Date();
+  return updated.toDateString() === now.toDateString()
+    ? updated.toLocaleTimeString(getCurrentLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '';
+}
+
+function getSessionDateGroup(session = {}) {
+  const updated = new Date(session.updated_at || session.created_at || 0);
+  const now = new Date();
+  const zh = isChineseLanguage(appState.language);
+  if (updated.toDateString() === now.toDateString()) return { key: 'today', label: zh ? '今天' : 'Today' };
+  const month = updated.getMonth() + 1;
+  const day = updated.getDate();
+  if (updated.getFullYear() === now.getFullYear()) {
+    return { key: `date-${updated.getFullYear()}-${month}-${day}`, label: zh ? `${month}月${day}日` : `${EN_MONTHS_SHORT[updated.getMonth()]} ${day}` };
+  }
+  return { key: `date-${updated.getFullYear()}-${month}-${day}`, label: zh ? `${updated.getFullYear()}年${month}月${day}日` : `${EN_MONTHS_SHORT[updated.getMonth()]} ${day}, ${updated.getFullYear()}` };
+}
+
+function sessionApi(path, options = {}) {
+  return fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${appState.token}`, ...(options.headers || {}) }
+  });
+}
+
+async function savePinnedOrder() {
+  const ids = (appState.pinnedSessions || []).map((session) => session.id);
+  const response = await sessionApi('/sessions/pins/order', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionIds: ids }) });
+  if (!response.ok) throw new Error('保存置顶顺序失败');
+}
+
+function movePinnedSession(sessionId, delta) {
+  const rows = appState.pinnedSessions || [];
+  const index = rows.findIndex((row) => String(row.id) === String(sessionId));
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= rows.length) return;
+  [rows[index], rows[target]] = [rows[target], rows[index]];
+  renderSessions({ preserveScroll: true });
+  savePinnedOrder().catch(() => loadSessions(true));
+}
+
+async function toggleSessionPin(sessionId, pinned) {
+  const response = await sessionApi(`/sessions/${encodeURIComponent(sessionId)}/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned }) });
+  if (!response.ok) throw new Error('更新置顶失败');
+  await loadSessions(true, { preserveSidebarScroll: true });
+}
+
+function closeSessionMenu() {
+  document.querySelectorAll('.session-context-menu').forEach((menu) => {
+    const triggerId = menu.dataset.triggerSessionMenu;
+    if (triggerId) document.querySelector(`.session-menu-btn[data-session-menu-id="${CSS.escape(triggerId)}"]`)?.setAttribute('aria-expanded', 'false');
+    menu.remove();
+  });
+}
+
+function positionSessionMenu(menu, trigger) {
+  if (!menu || !trigger) return;
+  const viewportPadding = 8;
+  const anchorGap = 6;
+  const rect = trigger.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const fitsRight = rect.right + anchorGap + menuRect.width <= window.innerWidth - viewportPadding;
+
+  let left;
+  let top;
+  if (fitsRight) {
+    left = rect.right + anchorGap;
+    top = rect.top;
+    menu.dataset.placement = 'right';
+  } else {
+    left = rect.right - menuRect.width;
+    top = rect.bottom + anchorGap;
+    menu.dataset.placement = 'below';
+  }
+
+  left = Math.max(viewportPadding, Math.min(left, window.innerWidth - menuRect.width - viewportPadding));
+  top = Math.max(viewportPadding, Math.min(top, window.innerHeight - menuRect.height - viewportPadding));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function openSessionMenu(event, session) {
+  event.stopPropagation();
+  const trigger = event.currentTarget;
+  const existing = document.querySelector(`.session-context-menu[data-session-id="${CSS.escape(String(session.id))}"]`);
+  if (existing && existing.dataset.triggerSessionMenu === trigger.dataset.sessionMenuId) {
+    existing.remove();
+    trigger.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  closeSessionMenu();
+  const isZh = isChineseLanguage(appState.language);
+  const menu = document.createElement('div');
+  menu.className = 'session-context-menu';
+  menu.dataset.sessionId = String(session.id);
+  menu.dataset.triggerSessionMenu = trigger.dataset.sessionMenuId || '';
+  menu.innerHTML = `<button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
+    <button type="button" data-action="pin">${session.pinned ? (isZh ? '取消置顶' : 'Unpin') : (isZh ? '置顶' : 'Pin')}</button>
+    <button type="button" data-action="explain">${isZh ? '查看本对话解释' : 'View conversation explanations'}</button>
+    <button type="button" class="danger" data-action="delete">${isZh ? '删除对话' : 'Delete conversation'}</button>`;
+  document.body.appendChild(menu);
+  trigger.setAttribute('aria-expanded', 'true');
+  positionSessionMenu(menu, trigger);
+  menu.addEventListener('click', async (menuEvent) => {
+    const action = menuEvent.target.closest('button')?.dataset.action;
+    closeSessionMenu();
+    if (action === 'pin') return toggleSessionPin(session.id, !session.pinned).catch((error) => showToast(error.message));
+    if (action === 'delete') return deleteSession(menuEvent, session.id);
+    if (action === 'folder') return showSessionFolderManager(session);
+    if (action === 'explain') {
+      if (window.RAISelectionExplainer?.openHistory) window.RAISelectionExplainer.openHistory({ sessionId: session.id });
+      else showToast(isZh ? '解释历史正在加载' : 'Explanation history is loading');
+    }
+  });
+  setTimeout(() => document.addEventListener('click', (outsideEvent) => {
+    if (!menu.isConnected || menu.contains(outsideEvent.target) || trigger.contains(outsideEvent.target)) return;
+    menu.remove();
+    trigger.setAttribute('aria-expanded', 'false');
+  }, { once: true }), 0);
+}
+
+async function showSessionFolderManager(session) {
+  await loadConversationFolders();
+  const isZh = isChineseLanguage(appState.language);
+  const overlay = document.createElement('div');
+  overlay.className = 'session-folder-overlay';
+  const folders = appState.conversationFolders || [];
+  const optionsMarkup = folders.length
+    ? folders.map((folder) => `<label><input type="checkbox" value="${escapeHtml(folder.id)}"><span>${escapeHtml(folder.name)}</span></label>`).join('')
+    : `<div class="session-folder-empty"><div class="session-folder-empty-title">${isZh ? '还没有文件夹' : 'No folders yet'}</div><div class="session-folder-empty-text">${isZh ? '新建一个文件夹后，就可以收纳这条对话。' : 'Create a folder to organize this conversation.'}</div><button type="button" class="session-folder-create" data-action="create">${getSvgIcon('add_simple', 'material-symbols-outlined', 18)}<span>${isZh ? '新建文件夹' : 'Create folder'}</span></button></div>`;
+  overlay.innerHTML = `<div class="session-folder-card" role="dialog" aria-modal="true" aria-labelledby="sessionFolderHeading"><div class="session-folder-heading" id="sessionFolderHeading">${isZh ? '添加到文件夹' : 'Add to folder'}</div>${folders.length ? `<input class="session-folder-search" placeholder="${isZh ? '搜索文件夹' : 'Search folders'}" aria-label="${isZh ? '搜索文件夹' : 'Search folders'}">` : ''}<div class="session-folder-options">${optionsMarkup}</div><div class="session-folder-actions"><button type="button" data-action="cancel">${isZh ? '取消' : 'Cancel'}</button>${folders.length ? `<button type="button" class="primary" data-action="save">${isZh ? '保存' : 'Save'}</button>` : ''}</div></div>`;
+  document.body.appendChild(overlay);
+  const closeOnEscape = (keyboardEvent) => { if (keyboardEvent.key === 'Escape') close(); };
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+  document.addEventListener('keydown', closeOnEscape);
+  const optionList = overlay.querySelector('.session-folder-options');
+  const membershipResponse = await sessionApi(`/sessions/${encodeURIComponent(session.id)}/conversation-folders`);
+  const membershipData = await membershipResponse.json().catch(() => ({}));
+  if (!membershipResponse.ok) {
+    close();
+    showToast(isZh ? '无法读取当前文件夹归类' : 'Could not load folder membership');
+    return;
+  }
+  const initialMembership = new Set((membershipData.folderIds || []).map((folderId) => String(folderId)));
+  folders.forEach((folder) => {
+    const check = overlay.querySelector(`input[value="${CSS.escape(folder.id)}"]`);
+    if (check) check.checked = initialMembership.has(String(folder.id));
+  });
+  overlay.querySelector('.session-folder-search')?.addEventListener('input', (inputEvent) => {
+    const query = inputEvent.target.value.toLowerCase();
+    optionList.querySelectorAll('label').forEach((label) => { label.hidden = !label.textContent.toLowerCase().includes(query); });
+  });
+  overlay.addEventListener('click', async (overlayEvent) => {
+    const action = overlayEvent.target.closest('button')?.dataset.action;
+    if (overlayEvent.target === overlay || action === 'cancel') close();
+    if (action === 'create') {
+      close();
+      showConversationFolderNameCard({ onCreated: () => showSessionFolderManager(session) });
+    }
+    if (action === 'save') {
+      const checks = [...overlay.querySelectorAll('input[type="checkbox"]')];
+      const changes = checks.filter((check) => check.checked !== initialMembership.has(String(check.value)));
+      const responses = await Promise.all(changes.map((check) => sessionApi(
+        `/conversation-folders/${encodeURIComponent(check.value)}/sessions/${encodeURIComponent(session.id)}`,
+        { method: check.checked ? 'PUT' : 'DELETE' }
+      )));
+      if (responses.some((response) => !response.ok)) {
+        showToast(isZh ? '保存失败：无法更新文件夹成员' : 'Could not update folder membership');
+        return;
+      }
+      close();
+      await loadConversationFolders();
+    }
+  });
+}
+
+function showConversationFolderNameCard({ folder = null, onCreated = null } = {}) {
+  const isZh = isChineseLanguage(appState.language);
+  const overlay = document.createElement('div');
+  overlay.className = 'session-folder-overlay';
+  const isRename = Boolean(folder);
+  const defaultName = isRename ? String(folder.name || '') : (isZh ? '收纳文件夹' : 'Inbox folder');
+  overlay.innerHTML = `<form class="session-folder-card session-folder-name-card" role="dialog" aria-modal="true">
+    <div class="session-folder-heading">${isRename ? (isZh ? '重命名文件夹' : 'Rename folder') : (isZh ? '新建文件夹' : 'New folder')}</div>
+    <input class="session-folder-name" maxlength="80" value="${escapeHtml(defaultName)}" aria-label="${isZh ? '文件夹名称' : 'Folder name'}" autocomplete="off">
+    <div class="session-folder-error" role="alert" hidden></div>
+    <div class="session-folder-actions">
+      ${isRename ? `<button type="button" class="danger" data-action="delete">${isZh ? '删除文件夹' : 'Delete folder'}</button>` : ''}
+      <button type="button" data-action="cancel">${isZh ? '取消' : 'Cancel'}</button>
+      <button type="submit" class="primary" data-action="save">${isZh ? '保存' : 'Save'}</button>
+    </div>
+  </form>`;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('.session-folder-name');
+  const errorMessage = overlay.querySelector('.session-folder-error');
+  const showFolderError = (message) => {
+    errorMessage.textContent = message;
+    errorMessage.hidden = false;
+    input.setAttribute('aria-invalid', 'true');
+    input.focus();
+  };
+  input.addEventListener('input', () => {
+    errorMessage.hidden = true;
+    input.removeAttribute('aria-invalid');
+  });
+  input.focus();
+  input.select();
+  const closeOnEscape = (keyboardEvent) => { if (keyboardEvent.key === 'Escape') close(); };
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+  document.addEventListener('keydown', closeOnEscape);
+  overlay.addEventListener('click', async (event) => {
+    if (event.target === overlay || event.target.closest('[data-action="cancel"]')) close();
+    if (event.target.closest('[data-action="delete"]') && folder) {
+      const response = await sessionApi(`/conversation-folders/${encodeURIComponent(folder.id)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        return showToast(isZh ? `删除失败：${data.error || '无法删除该文件夹'}` : (data.error || 'Could not delete folder'));
+      }
+      localStorage.removeItem(`rai.sidebar.folder.${folder.id}.open`);
+      close();
+      await loadConversationFolders();
+    }
+  });
+  overlay.querySelector('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) return input.focus();
+    const response = isRename
+      ? await sessionApi(`/conversation-folders/${encodeURIComponent(folder.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+      : await sessionApi('/conversation-folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const reason = String(data.error || '');
+      const message = response.status === 409
+        ? (isZh ? `保存失败：已经有名为“${name}”的文件夹` : `Could not save: a folder named “${name}” already exists`)
+        : (isZh ? `保存失败：${reason || '无法保存该文件夹'}` : (reason || 'Could not save folder'));
+      showToast(message);
+      return showFolderError(message);
+    }
+    const data = await response.json();
+    const createdId = data.folder?.id || data.id;
+    if (createdId) localStorage.setItem(`rai.sidebar.folder.${createdId}.open`, '1');
+    close();
+    await loadConversationFolders();
+    if (!isRename && typeof onCreated === 'function') await onCreated(data.folder || { id: createdId, name });
+  });
+}
+
+async function loadConversationFolders(context = captureConversationCacheContext()) {
+  if (!isConversationCacheContextCurrent(context)) return false;
+  const controller = new AbortController();
+  try {
+    const response = await fetch(`${API_BASE}/conversation-folders`, {
+      headers: { Authorization: `Bearer ${context.token}` },
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    if (!response.ok || !isConversationCacheContextCurrent(context)) return false;
+    const data = await response.json();
+    if (!isConversationCacheContextCurrent(context)) return false;
+    appState.conversationFolders = data.folders || [];
+  } catch (error) {
+    if (error?.name !== 'AbortError') console.warn('加载会话文件夹失败:', error.message);
+    return false;
+  }
+  renderConversationFolders();
+  return true;
+}
+
+function renderConversationFolders() {
+  const list = document.getElementById('conversationFoldersList');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const folder of (appState.conversationFolders || [])) {
+    const item = document.createElement('div');
+    item.className = 'conversation-folder-item';
+    item.innerHTML = `<button class="conversation-folder-row" type="button"><span>${escapeHtml(folder.name)}</span><small>${Number(folder.sessionCount || 0)}</small></button><button class="conversation-folder-menu" type="button" aria-label="Folder menu">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button><div class="conversation-folder-sessions" hidden></div>`;
+    const sessions = item.querySelector('.conversation-folder-sessions');
+    const expansionKey = `rai.sidebar.folder.${folder.id}.open`;
+    const toggleFolder = async () => {
+      const expanded = !sessions.hidden;
+      sessions.hidden = expanded;
+      localStorage.setItem(expansionKey, expanded ? '0' : '1');
+      if (!expanded && !sessions.dataset.loaded) {
+        const response = await sessionApi(`/conversation-folders/${encodeURIComponent(folder.id)}/sessions?limit=100`);
+        const data = response.ok ? await response.json() : { sessions: [] };
+        (data.sessions || []).forEach((session) => sessions.appendChild(createSessionElement(session, { inFolder: true })));
+        sessions.dataset.loaded = 'true';
+      }
+    };
+    item.querySelector('.conversation-folder-row').addEventListener('click', toggleFolder);
+    item.querySelector('.conversation-folder-menu').addEventListener('click', () => showConversationFolderNameCard({ folder }));
+    list.appendChild(item);
+    if (localStorage.getItem(expansionKey) === '1') toggleFolder();
+  }
+}
+
+async function createConversationFolder() {
+  showConversationFolderNameCard();
+}
+
+function initializeConversationSidebarControls() {
+  const folderToggle = document.getElementById('conversationFoldersToggle');
+  const folderGroup = document.getElementById('conversationFoldersGroup');
+  const flowToggle = document.getElementById('flowsGroupToggle');
+  const flowGroup = document.getElementById('flowsGroup');
+  const bindToggle = (control, target, key) => {
+    if (!control || control.dataset.bound) return; control.dataset.bound = 'true';
+    const toggle = () => { target.hidden = !target.hidden; localStorage.setItem(key, target.hidden ? '0' : '1'); };
+    control.addEventListener('click', toggle); control.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } });
+    target.hidden = localStorage.getItem(key) === '0';
+  };
+  bindToggle(folderToggle, folderGroup, 'rai.sidebar.folders.open');
+  bindToggle(flowToggle, flowGroup, 'rai.sidebar.chatflow.open');
+  const createButton = document.getElementById('createConversationFolderButton');
+  if (createButton && !createButton.dataset.bound) { createButton.dataset.bound = 'true'; createButton.addEventListener('click', createConversationFolder); }
 }
 
 function captureSessionsScrollState(container) {
@@ -14979,6 +17058,74 @@ function restoreSessionsScrollState(container, state) {
   scrollContainer.scrollTop = Math.min(Math.max(0, anchoredScrollTop), anchoredMax);
 }
 
+let sessionMenuSequence = 0;
+
+function createSessionElement(session, { inFolder = false, pinned = false } = {}) {
+  const div = document.createElement('div');
+  const timestamp = formatSessionListTimestamp(session);
+  div.className = `session-item ${timestamp ? 'has-time' : ''} ${session.id === appState.currentSession?.id ? 'active' : ''}`;
+  div.setAttribute('data-session-id', session.id);
+  if (pinned) { div.draggable = true; div.tabIndex = 0; }
+  const menuId = `session-menu-${String(session.id).replace(/[^a-zA-Z0-9_-]/g, '')}-${++sessionMenuSequence}`;
+  div.innerHTML = `<div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
+  let suppressPinnedClickUntil = 0;
+  div.addEventListener('click', (event) => {
+    if (Date.now() < suppressPinnedClickUntil) return;
+    if (!event.target.closest('.session-menu-btn')) loadSession(session.id);
+  });
+  div.querySelector('.session-menu-btn').addEventListener('click', (event) => openSessionMenu(event, { ...session, pinned: pinned || Boolean(session.pinned) }));
+  if (pinned) {
+    div.addEventListener('dragstart', () => { div.classList.add('dragging'); });
+    div.addEventListener('dragend', () => { div.classList.remove('dragging'); });
+    div.addEventListener('dragover', (event) => event.preventDefault());
+    div.addEventListener('drop', (event) => { event.preventDefault(); const from = (appState.pinnedSessions || []).findIndex((row) => String(row.id) === String(document.querySelector('.session-item.dragging')?.dataset.sessionId)); const to = (appState.pinnedSessions || []).findIndex((row) => String(row.id) === String(session.id)); if (from >= 0 && to >= 0 && from !== to) { const [row] = appState.pinnedSessions.splice(from, 1); appState.pinnedSessions.splice(to, 0, row); renderSessions({ preserveScroll: true }); savePinnedOrder().catch(() => loadSessions(true)); } });
+    div.addEventListener('keydown', (event) => { if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); movePinnedSession(session.id, event.key === 'ArrowUp' ? -1 : 1); } });
+    let touchDrag = null;
+    const cancelTouchDrag = () => {
+      if (touchDrag?.timer) clearTimeout(touchDrag.timer);
+      div.classList.remove('touch-dragging');
+      touchDrag = null;
+    };
+    div.addEventListener('pointerdown', (event) => {
+      if (event.pointerType !== 'touch' || event.target.closest('button')) return;
+      const drag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, timer: null };
+      drag.timer = setTimeout(() => {
+        if (touchDrag !== drag) return;
+        drag.active = true;
+        div.classList.add('touch-dragging');
+        div.setPointerCapture?.(drag.pointerId);
+      }, 420);
+      touchDrag = drag;
+    });
+    div.addEventListener('pointermove', (event) => {
+      if (!touchDrag || event.pointerId !== touchDrag.pointerId) return;
+      if (!touchDrag.active && Math.hypot(event.clientX - touchDrag.startX, event.clientY - touchDrag.startY) > 12) return cancelTouchDrag();
+      if (touchDrag.active) event.preventDefault();
+    }, { passive: false });
+    div.addEventListener('pointerup', (event) => {
+      if (!touchDrag || event.pointerId !== touchDrag.pointerId) return;
+      const active = touchDrag.active;
+      if (active) {
+        event.preventDefault();
+        suppressPinnedClickUntil = Date.now() + 500;
+        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.session-item[data-session-id]');
+        const from = (appState.pinnedSessions || []).findIndex((row) => String(row.id) === String(session.id));
+        const to = (appState.pinnedSessions || []).findIndex((row) => String(row.id) === String(target?.dataset.sessionId));
+        if (from >= 0 && to >= 0 && from !== to) {
+          const [row] = appState.pinnedSessions.splice(from, 1);
+          appState.pinnedSessions.splice(to, 0, row);
+          renderSessions({ preserveScroll: true });
+          savePinnedOrder().catch(() => loadSessions(true));
+        }
+      }
+      cancelTouchDrag();
+    }, { passive: false });
+    div.addEventListener('pointercancel', cancelTouchDrag);
+    div.addEventListener('contextmenu', (event) => { if (touchDrag?.active) event.preventDefault(); });
+  }
+  return div;
+}
+
 function renderSessions(options = {}) {
   const container = document.getElementById('sessionsContainer');
 
@@ -14992,6 +17139,7 @@ function renderSessions(options = {}) {
     : null;
 
   container.innerHTML = '';
+  initializeConversationSidebarControls();
 
   if (!appState.sessions || appState.sessions.length === 0) {
     if (appState.sessionsPagination.isLoading) {
@@ -15007,7 +17155,14 @@ function renderSessions(options = {}) {
     return;
   }
 
-  const isChinese = isChineseLanguage(appState.language);
+  const pinnedContainer = document.getElementById('pinnedSessionsContainer');
+  const pinnedSection = document.getElementById('pinnedSessionsSection');
+  if (pinnedContainer && pinnedSection) {
+    pinnedContainer.innerHTML = '';
+    const pinned = appState.pinnedSessions || [];
+    pinnedSection.hidden = pinned.length === 0;
+    pinned.forEach((session) => pinnedContainer.appendChild(createSessionElement(session, { pinned: true })));
+  }
 
   // 按更新时间降序排序（越新越上）
   const sorted = [...appState.sessions].sort((a, b) => {
@@ -15016,76 +17171,17 @@ function renderSessions(options = {}) {
     return tb - ta;
   });
 
-  // 按时间分组
-  const groups = [];
-  const groupMap = new Map();
+  let currentGroup = '';
   for (const session of sorted) {
-    const g = __raiSessionTimeGroup(session, isChinese);
-    if (!groupMap.has(g.key)) {
-      const group = { key: g.key, label: g.label, showTime: g.showTime, sessions: [] };
-      groupMap.set(g.key, group);
-      groups.push(group);
+    const group = getSessionDateGroup(session);
+    if (group.key !== currentGroup) {
+      const heading = document.createElement('div');
+      heading.className = 'session-date-group';
+      heading.textContent = group.label;
+      container.appendChild(heading);
+      currentGroup = group.key;
     }
-    groupMap.get(g.key).sessions.push(session);
-  }
-
-  // 渲染分组
-  for (const group of groups) {
-    const groupHeader = document.createElement('div');
-    groupHeader.className = 'session-group-header';
-    groupHeader.textContent = group.label;
-    container.appendChild(groupHeader);
-
-    for (const session of group.sessions) {
-      const div = document.createElement('div');
-      div.className = `session-item ${session.id === appState.currentSession?.id ? 'active' : ''}${group.showTime ? ' has-time' : ''}`;
-      div.setAttribute('data-session-id', session.id);
-      const displayTitle = getSessionDisplayTitle(session);
-      const previewText = stripAskUserBlocksForStreaming(stripTrailingTitleMarker(session.last_message || '')).replace(/\s+/g, ' ').trim();
-
-      const attachments = parseSessionAttachments(session);
-      let attachmentsHtml = '';
-      if (attachments.length > 0) {
-        const previews = attachments.map(att => renderSessionAttachmentPreview(att)).join('');
-        attachmentsHtml = `<div class="session-attachments">${previews}</div>`;
-      }
-
-      let timeHtml = '';
-      if (group.showTime) {
-        const updated = new Date(session.updated_at || session.created_at || Date.now());
-        const hh = String(updated.getHours()).padStart(2, '0');
-        const mm = String(updated.getMinutes()).padStart(2, '0');
-        timeHtml = `<span class="session-time">${hh}:${mm}</span>`;
-      }
-
-      div.innerHTML = `
-            <div class="session-title">${escapeHtml(displayTitle)}</div>
-            <div class="session-preview">${escapeHtml(previewText ? `${previewText.substring(0, 50)}...` : '')}</div>
-            ${timeHtml}
-            ${attachmentsHtml}
-            <button class="session-delete-btn" type="button">
-              ${getSvgIcon('close', 'material-symbols-outlined', 24)}
-            </button>
-          `;
-
-      div.addEventListener('click', function (e) {
-        if (!e.target.closest('.session-delete-btn')) {
-          const sid = this.getAttribute('data-session-id');
-          if (sid) loadSession(sid);
-        }
-      });
-
-      const deleteBtn = div.querySelector('.session-delete-btn');
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          const sid = div.getAttribute('data-session-id');
-          if (sid) deleteSession(e, sid);
-        });
-      }
-
-      container.appendChild(div);
-    }
+    container.appendChild(createSessionElement(session));
   }
 
   // 添加加载指示器（如果还有更多数据）
@@ -15232,6 +17328,11 @@ async function sendMessage(message = null, options = {}) {
 
   const providedMessage = message !== null && message !== undefined ? String(message).trim() : '';
   const messageText = providedMessage || input.value.trim();
+  const immediateTitleSource = messageText
+    || currentAttachment?.originalName
+    || currentAttachment?.fileName
+    || message;
+  const immediateConversationTitle = deriveImmediateConversationTitleFromUserMessage(immediateTitleSource);
 
   // 允许只发送附件（无文字内容）
   if (!messageText && !currentAttachment) return;
@@ -15243,7 +17344,12 @@ async function sendMessage(message = null, options = {}) {
   }
 
   if (!appState.currentSession && appState.currentSessionMemoryMode !== 'classic-temp') {
-    const created = await createNewSession({ focus: false, preserveInternetMode: true });
+    const created = await createNewSession({
+      focus: false,
+      preserveComposerMode: true,
+      preserveInternetMode: true,
+      initialTitle: immediateConversationTitle
+    });
     if (!created || !appState.currentSession) return;
   }
 
@@ -15268,11 +17374,7 @@ async function sendMessage(message = null, options = {}) {
   }
 
 	  // 构建带附件的用户消息
-	  const immediateTitleSource = messageText
-	    || currentAttachment?.originalName
-	    || currentAttachment?.fileName
-	    || finalMessageContent;
-	  syncCurrentSessionTitleNow(deriveImmediateConversationTitleFromUserMessage(immediateTitleSource));
+	  syncCurrentSessionTitleNow(immediateConversationTitle || deriveImmediateConversationTitleFromUserMessage(finalMessageContent));
 
 	  const userMsg = {
 	    role: 'user',
@@ -15291,7 +17393,12 @@ async function sendMessage(message = null, options = {}) {
       fileId: currentAttachment.fileId || null,
       filePath: currentAttachment.filePath || null
     }];
-    console.log(` 消息包含附件: ${currentAttachment.type} - ${currentAttachment.fileName} (metadata mode)`);
+    console.log(' 消息包含附件', {
+      attachmentType: currentAttachment.type,
+      filenameLength: String(currentAttachment.fileName || '').length,
+      bytes: Number(currentAttachment.size) || 0,
+      metadataMode: true
+    });
   }
 
   appState.messages.push(userMsg);
@@ -15328,10 +17435,20 @@ async function sendMessage(message = null, options = {}) {
   }
   if (stopBtn) stopBtn.style.display = 'flex';
 
+  const streamSessionId = String(appState.currentSession?.id || '');
+  const streamNavigationGeneration = appState.sessionNavigationGeneration;
+  const isActiveStreamSession = () => (
+    streamNavigationGeneration === appState.sessionNavigationGeneration &&
+    streamSessionId === String(appState.currentSession?.id || '')
+  );
+  let streamRequestId = '';
   appState.isStreaming = true;
 
   const aiMsgDiv = document.createElement('div');
   aiMsgDiv.className = 'message assistant';
+  armMessageEntranceAnimation(aiMsgDiv);
+  aiMsgDiv.dataset.raiStreamActive = '1';
+  aiMsgDiv.dataset.raiMessageKey = `active-stream:${streamSessionId}:${Date.now()}`;
   const thinkingLabelText = '';
 
   // 根据当前模式确定初始加载状态文本
@@ -15943,8 +18060,8 @@ async function sendMessage(message = null, options = {}) {
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
     const roleMap = isChineseLanguage(appState.language)
-      ? { master: '主控', judge: '主控校验', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '校验', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek Flash', mimo: 'Mimo Code', nemotron: 'Nemotron 3 Ultra' }
-      : { master: 'Master', judge: 'Judge', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Verifier', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek Flash', mimo: 'Mimo Code', nemotron: 'Nemotron 3 Ultra' };
+      ? { master: '主控', judge: '主控质量复核', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '启发式质量复核', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek v4', nemotron: 'Nemotron 3 Ultra' }
+      : { master: 'Master', judge: 'Master Quality Review', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Heuristic Quality Review', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek v4', nemotron: 'Nemotron 3 Ultra' };
     return roleMap[role] || role;
   };
 
@@ -16006,6 +18123,12 @@ async function sendMessage(message = null, options = {}) {
     return visible;
   }
 
+  try {
+    await ensureCurrentSessionPromptIdentity();
+  } catch (error) {
+    showToast(error.message || (isChineseLanguage(appState.language) ? '无法锁定会话模型提示词' : 'Could not lock the session model prompt'));
+    return;
+  }
   const effectiveSystemPrompt = isNoMemoryConversationActive() ? '' : buildEffectiveSystemPrompt(appState.systemPrompt, { includeMemory: shouldUseMemoryPrompt() });
   const selectedDomainMode = appState.pendingDomainMode || null;
   appState.pendingDomainMode = null;
@@ -16067,7 +18190,11 @@ async function sendMessage(message = null, options = {}) {
       }
     }
 
-    appState.currentRequestId = response.headers.get('X-Request-ID');
+    streamRequestId = String(response.headers.get('X-Request-ID') || '').trim();
+    appState.currentRequestId = streamRequestId || null;
+    if (streamRequestId) {
+      aiMsgDiv.dataset.raiMessageKey = `request:${streamRequestId}:assistant`;
+    }
 
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status}`;
@@ -16131,10 +18258,11 @@ async function sendMessage(message = null, options = {}) {
     let charRenderTimer = null;  // 渲染定时器
     let isCharRendering = false;  // 渲染状态
     let displayedContent = '';  // 已显示的内容
+    let lastStreamingRenderSignature = '';
     let lastMarkdownRender = 0;  // 上次 Markdown 渲染时间
     let lastMermaidRender = 0;  // 上次 Mermaid 渲染时间
-    const CHAR_RENDER_INTERVAL = 12;  // 字符渲染间隔 (ms)
-    const MARKDOWN_RENDER_INTERVAL = 700;  // Markdown 渲染间隔 (ms) - 足够让动画可见
+    const CHAR_RENDER_INTERVAL = 16;  // 每帧批量排空，避免完成时积压大量字符
+    const MARKDOWN_RENDER_INTERVAL = 80;  // 让最后一帧在完成事件前稳定为最终 Markdown
     const MERMAID_RENDER_INTERVAL = 500;  //  Mermaid 渲染间隔 (ms) - 更快以实现实时效果
     const MAX_ANIMATED_CHARS = 5;  // 最多同时动画的字符数
 
@@ -16161,6 +18289,7 @@ async function sendMessage(message = null, options = {}) {
       html = html.replace(
         /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/gi,
         (match, codeContent) => {
+          if (!MERMAID_RENDERING_ENABLED) return match;
           const currentId = diagramCount++;
 
           // 解码 HTML 实体
@@ -16191,12 +18320,17 @@ async function sendMessage(message = null, options = {}) {
         }
       );
 
-      streamingEl.innerHTML = html;
-      hydrateRenderedImages(streamingEl);
-      if (streamingAskUserResult.prompts.length > 0) {
-        streamingAskUserResult.prompts.forEach((prompt) => {
-          streamingEl.appendChild(createAskUserCard(prompt));
-        });
+      const renderSignature = `${html}\u0000${JSON.stringify(streamingAskUserResult.prompts)}`;
+      const contentChanged = renderSignature !== lastStreamingRenderSignature;
+      if (contentChanged) {
+        streamingEl.innerHTML = html;
+        hydrateRenderedImages(streamingEl);
+        if (streamingAskUserResult.prompts.length > 0) {
+          streamingAskUserResult.prompts.forEach((prompt) => {
+            streamingEl.appendChild(createAskUserCard(prompt));
+          });
+        }
+        lastStreamingRenderSignature = renderSignature;
       }
       hydrateStreamingMermaidCache();
       applyCharAnimations(streamingEl);
@@ -16212,6 +18346,7 @@ async function sendMessage(message = null, options = {}) {
       processCodeBlocksStreaming(streamingEl);
 
       scrollToBottom();
+      return contentChanged;
     }
 
     function hydrateStreamingMermaidCache() {
@@ -16234,7 +18369,7 @@ async function sendMessage(message = null, options = {}) {
 
     //  多图防抖动：查找内联 Mermaid 容器并异步渲染
     async function tryRenderMermaidLive() {
-      if (typeof mermaid === 'undefined' || !streamingEl) return;
+      if (!MERMAID_RENDERING_ENABLED || typeof mermaid === 'undefined' || !streamingEl) return;
 
       // 查找所有内联的 Mermaid 包装容器
       const wrappers = streamingEl.querySelectorAll('.mermaid-inline-wrapper');
@@ -16296,9 +18431,9 @@ async function sendMessage(message = null, options = {}) {
     // 字符级渲染消费者
     function processCharQueue() {
       if (charRenderQueue.length > 0) {
-        // 批量处理队列中的字符
-        const char = charRenderQueue.shift();
-        displayedContent += char;
+        // 每帧至少排空一半积压，网络流结束时不会突然补齐大段正文。
+        const batchSize = Math.max(1, Math.ceil(charRenderQueue.length / 2));
+        displayedContent += charRenderQueue.splice(0, batchSize).join('');
 
         // 节流 Markdown 渲染：每 100ms 渲染一次
         const now = Date.now();
@@ -16324,6 +18459,10 @@ async function sendMessage(message = null, options = {}) {
         charRenderTimer = null;
       }
       isCharRendering = false;
+      if (charRenderQueue.length > 0) {
+        displayedContent += charRenderQueue.join('');
+        charRenderQueue = [];
+      }
       // 最终渲染确保 Markdown 完整（包含 citations 和 Mermaid）
       if (displayedContent && streamingEl) {
         //  修复：使用 renderStreamingContent 保持 Mermaid 内联渲染逻辑一致
@@ -16501,15 +18640,15 @@ async function sendMessage(message = null, options = {}) {
           }
           else if (parsed.type === 'title') {
             // 处理标题更新
-            if (parsed.title && appState.currentSession) {
+            if (parsed.title && isActiveStreamSession()) {
               appState.currentSession.title = parsed.title;
-              console.log(` 会话标题已更新: "${parsed.title}"`);
+              console.log(` 会话标题已更新: length=${String(parsed.title || '').length}`);
               // 立即更新侧边栏（不等待服务器往返）
-              updateSessionInList(appState.currentSession.id, { title: parsed.title });
+              updateSessionInList(streamSessionId, { title: parsed.title });
 
               // 新增：如果处于 ChatFlow iframe 模式，同步标题给父窗口
               if (isChatFlowIframeMode) {
-                console.log(' 同步标题给 ChatFlow:', parsed.title);
+                console.log(` 同步标题给 ChatFlow: length=${String(parsed.title || '').length}`);
                 window.parent.postMessage({
                   action: 'update-flow-title',
                   title: parsed.title
@@ -16533,17 +18672,17 @@ async function sendMessage(message = null, options = {}) {
             }
           }
 	          else if (parsed.type === 'points_info') {
-	            handlePointsInfoEvent(parsed, { requestId: appState.currentRequestId });
+	            handlePointsInfoEvent(parsed, { requestId: streamRequestId });
 	          }
               else if (parsed.type === 'routing_notice') {
-                handleRoutingNoticeEvent(parsed, { requestId: appState.currentRequestId });
+                handleRoutingNoticeEvent(parsed, { requestId: streamRequestId });
               }
           // 新增：处理搜索来源
           else if (parsed.type === 'sources') {
             if (parsed.sources && Array.isArray(parsed.sources)) {
               currentSources = mergeAndReindexSources(currentSources, parsed.sources);
               aiMsg.sources = currentSources;
-              console.log(` 收到 ${currentSources.length} 个搜索来源:`, currentSources.map(s => s.title));
+              console.log(` 收到 ${currentSources.length} 个搜索来源`);
               addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `来源更新: ${currentSources.length} 条`
                 : `Sources updated: ${currentSources.length}`);
@@ -16710,24 +18849,28 @@ async function sendMessage(message = null, options = {}) {
             const contradictions = parsed.metrics?.contradictionCount ?? '-';
             const stopRule = parsed.metrics?.stopRule || '';
             if (stopRule === 'master_decides') {
-              updateStepStatus(stepToolDecision, parsed.pass ? 'done' : 'running', parsed.detail || (isChineseLanguage(appState.language)
+              const consensusDecision = parsed.detail || (isChineseLanguage(appState.language)
                 ? (parsed.pass ? '主控判断无需继续讨论' : '主控判断继续讨论')
-                : (parsed.pass ? 'Master decided to answer' : 'Master requested another round')));
+                : (parsed.pass ? 'Master decided to answer' : 'Master requested another round'));
+              const consensusBoundary = isChineseLanguage(appState.language)
+                ? '（模型共识复核，不构成独立事实验证）'
+                : ' (model consensus review, not independent fact verification)';
+              updateStepStatus(stepToolDecision, parsed.pass ? 'done' : 'running', `${consensusDecision}${consensusBoundary}`);
               updateStepStatus(stepProcessTrace, parsed.pass ? 'done' : 'running', isChineseLanguage(appState.language)
                 ? `已完成 ${coverage} 个模型发言`
                 : `${coverage} model turns completed`);
-              addProcessTraceItem('agent', parsed.detail || (isChineseLanguage(appState.language) ? '主控完成研究判定' : 'Master made research decision'));
+              addProcessTraceItem('agent', `${consensusDecision}${consensusBoundary}`);
               continue;
             }
             updateStepStatus(stepToolDecision, parsed.pass ? 'done' : 'running', isChineseLanguage(appState.language)
-              ? (parsed.pass ? '主控质量检查通过' : '主控要求继续讨论')
-              : (parsed.pass ? 'Master quality check passed' : 'Master requested more discussion'));
+              ? (parsed.pass ? '启发式质量复核通过（不代表事实已被独立证实）' : '启发式复核要求继续讨论')
+              : (parsed.pass ? 'Heuristic quality review passed (not independent fact verification)' : 'Heuristic review requested more discussion'));
             updateStepStatus(stepProcessTrace, parsed.pass ? 'done' : 'running', isChineseLanguage(appState.language)
               ? `覆盖 ${coverage}，冲突 ${contradictions}`
               : `Coverage ${coverage}, contradictions ${contradictions}`);
             addProcessTraceItem('agent', isChineseLanguage(appState.language)
-              ? `质量门控: ${parsed.pass ? '通过' : '待改进'} (coverage=${coverage}, contradictions=${contradictions})`
-              : `Quality gate: ${parsed.pass ? 'pass' : 'pending'} (coverage=${coverage}, contradictions=${contradictions})`);
+              ? `启发式质量复核: ${parsed.pass ? '通过' : '待改进'} (coverage=${coverage}, contradictions=${contradictions})`
+              : `Heuristic quality review: ${parsed.pass ? 'pass' : 'pending'} (coverage=${coverage}, contradictions=${contradictions})`);
           }
           else if (parsed.type === 'agent_retry') {
             agentRetryCount = parsed.round || (agentRetryCount + 1);
@@ -16838,6 +18981,11 @@ async function sendMessage(message = null, options = {}) {
       .replace(/<\|[^|]+\|>/g, '')
       .replace(/functions\.\w+:\d+/g, '')
       .trim();
+    if (streamingEl && cleanContent) {
+      displayedContent = cleanContent;
+      charRenderQueue = [];
+      renderStreamingContent();
+    }
 
     const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
       stepId: t.stepId,
@@ -16884,6 +19032,7 @@ async function sendMessage(message = null, options = {}) {
     const aiMsg = {
       role: 'assistant',
       content: cleanContent,
+      request_id: streamRequestId || null,
       reasoning_content: finalReasoningContent || null,
       model: appState.lastModelUsed || requestConfig.model,
       enable_search: appState.internetMode,
@@ -16892,15 +19041,22 @@ async function sendMessage(message = null, options = {}) {
       sources: currentSources.length > 0 ? currentSources : null,  // 新增：存储来源
       created_at: new Date().toISOString()
     };
-    appState.messages.push(aiMsg);
-
-    // 重新渲染所有消息以显示元信息和复制按钮
-    renderMessages();
+    if (
+      String(appState.currentSession?.id || '') === streamSessionId &&
+      streamNavigationGeneration === appState.sessionNavigationGeneration
+    ) {
+      appState.messages.push(aiMsg);
+      finishMessageNodeInPlace(aiMsgDiv, aiMsg, {
+        sessionId: streamSessionId,
+        generation: streamNavigationGeneration
+      });
+    }
 
     await loadSessions();
 
   } catch (error) {
     console.error(' 发送消息错误:', error);
+    if (aiMsgDiv?.isConnected) aiMsgDiv.remove();
     const message = error?.message || (isChineseLanguage(appState.language)
       ? '发送失败,请检查网络连接'
       : 'Send failed, check network');
@@ -16915,7 +19071,9 @@ async function sendMessage(message = null, options = {}) {
     }
     if (stopBtn) stopBtn.style.display = 'none';
     appState.isStreaming = false;
-    appState.currentRequestId = null;
+    if (!streamRequestId || appState.currentRequestId === streamRequestId) {
+      appState.currentRequestId = null;
+    }
     appState.activeResearch = null;
     if (typeof signalReplyReady === 'function') signalReplyReady();
 
@@ -16925,18 +19083,19 @@ async function sendMessage(message = null, options = {}) {
     // 修复：在流式传输结束后处理标题
     // 提取标题 <<<标题>>> - 匹配回复末尾的三角括号内容
     const fallbackTitle = extractTrailingTitleMarker(fullContent).title;
-    if (fallbackTitle) {
+    const streamSessionStillCurrent = isActiveStreamSession();
+    if (fallbackTitle && streamSessionStillCurrent) {
       const newTitle = fallbackTitle;
-      console.log(` 检测到新标题: "${newTitle}"`);
+      console.log(` 检测到新标题: length=${String(newTitle).length}`);
 
-      if (appState.currentSession) {
+      if (appState.currentSession && streamSessionId) {
         // 1. 更新本地状态
         appState.currentSession.title = newTitle;
         // 立即更新侧边栏
-        updateSessionInList(appState.currentSession.id, { title: newTitle });
+        updateSessionInList(streamSessionId, { title: newTitle });
 
         // 2. 更新服务器
-        fetch(`${API_BASE}/sessions/${appState.currentSession.id}`, {
+        fetch(`${API_BASE}/sessions/${encodeURIComponent(streamSessionId)}`, {
           method: 'PUT',
           headers: {
             'Authorization': `Bearer ${appState.token}`,
@@ -17318,14 +19477,14 @@ function handleFileSelected(event) {
   }
 
   const file = files[0];
-  console.log(` 选中文件: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+  console.log(` 选中文件: type=${file.type || 'unknown'}, bytes=${file.size}`);
 
   // 文件类型验证
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'text/plain'];
   if (!allowedTypes.includes(file.type)) {
     const msg = isChineseLanguage(appState.language)
-      ? `不支持的文件类型: ${file.type}\n支持的类型: 图片(JPG, PNG, GIF, WebP), PDF, 文本文件`
-      : `Unsupported file type: ${file.type}\nSupported: Images (JPG, PNG, GIF, WebP), PDF, Text`;
+      ? `不支持的文件类型: ${file.type}\n支持的类型: 图片(JPG, PNG, GIF, WebP), 文本文件`
+      : `Unsupported file type: ${file.type}\nSupported: Images (JPG, PNG, GIF, WebP), Text`;
     alert(msg);
     return;
   }
@@ -17393,12 +19552,12 @@ function setOnboardingCompleted(done = true, user = appState.user) {
 }
 
 async function enterAuthenticatedApp(data) {
-  appState.token = data.token;
+  invalidateUserAuthAsyncWork();
+  storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
   appState.user = data.user;
-  localStorage.setItem(RAI_TOKEN_KEY, data.token);
 
   showApp();
-  await loadUserData();
+  await loadUserData(null, { authContext: captureUserAuthContext() });
 
   if (data.isNewUser && !hasCompletedOnboarding(data.user)) {
     showOnboarding(() => {
@@ -17485,37 +19644,54 @@ function handleOnboardingLanguageChoice(answer) {
 
 
 
-async function verifyToken() {
-  try {
-    const response = await fetch(`${API_BASE}/auth/verify`, {
-      headers: { 'Authorization': `Bearer ${appState.token}` }
-    });
+async function verifyToken({ allowRefresh = true } = {}) {
+  let refreshAttempted = !allowRefresh;
 
-    const data = await response.json();
+  while (appState.token) {
+    const context = captureUserAuthContext();
+    const controller = new AbortController();
+    const untrack = trackUserAuthRequest(controller);
+    try {
+      const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
+        headers: { Authorization: `Bearer ${context.token}` },
+        credentials: 'include',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      const data = await response.json().catch(() => ({}));
 
-    if (data.success) {
-      appState.user = data.user;
-      showApp();
-      await loadUserData();
-      return true;
-    } else {
-      localStorage.removeItem('rai_token');
-      appState.token = null;
+      if (!isUserAuthContextCurrent(context)) return false;
+      if (response.ok && isProfileBoundToAuthContext(data, context)) {
+        scheduleUserAccessTokenRefresh();
+        showApp();
+        return Boolean(await loadUserData(data, { authContext: context }));
+      }
+      if (response.status !== 401 && response.status !== 403) return false;
+    } catch (error) {
+      console.warn(' 当前 access token 验证未完成:', error?.message || error);
       return false;
+    } finally {
+      untrack();
     }
-  } catch (error) {
-    console.error(' 验证token失败:', error);
-    localStorage.removeItem('rai_token');
-    appState.token = null;
-    return false;
+
+    if (!refreshAttempted) {
+      refreshAttempted = true;
+      if (await refreshUserAccessToken()) continue;
+    }
+    break;
   }
+
+  // Only explicit authentication failures remove local state. A timeout, 429 or
+  // server error must retain the neutral shell for retry.
+  clearUserAccessToken();
+  return false;
 }
 
 function clearAuthenticatedAppState() {
+  abortConversationAsyncWork();
+  window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);
   window.RAISelectionExplainer?.clearUserWorkspace?.(appState.user?.id);
-  localStorage.removeItem(LEGACY_RAUTH_TOKEN_KEY);
-  localStorage.removeItem(RAI_TOKEN_KEY);
-  appState.token = null;
+  clearUserAccessToken();
   appState.user = null;
   appState.sessions = [];
   appState.messages = [];
@@ -17525,7 +19701,12 @@ function clearAuthenticatedAppState() {
   appState.passkeysLoading = false;
   appState.passkeysError = '';
   appState.passkeyActionPending = '';
+  appState.securityDevices = { active: [], history: [] };
+  appState.securityDevicesLoading = false;
+  appState.securityDevicesError = '';
+  appState.securityLogoutAllPending = false;
   appState.internetMode = true;
+  appState.confirmedCacheUserId = null;
 }
 
 function redirectToLoggedOutAuth(extraParams = {}) {
@@ -17538,14 +19719,46 @@ function redirectToLoggedOutAuth(extraParams = {}) {
   window.location.replace(url.toString());
 }
 
-function handleLogout() {
+async function handleLogout() {
   const confirmMsg = isChineseLanguage(appState.language) ? '确定要登出吗?' : 'Are you sure you want to log out?';
-  if (confirm(confirmMsg)) {
-    if (typeof closeSettings === 'function') {
-      closeSettings({ skipHistory: true });
+  if (!confirm(confirmMsg) || appState.logoutPending) return;
+  appState.logoutPending = true;
+  if (typeof closeSettings === 'function') {
+    closeSettings({ skipHistory: true });
+  }
+
+  const postServerLogout = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      return await RAI_SESSION_FETCH(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${appState.token}` },
+        credentials: 'include',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeout);
     }
+  };
+
+  try {
+    if (!appState.token || getUserAccessTokenExpiryMs() <= Date.now()) {
+      await refreshUserAccessToken();
+    }
+    if (appState.token) {
+      const response = await postServerLogout();
+      if (response.status === 401 && await refreshUserAccessToken()) {
+        await postServerLogout();
+      }
+    }
+  } catch (error) {
+    console.warn(' 服务端登出未确认，已清除本地会话。');
+  } finally {
     clearAuthenticatedAppState();
     redirectToLoggedOutAuth();
+    appState.logoutPending = false;
   }
 }
 
@@ -17675,6 +19888,22 @@ function clearTwoFactorLoginChallenge() {
   updatePasskeyLoginEntry();
 }
 
+function configureAuthSecondFactorInput() {
+  const input = document.getElementById('authTwoFactorCode');
+  if (input) {
+    input.inputMode = 'text';
+    input.maxLength = 14;
+    input.removeAttribute('pattern');
+    input.placeholder = isChineseLanguage(appState.language) ? '6 位验证码或恢复码' : '6-digit or recovery code';
+  }
+  const hint = document.querySelector('#twoFactorStep .auth-two-factor-hint');
+  if (hint) {
+    hint.textContent = isChineseLanguage(appState.language)
+      ? '输入 Authenticator 当前 6 位验证码，或一个未使用的恢复码。'
+      : 'Enter the current 6-digit Authenticator code or one unused recovery code.';
+  }
+}
+
 function clearPendingEmailAuth({ clearCode = true } = {}) {
   appState.pendingEmailAuth = null;
   if (clearCode) {
@@ -17746,7 +19975,14 @@ function setAuthLoginMethod(method) {
 }
 
 function updateAuthMethodUI() {
+  configureAuthSecondFactorInput();
   const isLogin = appState.authMode === 'login';
+  const passwordInput = document.getElementById('authPassword');
+  if (passwordInput) {
+    passwordInput.placeholder = isLogin
+      ? (isChineseLanguage(appState.language) ? '输入密码' : 'Enter password')
+      : (isChineseLanguage(appState.language) ? '至少 8 位字符' : 'At least 8 characters');
+  }
   const methodStep = document.getElementById('authLoginMethodStep');
   const passwordBtn = document.getElementById('authPasswordMethodBtn');
   const codeBtn = document.getElementById('authEmailCodeMethodBtn');
@@ -17989,7 +20225,7 @@ function showForgotPasswordHelp() {
 
   overlay.innerHTML = `
     <div class="forgot-password-card" role="dialog" aria-modal="true" aria-labelledby="forgotPasswordTitle">
-      <button type="button" class="forgot-password-close" onclick="closeForgotPasswordHelp()" aria-label="${isZh ? '关闭' : 'Close'}">&times;</button>
+      <button type="button" class="forgot-password-close" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeForgotPasswordHelp()" aria-label="${isZh ? '关闭' : 'Close'}">&times;</button>
       <div class="forgot-password-kicker">${escapeHtml(BRAND_SHORT_NAME)}</div>
       <h3 id="forgotPasswordTitle">${escapeHtml(i18nText('forgot-password-title', isZh ? '找回 RAI 密码' : 'Recover your RAI password'))}</h3>
       <p>${escapeHtml(i18nText('forgot-password-desc', isZh ? '输入注册邮箱，RAI 会发送验证码。验证通过后即可设置新密码。' : 'Enter your email and RAI will send a code. After verification, set a new password.'))}</p>
@@ -18003,7 +20239,7 @@ function showForgotPasswordHelp() {
       </div>
       <div class="forgot-password-email">
         <span>${escapeHtml(i18nText('password-new-label', isZh ? '新密码' : 'New password'))}</span>
-        <input type="password" class="form-input" id="forgotPasswordNewPassword" placeholder="${isZh ? '至少6位字符' : 'At least 6 characters'}" autocomplete="new-password">
+        <input type="password" class="form-input" id="forgotPasswordNewPassword" placeholder="${isZh ? '至少 8 位字符' : 'At least 8 characters'}" autocomplete="new-password">
       </div>
       <div class="forgot-password-email">
         <span>${escapeHtml(i18nText('password-confirm-label', isZh ? '确认新密码' : 'Confirm new password'))}</span>
@@ -18011,9 +20247,9 @@ function showForgotPasswordHelp() {
       </div>
       <div class="admin-login-error" id="forgotPasswordStatus"></div>
       <div class="forgot-password-actions">
-        <button type="button" class="forgot-password-primary" id="forgotPasswordSendCodeBtn" onclick="requestPasswordResetCode()">${escapeHtml(i18nText('email-code-send-btn', isZh ? '发送验证码' : 'Send code'))}</button>
-        <button type="button" class="forgot-password-primary" id="forgotPasswordConfirmBtn" onclick="confirmPasswordResetWithCode()">${escapeHtml(i18nText('forgot-password-confirm', isZh ? '重置密码' : 'Reset password'))}</button>
-        <button type="button" class="forgot-password-secondary" onclick="closeForgotPasswordHelp()">${escapeHtml(i18nText('forgot-password-close', isZh ? '稍后处理' : 'Not now'))}</button>
+        <button type="button" class="forgot-password-primary" id="forgotPasswordSendCodeBtn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="requestPasswordResetCode()">${escapeHtml(i18nText('email-code-send-btn', isZh ? '发送验证码' : 'Send code'))}</button>
+        <button type="button" class="forgot-password-primary" id="forgotPasswordConfirmBtn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="confirmPasswordResetWithCode()">${escapeHtml(i18nText('forgot-password-confirm', isZh ? '重置密码' : 'Reset password'))}</button>
+        <button type="button" class="forgot-password-secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeForgotPasswordHelp()">${escapeHtml(i18nText('forgot-password-close', isZh ? '稍后处理' : 'Not now'))}</button>
       </div>
     </div>
   `;
@@ -18084,8 +20320,8 @@ async function confirmPasswordResetWithCode() {
     setForgotPasswordStatus(i18nText('email-code-required', isZh ? '请输入 10-16 位邮箱验证码' : 'Enter the 10-16 character email code'), true);
     return;
   }
-  if (newPassword.length < 6) {
-    setForgotPasswordStatus(i18nText('password-too-short-error', isZh ? '新密码至少需要 6 位字符' : 'New password must be at least 6 characters'), true);
+  if (newPassword.length < USER_PASSWORD_MIN_LENGTH) {
+    setForgotPasswordStatus(i18nText('password-too-short-error', isZh ? '新密码至少需要 8 位字符' : 'New password must be at least 8 characters'), true);
     return;
   }
   if (newPassword !== confirmPassword) {
@@ -18251,6 +20487,7 @@ function beginPendingEmailAuth({ purpose, email, message = '' }) {
 
 function beginPendingTwoFactor(twoFactorToken) {
   appState.pendingTwoFactorToken = twoFactorToken || '';
+  configureAuthSecondFactorInput();
   clearPendingEmailAuth({ clearCode: false });
   hideAuthStep('passwordStep');
   hideAuthStep('emailCodeStep');
@@ -18263,6 +20500,20 @@ function beginPendingTwoFactor(twoFactorToken) {
 
 async function handleAuthServerResponse(data) {
   const email = data?.email || getCurrentAuthEmail();
+  if (data?.code === 'password_upgrade_required' || data?.passwordUpgradeRequired === true) {
+    clearTwoFactorLoginChallenge();
+    clearPendingEmailAuth();
+    const passwordInput = document.getElementById('authPassword');
+    if (passwordInput) passwordInput.value = '';
+    showForgotPasswordHelp();
+    setForgotPasswordStatus(
+      isChineseLanguage(appState.language)
+        ? '这个账号的旧密码不再符合安全要求。请发送邮箱验证码并设置至少 8 位的新密码。'
+        : 'This account uses a legacy password that no longer meets the security policy. Send an email code and set a new password of at least 8 characters.',
+      false
+    );
+    return true;
+  }
   if (data?.requiresEmailVerification) {
     beginPendingEmailAuth({
       purpose: 'register',
@@ -18346,7 +20597,7 @@ async function resendAuthEmailCode() {
       btn.innerHTML = '<span class="loading"></span>';
     }
     if (appState.pendingEmailAuth?.purpose === 'register') {
-      if (!password || password.length < 6) {
+      if (!password || password.length < USER_PASSWORD_MIN_LENGTH) {
         throw new Error(isZh ? '请保留注册密码后重发验证码' : 'Keep the registration password to resend the code');
       }
 	      const response = await fetch(`${API_BASE}/auth/register/resend`, {
@@ -18380,7 +20631,7 @@ async function handleAuthSubmit() {
   const email = document.getElementById('authEmail')?.value.trim();
   const password = document.getElementById('authPassword')?.value;
   const username = document.getElementById('authUsername')?.value.trim();
-  const twoFactorCode = normalizeTwoFactorCode(document.getElementById('authTwoFactorCode')?.value);
+  const twoFactorCode = normalizeUserSecondFactorCode(document.getElementById('authTwoFactorCode')?.value);
   const emailCode = normalizeEmailCodeInput(document.getElementById('authEmailCode')?.value);
   const submitBtn = document.getElementById('authSubmitBtn');
 
@@ -18393,8 +20644,8 @@ async function handleAuthSubmit() {
     return;
   }
 
-  if (isPendingTwoFactorLogin && !/^\d{6}$/.test(twoFactorCode)) {
-    showAuthError(i18nText('two-factor-required', isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码' : 'Enter the 6-digit Authenticator code'));
+  if (isPendingTwoFactorLogin && !isValidUserSecondFactorCode(twoFactorCode)) {
+    showAuthError(isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码或恢复码' : 'Enter the 6-digit Authenticator code or a recovery code');
     return;
   }
 
@@ -18406,8 +20657,12 @@ async function handleAuthSubmit() {
   const needsPassword = !isPendingTwoFactorLogin
     && !isPendingEmailAuth
     && (appState.authMode === 'register' || appState.authLoginMethod !== 'email-code');
-  if (needsPassword && (!password || password.length < 6)) {
-    showAuthError(isChineseLanguage(appState.language) ? '密码至少6位字符' : 'Password must be at least 6 characters');
+  if (needsPassword && !password) {
+    showAuthError(isChineseLanguage(appState.language) ? '请输入密码' : 'Enter your password');
+    return;
+  }
+  if (appState.authMode === 'register' && password.length < USER_PASSWORD_MIN_LENGTH) {
+    showAuthError(isChineseLanguage(appState.language) ? '密码至少需要 8 位字符' : 'Password must be at least 8 characters');
     return;
   }
 
@@ -18417,8 +20672,8 @@ async function handleAuthSubmit() {
     && !isPendingTwoFactorLogin
     && !isPendingEmailAuth
     && appState.authTwoFactorRequired;
-  if (isUpfrontTwoFactorLogin && !/^\d{6}$/.test(twoFactorCode)) {
-    showAuthError(i18nText('two-factor-required', isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码' : 'Enter the 6-digit Authenticator code'));
+  if (isUpfrontTwoFactorLogin && !isValidUserSecondFactorCode(twoFactorCode)) {
+    showAuthError(isChineseLanguage(appState.language) ? '请输入 6 位 Authenticator 验证码或恢复码' : 'Enter the 6-digit Authenticator code or a recovery code');
     return;
   }
 
@@ -18501,6 +20756,8 @@ async function handleAuthSubmit() {
 }
 
 function showApp() {
+  appState.authState = 'authenticated';
+  document.documentElement.dataset.raiAuthState = 'authenticated';
   document.getElementById('authContainer').classList.remove('active');
   document.getElementById('appContainer').style.display = 'flex';
   focusEntryTextInput('app-screen', { delay: 80 });
@@ -18515,7 +20772,13 @@ function showApp() {
 }
 
 // ==================== 新用户引导 ====================
+let onboardingEventController = null;
+
 function showOnboarding(onDone) {
+  onboardingEventController?.abort();
+  const eventController = new AbortController();
+  onboardingEventController = eventController;
+  const eventOptions = { signal: eventController.signal };
   const overlay = document.getElementById('onboardingOverlay');
   const card = overlay?.querySelector('.onboarding-card');
   const steps = document.querySelectorAll('.onboarding-step');
@@ -18548,6 +20811,8 @@ function showOnboarding(onDone) {
   }
 
   function finish() {
+    eventController.abort();
+    if (onboardingEventController === eventController) onboardingEventController = null;
     appState.onboardingActive = false;
     overlay.style.display = 'none';
     document.body.style.overflow = '';
@@ -18555,21 +20820,21 @@ function showOnboarding(onDone) {
     focusEntryTextInput('onboarding-finished', { delay: 160 });
   }
 
-  skipBtn.onclick = finish;
-  startBtn.onclick = finish;
+  skipBtn.addEventListener('click', finish, eventOptions);
+  startBtn.addEventListener('click', finish, eventOptions);
 
-  nextBtn.onclick = () => {
+  nextBtn.addEventListener('click', () => {
     if (currentStep < totalSteps - 1) {
       goToStep(currentStep + 1);
     }
-  };
+  }, eventOptions);
 
   // 点击步骤指示器可直接跳转
   dots.forEach(dot => {
-    dot.onclick = () => {
-      const step = parseInt(dot.dataset.step);
+    dot.addEventListener('click', () => {
+      const step = Number.parseInt(dot.dataset.step, 10);
       goToStep(step);
-    };
+    }, eventOptions);
   });
 
   overlay.style.display = 'flex';
@@ -18589,24 +20854,45 @@ function replayOnboarding() {
 
 
 
-async function loadUserData() {
+async function loadUserData(profileInput = null, { authContext = captureUserAuthContext() } = {}) {
+  if (!isUserAuthContextCurrent(authContext)) return false;
   try {
     console.log(' 加载用户数据...');
+    const profile = profileInput || await (async () => {
+      const controller = new AbortController();
+      const untrack = trackUserAuthRequest(controller);
+      try {
+        const profileResponse = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
+          headers: { 'Authorization': `Bearer ${authContext.token}` },
+          credentials: 'include',
+          cache: 'no-store',
+          signal: controller.signal
+        });
+        if (!profileResponse.ok) throw new Error(`HTTP ${profileResponse.status}`);
+        const resolved = await profileResponse.json();
+        if (!isProfileBoundToAuthContext(resolved, authContext)) return null;
+        return resolved;
+      } finally {
+        untrack();
+      }
+    })();
+    if (!isProfileBoundToAuthContext(profile, authContext)) return false;
 
-    const profileResponse = await fetch(`${API_BASE}/user/profile`, {
-      headers: { 'Authorization': `Bearer ${appState.token}` }
-    });
-
-    if (!profileResponse.ok) {
-      throw new Error(`HTTP ${profileResponse.status}`);
+    const previousCacheUserId = String(appState.confirmedCacheUserId || '');
+    const nextProfileUserId = String(profile.id || appState.user?.id || '');
+    if (previousCacheUserId && nextProfileUserId && previousCacheUserId !== nextProfileUserId) {
+      abortConversationAsyncWork();
+      await window.RAIConversationCache?.clearCurrentAccount?.();
+      if (!isUserAuthContextCurrent(authContext)) return false;
+      appState.confirmedCacheUserId = null;
     }
 
-    const profile = await profileResponse.json();
+    if (!isUserAuthContextCurrent(authContext)) return false;
 
     const realEmail = profile.email || appState.user?.email || '';
     const displayName = profile.username || appState.user?.username || (realEmail ? realEmail.split('@')[0] : (isChineseLanguage(appState.language) ? '用户' : 'User'));
 
-    console.log(' 显示邮箱:', realEmail);
+    console.log(` 用户邮箱已加载: length=${String(realEmail).length}`);
 
 	    appState.user = {
 	      id: profile.id || appState.user?.id || null,
@@ -18634,11 +20920,7 @@ async function loadUserData() {
 
     //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
-      if (profile.default_model !== undefined) {
-        const rememberedModel = normalizeSelectedModelId(profile.default_model || 'auto');
-        appState.profileDefaultModel = MODELS[rememberedModel] && !isModelDisabledByAdmin(rememberedModel) ? rememberedModel : 'auto';
-        appState.selectedModel = appState.profileDefaultModel;
-      }
+      resetModelToSmart();
       if (profile.temperature !== undefined) appState.temperature = parseFloat(profile.temperature) || 0.7;
       if (profile.top_p !== undefined) appState.topP = parseFloat(profile.top_p) || 0.9;
       if (profile.max_tokens !== undefined) appState.maxTokens = parseInt(profile.max_tokens, 10) || 2000;
@@ -18671,7 +20953,7 @@ async function loadUserData() {
         appState.selectionExplanationDeleteMode = normalizeSelectionExplanationDeleteMode(profile.selection_explanation_delete_mode);
       }
       if (profile.font_preference !== undefined) {
-        applyFontPreference(profile.font_preference || 'rai');
+        applyFontPreference(profile.font_preference || 'system');
         persistLocalSettingsPatch({ fontPreference: appState.fontPreference });
       }
       if (typeof applyRuntimeBranding === 'function') applyRuntimeBranding();
@@ -18690,24 +20972,30 @@ async function loadUserData() {
       console.warn(' profile对象格式不正确');
     }
 
-    console.log(' 加载历史会话...');
-    await loadSessions();
-
-    if (appState.sessions && appState.sessions.length > 0) {
-      console.log(` 找到 ${appState.sessions.length} 个历史会话,自动加载最新会话`);
-      await loadSession(appState.sessions[0].id);
-    } else {
-      console.log(' 无历史会话,显示欢迎界面');
-      showWelcome();
-    }
+    if (!isUserAuthContextCurrent(authContext)) return false;
+    // Successful server profile resolution is the privacy boundary for IndexedDB.
+    appState.confirmedCacheUserId = appState.user.id;
+    await window.RAIConversationCache?.openForUser?.(appState.user.id);
+    if (!isUserAuthContextCurrent(authContext)) return false;
+    const conversationContext = captureConversationCacheContext();
+    if (!isConversationCacheContextCurrent(conversationContext)) return false;
+    await updateConversationCacheSettingsUI(conversationContext);
+    if (!isUserAuthContextCurrent(authContext)) return false;
+    await hydrateCachedConversationShell(conversationContext);
+    if (!isUserAuthContextCurrent(authContext)) return false;
+    showWelcome();
 
     console.log(' 用户数据加载完成');
 
     //  获取并显示会员状态 + 应用模型策略
-    await fetchUserMembership({ applyPolicy: true, initial: true });
+    await fetchUserMembership({ applyPolicy: true, initial: true, authContext });
+    if (!isUserAuthContextCurrent(authContext)) return false;
     updateUserAreaWithMembership();
     focusEntryTextInput('user-data-loaded', { delay: 120 });
+    syncConversationsAcrossDevices({ force: true }).catch(() => null);
+    return true;
   } catch (error) {
+    if (!isUserAuthContextCurrent(authContext) || error?.name === 'AbortError') return false;
     console.error(' 加载用户数据失败:', error);
     if (error.message.includes('500')) {
       console.warn(' 用户配置加载失败,使用默认配置继续');
@@ -18715,6 +21003,7 @@ async function loadUserData() {
     } else {
       alert((isChineseLanguage(appState.language) ? '加载失败: ' : 'Load failed: ') + error.message);
     }
+    return false;
   }
 }
 
@@ -18747,14 +21036,15 @@ async function loadSpaces() {
 
     spacesList.innerHTML = spaces.map(space => `
           <div class="space-item ${space.id === appState.currentSpaceId ? 'active' : ''}"
-               onclick="selectSpace('${space.id}')">
+               data-space-id="${escapeHtml(String(space.id))}"
+               data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="selectSpace(this.dataset.spaceId)">
             <div class="space-icon">${space.icon}</div>
             <div class="space-info">
               <div class="space-name">${space.name}</div>
               <div class="space-doc-count">${space.document_count || 0} ${isChineseLanguage(appState.language) ? '个文档' : 'docs'}</div>
             </div>
-            <div class="space-actions" onclick="event.stopPropagation()">
-              <button class="space-action-icon delete" onclick="deleteSpace('${space.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
+            <div class="space-actions" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation()">
+              <button class="space-action-icon delete" data-space-id="${escapeHtml(String(space.id))}" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="deleteSpace(this.dataset.spaceId)" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
                 ${getSvgIcon('delete', 'material-symbols-outlined', 24)}
               </button>
             </div>
@@ -18789,7 +21079,7 @@ async function createNewSpace() {
     if (!response.ok) throw new Error('创建空间失败');
 
     const { space } = await response.json();
-    console.log(' 空间创建成功:', space);
+    console.log(' 空间创建成功');
 
     // 重新加载空间列表
     await loadSpaces();
@@ -18807,9 +21097,7 @@ async function selectSpace(spaceId) {
   const spaceItems = document.querySelectorAll('.space-item');
   spaceItems.forEach(item => item.classList.remove('active'));
 
-  const selectedItem = Array.from(spaceItems).find(item =>
-    item.onclick.toString().includes(spaceId)
-  );
+  const selectedItem = Array.from(spaceItems).find((item) => item.dataset.spaceId === String(spaceId));
   if (selectedItem) selectedItem.classList.add('active');
 
   // 显示空间详情面板
@@ -18853,7 +21141,7 @@ async function loadDocuments(spaceId) {
               <div class="document-name" title="${doc.original_name}">${doc.original_name}</div>
               <div class="document-meta">${formatFileSize(doc.file_size)} • ${doc.embedding_status === 'completed' ? (isChineseLanguage(appState.language) ? '✓ 已索引' : '✓ Indexed') : (isChineseLanguage(appState.language) ? '处理中' : 'Processing')}</div>
             </div>
-            <button class="document-delete" onclick="deleteDocument('${spaceId}', '${doc.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
+            <button class="document-delete" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="deleteDocument('${spaceId}', '${doc.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
               ${getSvgIcon('delete', 'material-symbols-outlined', 24)}
             </button>
           </div>
@@ -19408,13 +21696,13 @@ function renderFlowsList(flows) {
 
   container.innerHTML = flows.map(flow => `
         <div class="flow-item ${chatFlowState.currentFlowId === flow.id ? 'active' : ''}" 
-             onclick="openFlow('${flow.id}')" data-flow-id="${flow.id}">
+             data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="openFlow('${flow.id}')" data-flow-id="${flow.id}">
           ${getSvgIcon('rai_logo_colored', 'flow-item-icon rai-flow-logo', 18)}
           <div class="flow-item-main">
             <div class="flow-item-title">${escapeHtml(flow.title)}</div>
             <div class="flow-item-preview">${escapeHtml(getFlowLastMessagePreview(flow))}</div>
           </div>
-          <button class="flow-item-delete" onclick="event.stopPropagation(); deleteFlow('${flow.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
+          <button class="flow-item-delete" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation(); deleteFlow('${flow.id}')" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
             </svg>
@@ -19440,7 +21728,7 @@ async function createNewFlow() {
     if (!response.ok) throw new Error('创建失败');
 
     const flow = await response.json();
-    console.log(' 创建 ChatFlow 成功:', flow.id);
+    console.log(' 创建 ChatFlow 成功');
 
     await loadFlowsList();
     await openFlow(flow.id);
@@ -19513,7 +21801,7 @@ async function openFlow(flowId) {
     updateChatFlowControlStates();
 
 
-    console.log(' 打开 ChatFlow:', flowId);
+    console.log(' 已打开 ChatFlow');
   } catch (error) {
     console.error(' 打开 ChatFlow 失败:', error);
     alert(isChineseLanguage(appState.language) ? '打开 ChatFlow 失败，请重试' : 'Failed to open ChatFlow, please retry');
@@ -19551,7 +21839,7 @@ async function deleteFlow(flowId) {
     }
 
     await loadFlowsList();
-    console.log(' 删除 ChatFlow 成功:', flowId);
+    console.log(' 删除 ChatFlow 成功');
   } catch (error) {
     console.error(' 删除 ChatFlow 失败:', error);
     alert(isChineseLanguage(appState.language) ? '删除 ChatFlow 失败，请重试' : 'Failed to delete ChatFlow, please retry');
@@ -20817,7 +23105,7 @@ function createCanvasNode(message, x, y, sourceReference = null) {
   renderEdges();
   saveFlowState();
 
-  console.log(' 创建节点:', nodeId);
+  console.log(' 已创建画布节点');
 }
 
 // 创建文本节点（从选中文本拖拽）
@@ -20849,7 +23137,7 @@ function createTextNode(text, x, y) {
   renderEdges();
   saveFlowState();
 
-  console.log(' 从选中文本创建节点:', nodeId);
+  console.log(' 已从选中文本创建画布节点');
   showToast(i18nText('canvas-added', isChineseLanguage(appState.language) ? '已添加到画布' : 'Added to canvas'));
 }
 
@@ -21378,7 +23666,7 @@ function createEdge(fromId, toId, label = '') {
   chatFlowState.edges.push(edge);
   renderEdges();
   saveFlowState();
-  console.log(' 创建连线:', edgeId);
+  console.log(' 已创建画布连线');
 }
 
 // 渲染所有边
@@ -21762,7 +24050,7 @@ async function exportAsImage(format) {
     const ctx = canvas.getContext('2d');
 
     const img = new Image();
-    img.onload = () => {
+    img.addEventListener('load', () => {
       ctx.fillStyle = '#1a1a1a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
@@ -21774,7 +24062,7 @@ async function exportAsImage(format) {
         a.click();
         URL.revokeObjectURL(url);
       });
-    };
+    }, { once: true });
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   }
 }
@@ -22169,10 +24457,15 @@ function initAutoSave() {
 // reset=true: 重新加载（初始化/刷新）
 // reset=false: 追加加载（滚动加载更多）
 async function loadSessions(reset = true, options = {}) {
-  // 如果正在加载，跳过
-  if (appState.sessionsPagination.isLoading) return;
+  const context = options.context || captureConversationCacheContext();
+  if (!isConversationCacheContextCurrent(context)) return false;
+  const activeRequest = appState.sessionsListRequest;
+  if (appState.sessionsPagination.isLoading) {
+    if (activeRequest && sameConversationCacheContext(activeRequest.context, context)) return false;
+    activeRequest?.controller?.abort?.();
+  }
   // 如果不是重置且没有更多数据，跳过
-  if (!reset && !appState.sessionsPagination.hasMore) return;
+  if (!reset && !appState.sessionsPagination.hasMore) return false;
 
   const previousSessions = Array.isArray(appState.sessions) ? [...appState.sessions] : [];
   const previousOffset = Number(appState.sessionsPagination.offset || 0);
@@ -22180,13 +24473,19 @@ async function loadSessions(reset = true, options = {}) {
   const previousSignature = getSessionListRenderSignature(
     previousSessions,
     previousHasMore,
-    appState.currentSession?.id
+    appState.currentSession?.id,
+    appState.pinnedSessions
   );
   const preservedCurrentSession = appState.currentSession ? { ...appState.currentSession } : null;
 
+  const controller = new AbortController();
+  const request = { context, controller };
+  appState.sessionsListController = controller;
+  appState.sessionsListRequest = request;
   appState.sessionsPagination.isLoading = true;
   let shouldFocusAfterRender = false;
   let shouldRender = true;
+  let stale = false;
 
   try {
     const pageLimit = Math.max(1, Number(appState.sessionsPagination.limit || 5));
@@ -22198,14 +24497,30 @@ async function loadSessions(reset = true, options = {}) {
       : pageLimit;
     const response = await fetch(
       `${API_BASE}/sessions?offset=${offset}&limit=${limit}`,
-      { headers: { 'Authorization': `Bearer ${appState.token}` } }
+      { headers: { 'Authorization': `Bearer ${context.token}` }, cache: 'no-store', signal: controller.signal }
     );
+
+    if (
+      appState.sessionsListRequest !== request ||
+      !isConversationCacheContextCurrent(context)
+    ) {
+      stale = true;
+      return false;
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
     const data = await response.json();
+    if (
+      appState.sessionsListRequest !== request ||
+      !isConversationCacheContextCurrent(context)
+    ) {
+      stale = true;
+      return false;
+    }
+    appState.pinnedSessions = Array.isArray(data.pinned) ? data.pinned : [];
 
     const fetchedSessions = Array.isArray(data.sessions) ? data.sessions : [];
     const incomingSessions = preserveLoadedWindow && loadedWindowSize < 100
@@ -22238,7 +24553,8 @@ async function loadSessions(reset = true, options = {}) {
     const nextSignature = getSessionListRenderSignature(
       appState.sessions,
       appState.sessionsPagination.hasMore,
-      appState.currentSession?.id
+      appState.currentSession?.id,
+      appState.pinnedSessions
     );
     shouldRender = options.skipRenderIfUnchanged !== true || nextSignature !== previousSignature;
 
@@ -22246,8 +24562,18 @@ async function loadSessions(reset = true, options = {}) {
     if (options.focusEmpty !== false && appState.messages.length === 0) {
       shouldFocusAfterRender = true;
     }
-
+    if (reset) loadConversationFolders(context).catch(() => null);
+    return true;
+	
   } catch (error) {
+    if (
+      error?.name === 'AbortError' ||
+      appState.sessionsListRequest !== request ||
+      !isConversationCacheContextCurrent(context)
+    ) {
+      stale = true;
+      return false;
+    }
     console.error(' 加载会话失败:', error);
     if (reset && options.clearOnError === true) {
       appState.sessions = [];
@@ -22261,16 +24587,22 @@ async function loadSessions(reset = true, options = {}) {
     const errorSignature = getSessionListRenderSignature(
       appState.sessions,
       appState.sessionsPagination.hasMore,
-      appState.currentSession?.id
+      appState.currentSession?.id,
+      appState.pinnedSessions
     );
     shouldRender = options.skipRenderIfUnchanged !== true || errorSignature !== previousSignature;
+    return false;
   } finally {
-    appState.sessionsPagination.isLoading = false;
-    if (shouldRender) {
-      renderSessions({ preserveScroll: options.preserveSidebarScroll === true });
-    }
-    if (shouldFocusAfterRender) {
-      focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
+    if (appState.sessionsListRequest === request) {
+      appState.sessionsListController = null;
+      appState.sessionsListRequest = null;
+      appState.sessionsPagination.isLoading = false;
+      if (!stale && isConversationCacheContextCurrent(context) && shouldRender) {
+        renderSessions({ preserveScroll: options.preserveSidebarScroll === true });
+      }
+      if (!stale && isConversationCacheContextCurrent(context) && shouldFocusAfterRender) {
+        focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
+      }
     }
   }
 }
@@ -22759,7 +25091,7 @@ function renderMemorySettings() {
         <div class="memory-item-content">${escapeHtml(memory.content || '')}</div>
         <div class="memory-item-meta">${escapeHtml(i18nText('memory-long-term-title', isChineseLanguage(appState.language) ? '长期记忆' : 'Long-term memory'))} · ${escapeHtml(memory.category || 'other')}</div>
       </div>
-      <button type="button" class="memory-delete-btn" onclick="deleteUserMemory(${Number(memory.id) || 0})" aria-label="${escapeHtml(i18nText('memory-delete-label', '删除记忆'))}" title="${escapeHtml(i18nText('memory-delete-label', '删除记忆'))}">
+      <button type="button" class="memory-delete-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="deleteUserMemory(${Number(memory.id) || 0})" aria-label="${escapeHtml(i18nText('memory-delete-label', '删除记忆'))}" title="${escapeHtml(i18nText('memory-delete-label', '删除记忆'))}">
         ${getSvgIcon('delete', 'material-symbols-outlined', 18)}
       </button>
     </div>
@@ -22798,7 +25130,7 @@ async function loadUserMemories({ force = false } = {}) {
 function buildCurrentConfigPayloadForMemory() {
   return {
     theme: appState.themePreference || appState.theme,
-    default_model: appState.selectedModel,
+    default_model: 'auto',
     temperature: appState.temperature,
     top_p: appState.topP,
     max_tokens: appState.maxTokens,
@@ -22808,7 +25140,7 @@ function buildCurrentConfigPayloadForMemory() {
     thinking_mode: appState.thinkingMode ? 1 : 0,
     internet_mode: 1,
     long_memory_enabled: appState.longMemoryEnabled ? 1 : 0,
-    font_preference: appState.fontPreference || 'rai',
+    font_preference: appState.fontPreference || 'system',
     tab_title_mode: appState.tabTitleMode || 'default',
     tab_title_custom_text: appState.tabTitleCustomText || '',
     selection_explanation_delete_mode: normalizeSelectionExplanationDeleteMode(appState.selectionExplanationDeleteMode)
@@ -22930,6 +25262,10 @@ async function clearAllUserMemories() {
 }
 
 function showClassicTemporaryChat() {
+  abortConversationSessionRefresh(appState.currentSession?.id);
+  appState.sessionNavigationGeneration += 1;
+  appState.sessionLoadController?.abort?.();
+  appState.sessionLoadController = null;
   closeSessionStreamSubscription();
   restoreInternetSearchDefault();
   appState.currentSession = null;
@@ -23018,19 +25354,36 @@ async function handleTemporaryChatClick() {
 }
 
 async function handleNewChatClick() {
-  return createNewSession({ focus: true, mode: 'normal' });
+  abortConversationSessionRefresh(appState.currentSession?.id);
+  appState.sessionNavigationGeneration += 1;
+  appState.sessionLoadController?.abort?.();
+  appState.sessionLoadController = null;
+  closeSessionStreamSubscription();
+  resetModelToSmart();
+  restoreInternetSearchDefault();
+  appState.currentSession = null;
+  appState.currentSessionMemoryMode = 'normal';
+  appState.messages = [];
+  renderMessages();
+  renderSessions();
+  showWelcome();
+  focusMessageInputForNewChat(true);
+  return true;
 }
 
 async function createNewSession(options = {}) {
   try {
     const shouldFocus = options.focus !== false;
+    const preserveComposerMode = options.preserveComposerMode === true;
     const preserveInternetMode = options.preserveInternetMode === true;
     const mode = normalizeNewChatMode(options.mode || 'normal');
     if (mode === 'classic-temp') {
       return showClassicTemporaryChat();
     }
+    if (!preserveComposerMode) resetModelToSmart();
     if (!preserveInternetMode) restoreInternetSearchDefault();
     const isSavedTemporary = mode === 'saved-temp';
+    const initialTitle = normalizeConversationTitleCandidate(options.initialTitle || '');
     appState.pendingMobileComposerFocus = shouldFocus && window.innerWidth <= 768;
     const response = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
@@ -23041,8 +25394,9 @@ async function createNewSession(options = {}) {
       body: JSON.stringify({
         title: isSavedTemporary
           ? i18nText('temp-chat-saved-title', isChineseLanguage(appState.language) ? '临时对话' : 'Temporary chat')
-          : (isChineseLanguage(appState.language) ? '新对话' : 'New Chat'),
+          : (initialTitle || (isChineseLanguage(appState.language) ? '新对话' : 'New Chat')),
         model: appState.selectedModel || 'auto',
+        prompt_model_identity: getPromptModelIdentityForSession(),
         session_kind: isSavedTemporary ? 'temporary_saved' : 'chat'
       })
     });
@@ -23074,19 +25428,90 @@ async function createNewSession(options = {}) {
   }
 }
 
-async function loadSession(sessionId, options = {}) {
-  try {
-    console.log(' 加载会话:', sessionId);
+function captureConversationCacheContext() {
+  const confirmedUserId = String(appState.confirmedCacheUserId || '');
+  const activeUserId = String(appState.user?.id || '');
+  return {
+    userId: confirmedUserId && confirmedUserId === activeUserId ? confirmedUserId : '',
+    token: String(appState.token || ''),
+    epoch: Number(appState.conversationCacheEpoch || 0)
+  };
+}
 
-    const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
-      headers: { 'Authorization': `Bearer ${appState.token}` }
-    });
+function isConversationCacheContextCurrent(context) {
+  if (!context?.userId || !context?.token) return false;
+  return (
+    context.userId === String(appState.confirmedCacheUserId || '') &&
+    context.userId === String(appState.user?.id || '') &&
+    context.token === String(appState.token || '') &&
+    context.epoch === Number(appState.conversationCacheEpoch || 0)
+  );
+}
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+function sameConversationCacheContext(left, right) {
+  return Boolean(
+    left && right &&
+    left.userId === right.userId &&
+    left.token === right.token &&
+    left.epoch === right.epoch
+  );
+}
+
+function abortConversationSessionRefresh(sessionId) {
+  const targetSessionId = String(sessionId || '');
+  if (!targetSessionId) return;
+  appState.sessionRefreshes.forEach((entry, key) => {
+    if (String(entry?.sessionId || '') !== targetSessionId) return;
+    entry.controller?.abort?.();
+    if (appState.sessionRefreshes.get(key) === entry) {
+      appState.sessionRefreshes.delete(key);
     }
+  });
+}
 
-    const messages = await response.json();
+function abortConversationAsyncWork() {
+  appState.conversationCacheEpoch = Number(appState.conversationCacheEpoch || 0) + 1;
+  appState.sessionNavigationGeneration += 1;
+  appState.sessionLoadController?.abort?.();
+  appState.sessionLoadController = null;
+  appState.sessionsListController?.abort?.();
+  appState.sessionsListController = null;
+  appState.sessionsListRequest = null;
+  appState.sessionsPagination.isLoading = false;
+  appState.sessionRefreshes.forEach((entry) => entry?.controller?.abort?.());
+  appState.sessionRefreshes.clear();
+  appState.conversationSyncController?.abort?.();
+  appState.conversationSyncController = null;
+  appState.conversationAssetControllers.forEach((controller) => controller?.abort?.());
+  appState.conversationAssetControllers.clear();
+  appState.syncInFlight = false;
+  closeSessionStreamSubscription();
+}
+
+function cachedConversationMatchesManifest(cached, session) {
+  if (!cached || !Array.isArray(cached.messages) || !session) return false;
+  if (!Object.prototype.hasOwnProperty.call(cached, 'revision')) return false;
+  if (!Object.prototype.hasOwnProperty.call(session, 'messages_revision')) return false;
+  const cachedRevision = Number(cached.revision);
+  const manifestRevision = Number(session.messages_revision);
+  return Number.isFinite(cachedRevision) &&
+    Number.isFinite(manifestRevision) &&
+    cachedRevision === manifestRevision;
+}
+
+async function loadSession(sessionId, options = {}) {
+  const previousSessionId = String(appState.currentSession?.id || '');
+  appState.sessionNavigationGeneration += 1;
+  const generation = appState.sessionNavigationGeneration;
+  if (previousSessionId && previousSessionId !== String(sessionId || '')) {
+    abortConversationSessionRefresh(previousSessionId);
+  }
+  closeSessionStreamSubscription();
+  appState.sessionLoadController?.abort?.();
+  const controller = new AbortController();
+  appState.sessionLoadController = controller;
+  try {
+    console.log(' 开始加载会话');
 
     // 联网关闭不跨会话传播；进入任何会话都恢复默认开启。
     if (options.preserveInternetMode !== true) restoreInternetSearchDefault();
@@ -23099,10 +25524,12 @@ async function loadSession(sessionId, options = {}) {
     appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
       ? 'saved-temp'
       : 'normal';
-    appState.messages = Array.isArray(messages) ? messages : [];
+    const cached = await window.RAIConversationCache?.getConversation?.(sessionId);
+    if (generation !== appState.sessionNavigationGeneration) return;
+    appState.messages = Array.isArray(cached?.messages) ? cached.messages : [];
     if (typeof startTitleAnimation === 'function') startTitleAnimation();
 
-    console.log(` 加载到 ${messages.length} 条消息`);
+    console.log(` 加载到 ${appState.messages.length} 条缓存消息`);
 
     renderMessages();
     renderSessions({ preserveScroll: true });
@@ -23110,6 +25537,11 @@ async function loadSession(sessionId, options = {}) {
       focusMessageInputForNewChat(appState.pendingMobileComposerFocus);
     }
     startSessionStreamSubscription(sessionId);
+    if (!cachedConversationMatchesManifest(cached, appState.currentSession)) {
+      refreshCachedSession(sessionId, { signal: controller.signal, generation }).catch((error) => {
+        if (error?.name !== 'AbortError') console.warn(' 后台刷新会话失败:', error.message);
+      });
+    }
 
     // 移除移动端自动弹出侧边栏
     // if (window.innerWidth <= 768) {
@@ -23122,7 +25554,16 @@ async function loadSession(sessionId, options = {}) {
   }
 }
 
+function cancelLiveStreamRender() {
+  if (appState.liveStreamRenderTimer) {
+    clearTimeout(appState.liveStreamRenderTimer);
+    appState.liveStreamRenderTimer = null;
+  }
+  appState.liveStreamRenderContext = null;
+}
+
 function closeSessionStreamSubscription() {
+  cancelLiveStreamRender();
   if (appState.sessionStreamRetryTimer) {
     clearTimeout(appState.sessionStreamRetryTimer);
     appState.sessionStreamRetryTimer = null;
@@ -23163,14 +25604,34 @@ function processSessionStreamSseChunk(buffer, onEvent) {
   return remainder;
 }
 
-function scheduleLiveStreamRender() {
-  if (appState.liveStreamRenderTimer) return;
+function scheduleLiveStreamRender(
+  sessionId = appState.currentSession?.id,
+  generation = appState.sessionNavigationGeneration
+) {
+  const renderContext = {
+    sessionId: String(sessionId || ''),
+    generation: Number(generation)
+  };
+  if (!renderContext.sessionId) return;
+  if (appState.liveStreamRenderTimer) {
+    const pending = appState.liveStreamRenderContext;
+    if (
+      pending?.sessionId === renderContext.sessionId &&
+      pending?.generation === renderContext.generation
+    ) return;
+    cancelLiveStreamRender();
+  }
+  appState.liveStreamRenderContext = renderContext;
   appState.liveStreamRenderTimer = setTimeout(() => {
     appState.liveStreamRenderTimer = null;
-    renderMessages();
-    if (isNearBottom()) {
-      scrollToBottom(true);
-    }
+    appState.liveStreamRenderContext = null;
+    if (
+      renderContext.generation !== appState.sessionNavigationGeneration ||
+      renderContext.sessionId !== String(appState.currentSession?.id || '')
+    ) return;
+    const shouldFollow = appState.scrollFollowMode === 'following' && isNearBottom();
+    patchMessagesById(appState.messages, { preserveScroll: !shouldFollow });
+    if (shouldFollow) scrollToBottom(true);
   }, 220);
 }
 
@@ -23187,6 +25648,9 @@ function upsertLiveSessionStream(event) {
   if (!event || !appState.currentSession?.id) return;
   if (String(event.sessionId || '') !== String(appState.currentSession.id)) return;
   if (appState.isStreaming) return;
+
+  const streamSessionId = String(appState.currentSession.id);
+  const streamGeneration = appState.sessionNavigationGeneration;
 
   const requestId = String(event.requestId || '');
   if (!requestId) return;
@@ -23237,7 +25701,7 @@ function upsertLiveSessionStream(event) {
   liveAssistant.model = event.model || liveAssistant.model || appState.selectedModel;
   liveAssistant.stream_draft_status = event.status || 'running';
   liveAssistant.created_at = liveAssistant.created_at || updatedAt;
-  scheduleLiveStreamRender();
+  scheduleLiveStreamRender(streamSessionId, streamGeneration);
 }
 
 function handleSessionStreamEvent(event) {
@@ -23253,17 +25717,26 @@ function handleSessionStreamEvent(event) {
 
   if (event.type === 'session_stream_done') {
     upsertLiveSessionStream(event);
+    const completedSessionId = String(event.sessionId || appState.currentSession?.id || '');
+    const completedGeneration = appState.sessionNavigationGeneration;
     setTimeout(() => {
-      removeLiveStreamMessages(event.requestId || '');
-      syncCurrentSessionMessages().catch(() => null);
+      if (
+        completedGeneration !== appState.sessionNavigationGeneration ||
+        completedSessionId !== String(appState.currentSession?.id || '')
+      ) return;
+      // Keep the final draft node visible until the authoritative keyed snapshot arrives.
+      syncConversationsAcrossDevices({ force: true }).catch(() => null);
     }, 650);
     return;
   }
 
   if (event.type === 'session_stream_failed') {
     removeLiveStreamMessages(event.requestId || '');
-    scheduleLiveStreamRender();
-    syncCurrentSessionMessages().catch(() => null);
+    scheduleLiveStreamRender(
+      String(appState.currentSession?.id || ''),
+      appState.sessionNavigationGeneration
+    );
+    syncConversationsAcrossDevices({ force: true }).catch(() => null);
   }
 }
 
@@ -23293,6 +25766,7 @@ function startSessionStreamSubscription(sessionId = appState.currentSession?.id)
       appState.sessionStreamRetryTimer = null;
       if (appState.currentSession?.id === sessionId) {
         startSessionStreamSubscription(sessionId);
+        syncConversationsAcrossDevices({ force: true }).catch(() => null);
       }
     }, 5000);
   };
@@ -23360,54 +25834,112 @@ function canRunConversationSync() {
 async function syncCurrentSessionMessages() {
   const sessionId = appState.currentSession?.id;
   if (!sessionId || !canRunConversationSync()) return false;
-
-  const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages?t=${Date.now()}`, {
-    cache: 'no-store',
-    headers: {
-      'Authorization': `Bearer ${appState.token}`,
-      'Cache-Control': 'no-cache'
-    }
-  });
-  if (!response.ok) return false;
-
-  const nextMessages = await response.json();
-  if (!Array.isArray(nextMessages)) return false;
-
-  const oldSignature = getMessagesSignature(appState.messages);
-  const nextSignature = getMessagesSignature(nextMessages);
-  if (oldSignature === nextSignature) return false;
-
-  const shouldPreserveScroll = appState.scrollFollowMode === 'pausedByUser' || !isNearBottom();
-  appState.messages = nextMessages;
-  renderMessages({ preserveScroll: shouldPreserveScroll });
-  if (!shouldPreserveScroll) {
-    scrollToBottom(true);
-  }
-  console.log(` 多设备同步：当前会话更新 ${nextMessages.length} 条消息`);
-  return true;
+  return refreshCachedSession(sessionId);
 }
 
 async function syncConversationsAcrossDevices({ force = false } = {}) {
-  if (!canRunConversationSync()) return;
+  const context = captureConversationCacheContext();
+  if (!canRunConversationSync() || !isConversationCacheContextCurrent(context)) return;
   const now = Date.now();
-  if (!force && now - Number(appState.lastSyncAt || 0) < 2500) return;
+  if (!force && now - Number(appState.lastSyncAt || 0) < 15000) return;
   if (appState.syncInFlight) return;
 
+  const controller = new AbortController();
   appState.syncInFlight = true;
+  appState.conversationSyncController = controller;
   appState.lastSyncAt = now;
   try {
-    await loadSessions(true, {
-      focusEmpty: false,
-      preserveCurrentSession: true,
-      preserveLoadedWindow: true,
-      preserveSidebarScroll: true,
-      skipRenderIfUnchanged: true
+    const cache = window.RAIConversationCache;
+    const cachedManifest = await cache?.getManifest?.();
+    if (!isConversationCacheContextCurrent(context)) return;
+    const headers = { Authorization: `Bearer ${context.token}` };
+    const etag = appState.manifestEtag || cachedManifest?.etag;
+    if (etag) headers['If-None-Match'] = etag;
+    let response = await fetch(`${API_BASE}/sessions/manifest`, {
+      headers,
+      cache: 'no-store',
+      signal: controller.signal
     });
-    await syncCurrentSessionMessages();
+    if (response.status === 304 && !cachedManifest?.manifest) {
+      headers.delete?.('If-None-Match');
+      delete headers['If-None-Match'];
+      response = await fetch(`${API_BASE}/sessions/manifest`, {
+        headers,
+        cache: 'no-store',
+        signal: controller.signal
+      });
+    }
+    if (!isConversationCacheContextCurrent(context)) return;
+    const manifestUnchanged = response.status === 304;
+    if (!manifestUnchanged && !response.ok) throw new Error(`manifest_http_${response.status}`);
+    const manifest = manifestUnchanged ? cachedManifest?.manifest : await response.json();
+    if (!isConversationCacheContextCurrent(context)) return;
+    if (!Array.isArray(manifest?.sessions)) throw new Error('invalid_manifest_payload');
+    if (!manifestUnchanged) {
+      appState.sessions = manifest.sessions;
+      appState.pinnedSessions = manifest.sessions.filter((session) => session.pinned);
+      const currentSummary = manifest.sessions.find((session) =>
+        String(session.id) === String(appState.currentSession?.id || '')
+      );
+      if (currentSummary && appState.currentSession) {
+        Object.assign(appState.currentSession, currentSummary);
+      }
+      appState.manifestEtag = String(response.headers.get('ETag') || '');
+      await cache?.putManifest?.(manifest, appState.manifestEtag);
+      if (!isConversationCacheContextCurrent(context)) return;
+      renderSessions({ preserveScroll: true });
+    }
+    const manifestIds = new Set(manifest.sessions.map((session) => String(session.id)));
+    const cachedRows = await cache?.cachedConversationRevisions?.() || [];
+    const cachedRevisions = new Map(cachedRows.map((row) => [String(row.sessionId), Number(row.revision || 0)]));
+    const cachedIds = new Set(cachedRevisions.keys());
+    await Promise.all(Array.from(cachedIds)
+      .filter((id) => !manifestIds.has(id))
+      .map((id) => cache?.deleteConversation?.(id)));
+    if (!isConversationCacheContextCurrent(context)) return;
+    const currentId = String(appState.currentSession?.id || '');
+    const changed = manifest.sessions
+      .filter((session) => {
+        const id = String(session.id);
+        return cachedRevisions.has(id) &&
+          Number(cachedRevisions.get(id)) !== Number(session.messages_revision || 0);
+      })
+      .map((session) => String(session.id));
+    const recentWarmIds = cache?.isEnabled?.() === true
+      ? [...manifest.sessions]
+        .sort((a, b) => {
+          const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
+          const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
+          return bTime - aTime || String(b.id).localeCompare(String(a.id));
+        })
+        .slice(0, 50)
+        .filter((session) => {
+          const id = String(session.id);
+          return !cachedRevisions.has(id) ||
+            Number(cachedRevisions.get(id)) !== Number(session.messages_revision || 0);
+        })
+        .map((session) => String(session.id))
+      : [];
+    const refreshIds = new Set([...recentWarmIds, ...changed]);
+    const queued = [currentId, ...recentWarmIds, ...changed]
+      .filter((id, index, all) => id && all.indexOf(id) === index && refreshIds.has(id));
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(3, queued.length) }, async () => {
+      while (cursor < queued.length) {
+        const sessionId = queued[cursor++];
+        await refreshCachedSession(sessionId, {
+          context,
+          touchCache: sessionId === currentId
+        }).catch(() => false);
+      }
+    }));
   } catch (error) {
-    console.warn('多设备对话同步失败:', error.message);
+    if (error?.name !== 'AbortError') console.warn('多设备对话同步失败:', error.message);
   } finally {
-    appState.syncInFlight = false;
+    if (appState.conversationSyncController === controller) {
+      appState.conversationSyncController = null;
+      appState.syncInFlight = false;
+    }
   }
 }
 
@@ -23418,7 +25950,7 @@ function startConversationSyncMonitor() {
       startSessionStreamSubscription(appState.currentSession.id);
     }
     syncConversationsAcrossDevices().catch(() => null);
-  }, 5000);
+  }, 15000);
   window.addEventListener('focus', () => {
     syncConversationsAcrossDevices({ force: true }).catch(() => null);
   });
@@ -23441,7 +25973,6 @@ function initSwipeGestures() {
   const gestureLockDistance = 12;
   const gestureCommitDistance = 20;
   const horizontalDominanceRatio = 1.2;
-  const getSidebarOpenEdgeWidth = () => Math.min(132, Math.max(88, window.innerWidth * 0.28));
 
   const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
   const getSidebarWidth = () => sidebar.getBoundingClientRect().width || sidebar.offsetWidth || window.innerWidth * 0.85;
@@ -23494,7 +26025,7 @@ function initSwipeGestures() {
     const onHeader = !!target.closest('#mobileHeader');
     const onMain = !!target.closest('.main-content');
 
-    const canOpen = !appState.sidebarOpen && (onMain || onHeader) && touch.clientX <= getSidebarOpenEdgeWidth() && !isGestureBlockedTarget(target);
+    const canOpen = !appState.sidebarOpen && (onMain || onHeader) && !isGestureBlockedTarget(target);
     const canClose = appState.sidebarOpen && (onSidebar || onOverlay);
 
     if (!canOpen && !canClose) return;
@@ -23592,6 +26123,7 @@ function initSwipeGestures() {
 
 function selectModel(value, displayName) {
   appState.selectedModel = normalizeSelectedModelId(value);
+  appState.modelPromptIdentity = 'manual';
   updateSelectedModelText(appState.selectedModel);
 
   document.querySelectorAll('.model-option').forEach(option => {
@@ -23606,7 +26138,147 @@ function selectModel(value, displayName) {
 
   closeModelDropdown();
   updateModelControls();
-  persistDefaultModelPreference(appState.selectedModel);
+}
+
+async function hydrateCachedConversationShell(context = captureConversationCacheContext()) {
+  if (!isConversationCacheContextCurrent(context)) return false;
+  const cached = await window.RAIConversationCache?.getManifest?.();
+  if (!isConversationCacheContextCurrent(context) || !cached?.manifest) return false;
+  appState.manifestEtag = String(cached.etag || '');
+  appState.sessions = Array.isArray(cached.manifest.sessions) ? cached.manifest.sessions : [];
+  appState.pinnedSessions = appState.sessions.filter((session) => session.pinned);
+  appState.sessionsPagination.offset = appState.sessions.length;
+  appState.sessionsPagination.hasMore = false;
+  renderSessions({ preserveScroll: true });
+  return true;
+}
+
+async function updateConversationCacheSettingsUI(context = null) {
+  if (context && !isConversationCacheContextCurrent(context)) return;
+  const cache = window.RAIConversationCache;
+  const toggle = document.getElementById('conversationCacheEnabled');
+  const usage = document.getElementById('conversationCacheUsage');
+  if (toggle) toggle.checked = cache?.isEnabled?.() !== false;
+  if (usage) {
+    const bytes = await cache?.usage?.().catch(() => 0) || 0;
+    if (context && !isConversationCacheContextCurrent(context)) return;
+    usage.textContent = `${(bytes / (1024 * 1024)).toFixed(1)} MiB / 250 MiB`;
+  }
+}
+
+function initConversationCacheSettings() {
+  const toggle = document.getElementById('conversationCacheEnabled');
+  const clearButton = document.getElementById('clearConversationCacheBtn');
+  toggle?.addEventListener('change', async () => {
+    await window.RAIConversationCache?.setEnabled?.(toggle.checked);
+    if (toggle.checked && appState.user?.id) await window.RAIConversationCache?.openForUser?.(appState.user.id);
+    await updateConversationCacheSettingsUI();
+    if (toggle.checked) syncConversationsAcrossDevices({ force: true }).catch(() => null);
+  });
+  clearButton?.addEventListener('click', async () => {
+    await window.RAIConversationCache?.clearCurrentAccount?.();
+    await updateConversationCacheSettingsUI();
+  });
+}
+
+async function fetchSessionMessagesWithCache(sessionId, options = {}) {
+  const context = options.context || captureConversationCacheContext();
+  if (!isConversationCacheContextCurrent(context)) return { stale: true };
+  const cache = window.RAIConversationCache;
+  const touchCache = options.touchCache !== false;
+  const cached = await cache?.getConversation?.(sessionId, { touch: touchCache });
+  if (!isConversationCacheContextCurrent(context)) return { stale: true };
+  const headers = { Authorization: `Bearer ${context.token}` };
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+  const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    headers, cache: 'no-store', signal: options.signal
+  });
+  if (!isConversationCacheContextCurrent(context)) return { stale: true };
+  if (response.status === 304) return { unchanged: true, cached };
+  if (response.status === 404) {
+    await cache?.deleteConversation?.(sessionId);
+    return { deleted: true };
+  }
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const messages = await response.json();
+  if (!Array.isArray(messages)) throw new Error('invalid_messages_payload');
+  if (!isConversationCacheContextCurrent(context)) return { stale: true };
+  const revision = Number(response.headers.get('X-RAI-Messages-Revision') || 0);
+  await cache?.putConversation?.(sessionId, messages, revision, response.headers.get('ETag'), {
+    touch: touchCache,
+    lastOpenedAt: cached?.lastOpenedAt
+  });
+  if (!isConversationCacheContextCurrent(context)) return { stale: true };
+  return { messages, revision };
+}
+
+async function refreshCachedSession(sessionId, options = {}) {
+  const generation = options.generation ?? appState.sessionNavigationGeneration;
+  const context = options.context || captureConversationCacheContext();
+  if (!isConversationCacheContextCurrent(context)) return false;
+  const refreshKey = `${context.userId}:${String(sessionId || '')}`;
+  let refreshEntry = appState.sessionRefreshes.get(refreshKey);
+  if (
+    refreshEntry &&
+    (
+      refreshEntry.controller?.signal?.aborted ||
+      !sameConversationCacheContext(refreshEntry.context, context)
+    )
+  ) {
+    refreshEntry.controller?.abort?.();
+    appState.sessionRefreshes.delete(refreshKey);
+    refreshEntry = null;
+  }
+  if (!refreshEntry) {
+    const controller = new AbortController();
+    refreshEntry = {
+      sessionId: String(sessionId || ''),
+      context,
+      controller,
+      promise: fetchSessionMessagesWithCache(sessionId, {
+        ...options,
+        context,
+        signal: controller.signal
+      }),
+      appliedGenerations: new Set()
+    };
+    appState.sessionRefreshes.set(refreshKey, refreshEntry);
+  }
+
+  let detachAbortSignal = null;
+  if (options.signal) {
+    const abortSharedRefresh = () => refreshEntry.controller?.abort?.();
+    if (options.signal.aborted) {
+      abortSharedRefresh();
+    } else {
+      options.signal.addEventListener('abort', abortSharedRefresh, { once: true });
+      detachAbortSignal = () => options.signal.removeEventListener('abort', abortSharedRefresh);
+    }
+  }
+  let result;
+  try {
+    result = await refreshEntry.promise;
+  } finally {
+    detachAbortSignal?.();
+    if (appState.sessionRefreshes.get(refreshKey) === refreshEntry) {
+      appState.sessionRefreshes.delete(refreshKey);
+    }
+  }
+  if (
+    !isConversationCacheContextCurrent(refreshEntry.context) ||
+    generation !== appState.sessionNavigationGeneration ||
+    result.deleted ||
+    result.stale ||
+    !result.messages
+  ) return false;
+  if (String(appState.currentSession?.id || '') === String(sessionId)) {
+    if (refreshEntry.appliedGenerations.has(generation)) return true;
+    refreshEntry.appliedGenerations.add(generation);
+    const preserveScroll = appState.scrollFollowMode === 'pausedByUser' || !isNearBottom();
+    patchMessagesById(result.messages, { preserveScroll });
+    if (!preserveScroll) scrollToBottom(true);
+  }
+  return true;
 }
 
 // 修复：添加null检查和安全的DOM操作
@@ -24117,16 +26789,14 @@ function handleFileUpload() {
     // 代码文件
     '.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.c', '.cpp', '.h', '.hpp',
     '.css', '.scss', '.less', '.html', '.vue', '.svelte', '.swift', '.kt', '.go', '.rs', '.rb', '.php',
-    '.sh', '.bash', '.zsh', '.sql',
-    // 办公文档
-    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'
+    '.sh', '.bash', '.zsh', '.sql'
   ].join(',');
 
-  input.onchange = async (e) => {
+  input.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     await processUploadedFile(file);
-  };
+  }, { once: true });
   input.click();
 }
 
@@ -24153,7 +26823,7 @@ async function processUploadedFile(file) {
     attachmentType = 'text';
   } else if (/\.(js|ts|jsx|tsx|py|java|c|cpp|h|hpp|css|scss|less|html|vue|svelte|swift|kt|go|rs|rb|php|sh|bash|zsh|sql)$/i.test(fileName)) {
     attachmentType = 'code';
-  } else if (/\.(pdf|docx|xlsx|xls|pptx|ppt|csv)$/i.test(fileName) || fileType === 'application/pdf' || fileType.includes('officedocument') || fileType.includes('spreadsheet') || fileType === 'text/csv') {
+  } else if (/\.csv$/i.test(fileName) || fileType === 'text/csv') {
     attachmentType = 'document';
   }
 
@@ -24193,10 +26863,19 @@ async function processUploadedFile(file) {
       // 图片保留本地缩略图用于预览（不发送到服务器）
       localThumbnail: localThumbnail
     };
-    console.log(` ${attachmentType}文件已上传: ${file.name} (${file.size} bytes)`);
+    console.log(' 文件已上传', {
+      attachmentType,
+      filenameLength: String(file.name || '').length,
+      bytes: Number(file.size) || 0
+    });
     updateAttachmentUI();
   } catch (error) {
-    console.error(' 文件上传失败:', error);
+    if (error?.name === 'AbortError') return;
+    console.error(' 文件上传失败:', {
+      errorName: String(error?.name || 'Error').slice(0, 80),
+      status: Number(error?.status || 0) || undefined,
+      messageLength: String(error?.message || '').length
+    });
     if (localThumbnail) URL.revokeObjectURL(localThumbnail);
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
     alert(error?.message || fallback);
@@ -24271,7 +26950,7 @@ function updateAttachmentUI() {
           <span class="attachment-type">${typeLabel}</span>
           <span class="attachment-name">${currentAttachment.fileName}</span>
         </div>
-        <button class="attachment-remove" onclick="removeAttachment()" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
+        <button class="attachment-remove" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="removeAttachment()" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
           ${getSvgIcon('close', 'remove-icon', 16)}
         </button>
       `;
@@ -24346,7 +27025,10 @@ function initDragAndDrop() {
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       processUploadedFile(files[0]);
-      console.log(' 拖拽上传文件:', files[0].name);
+      console.log(' 拖拽上传文件:', {
+        filenameLength: String(files[0].name || '').length,
+        bytes: Number(files[0].size) || 0
+      });
     }
   });
 
@@ -24944,6 +27626,7 @@ let userMembershipState = {
   points: 0,
   purchasedPoints: 0,
   totalPoints: 0,
+  image2Quota: { limit: 0, used: 0, remaining: 0, resetAt: null },
   canCheckin: true,
   createdAt: null,
   tasks: {
@@ -25002,6 +27685,7 @@ function applyUserMembershipData(data = {}) {
     points: data.points || 0,
     purchasedPoints: data.purchasedPoints || 0,
     totalPoints: data.totalPoints || 0,
+    image2Quota: data.image2Quota || { limit: 0, used: 0, remaining: 0, resetAt: null },
     canCheckin: data.canCheckin,
     createdAt: data.createdAt,
     tasks: normalizeMembershipTasks(data.tasks)
@@ -25013,47 +27697,32 @@ function applyMembershipModelPolicy({ initial = false, previousMembership = null
   const currentMembership = String(userMembershipState?.membership || 'free');
   const prev = previousMembership ? String(previousMembership) : null;
 
-  // free 用户：默认 智能模型（仅首次或从非 free 降级时强制）
-  if (currentMembership === 'free') {
-    if (initial || (prev && prev !== 'free') || !membershipModelPolicyInitialized) {
-      appState.selectedModel = 'auto';
-      updateSelectedModelText('auto');
-      updateModelControls();
-      updateMenuSelection();
-    }
-    membershipModelPolicyInitialized = true;
-    return;
-  }
-
-  // Pro/MAX：记住上次模型（首次加载或刚从free升级时应用）
-  if (initial || prev === 'free' || !membershipModelPolicyInitialized) {
-    const remembered = normalizeSelectedModelId(appState.profileDefaultModel || appState.selectedModel || 'auto');
-    const targetModel = MODELS[remembered] && !isModelDisabledByAdmin(remembered) ? remembered : 'auto';
-    appState.selectedModel = targetModel;
-    updateSelectedModelText(targetModel);
-    updateModelControls();
-    updateMenuSelection();
-  }
+  // Membership controls availability, never the next-chat default.
+  if (initial || prev !== currentMembership || !membershipModelPolicyInitialized) resetModelToSmart();
   membershipModelPolicyInitialized = true;
 }
 
 // 获取用户会员状态
-async function fetchUserMembership({ applyPolicy = false, initial = false } = {}) {
+async function fetchUserMembership({ applyPolicy = false, initial = false, authContext = captureUserAuthContext() } = {}) {
   try {
-    const token = appState.token;
-    if (!token) return;
+    if (!isUserAuthContextCurrent(authContext)) return false;
+    const token = authContext.token;
+    if (!token) return false;
 
     const previousMembership = userMembershipState?.membership || 'free';
 
     const res = await fetch('/api/user/membership', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
+    if (!isUserAuthContextCurrent(authContext)) return false;
     if (res.ok) {
       const data = await res.json();
+      if (!isUserAuthContextCurrent(authContext)) return false;
       applyUserMembershipData(data);
-      console.log(' 会员状态更新:', userMembershipState);
+      console.log(' 会员状态已刷新');
       if (isMembershipLockedModel(appState.selectedModel) || isModelDisabledByAdmin(appState.selectedModel)) {
         appState.selectedModel = 'auto';
+        appState.modelPromptIdentity = 'smart';
         updateSelectedModelText('auto');
         updateModelControls();
       }
@@ -25069,9 +27738,12 @@ async function fetchUserMembership({ applyPolicy = false, initial = false } = {}
       updateUserAreaWithMembership();
       updateSettingsMembership();
       maybeShowPwaRewardPrompt();
+      return true;
     }
+    return false;
   } catch (e) {
-    console.log('获取会员状态失败');
+    if (isUserAuthContextCurrent(authContext)) console.log('获取会员状态失败');
+    return false;
   }
 }
 
@@ -25199,6 +27871,7 @@ function setCheckinControlsPending(pending) {
       button.textContent = i18nText('checkin-bonus', '签到 +20 ');
     }
   });
+  window.addEventListener('online', () => syncConversationsAcrossDevices({ force: true }).catch(() => null));
 }
 
 async function performUserCheckin() {
@@ -25383,7 +28056,7 @@ function renderMembershipPlanCard(tier) {
       <div class="membership-plan-points">${subline}</div>
       <button
         class="membership-plan-action"
-        onclick="redeemMembership('${tier}')"
+        data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="redeemMembership('${tier}')"
         ${action.disabled || isPending ? 'disabled' : ''}
       >
         ${isPending
@@ -25492,8 +28165,31 @@ function openGitHubStarTask() {
     window.location.href = 'https://github.com/Rick-953/RAI';
   }
   showToast(isChineseLanguage(appState.language)
-    ? '完成 Star 后，把截图发送到 rick080402@gmail.com 即可获得一个月 Pro'
-    : 'After starring, email the screenshot to rick080402@gmail.com to get 1 month Pro');
+    ? '完成 Star 后，把截图发送到 rick080402@gmail.com 即可获得 50 点数'
+    : 'After starring, email the screenshot to rick080402@gmail.com to receive 50 points');
+}
+
+function renderMembershipModelPricing() {
+  const isZh = isChineseLanguage(appState.language);
+  const rows = [
+    ['GPT 5.6', 5],
+    ['Claude Sonnet 5', 10],
+    ['Gemini 3.6', 3],
+    ['DeepSeek', 1],
+    ['GPT Image 2', 20]
+  ];
+  return `
+    <div class="membership-model-pricing">
+      <div class="membership-model-pricing-heading">
+        <h3>${isZh ? '模型点数标价' : 'Model point pricing'}</h3>
+        <span>${isZh ? '按次扣除' : 'Per request'}</span>
+      </div>
+      <div class="membership-model-pricing-list">
+        ${rows.map(([name, points]) => `<div><span>${name}</span><strong>${isZh ? `${points} 点 / 次` : `${points} points / request`}</strong></div>`).join('')}
+      </div>
+      <small>${isZh ? 'Kolors Free 免费。点数不足时会提示并自动改用可用免费模型。' : 'Kolors Free is free. When points are insufficient, RAI explains the fallback and uses an available free model.'}</small>
+    </div>
+  `;
 }
 
 function renderMembershipTasksSection({ compact = false } = {}) {
@@ -25519,10 +28215,10 @@ function renderMembershipTasksSection({ compact = false } = {}) {
             <span>${isZh ? `积分 +${tasks.pwaInstall.rewardPoints}` : `+${tasks.pwaInstall.rewardPoints} points`}</span>
           </div>
           <div class="membership-task-actions">
-            <button type="button" class="membership-task-action" onclick="startPwaInstallTask()" ${pwaDone ? 'disabled' : ''}>
+            <button type="button" class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="startPwaInstallTask()" ${pwaDone ? 'disabled' : ''}>
               ${pwaDone ? (isZh ? '已完成' : 'Done') : (isZh ? '去添加' : 'Add')}
             </button>
-            ${pwaDone ? '' : `<button type="button" class="membership-task-action secondary" onclick="claimPwaInstallTask()">${isZh ? '已添加，领取' : 'Already added'}</button>`}
+            ${pwaDone ? '' : `<button type="button" class="membership-task-action secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="claimPwaInstallTask()">${isZh ? '已添加，领取' : 'Already added'}</button>`}
           </div>
         </div>
         <div class="membership-task-item ${inviteDone ? 'completed' : ''}">
@@ -25533,7 +28229,7 @@ function renderMembershipTasksSection({ compact = false } = {}) {
             <small>${escapeHtml(inviteLink)}</small>
           </div>
           <div class="membership-task-actions">
-            <button type="button" class="membership-task-action" onclick="copyInviteLink()">
+            <button type="button" class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="copyInviteLink()">
               ${isZh ? '复制链接' : 'Copy link'}
             </button>
           </div>
@@ -25545,22 +28241,22 @@ function renderMembershipTasksSection({ compact = false } = {}) {
             <small>${escapeHtml(RAI_NEW_PUBLIC_ORIGIN)}</small>
           </div>
           <div class="membership-task-actions">
-            <button type="button" class="membership-task-action" onclick="openBookmarkDomain()">
+            <button type="button" class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="openBookmarkDomain()">
               ${isZh ? '打开新域名' : 'Open domain'}
             </button>
-            <button type="button" class="membership-task-action secondary" onclick="claimBookmarkDomainTask()" ${bookmarkDone ? 'disabled' : ''}>
+            <button type="button" class="membership-task-action secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="claimBookmarkDomainTask()" ${bookmarkDone ? 'disabled' : ''}>
               ${bookmarkDone ? (isZh ? '已完成' : 'Done') : (isZh ? '我已收藏' : 'Bookmarked')}
             </button>
           </div>
         </div>
         <div class="membership-task-item">
           <div class="membership-task-main">
-            <strong>${isZh ? 'GitHub 给个 Star → 一个月 Pro' : 'Star on GitHub → 1 month Pro'}</strong>
-            <span>${isZh ? '赠送一个月 Pro' : '1 month Pro reward'}</span>
+            <strong>${isZh ? 'GitHub 给个 Star → 50 点数' : 'Star on GitHub → 50 points'}</strong>
+            <span>${isZh ? '赠送 50 点数' : '50 point reward'}</span>
             <small>${isZh ? '把 Star 截图发送至 rick080402@gmail.com' : 'Email your star screenshot to rick080402@gmail.com'}</small>
           </div>
           <div class="membership-task-actions">
-            <button type="button" class="membership-task-action" onclick="openGitHubStarTask()">
+            <button type="button" class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="openGitHubStarTask()">
               ${isZh ? '去 Star' : 'Star it'}
             </button>
             <button type="button" class="membership-task-action secondary" disabled>
@@ -25583,7 +28279,7 @@ function renderMembershipPlansModalContent() {
     <div class="membership-plans-box">
       <div class="membership-plans-header">
         <h2>${isZh ? '点数兑换会员' : 'Redeem Membership with Points'}</h2>
-        <button class="admin-close-btn" onclick="closeMembershipPlans()">
+        <button class="admin-close-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeMembershipPlans()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
@@ -25620,6 +28316,7 @@ function renderMembershipPlansModalContent() {
           ${renderMembershipPlanCard('MAX')}
         </div>
 
+        ${renderMembershipModelPricing()}
         ${renderMembershipTasksSection()}
 
         <div class="membership-contact">
@@ -25730,7 +28427,7 @@ function updateUserAreaWithMembership() {
   if (m.canCheckin) {
     checkinContainer.style.display = 'block';
     checkinContainer.innerHTML = `
-          <button type="button" class="sidebar-checkin-btn" onclick="sidebarCheckin()">
+          <button type="button" class="sidebar-checkin-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="sidebarCheckin()">
             ${i18nText('checkin-bonus', '签到 +20 ')}
           </button>
         `;
@@ -25776,6 +28473,13 @@ function updateSettingsMembership() {
   if (points) points.textContent = m.totalPoints;
   const mobilePoints = document.getElementById('settingsMobilePointsDisplay');
   if (mobilePoints) mobilePoints.textContent = m.totalPoints;
+  const image2Quota = document.getElementById('settingsImage2Quota');
+  if (image2Quota) {
+    const quota = m.image2Quota || {};
+    image2Quota.textContent = isChineseLanguage(appState.language)
+      ? `Image 2: ${Number(quota.used || 0)} / ${Number(quota.limit || 0)}，剩余 ${Number(quota.remaining || 0)}`
+      : `Image 2: ${Number(quota.used || 0)} / ${Number(quota.limit || 0)}, ${Number(quota.remaining || 0)} left`;
+  }
 
   // 更新签到按钮
   const checkinBtn = document.getElementById('settingsCheckinBtn');
@@ -25913,7 +28617,7 @@ function createAdminLoginModal() {
             </svg>
             <h2>${adminLoginLabels.title}</h2>
           </div>
-          <form id="adminLoginForm" onsubmit="handleAdminLogin(event)">
+          <form id="adminLoginForm" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-submit="handleAdminLogin(event)">
             <div class="admin-input-group">
               <label>${adminLoginLabels.username}</label>
               <input type="text" id="adminUsername" placeholder="admin" autocomplete="username" required>
@@ -25929,7 +28633,7 @@ function createAdminLoginModal() {
             <div id="adminLoginError" class="admin-login-error"></div>
             <button type="submit" class="admin-login-btn">${adminLoginLabels.submit}</button>
           </form>
-          <button class="admin-close-btn" onclick="closeAdminLogin()">
+          <button class="admin-close-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeAdminLogin()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -26002,7 +28706,7 @@ function createAdminPanel() {
               </svg>
               RAI 管理后台
             </h1>
-            <button class="admin-close-btn" onclick="closeAdminPanel()">
+            <button class="admin-close-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeAdminPanel()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -26010,39 +28714,39 @@ function createAdminPanel() {
           </div>
 
           <div class="admin-panel-tabs">
-            <button class="admin-tab active" data-tab="stats" onclick="switchAdminTab('stats')">
+            <button class="admin-tab active" data-tab="stats" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('stats')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
               <span>数据统计</span>
             </button>
-            <button class="admin-tab" data-tab="users" onclick="switchAdminTab('users')">
+            <button class="admin-tab" data-tab="users" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('users')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
               <span>用户管理</span>
             </button>
-            <button class="admin-tab" data-tab="messages" onclick="switchAdminTab('messages')">
+            <button class="admin-tab" data-tab="messages" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('messages')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
               <span>消息浏览</span>
             </button>
-            <button class="admin-tab" data-tab="feedback" onclick="switchAdminTab('feedback')">
+            <button class="admin-tab" data-tab="feedback" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('feedback')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 8h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2c0-1.1-.9-2-2-2zM1 9h4v12H1z"/></svg>
               <span>用户反馈</span>
             </button>
-            <button class="admin-tab" data-tab="models" onclick="switchAdminTab('models')">
+            <button class="admin-tab" data-tab="models" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('models')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 2 7l10 5 10-5-10-5Zm0 7.8L6.47 7 12 4.2 17.53 7 12 9.8ZM4 10.27l8 4 8-4V13l-8 4-8-4v-2.73Zm0 5 8 4 8-4V18l-8 4-8-4v-2.73Z"/></svg>
               <span>模型开关</span>
             </button>
-            <button class="admin-tab" data-tab="limits" onclick="switchAdminTab('limits')">
+            <button class="admin-tab" data-tab="limits" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('limits')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm1 6v5h4v2h-6V7h2z"/></svg>
               <span>限制风控</span>
             </button>
-            <button class="admin-tab" data-tab="announcements" onclick="switchAdminTab('announcements')">
+            <button class="admin-tab" data-tab="announcements" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('announcements')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v9l3-3h9c1.1 0 2-.9 2-2v-1h1v6l-2.5-2.5H7v1c0 .55.45 1 1 1h6l4 4V10c0-1.1-.9-2-1-2z"/></svg>
               <span>公告管理</span>
             </button>
-            <button class="admin-tab" data-tab="broadcast" onclick="switchAdminTab('broadcast')">
+            <button class="admin-tab" data-tab="broadcast" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('broadcast')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/></svg>
               <span>邮件群发</span>
             </button>
-            <button class="admin-tab" data-tab="sessions" onclick="switchAdminTab('sessions')">
+            <button class="admin-tab" data-tab="sessions" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('sessions')">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
               <span>会话管理</span>
             </button>
@@ -26078,21 +28782,21 @@ function createAdminPanel() {
 
             <div id="adminMessagesTab" class="admin-tab-content">
               <div class="admin-search-bar">
-                <input type="text" id="adminMessageSearch" placeholder="搜索消息内容..." onkeyup="if(event.key==='Enter')loadAdminMessages()">
-                <button onclick="loadAdminMessages()">搜索</button>
+                <input type="text" id="adminMessageSearch" placeholder="搜索消息内容..." data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-keyup="if(event.key==='Enter')loadAdminMessages()">
+                <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadAdminMessages()">搜索</button>
               </div>
               <div id="adminMessagesTable" class="admin-table-container"></div>
             </div>
 
             <div id="adminFeedbackTab" class="admin-tab-content">
               <div class="admin-search-bar admin-feedback-filters">
-                <select id="adminFeedbackRating" onchange="loadAdminFeedback()">
+                <select id="adminFeedbackRating" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-change="loadAdminFeedback()">
                   <option value="">全部反馈</option>
                   <option value="up">点赞</option>
                   <option value="down">倒赞</option>
                 </select>
-                <input type="text" id="adminFeedbackSearch" placeholder="搜索反馈/回复/用户..." onkeyup="if(event.key==='Enter')loadAdminFeedback()">
-                <button onclick="loadAdminFeedback()">搜索</button>
+                <input type="text" id="adminFeedbackSearch" placeholder="搜索反馈/回复/用户..." data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-keyup="if(event.key==='Enter')loadAdminFeedback()">
+                <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadAdminFeedback()">搜索</button>
               </div>
               <div id="adminFeedbackTable" class="admin-table-container"></div>
             </div>
@@ -26337,7 +29041,7 @@ async function loadAdminUsers() {
       const totalPoints = (user.points || 0) + (user.purchased_points || 0);
       const safeUsername = getAdminDisplayName({ id: user.id, username: user.username }, '-');
       html += `
-            <tr onclick="openUserDetailModal(${user.id})" style="cursor:pointer" title="点击查看用户详情">
+            <tr data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="openUserDetailModal(${user.id})" style="cursor:pointer" title="点击查看用户详情">
               <td>${user.id}</td>
               <td>${escapeHtml(user.email || '-')}</td>
               <td>${escapeHtml(safeUsername)}</td>
@@ -26345,11 +29049,11 @@ async function loadAdminUsers() {
               <td>${totalPoints} </td>
               <td>${user.messageCount || 0}</td>
               <td>
-                <button class="admin-action-btn view" onclick="event.stopPropagation();openUserDetailModal(${user.id})">查看</button>
-                <button class="admin-action-btn view" onclick="event.stopPropagation();openMembershipEditor(${user.id}, '${user.membership || 'free'}')">会员</button>
-                <button class="admin-action-btn view" onclick="event.stopPropagation();openPointsEditor(${user.id})">点数</button>
-                <button class="admin-action-btn view" onclick="event.stopPropagation();openAdminPasswordEditor(${user.id})">改密</button>
-                <button class="admin-action-btn delete" onclick="event.stopPropagation();deleteUser(${user.id})">删除</button>
+                <button class="admin-action-btn view" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation();openUserDetailModal(${user.id})">查看</button>
+                <button class="admin-action-btn view" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation();openMembershipEditor(${user.id}, '${user.membership || 'free'}')">会员</button>
+                <button class="admin-action-btn view" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation();openPointsEditor(${user.id})">点数</button>
+                <button class="admin-action-btn view" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation();openAdminPasswordEditor(${user.id})">改密</button>
+                <button class="admin-action-btn delete" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="event.stopPropagation();deleteUser(${user.id})">删除</button>
               </td>
             </tr>
           `;
@@ -26455,7 +29159,7 @@ function openAdminPasswordEditor(userId, userLabel = '') {
 
   modal.innerHTML = `
     <div class="admin-password-box">
-      <button class="admin-close-btn" onclick="closeAdminPasswordEditor()" aria-label="${isZh ? '关闭' : 'Close'}">
+      <button class="admin-close-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeAdminPasswordEditor()" aria-label="${isZh ? '关闭' : 'Close'}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
@@ -26466,14 +29170,14 @@ function openAdminPasswordEditor(userId, userLabel = '') {
       </div>
       <div class="admin-input-group">
         <label for="adminNewUserPassword">${isZh ? '新密码' : 'New password'}</label>
-        <input type="password" id="adminNewUserPassword" maxlength="128" autocomplete="new-password" placeholder="${isZh ? '至少6位字符' : 'At least 6 characters'}">
+        <input type="password" id="adminNewUserPassword" maxlength="128" autocomplete="new-password" placeholder="${isZh ? '至少 8 位字符' : 'At least 8 characters'}">
       </div>
       <div class="admin-input-group">
         <label for="adminConfirmUserPassword">${isZh ? '确认新密码' : 'Confirm password'}</label>
         <input type="password" id="adminConfirmUserPassword" maxlength="128" autocomplete="new-password" placeholder="${isZh ? '再次输入新密码' : 'Enter it again'}">
       </div>
       <div class="admin-password-error" id="adminPasswordError"></div>
-      <button class="admin-login-btn" onclick="saveAdminUserPassword(${userId})">${isZh ? '保存新密码' : 'Save password'}</button>
+      <button class="admin-login-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="saveAdminUserPassword(${userId})">${isZh ? '保存新密码' : 'Save password'}</button>
     </div>
   `;
   modal.classList.add('active');
@@ -26495,8 +29199,8 @@ async function saveAdminUserPassword(userId) {
     if (errorEl) errorEl.textContent = message;
   };
 
-  if (newPassword.length < 6) {
-    setError(isZh ? '新密码至少需要 6 位字符' : 'New password must be at least 6 characters');
+  if (newPassword.length < USER_PASSWORD_MIN_LENGTH) {
+    setError(isZh ? '新密码至少需要 8 位字符' : 'New password must be at least 8 characters');
     return;
   }
   if (newPassword !== confirmPassword) {
@@ -26579,7 +29283,7 @@ async function loadAdminMessages() {
               <td class="admin-msg-content">${escapeHtml(content)}</td>
               <td>${escapeHtml(msg.model || '-')}</td>
               <td>${formatDate(msg.created_at)}</td>
-              <td><button class="admin-action-btn delete" onclick="deleteMessage(${msg.id})">删除</button></td>
+              <td><button class="admin-action-btn delete" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="deleteMessage(${msg.id})">删除</button></td>
             </tr>
           `;
     });
@@ -26683,10 +29387,10 @@ async function loadAdminModels() {
           <div class="admin-model-switch-item">
             <div>
               <div class="admin-model-switch-name">${escapeHtml(model.name || model.id)}</div>
-              <div class="admin-model-switch-meta">${escapeHtml(model.id)} · ${escapeHtml(model.group || '模型')}</div>
+              <div class="admin-model-switch-meta">${escapeHtml(model.group || '模型')}</div>
             </div>
             <label class="admin-switch">
-              <input type="checkbox" ${model.enabled ? 'checked' : ''} onchange="toggleAdminModel('${escapeHtml(model.id)}', this.checked, this)">
+              <input type="checkbox" ${model.enabled ? 'checked' : ''} data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-change="toggleAdminModel('${escapeHtml(model.id)}', this.checked, this)">
               <span></span>
             </label>
           </div>
@@ -26779,7 +29483,7 @@ async function loadAdminLimits() {
           </div>
         </div>
         <div class="admin-announcement-form-actions">
-          <button type="button" onclick="saveAdminLimits()">保存限制配置</button>
+          <button type="button" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="saveAdminLimits()">保存限制配置</button>
         </div>
       </div>
     `;
@@ -26878,15 +29582,15 @@ function renderAdminAnnouncements() {
         ${a.titleEn || a.bodyEn ? `<div class="admin-announcement-body admin-announcement-body-en">EN: ${escapeHtml(a.titleEn || a.title)}${a.bodyEn ? ` · ${escapeHtml(a.bodyEn)}` : ''}</div>` : ''}
       </div>
       <div class="admin-announcement-actions">
-        <button class="membership-task-action secondary" onclick="editAdminAnnouncement(${a.id})">${isZh ? '编辑' : 'Edit'}</button>
-        <button class="membership-task-action secondary" onclick="deleteAdminAnnouncement(${a.id})">${isZh ? '删除' : 'Delete'}</button>
+        <button class="membership-task-action secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="editAdminAnnouncement(${a.id})">${isZh ? '编辑' : 'Edit'}</button>
+        <button class="membership-task-action secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="deleteAdminAnnouncement(${a.id})">${isZh ? '删除' : 'Delete'}</button>
       </div>
     </div>
   `).join('');
 
   container.innerHTML = `
     <div class="admin-announcement-toolbar">
-      <button class="membership-task-action" onclick="showAdminAnnouncementForm()">${isZh ? '+ 新建公告' : '+ New announcement'}</button>
+      <button class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="showAdminAnnouncementForm()">${isZh ? '+ 新建公告' : '+ New announcement'}</button>
     </div>
     <div class="admin-announcement-list">
       ${rows || `<div class="admin-empty">${isZh ? '暂无公告' : 'No announcements yet'}</div>`}
@@ -26941,8 +29645,8 @@ function showAdminAnnouncementForm(announcement = null) {
         <span>${isZh ? '启用' : 'Enabled'}</span>
       </label>
       <div class="admin-announcement-form-actions">
-        <button class="membership-task-action" onclick="saveAdminAnnouncement(${a.id || 0})">${isZh ? '保存' : 'Save'}</button>
-        <button class="membership-task-action secondary" onclick="renderAdminAnnouncements()">${isZh ? '取消' : 'Cancel'}</button>
+        <button class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="saveAdminAnnouncement(${a.id || 0})">${isZh ? '保存' : 'Save'}</button>
+        <button class="membership-task-action secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="renderAdminAnnouncements()">${isZh ? '取消' : 'Cancel'}</button>
       </div>
     </div>
   `;
@@ -27027,8 +29731,8 @@ function renderAdminBroadcastPanel() {
         <textarea id="adminBroadcastText" rows="5" maxlength="100000" placeholder="${isZh ? '给不显示 HTML 的邮箱客户端使用' : 'Fallback for mail clients that do not render HTML'}"></textarea>
       </label>
       <div class="admin-announcement-form-actions admin-broadcast-actions">
-        <button class="membership-task-action secondary" onclick="sendAdminBroadcastTest()">${isZh ? '发送测试' : 'Send test'}</button>
-        <button class="membership-task-action" onclick="sendAdminBroadcastAll()">${isZh ? '发送给已验证用户' : 'Broadcast to verified users'}</button>
+        <button class="membership-task-action secondary" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="sendAdminBroadcastTest()">${isZh ? '发送测试' : 'Send test'}</button>
+        <button class="membership-task-action" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="sendAdminBroadcastAll()">${isZh ? '发送给已验证用户' : 'Broadcast to verified users'}</button>
       </div>
       <div id="adminBroadcastResult" class="admin-broadcast-result" aria-live="polite"></div>
     </div>
@@ -27163,7 +29867,7 @@ async function loadAdminSessions() {
               <td>${escapeHtml(session.model || '-')}</td>
               <td>${session.messageCount || 0}</td>
               <td>${formatDate(session.updated_at)}</td>
-              <td><button class="admin-action-btn delete" onclick="deleteAdminSession('${session.id}')">删除</button></td>
+              <td><button class="admin-action-btn delete" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="deleteAdminSession('${session.id}')">删除</button></td>
             </tr>
           `;
     });
@@ -27245,7 +29949,7 @@ async function openUserDetailModal(userId) {
     <div class="user-detail-container">
       <div class="user-detail-header">
         <h2> 用户详情</h2>
-        <button class="admin-close-btn" onclick="closeUserDetailModal()">
+        <button class="admin-close-btn" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="closeUserDetailModal()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
@@ -27333,7 +30037,7 @@ function renderUserDetail(user, sessions) {
           </div>
         </div>
         <div class="user-info-actions">
-          <button class="admin-action-btn view" onclick="openAdminPasswordEditor(${user.id})">${isChineseLanguage(appState.language) ? '更改密码' : 'Change password'}</button>
+          <button class="admin-action-btn view" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="openAdminPasswordEditor(${user.id})">${isChineseLanguage(appState.language) ? '更改密码' : 'Change password'}</button>
         </div>
       </div>
       
@@ -27345,7 +30049,7 @@ function renderUserDetail(user, sessions) {
             ${sessions.length === 0 ? '<div class="no-sessions">该用户暂无对话</div>' : sessions.map(s => `
               <div class="ud-session-item ${userDetailState.currentSessionId === s.id ? 'active' : ''}" 
                    data-session-id="${s.id}"
-                   onclick="loadSessionMessages('${s.id}')">
+                   data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadSessionMessages('${s.id}')">
                 <div class="ud-session-title">${escapeHtml(s.title || '新对话')}</div>
                 <div class="ud-session-meta">
                   <span>${s.messageCount || 0} 条消息</span>
@@ -27465,7 +30169,7 @@ function renderSessionMessages(session, messages, totalCount) {
           <span class="ud-message-time">${formatDate(msg.created_at)}</span>
           ${msg.model ? `<span class="ud-message-model">${escapeHtml(msg.model)}</span>` : ''}
         </div>
-        <div class="ud-message-content" onclick="this.classList.toggle('expanded')">
+        <div class="ud-message-content" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="this.classList.toggle('expanded')">
           <pre>${escapeHtml(content)}</pre>
         </div>
         ${msg.reasoning_content ? `

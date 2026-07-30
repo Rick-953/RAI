@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.39-20260718-selection-dock-zero-hide-v01139';
+const RAI_SW_VERSION = '0.11.58-20260729-release-safety-password-v01158';
 const RAI_STATIC_CACHE_PREFIX = 'rai-static-root-';
 const RAI_AVATAR_CACHE_PREFIX = 'rai-avatar-root-';
 const RAI_FONT_CACHE_NAME = 'rai-fonts-root-v1';
@@ -9,25 +9,27 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/styles.css?v=20260718-selection-dock-zero-hide-v01139',
-  '/selection-explainer.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/selection-explainer.css?v=20260718-selection-dock-zero-hide-v01139',
-  '/site.webmanifest?v=20260718-selection-dock-zero-hide-v01139',
+  '/runtime-brand.js?v=20260729-release-safety-password-v01158',
+  '/event-bindings.js?v=20260729-release-safety-password-v01158',
+  '/app.js?v=20260729-release-safety-password-v01158',
+  '/styles.css?v=20260729-release-safety-password-v01158',
+  '/selection-explainer.js?v=20260729-release-safety-password-v01158',
+  '/selection-explainer.css?v=20260729-release-safety-password-v01158',
+  '/site.webmanifest?v=20260729-release-safety-password-v01158',
   '/icons/source-search.svg',
   '/icons/rai-app-icon.svg',
   '/icons/rai-app-icon-192.png',
   '/icons/rai-app-icon-512.png',
   '/icons/settings/notifications.svg',
   '/icons/settings/notifications_paused.svg',
-  '/lib/marked.min.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/purify.min.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/katex/katex.min.css?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/katex/katex.min.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/katex/contrib/auto-render.min.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/mermaid/mermaid.min.js?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/highlight/styles/github-dark.min.css?v=20260718-selection-dock-zero-hide-v01139',
-  '/lib/highlight/highlight.min.js?v=20260718-selection-dock-zero-hide-v01139'
+  '/icons/settings/security.svg',
+  '/lib/marked.min.js?v=20260729-release-safety-password-v01158',
+  '/lib/purify.min.js?v=20260729-release-safety-password-v01158',
+  '/lib/katex/katex.min.css?v=20260729-release-safety-password-v01158',
+  '/lib/katex/katex.min.js?v=20260729-release-safety-password-v01158',
+  '/lib/katex/contrib/auto-render.min.js?v=20260729-release-safety-password-v01158',
+  '/lib/highlight/styles/github-dark.min.css?v=20260729-release-safety-password-v01158',
+  '/lib/highlight/highlight.min.js?v=20260729-release-safety-password-v01158'
 ];
 
 function isAvatarRequest(url) {
@@ -117,6 +119,8 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/') || url.pathname.startsWith('/generated-images/') || url.pathname.startsWith('/downloads/')) {
     return;
   }
+
+  if (url.pathname === '/runtime-config.js') return;
 
   if (request.mode === 'navigate') {
     event.respondWith(

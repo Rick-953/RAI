@@ -170,7 +170,7 @@ async function runAgentPipeline(options) {
       scope: 'stage',
       stepId: 'planner',
       status: 'failed',
-      detail: `Planner failed, using default plan: ${error.message}`
+      detail: 'Planner failed; using the default plan'
     });
     plannerPlan = parsePlanOutput('', { maxSubAgents, userMessage });
   }
@@ -338,7 +338,7 @@ async function runAgentPipeline(options) {
         stepId: `task-${task.agent_id || idx + 1}`,
         taskId: task.agent_id || idx + 1,
         status: 'failed',
-        detail: result.reason.message || 'Sub-agent failed'
+        detail: 'Sub-agent failed'
       });
     }
   });
@@ -406,7 +406,7 @@ async function runAgentPipeline(options) {
     scope: 'stage',
     stepId: 'quality',
     status: 'running',
-    detail: 'Running quality gate'
+    detail: 'Running heuristic quality review (not independent fact verification)'
   });
 
   const mergedSources = [...subSources, ...(synthResult.sources || [])];
@@ -422,6 +422,10 @@ async function runAgentPipeline(options) {
 
   emitEvent({
     type: 'agent_quality',
+    // This stage only evaluates heuristics produced by the same pipeline. Keep
+    // the public contract fail-closed even if an injected checker overclaims.
+    reviewKind: 'heuristic_quality_review',
+    independentFactVerification: false,
     pass: quality.pass,
     profile: qualityProfile,
     metrics: quality.metrics,
@@ -453,7 +457,9 @@ async function runAgentPipeline(options) {
     stepId: 'quality',
     status: 'done',
     durationMs: stageDurations.quality,
-    detail: quality.pass ? 'Quality gate passed' : 'Quality gate failed, conservative degradation applied'
+    detail: quality.pass
+      ? 'Heuristic quality review passed (facts are not independently verified)'
+      : 'Heuristic quality review failed, conservative degradation applied'
   });
 
   emitEvent({
