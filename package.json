@@ -49,7 +49,7 @@
     "@simplewebauthn/server": "13.3.2",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
-    "express": "^4.22.2",
+    "express": "^5.2.1",
     "express-rate-limit": "^7.1.5",
     "ipaddr.js": "2.4.0",
     "jsonwebtoken": "^9.0.3",
