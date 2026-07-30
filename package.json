@@ -59,7 +59,7 @@
     "yauzl": "3.4.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.2",
+    "@tauri-apps/cli": "^2.11.4",
     "tar": "7.5.22",
     "yazl": "3.3.1"
   },
