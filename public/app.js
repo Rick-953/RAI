@@ -2386,8 +2386,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.92';
-const RAI_BUILD_ID = '20260808-badges-stream-latency-v01192';
+const RAI_APP_VERSION = '0.11.93';
+const RAI_BUILD_ID = '20260811-menu-scroll-undici-v01193';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -6202,7 +6202,7 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-08-06',
-    version: 'v0.11.92',
+    version: 'v0.11.93',
     zh: {
       summary: '对话可验证存证、文件产物不中断与会员分级并发已上线。',
       details: [
@@ -13475,7 +13475,7 @@ function retryStartupAuthentication() {
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
-  console.log(' RAI v0.11.92 初始化 (badges-stream-latency)');
+  console.log(' RAI v0.11.93 初始化 (badges-stream-latency)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

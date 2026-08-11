@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.11.92-20260808-badges-stream-latency-v01192';
+const RAI_SW_VERSION = '0.11.93-20260811-menu-scroll-undici-v01193';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,19 +13,19 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  '', 'index.html', 'runtime-brand.js?v=20260808-badges-stream-latency-v01192',
-  'rai-system-prompt.js?v=20260808-badges-stream-latency-v01192', 'event-bindings.js?v=20260808-badges-stream-latency-v01192',
-  'app.js?v=20260808-badges-stream-latency-v01192', 'styles.css?v=20260808-badges-stream-latency-v01192',
-  'crf-ui.js?v=20260808-badges-stream-latency-v01192',
-  'selection-explainer.js?v=20260808-badges-stream-latency-v01192', 'selection-explainer.css?v=20260808-badges-stream-latency-v01192',
-  'site.webmanifest?v=20260808-badges-stream-latency-v01192', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  '', 'index.html', 'runtime-brand.js?v=20260811-menu-scroll-undici-v01193',
+  'rai-system-prompt.js?v=20260811-menu-scroll-undici-v01193', 'event-bindings.js?v=20260811-menu-scroll-undici-v01193',
+  'app.js?v=20260811-menu-scroll-undici-v01193', 'styles.css?v=20260811-menu-scroll-undici-v01193',
+  'crf-ui.js?v=20260811-menu-scroll-undici-v01193',
+  'selection-explainer.js?v=20260811-menu-scroll-undici-v01193', 'selection-explainer.css?v=20260811-menu-scroll-undici-v01193',
+  'site.webmanifest?v=20260811-menu-scroll-undici-v01193', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20260808-badges-stream-latency-v01192', 'lib/purify.min.js?v=20260808-badges-stream-latency-v01192',
-  'lib/katex/katex.min.css?v=20260808-badges-stream-latency-v01192', 'lib/katex/katex.min.js?v=20260808-badges-stream-latency-v01192',
-  'lib/katex/contrib/auto-render.min.js?v=20260808-badges-stream-latency-v01192',
-  'lib/highlight/styles/github-dark.min.css?v=20260808-badges-stream-latency-v01192',
-  'lib/highlight/highlight.min.js?v=20260808-badges-stream-latency-v01192'
+  'lib/marked.min.js?v=20260811-menu-scroll-undici-v01193', 'lib/purify.min.js?v=20260811-menu-scroll-undici-v01193',
+  'lib/katex/katex.min.css?v=20260811-menu-scroll-undici-v01193', 'lib/katex/katex.min.js?v=20260811-menu-scroll-undici-v01193',
+  'lib/katex/contrib/auto-render.min.js?v=20260811-menu-scroll-undici-v01193',
+  'lib/highlight/styles/github-dark.min.css?v=20260811-menu-scroll-undici-v01193',
+  'lib/highlight/highlight.min.js?v=20260811-menu-scroll-undici-v01193'
 ].map(appPath);
 
 function isAvatarRequest(url) {
