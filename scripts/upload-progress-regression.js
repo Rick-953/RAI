@@ -17,6 +17,7 @@ assert.match(server, /uploadProgressSessions\.size >= UPLOAD_PROGRESS_MAX_SESSIO
 assert.match(server, /code: 'upload_sessions_busy'/);
 assert.match(server, /app\.post\('\/api\/uploads\/sessions', apiLimiter, authenticateToken/);
 assert.match(server, /app\.get\('\/api\/uploads\/:uploadId\/status', apiLimiter, authenticateToken/);
+assert.match(server, /app\.post\([\s\S]*'\/api\/upload',[\s\S]*apiLimiter,[\s\S]*authenticateToken/);
 assert.match(server, /Number\(session\.userId\) !== Number\(req\.user\.userId\)/);
 assert.match(server, /res\.setHeader\('Cache-Control', 'private, no-store'\)/);
 assert.match(server, /function startUploadByteTracking[\s\S]*req\.on\('data'/);
@@ -26,6 +27,8 @@ assert.match(server, /status: 'processing'/);
 assert.match(server, /status: 'completed'[\s\S]*uploadId: req\.uploadProgressSession\.id/);
 assert.match(server, /status: 'failed'/);
 assert.match(server, /X-RAI-Upload-ID/);
+assert.match(server, /resolveValidatedUploadedFilePath\(req\.file, 'attachment'\)/);
+assert.match(server, /formatPrivateLogFingerprint\(req\.file\.filename, 'upload'\)/);
 
 assert.match(app, /async function createUploadSession[\s\S]*\/uploads\/sessions/);
 assert.match(app, /function uploadFileWithProgress[\s\S]*new XMLHttpRequest\(\)/);

@@ -10862,6 +10862,19 @@ function isServerGeneratedUploadPath(filePath) {
         && /^\d{10,17}-[a-f0-9]{12}\.[a-z0-9]{1,10}$/i.test(filename);
 }
 
+function resolveValidatedUploadedFilePath(file, uploadKind) {
+    const rawFilename = String(file?.filename || '');
+    const filename = path.basename(rawFilename);
+    const storageRoot = uploadKind === 'avatar' ? UPLOAD_STORAGE_ROOTS[1] : UPLOAD_STORAGE_ROOTS[0];
+    const resolvedPath = path.join(storageRoot, filename);
+    if (filename !== rawFilename || !isServerGeneratedUploadPath(resolvedPath)) {
+        const error = new Error('上传文件路径无效');
+        error.statusCode = 400;
+        throw error;
+    }
+    return resolvedPath;
+}
+
 function trackRequestUploadPath(req, filePath) {
     const resolvedPath = path.resolve(String(filePath || ''));
     if (!isServerGeneratedUploadPath(resolvedPath)) return;
@@ -11042,7 +11055,7 @@ function isTextualAttachmentExtension(ext) {
 
 async function validateUploadedFileContent(file, uploadKind) {
     const ext = getUploadExtension(file);
-    const prefix = await readFilePrefix(file.path);
+    const prefix = await readFilePrefix(resolveValidatedUploadedFilePath(file, uploadKind));
 
     if (uploadKind === 'avatar' && !hasImageMagic(prefix, ext)) {
         const error = new Error('头像文件内容与类型不匹配');
@@ -14505,11 +14518,12 @@ app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
 
 app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+    const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'avatar');
 
     try {
         await validateUploadedFileContent(req.file, 'avatar');
     } catch (error) {
-        fs.unlink(req.file.path, () => null);
+        fs.unlink(uploadedFilePath, () => null);
         return res.status(error.statusCode || 400).json({ error: error.message || '头像上传失败' });
     }
 
@@ -18935,6 +18949,7 @@ app.get('/api/uploads/:uploadId/status', apiLimiter, authenticateToken, (req, re
 
 app.post(
     '/api/upload',
+    apiLimiter,
     authenticateToken,
     trackUploadProgress,
     enforceUploadPreflight,
@@ -18956,6 +18971,7 @@ app.post(
             failUploadProgressSession(req, 'upload_file_missing');
             return res.status(400).json({ success: false, error: '没有文件上传' });
         }
+        const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'attachment');
 
         try {
             await validateUploadedFileContent(req.file, 'attachment');
@@ -18974,7 +18990,7 @@ app.post(
                 file,
                 errorCode: null
             });
-            console.log(' 文件上传成功:', req.file.filename);
+            console.log(` 文件上传成功: ${formatPrivateLogFingerprint(req.file.filename, 'upload')}`);
             res.json({
                 success: true,
                 uploadId: req.uploadProgressSession.id,
@@ -18982,7 +18998,7 @@ app.post(
                 file
             });
         } catch (error) {
-            fs.unlink(req.file.path, () => null);
+            fs.unlink(uploadedFilePath, () => null);
             failUploadProgressSession(req, Number(error.statusCode || 500) === 413 ? 'upload_quota_exceeded' : 'upload_validation_failed');
             console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
             res.status(error.statusCode || 500).json({
