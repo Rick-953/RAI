@@ -7,15 +7,16 @@ const { resolveDocumentSandboxEnabled } = require('../lib/document-sandbox-runti
 
 const root = path.resolve(__dirname, '..');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+const parser = fs.readFileSync(path.join(root, 'lib', 'document-parser.js'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 
-// Beta can advertise Office only after all production sandbox checks pass.
+// Formal and Beta Web can advertise Office only after all production sandbox checks pass.
 assert.equal(resolveDocumentSandboxEnabled({
     parserEnabled: true,
     isProduction: true,
     sandboxAvailable: true
 }), true);
-// Formal stays closed when its explicit production flag is not enabled.
+// The runtime remains closed when parsing is force-disabled or unavailable.
 assert.equal(resolveDocumentSandboxEnabled({
     parserEnabled: false,
     isProduction: true,
@@ -33,9 +34,11 @@ assert.equal(resolveDocumentSandboxEnabled({
 }), false);
 
 assert.match(server, /documentSandboxEnabled:\s*DOCUMENT_SANDBOX_RUNTIME_ENABLED/);
-assert.match(server, /resolveDocumentSandboxEnabled\(\{[\s\S]{0,240}parserEnabled:\s*DOCUMENT_PARSER_ENABLED[\s\S]{0,240}isProduction:\s*IS_PRODUCTION[\s\S]{0,240}sandboxAvailable:\s*isProductionDocumentSandboxAvailable\(\)/);
-for (const executable of ['/usr/bin/prlimit', "path.resolve(__dirname, 'scripts', 'rai-document-parser-sandbox.sh')", '/usr/bin/bwrap', '/bin/sh']) {
-    assert.ok(server.includes(executable), `runtime availability must require ${executable}`);
+assert.match(server, /const DOCUMENT_PARSER_FORCE_DISABLED = parseBooleanEnv\(process\.env\.RAI_DOCUMENT_PARSER_FORCE_DISABLED, false\)/);
+assert.match(server, /const DOCUMENT_PARSER_ENABLED = !DOCUMENT_PARSER_FORCE_DISABLED && \(\s*IS_PRODUCTION \|\| parseBooleanEnv\(process\.env\.RAI_DOCUMENT_PARSER_ENABLED, true\)\s*\)/);
+assert.match(server, /resolveDocumentSandboxEnabled\(\{[\s\S]{0,240}parserEnabled:\s*DOCUMENT_PARSER_ENABLED[\s\S]{0,240}isProduction:\s*IS_PRODUCTION[\s\S]{0,240}sandboxAvailable:\s*isProductionDocumentSandboxAvailable\(process\.env\.RAI_DOCUMENT_PARSER_PROFILE\)/);
+for (const requiredPath of ['/usr/bin/prlimit', '/usr/bin/bwrap', '/bin/sh', 'PRODUCTION_NODE_ROOT', "path.join(appRoot, 'workers', 'document-parser-worker.js')", "path.join(appRoot, 'node_modules')"]) {
+    assert.ok(parser.includes(requiredPath), `runtime availability must require ${requiredPath}`);
 }
 assert.match(server, /SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS = new Set\(\['docx', 'xlsx', 'pptx'\]\)/);
 assert.match(server, /SANDBOXED_ARCHIVE_ATTACHMENT_EXTENSIONS = new Set\(\['zip', '7z', 'tar', 'gz', 'bz2', 'xz'\]\)/);
@@ -82,4 +85,4 @@ const dragDropSource = app.slice(dragDropStart, dragDropStart + 2600);
 assert.ok(dragDropStart >= 0, 'missing initDragAndDrop');
 assert.match(dragDropSource, /processUploadedFile\(files\[0\]\)/);
 
-console.log('office-picker-runtime-regression ok (beta enabled, formal disabled, picker/drop/process gated)');
+console.log('office-picker-runtime-regression ok (formal and beta sandbox-gated, picker/drop/process gated)');

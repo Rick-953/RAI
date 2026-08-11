@@ -5,7 +5,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const yazl = require('yazl');
-const { parseDocumentFile } = require('../lib/document-parser');
+const {
+    isProductionDocumentSandboxAvailable,
+    parseDocumentFile
+} = require('../lib/document-parser');
 
 async function createZip(entries) {
     const zip = new yazl.ZipFile();
@@ -262,18 +265,7 @@ async function main() {
         process.env.NODE_ENV = 'production';
         process.env.RAI_DOCUMENT_PARSER_PROFILE = 'beta';
         try {
-            const isExecutable = (filePath) => {
-                try {
-                    fs.accessSync(filePath, fs.constants.X_OK);
-                    return true;
-                } catch (_) {
-                    return false;
-                }
-            };
-            const sandboxAvailable = process.platform === 'linux'
-                && isExecutable('/usr/bin/prlimit')
-                && isExecutable('/usr/bin/bwrap')
-                && isExecutable(path.join(__dirname, 'rai-document-parser-sandbox.sh'));
+            const sandboxAvailable = isProductionDocumentSandboxAvailable('beta');
             if (sandboxAvailable) {
                 const productionResult = await parseDocumentFile(docxPath, 'docx');
                 assert.match(productionResult.text, /DOCX & safe/);

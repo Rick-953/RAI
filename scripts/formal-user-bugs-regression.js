@@ -1035,15 +1035,15 @@ async function testMessageRenderingStability() {
 }
 
 function testVersionContract() {
-  const expectedVersion = '0.11.93';
-  const expectedBuild = '20260811-menu-scroll-undici-v01193';
+  const expectedVersion = '0.11.94';
+  const expectedBuild = '20260811-office-audio-title-v01194-r1';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.93'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260811-menu-scroll-undici-v01193'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.93/);
-  assert.match(serviceWorker, /0\.11\.93-20260811-menu-scroll-undici-v01193/);
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.94'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260811-office-audio-title-v01194-r1'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.94/);
+  assert.match(serviceWorker, /0\.11\.94-20260811-office-audio-title-v01194-r1/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
@@ -1056,7 +1056,7 @@ function testVersionContract() {
     'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260811-menu-scroll-undici-v01193/);
+  assert.match(index, /conversation-cache\.js\?v=20260811-office-audio-title-v01194-r1/);
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
     'fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
@@ -1220,6 +1220,16 @@ function testVersionContract() {
     'conversation rows must not restore message previews or attachment previews');
   assert.match(server, /conversation_folders[\s\S]{0,1200}conversation_folder_sessions[\s\S]{0,1200}session_pins/);
   const folderManager = extractNamedFunction(app, 'showSessionFolderManager');
+  const sessionMenu = extractNamedFunction(app, 'openSessionMenu');
+  const sessionRename = extractNamedFunction(app, 'showSessionRenameCard');
+  assert.match(sessionMenu, /data-action="rename"[\s\S]*showSessionRenameCard\(session\)/,
+    'conversation menus must expose the user rename command');
+  assert.match(sessionRename, /maxlength="60"[\s\S]*method:\s*'PUT'[\s\S]*JSON\.stringify\(\{ title \}\)/,
+    'conversation rename must submit one bounded title to the owned session endpoint');
+  assert.match(sessionRename, /appState\.currentSession\.title = savedTitle[\s\S]*renderSessions\(\{ preserveScroll: true \}\)/,
+    'a successful rename must update the current title and sidebar immediately');
+  assert.match(server, /title !== undefined && !safeTitle[\s\S]{0,180}status\(400\)/,
+    'the session update endpoint must reject empty or default titles instead of returning a false success');
   assert.match(folderManager, /\/sessions\/\$\{encodeURIComponent\(session\.id\)\}\/conversation-folders/,
     'folder editing must load exact membership for the selected session');
   assert.match(app, /await Promise\.all\(\[\s*hydrateCachedConversationShell\(conversationContext\),\s*loadConversationFolders\(conversationContext\)\s*\]\)/,

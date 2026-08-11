@@ -50,6 +50,12 @@ assert.doesNotMatch(app, /点击加载附件|Click to load attachments|loadMessa
 assert.match(server, /app\.get\('\/api\/uploads\/:filename\/preview', apiLimiter, authenticateToken/);
 assert.match(server, /WHERE filename = \? AND user_id = \? AND upload_kind = 'attachment'/);
 assert.match(server, /SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS\.has\(ext\)[\s\S]*parseDocumentFile\(filePath, ext\)/);
+for (const [extension, kind] of [['.docx', 'docx'], ['.xlsx', 'xlsx'], ['.pptx', 'pptx'], ['.csv', 'csv']]) {
+    assert.ok(
+        server.includes(`ext === '${extension}'`) && server.includes(`tryExtractDocumentText(filePath, '${kind}')`),
+        `${extension} attachments must be extracted into trusted prompt context`
+    );
+}
 assert.match(server, /Cache-Control', 'private, no-store'/);
 assert.match(cache, /MESSAGE_FORMAT_VERSION = 3/);
 assert.match(cache, /formatVersion: MESSAGE_FORMAT_VERSION/);
