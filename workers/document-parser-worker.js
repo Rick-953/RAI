@@ -197,6 +197,39 @@ function extractTextNodes(xml) {
     return values;
 }
 
+function parseXlsxRows(sheetXml, sharedValues) {
+    // 按行解析 sheet XML：提取字符串（sharedStrings/inlineStr）与数值（<v>）单元格
+    const rows = [];
+    const rowRegex = /<row[^>]*>([\s\S]*?)<\/row>/g;
+    let rowMatch;
+    while ((rowMatch = rowRegex.exec(sheetXml)) !== null) {
+        const cells = [];
+        const cellRegex = /<c\b([^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*)\/>/g;
+        let cellMatch;
+        while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+            const attrs = cellMatch[1] || cellMatch[3] || '';
+            const body = cellMatch[2] || '';
+            const typeMatch = /t="([^"]*)"/.exec(attrs);
+            const type = typeMatch ? typeMatch[1] : '';
+            let value = '';
+            if (type === 's') {
+                const vMatch = /<v>([\s\S]*?)<\/v>/.exec(body);
+                const idx = vMatch ? parseInt(vMatch[1], 10) : NaN;
+                if (Number.isInteger(idx) && sharedValues[idx] !== undefined) value = sharedValues[idx];
+            } else if (type === 'inlineStr') {
+                const tMatch = /<t[^>]*>([\s\S]*?)<\/t>/.exec(body);
+                value = tMatch ? tMatch[1] : '';
+            } else {
+                const vMatch = /<v>([\s\S]*?)<\/v>/.exec(body);
+                value = vMatch ? vMatch[1] : '';
+            }
+            if (value !== undefined && value !== '') cells.push(value);
+        }
+        if (cells.length) rows.push(cells.join(' | '));
+    }
+    return rows;
+}
+
 async function parseOffice(kind, input) {
     const { targets, totals } = await inspectOfficeArchive(kind, input);
     let text = '';
@@ -207,17 +240,14 @@ async function parseOffice(kind, input) {
     } else if (kind === 'xlsx') {
         const parts = [];
         const shared = targets.get('xl/sharedStrings.xml');
-        if (shared) {
-            const sharedValues = extractTextNodes(shared.toString('utf8'));
-            if (sharedValues.length) parts.push(`[单元格数据]: ${sharedValues.join(' | ')}`);
-        }
+        const sharedValues = shared ? extractTextNodes(shared.toString('utf8')) : [];
         const sheetNames = [...targets.keys()]
             .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
             .sort((a, b) => Number(a.match(/sheet(\d+)/)?.[1] || 0) - Number(b.match(/sheet(\d+)/)?.[1] || 0));
         if (sheetNames.length > 64) throw parserError('workbook_sheet_limit');
         for (const [index, name] of sheetNames.entries()) {
-            const inlineValues = extractTextNodes(targets.get(name).toString('utf8'));
-            if (inlineValues.length) parts.push(`[工作表${index + 1}]: ${inlineValues.join(' | ')}`);
+            const rows = parseXlsxRows(targets.get(name).toString('utf8'), sharedValues);
+            if (rows.length) parts.push(`[工作表${index + 1}]:\n${rows.join('\n')}`);
         }
         if (!parts.length && sheetNames[0]) {
             const fallback = xmlToPlainText(targets.get(sheetNames[0]).toString('utf8'));
