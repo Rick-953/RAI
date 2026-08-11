@@ -594,6 +594,113 @@ async function hydratePrivateGeneratedImage(img, sourceUrl, handleImageError) {
   }
 }
 
+async function fetchPrivateGeneratedImageBlob(sourceUrl) {
+  const generatedUrl = resolvePrivateGeneratedImageUrl(sourceUrl);
+  const context = captureConversationCacheContext();
+  if (!generatedUrl || !isConversationCacheContextCurrent(context)) {
+    throw new Error('generated image unavailable');
+  }
+  const cache = window.RAIConversationCache;
+  const cached = await cache?.getAsset?.(generatedUrl);
+  if (!isConversationCacheContextCurrent(context)) throw new Error('generated image context changed');
+  if (cached?.blob?.size) return { blob: cached.blob, url: generatedUrl };
+
+  const response = await fetch(generatedUrl, {
+    headers: { Authorization: `Bearer ${context.token}` },
+    credentials: RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin',
+    cache: 'no-store'
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.startsWith('image/')) throw new Error('Unexpected generated image content type');
+  const blob = await response.blob();
+  if (!blob.size || !isConversationCacheContextCurrent(context)) throw new Error('empty generated image');
+  await cache?.putAsset?.(generatedUrl, blob, {
+    etag: response.headers.get('ETag'),
+    expiresAt: Number(response.headers.get('X-RAI-Asset-Expires-At') || 0)
+  });
+  return { blob, url: generatedUrl };
+}
+
+function generatedImageFileName(generatedUrl = '', blob = null) {
+  try {
+    const name = decodeURIComponent(new URL(generatedUrl, window.location.origin).pathname.split('/').pop() || '');
+    if (/\.(?:png|jpe?g|gif|webp)$/i.test(name)) return name;
+  } catch (_) {
+    // Fall through to a MIME-derived extension.
+  }
+  const extension = String(blob?.type || '').toLowerCase().includes('jpeg') ? 'jpg'
+    : (String(blob?.type || '').split('/')[1] || 'png').replace(/[^a-z0-9]/g, '');
+  return `rai-generated-${Date.now()}.${extension || 'png'}`;
+}
+
+async function previewGeneratedImage(sourceUrl) {
+  try {
+    const { blob, url } = await fetchPrivateGeneratedImageBlob(sourceUrl);
+    const objectUrl = URL.createObjectURL(blob);
+    const image = document.createElement('img');
+    image.className = 'private-file-preview-media';
+    image.alt = isChineseLanguage(appState.language) ? 'RAI 生成图片' : 'RAI generated image';
+    image.src = objectUrl;
+    showPrivateFilePreview({
+      title: generatedImageFileName(url, blob),
+      contentNode: image,
+      objectUrl
+    });
+    return true;
+  } catch (error) {
+    console.warn('生成图片预览失败:', error?.message || error);
+    showToast(isChineseLanguage(appState.language) ? '生成图片暂时无法预览' : 'Generated image preview is unavailable');
+    return false;
+  }
+}
+
+async function downloadGeneratedImage(sourceUrl) {
+  try {
+    const { blob, url } = await fetchPrivateGeneratedImageBlob(sourceUrl);
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = generatedImageFileName(url, blob);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    return true;
+  } catch (error) {
+    console.warn('生成图片下载失败:', error?.message || error);
+    showToast(isChineseLanguage(appState.language) ? '生成图片下载失败' : 'Generated image download failed');
+    return false;
+  }
+}
+
+function addGeneratedImageActions(img, generatedUrl) {
+  if (!img || !generatedUrl || img.dataset.raiGeneratedImageActions === '1') return;
+  img.dataset.raiGeneratedImageActions = '1';
+  img.tabIndex = 0;
+  img.setAttribute('role', 'button');
+  img.setAttribute('aria-label', isChineseLanguage(appState.language) ? '预览 RAI 生成图片' : 'Preview RAI generated image');
+  const preview = () => previewGeneratedImage(generatedUrl);
+  img.addEventListener('click', preview);
+  img.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      preview();
+    }
+  });
+
+  const actions = document.createElement('span');
+  actions.className = 'generated-image-actions';
+  actions.innerHTML = `
+    <button type="button" class="generated-image-action generated-image-preview">${getSvgIcon('visibility', 'material-symbols-outlined', 18)}<span>${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</span></button>
+    <button type="button" class="generated-image-action generated-image-download">${getSvgIcon('download', 'material-symbols-outlined', 18)}<span>${isChineseLanguage(appState.language) ? '下载' : 'Download'}</span></button>
+  `;
+  actions.querySelector('.generated-image-preview')?.addEventListener('click', preview);
+  actions.querySelector('.generated-image-download')?.addEventListener('click', () => downloadGeneratedImage(generatedUrl));
+  const actionHost = img.closest('.streaming-image-container') || img.parentElement;
+  actionHost?.appendChild(actions);
+}
+
 function hydrateRenderedImages(container) {
   if (!container) return;
   const seenGenerated = new Set();
@@ -627,6 +734,7 @@ function hydrateRenderedImages(container) {
 
     img.addEventListener('error', handleImageError, { once: true });
     if (isGeneratedImage) {
+      addGeneratedImageActions(img, generatedUrl);
       hydratePrivateGeneratedImage(img, generatedUrl, handleImageError);
       return;
     }
@@ -2138,6 +2246,12 @@ const ICON_PATHS = {
 
   // 文件夹图标 - 用于侧边栏空间分组标题
   'folder': '<path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>',
+  'description': '<path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z"/>',
+  'visibility': '<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5Zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>',
+  'download': '<path d="M19 9h-4V3H9v6H5l7 7 7-7ZM5 18v2h14v-2H5Z"/>',
+  'audio_file': '<path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Zm-2 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/>',
+  'video_file': '<path d="M17 10.5V6c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-4.5l4 4v-11l-4 4Z"/>',
+  'archive': '<path d="M20.54 5.23 19.15 3.55A1.45 1.45 0 0 0 18 3H6c-.46 0-.89.21-1.17.55L3.46 5.23A1.94 1.94 0 0 0 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.47-.17-.91-.46-1.27ZM6.24 5h11.52l.81 1H5.43l.81-1ZM5 19V8h14v11H5Zm4-9h6v2H9v-2Z"/>',
 
   // 向上箭头图标 - 用于折叠组的收起状态、思考内容展开后的图标
   'expand_less': '<path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/>',
@@ -2272,8 +2386,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.88';
-const RAI_BUILD_ID = '20260806-beta-integrity-stream-concurrency-v01188';
+const RAI_APP_VERSION = '0.11.92';
+const RAI_BUILD_ID = '20260808-badges-stream-latency-v01192';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5539,16 +5653,111 @@ async function hydratePrivateAttachmentImage(img, att = {}) {
   }
 }
 
-async function downloadAttachment(att = {}) {
-  const url = resolveAttachmentUrl(att);
-  if (!url) return;
-
-  try {
-    const response = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${appState.token}` }
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+async function fetchPrivateAttachmentBlob(att = {}) {
+  if (typeof att.data === 'string' && att.data.startsWith('data:')) {
+    const response = await fetch(att.data);
     const blob = await response.blob();
+    if (!blob.size) throw new Error('empty attachment');
+    return blob;
+  }
+
+  const url = resolveAttachmentUrl(att);
+  const context = captureConversationCacheContext();
+  if (!url || !isConversationCacheContextCurrent(context)) throw new Error('attachment unavailable');
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${context.token}` },
+    credentials: RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin',
+    cache: 'no-store'
+  });
+  if (!isConversationCacheContextCurrent(context)) throw new Error('attachment context changed');
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const blob = await response.blob();
+  if (!blob.size || !isConversationCacheContextCurrent(context)) throw new Error('empty attachment');
+  return blob;
+}
+
+function showPrivateFilePreview({ title = '', contentNode = null, objectUrl = '' } = {}) {
+  const existing = document.getElementById('privateFilePreview');
+  if (typeof existing?.__raiClosePreview === 'function') existing.__raiClosePreview();
+  else existing?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'privateFilePreview';
+  overlay.className = 'private-file-preview-overlay';
+  overlay.innerHTML = `
+    <div class="private-file-preview" role="dialog" aria-modal="true" aria-labelledby="privateFilePreviewTitle">
+      <div class="private-file-preview-head">
+        <strong id="privateFilePreviewTitle">${escapeHtml(title || (isChineseLanguage(appState.language) ? '文件预览' : 'File preview'))}</strong>
+        <button type="button" class="private-file-preview-close" aria-label="${isChineseLanguage(appState.language) ? '关闭' : 'Close'}">${getSvgIcon('close', 'material-symbols-outlined', 20)}</button>
+      </div>
+      <div class="private-file-preview-body"></div>
+    </div>
+  `;
+  const body = overlay.querySelector('.private-file-preview-body');
+  if (contentNode) body?.appendChild(contentNode);
+  const close = () => {
+    overlay.remove();
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    document.removeEventListener('keydown', onKeydown);
+  };
+  const onKeydown = (event) => {
+    if (event.key === 'Escape') close();
+  };
+  overlay.__raiClosePreview = close;
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelector('.private-file-preview-close')?.addEventListener('click', close);
+  document.addEventListener('keydown', onKeydown);
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+async function previewAttachment(att = {}) {
+  const type = String(att.type || '').toLowerCase();
+  const title = att.fileName || att.originalName || (isChineseLanguage(appState.language) ? '附件' : 'Attachment');
+  try {
+    if (['image', 'audio', 'video'].includes(type)) {
+      const blob = await fetchPrivateAttachmentBlob(att);
+      const objectUrl = URL.createObjectURL(blob);
+      let media;
+      if (type === 'image') {
+        media = document.createElement('img');
+        media.alt = title;
+      } else {
+        media = document.createElement(type);
+        media.controls = true;
+        media.preload = 'metadata';
+      }
+      media.className = 'private-file-preview-media';
+      media.src = objectUrl;
+      showPrivateFilePreview({ title, contentNode: media, objectUrl });
+      return true;
+    }
+
+    const url = resolveAttachmentUrl(att);
+    if (!url || !appState.token) throw new Error('attachment unavailable');
+    const response = await fetch(`${url}/preview`, {
+      headers: { Authorization: `Bearer ${appState.token}` },
+      credentials: RAI_IS_TAURI_DESKTOP ? 'include' : 'same-origin',
+      cache: 'no-store'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.kind !== 'text') throw new Error(data.error || `HTTP ${response.status}`);
+    const preview = document.createElement('pre');
+    preview.className = 'private-file-preview-text';
+    preview.textContent = String(data.content || '');
+    showPrivateFilePreview({ title: data.fileName || title, contentNode: preview });
+    return true;
+  } catch (error) {
+    console.warn('附件预览失败:', error?.message || error);
+    showToast(isChineseLanguage(appState.language) ? '此文件暂时无法预览，可直接下载' : 'Preview unavailable; you can still download the file');
+    return false;
+  }
+}
+
+async function downloadAttachment(att = {}) {
+  try {
+    const blob = await fetchPrivateAttachmentBlob(att);
     const objectUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = objectUrl;
@@ -5556,11 +5765,293 @@ async function downloadAttachment(att = {}) {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(objectUrl);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
   } catch (error) {
     console.error(' 附件下载失败:', error);
     showToast(isChineseLanguage(appState.language) ? '附件下载失败' : 'Attachment download failed');
   }
+}
+
+const fileLibraryState = {
+  files: [],
+  storage: null,
+  nextOffset: null,
+  query: '',
+  loading: false,
+  controller: null,
+  searchTimer: null,
+  contextKey: ''
+};
+
+function fileLibraryTierLabel(tier) {
+  const normalized = String(tier || 'free').toLowerCase();
+  return normalized === 'max' ? 'MAX' : (normalized === 'pro' ? 'Pro' : 'Free');
+}
+
+function fileLibraryIconName(file = {}) {
+  const type = String(file.type || '').toLowerCase();
+  const extension = String(file.fileName || '').split('.').pop().toLowerCase();
+  if (type === 'image') return 'image';
+  if (type === 'video') return 'video_file';
+  if (type === 'audio') return 'audio_file';
+  if (type === 'code' || ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'css', 'html', 'sql', 'sh'].includes(extension)) return 'code';
+  if (['zip', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(extension)) return 'archive';
+  return 'description';
+}
+
+function localizeFileLibraryPage() {
+  const isZh = isChineseLanguage(appState.language);
+  const title = document.getElementById('fileLibraryTitle');
+  const search = document.getElementById('fileLibrarySearch');
+  const upload = document.querySelector('.file-library-upload span');
+  const loadMore = document.getElementById('fileLibraryLoadMore');
+  const close = document.querySelector('.file-library-close');
+  if (title) title.textContent = isZh ? '文件' : 'Files';
+  if (search) search.placeholder = isZh ? '搜索文件' : 'Search files';
+  if (upload) upload.textContent = isZh ? '上传' : 'Upload';
+  if (loadMore) loadMore.textContent = isZh ? '加载更多' : 'Load more';
+  if (close) close.setAttribute('aria-label', isZh ? '关闭文件库' : 'Close files');
+}
+
+function renderFileLibraryStorage(storage = fileLibraryState.storage) {
+  if (!storage) return;
+  const used = Math.max(0, Number(storage.usedBytes || 0));
+  const limit = Math.max(1, Number(storage.limitBytes || 1));
+  const percent = Math.min(100, Math.max(0, (used / limit) * 100));
+  const label = document.getElementById('fileLibraryStorageLabel');
+  const value = document.getElementById('fileLibraryStorageValue');
+  const bar = document.getElementById('fileLibraryStorageBar');
+  const track = bar?.parentElement;
+  const summary = document.getElementById('fileLibrarySummary');
+  const isZh = isChineseLanguage(appState.language);
+  if (label) label.textContent = `${fileLibraryTierLabel(storage.tier)} ${isZh ? '存储空间' : 'storage'}`;
+  if (value) value.textContent = `${formatFileSize(used)} / ${formatFileSize(limit)}`;
+  if (bar) bar.style.width = `${percent.toFixed(2)}%`;
+  if (track) track.setAttribute('aria-valuenow', String(Math.round(percent)));
+  if (summary) {
+    const count = Math.max(0, Number(storage.fileCount || 0));
+    summary.textContent = isZh ? `${count} 个文件` : `${count} file${count === 1 ? '' : 's'}`;
+  }
+}
+
+function setFileLibraryStatus(message = '', { error = false } = {}) {
+  const status = document.getElementById('fileLibraryStatus');
+  if (!status) return;
+  status.hidden = !message;
+  status.textContent = message;
+  status.classList.toggle('error', error);
+}
+
+function formatFileLibraryDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(isChineseLanguage(appState.language) ? 'zh-CN' : 'en', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  }).format(date);
+}
+
+function useFileLibraryItemInChat(file = {}) {
+  if (!file.filePath) return false;
+  if (currentAttachment?.localThumbnail) URL.revokeObjectURL(currentAttachment.localThumbnail);
+  currentAttachment = {
+    type: file.type || 'document',
+    fileName: file.fileName || file.originalName || '',
+    originalName: file.originalName || file.fileName || '',
+    mimeType: file.mimeType || '',
+    size: Number(file.size || 0),
+    fileId: file.id || null,
+    filePath: file.filePath,
+    localThumbnail: null
+  };
+  updateAttachmentUI();
+  closeFileLibrary();
+  showToast(isChineseLanguage(appState.language) ? '已添加到当前对话' : 'Added to the current chat');
+  return true;
+}
+
+async function deleteFileLibraryItem(file = {}) {
+  const label = file.fileName || file.originalName || '';
+  const prompt = isChineseLanguage(appState.language)
+    ? `删除“${label}”？历史对话中的这个附件也将无法下载。`
+    : `Delete "${label}"? This attachment will no longer be downloadable from previous chats.`;
+  if (!confirm(prompt)) return false;
+  try {
+    const response = await fetch(`${API_BASE}/files/${encodeURIComponent(file.id || '')}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${appState.token}` }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    fileLibraryState.files = fileLibraryState.files.filter((entry) => entry.id !== file.id);
+    fileLibraryState.storage = data.storage || fileLibraryState.storage;
+    if (String(currentAttachment?.fileId || '') === String(file.id || '')) removeAttachment();
+    renderFileLibrary();
+    showToast(isChineseLanguage(appState.language) ? '文件已删除' : 'File deleted');
+    return true;
+  } catch (error) {
+    showToast(error?.message || (isChineseLanguage(appState.language) ? '删除文件失败' : 'Could not delete file'));
+    return false;
+  }
+}
+
+function createFileLibraryItem(file = {}) {
+  const item = document.createElement('article');
+  item.className = 'file-library-item';
+  const iconName = fileLibraryIconName(file);
+  const isImage = iconName === 'image' && file.filePath;
+  item.innerHTML = `
+    <div class="file-library-thumbnail ${isImage ? 'is-image' : ''}">
+      ${isImage ? '<img alt="" loading="lazy">' : getSvgIcon(iconName, 'material-symbols-outlined', 30)}
+    </div>
+    <div class="file-library-item-copy">
+      <strong title="${escapeHtml(file.fileName || '')}">${escapeHtml(file.fileName || '')}</strong>
+      <span>${escapeHtml([formatFileSize(Number(file.size || 0)), formatFileLibraryDate(file.createdAt)].filter(Boolean).join(' · '))}</span>
+    </div>
+    <div class="file-library-item-actions">
+      <button type="button" class="file-library-action preview" title="${isChineseLanguage(appState.language) ? '预览' : 'Preview'}" aria-label="${isChineseLanguage(appState.language) ? '预览' : 'Preview'}">${getSvgIcon('visibility', 'material-symbols-outlined', 18)}</button>
+      <button type="button" class="file-library-action download" title="${isChineseLanguage(appState.language) ? '下载' : 'Download'}" aria-label="${isChineseLanguage(appState.language) ? '下载' : 'Download'}">${getSvgIcon('download', 'material-symbols-outlined', 18)}</button>
+      <button type="button" class="file-library-action use" title="${isChineseLanguage(appState.language) ? '添加到对话' : 'Add to chat'}" aria-label="${isChineseLanguage(appState.language) ? '添加到对话' : 'Add to chat'}">${getSvgIcon('add_simple', 'material-symbols-outlined', 18)}</button>
+      <button type="button" class="file-library-action delete" title="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}" aria-label="${isChineseLanguage(appState.language) ? '删除' : 'Delete'}">${getSvgIcon('delete', 'material-symbols-outlined', 18)}</button>
+    </div>
+  `;
+  if (isImage) {
+    const img = item.querySelector('img');
+    img.alt = file.fileName || '';
+    img.addEventListener('click', () => previewAttachment(file));
+    hydratePrivateAttachmentImage(img, file).then((loaded) => {
+      if (!loaded) item.querySelector('.file-library-thumbnail')?.classList.add('failed');
+    });
+  }
+  item.querySelector('.preview')?.addEventListener('click', () => previewAttachment(file));
+  item.querySelector('.download')?.addEventListener('click', () => downloadAttachment(file));
+  item.querySelector('.use')?.addEventListener('click', () => useFileLibraryItemInChat(file));
+  item.querySelector('.delete')?.addEventListener('click', () => deleteFileLibraryItem(file));
+  return item;
+}
+
+function renderFileLibrary() {
+  const grid = document.getElementById('fileLibraryGrid');
+  const loadMore = document.getElementById('fileLibraryLoadMore');
+  if (!grid) return;
+  grid.innerHTML = '';
+  if (fileLibraryState.files.length === 0 && !fileLibraryState.loading) {
+    const empty = document.createElement('div');
+    empty.className = 'file-library-empty';
+    empty.innerHTML = `${getSvgIcon('description', 'material-symbols-outlined', 32)}<strong>${isChineseLanguage(appState.language) ? '还没有文件' : 'No files yet'}</strong>`;
+    grid.appendChild(empty);
+  } else {
+    fileLibraryState.files.forEach((file) => grid.appendChild(createFileLibraryItem(file)));
+  }
+  if (loadMore) loadMore.hidden = fileLibraryState.nextOffset === null || fileLibraryState.loading;
+  renderFileLibraryStorage();
+}
+
+async function loadFileLibrary({ append = false } = {}) {
+  const context = captureConversationCacheContext();
+  if (!isConversationCacheContextCurrent(context)) return false;
+  const contextKey = `${context.userId}:${context.epoch}`;
+  if (fileLibraryState.contextKey !== contextKey) {
+    fileLibraryState.files = [];
+    fileLibraryState.storage = null;
+    fileLibraryState.nextOffset = null;
+    fileLibraryState.contextKey = contextKey;
+  }
+  if (fileLibraryState.loading) {
+    fileLibraryState.controller?.abort?.();
+    fileLibraryState.loading = false;
+  }
+  const controller = new AbortController();
+  fileLibraryState.controller = controller;
+  fileLibraryState.loading = true;
+  const offset = append ? Number(fileLibraryState.nextOffset || 0) : 0;
+  setFileLibraryStatus(isChineseLanguage(appState.language) ? '正在加载...' : 'Loading...');
+  renderFileLibrary();
+  try {
+    const params = new URLSearchParams({ limit: '100', offset: String(offset) });
+    if (fileLibraryState.query) params.set('query', fileLibraryState.query);
+    const response = await fetch(`${API_BASE}/files?${params}`, {
+      headers: { Authorization: `Bearer ${context.token}` },
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!isConversationCacheContextCurrent(context) || fileLibraryState.contextKey !== contextKey) {
+      const contextError = new Error('File library context changed');
+      contextError.name = 'AbortError';
+      throw contextError;
+    }
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    fileLibraryState.files = append
+      ? [...fileLibraryState.files, ...(Array.isArray(data.files) ? data.files : [])]
+      : (Array.isArray(data.files) ? data.files : []);
+    fileLibraryState.storage = data.storage || null;
+    fileLibraryState.nextOffset = Number.isInteger(data.nextOffset) ? data.nextOffset : null;
+    setFileLibraryStatus('');
+    return true;
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      setFileLibraryStatus(error?.message || (isChineseLanguage(appState.language) ? '文件库加载失败' : 'Could not load files'), { error: true });
+    }
+    return false;
+  } finally {
+    if (fileLibraryState.controller === controller) {
+      fileLibraryState.controller = null;
+      fileLibraryState.loading = false;
+      renderFileLibrary();
+    }
+  }
+}
+
+function openFileLibrary() {
+  const page = document.getElementById('fileLibraryPage');
+  if (!page) return false;
+  localizeFileLibraryPage();
+  page.hidden = false;
+  page.classList.add('active');
+  document.getElementById('fileLibraryEntry')?.classList.add('active');
+  if (window.innerWidth <= 768 && appState.sidebarOpen) closeSidebar();
+  loadFileLibrary();
+  return true;
+}
+
+function closeFileLibrary() {
+  const page = document.getElementById('fileLibraryPage');
+  page?.classList.remove('active');
+  if (page) page.hidden = true;
+  document.getElementById('fileLibraryEntry')?.classList.remove('active');
+  fileLibraryState.controller?.abort?.();
+  fileLibraryState.controller = null;
+  return true;
+}
+
+function searchFileLibrary(value) {
+  fileLibraryState.query = String(value || '').trim().slice(0, 120);
+  clearTimeout(fileLibraryState.searchTimer);
+  fileLibraryState.searchTimer = setTimeout(() => loadFileLibrary(), 240);
+}
+
+function loadMoreFileLibrary() {
+  if (fileLibraryState.nextOffset !== null) loadFileLibrary({ append: true });
+}
+
+function uploadFilesToLibrary() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.accept = getUiUploadPickerAccept();
+  input.addEventListener('change', async () => {
+    const files = Array.from(input.files || []).slice(0, 20);
+    let uploaded = 0;
+    for (let index = 0; index < files.length; index += 1) {
+      setFileLibraryStatus(`${isChineseLanguage(appState.language) ? '正在上传' : 'Uploading'} ${index + 1}/${files.length}`);
+      if (await processUploadedFile(files[index], { attachToComposer: false })) uploaded += 1;
+    }
+    if (uploaded > 0) await loadFileLibrary();
+    else setFileLibraryStatus('');
+  }, { once: true });
+  input.click();
 }
 
 function resolveProtectedFileJobUrl(value) {
@@ -5658,7 +6149,6 @@ function createAttachmentListItem(att = {}) {
     img.loading = 'lazy';
     if (att.data) {
       img.src = att.data;
-      img.addEventListener('click', () => window.open(att.data, '_blank', 'noopener'));
     } else {
       img.classList.add('protected-attachment-image');
       img.addEventListener('error', () => itemDiv.classList.add('attachment-preview-error'), { once: true });
@@ -5666,21 +6156,42 @@ function createAttachmentListItem(att = {}) {
         if (!loaded) itemDiv.classList.add('attachment-preview-error');
       });
     }
+    img.addEventListener('click', () => previewAttachment(att));
     itemDiv.appendChild(img);
+    const actions = document.createElement('div');
+    actions.className = 'attachment-image-actions';
+    actions.innerHTML = `
+      <button type="button" class="attachment-preview-btn">${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</button>
+      <button type="button" class="attachment-download-btn">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</button>
+    `;
+    actions.querySelector('.attachment-preview-btn')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      previewAttachment(att);
+    });
+    actions.querySelector('.attachment-download-btn')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      downloadAttachment(att);
+    });
+    itemDiv.appendChild(actions);
     return itemDiv;
   }
 
-  const actionLabel = att.filePath
-    ? (isChineseLanguage(appState.language) ? '下载' : 'Download')
-    : '';
+  const canAccessFile = Boolean(att.filePath || att.data);
   itemDiv.innerHTML = `
-    <span class="media-icon"></span>
+    <span class="media-icon">${getSvgIcon(fileLibraryIconName(att), 'material-symbols-outlined', 24)}</span>
     <div class="media-info">
       <div class="media-type">${escapeHtml(getAttachmentTypeLabel(att.type))}${sizeLabel ? ` · ${escapeHtml(sizeLabel)}` : ''}</div>
       <div class="media-name">${escapeHtml(att.fileName || att.originalName || '')}</div>
-      ${actionLabel ? `<button type="button" class="attachment-download-btn">${actionLabel}</button>` : ''}
+      ${canAccessFile ? `<div class="attachment-file-actions">
+        <button type="button" class="attachment-preview-btn">${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</button>
+        <button type="button" class="attachment-download-btn">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</button>
+      </div>` : ''}
     </div>
   `;
+  itemDiv.querySelector('.attachment-preview-btn')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    previewAttachment(att);
+  });
   itemDiv.querySelector('.attachment-download-btn')?.addEventListener('click', (event) => {
     event.stopPropagation();
     downloadAttachment(att);
@@ -5691,7 +6202,7 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-08-06',
-    version: 'v0.11.88',
+    version: 'v0.11.92',
     zh: {
       summary: '对话可验证存证、文件产物不中断与会员分级并发已上线。',
       details: [
@@ -12964,7 +13475,7 @@ function retryStartupAuthentication() {
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
-  console.log(' RAI v0.11.88 初始化 (beta-integrity-stream-concurrency)');
+  console.log(' RAI v0.11.92 初始化 (badges-stream-latency)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -16750,6 +17261,143 @@ async function triggerAIResponse(messages, options = {}) {
   return await streamAIResponse(messages, aiMsg, { ...options, requestId });
 }
 
+const CHAT_STREAM_CONTINUATION_LIMIT = 2;
+
+function mergeContinuationText(previous = '', next = '') {
+  const left = String(previous || '');
+  const right = String(next || '');
+  if (!right) return left;
+  if (!left) return right;
+  if (right === left || left.endsWith(right)) return left;
+  if (right.startsWith(left)) return right;
+
+  const maxOverlap = Math.min(left.length, right.length, 12000);
+  for (let length = maxOverlap; length > 0; length -= 1) {
+    if (left.slice(-length) === right.slice(0, length)) {
+      return left + right.slice(length);
+    }
+  }
+  const separator = /\s$/.test(left) || /^\s/.test(right) ? '' : '\n\n';
+  return `${left}${separator}${right}`;
+}
+
+function buildChatContinuationMessages(messages, partialContent) {
+  const instruction = isChineseLanguage(appState.language)
+    ? '上一条回答的传输意外中断。请只从中断处继续完成，不要重复已经输出的内容，也不要解释中断原因。'
+    : 'The previous answer stream was interrupted. Continue only from the cutoff, without repeating existing text or explaining the interruption.';
+  return [
+    ...(Array.isArray(messages) ? messages : []),
+    { role: 'assistant', content: String(partialContent || '') },
+    { role: 'user', content: instruction }
+  ];
+}
+
+async function recoverIncompleteChatStream({
+  basePayload,
+  messages,
+  partialContent = '',
+  partialReasoning = '',
+  continuationOfRequestId = ''
+} = {}) {
+  let content = String(partialContent || '');
+  let reasoning = String(partialReasoning || '');
+  let sources = [];
+  let model = '';
+  const rootRequestId = String(continuationOfRequestId || '');
+  let requestId = rootRequestId;
+  let errorMessage = '';
+
+  for (let attempt = 1; attempt <= CHAT_STREAM_CONTINUATION_LIMIT; attempt += 1) {
+    const response = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${appState.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ...(basePayload || {}),
+        messages: buildChatContinuationMessages(messages, content),
+        skipUserSave: true,
+        continuationOfRequestId: rootRequestId || null,
+        continuationPrefix: content,
+        continuationAttempt: attempt
+      })
+    });
+    if (!response.ok) {
+      errorMessage = await getApiErrorMessage(response, `HTTP ${response.status}`);
+      continue;
+    }
+    requestId = String(response.headers.get('X-Request-ID') || requestId || '').trim();
+    if (!response.body) {
+      errorMessage = isChineseLanguage(appState.language) ? '续传响应体为空' : 'Continuation response body is empty';
+      continue;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let attemptContent = '';
+    let attemptReasoning = '';
+    let receivedDone = false;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: !done });
+        if (done) buffer += decoder.decode();
+        const lines = buffer.split(/\r?\n/);
+        buffer = done ? '' : (lines.pop() || '');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const raw = trimmed.slice(6);
+          if (!raw || raw === '[DONE]') continue;
+          let event;
+          try {
+            event = JSON.parse(raw);
+          } catch (_) {
+            continue;
+          }
+          if (event.type === 'done') {
+            receivedDone = true;
+          } else if (event.type === 'content' && event.content) {
+            attemptContent += sanitizeAssistantDisplayText(event.content);
+          } else if (event.type === 'reasoning' && event.content) {
+            attemptReasoning += String(event.content);
+          } else if (event.type === 'sources' && Array.isArray(event.sources)) {
+            sources = mergeAndReindexSources(sources, event.sources);
+          } else if (event.type === 'model_info' && event.model) {
+            model = event.model;
+          } else if (event.type === 'error') {
+            errorMessage = String(event.error || 'continuation_failed');
+          } else if (event.choices?.[0]?.delta?.content) {
+            attemptContent += sanitizeAssistantDisplayText(event.choices[0].delta.content);
+          }
+        }
+        if (done) break;
+      }
+    } catch (error) {
+      errorMessage = String(error?.message || 'continuation_stream_interrupted');
+    }
+
+    content = mergeContinuationText(content, attemptContent);
+    reasoning = mergeContinuationText(reasoning, attemptReasoning);
+    if (receivedDone) {
+      return { completed: true, content, reasoning, sources, model, requestId, attempts: attempt };
+    }
+  }
+
+  return {
+    completed: false,
+    content,
+    reasoning,
+    sources,
+    model,
+    requestId,
+    attempts: CHAT_STREAM_CONTINUATION_LIMIT,
+    error: errorMessage || 'missing_done_event'
+  };
+}
+
 // 流式AI回复（优化版：增量更新DOM，不重新渲染整个消息列表）
 async function streamAIResponse(messages, aiMsg, options = {}) {
   appState.isStreaming = true;
@@ -16931,42 +17579,43 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
   try {
     await ensureCurrentSessionPromptIdentity();
     const canvasFlowId = chatFlowState.isOpen ? await ensureCanvasFlowForSend() : null;
+    const streamPayload = {
+      messages,
+      model: getRequestModelIdForCurrentMode(),
+      sessionId,
+      flowId: canvasFlowId,
+      requestId,
+      internetMode: appState.internetMode,
+      researchMode: getEffectiveResearchMode(),
+      researchAgentModels: normalizeResearchAgentModels(appState.researchAgentModels),
+      researchMasterModel: normalizeResearchMasterModel(appState.researchMasterModel),
+      thinkingMode: appState.thinkingMode,
+      reasoningProfile: getRequestReasoningProfileForCurrentMode(),
+      agentMode: 'off',
+      agentPolicy: appState.agentPolicy,
+      qualityProfile: appState.qualityProfile,
+      temperature: appState.temperature,
+      top_p: appState.topP,
+      max_tokens: appState.maxTokens,
+      frequency_penalty: appState.frequencyPenalty,
+      presence_penalty: appState.presencePenalty,
+      promptTimeContext: getUserTimeContext(),
+      memoryMode: shouldUseMemoryPrompt() ? 'normal' : 'off',
+      canvasContext: chatFlowState.isOpen ? buildChatFlowCanvasContext() : null,
+      canvasApplyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
+      applyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
+      uiSurface: chatFlowState.isOpen
+        ? (isChatFlowMobileViewport() ? 'chatflow-mobile' : 'chatflow-desktop')
+        : 'chat',
+      skipUserSave: options.skipUserSave === true
+    };
     const response = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${appState.token}`
       },
-      body: JSON.stringify({
-        messages,
-        model: getRequestModelIdForCurrentMode(),
-        sessionId,
-        flowId: canvasFlowId,
-        requestId,
-        internetMode: appState.internetMode,
-        researchMode: getEffectiveResearchMode(),
-        researchAgentModels: normalizeResearchAgentModels(appState.researchAgentModels),
-        researchMasterModel: normalizeResearchMasterModel(appState.researchMasterModel),
-        thinkingMode: appState.thinkingMode,
-        reasoningProfile: getRequestReasoningProfileForCurrentMode(),
-        agentMode: 'off',
-        agentPolicy: appState.agentPolicy,
-        qualityProfile: appState.qualityProfile,
-        temperature: appState.temperature,
-        top_p: appState.topP,
-        max_tokens: appState.maxTokens,
-        frequency_penalty: appState.frequencyPenalty,
-        presence_penalty: appState.presencePenalty,
-        promptTimeContext: getUserTimeContext(),
-        memoryMode: shouldUseMemoryPrompt() ? 'normal' : 'off',
-        canvasContext: chatFlowState.isOpen ? buildChatFlowCanvasContext() : null,
-        canvasApplyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
-        applyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
-        uiSurface: chatFlowState.isOpen
-          ? (isChatFlowMobileViewport() ? 'chatflow-mobile' : 'chatflow-desktop')
-          : 'chat',
-        skipUserSave: options.skipUserSave === true
-      })
+      body: JSON.stringify(streamPayload)
     });
 
     if (!response.ok) {
@@ -16986,9 +17635,20 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     let sources = null;
     let finalModel = appState.selectedModel;
     let sseBuffer = '';
+    let receivedDoneEvent = false;
+    let receivedTerminalFailure = false;
+    let receivedCancelled = false;
 
     while (true) {
-      const { done, value } = await reader.read();
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        receivedTerminalFailure = true;
+        console.warn('流式读取中断，准备自动续传:', error?.message || error);
+        break;
+      }
+      const { done, value } = chunk;
       if (value) sseBuffer += decoder.decode(value, { stream: !done });
       if (done) sseBuffer += decoder.decode();
       const lines = sseBuffer.split('\n');
@@ -17001,6 +17661,22 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
         try {
           const parsed = JSON.parse(data);
+
+          if (parsed.type === 'done') {
+            receivedDoneEvent = true;
+            continue;
+          }
+
+          if (parsed.type === 'cancelled') {
+            receivedCancelled = true;
+            receivedTerminalFailure = true;
+            continue;
+          }
+
+          if (parsed.type === 'error') {
+            receivedTerminalFailure = true;
+            continue;
+          }
 
 	          if (parsed.type === 'points_info') {
 	            handlePointsInfoEvent(parsed, { requestId });
@@ -17090,13 +17766,44 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
       if (done) break;
     }
 
-    // 流结束后最终渲染一次（确保完整内容显示）
+    if (!receivedDoneEvent && !receivedCancelled) {
+      const recovered = await recoverIncompleteChatStream({
+        basePayload: streamPayload,
+        messages,
+        partialContent: fullContent,
+        partialReasoning: reasoningContent,
+        continuationOfRequestId: requestId
+      });
+      fullContent = recovered.content;
+      reasoningContent = recovered.reasoning;
+      if (recovered.sources.length > 0) sources = mergeAndReindexSources(sources || [], recovered.sources);
+      if (recovered.model) finalModel = recovered.model;
+      if (recovered.requestId) requestId = recovered.requestId;
+      aiMsg.content = fullContent;
+      aiMsg.reasoning_content = reasoningContent || null;
+      aiMsg.sources = sources;
+      aiMsg.model = finalModel;
+      throttledUpdate(fullContent);
+      receivedDoneEvent = recovered.completed;
+    }
+
+    if (!receivedDoneEvent) {
+      throw new Error(receivedTerminalFailure ? 'chat_stream_failed' : 'chat_stream_missing_done');
+    }
+
+    // 只有服务端明确发送 done 才算完整完成。
     console.log(' 流式响应完成');
     streamSucceeded = true;
 
   } catch (error) {
     console.error(' 流式请求失败:', error);
-    aiMsg.content = isChineseLanguage(appState.language) ? '生成失败，请重试' : 'Generation failed, please retry';
+    if (!String(aiMsg.content || '').trim()) {
+      aiMsg.content = isChineseLanguage(appState.language) ? '生成失败，请重试' : 'Generation failed, please retry';
+    } else {
+      showToast(isChineseLanguage(appState.language)
+        ? '回答续传仍未完成，已保留现有内容'
+        : 'The continuation was still incomplete; existing content was kept');
+    }
   } finally {
     appState.isStreaming = false;
     clearChatFlowActivityNotice();
@@ -18893,48 +19600,48 @@ async function sendMessage(message = null, options = {}) {
   appState.pendingDomainMode = null;
 
   try {
+    const chatRequestPayload = {
+      sessionId: appState.currentSession?.id || null,
+      flowId: canvasFlowId,
+      messages,
+      model: requestConfig.model,
+      thinkingMode: requestConfig.thinkingMode,
+      thinkingBudget: appState.thinkingBudget,
+      reasoningProfile: requestConfig.reasoningProfile,
+      internetMode: appState.internetMode,
+      researchMode: currentResearchMode,
+      researchAgentModels: requestConfig.researchAgentModels,
+      researchMasterModel: requestConfig.researchMasterModel,
+      researchMaxRounds: requestConfig.researchMaxRounds,
+      agentMode: 'off',
+      agentPolicy: appState.agentPolicy,
+      qualityProfile: appState.qualityProfile,
+      temperature: appState.temperature,
+      top_p: appState.topP,
+      max_tokens: appState.maxTokens,
+      frequency_penalty: appState.frequencyPenalty,
+      presence_penalty: appState.presencePenalty,
+      domainMode: selectedDomainMode,
+      uiLanguage: appState.language,
+      promptTimeContext: getUserTimeContext(),
+      memoryMode: shouldUseMemoryPrompt() ? 'normal' : 'off',
+      canvasContext: chatFlowState.isOpen ? buildChatFlowCanvasContext() : null,
+      canvasApplyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
+      applyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
+      uiSurface: chatFlowState.isOpen
+        ? (isChatFlowMobileViewport() ? 'chatflow-mobile' : 'chatflow-desktop')
+        : 'chat',
+      spaceId: appState.currentSpaceId,
+      useRag: appState.useRag,
+      ragTopK: appState.ragTopK
+    };
     const response = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${appState.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        sessionId: appState.currentSession?.id || null,
-        flowId: canvasFlowId,
-        messages: messages,
-        model: requestConfig.model,
-        thinkingMode: requestConfig.thinkingMode,
-        thinkingBudget: appState.thinkingBudget,
-        reasoningProfile: requestConfig.reasoningProfile,
-        internetMode: appState.internetMode,
-        researchMode: currentResearchMode,
-        researchAgentModels: requestConfig.researchAgentModels,
-        researchMasterModel: requestConfig.researchMasterModel,
-        researchMaxRounds: requestConfig.researchMaxRounds,
-        agentMode: 'off',
-        agentPolicy: appState.agentPolicy,
-        qualityProfile: appState.qualityProfile,
-        temperature: appState.temperature,
-        top_p: appState.topP,
-        max_tokens: appState.maxTokens,
-        frequency_penalty: appState.frequencyPenalty,
-        presence_penalty: appState.presencePenalty,
-        domainMode: selectedDomainMode,
-        uiLanguage: appState.language,
-        promptTimeContext: getUserTimeContext(),
-        memoryMode: shouldUseMemoryPrompt() ? 'normal' : 'off',
-        canvasContext: chatFlowState.isOpen ? buildChatFlowCanvasContext() : null,
-        canvasApplyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
-        applyMode: chatFlowState.isOpen ? chatFlowState.patchApplyMode : null,
-        uiSurface: chatFlowState.isOpen
-          ? (isChatFlowMobileViewport() ? 'chatflow-mobile' : 'chatflow-desktop')
-          : 'chat',
-        // RAG参数
-        spaceId: appState.currentSpaceId,
-        useRag: appState.useRag,
-        ragTopK: appState.ragTopK
-      })
+      body: JSON.stringify(chatRequestPayload)
     });
 
     const modelUsed = response.headers.get('X-Model-Used');
@@ -19262,7 +19969,13 @@ async function sendMessage(message = null, options = {}) {
       scrollToBottom();
     }
 
-    while (true) {
+    let receivedDoneEvent = false;
+    let receivedCancelled = false;
+    let streamFailureMessage = '';
+    let streamReadError = null;
+
+    try {
+      while (true) {
       const { done, value } = await reader.read();
       if (value) buffer += decoder.decode(value, { stream: !done });
       if (done) buffer += decoder.decode();
@@ -19701,6 +20414,7 @@ async function sendMessage(message = null, options = {}) {
             scrollToBottom();
           }
           else if (parsed.type === 'done') {
+            receivedDoneEvent = true;
             console.log(' 流式响应完成');
 
             // 停止字符渲染队列
@@ -19717,6 +20431,7 @@ async function sendMessage(message = null, options = {}) {
             if (aiAvatar) aiAvatar.classList.remove('thinking');
           }
           else if (parsed.type === 'cancelled') {
+            receivedCancelled = true;
             console.log(' 响应已取消');
             stopCharRender();  // 停止字符渲染
             updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程已取消' : 'Trace cancelled');
@@ -19726,12 +20441,12 @@ async function sendMessage(message = null, options = {}) {
             break;
           }
           else if (parsed.type === 'error') {
+            streamFailureMessage = String(parsed.error || '未知错误');
             stopCharRender();  // 停止字符渲染
             updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
             addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${parsed.error || ''}`);
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
-            alert((isChineseLanguage(appState.language) ? 'AI服务错误: ' : 'AI Service Error: ') + (parsed.error || '未知错误'));
             break;
           }
         } catch (e) {
@@ -19739,6 +20454,60 @@ async function sendMessage(message = null, options = {}) {
         }
       }
       if (done) break;
+    }
+    } catch (error) {
+      streamReadError = error;
+      console.warn('聊天流读取中断，准备自动续传:', error?.message || error);
+    }
+
+    if (!receivedDoneEvent && !receivedCancelled) {
+      updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
+      addProcessTraceItem('info', isChineseLanguage(appState.language) ? '未收到完成事件，开始自动续传' : 'Completion event missing; starting continuation');
+      const recovered = await recoverIncompleteChatStream({
+        basePayload: chatRequestPayload,
+        messages,
+        partialContent: fullContent,
+        partialReasoning: reasoningContent,
+        continuationOfRequestId: streamRequestId
+      });
+      fullContent = recovered.content;
+      reasoningContent = recovered.reasoning;
+      if (recovered.sources.length > 0) {
+        currentSources = mergeAndReindexSources(currentSources, recovered.sources);
+      }
+      if (recovered.model) appState.lastModelUsed = recovered.model;
+      if (recovered.requestId) {
+        streamRequestId = recovered.requestId;
+        appState.currentRequestId = streamRequestId;
+        aiMsgDiv.dataset.raiMessageKey = `request:${streamRequestId}:assistant`;
+      }
+      receivedDoneEvent = recovered.completed;
+      if (fullContent) {
+        displayedContent = sanitizeAssistantDisplayText(stripTrailingTitleMarker(fullContent));
+        charRenderQueue = [];
+        renderStreamingContent();
+      }
+      if (receivedDoneEvent) {
+        stopCharRender();
+        updateStepStatus(stepGenerating, 'done', isChineseLanguage(appState.language) ? '续传完成' : 'Continuation completed');
+        updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
+          ? `过程完成 · 自动续传 ${recovered.attempts} 次`
+          : `Done · ${recovered.attempts} automatic continuation attempt(s)`);
+        addProcessTraceItem('info', isChineseLanguage(appState.language) ? '自动续传完成' : 'Automatic continuation completed');
+      } else {
+        streamFailureMessage = recovered.error || streamFailureMessage || streamReadError?.message || 'missing_done_event';
+      }
+    }
+
+    if (!receivedDoneEvent && !receivedCancelled && !String(fullContent || '').trim()) {
+      throw new Error(streamFailureMessage || streamReadError?.message || (isChineseLanguage(appState.language)
+        ? '模型输出未完成'
+        : 'Model output did not complete'));
+    }
+    if (!receivedDoneEvent && !receivedCancelled) {
+      showToast(isChineseLanguage(appState.language)
+        ? '自动续传仍未收到完成信号，已保留当前内容'
+        : 'Continuation still lacked a completion signal; current content was kept');
     }
 
     // 确保停止AI头像闪烁
@@ -25964,6 +26733,7 @@ async function clearAllUserMemories() {
 }
 
 function showClassicTemporaryChat() {
+  closeFileLibrary();
   abortConversationSessionRefresh(appState.currentSession?.id);
   abortSessionCanvasWork();
   resetUnifiedCanvasState();
@@ -26059,6 +26829,7 @@ async function handleTemporaryChatClick() {
 }
 
 async function handleNewChatClick() {
+  closeFileLibrary();
   closeModelModal();
   abortConversationSessionRefresh(appState.currentSession?.id);
   abortSessionCanvasWork();
@@ -26213,6 +26984,7 @@ function cachedConversationMatchesManifest(cached, session) {
 }
 
 async function loadSession(sessionId, options = {}) {
+  closeFileLibrary();
   closeModelModal();
   const previousSessionId = String(appState.currentSession?.id || '');
   const switchingSession = previousSessionId && previousSessionId !== String(sessionId || '');
@@ -27533,7 +28305,8 @@ function handleFileUpload() {
 }
 
 // 独立的文件处理函数（供拖拽上传复用）
-async function processUploadedFile(file) {
+async function processUploadedFile(file, options = {}) {
+  const attachToComposer = options.attachToComposer !== false;
   if (!isUiAllowedUploadFile(file)) {
     showUiUploadRejected(file);
     return false;
@@ -27572,7 +28345,7 @@ async function processUploadedFile(file) {
   // 图片/视频/音频：保留本地缩略图用于预览，但聊天请求不再塞大 Base64
   // 所有附件统一走 /api/upload，用元数据模式传给后端解析
   let localThumbnail = null;
-  if (attachmentType === 'image') {
+  if (attachmentType === 'image' && attachToComposer) {
     localThumbnail = URL.createObjectURL(file);
   }
 
@@ -27594,7 +28367,7 @@ async function processUploadedFile(file) {
     if (!response.ok || !data?.success) {
       throw new Error(data?.error || data?.message || responseText || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
     }
-    currentAttachment = {
+    const uploadedAttachment = {
       type: attachmentType,
       fileName: file.name,
       originalName: file.name,
@@ -27610,8 +28383,13 @@ async function processUploadedFile(file) {
       filenameLength: String(file.name || '').length,
       bytes: Number(file.size) || 0
     });
-    updateAttachmentUI();
-    updateNewChatModeSettingsUI();
+    if (attachToComposer) {
+      currentAttachment = uploadedAttachment;
+      updateAttachmentUI();
+      updateNewChatModeSettingsUI();
+    } else if (localThumbnail) {
+      URL.revokeObjectURL(localThumbnail);
+    }
     return true;
   } catch (error) {
     if (error?.name === 'AbortError') return;
@@ -30240,7 +31018,7 @@ async function loadAdminLimits() {
           <div class="admin-limits-grid">
             ${numberField('upload_per_minute', '每分钟上传次数', 0, 1000)}
             ${numberField('upload_max_file_mb', '单文件上限', 1, 50, 'MB')}
-            ${numberField('upload_user_total_mb', '每用户总空间', 0, 102400, 'MB，0 不限制')}
+            ${numberField('upload_user_total_mb', '文件库全局硬上限', 0, 102400, 'MB，0 使用会员额度')}
             ${numberField('upload_user_max_files', '每用户文件数', 0, 100000, '0 不限制')}
           </div>
         </div>

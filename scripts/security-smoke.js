@@ -1081,6 +1081,26 @@ async function main() {
     });
     assert.strictEqual(bDownload.response.status, 404, 'other user cannot download known upload filename');
 
+    const ownerFileLibrary = await request('/api/files', { headers: authHeaders(userA.token) });
+    assert.strictEqual(ownerFileLibrary.response.status, 200, 'owner can list the private file library');
+    assert.ok(ownerFileLibrary.body?.files?.some((file) => file.id === filename), 'owner file library must include the uploaded file');
+    assert.strictEqual(ownerFileLibrary.body?.storage?.tier, 'free', 'new security-smoke users should receive the Free file tier');
+    assert.strictEqual(ownerFileLibrary.body?.storage?.limitBytes, 100 * 1024 * 1024, 'Free file storage must be 100 MB');
+
+    const peerFileLibrary = await request('/api/files', { headers: authHeaders(userB.token) });
+    assert.strictEqual(peerFileLibrary.response.status, 200, 'another user can list only their own file library');
+    assert.ok(!peerFileLibrary.body?.files?.some((file) => file.id === filename), 'another user file library must not expose a known upload');
+
+    const ownerPreview = await request(`/api/uploads/${encodeURIComponent(filename)}/preview`, {
+      headers: authHeaders(userA.token)
+    });
+    assert.strictEqual(ownerPreview.response.status, 200, 'owner can preview a supported uploaded file');
+    assert.strictEqual(ownerPreview.body?.kind, 'text', 'text preview should use the bounded text contract');
+    const peerPreview = await request(`/api/uploads/${encodeURIComponent(filename)}/preview`, {
+      headers: authHeaders(userB.token)
+    });
+    assert.strictEqual(peerPreview.response.status, 404, 'another user cannot preview a known upload filename');
+
     const forgedAttachment = await request('/api/chat/stream', {
       method: 'POST',
       headers: authHeaders(userB.token, { 'Content-Type': 'application/json' }),
@@ -1103,6 +1123,16 @@ async function main() {
       headers: authHeaders(userB.token)
     });
     assert.strictEqual(bDownloadAfterForgery.response.status, 404, 'forged message metadata must never seed legacy file authorization');
+
+    const ownerDeleteFile = await request(`/api/files/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+      headers: authHeaders(userA.token)
+    });
+    assert.strictEqual(ownerDeleteFile.response.status, 200, 'owner can delete a file-library item');
+    const deletedDownload = await request(`/api/uploads/${encodeURIComponent(filename)}`, {
+      headers: authHeaders(userA.token)
+    });
+    assert.strictEqual(deletedDownload.response.status, 404, 'deleted file-library bytes must no longer be downloadable');
 
     const svgForm = new FormData();
     svgForm.append('file', new Blob(['<svg onload=alert(1)>'], { type: 'image/svg+xml' }), `xss-${RUN_ID}.svg`);
