@@ -227,6 +227,10 @@ function extractCookie(headers) {
   return setCookie ? setCookie.split(';', 1)[0] : '';
 }
 
+function extractSetCookie(headers) {
+  return headers.get('set-cookie') || '';
+}
+
 function responseSummary(result) {
   const code = result?.body && typeof result.body === 'object' ? result.body.code : '';
   const error = result?.body && typeof result.body === 'object' ? result.body.error : '';
@@ -265,7 +269,8 @@ async function request(pathname, options = {}) {
     status: response.status,
     body: parsedBody,
     headers: response.headers,
-    cookie: extractCookie(response.headers)
+    cookie: extractCookie(response.headers),
+    setCookie: extractSetCookie(response.headers)
   };
 }
 
@@ -438,6 +443,11 @@ async function beginPasskeyAuthentication(testIP = DEFAULT_TEST_IP) {
   expectStatus(result, 200, 'passkey authentication options');
   assert.ok(result.body?.options?.challenge, 'authentication options should include a challenge');
   assert.ok(result.cookie.startsWith('rai_passkey_login='), 'authentication options should set the HTTP-only challenge cookie');
+  assert.match(
+    result.setCookie,
+    /(?:^|;\s*)Path=\/beta\/api\/auth\/passkeys(?:;|$)/,
+    'passkey challenge cookie should be scoped to the configured beta base path'
+  );
   return result;
 }
 
@@ -509,7 +519,7 @@ async function main() {
     PORT: String(port),
     TRUST_PROXY: '1',
     RAI_DB_PATH: dbPath,
-    PUBLIC_BASE_URL: origin,
+    PUBLIC_BASE_URL: `${origin}/beta`,
     CORS_ORIGINS: origin,
     JWT_SECRET: jwtSecret,
     ADMIN_JWT_SECRET: randomSecret(),

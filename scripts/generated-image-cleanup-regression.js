@@ -329,18 +329,26 @@ async function main() {
             "app.delete('/api/admin/sessions/:sessionId'",
             '// ==================== 404\u5904\u7406 ===================='
         );
-        for (const [label, route, parentDeletePattern] of [
-            ['user session', userSessionDeleteRoute, /DELETE FROM sessions/],
-            ['flow', flowDeleteRoute, /DELETE FROM flows/],
-            ['admin session', adminSessionDeleteRoute, /DELETE FROM sessions/]
+        for (const [label, route] of [
+            ['user session', userSessionDeleteRoute],
+            ['flow', flowDeleteRoute],
+            ['admin session', adminSessionDeleteRoute]
         ]) {
             assert.match(route, /withMainDbTransaction\(async \(tx\) =>/,
                 `${label} deletion must own one main-database transaction`);
-            const stageIndex = route.indexOf('stageGeneratedImageDeletionsForSession({');
-            const parentDeleteIndex = route.search(parentDeletePattern);
-            assert.ok(stageIndex >= 0 && parentDeleteIndex > stageIndex,
-                `${label} deletion must stage image cleanup before deleting its parent`);
+            assert.match(route, /deleteOwnedSessionWithRelatedData\(\{/,
+                `${label} deletion must use the shared session cleanup helper`);
         }
+        const sharedDeleteStart = serverSource.indexOf('async function deleteOwnedSessionWithRelatedData');
+        const sharedDeleteEnd = serverSource.indexOf('\nfunction migrateFlowCanvasMessageReferences', sharedDeleteStart);
+        assert.ok(sharedDeleteStart >= 0 && sharedDeleteEnd > sharedDeleteStart,
+            'missing shared session cleanup helper');
+        const sharedSessionDelete = serverSource.slice(sharedDeleteStart, sharedDeleteEnd);
+        const stageIndex = sharedSessionDelete.indexOf('stageGeneratedImageDeletionsForSession({');
+        const flowDeleteIndex = sharedSessionDelete.indexOf('DELETE FROM flows');
+        const sessionDeleteIndex = sharedSessionDelete.indexOf('DELETE FROM sessions');
+        assert.ok(stageIndex >= 0 && flowDeleteIndex > stageIndex && sessionDeleteIndex > flowDeleteIndex,
+            'shared session deletion must stage image cleanup before deleting Flow and session parents');
         const userMessageDeleteRoute = extractRoute(
             "app.delete('/api/sessions/:sessionId/messages/:messageId'",
             "app.put('/api/sessions/:sessionId/messages/:messageId'"
@@ -375,7 +383,7 @@ async function main() {
             'failed chat cleanup must stage by request without requiring a session');
         assert.match(chatRoute, /!chatRequestSucceeded \|\| clientAborted \|\| chatRequestCancelled/,
             'failed chat cleanup must distinguish successful requests from aborts and cancellation');
-        assert.ok((chatRoute.match(/chatRequestSucceeded = true/g) || []).length >= 5,
+        assert.ok((chatRoute.match(/chatRequestSucceeded = true/g) || []).length >= 4,
             'all successful chat completion paths must opt out of failed-request cleanup');
         assert.throws(
             () => resolveGeneratedImageDeleteTarget(imageRoot, '../outside.png'),

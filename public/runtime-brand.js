@@ -12,7 +12,9 @@
   }
 
   if ('serviceWorker' in navigator && globalThis.isSecureContext) {
-    navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
+    const configuredBase = new URL(String(cfg.publicBaseUrl || window.location.href), window.location.origin);
+    const scope = configuredBase.pathname.endsWith('/') ? configuredBase.pathname : `${configuredBase.pathname}/`;
+    navigator.serviceWorker.register(`${scope}sw.js`, { scope, updateViaCache: 'none' })
       .then((registration) => registration.update?.().catch(() => null))
       .catch(() => null);
   }

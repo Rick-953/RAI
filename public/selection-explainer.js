@@ -93,6 +93,12 @@
     };
   }
 
+  function apiPath(url) {
+    const raw = String(url || '');
+    const base = String(globalThis.RAI_API_BASE || '/api').replace(/\/+$/, '');
+    return raw.replace(/^\/api(?=\/|$)/, base);
+  }
+
   function isAuthenticated() {
     return Boolean(getAppState()?.token && getAppState()?.user?.id);
   }
@@ -559,7 +565,7 @@
     enforceExpandedLimit(card);
     if (persist) persistLayout();
     if (card.requestId) {
-      fetch(`/api/selection-explanations/${encodeURIComponent(card.requestId)}/stop`, {
+      fetch(apiPath(`/api/selection-explanations/${encodeURIComponent(card.requestId)}/stop`), {
         method: 'POST',
         headers: authHeaders(true),
         body: '{}'
@@ -1007,7 +1013,7 @@
     card.requestId = clientRequestId;
 
     try {
-      const response = await fetch('/api/selection-explanations/stream', {
+      const response = await fetch(apiPath('/api/selection-explanations/stream'), {
         method: 'POST',
         headers: authHeaders(true),
         signal: controller.signal,
@@ -1068,7 +1074,7 @@
   }
 
   async function apiJson(url, options = {}) {
-    const response = await fetch(url, {
+    const response = await fetch(apiPath(url), {
       ...options,
       headers: { ...authHeaders(Boolean(options.body)), ...(options.headers || {}) }
     });

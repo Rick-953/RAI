@@ -121,7 +121,21 @@ function copyRuntimeGraph(tempRoot) {
   }
 
   // These are the only static files reachable during a minimal service boot.
-  for (const relative of ['public/index.html', 'public/site.webmanifest', 'public/sw.js']) {
+  for (const relative of [
+    'public/index.html',
+    'public/site.webmanifest',
+    'public/sw.js',
+    'public/uwp-signup.html',
+    'public/uwp-signup.css',
+    'public/uwp-signup.js',
+    'skills/web_sources/SKILL.md',
+    'skills/image_generation/SKILL.md',
+    'skills/ask_user/SKILL.md',
+    'skills/mermaid/SKILL.md',
+    'skills/memory/SKILL.md',
+    'skills/rai-product/SKILL.md',
+    'skills/sandbox/SKILL.md'
+  ]) {
     const sourcePath = path.join(SOURCE_ROOT, relative);
     if (!fs.existsSync(sourcePath)) continue;
     assertSafeSourceFile(fs.realpathSync(sourcePath));

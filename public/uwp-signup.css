@@ -1,0 +1,302 @@
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #ffffff;
+  color: #1f1f1f;
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.top-bar {
+  width: 100%;
+  background: #0078d7;
+  color: #ffffff;
+}
+
+.top-bar-inner {
+  width: 92%;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 18px 0;
+}
+
+.brand-mark {
+  display: inline-block;
+  width: 38px;
+  height: 38px;
+  margin-right: 10px;
+  background: #ffffff;
+  color: #0078d7;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 38px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.brand-name {
+  font-size: 24px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.page-name {
+  margin-left: 16px;
+  font-size: 16px;
+  vertical-align: middle;
+}
+
+.page {
+  display: block;
+  width: 100%;
+}
+
+.registration-panel {
+  width: 92%;
+  max-width: 440px;
+  margin: 48px auto 64px;
+}
+
+h1 {
+  margin: 0 0 30px;
+  color: #1f1f1f;
+  font-size: 30px;
+  font-weight: 300;
+  line-height: 1.25;
+}
+
+.field-group {
+  margin: 0 0 20px;
+}
+
+label {
+  display: block;
+  margin: 0 0 7px;
+  font-weight: 600;
+}
+
+input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 8px 10px;
+  border: 2px solid #767676;
+  background: #ffffff;
+  color: #1f1f1f;
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+input:focus {
+  border-color: #0078d7;
+  outline: 1px solid #0078d7;
+}
+
+.field-hint,
+.verification-note {
+  margin: 7px 0 0;
+  color: #595959;
+  font-size: 14px;
+}
+
+.verification-note {
+  margin: 0 0 24px;
+}
+
+button {
+  box-sizing: border-box;
+  min-width: 150px;
+  min-height: 44px;
+  padding: 9px 18px;
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.primary-button {
+  border: 2px solid #0078d7;
+  background: #0078d7;
+  color: #ffffff;
+}
+
+.primary-button:hover,
+.primary-button:focus {
+  border-color: #005a9e;
+  background: #005a9e;
+  outline: 1px solid #005a9e;
+}
+
+.secondary-button {
+  margin-left: 8px;
+  border: 2px solid #0078d7;
+  background: #ffffff;
+  color: #0078d7;
+}
+
+.secondary-button:hover,
+.secondary-button:focus {
+  border-color: #005a9e;
+  background: #e5f1fb;
+  color: #005a9e;
+  outline: 1px solid #005a9e;
+}
+
+button:disabled {
+  border-color: #a6a6a6;
+  background: #a6a6a6;
+  color: #ffffff;
+  cursor: default;
+}
+
+.status-message {
+  box-sizing: border-box;
+  margin: 0 0 22px;
+  padding: 11px 12px;
+  border-left: 5px solid #d13438;
+  background: #fbe9e9;
+  color: #8a1519;
+}
+
+.status-message.info {
+  border-left-color: #0078d7;
+  background: #e5f1fb;
+  color: #005a9e;
+}
+
+.completion-view {
+  padding-top: 8px;
+}
+
+.completion-tile {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 24px;
+  background: #0078d7;
+  color: #ffffff;
+  font-size: 38px;
+  line-height: 64px;
+  text-align: center;
+}
+
+.completion-view p {
+  margin: 0;
+  color: #1f1f1f;
+  font-size: 22px;
+  line-height: 1.55;
+}
+
+@media screen and (max-width: 520px) {
+  .top-bar-inner,
+  .registration-panel {
+    width: auto;
+    margin-left: 20px;
+    margin-right: 20px;
+  }
+
+  .registration-panel {
+    margin-top: 32px;
+  }
+
+  .page-name {
+    display: block;
+    margin: 8px 0 0 52px;
+  }
+
+  h1 {
+    font-size: 27px;
+  }
+
+  button {
+    display: block;
+    width: 100%;
+  }
+
+  .secondary-button {
+    margin: 10px 0 0;
+  }
+}
+
+@media (-ms-high-contrast: active) {
+  input,
+  button,
+  .status-message {
+    border: 2px solid windowText;
+  }
+}
+
+/* ---- 深色模式：跟随系统 ---- */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #000000;
+    color: #ffffff;
+  }
+
+  h1,
+  .completion-view p {
+    color: #ffffff;
+  }
+
+  label {
+    color: #ffffff;
+  }
+
+  input {
+    border-color: #8a8a8a;
+    background: #1f1f1f;
+    color: #ffffff;
+  }
+
+  input:focus {
+    border-color: #4cc2ff;
+    outline-color: #4cc2ff;
+  }
+
+  .field-hint,
+  .verification-note {
+    color: #b8b8b8;
+  }
+
+  .secondary-button {
+    border-color: #4cc2ff;
+    background: #1f1f1f;
+    color: #4cc2ff;
+  }
+
+  .secondary-button:hover,
+  .secondary-button:focus {
+    border-color: #4cc2ff;
+    background: #1e3a52;
+    color: #ffffff;
+  }
+
+  button:disabled {
+    border-color: #5a5a5a;
+    background: #5a5a5a;
+  }
+
+  .status-message {
+    border-left-color: #ff6161;
+    background: #3a1a1a;
+    color: #ffb3b3;
+  }
+
+  .status-message.info {
+    border-left-color: #4cc2ff;
+    background: #12263a;
+    color: #8fd4ff;
+  }
+}

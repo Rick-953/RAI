@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="format-detection" content="telephone=no">
+  <title>RAI UWP 用户注册</title>
+  <link rel="stylesheet" href="/uwp-signup.css?v=20260807-dark-mode">
+</head>
+<body>
+  <header class="top-bar">
+    <div class="top-bar-inner">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span class="brand-name">RAI</span>
+      <span class="page-name">UWP 用户注册</span>
+    </div>
+  </header>
+
+  <main class="page" role="main">
+    <section class="registration-panel" aria-labelledby="pageTitle">
+      <h1 id="pageTitle">创建 RAI 账号</h1>
+
+      <div id="statusMessage" class="status-message" role="alert" aria-live="polite" hidden></div>
+
+      <form id="registrationForm" novalidate>
+        <div class="field-group">
+          <label for="email">邮箱</label>
+          <input id="email" name="email" type="email" maxlength="254" autocomplete="email" required>
+        </div>
+
+        <div class="field-group">
+          <label for="username">用户名（可选）</label>
+          <input id="username" name="username" type="text" maxlength="80" autocomplete="username">
+        </div>
+
+        <div class="field-group">
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" maxlength="128" autocomplete="new-password" required>
+          <p class="field-hint">至少 8 个字符，请勿使用常见密码或邮箱、用户名中的明显片段。</p>
+        </div>
+
+        <div class="field-group">
+          <label for="passwordConfirm">确认密码</label>
+          <input id="passwordConfirm" name="passwordConfirm" type="password" maxlength="128" autocomplete="new-password" required>
+        </div>
+
+        <button id="registerButton" class="primary-button" type="submit">注册</button>
+      </form>
+
+      <form id="verificationForm" hidden novalidate>
+        <p class="verification-note">验证码已发送到 <strong id="verificationEmail"></strong></p>
+
+        <div class="field-group">
+          <label for="verificationCode">邮箱验证码</label>
+          <input id="verificationCode" name="verificationCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" required>
+          <p class="field-hint">请输入邮件中的 6 位数字验证码，验证码 5 分钟内有效。</p>
+        </div>
+
+        <button id="verifyButton" class="primary-button" type="submit">验证并完成注册</button>
+        <button id="resendButton" class="secondary-button" type="button">重新发送验证码</button>
+      </form>
+
+      <div id="completionView" class="completion-view" hidden tabindex="-1">
+        <div class="completion-tile" aria-hidden="true">&#10003;</div>
+        <p>感谢您的注册，您现在可以返回UWP登录页登录了</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/uwp-signup.js?v=20260801-uwp-signup-v01174"></script>
+</body>
+</html>

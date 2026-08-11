@@ -144,7 +144,7 @@ function testRetiredRequestsFallBackSafely(serverSource) {
 
     assert.equal(harness.routing.auto?.isAutoMode, true, 'auto route must remain intact');
     for (const modelId of harness.supported) {
-        if (modelId === 'auto') continue;
+        if (['auto', 'fast-auto', 'think-auto'].includes(modelId)) continue;
         assert.ok(harness.routing[modelId], `supported incoming model ${modelId} must have a route`);
     }
     for (const modelId of harness.fallbacks) {
@@ -156,7 +156,8 @@ function testRetiredRequestsFallBackSafely(serverSource) {
 function testChatAndConfigUseGuardedNormalization(serverSource) {
     assert.match(serverSource, /let\s+model\s*=\s*normalizeIncomingModelId\(requestedModel\)/, 'chat requests must normalize retired and unknown IDs');
     assert.match(serverSource, /const\s+safeDefaultModel\s*=\s*['"]auto['"]/, 'stored defaults must always reset to smart auto mode');
-    assert.match(serverSource, /else\s+if\s*\(model\s*===\s*['"]auto['"]\)/, 'normalized auto requests must enter the safe automatic route');
+    assert.match(serverSource, /else\s+if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
+        'normalized automatic requests must enter the safe automatic route');
 }
 
 function main() {

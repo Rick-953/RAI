@@ -28,7 +28,7 @@ const checks = [
   ['empty folder manager offers folder creation', /还没有文件夹[\s\S]{0,800}data-action="create"/],
   ['folder membership uses exact single-session reads and writes', /\/sessions\/\$\{encodeURIComponent\(session\.id\)\}\/conversation-folders[\s\S]{0,2600}method: check\.checked \? 'PUT' : 'DELETE'/],
   ['folder membership mutation is idempotent and scoped', /app\.route\('\/api\/conversation-folders\/:folderId\/sessions\/:sessionId'\)[\s\S]{0,3500}INSERT OR IGNORE[\s\S]{0,3500}DELETE FROM conversation_folder_sessions/],
-  ['conversation menu button toggles its active menu', /existing\.dataset\.triggerSessionMenu === trigger\.dataset\.sessionMenuId[\s\S]{0,300}aria-expanded',/],
+  ['conversation menu button toggles its active menu', /existing\.dataset\.triggerSessionMenu === trigger\.dataset\.sessionMenuId[\s\S]{0,1400}setAttribute\('aria-expanded', 'true'\)/],
   ['pinned touch reorder requires a long press', /setTimeout\(\(\) =>[\s\S]{0,800}touch-dragging[\s\S]{0,1800}elementFromPoint/]
 ];
 

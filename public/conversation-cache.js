@@ -4,6 +4,7 @@
 
   const DB_NAME = 'rai-conversation-cache-v1';
   const DB_VERSION = 1;
+  const MESSAGE_FORMAT_VERSION = 3;
   const MAX_BYTES = 250 * 1024 * 1024;
   const MAX_RESOURCE_BYTES = 25 * 1024 * 1024;
   let dbPromise = null;
@@ -131,6 +132,12 @@
         };
         return requestValue(request);
       });
+      if (row && Number(row.formatVersion || 0) !== MESSAGE_FORMAT_VERSION) {
+        await transaction(['messages'], 'readwrite', (tx) => {
+          tx.objectStore('messages').delete([key, String(sessionId)]);
+        });
+        return null;
+      }
       return row || null;
     },
     async putConversation(sessionId, messages, revision, etag, options = {}) {
@@ -141,7 +148,7 @@
         : Date.now();
       await transaction(['messages'], 'readwrite', (tx) => tx.objectStore('messages').put({
         accountId: key, sessionId: String(sessionId), messages, revision: Number(revision || 0), etag: String(etag || ''),
-        size: messageBytes(messages), lastOpenedAt, updatedAt: Date.now()
+        formatVersion: MESSAGE_FORMAT_VERSION, size: messageBytes(messages), lastOpenedAt, updatedAt: Date.now()
       }));
       await trim();
     },
@@ -154,10 +161,12 @@
       return (await getAllForAccount('messages')).map((row) => String(row.sessionId));
     },
     async cachedConversationRevisions() {
-      return (await getAllForAccount('messages')).map((row) => ({
-        sessionId: String(row.sessionId),
-        revision: Number(row.revision || 0)
-      }));
+      return (await getAllForAccount('messages'))
+        .filter((row) => Number(row.formatVersion || 0) === MESSAGE_FORMAT_VERSION)
+        .map((row) => ({
+          sessionId: String(row.sessionId),
+          revision: Number(row.revision || 0)
+        }));
     },
     async getAsset(url) {
       const key = currentAccount();

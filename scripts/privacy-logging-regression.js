@@ -202,7 +202,8 @@ assert.notEqual(
 assert.match(server, /DOCUMENT_PARSER_ENABLED[\s\S]{0,200}!IS_PRODUCTION/);
 assert.match(server, /production_requires_totp_encryption_key_file/);
 assert.match(server, /production_requires_refresh_token_pepper_file/);
-assert.match(parser, /nodeMajor < 25[\s\S]{0,200}document_parser_network_isolation_unavailable/);
+assert.match(parser, /NODE_ENV \|\| ''\)\.toLowerCase\(\) === 'production'[\s\S]{0,120}productionSandboxCommand\(kind\)/);
+assert.match(parser, /document_parser_sandbox_unavailable/);
 assert.ok(!/ALLOWED_KINDS[^\n]*pdf/.test(parser), 'PDF must remain blocked until it has an OS sandbox without native addon bypass');
 assert.match(envExample, /^RAI_DOCUMENT_PARSER_ENABLED=false$/m);
 assert.doesNotMatch(app, /searchParams\.get\(['"](?:rai_token|token)['"]\)/, 'access tokens must never be accepted from URL query parameters');
@@ -218,12 +219,12 @@ for (const [label, source] of [['index', index], ['service worker', serviceWorke
 }
 assert.ok(!fs.existsSync(path.join(root, 'public', 'lib', 'mermaid', 'mermaid.min.js')));
 
-const staticAssetsMatch = serviceWorker.match(/const RAI_STATIC_ASSETS = \[([\s\S]*?)\];/);
+const staticAssetsMatch = serviceWorker.match(/const RAI_STATIC_ASSETS = \[([\s\S]*?)\](?:\.map\(appPath\))?;/);
 assert.ok(staticAssetsMatch, 'service worker static asset manifest must be parseable');
-const staticAssetUrls = [...staticAssetsMatch[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+const staticAssetUrls = [...staticAssetsMatch[1].matchAll(/'([^']*)'/g)].map((match) => match[1]);
 for (const assetUrl of staticAssetUrls) {
   const pathname = assetUrl.split('?', 1)[0];
-  const localPath = pathname === '/'
+  const localPath = pathname === '' || pathname === '/'
     ? path.join(root, 'public', 'index.html')
     : path.join(root, 'public', pathname.replace(/^\/+/, ''));
   assert.ok(fs.existsSync(localPath), `service worker precache target is missing: ${assetUrl}`);

@@ -15,6 +15,7 @@ const index = read('public/index.html');
 const styles = read('public/styles.css');
 const serviceWorker = read('public/sw.js');
 const conversationCache = read('public/conversation-cache.js');
+const raiSystemPrompt = read('public/rai-system-prompt.js');
 const server = read('server.js');
 const authSessionStore = read('lib/auth-session-store.js');
 const envExample = read('.env.example');
@@ -156,16 +157,12 @@ function testInternetDefaults() {
   assert.match(app, /async function\s+loadSession\([^)]*\)[\s\S]*?restoreInternetSearchDefault\(\)/);
   assert.match(app, /async function\s+sendMessage\([^)]*\)[\s\S]*?createNewSession\(\{[\s\S]{0,180}focus:\s*false,[\s\S]{0,180}preserveInternetMode:\s*true,[\s\S]{0,180}initialTitle:\s*immediateConversationTitle[\s\S]{0,80}\}\)/);
   assert.match(app, /const preserveInternetMode = options\.preserveInternetMode === true;[\s\S]*?if \(!preserveInternetMode\) restoreInternetSearchDefault\(\)/);
-  assert.match(app, /await loadSession\(data\.sessionId, \{ preserveInternetMode \}\)/);
+  assert.match(app, /await loadSession\(data\.sessionId, \{[\s\S]{0,180}preserveInternetMode,[\s\S]{0,180}newlyCreated:\s*true,[\s\S]{0,180}preserveCanvasDraft:\s*options\.preserveCanvasDraft === true[\s\S]{0,80}\}\)/);
   assert.match(app, /async function loadSession\(sessionId, options = \{\}\)[\s\S]*?if \(options\.preserveInternetMode !== true\) restoreInternetSearchDefault\(\)/);
-  assert.match(app, /function\s+restoreChatFlowInternetSearchDefault\(\)\s*\{\s*chatFlowState\.internetMode\s*=\s*true;\s*updateChatFlowControlStates\(\)/);
   assert.match(app, /async function\s+streamAIResponse\([^)]*\)[\s\S]*?finally\s*\{[\s\S]*?restoreInternetSearchDefault\(\)/);
   assert.match(app, /async function\s+confirmRegenerate\([^)]*\)[\s\S]*?restoreInternetSearchDefault\(\)/);
   assert.doesNotMatch(app, /originalInternet|appState\.internetMode\s*=\s*original/);
-  assert.match(app, /async function\s+createNewFlow\(\)[\s\S]*?restoreChatFlowInternetSearchDefault\(\)/);
-  assert.match(app, /async function\s+openFlow\([^)]*\)[\s\S]*?restoreChatFlowInternetSearchDefault\(\)/);
-  assert.match(app, /function\s+closeChatFlow\(\)[\s\S]*?restoreChatFlowInternetSearchDefault\(\)/);
-  assert.match(app, /async function\s+sendChatFlowMessage\(\)[\s\S]*?finally\s*\{[\s\S]*?restoreChatFlowInternetSearchDefault\(\)/);
+  assert.doesNotMatch(app, /restoreChatFlowInternetSearchDefault|chatFlowState\.internetMode|sendChatFlowMessage/);
 
   const appState = { internetMode: false };
   let toolbarUpdates = 0;
@@ -181,39 +178,27 @@ function testInternetDefaults() {
   assert.equal(toolbarUpdates, 1);
   assert.equal(settingsUpdates, 1);
 
-  const chatFlowState = { internetMode: false };
-  let chatFlowUpdates = 0;
-  const restoreChatFlow = new Function(
-    'chatFlowState',
-    'updateChatFlowControlStates',
-    `${extractNamedFunction(app, 'restoreChatFlowInternetSearchDefault')}; return restoreChatFlowInternetSearchDefault;`
-  )(chatFlowState, () => { chatFlowUpdates += 1; });
-  restoreChatFlow();
-  assert.equal(chatFlowState.internetMode, true);
-  assert.equal(chatFlowUpdates, 1);
   assert.equal((app.match(/internet_mode:\s*appState\.internetMode/g) || []).length, 1, 'only the live chat request may transmit the current opt-out');
   assert.ok((app.match(/internet_mode:\s*1/g) || []).length >= 2, 'profile/config persistence must always store enabled');
   assert.match(server, /CREATE TABLE IF NOT EXISTS user_configs[\s\S]*?internet_mode INTEGER DEFAULT 1/);
   assert.match(server, /Internet search is opt-out for the current chat only; it never persists as disabled\.[\s\S]*?internet_mode:\s*1/);
-  assert.match(server, /app\.post\('\/api\/chat\/stream'[\s\S]*?internetMode\s*=\s*true/);
+  assert.match(server, /app\.post\('\/api\/chat\/stream'[\s\S]*?internetMode:\s*requestedInternetMode\s*=\s*true[\s\S]*?let internetMode = !!requestedInternetMode/);
 }
 
 function testMenuHitAreasAndGeometry() {
   assert.match(index, /<div class="more-menu-item" role="button" tabindex="0"\s+data-rai-click="handleFileUploadFromMenu\(\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(index, /<div class="research-mode-header" role="button" tabindex="0"\s+data-rai-click="toggleResearchModeFromMenu\(event\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(app, /function\s+handleComposerMenuItemKeydown\(event\)[\s\S]*?event\.key\s*!==\s*'Enter'[\s\S]*?event\.key\s*!==\s*' '[\s\S]*?event\.currentTarget\.click\(\)/);
-  assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeChatFlowModelMenu\(\{ restoreFocus: true \}\)/);
+  assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)/);
   assert.match(app, /focusableItems = Array\.from[\s\S]*?!item\.closest\('\[aria-hidden="true"\]'\)/);
-  assert.match(app, /querySelectorAll\('#modelDropdownMenu \.model-menu-item, #chatflowModelMenu \.model-menu-item, \.model-select-custom'\)/);
+  assert.match(app, /querySelectorAll\('#modelDropdownMenu \.model-menu-item, \.model-select-custom'\)/);
   assert.match(index, /id="moreBtn"[^>]*data-i18n-aria-label="more-tools"[^>]*aria-controls="moreMenu"[^>]*aria-expanded="false"/);
   assert.match(app, /function\s+handleFileUploadFromMenu\(\)[\s\S]*?closeMoreMenu\(\)[\s\S]*?handleFileUpload\(\)/);
-  assert.match(app, /function\s+handleComposerMenuEscape\(event\)[\s\S]*?event\.key !== 'Escape'[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeChatFlowModelMenu\(\{ restoreFocus: true \}\)/);
+  assert.match(app, /function\s+handleComposerMenuEscape\(event\)[\s\S]*?event\.key !== 'Escape'[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeMoreMenu\(\)/);
   assert.match(app, /function\s+focusFirstComposerMenuItem\(menu\)[\s\S]*?firstItem\.focus/);
   assert.match(app, /function\s+closeModelModal\(\{ restoreFocus = false \} = \{\}\)[\s\S]*?trigger\.focus/);
-  assert.match(index, /id="chatflowModelSelect"[\s\S]*?aria-controls="chatflowModelMenu" aria-expanded="false"/);
-  assert.match(index, /id="chatflowModelMenu" aria-hidden="true"/);
-  assert.match(app, /function\s+closeChatFlowModelMenu\(\{ restoreFocus = false \} = \{\}\)[\s\S]*?aria-expanded', 'false'[\s\S]*?trigger\.focus/);
-  assert.match(app, /function\s+toggleChatFlowModelMenu\(event = null\)[\s\S]*?aria-hidden', 'false'[\s\S]*?aria-expanded', 'true'[\s\S]*?focusFirstComposerMenuItem/);
+  assert.doesNotMatch(index, /id="chatflowModel(?:Select|Menu)"/);
+  assert.doesNotMatch(app, /closeChatFlowModelMenu|toggleChatFlowModelMenu|selectChatFlowModel/);
   assert.match(app, /function\s+isComposerMenuAnchorVisible\(anchor\)[\s\S]*?getBoundingClientRect\(\)[\s\S]*?rect\.width > 0 && rect\.height > 0/);
   assert.match(app, /function\s+positionFloatingMenu\(menu, anchor, align = 'left', vertical = 'above'\)/);
   assert.doesNotMatch(app, /preserveHorizontal/);
@@ -267,7 +252,8 @@ function testReasoningSwitchAvailability() {
   const serverFastModel = server.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
   assert.ok(serverFastModel, 'missing server DeepSeek Flash routing metadata');
   assert.match(serverFastModel[1], /supportsThinking:\s*true/, 'server Fast metadata must expose DeepSeek reasoning support');
-  assert.match(app, /mode:\s*'fast',[\s\S]*?model:\s*'deepseek-flash'/, 'Fast mode must route to DeepSeek Flash');
+  assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]*?identity === 'fast'[\s\S]*?return 'fast-auto'/, 'Fast mode must route through the fast-auto virtual id');
+  assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]*?identity === 'think'[\s\S]*?return 'think-auto'/, 'Think mode must route through the think-auto virtual id');
   assert.match(app, /"auto":\s*\{[\s\S]*?supportsThinking:\s*true/, 'Smart mode must expose reasoning support');
   assert.match(server, /routing\.provider\s*===\s*'deepseek'[\s\S]*?applyDeepSeekV4ModeParams\(requestBody,\s*!!thinkingMode,\s*normalizedReasoningProfile\)/, 'DeepSeek routes must forward thinking mode');
   assert.doesNotMatch(app, /selectedModel\s*===\s*'deepseek-flash'\s*&&\s*!appState\.thinkingMode/, 'Fast identity must survive when reasoning is enabled');
@@ -319,12 +305,16 @@ function testLocalNotificationAsset() {
   assert.match(dotRule, /height:\s*8px/);
   assert.match(dotRule, /border:\s*1px solid/);
   assert.match(dotRule, /background:\s*var\(--error-color,\s*#ef4444\)/i);
-  assert.match(serviceWorker, /\/icons\/settings\/notifications\.svg/);
+  assert.match(serviceWorker, /(?:^|[\/'\"])icons\/settings\/notifications\.svg/);
   assert.doesNotMatch([index, styles, app].join('\n'), /fonts\.googleapis\.com|fonts\.gstatic\.com|fonts\.google\.com/i);
 }
 
 function testDomainPreparation() {
   assert.match(app, /const RAI_NEW_PUBLIC_ORIGIN = 'https:\/\/rai\.rick\.sarl'/);
+  assert.match(app, /const RAI_PRODUCTION_ORIGIN = 'https:\/\/rai\.rick\.sarl'/,
+    'desktop clients must use the canonical production host');
+  assert.doesNotMatch(app, /const RAI_PRODUCTION_ORIGIN = 'https:\/\/rai\.000339\.xyz'/,
+    'the legacy host must not remain the desktop client API origin');
   assert.match(app, /'https:\/\/rai\.rick\.sarl'[\s\S]*?'https:\/\/rai\.000339\.xyz'/);
   assert.match(server, /"frame-ancestors 'self'"/);
   assert.doesNotMatch(server, /frame-ancestors[^\n]*https:\/\//,
@@ -359,7 +349,7 @@ function testMessageBadgeVisibilityAndDesktopLogout() {
   assert.match(index, /id="settingsInternetBadgeSwitch"[\s\S]*?settingsToggleInternetBadgeVisibility\(\)[\s\S]*?aria-pressed="false"/);
 
   const createMessageStart = app.indexOf('function createMessageElement(message)');
-  const createMessageEnd = app.indexOf('// 懒加载消息附件', createMessageStart);
+  const createMessageEnd = app.indexOf('// 修复：改进openSidebar函数', createMessageStart);
   assert.ok(createMessageStart >= 0 && createMessageEnd > createMessageStart, 'missing createMessageElement surface');
   const createMessage = app.slice(createMessageStart, createMessageEnd);
   assert.match(createMessage, /modelBadge\.className\s*=\s*'meta-badge model-meta-badge'/);
@@ -506,7 +496,7 @@ function testCheckinDialogVisualLanguageAndDesktopWidth() {
 
   assert.match(userCheckin, /return performUserCheckin\(\)/);
   assert.match(sidebarCheckin, /return performUserCheckin\(\)/);
-  assert.equal((app.match(/fetch\(['"]\/api\/user\/checkin/g) || []).length, 1,
+  assert.equal((app.match(/fetch\(`\$\{API_BASE\}\/user\/checkin/g) || []).length, 1,
     'settings and sidebar must share exactly one check-in request implementation');
   assert.doesNotMatch([userCheckin, sidebarCheckin, performCheckin].join('\n'), /\balert\s*\(/,
     'check-in feedback must never use a browser-native alert');
@@ -577,14 +567,12 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.doesNotMatch(allModels, /model-menu-description|>\s*(?:gpt-|deepseek-|nemotron-)/,
     'the user-facing model list must not expose implementation IDs');
 
-  const chatflowStart = index.indexOf('<div class="chatflow-model-menu"');
-  const chatflowEnd = index.indexOf('<button type="button" class="chatflow-send-btn"', chatflowStart);
-  assert.ok(chatflowStart >= 0 && chatflowEnd > chatflowStart, 'missing focused ChatFlow model menu');
-  const chatflowMenu = index.slice(chatflowStart, chatflowEnd);
-  assert.deepEqual(
-    [...chatflowMenu.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]),
-    ['auto', 'gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra']
-  );
+  assert.match(index, /id="modelSelectCustom"[^>]*aria-controls="modelDropdownMenu"/,
+    'the desktop composer must open the shared model menu');
+  assert.match(index, /id="mobileModelSelectCustom"[\s\S]{0,160}aria-controls="modelDropdownMenu"/,
+    'the mobile composer must open the shared model menu');
+  assert.doesNotMatch(index, /chatflow-model-menu|chatflow-send-btn/,
+    'the retired standalone ChatFlow composer must not return after conversation fusion');
   assert.match(app, /admin-model-switch-meta">\$\{escapeHtml\(model\.group \|\| '模型'\)\}/,
     'admin model rows must show a product group instead of the implementation ID');
 
@@ -592,15 +580,47 @@ function testFocusedModelUiReasoningAndSwipe() {
     assert.match(index, new RegExp(`class="model-menu-item model-mode-item"[^>]*data-mode="${mode}"`));
   }
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
-  assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'deepseek-pro'[\s\S]{0,100}thinkingMode: true/);
-  assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'deepseek-flash'[\s\S]{0,80}thinkingMode: false/);
-  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-pro', 'gpt-5\.6-luna'\]/);
-  assert.match(server, /'deepseek-pro': \['gpt-5\.6-luna'\]/);
-  assert.match(server, /'deepseek-flash': \['gpt-5\.6-luna'\]/);
+  assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
+  assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
+  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-5\.6-luna', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
+    'Smart Model text requests must prefer DeepSeek V4 Flash (admin-configurable) with the requested ordered fallback chain');
+  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-5\.6-luna', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
+    'Smart Model multimodal requests must keep Luna first and avoid text-only fallbacks');
+  assert.match(server, /'gpt-5\.6-luna':\s*\{[\s\S]{0,180}provider:\s*'rai_gpt_gateway'[\s\S]{0,180}model:\s*'gpt-5\.6-luna'/,
+    'the public GPT 5.6 selection must call the Luna upstream model');
+  assert.match(server, /'gpt-5\.6-luna': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
+    'Luna failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.match(server, /'claude-sonnet-5':\s*\{[\s\S]{0,180}provider:\s*'rai_claude_gateway'[\s\S]{0,180}model:\s*'claude-sonnet-5'/,
+    'the Claude product route must use UMAPIS Claude Sonnet 5');
+  assert.match(server, /'gemini-3\.6-flash-low':\s*\{[\s\S]{0,180}provider:\s*'rai_fast_gateway'[\s\S]{0,180}model:\s*'gemini-3\.6-flash-low'/,
+    'the Gemini product route must use the independent Fast gateway');
+  assert.match(server, /'kimi-k2\.6':\s*\{[\s\S]{0,180}provider:\s*'siliconflow'[\s\S]{0,180}model:\s*'Pro\/moonshotai\/Kimi-K2\.6'/,
+    'the Smart Model preference must resolve to the SiliconFlow Kimi K2.6 route');
+  assert.match(server, /'nemotron-3-ultra':\s*\{[\s\S]{0,180}provider:\s*'openrouter'[\s\S]{0,180}model:\s*'nvidia\/nemotron-3-ultra-550b-a55b:free'/,
+    'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
+  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-flash'/,
+    'DeepSeek V4 Flash must use the official DeepSeek route');
+  assert.match(server, /'deepseek-pro':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-pro'/,
+    'DeepSeek Pro must use the official DeepSeek route');
+  assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
+    'Claude failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
+    'Gemini failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.match(server, /智能模型默认使用 \$\{researchModelLabel\(finalModel\)\}/,
+    'Smart Model routing notices must use a user-facing model label');
   assert.match(server, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
-    'saved GPT 5.6 Terra preferences must normalize to Luna');
+    'saved Terra preferences must normalize to the stable public GPT 5.6 ID');
   assert.match(app, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
-    'stale clients must normalize GPT 5.6 Terra to Luna');
+    'stale clients must normalize Terra to the stable public GPT 5.6 ID');
+
+  assert.match(styles, /\.settings-about-card\s*\{[\s\S]{0,700}background-image:\s*url\(['"]images\/onboarding-saturn\.png['"]\)/,
+    'the About RAI card must use the bundled Saturn background');
+  assert.match(styles, /\.settings-about-card::before\s*\{[\s\S]{0,260}background:\s*rgba\(4,\s*4,\s*4,\s*0\.38\)/,
+    'the About RAI background must retain a readable text overlay');
+  assert.doesNotMatch(styles, /\.settings-about-card,\s*[\s\S]{0,240}background:\s*var\(--settings-row-bg\)/,
+    'responsive card groups must not reset the About RAI background image');
+  assert.match(serviceWorker, /['"]\/?images\/onboarding-saturn\.png['"]/,
+    'the bundled About RAI background must be available offline');
 
   const activeProductSources = [server, app, index, styles, read('scripts/formal-poe-removal-regression.js'), read('README.md'), read('README.zh-CN.md')].join('\n');
   assert.doesNotMatch(activeProductSources, /north-mini-code|cohere\/north-mini-code|Mimo Code|role-mimo|\bmimo\b/i,
@@ -678,13 +698,17 @@ async function testMessageRenderingStability() {
     'AI completion must not recreate its message node and replay the entrance animation');
 
   const positionSessionMenu = extractNamedFunction(app, 'positionSessionMenu');
-  assert.match(positionSessionMenu, /rect\.right \+ anchorGap \+ menuRect\.width <= window\.innerWidth - viewportPadding/,
+  assert.match(positionSessionMenu, /const canOpenRight = rightLeft \+ menuRect\.width <= viewportRight - viewportPadding/,
     'the conversation menu must prefer the open space to the right of its three-dot trigger');
-  assert.match(positionSessionMenu, /fitsRight[\s\S]{0,260}rect\.right \+ anchorGap[\s\S]{0,260}rect\.bottom \+ anchorGap/,
-    'the conversation menu must fall below its trigger only when right-side placement does not fit');
+  assert.match(positionSessionMenu, /canOpenBelow[\s\S]{0,260}belowTop[\s\S]{0,260}canOpenAbove/,
+    'the conversation menu must choose a vertical placement that fits the viewport');
+  assert.match(positionSessionMenu, /visualViewport|viewportHeight/,
+    'the conversation menu must account for the visible viewport on mobile');
   const sessionContextMenuRule = cssRule('.session-context-menu', 'position: fixed');
   assert.match(sessionContextMenuRule, /width:\s*max-content[\s\S]{0,100}min-width:\s*148px[\s\S]{0,100}max-width:\s*min\(220px/,
     'the conversation menu must use a compact content-sized width with a viewport-safe cap');
+  assert.match(sessionContextMenuRule, /max-height:\s*min\(320px[\s\S]{0,60}overflow-y:\s*auto/,
+    'the conversation menu must scroll instead of overflowing a short viewport');
 
   const patchMessages = extractNamedFunction(app, 'patchMessagesById');
   assert.match(patchMessages, /getMessageRenderKey\(/,
@@ -712,6 +736,39 @@ async function testMessageRenderingStability() {
   );
 
   const sendMessage = extractNamedFunction(app, 'sendMessage');
+  const createNewSessionFirstStream = extractNamedFunction(app, 'createNewSession');
+  const loadSessionFirstStream = extractNamedFunction(app, 'loadSession');
+  assert.match(createNewSessionFirstStream, /loadSession\(data\.sessionId,\s*\{\s*preserveInternetMode,\s*newlyCreated:\s*true[\s\S]{0,140}\}\)/,
+    'a newly created conversation must be loaded with its empty-refresh guard');
+  assert.match(loadSessionFirstStream, /const newlyCreated = options\.newlyCreated === true;[\s\S]{0,180}const cached = newlyCreated[\s\S]{0,120}\? null[\s\S]{0,120}getConversation/,
+    'a newly created conversation must not hydrate an obsolete empty cache entry');
+  assert.match(loadSessionFirstStream, /if \(!newlyCreated && !cachedConversationMatchesManifest/,
+    'a newly created conversation must not launch an empty background refresh before its first stream');
+  assert.match(sendMessage, /appState\.sendStarting = true;[\s\S]{0,500}createNewSession\([\s\S]{0,500}finally \{[\s\S]{0,120}appState\.sendStarting = false;/,
+    'the cross-device cache sync must stay paused throughout first-session creation');
+  const canRunConversationSync = extractNamedFunction(app, 'canRunConversationSync');
+  assert.match(canRunConversationSync, /!appState\.sendStarting[\s\S]{0,120}!appState\.isStreaming/,
+    'background synchronization must reject both starting and active sends');
+
+  const trustedModelSelection = extractNamedFunction(app, 'isTrustedModelMenuSelection');
+  const selectModelFromMenuTrusted = extractNamedFunction(app, 'selectModelFromMenu');
+  const modelMenuKeyboard = extractNamedFunction(app, 'handleComposerMenuItemKeydown');
+  assert.match(trustedModelSelection, /event\?\.isTrusted !== true/,
+    'model changes must reject synthetic or replayed click events');
+  assert.match(trustedModelSelection, /menu\.classList\.contains\('active'\)[\s\S]{0,180}menu\.contains\(target\)/,
+    'model changes must originate from the currently open model menu');
+  assert.match(trustedModelSelection, /requestedModel !== targetModel/,
+    'the clicked model row must match the requested model exactly');
+  assert.match(trustedModelSelection, /Number\(event\.detail \|\| 0\) > 0 && Date\.now\(\) - Number\(appState\.modelMenuOpenedAt \|\| 0\) < 160/,
+    'the opening click must not fall through onto a model row');
+  assert.match(selectModelFromMenuTrusted, /if \(!isTrustedModelMenuSelection\(model, event\)\) return;/,
+    'untrusted or stale model-menu events must not mutate the composer model');
+  assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
+    'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
+  const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
+  assert.equal(modelSelectionBindings.length, 7,
+    'every visible conversation and image model row must pass its real click event');
+
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
   const primaryCompletionEnd = sendMessage.indexOf('await loadSessions()', primaryCompletionStart);
   assert.ok(primaryCompletionStart >= 0 && primaryCompletionEnd > primaryCompletionStart,
@@ -978,26 +1035,62 @@ async function testMessageRenderingStability() {
 }
 
 function testVersionContract() {
-  const expectedVersion = '0.11.58';
-  const expectedBuild = '20260729-release-safety-password-v01158';
+  const expectedVersion = '0.11.91';
+  const expectedBuild = '20260808-stream-partial-edit-v01191';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
-  assert.match(app, /const RAI_APP_VERSION = '0.11.58'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260729-release-safety-password-v01158'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.58/);
-  assert.match(serviceWorker, /0\.11\.58-20260729-release-safety-password-v01158/);
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.91'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260808-stream-partial-edit-v01191'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.91/);
+  assert.match(serviceWorker, /0\.11\.91-20260808-stream-partial-edit-v01191/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
   assert.ok(serviceWorkerBuildRefs.length >= 10, 'Service Worker build-marker coverage unexpectedly shrank');
   assert.deepEqual([...new Set(indexBuildRefs)], [expectedBuild], 'index contains mixed cache build markers');
   assert.deepEqual([...new Set(serviceWorkerBuildRefs)], [expectedBuild], 'Service Worker contains mixed cache build markers');
-  assert.doesNotMatch([index, serviceWorker].join('\n'), /20260729-message-fade-sidebar-ux-v01157/,
-    'the previous Web build marker must not survive the v0.11.58 cache cutover');
+  assert.doesNotMatch([index, serviceWorker].join('\n'), /20260731-terra-claude-gemini-routes-v01163/,
+    'the previous Web build marker must not survive the v0.11.69 cache cutover');
+  assert.doesNotMatch([index, serviceWorker].join('\n'), /20260805-beta-file-followup-v01186/,
+    'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260729-release-safety-password-v01158/);
+  assert.match(index, /conversation-cache\.js\?v=20260808-stream-partial-edit-v01191/);
+  assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
+    'fast mode must route through the fast-auto virtual id');
+  assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
+    'think mode must route through the think-auto virtual id');
+  assert.match(app, /function resolveSendRequestConfig\([\s\S]{0,700}oneShotModelId = oneShotMode === 'fast'[\s\S]{0,160}'fast-auto'/,
+    'one-shot fast sends must map to fast-auto');
+  assert.match(app, /modelSelectField\('smart_default_model', '智能模型首选模型'/,
+    'admin model routing panel must expose smart preferred model');
+  assert.match(app, /modelSelectField\('vision_fallback_model', '视觉备用路由模型'/,
+    'admin model routing panel must expose vision fallback model');
+  assert.match(app, /function getModelDisplayMeta\(modelId\)[\s\S]{0,400}identity === 'fast'[\s\S]{0,120}model-fast/,
+    'fast identity must keep the Fast label after routing through auto');
+  assert.match(styles, /@media \(min-width: 1025px\)[\s\S]{0,400}transition: width var\(--menu-motion-duration\)/,
+    'desktop ChatFlow toggle must animate the chat panel width');
+  assert.match(styles, /\.chatflow-workspace\.canvas-enter[\s\S]{0,120}translateX\(100%\)/,
+    'ChatFlow must slide in from the right on desktop');
+  assert.match(styles, /\.main-content\.canvas-closing > \.chat-panel[\s\S]{0,160}width: 100%/,
+    'closing ChatFlow must start the chat panel width transition immediately');
+  assert.match(app, /layout\.main\.classList\.add\('canvas-closing'\)/,
+    'closing ChatFlow must enter the parallel closing state');
+  assert.match(server, /function isSupportedAdminModelSettingValue\(value\)[\s\S]{0,300}imageOnly !== true/,
+    'image-only models must be rejected as preferred model settings');
+  assert.match(server, /async function resolveVisibleFastModel\(\)[\s\S]{0,500}fast_default_model/,
+    'fast route must consult admin settings');
+  assert.match(server, /async function resolveVisibleThinkingModel\(\)[\s\S]{0,500}thinking_default_model/,
+    'thinking route must consult admin settings');
+  assert.match(server, /async function resolveVisionFallbackModel\(\)[\s\S]{0,400}vision_fallback_model/,
+    'vision fallback must consult admin settings');
+  assert.match(server, /else if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/,
+    'server must route fast-auto and think-auto virtual ids');
+  assert.match(styles, /\.session-title-wrap\s*\{[\s\S]{0,300}flex:\s*1 1 auto[\s\S]{0,120}min-width:\s*0/,
+    'conversation titles must share a flexible column before the fixed menu column');
+  assert.match(styles, /\.session-time\s*\{[\s\S]{0,260}flex:\s*0 0 48px[\s\S]{0,180}text-align:\s*right/,
+    'conversation timestamps must use a fixed right-aligned column');
   assert.match(app, /function resetModelToSmart\(\)[\s\S]{0,400}selectedModel = 'auto'/);
   assert.match(app, /fetch\(`\$\{API_BASE\}\/sessions\/manifest`/);
   assert.match(server, /app\.get\('\/api\/sessions\/manifest'/);
@@ -1005,7 +1098,9 @@ function testVersionContract() {
   assert.match(server, /conversation_sync_state/);
   assert.match(app, /function getSessionPromptLanguage\(\)[\s\S]{0,600}prompt_language/,
     'the system prompt language must be resolved from the session lock before the current UI language');
-  assert.match(app, /function buildEnglishSystemPrompt\([\s\S]{0,600}Reply in the language used by the user/,
+  assert.match(app, /function buildEnglishSystemPrompt\([\s\S]{0,300}getRaiSystemPromptApi\(\)\.buildEnglishSystemPrompt/,
+    'Web must delegate English prompt construction to the shared prompt source');
+  assert.match(raiSystemPrompt, /function buildEnglishSystemPrompt\([\s\S]{0,1000}Reply in the language used by the user/,
     'English UI sessions must receive the English RAI system prompt');
   assert.match(app, /ensureCurrentSessionPromptIdentity[\s\S]{0,900}prompt_language: getSessionPromptLanguage\(\)/,
     'the first message must atomically lock prompt language with model identity');
@@ -1088,10 +1183,10 @@ function testVersionContract() {
   assert.match(index, /data-font-option="rai-v1"/);
   assert.match(app, /const RAI_FONT_VERSION = 'v1'[\s\S]*?function loadRaiFontsOnDemand\(\)[\s\S]*?new FontFace\(/);
   assert.match(styles, /html\[data-font-preference="rai-v1"\][\s\S]*?RAI Noto Sans SC/);
-  assert.match(serviceWorker, /url\.pathname === '\/runtime-config\.js'/);
+  assert.match(serviceWorker, /url\.pathname === (?:appPath\('runtime-config\.js'\)|'\/runtime-config\.js')/);
   const renderSessions = extractNamedFunction(app, 'renderSessions');
   const renderSessionRow = extractNamedFunction(app, 'createSessionElement');
-  assert.match(renderSessionRow, /formatSessionListTimestamp\(session\)[\s\S]{0,700}class="session-time"/,
+  assert.match(renderSessionRow, /formatSessionListTimestamp\(session\)[\s\S]{0,1200}class="session-time"/,
     'today rows must retain their HH:mm timestamp');
   assert.match(renderSessions, /getSessionDateGroup\(session\)[\s\S]{0,400}session-date-group/,
     'conversation rows must be grouped from browser-local dates');
@@ -1112,7 +1207,7 @@ function testVersionContract() {
   assert.match(handleNewChatClick, /appState\.currentSession = null[\s\S]{0,260}showWelcome\(\)/,
     'the new-conversation command must stay on an unsaved local home until first send');
   const sendMessage = extractNamedFunction(app, 'sendMessage');
-  assert.match(sendMessage, /immediateConversationTitle\s*=\s*deriveImmediateConversationTitleFromUserMessage[\s\S]{0,900}createNewSession\(\{[\s\S]{0,160}initialTitle:\s*immediateConversationTitle/,
+  assert.match(sendMessage, /immediateConversationTitle\s*=\s*deriveImmediateConversationTitleFromUserMessage[\s\S]{0,1800}createNewSession\(\{[\s\S]{0,160}initialTitle:\s*immediateConversationTitle/,
     'the first user question must be the session title at creation time, before model summarization');
   assert.match(sendMessage, /createNewSession\(\{[\s\S]{0,180}preserveComposerMode:\s*true/,
     'first-send session creation must preserve the selected composer mode');
@@ -1127,6 +1222,10 @@ function testVersionContract() {
   const folderManager = extractNamedFunction(app, 'showSessionFolderManager');
   assert.match(folderManager, /\/sessions\/\$\{encodeURIComponent\(session\.id\)\}\/conversation-folders/,
     'folder editing must load exact membership for the selected session');
+  assert.match(app, /await Promise\.all\(\[\s*hydrateCachedConversationShell\(conversationContext\),\s*loadConversationFolders\(conversationContext\)\s*\]\)/,
+    'startup must load conversation folders even when the session list comes from the manifest cache');
+  assert.match(app, /renderSessions\(\{ preserveScroll: true \}\);\s*await loadConversationFolders\(context\);/,
+    'manifest changes must refresh folder names, counts, and membership rows');
   assert.doesNotMatch(folderManager, /sessions\?limit=100|sessionIds:\s*ids/,
     'folder editing must not infer membership from one page or replace a complete member set');
   assert.match(folderManager, /sessions\/\$\{encodeURIComponent\(session\.id\)\}[\s\S]{0,180}method:\s*check\.checked \? 'PUT' : 'DELETE'/,
@@ -1164,8 +1263,9 @@ function testPromptModelIdentity() {
 
   const systemPrompt = extractNamedFunction(app, 'buildSystemPrompt');
   assert.match(systemPrompt, /const modelIdentity = getModelPromptIdentity\(promptLanguage\)/);
-  assert.match(systemPrompt, /你是\$\{modelIdentity\}。/);
-  assert.match(systemPrompt, /请用用户使用的语言回答。/);
+  assert.match(systemPrompt, /buildSystemPrompt\(\{ promptLanguage, includeMemory, modelIdentity \}\)/);
+  assert.match(raiSystemPrompt, /你是\$\{modelIdentity\}。/);
+  assert.match(raiSystemPrompt, /请用用户使用的语言回答。/);
 
   const selectMode = extractNamedFunction(app, 'selectRaiModeFromMenu');
   assert.match(selectMode, /appState\.modelPromptIdentity = config\.mode/);
@@ -1256,14 +1356,16 @@ async function testMainDatabaseTransactionIsolation() {
   }
   assert.match(server, /async function createSessionRecord\([^)]*tx = null[^)]*\)[\s\S]*?if \(!tx\) await ensureSessionKindColumn\(\)[\s\S]*?const run = tx\?\.run \|\| dbRunAsync/,
     'the Flow session helper must stay on tx.run when called from a transaction');
-  assert.match(server, /async function migrateLegacyFlowRow[\s\S]*?withMainDbTransaction\(async \(tx\)[\s\S]*?SELECT \* FROM flows WHERE id = \? AND user_id = \?[\s\S]*?if \(currentFlow\.session_id\)[\s\S]*?INSERT INTO sessions/,
+  assert.match(server, /async function migrateLegacyFlowRow[\s\S]*?withMainDbTransaction\(async \(tx\)[\s\S]*?SELECT f\.\*, s\.id AS linked_session_id[\s\S]*?WHERE f\.id = \? AND f\.user_id = \?[\s\S]*?if \(currentFlow\.session_id[\s\S]*?migrateLegacyFlowInTransaction\(tx, currentFlow, userId\)/,
     'legacy Flow migration must re-read the authoritative row inside the FIFO transaction');
+  assert.match(server, /async function migrateLegacyFlowInTransaction\(tx,[\s\S]*?INSERT INTO sessions[\s\S]*?UPDATE flows/,
+    'legacy Flow migration writes must remain on the transaction-scoped helper');
   assert.match(server, /flowRow = await migrateLegacyFlowRow\(flowRow, userId\);\s*if \(!flowRow\) return null;/,
     'a Flow deleted during migration must resolve as not found instead of throwing');
   assert.match(
     server,
-    /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*transactionDbReady\s*\]\)/,
-    'HTTP startup must fail closed until transaction and software-client authentication storage are ready'
+    /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*conversationOrganizationStartupReady,\s*fileWorkspaceStartupReady\s*\]\)/,
+    'HTTP startup must fail closed until transaction, software-client authentication, Passkey, ChatFlow, conversation organization, and file-workspace storage are ready'
   );
   assert.match(server, /await closeTransactionDb\(\);[\s\S]*?closeSqliteConnection\(db, '数据库'\)/,
     'shutdown must drain and close the transaction connection before the shared database');

@@ -64,6 +64,32 @@ function setCentralDirectoryUncompressedSize(buffer, entryName, declaredSize) {
     throw new Error(`central directory entry not found: ${entryName}`);
 }
 
+function markZipEntryEncrypted(buffer, entryName) {
+    const result = Buffer.from(buffer);
+    const expectedName = Buffer.from(entryName);
+    let localUpdated = false;
+    let centralUpdated = false;
+    for (let cursor = 0; cursor <= result.length - 30; cursor += 1) {
+        if (result.readUInt32LE(cursor) === 0x04034b50) {
+            const nameLength = result.readUInt16LE(cursor + 26);
+            const nameStart = cursor + 30;
+            if (result.subarray(nameStart, nameStart + nameLength).equals(expectedName)) {
+                result.writeUInt16LE(result.readUInt16LE(cursor + 6) | 0x1, cursor + 6);
+                localUpdated = true;
+            }
+        } else if (result.readUInt32LE(cursor) === 0x02014b50) {
+            const nameLength = result.readUInt16LE(cursor + 28);
+            const nameStart = cursor + 46;
+            if (result.subarray(nameStart, nameStart + nameLength).equals(expectedName)) {
+                result.writeUInt16LE(result.readUInt16LE(cursor + 8) | 0x1, cursor + 8);
+                centralUpdated = true;
+            }
+        }
+    }
+    assert.ok(localUpdated && centralUpdated, `encrypted ZIP mutation failed for ${entryName}`);
+    return result;
+}
+
 async function writeFixture(tempDir, name, buffer) {
     const filePath = path.join(tempDir, name);
     await fs.promises.writeFile(filePath, buffer, { mode: 0o600 });
@@ -85,6 +111,7 @@ async function expectParserError(filePath, kind, expectedCode) {
 
 async function main() {
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rai-document-regression-'));
+    const runningProductionSandbox = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
     const completed = [];
     try {
         const validDocx = await createZip([{
@@ -99,20 +126,25 @@ async function main() {
             name: 'ppt/slides/slide1.xml',
             content: '<p:sld><a:p><a:r><a:t>Slide safe</a:t></a:r></a:p></p:sld>'
         }]);
+        const validCsv = Buffer.from('name,value\nalpha,1\n"beta, row",2\n');
 
         const docxPath = await writeFixture(tempDir, 'valid.docx', validDocx);
         const xlsxPath = await writeFixture(tempDir, 'valid.xlsx', validXlsx);
         const pptxPath = await writeFixture(tempDir, 'valid.pptx', validPptx);
-        const [docx, xlsx, pptx] = await Promise.all([
+        const csvPath = await writeFixture(tempDir, 'valid.csv', validCsv);
+        const [docx, xlsx, pptx, csv] = await Promise.all([
             parseDocumentFile(docxPath, 'docx'),
             parseDocumentFile(xlsxPath, 'xlsx'),
-            parseDocumentFile(pptxPath, 'pptx')
+            parseDocumentFile(pptxPath, 'pptx'),
+            parseDocumentFile(csvPath, 'csv')
         ]);
         assert.match(docx.text, /DOCX & safe/);
         assert.match(xlsx.text, /Shared cell/);
         assert.match(xlsx.text, /Inline cell/);
         assert.match(pptx.text, /Slide safe/);
-        completed.push('valid_docx_xlsx_pptx');
+        assert.match(csv.text, /\| name \| value \|/);
+        assert.match(csv.text, /beta, row/);
+        completed.push('valid_docx_xlsx_pptx_csv');
 
         const traversalBase = await createZip([
             { name: 'word/document.xml', content: '<w:document><w:t>safe</w:t></w:document>' },
@@ -159,6 +191,14 @@ async function main() {
         await expectParserError(highRatioPath, 'docx', 'archive_compression_ratio_limit');
         completed.push('compression_ratio_rejected');
 
+        const encryptedPath = await writeFixture(
+            tempDir,
+            'encrypted.docx',
+            markZipEntryEncrypted(validDocx, 'word/document.xml')
+        );
+        await expectParserError(encryptedPath, 'docx', ['archive_encrypted_entry_blocked', 'office_archive_invalid', 'office_archive_parse_failed']);
+        completed.push('encrypted_entry_rejected');
+
         const symlinkPath = await writeFixture(tempDir, 'symlink-entry.docx', await createZip([{
             name: 'word/document.xml',
             content: 'temporary-link-target',
@@ -192,13 +232,15 @@ async function main() {
         process.env.RAI_DOCUMENT_PARSER_CONCURRENCY = '1';
         process.env.RAI_DOCUMENT_PARSER_QUEUE_LIMIT = '1';
         try {
-            const queued = [
-                parseDocumentFile(docxPath, 'docx'),
-                parseDocumentFile(xlsxPath, 'xlsx'),
-                parseDocumentFile(pptxPath, 'pptx')
-            ];
+            const queueInputs = runningProductionSandbox
+                ? [docxPath, xlsxPath, pptxPath, csvPath, docxPath, xlsxPath]
+                : [docxPath, xlsxPath, pptxPath];
+            const queueKinds = runningProductionSandbox
+                ? ['docx', 'xlsx', 'pptx', 'csv', 'docx', 'xlsx']
+                : ['docx', 'xlsx', 'pptx'];
+            const queued = queueInputs.map((filePath, index) => parseDocumentFile(filePath, queueKinds[index]));
             const results = await Promise.allSettled(queued);
-            assert.strictEqual(results.filter((item) => item.status === 'fulfilled').length, 2);
+            assert.strictEqual(results.filter((item) => item.status === 'fulfilled').length, runningProductionSandbox ? 5 : 2);
             assert.strictEqual(results.filter((item) => item.status === 'rejected' && item.reason?.code === 'document_parser_queue_full').length, 1);
         } finally {
             if (previousConcurrency === undefined) delete process.env.RAI_DOCUMENT_PARSER_CONCURRENCY;
@@ -219,18 +261,25 @@ async function main() {
         completed.push('unsupported_kind_rejected');
 
         const previousNodeEnv = process.env.NODE_ENV;
+        const previousParserProfile = process.env.RAI_DOCUMENT_PARSER_PROFILE;
         process.env.NODE_ENV = 'production';
+        process.env.RAI_DOCUMENT_PARSER_PROFILE = 'beta';
         try {
-            const nodeMajor = Number.parseInt(String(process.versions.node).split('.')[0], 10);
-            if (nodeMajor < 25) {
-                await expectParserError(docxPath, 'docx', 'document_parser_network_isolation_unavailable');
-            } else {
+            const sandboxAvailable = process.platform === 'linux'
+                && fs.existsSync('/usr/bin/prlimit')
+                && fs.existsSync('/usr/bin/bwrap')
+                && fs.existsSync(path.join(__dirname, 'rai-document-parser-sandbox.sh'));
+            if (sandboxAvailable) {
                 const productionResult = await parseDocumentFile(docxPath, 'docx');
                 assert.match(productionResult.text, /DOCX & safe/);
+            } else {
+                await expectParserError(docxPath, 'docx', 'document_parser_sandbox_unavailable');
             }
         } finally {
             if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
             else process.env.NODE_ENV = previousNodeEnv;
+            if (previousParserProfile === undefined) delete process.env.RAI_DOCUMENT_PARSER_PROFILE;
+            else process.env.RAI_DOCUMENT_PARSER_PROFILE = previousParserProfile;
         }
         completed.push('production_network_isolation_gate');
     } finally {

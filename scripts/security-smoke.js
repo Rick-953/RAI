@@ -508,6 +508,16 @@ async function main() {
     assert.ok(version.response.headers.get('content-security-policy'), 'content-security-policy should be present');
     assert.ok(version.response.headers.get('permissions-policy'), 'permissions-policy should be present');
 
+    const uwpSignup = await request('/UWP-SignUP');
+    assert.strictEqual(uwpSignup.response.status, 200, 'the UWP signup page should be public');
+    assert.match(uwpSignup.response.headers.get('content-type') || '', /^text\/html\b/);
+    assert.match(uwpSignup.response.headers.get('cache-control') || '', /no-store/);
+    assert.match(String(uwpSignup.body || ''), /感谢您的注册，您现在可以返回UWP登录页登录了/);
+    const uwpSignupCss = await request('/uwp-signup.css');
+    const uwpSignupJs = await request('/uwp-signup.js');
+    assert.strictEqual(uwpSignupCss.response.status, 200, 'the UWP signup stylesheet should be public');
+    assert.strictEqual(uwpSignupJs.response.status, 200, 'the UWP signup client should be public');
+
     const testProbe = await request('/api/test');
     assert.strictEqual(testProbe.response.status, 200, '/api/test should stay public for health probes');
     assert.strictEqual(testProbe.body?.providers, undefined, '/api/test should not enumerate configured providers');
@@ -565,7 +575,7 @@ async function main() {
     assert.strictEqual(resetExisting.body?.email, undefined, 'password-reset request must not echo a known account email');
 
     if (process.env.RAI_SECURITY_ISOLATED === '1' && SECURITY_DB_PATH && SECURITY_JWT_SECRET) {
-      const resetCode = 'ResetProofA953!';
+      const resetCode = '592341';
       const resetCodeHash = crypto
         .createHmac('sha256', SECURITY_JWT_SECRET)
         .update(`${userA.email.toLowerCase()}:password_reset:${resetCode}`)
@@ -574,7 +584,7 @@ async function main() {
         `INSERT INTO auth_email_codes
          (email, user_id, purpose, code_hash, attempts, metadata, created_at, expires_at, consumed_at)
          VALUES (?, ?, 'password_reset', ?, 0, '{}', ?, ?, NULL)`,
-        [userA.email, userA.id, resetCodeHash, Date.now(), Date.now() + 10 * 60 * 1000]
+        [userA.email, userA.id, resetCodeHash, Date.now(), Date.now() + 5 * 60 * 1000]
       );
       const resetWithAccountDerivedPassword = await request('/api/auth/password/reset/confirm', {
         method: 'POST',

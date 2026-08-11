@@ -30,8 +30,9 @@ function assertStartupRejected(trustProxy, expectedCode) {
 
 function sourceFiles(root) {
     const ignoredDirectories = new Set([
-        '.git', 'node_modules', 'historical-releases', 'security-artifacts',
-        'uploads', 'avatars', 'database', 'target', 'icons', 'images', 'downloads'
+        '.git', '.gradle', 'node_modules', 'historical-releases', 'security-artifacts',
+        'uploads', 'avatars', 'database', 'target', 'build', 'dist', 'output', 'coverage',
+        'icons', 'images', 'downloads'
     ]);
     const ignoredFiles = new Set(['短期记忆.txt', '维护详细记录.txt', '更新运维.txt', 'rai运行报告.md']);
     const allowedExtensions = new Set(['.js', '.json', '.md', '.txt', '.yml', '.yaml', '.toml', '.html', '.css', '.rs', '.example']);

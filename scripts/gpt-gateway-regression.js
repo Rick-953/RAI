@@ -10,6 +10,7 @@ const {
     GPT_GATEWAY_CHAT_MODELS,
     GPT_GATEWAY_IMAGE_MODEL,
     applyGatewayChatRequestPolicy,
+    buildDirectImageToolCallSse,
     buildGatewayHeaders,
     buildGatewayImageChatRequest,
     buildGatewayImageRequest,
@@ -323,11 +324,24 @@ async function main() {
             response_format: 'b64_json'
         });
         const imageChatBody = buildGatewayImageChatRequest({ prompt: 'a safe test image', image_size: '720x1280' });
-        assert.deepStrictEqual(imageChatBody, {
+    assert.deepStrictEqual(imageChatBody, {
             model: 'gpt-image-2',
             messages: [{ role: 'user', content: 'a safe test image' }],
-            stream: false
+        stream: false
+    });
+        const directImageToolSse = buildDirectImageToolCallSse('a safe test image', 'direct_image_test');
+        const directImageToolPayload = JSON.parse(directImageToolSse.split('\n')[0].slice(6));
+        assert.strictEqual(directImageToolPayload.choices[0].finish_reason, 'tool_calls');
+        assert.deepStrictEqual(directImageToolPayload.choices[0].delta.tool_calls[0], {
+            index: 0,
+            id: 'direct_image_test',
+            type: 'function',
+            function: {
+                name: 'generate_image',
+                arguments: JSON.stringify({ prompt: 'a safe test image' })
+            }
         });
+        assert.match(directImageToolSse, /data: \[DONE\]/);
         const imageResponse = await postGatewayJson({
             baseUrl,
             endpoint: 'chat/completions',
@@ -396,7 +410,9 @@ async function main() {
         assert.ok(!indexSource.includes(`data-model="${hiddenModelId}"`), `internal model must stay out of the focused picker: ${hiddenModelId}`);
     }
     assert.match(serverSource, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
-        'legacy Terra requests must route to Luna');
+        'legacy Terra requests must route through the stable public GPT 5.6 ID');
+    assert.match(serverSource, /'gpt-5\.6-luna': \{[\s\S]{0,180}model: 'gpt-5\.6-luna'/,
+        'the stable public GPT 5.6 route must call the Luna upstream model');
     const chatModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">对话模型'), indexSource.indexOf('model-menu-section-label">图像生成'));
     const imageModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">图像生成'), indexSource.indexOf('</div>\n                </div>\n              </div>\n\n              <button type="button" class="send-btn"'));
     assert.ok(!chatModelSection.includes('data-model="gpt-image-2"'), 'Image 2 must not appear in the chat-model picker');
@@ -419,12 +435,22 @@ async function main() {
     assert.match(imageProviderBlock, /endpoint: joinGatewayEndpoint\(GPT_IMAGE_BASE_URL, 'chat\/completions'\)/);
     assert.match(imageProviderBlock, /requestBody: buildGatewayImageChatRequest\(args\)/);
     assert.match(imageProviderBlock, /extractSources: extractGatewayChatImageSources/);
+    assert.match(imageProviderBlock, /const maxAttempts = providerName === 'rai_gpt_image' \? 1 : 2/,
+        'the paid Image 2 upstream must never be retried implicitly');
     assert.match(imageProviderBlock, /const externalSignal = context\?\.signal/);
     assert.match(imageProviderBlock, /linkImageProviderAbort\(controller, externalSignal\)/);
     assert.match(imageProviderBlock, /if \(externalSignal\?\.aborted\) throw createExternalRequestAbortError\(\)/);
     assert.match(imageProviderBlock, /waitForImageRetry\(1200, externalSignal\)/);
     assert.match(imageProviderBlock, /signal: externalSignal/);
     assert.match(serverSource, /requireGptGateway: gptImageModelSelected,[\s\S]{0,600}signal: controller\.signal/);
+    assert.match(serverSource, /buildDirectImageToolCallSse\(userContent, `direct_image_\$\{requestId\}`\)/,
+        'explicit Image 2 selection must bypass the chat-model planning request');
+    assert.match(serverSource, /Image 2 直达模式完成，跳过聊天模型续传/,
+        'explicit Image 2 selection must not issue a chat-model continuation after generation');
+    assert.match(serverSource, /if \(gptImageModelSelected\) \{[\s\S]{0,120}result = await resultPromise;[\s\S]{0,120}\} else \{[\s\S]{0,120}buildImageWaitingLineFromUserPrompt/,
+        'explicit Image 2 selection must not call the waiting-line chat model');
+    assert.match(serverSource, /if \(!usedImage2 && imagePoints\.pointsDeducted > 0\)[\s\S]{0,180}refundPointDeduction/,
+        'fallback image generation must refund Image 2 points');
     assert.match(serverSource, /TOOL_EXECUTORS\.generate_image\(args, \{ userId, sessionId, requestId, signal \}\)/);
     assert.doesNotMatch(
         serverSource,
@@ -437,11 +463,12 @@ async function main() {
     );
     assert.match(continuationBlock, /applyGatewayChatRequestPolicy\(continueRequestBody/);
     assert.ok(
-        continuationBlock.indexOf('applyGatewayChatRequestPolicy(continueRequestBody') < continuationBlock.indexOf('await fetch(providerConfig.baseURL'),
+        continuationBlock.indexOf('applyGatewayChatRequestPolicy(continueRequestBody') < continuationBlock.indexOf('await fetch(continueApiUrl'),
         'continuation policy must run before the upstream request'
     );
     assert.match(continuationBlock, /const continueController = createChatAbortController\(\)/);
-    assert.match(continuationBlock, /setTimeout\(\(\) => continueController\.abort\(\), 120000\)/);
+    assert.match(continuationBlock, /const continueTimeoutMs = chatRequestBudget\?\.nextAttemptTimeoutMs\(\) \|\| 0/);
+    assert.match(continuationBlock, /setTimeout\(\(\) => continueController\.abort\(\), continueTimeoutMs\)/);
     assert.match(continuationBlock, /signal: continueController\.signal/);
     assert.match(continuationBlock, /readBoundedResponseText\(continueResponse\)/);
     assert.doesNotMatch(continuationBlock, /continueResponse\.text\(\)/);

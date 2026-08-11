@@ -172,6 +172,8 @@ For local development, replace the official domain defaults in `.env.example` wi
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek chat and reasoning routes |
 | `RAI_GPT_GATEWAY_BASE_URL` + `RAI_GPT_GATEWAY_API_KEY_FILE` | Optional OpenAI-compatible `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-image-2`; production requires an explicit HTTPS `/v1` root and a regular 0600 key file |
+| `RAI_FAST_GATEWAY_BASE_URL` + `RAI_FAST_GATEWAY_API_KEY_FILE` | OpenAI-compatible Fast route for Gemini 3.6, backed by a separate regular 0600 key file |
+| `RAI_CLAUDE_GATEWAY_BASE_URL` + `RAI_CLAUDE_GATEWAY_API_KEY_FILE` | OpenAI-compatible UMAPIS route for Claude Opus 5, backed by a separate regular 0600 key file |
 | `SILICONFLOW_API_KEY` | Configured Qwen/Kimi routes and image generation |
 | `OPENROUTER_API_KEY` | OpenRouter-backed model routes |
 | `GOOGLE_GEMINI_API_KEY` | Gemini routes |

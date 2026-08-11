@@ -70,7 +70,7 @@ check(/removeAttribute\('data-rai-binding-token'\)/.test(bindingsJs), 'dynamic a
 
 const scriptSources = Array.from(indexHtml.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi))
   .map((match) => match[1].replace(/[?#].*$/, ''));
-const localScriptSources = scriptSources.filter((source) => !source.startsWith('/runtime-config.js'));
+const localScriptSources = scriptSources.filter((source) => !/^\/?runtime-config\.js$/.test(source));
 for (const source of localScriptSources) {
   const relativePath = path.posix.join('public', source.replace(/^\//, ''));
   const absolutePath = path.join(root, relativePath);
@@ -122,10 +122,10 @@ function verifyDeclarativeBindings(relativePath, source, minimumExpected) {
   return count;
 }
 
-// Folder and ChatFlow headers use the sidebar controller so their expanded state can
-// be stored per device; this intentionally replaces one declarative legacy binding.
-const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 182);
-check(staticIndexBindingCount === 182, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 182)`);
+// ChatFlow now reuses the normal conversation composer, removing its duplicated
+// declarative controls while keeping the unified canvas actions in the shared UI.
+const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 171);
+check(staticIndexBindingCount === 171, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 171)`);
 verifyDeclarativeBindings('public/app.js', appJs, 70);
 
 // Exercise the production parser itself in a DOM-free VM. App template expressions are

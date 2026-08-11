@@ -52,7 +52,7 @@
   --notification-surface-bg: rgba(31, 32, 27, 0.8);
   --notification-surface-unread-bg: rgba(45, 46, 38, 0.8);
   --composer-surface-bg: rgba(31, 32, 27, 0.8);
-  --menu-motion-duration: 1s;
+  --menu-motion-duration: 0.75s;
   --menu-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
   --error-color: #EF4444;
   --warning-color: #F59E0B;
@@ -654,7 +654,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 
 .group-toggle-icon {
   font-size: 20px;
-  transition: transform 0.3s;
+  transition: transform var(--menu-motion-duration) var(--menu-motion-easing);
   color: var(--text-secondary);
 }
 
@@ -666,8 +666,8 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   padding-left: var(--spacing-md);
   margin-top: var(--spacing-sm);
   max-height: 99999px;
-  overflow: visible;
-  transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+  overflow: hidden;
+  transition: max-height var(--menu-motion-duration) var(--menu-motion-easing), opacity var(--menu-motion-duration) var(--menu-motion-easing);
   opacity: 1;
 }
 
@@ -831,16 +831,76 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 
 /* ChatFlow 工作区布局 */
 .chatflow-workspace {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
   display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   background: var(--bg-primary);
-  z-index: 1000;
+  z-index: 2;
   overflow: hidden;
   --chatflow-mobile-panel-height: 50vh;
+  transition: opacity var(--menu-motion-duration) var(--menu-motion-easing), transform var(--menu-motion-duration) var(--menu-motion-easing);
+}
+
+.chatflow-workspace[hidden],
+.chatflow-divider[hidden] {
+  display: none !important;
+}
+
+/* ChatFlow 开关动画：PC 大屏下中心对话向左让位、ChatFlow 从右向左滑入/滑出，与 +号/模型菜单统一 0.75s 非线性速率 */
+.chatflow-workspace.canvas-enter,
+.chatflow-divider.canvas-enter {
+  opacity: 0;
+  transform: translateX(100%);
+  pointer-events: none;
+}
+
+.main-content > .chat-panel {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.main-content.canvas-open {
+  flex-direction: row;
+}
+
+.main-content.canvas-open > .chat-panel {
+  flex: 0 0 var(--chatflow-desktop-chat-width, 52%);
+  width: var(--chatflow-desktop-chat-width, 52%);
+}
+
+/* 桌面端（>1024px 横屏）打开 ChatFlow：对话面板宽度平滑收窄向左移动，ChatFlow 同步从右滑入 */
+@media (min-width: 1025px) {
+  .main-content > .chat-panel {
+    flex: 0 0 auto;
+    width: 100%;
+    transition: width var(--menu-motion-duration) var(--menu-motion-easing);
+  }
+
+  .main-content.canvas-open > .chat-panel {
+    flex: 0 0 auto;
+    width: var(--chatflow-desktop-chat-width, 52%);
+  }
+
+  /* 关闭中间态：布局保持 row，但对话面板立即开始向右回弹，与 ChatFlow 滑出并行 */
+  .main-content.canvas-closing > .chat-panel {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+}
+
+.main-content.canvas-open::before,
+.main-content.canvas-open::after {
+  display: none;
 }
 
 .chatflow-back-btn {
@@ -904,15 +964,19 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 }
 
 .chatflow-header {
-  padding: 60px 20px 12px 20px;
+  min-height: 68px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .chatflow-header-main {
   min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
 .chatflow-title {
@@ -926,6 +990,46 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   margin: 0;
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.chatflow-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.canvas-close-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.canvas-close-btn:hover,
+.canvas-close-btn:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.canvas-close-btn:active {
+  transform: scale(0.94);
+}
+
+.canvas-close-btn svg {
+  width: 17px;
+  height: 17px;
+  display: block;
 }
 
 .chatflow-messages {
@@ -1013,7 +1117,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   width: 6px;
   cursor: col-resize;
   background: transparent;
-  transition: background 0.2s;
+  transition: background 0.2s, opacity var(--menu-motion-duration) var(--menu-motion-easing), transform var(--menu-motion-duration) var(--menu-motion-easing);
   position: relative;
 }
 
@@ -1040,6 +1144,7 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   flex: 1;
   position: relative;
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg-primary);
 }
 
@@ -1299,19 +1404,25 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 .chatflow-mode-chip {
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
+  border: 0;
+  border-radius: 8px;
   background: var(--bg-hover);
   color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 
-.chatflow-mode-chip:hover {
+.chatflow-mode-chip:hover,
+.chatflow-mode-chip:focus-visible {
+  outline: none;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border-color: var(--color-saturn-yellow);
+}
+
+.chatflow-mode-chip:active {
+  transform: scale(0.97);
 }
 
 .chatflow-patch-banner {
@@ -1729,53 +1840,46 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   filter: drop-shadow(0 0 8px rgba(245, 213, 71, 0.5));
 }
 
-/* 移动端适配 */
-@media (max-width: 768px) {
-  .chatflow-workspace {
-    display: block;
+/* 手机和平板使用上画布、下聊天的可调分屏。 */
+@media (max-width: 1024px) {
+  .main-content.canvas-open {
+    flex-direction: column;
   }
 
-  .chatflow-llm-panel {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: auto;
-    max-width: none;
-    min-width: 0;
+  .main-content.canvas-open > .chatflow-workspace {
+    order: 1;
+    flex: 1 1 auto;
+    width: 100%;
+    height: auto;
+  }
+
+  .main-content.canvas-open > .chatflow-divider {
+    order: 2;
+    flex: 0 0 6px;
+    width: 100%;
+    height: 6px;
+    cursor: row-resize;
+  }
+
+  .main-content.canvas-open > .chatflow-divider::after {
+    width: 44px;
+    height: 2px;
+  }
+
+  .main-content.canvas-open > .chat-panel {
+    order: 3;
+    flex: 0 0 var(--chatflow-mobile-panel-height, 50vh);
+    width: 100%;
     height: var(--chatflow-mobile-panel-height, 50vh);
-    border-right: none;
-    border-top: 1px solid var(--border-color);
-    border-radius: 24px 24px 0 0;
-    background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
-    backdrop-filter: blur(18px);
-    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.28);
   }
 
-  .chatflow-divider {
-    display: none;
-  }
-
-  .chatflow-canvas-container {
-    display: block;
-    position: absolute;
-    inset: 0;
-  }
-
-  .chatflow-back-btn {
-    top: 12px;
-    left: 12px;
-    padding: 6px 12px;
-    font-size: 12px;
-    background: rgba(0, 0, 0, 0.36);
-    backdrop-filter: blur(12px);
+  .chatflow-header {
+    padding: max(10px, env(safe-area-inset-top, 0px)) 12px 8px;
+    gap: 4px;
   }
 
   .canvas-floating-toolbar {
     right: 8px;
-    top: auto;
-    bottom: calc(var(--chatflow-mobile-panel-height, 50vh) + 76px);
-    transform: none;
     padding: 4px;
   }
 
@@ -1785,37 +1889,12 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   }
 
   .canvas-zoom-controls {
-    bottom: calc(var(--chatflow-mobile-panel-height, 50vh) + 18px);
     right: 12px;
-  }
-
-  .chatflow-sheet-grabber {
-    display: flex;
-  }
-
-  .chatflow-header {
-    padding: 0 16px 10px;
-    gap: 4px;
+    bottom: 12px;
   }
 
   .chatflow-patch-banner {
     margin: 8px 12px 0;
-  }
-
-  .chatflow-messages {
-    padding: 12px 14px;
-  }
-
-  .chatflow-message.user {
-    margin-left: 0;
-  }
-
-  .chatflow-input-area {
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .chatflow-input-container {
-    background: rgba(0, 0, 0, 0.18);
   }
 
   .chatflow-mode-chip {
@@ -2065,7 +2144,28 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 .session-item.dragging { opacity: .45; }
 .session-item.touch-dragging { opacity: .55; outline: 2px solid var(--accent-color, #5f8dee); outline-offset: -2px; }
 .pinned-sessions .session-item { touch-action: pan-y; }
-.session-context-menu { position: fixed; z-index: 1200; width: max-content; min-width: 148px; max-width: min(220px, calc(100vw - 16px)); padding: 4px; border-radius: 8px; background: var(--bg-primary); box-shadow: 0 10px 28px rgba(0,0,0,.24); }
+.session-context-menu {
+  position: fixed;
+  z-index: 1200;
+  width: max-content;
+  min-width: 148px;
+  max-width: min(220px, calc(100vw - 16px));
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 28px rgba(0,0,0,.24);
+  opacity: 0;
+  transform: translateY(6px) scale(0.96);
+  transform-origin: var(--session-menu-origin, top right);
+  pointer-events: none;
+  transition: opacity var(--menu-motion-duration) var(--menu-motion-easing), transform var(--menu-motion-duration) var(--menu-motion-easing);
+}
+
+.session-context-menu.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
 .session-context-menu button { width: 100%; padding: 9px 10px; border: 0; border-radius: 5px; text-align: left; white-space: nowrap; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; }
 .session-context-menu button:hover { background: rgba(127,127,127,.13); }
 .session-context-menu .danger { color: #d45252; }
@@ -2073,7 +2173,17 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 .conversation-folder-row { width: calc(100% - 34px); min-height: 32px; padding: 0 8px; border: 0; background: transparent; color: var(--text-primary); display: inline-flex; justify-content: space-between; align-items: center; text-align: left; font: inherit; }
 .conversation-folder-row small { color: var(--text-secondary); }
 .conversation-folder-menu { width: 30px; height: 30px; border: 0; background: transparent; color: var(--text-secondary); vertical-align: middle; }
-.conversation-folder-sessions { padding-left: 10px; }
+.conversation-folder-sessions {
+  padding-left: 10px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height var(--menu-motion-duration) var(--menu-motion-easing), opacity var(--menu-motion-duration) var(--menu-motion-easing);
+}
+
+.conversation-folder-sessions.expanded {
+  opacity: 1;
+}
 .conversation-folder-sessions .session-item { font-size: 12px; }
 .session-folder-overlay { position: fixed; z-index: 1300; inset: 0; background: rgba(0,0,0,.68); display: grid; place-items: center; padding: 18px; animation: fadeIn .18s ease-out; }
 .session-folder-card { width: min(380px, 100%); max-height: min(540px, calc(100dvh - 36px)); display: flex; flex-direction: column; gap: 14px; padding: 22px; border: 0; border-radius: var(--radius-lg); color: var(--text-primary); background: var(--bg-secondary); box-shadow: var(--floating-menu-shadow); animation: slideUp .24s cubic-bezier(.16,1,.3,1); }
@@ -2118,11 +2228,13 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 
 .session-time {
   position: static;
-  flex: 0 0 auto;
+  flex: 0 0 48px;
+  width: 48px;
   margin-left: 8px;
   font-size: 11px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .session-item.has-time .session-title {
@@ -2160,6 +2272,25 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.session-title-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 5px;
+}
+
+.session-title-wrap .session-title {
+  min-width: 0;
+}
+
+.session-canvas-marker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--text-tertiary);
 }
 
 .session-preview {
@@ -2822,6 +2953,17 @@ body.keyboard-open .chat-edge-blur-bottom {
 @media (prefers-reduced-motion: reduce) {
   .message.message-entering {
     animation: none;
+  }
+
+  /* 统一 0.75s 非线性动画：系统减少动态时全部瞬间完成 */
+  .chatflow-workspace,
+  .chatflow-divider,
+  .chat-panel,
+  .session-context-menu,
+  .conversation-folder-sessions,
+  .sidebar-group-content,
+  .group-toggle-icon {
+    transition-duration: 0.01ms !important;
   }
 }
 
@@ -3786,44 +3928,6 @@ body.keyboard-open .chat-edge-blur-bottom {
 
 .edit-save-btn:hover {
   opacity: 0.9;
-}
-
-/* 懒加载附件样式 */
-.lazy-attachments {
-  margin-bottom: 8px;
-}
-
-.lazy-attachment-placeholder {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: var(--bg-tertiary);
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.lazy-attachment-placeholder:hover {
-  background: var(--bg-hover);
-  border-color: var(--text-secondary);
-}
-
-.lazy-attachment-placeholder.loading {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.lazy-attachment-placeholder.error {
-  border-color: var(--error-color);
-  color: var(--error-color);
-}
-
-.lazy-attachment-placeholder .loading-spinner {
-  animation: spin 1s linear infinite;
 }
 
 /* 重新生成弹窗 */
@@ -6231,6 +6335,12 @@ body.keyboard-open .chat-edge-blur-bottom {
   text-overflow: ellipsis;
 }
 
+.attachment-size {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
 .attachment-remove {
   width: 24px;
   height: 24px;
@@ -8070,6 +8180,119 @@ html[data-rai-auth-state="checking"] .app-container {
   border-color: var(--border-dark);
 }
 
+.auth-custom-api-entry {
+  margin-top: var(--spacing-md);
+  text-align: center;
+}
+
+.auth-custom-api-link,
+.auth-custom-api-back {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-color);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-custom-api-link:hover,
+.auth-custom-api-back:hover {
+  text-decoration: underline;
+}
+
+.custom-api-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.custom-api-panel.auth-step-visible {
+  display: grid;
+  max-height: 640px;
+}
+
+.custom-api-panel-heading {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 780;
+}
+
+.custom-api-panel-hint {
+  margin: -4px 0 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.custom-api-submit {
+  margin-top: 2px;
+}
+
+.custom-api-back {
+  justify-self: center;
+  color: var(--text-secondary);
+}
+
+#customApiError {
+  margin: 0;
+}
+
+body.custom-api-mode .home-action-rail,
+body.custom-api-mode .chat-toolbar,
+body.custom-api-mode .sidebar,
+body.custom-api-mode .mobile-header,
+body.custom-api-mode .mobile-overlay,
+body.custom-api-mode .model-selector,
+body.custom-api-mode .mobile-model-selector,
+body.custom-api-mode .more-menu-container,
+body.custom-api-mode .canvas-toggle-btn,
+body.custom-api-mode .chat-edge-blur-top,
+body.custom-api-mode .chat-edge-blur-bottom {
+  display: none !important;
+}
+
+body.custom-api-mode .main-content {
+  width: 100%;
+}
+
+.custom-api-exit-btn {
+  display: none;
+}
+
+body.custom-api-mode .custom-api-exit-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #0078d7;
+  border-radius: 0;
+  background: #ffffff;
+  color: #005a9e;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+body.custom-api-mode .custom-api-exit-btn:hover,
+body.custom-api-mode .custom-api-exit-btn:focus-visible {
+  background: #0078d7;
+  color: #ffffff;
+  outline: none;
+}
+
+body.custom-api-mode,
+body.custom-api-mode .app-container,
+body.custom-api-mode .main-content {
+  background: #ffffff;
+}
+
 .auth-passkey-entry {
   margin-top: var(--spacing-md);
 }
@@ -9153,7 +9376,7 @@ html[data-rai-auth-state="checking"] .app-container {
 
 /* ==================== 对话索引导航器 ==================== */
 .chat-index-navigator {
-  position: fixed;
+  position: absolute;
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
@@ -12266,6 +12489,9 @@ body.chatflow-iframe-mode .message-content::selection {
   gap: 18px;
   padding: 18px 12px;
   background: var(--settings-page-bg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .settings-close-btn {
@@ -13510,20 +13736,33 @@ body.chatflow-iframe-mode .message-content::selection {
 
 .settings-about-card {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
   display: flex;
   align-items: center;
   gap: 18px;
+  min-height: 148px;
   padding: 24px;
-  background: var(--settings-card-bg);
+  background-color: #11100e;
+  background-image: url('images/onboarding-saturn.png');
+  background-position: center 48%;
+  background-size: cover;
+}
+
+.settings-about-card::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: rgba(4, 4, 4, 0.38);
 }
 
 .settings-about-card h3 {
-  color: var(--text-primary);
+  color: #ffffff;
 }
 
 .settings-about-card p {
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .settings-about-logo {
@@ -13532,6 +13771,8 @@ body.chatflow-iframe-mode .message-content::selection {
 }
 
 .settings-about-card > div:last-child {
+  position: relative;
+  z-index: 1;
   flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
@@ -13647,6 +13888,40 @@ body.chatflow-iframe-mode .message-content::selection {
 
 .settings-certificate-link:hover {
   color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.settings-windows-lumia {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-windows-lumia .settings-lumia-link {
+  color: var(--accent, #4a9eff);
+  text-decoration: none;
+}
+
+.settings-windows-lumia .settings-lumia-link:hover {
+  text-decoration: underline;
+}
+
+.settings-onedrive-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+.settings-onedrive-hint a {
+  color: var(--accent, #4a9eff);
+  text-decoration: none;
+}
+
+.settings-onedrive-hint a:hover {
   text-decoration: underline;
 }
 
@@ -14310,8 +14585,8 @@ body.chatflow-iframe-mode .message-content::selection {
   width: 70px;
   height: 70px;
   border-radius: 20px;
-  background: var(--settings-card-hover);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -14752,10 +15027,13 @@ body.chatflow-iframe-mode .message-content::selection {
 	  .settings-passkey-card,
 	  .settings-membership-section,
 	  .ztx6d-binding-card,
-	  .settings-about-card,
 	  .settings-install-card {
     border-radius: 21px;
     background: var(--settings-row-bg);
+  }
+
+  .settings-about-card {
+    border-radius: 21px;
   }
 
   .settings-about-links {
@@ -15259,6 +15537,23 @@ body.chatflow-iframe-mode .message-content::selection {
   outline: none;
   background: var(--settings-card-hover);
   color: var(--error-color);
+}
+
+@media (min-width: 861px) {
+  .settings-sidebar {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .settings-nav {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .settings-desktop-logout-link {
+    margin-top: 0;
+  }
 }
 
 @media (max-width: 860px) {
@@ -17676,3 +17971,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   outline: none !important;
   outline-offset: 0 !important;
 }
+
+/* ---- CRF 导入导出 toast ---- */
+.crf-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 99999; padding: 12px 20px; border-radius: 10px; font-size: 14px; color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.35); max-width: 90vw; transition: opacity .4s; }
+.crf-toast-ok { background: #16a34a; }
+.crf-toast-bad { background: #dc2626; }
+.crf-toast-warn { background: #d97706; }
+.crf-toast-info { background: #1d4ed8; }
+.crf-toast-hide { opacity: 0; }

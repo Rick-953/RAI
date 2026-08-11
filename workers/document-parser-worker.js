@@ -2,7 +2,7 @@
 
 const yauzl = require('yauzl');
 
-const MAX_INPUT_BYTES = 50 * 1024 * 1024;
+const MAX_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 512;
 const MAX_ARCHIVE_TOTAL_BYTES = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES = 8 * 1024 * 1024;
@@ -10,7 +10,7 @@ const MAX_ARCHIVE_RATIO = 200;
 const MAX_TARGET_TOTAL_BYTES = 20 * 1024 * 1024;
 const MAX_PRESENTATION_SLIDES = 200;
 const MAX_OUTPUT_CHARS = 100000;
-const ALLOWED_KINDS = new Set(['docx', 'xlsx', 'pptx']);
+const ALLOWED_KINDS = new Set(['docx', 'xlsx', 'pptx', 'csv']);
 
 function parserError(code) {
     const error = new Error(code);
@@ -238,12 +238,80 @@ async function parseOffice(kind, input) {
     };
 }
 
+function escapeMarkdownCell(value) {
+    return String(value || '').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
+function parseCsvRows(source) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let quoted = false;
+    const text = String(source || '').replace(/^\uFEFF/, '');
+    for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        if (quoted) {
+            if (character === '"' && text[index + 1] === '"') {
+                field += '"';
+                index += 1;
+            } else if (character === '"') {
+                quoted = false;
+            } else {
+                field += character;
+            }
+            continue;
+        }
+        if (character === '"' && field.length === 0) {
+            quoted = true;
+        } else if (character === ',') {
+            row.push(field);
+            field = '';
+        } else if (character === '\n') {
+            row.push(field.replace(/\r$/, ''));
+            rows.push(row);
+            row = [];
+            field = '';
+            if (rows.length > 2000) throw parserError('csv_row_limit');
+        } else {
+            field += character;
+        }
+    }
+    if (quoted) throw parserError('csv_quote_unterminated');
+    if (field || row.length) {
+        row.push(field.replace(/\r$/, ''));
+        rows.push(row);
+    }
+    return rows;
+}
+
+function parseCsv(input) {
+    const source = input.toString('utf8');
+    if (Buffer.byteLength(source, 'utf8') !== input.length || source.includes('\u0000')) {
+        throw parserError('csv_encoding_invalid');
+    }
+    const rows = parseCsvRows(source);
+    if (!rows.length) return { text: '', meta: { rows: 0, columns: 0 } };
+    const columnCount = Math.max(...rows.map((row) => row.length));
+    if (columnCount > 256) throw parserError('csv_column_limit');
+    const normalized = rows.map((row) => Array.from({ length: columnCount }, (_, index) => escapeMarkdownCell(row[index] || '')));
+    const header = normalized[0];
+    const markdown = [
+        `| ${header.join(' | ')} |`,
+        `| ${header.map(() => '---').join(' | ')} |`,
+        ...normalized.slice(1).map((row) => `| ${row.join(' | ')} |`)
+    ].join('\n');
+    return {
+        text: markdown.slice(0, MAX_OUTPUT_CHARS),
+        meta: { rows: rows.length, columns: columnCount }
+    };
+}
+
 async function main() {
     const kind = String(process.argv[2] || '').toLowerCase();
     if (!ALLOWED_KINDS.has(kind)) throw parserError('document_kind_blocked');
     const input = await collectStdin();
     if (!input.length) throw parserError('document_input_empty');
-    const result = await parseOffice(kind, input);
+    const result = kind === 'csv' ? parseCsv(input) : await parseOffice(kind, input);
     process.stdout.write(JSON.stringify({ ok: true, ...result }));
 }
 

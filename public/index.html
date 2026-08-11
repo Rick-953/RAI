@@ -11,36 +11,37 @@
   <meta name="apple-mobile-web-app-title" content="RAI">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
-  <script src="/runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20260729-release-safety-password-v01158"></script>
+  <script src="runtime-config.js"></script>
+  <script src="runtime-brand.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260729-release-safety-password-v01158">
+  <link rel="manifest" href="site.webmanifest?v=20260806-beta-integrity-stream-concurrency-v01188">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260729-release-safety-password-v01158"></script>
-  <script defer src="lib/purify.min.js?v=20260729-release-safety-password-v01158"></script>
+  <script defer src="lib/marked.min.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
+  <script defer src="lib/purify.min.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260729-release-safety-password-v01158">
-  <script defer src="lib/katex/katex.min.js?v=20260729-release-safety-password-v01158"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260729-release-safety-password-v01158"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260806-beta-integrity-stream-concurrency-v01188">
+  <script defer src="lib/katex/katex.min.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="event-bindings.js?v=20260729-release-safety-password-v01158"></script>
+  <script defer src="rai-system-prompt.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
+  <script defer src="event-bindings.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260729-release-safety-password-v01158">
-  <script defer src="lib/highlight/highlight.min.js?v=20260729-release-safety-password-v01158"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260806-beta-integrity-stream-concurrency-v01188">
+  <script defer src="lib/highlight/highlight.min.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260729-release-safety-password-v01158">
-  <link rel="stylesheet" href="selection-explainer.css?v=20260729-release-safety-password-v01158">
+  <link rel="stylesheet" href="styles.css?v=20260806-beta-integrity-stream-concurrency-v01188">
+  <link rel="stylesheet" href="selection-explainer.css?v=20260806-beta-integrity-stream-concurrency-v01188">
 </head>
 
 <body>
@@ -98,7 +99,7 @@
             <label class="form-label" for="authEmailCode" data-i18n="email-code-label">邮箱验证码</label>
             <div class="auth-code-row">
               <input type="text" class="form-input" id="authEmailCode" data-i18n-placeholder="email-code-placeholder"
-                placeholder="10-16 位验证码" inputmode="text" maxlength="16"
+                placeholder="6 位数字验证码" inputmode="numeric" pattern="[0-9]*" maxlength="6"
                 data-rai-keydown="handleEmailCodeKeydown(event)" autocomplete="one-time-code">
               <button type="button" class="auth-inline-action" id="authEmailCodeResendBtn"
                 data-rai-click="resendAuthEmailCode()" data-i18n="email-code-resend">重发</button>
@@ -133,16 +134,43 @@
             <button type="button" class="auth-sso-btn auth-sso-btn-pending" data-rai-click="showRpassPending()"
               data-i18n="auth-rpass-login" data-i18n-title="auth-coming-soon" title="待上线">rPass 登录</button>
           </div>
+
+          <div class="auth-custom-api-entry" id="customApiEntry">
+            <button type="button" class="auth-custom-api-link" id="customApiToggleBtn"
+              data-rai-click="toggleCustomApiMode()" data-i18n="custom-api-entry">我有一个 API Key</button>
+          </div>
+
+          <div class="custom-api-panel auth-step-hidden" id="customApiPanel">
+            <div class="form-group">
+              <label class="form-label" for="customApiUrl" data-i18n="custom-api-url-label">API URL</label>
+              <input type="url" class="form-input" id="customApiUrl" value="https://api.openai.com/v1"
+                placeholder="https://api.example.com/v1" autocomplete="url">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="customApiKey" data-i18n="custom-api-key-label">API Key</label>
+              <input type="password" class="form-input" id="customApiKey" data-i18n-placeholder="custom-api-key-placeholder"
+                placeholder="sk-..." autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="customModelId" data-i18n="custom-model-label">模型 ID</label>
+              <input type="text" class="form-input" id="customModelId" placeholder="gpt-4o-mini" autocomplete="off">
+            </div>
+            <div class="error-message" id="customApiError"></div>
+            <button type="button" class="auth-btn custom-api-submit" id="customApiSubmitBtn"
+              data-rai-click="startCustomApiMode()" data-i18n="custom-api-submit">进入自定义 API</button>
+            <button type="button" class="auth-custom-api-back" data-rai-click="toggleCustomApiMode(false)"
+              data-i18n="custom-api-back">返回普通登录</button>
+          </div>
         </div>
 
         <!-- 登录/注册切换 和 语言切换 - 放到表单下方 -->
-        <div class="auth-footer">
+        <div class="auth-footer" id="authFooter">
           <div class="auth-switch" id="authSwitch">
             <span data-i18n="no-account">还没有账号?</span>
             <a class="auth-link" data-rai-click="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
           </div>
         </div>
-        <div class="auth-lang-row" role="group" aria-label="Language">
+        <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
           <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')">简体中文</button>
           <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')">繁體中文</button>
           <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')">English</button>
@@ -262,6 +290,8 @@
 
   <!-- 主应用容器 -->
   <div class="app-container" id="appContainer">
+    <button type="button" class="custom-api-exit-btn" id="customApiExitBtn"
+      data-rai-click="leaveCustomApiMode()" data-i18n="custom-api-exit">退出自定义 API</button>
     <!-- 移动端头部 -->
     <div class="mobile-header" id="mobileHeader">
       <div class="mobile-left-controls">
@@ -336,7 +366,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.11.58</div>
+                <div class="logo-subtitle">by Rick · v0.11.88</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -408,46 +438,6 @@
                 <span>新建文件夹</span>
               </button>
               <div class="spaces-list conversation-folders-list" id="conversationFoldersList"></div>
-            </div>
-          </div>
-
-          <!-- ChatFlow 分组 -->
-          <div class="sidebar-group">
-            <div class="sidebar-group-header" id="flowsGroupToggle" role="button" tabindex="0">
-              <svg class="flow-group-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="24" height="24">
-                <defs>
-                  <linearGradient id="planetGradFlow" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" style="stop-color:#f5d547;stop-opacity:1" />
-                    <stop offset="100%" style="stop-color:#e6a824;stop-opacity:1" />
-                  </linearGradient>
-                  <linearGradient id="ringGradFlow" x1="0%" y1="100%" x2="100%" y2="0%">
-                    <stop offset="0%" style="stop-color:#f9e79f;stop-opacity:1" />
-                    <stop offset="100%" style="stop-color:#fef5e7;stop-opacity:1" />
-                  </linearGradient>
-                </defs>
-                <circle cx="32" cy="32" r="14" fill="url(#planetGradFlow)" />
-                <path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none"
-                  stroke="url(#ringGradFlow)" stroke-width="4" stroke-linecap="round" opacity="0.8" />
-                <path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(#ringGradFlow)" stroke-width="4"
-                  stroke-linecap="round" opacity="0.9" />
-                <circle cx="26" cy="26" r="4" fill="white" opacity="0.2" />
-              </svg>
-              <span class="sidebar-group-title" data-i18n="sidebar-flows">ChatFlow</span>
-              <span class="sidebar-beta-badge" data-i18n="sidebar-flows-beta">测试</span>
-              <svg class="material-symbols-outlined group-toggle-icon" id="flowsToggle"
-                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-                <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
-              </svg>
-            </div>
-            <div class="sidebar-group-content" id="flowsGroup" hidden>
-              <button class="new-flow-btn-inline" data-rai-click="createNewFlow()">
-                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24"
-                  height="24" fill="currentColor">
-                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                </svg>
-                <span data-i18n="new-flow">新建 ChatFlow</span>
-              </button>
-              <div class="flows-list" id="flowsList"></div>
             </div>
           </div>
 
@@ -712,6 +702,15 @@
                 </div>
               </div>
 
+              <button type="button" class="toolbar-btn canvas-toggle-btn" id="canvasToggleBtn"
+                aria-pressed="false" data-i18n-title="canvas-toggle-title" data-i18n-aria-label="canvas-toggle-title"
+                title="打开画布" aria-label="打开画布" data-rai-click="toggleSessionCanvas()">
+                <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
+                  width="20" height="20" fill="currentColor" aria-hidden="true">
+                  <path d="M200-120q-33 0-56.5-23.5T120-200v-200h80v200h200v80H200Zm360 0v-80h200v-200h80v200q0 33-23.5 56.5T760-120H560ZM120-560v-200q0-33 23.5-56.5T200-840h200v80H200v200h-80Zm640 0v-200H560v-80h200q33 0 56.5 23.5T840-760v200h-80ZM320-320v-320h320v320H320Zm80-80h160v-160H400v160Z" />
+                </svg>
+              </button>
+
               <!-- 思考预算弹窗 (保留，用于推理模式) -->
               <div class="thinking-budget-modal" id="thinkingBudgetModal" style="display: none;">
                 <div class="thinking-budget-content">
@@ -813,31 +812,31 @@
                     <div class="model-menu-section-label">对话模型</div>
 
                     <div class="model-menu-item" data-model="gpt-5.6-luna"
-                      data-rai-click="selectModelFromMenu('gpt-5.6-luna', 'GPT 5.6')">
+                      data-rai-click="selectModelFromMenu('gpt-5.6-luna', 'GPT 5.6', null, event)">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">GPT 5.6</span><span class="model-badge">多模态</span></div>
                       </div>
                     </div>
                     <div class="model-menu-item" data-model="claude-sonnet-5"
-                      data-rai-click="selectModelFromMenu('claude-sonnet-5', 'Claude Sonnet 5')">
+                      data-rai-click="selectModelFromMenu('claude-sonnet-5', 'Claude Sonnet 5', null, event)">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Claude Sonnet 5</span><span class="model-badge">多模态</span></div>
                       </div>
                     </div>
                     <div class="model-menu-item" data-model="gemini-3.6-flash-low"
-                      data-rai-click="selectModelFromMenu('gemini-3.6-flash-low', 'Gemini 3.6')">
+                      data-rai-click="selectModelFromMenu('gemini-3.6-flash-low', 'Gemini 3.6', null, event)">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Gemini 3.6</span><span class="model-badge">多模态</span></div>
                       </div>
                     </div>
                     <div class="model-menu-item" data-model="deepseek-flash"
-                      data-rai-click="selectModelFromMenu('deepseek-flash', 'DeepSeek v4')">
+                      data-rai-click="selectModelFromMenu('deepseek-flash', 'DeepSeek v4', null, event)">
                       <div class="model-menu-content">
                         <div class="model-menu-title">DeepSeek v4</div>
                       </div>
                     </div>
                     <div class="model-menu-item" data-model="nemotron-3-ultra"
-                      data-rai-click="selectModelFromMenu('nemotron-3-ultra', 'Nemotron 3 Ultra')">
+                      data-rai-click="selectModelFromMenu('nemotron-3-ultra', 'Nemotron 3 Ultra', null, event)">
                       <div class="model-menu-content">
                         <div class="model-menu-title"><span class="model-menu-name">Nemotron 3 Ultra</span><span class="model-badge limited-free">Free</span></div>
                       </div>
@@ -845,16 +844,16 @@
 
                     <div class="model-menu-section-label">图像生成</div>
                     <div class="model-menu-item" data-model="kolors-free"
-                      data-rai-click="selectModelFromMenu('kolors-free', 'Kolors Free')">
+                      data-rai-click="selectModelFromMenu('kolors-free', 'Kolors Free', null, event)">
                       <div class="model-menu-content"><div class="model-menu-title">Kolors Free <span class="model-badge limited-free">Free</span></div></div>
                     </div>
                     <div class="model-menu-item" data-model="gpt-image-2"
-                      data-rai-click="selectModelFromMenu('gpt-image-2', 'GPT Image 2')">
+                      data-rai-click="selectModelFromMenu('gpt-image-2', 'GPT Image 2', null, event)">
                       <div class="model-menu-content"><div class="model-menu-title">GPT Image 2</div></div>
-                    </div>
+          </div>
 
-                  </div>
                 </div>
+              </div>
               </div>
 
               <button type="button" class="send-btn" id="sendBtn" data-rai-click="handleSendButtonClick(event)">
@@ -878,106 +877,41 @@
   </div>
   </div>
 
-  <!-- ChatFlow 工作区 -->
-  <div class="chatflow-workspace" id="chatFlowWorkspace" style="display: none;">
-    <!-- 返回按钮 -->
-    <button class="chatflow-back-btn" data-rai-click="closeChatFlow()">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
-      </svg>
-      <span data-i18n="back-to-chat">返回对话</span>
-    </button>
+  <div class="chatflow-divider" id="chatflowDivider" role="separator" aria-label="调整聊天和画布大小"
+    aria-orientation="vertical" hidden></div>
 
-    <!-- 左侧 LLM 面板 -->
-    <div class="chatflow-llm-panel" id="chatflowLLMPanel">
-      <div class="chatflow-sheet-grabber" id="chatflowSheetGrabber" aria-hidden="true">
-        <span></span>
+  <!-- 会话画布：消息和输入继续由普通对话区域提供 -->
+  <section class="chatflow-workspace" id="chatFlowWorkspace" aria-label="对话画布" hidden>
+    <header class="chatflow-header">
+      <div class="chatflow-header-main">
+        <h3 class="chatflow-title" id="chatflowTitle" data-i18n="chatflow-title-default">对话画布</h3>
+        <p class="chatflow-header-meta" id="chatflowHeaderMeta" data-i18n="chatflow-session">当前对话</p>
       </div>
-      <div class="chatflow-header">
-        <div class="chatflow-header-main">
-          <h3 class="chatflow-title" id="chatflowTitle" data-i18n="chatflow-title-default">新 ChatFlow</h3>
-          <p class="chatflow-header-meta" id="chatflowHeaderMeta" data-i18n="chatflow-session">ChatFlow 会话</p>
-        </div>
+      <div class="chatflow-header-actions">
+        <button type="button" class="chatflow-mode-chip" id="chatflowPatchModeBtn"
+          data-rai-click="toggleChatFlowPatchMode()" data-i18n="chatflow-review-mode">审核后应用</button>
+        <button type="button" class="canvas-close-btn" data-rai-click="toggleSessionCanvas(false)"
+          data-i18n-title="canvas-close-title" data-i18n-aria-label="canvas-close-title"
+          title="关闭画布" aria-label="关闭画布">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+            <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.41 4.29 19.71 2.88 18.3 9.17 12 2.88 5.7 4.29 4.29l6.3 6.3 6.3-6.3 1.41 1.42Z" />
+          </svg>
+        </button>
       </div>
+    </header>
 
-      <div class="chatflow-patch-banner" id="chatflowPatchBanner" style="display: none;">
-        <div class="chatflow-patch-banner-title" id="chatflowPatchBannerTitle" data-i18n="chatflow-patch-ready">AI 画布建议已准备</div>
-        <div class="chatflow-patch-summary" id="chatflowPatchSummary"></div>
-        <div class="chatflow-patch-actions">
-          <button type="button" class="chatflow-patch-btn primary" id="chatflowPatchApplyBtn"
-            data-rai-click="applyPendingCanvasPatch()" data-i18n="chatflow-patch-apply">应用</button>
-          <button type="button" class="chatflow-patch-btn" id="chatflowPatchDismissBtn"
-            data-rai-click="dismissPendingCanvasPatch()" data-i18n="chatflow-patch-dismiss">忽略</button>
-          <button type="button" class="chatflow-patch-btn" id="chatflowPatchUndoBtn" style="display: none;"
-            data-rai-click="undoLastCanvasPatch()" data-i18n="chatflow-patch-undo">撤回上一次 AI 修改</button>
-        </div>
-      </div>
-
-      <div class="chatflow-messages" id="chatflowMessages"></div>
-
-      <div class="chatflow-input-area">
-        <div class="chatflow-input-wrapper">
-          <div class="chatflow-input-container">
-            <div class="chatflow-input-row">
-              <textarea id="chatflowMessageInput" class="chatflow-message-input" rows="1"
-                data-i18n-placeholder="chatflow-input-placeholder" placeholder="输入消息，让 AI 帮你梳理并修改画布" data-rai-input="autoResizeChatFlowInput()"
-                data-rai-keydown="handleChatFlowInputKeydown(event)"
-                data-rai-compositionstart="handleTextInputCompositionStart(event)"
-                data-rai-compositionend="handleTextInputCompositionEnd(event)"></textarea>
-            </div>
-            <div class="chatflow-input-toolbar">
-              <button type="button" class="chatflow-toolbar-btn" id="chatflowInternetToggle"
-                data-rai-click="toggleChatFlowInternet(event)" data-i18n-title="chatflow-web-title" title="联网">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
-                  <path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q146 0 255.5 91.5T872-559h-82q-19-73-68.5-130.5T600-776v16q0 33-23.5 56.5T520-680h-80v80q0 17-11.5 28.5T400-560h-80v80h80v120h-40L168-552q-3 18-5.5 36t-2.5 36q0 131 92 225t228 95v80Zm364-20L716-228q-21 12-45 20t-51 8q-75 0-127.5-52.5T440-380q0-75 52.5-127.5T620-560q75 0 127.5 52.5T800-380q0 27-8 51t-20 45l128 128-56 56ZM691-309q29-29 29-71t-29-71q-29-29-71-29t-71 29q-29 29-29 71t29 71q29 29 71 29t71-29Z" />
-                </svg>
-              </button>
-              <button type="button" class="chatflow-toolbar-btn" id="chatflowThinkingToggle"
-                data-rai-click="toggleChatFlowThinking(event)" data-i18n-title="chatflow-reasoning-title" title="推理">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" width="20" height="20" fill="currentColor">
-                  <path d="M574.5-774.5Q560-789 560-810t14.5-35.5Q589-860 610-860t35.5 14.5Q660-831 660-810t-14.5 35.5Q631-760 610-760t-35.5-14.5Zm0 660Q560-129 560-150t14.5-35.5Q589-200 610-200t35.5 14.5Q660-171 660-150t-14.5 35.5Q631-100 610-100t-35.5-14.5Zm160-520Q720-649 720-670t14.5-35.5Q749-720 770-720t35.5 14.5Q820-691 820-670t-14.5 35.5Q791-620 770-620t-35.5-14.5Zm0 380Q720-269 720-290t14.5-35.5Q749-340 770-340t35.5 14.5Q820-311 820-290t-14.5 35.5Q791-240 770-240t-35.5-14.5Zm60-190Q780-459 780-480t14.5-35.5Q809-530 830-530t35.5 14.5Q880-501 880-480t-14.5 35.5Q851-430 830-430t-35.5-14.5ZM480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880v80q-134 0-227 93t-93 227q0 134 93 227t227 93v80Zm132-212L440-464v-216h80v184l148 148-56 56Z" />
-                </svg>
-              </button>
-              <button type="button" class="chatflow-mode-chip" id="chatflowPatchModeBtn" data-rai-click="toggleChatFlowPatchMode()" data-i18n="chatflow-review-mode">
-                审核后应用
-              </button>
-              <div class="chatflow-toolbar-spacer"></div>
-              <div class="chatflow-model-selector">
-                <button type="button" class="chatflow-model-select" id="chatflowModelSelect"
-                  aria-label="选择模型" aria-controls="chatflowModelMenu" aria-expanded="false"
-                  data-rai-click="toggleChatFlowModelMenu(event)">
-                  <span id="chatflowSelectedModel">Auto</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                    <path d="M7 10l5 5 5-5z" />
-                  </svg>
-                </button>
-                <div class="chatflow-model-menu" id="chatflowModelMenu" aria-hidden="true">
-		                  <div class="model-menu-item" data-model="auto" data-rai-click="selectChatFlowModel('auto', 'Auto')">Auto</div>
-		                  <div class="model-menu-item" data-model="gpt-5.6-luna" data-rai-click="selectChatFlowModel('gpt-5.6-luna', 'GPT 5.6')">GPT 5.6</div>
-		                  <div class="model-menu-item" data-model="claude-sonnet-5" data-rai-click="selectChatFlowModel('claude-sonnet-5', 'Claude Sonnet 5')">Claude Sonnet 5</div>
-		                  <div class="model-menu-item" data-model="gemini-3.6-flash-low" data-rai-click="selectChatFlowModel('gemini-3.6-flash-low', 'Gemini 3.6')">Gemini 3.6</div>
-		                  <div class="model-menu-item" data-model="deepseek-flash" data-rai-click="selectChatFlowModel('deepseek-flash', 'DeepSeek v4')">DeepSeek v4</div>
-		                  <div class="model-menu-item" data-model="nemotron-3-ultra" data-rai-click="selectChatFlowModel('nemotron-3-ultra', 'Nemotron 3 Ultra')">Nemotron 3 Ultra</div>
-                </div>
-              </div>
-              <button type="button" class="chatflow-send-btn" id="chatflowSendBtn" data-rai-click="sendChatFlowMessage()">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                  <path d="M2 21 23 12 2 3v7l15 2-15 2v7Z" />
-                </svg>
-              </button>
-              <button type="button" class="chatflow-stop-btn" id="chatflowStopBtn" data-rai-click="stopChatFlowGeneration()">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                  <path d="M6 6h12v12H6z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
+    <div class="chatflow-patch-banner" id="chatflowPatchBanner" style="display: none;">
+      <div class="chatflow-patch-banner-title" id="chatflowPatchBannerTitle" data-i18n="chatflow-patch-ready">AI 画布建议已准备</div>
+      <div class="chatflow-patch-summary" id="chatflowPatchSummary"></div>
+      <div class="chatflow-patch-actions">
+        <button type="button" class="chatflow-patch-btn primary" id="chatflowPatchApplyBtn"
+          data-rai-click="applyPendingCanvasPatch()" data-i18n="chatflow-patch-apply">应用</button>
+        <button type="button" class="chatflow-patch-btn" id="chatflowPatchDismissBtn"
+          data-rai-click="dismissPendingCanvasPatch()" data-i18n="chatflow-patch-dismiss">忽略</button>
+        <button type="button" class="chatflow-patch-btn" id="chatflowPatchUndoBtn" style="display: none;"
+          data-rai-click="undoLastCanvasPatch()" data-i18n="chatflow-patch-undo">撤回上一次 AI 修改</button>
       </div>
     </div>
-
-    <!-- 可拖拽分隔栏 -->
-    <div class="chatflow-divider" id="chatflowDivider"></div>
 
     <!-- 无限画布区域 -->
     <div class="chatflow-canvas-container" id="chatflowCanvasContainer">
@@ -1117,7 +1051,7 @@
       </div>
 
     </div>
-  </div>
+  </section>
 
   <!-- 对话索引导航器 -->
   <div class="chat-index-navigator" id="chatIndexNavigator">
@@ -1160,7 +1094,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260729-release-safety-password-v01158" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260806-beta-integrity-stream-concurrency-v01188" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1226,7 +1160,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260729-release-safety-password-v01158" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260806-beta-integrity-stream-concurrency-v01188" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1236,7 +1170,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260729-release-safety-password-v01158" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260806-beta-integrity-stream-concurrency-v01188" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1878,10 +1812,21 @@
                 </section>
                 <section class="settings-platform-download" aria-labelledby="settingsWindowsDownloadTitle">
                   <h4 id="settingsWindowsDownloadTitle" data-i18n="settings-windows-title">Windows 10 / 11（Phone）</h4>
+                  <div class="settings-install-status" id="windowsDownloadStatus">正在获取 GitHub 最新版...</div>
                   <div class="settings-windows-actions">
-                    <a class="settings-install-download" href="https://github.com/Master-Tea/CX-RAI/releases/download/v1.1.1/CX.RAI_1.1.1.0_x86_x64_arm.appxbundle" target="_blank" rel="noopener noreferrer" data-i18n="settings-platform-download">下载</a>
-                    <a class="settings-certificate-link" href="https://github.com/Master-Tea/CX-RAI/releases/download/v1.1.1/CX.RAI_1.1.1.0_x86_x64_arm.cer" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-certificate">安装证书</a>
+                    <a class="settings-install-download" id="windowsPackageDownload" href="https://github.com/Master-Tea/CX-RAI/releases/download/v1.1.1/CX.RAI_1.1.1.0_x86_x64_arm.appxbundle" target="_blank" rel="noopener noreferrer" data-i18n="settings-platform-download">下载</a>
+                    <a class="settings-certificate-link" id="windowsCertificateDownload" href="https://github.com/Master-Tea/CX-RAI/releases/download/v1.1.1/CX.RAI_1.1.1.0_x86_x64_arm.cer" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-certificate">安装证书</a>
                   </div>
+                  <div class="settings-windows-lumia" id="windowsLumiaSection" style="display:none">
+                    <span class="settings-lumia-hint" data-i18n="settings-windows-lumia-hint">为 Lumia 设备下载：</span>
+                    <a class="settings-lumia-link" id="windowsLumiaPackage" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-lumia-package">Arm 包</a>
+                    <span data-i18n="settings-windows-lumia-deps-note">（依赖请到 <a class="settings-lumia-link" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer">GitHub 下载页</a>获取）</span>
+                  </div>
+                  <p class="settings-onedrive-hint">
+                    <span data-i18n="settings-onedrive-hint">无法访问 GitHub？尝试使用</span>
+                    <a href="https://0p6g5-my.sharepoint.com/:f:/g/personal/mastertea_0p6g5_onmicrosoft_com/IgDAdirFYun2TYDn_97o7xnFARHtKfA93ZtAjxMYqRVscq4?e=aHHGzd" target="_blank" rel="noopener noreferrer">OneDrive E5</a>
+                    <span data-i18n="settings-onedrive-suffix">下载</span>
+                  </p>
                 </section>
               </div>
               <details class="settings-install-tutorial">
@@ -2038,9 +1983,10 @@
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20260729-release-safety-password-v01158"></script>
-  <script defer src="app.js?v=20260729-release-safety-password-v01158"></script>
-  <script defer src="selection-explainer.js?v=20260729-release-safety-password-v01158"></script>
+  <script defer src="conversation-cache.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
+  <script defer src="app.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
+  <script defer src="crf-ui.js?v=20260807-session-menu-crf"></script>
+  <script defer src="selection-explainer.js?v=20260806-beta-integrity-stream-concurrency-v01188"></script>
 </body>
 
 </html>

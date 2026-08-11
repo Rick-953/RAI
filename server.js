@@ -15,6 +15,7 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const crfSignature = require('./lib/crf-signature');
 const {
     createPrivacyLog,
     sanitizeReportLabel,
@@ -38,6 +39,23 @@ const {
 } = require('./lib/software-client-auth');
 const { runSensitiveAccountMutation } = require('./lib/sensitive-account-session');
 const { parseDocumentFile } = require('./lib/document-parser');
+const { resolveDocumentSandboxEnabled } = require('./lib/document-sandbox-runtime');
+const {
+    ARTIFACT_FORMATS,
+    DEFAULT_ROOT: FILE_WORKSPACE_DEFAULT_ROOT,
+    FileWorkspace,
+    FileWorkspaceError,
+    READ_MODES,
+    TRANSFORM_OPERATIONS
+} = require('./lib/file-workspace');
+const { LinuxSandbox, LinuxSandboxError } = require('./lib/linux-sandbox');
+const {
+    buildEditScript,
+    normalizeEditableExtension,
+    normalizeEditedFileName,
+    normalizeEditReplacements
+} = require('./lib/file-edit');
+const { createWindowsDownloadsResolver } = require('./lib/windows-downloads');
 const {
     normalizeHostname,
     requestPinnedHttp,
@@ -57,6 +75,7 @@ const {
     GPT_GATEWAY_CHAT_MODELS,
     GPT_GATEWAY_IMAGE_MODEL,
     applyGatewayChatRequestPolicy,
+    buildDirectImageToolCallSse,
     buildGatewayHeaders,
     buildGatewayImageChatRequest,
     createExternalRequestAbortError,
@@ -80,9 +99,46 @@ const {
     validateNewPasswordPolicy,
     verifyPassword
 } = require('./lib/password-policy');
+const {
+    buildMemoryToolPolicyInstruction,
+    normalizeMemoryCategory,
+    normalizeSaveMemoryToolArgs,
+    validateSaveMemoryRequest
+} = require('./lib/memory-tool-policy');
+const {
+    buildEffectiveSystemPrompt: buildCanonicalRaiSystemPrompt
+} = require('./public/rai-system-prompt');
+const {
+    getSkillCatalog,
+    loadTrustedSkill,
+    validateSkillRegistry
+} = require('./lib/skill-registry');
+const {
+    createToolProtocolFilter
+} = require('./lib/tool-protocol-filter');
+const {
+    buildConversationDocument,
+    createConversationReceipt,
+    loadConversationSigner,
+    verifyConversationReceipt,
+    writeConversationReceiptLedgers
+} = require('./lib/conversation-integrity');
+const {
+    createChatRequestBudget,
+    createProviderCircuitBreaker,
+    isTransientProviderFailure
+} = require('./lib/chat-request-budget');
+
+// Static source only: fail closed before accepting requests if a bundled skill drifts.
+validateSkillRegistry();
 
 const app = express();
 app.disable('x-powered-by');
+
+// Ordinary chat fallback shares one request deadline and a short-lived transient-failure circuit.
+const runtimeFallbackCircuit = createProviderCircuitBreaker({
+    openMs: Number.parseInt(process.env.RAI_CHAT_CIRCUIT_OPEN_MS, 10) || 60_000
+});
 
 function cleanEnvValue(value) {
     let text = String(value ?? '').trim();
@@ -157,6 +213,42 @@ const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1.com';
 // Node <25 的 Permission Model 不限制网络。生产默认关闭不受信文档解析，
 // 直到运行时能提供确定性无网络隔离；开发/回归环境仍可直接测试解析器。
 const DOCUMENT_PARSER_ENABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, !IS_PRODUCTION);
+function isProductionDocumentSandboxAvailable() {
+    if (process.platform !== 'linux') return false;
+    try {
+        for (const executable of [
+            '/usr/bin/prlimit',
+            path.resolve(__dirname, 'scripts', 'rai-document-parser-sandbox.sh'),
+            '/usr/bin/bwrap',
+            '/bin/sh'
+        ]) {
+            fs.accessSync(executable, fs.constants.X_OK);
+        }
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+const DOCUMENT_SANDBOX_RUNTIME_ENABLED = resolveDocumentSandboxEnabled({
+    parserEnabled: DOCUMENT_PARSER_ENABLED,
+    isProduction: IS_PRODUCTION,
+    sandboxAvailable: isProductionDocumentSandboxAvailable()
+});
+// The production workspace path is fixed and must be provisioned by systemd
+// tmpfiles/RuntimeDirectory. Non-production tests may opt into a temporary
+// absolute directory without changing the production boundary.
+const FILE_WORKSPACE_ROOT = IS_PRODUCTION
+    ? FILE_WORKSPACE_DEFAULT_ROOT
+    : (cleanEnvValue(process.env.RAI_FILE_WORKSPACE_ROOT) || path.join('/tmp', `rai-file-jobs-${process.pid}`));
+const fileWorkspace = new FileWorkspace({
+    rootDir: FILE_WORKSPACE_ROOT,
+    parseDocumentFile: (filePath, kind) => parseDocumentFile(filePath, kind)
+});
+const linuxSandbox = new LinuxSandbox({ fileWorkspace });
+const fileWorkspaceStartupReady = fileWorkspace.init().then(() => {
+    fileWorkspace.startCleanup();
+    return true;
+});
 
 async function validateNewPasswordForAccount(password, context = {}, fieldLabel = '密码') {
     const localError = validateNewPasswordPolicy(password, context, fieldLabel);
@@ -188,9 +280,18 @@ function isProvisionedTestAccount(user, normalizedEmail) {
         && normalizeEmailForAuth(user?.email) === PROVISIONED_TEST_ACCOUNT_EMAIL;
 }
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
+const resolveWindowsDownloads = createWindowsDownloadsResolver();
 const MAX_CONCURRENT_REQUESTS_PER_USER = Math.max(
     1,
     parseInt(cleanEnvValue(process.env.RAI_MAX_CONCURRENT_REQUESTS_PER_USER) || '2', 10) || 2
+);
+const FREE_CONCURRENT_REQUESTS_DEFAULT = Math.max(
+    1,
+    parseInt(cleanEnvValue(process.env.RAI_MAX_CONCURRENT_REQUESTS_FREE) || '2', 10) || 2
+);
+const PRO_MAX_CONCURRENT_REQUESTS_DEFAULT = Math.max(
+    1,
+    parseInt(cleanEnvValue(process.env.RAI_MAX_CONCURRENT_REQUESTS_PRO_MAX) || '5', 10) || 5
 );
 const ADMIN_TOKEN_EXPIRES_IN = cleanEnvValue(process.env.ADMIN_TOKEN_EXPIRES_IN) || (IS_PRODUCTION ? '12h' : '30d');
 const ADMIN_TOTP_REQUIRED = parseBooleanEnv(process.env.RAI_ADMIN_TOTP_REQUIRED, IS_PRODUCTION);
@@ -199,12 +300,8 @@ const USERNAME_MAX_LENGTH = 80;
 const LONG_MEMORY_DEFAULT_ENABLED = parseBooleanEnv(process.env.RAI_LONG_MEMORY_DEFAULT_ENABLED, false);
 const LONG_MEMORY_PROMPT_LIMIT = Math.max(1, parseInt(cleanEnvValue(process.env.RAI_LONG_MEMORY_PROMPT_LIMIT) || '24', 10) || 24);
 const RECENT_TITLE_MEMORY_LIMIT = Math.max(1, parseInt(cleanEnvValue(process.env.RAI_RECENT_TITLE_MEMORY_LIMIT) || '10', 10) || 10);
-const MEMORY_CONTEXT_MESSAGE_LIMIT = Math.max(2, Math.min(parseInt(cleanEnvValue(process.env.RAI_MEMORY_CONTEXT_MESSAGE_LIMIT) || '8', 10) || 8, 16));
 const MEMORY_CONTENT_MAX_LENGTH = 360;
 const MEMORY_KEY_MAX_LENGTH = 96;
-const MEMORY_EXTRACTION_MODEL_ID = 'deepseek-flash';
-const MEMORY_MODEL_MAX_TOKENS = 700;
-const MEMORY_MODEL_TIMEOUT_MS = 15000;
 const TITLE_FALLBACK_MODEL_IDS = ['chatgpt-gpt-oss-120b', 'deepseek-flash'];
 const TITLE_FALLBACK_MAX_TOKENS = 80;
 const TITLE_FALLBACK_TIMEOUT_MS = 10000;
@@ -236,18 +333,6 @@ const CHAT_CLIENT_MAX_TOTAL_CHARS = Math.max(CHAT_CLIENT_MAX_MESSAGE_CHARS, Math
 const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
 const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
 const GENERIC_SESSION_TITLE_RE = /^(新对话|新 ChatFlow|临时对话|New Chat|Temporary chat|Untitled|未命名)$/i;
-const MEMORY_CATEGORIES = new Set([
-    'identity',
-    'profile',
-    'preference',
-    'interest',
-    'ability',
-    'weakness',
-    'health',
-    'relationship',
-    'work',
-    'other'
-]);
 
 function normalizeUsernameForStorage(username) {
     const normalized = String(username || '').trim().replace(/\s+/g, ' ');
@@ -305,12 +390,7 @@ function escapeEmailHtml(value) {
 }
 
 function generateEmailCode() {
-    const length = crypto.randomInt(EMAIL_CODE_MIN_LENGTH, EMAIL_CODE_MAX_LENGTH + 1);
-    let output = '';
-    for (let i = 0; i < length; i += 1) {
-        output += EMAIL_CODE_ALLOWED_CHARS[crypto.randomInt(0, EMAIL_CODE_ALLOWED_CHARS.length)];
-    }
-    return output;
+    return crypto.randomInt(0, 1000000).toString().padStart(EMAIL_CODE_LENGTH, '0');
 }
 
 function normalizeEmailCodeInput(code) {
@@ -318,13 +398,12 @@ function normalizeEmailCodeInput(code) {
         .normalize('NFKC')
         .trim()
         .replace(/\s+/g, '')
-        .slice(0, EMAIL_CODE_MAX_LENGTH + 8);
+        .slice(0, EMAIL_CODE_LENGTH + 8);
 }
 
 function isValidEmailCodeInput(code) {
     const normalized = normalizeEmailCodeInput(code);
-    if (normalized.length < EMAIL_CODE_MIN_LENGTH || normalized.length > EMAIL_CODE_MAX_LENGTH) return false;
-    return new RegExp(`^[${EMAIL_CODE_ALLOWED_CHARS.replace(/[\\\]\-^]/g, '\\$&')}]+$`).test(normalized);
+    return /^\d{6}$/.test(normalized);
 }
 
 function hashEmailCode({ email, purpose, code }) {
@@ -373,6 +452,29 @@ const {
 } = createPrivacyLog({ secret: JWT_SECRET });
 const OPENROUTER_BASE_URL = cleanEnvValue(process.env.OPENROUTER_BASE_URL) || 'https://openrouter.ai/api/v1/chat/completions';
 const GOOGLE_GEMINI_BASE_URL = cleanEnvValue(process.env.GOOGLE_GEMINI_BASE_URL) || 'https://generativelanguage.googleapis.com/v1beta/models';
+function resolveLoopbackTestProviderUrl(envName, fallbackUrl) {
+    if (cleanEnvValue(process.env.NODE_ENV).toLowerCase() !== 'test') return fallbackUrl;
+    const raw = cleanEnvValue(process.env[envName]);
+    if (!raw) return fallbackUrl;
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    } catch (_) {
+        throw new Error(`invalid_${envName.toLowerCase()}`);
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || !['127.0.0.1', '::1', 'localhost'].includes(parsed.hostname)) {
+        throw new Error(`${envName.toLowerCase()}_must_be_loopback`);
+    }
+    return parsed.toString();
+}
+const DEEPSEEK_CHAT_COMPLETIONS_URL = resolveLoopbackTestProviderUrl(
+    'RAI_TEST_DEEPSEEK_CHAT_COMPLETIONS_URL',
+    'https://api.deepseek.com/v1/chat/completions'
+);
+const SILICONFLOW_CHAT_COMPLETIONS_URL = resolveLoopbackTestProviderUrl(
+    'RAI_TEST_SILICONFLOW_CHAT_COMPLETIONS_URL',
+    'https://api.siliconflow.cn/v1/chat/completions'
+);
 const ZTX6D_APP_ID = cleanEnvValue(process.env.ZTX6D_APP_ID);
 const ZTX6D_APP_KEY = cleanEnvValue(process.env.ZTX6D_APP_KEY);
 const ZTX6D_API_URL = cleanEnvValue(process.env.ZTX6D_API_URL) || 'https://ztx6d.cn/open.php';
@@ -453,7 +555,20 @@ const FAST_GATEWAY_API_KEY = FAST_GATEWAY_API_KEY_FILE
     : '';
 const FAST_GATEWAY_CONFIGURED = !!(FAST_GATEWAY_BASE_URL && FAST_GATEWAY_API_KEY);
 if (FAST_GATEWAY_BASE_URL && !FAST_GATEWAY_API_KEY) {
-    console.warn(' Fast OpenAI 兼容网关未配置 RAI_FAST_GATEWAY_API_KEY_FILE；Claude/Gemini 将 fail closed');
+    console.warn(' Fast OpenAI 兼容网关未配置 RAI_FAST_GATEWAY_API_KEY_FILE；Gemini 3.6 将 fail closed');
+}
+const CLAUDE_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(
+    cleanEnvValue(process.env.RAI_CLAUDE_GATEWAY_BASE_URL) || 'https://www.umapis.com/v1',
+    { production: IS_PRODUCTION }
+);
+const CLAUDE_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_CLAUDE_GATEWAY_API_KEY_FILE)
+    || (IS_PRODUCTION ? path.join(__dirname, '.claude-gateway-api-key') : '');
+const CLAUDE_GATEWAY_API_KEY = CLAUDE_GATEWAY_API_KEY_FILE
+    ? readGatewayApiKeyFile(CLAUDE_GATEWAY_API_KEY_FILE)
+    : '';
+const CLAUDE_GATEWAY_CONFIGURED = !!(CLAUDE_GATEWAY_BASE_URL && CLAUDE_GATEWAY_API_KEY);
+if (CLAUDE_GATEWAY_BASE_URL && !CLAUDE_GATEWAY_API_KEY) {
+    console.warn(' Claude OpenAI 兼容网关未配置 RAI_CLAUDE_GATEWAY_API_KEY_FILE；Claude Sonnet 5 将 fail closed');
 }
 const TOTP_ENCRYPTION_KEY_FILE = cleanEnvValue(process.env.RAI_TOTP_ENCRYPTION_KEY_FILE);
 const TOTP_ENCRYPTION_KEY = TOTP_ENCRYPTION_KEY_FILE
@@ -501,21 +616,13 @@ const RESEND_TIMEOUT_MS = Math.max(
     parseInt(cleanEnvValue(process.env.RAI_RESEND_TIMEOUT_MS) || '12000', 10) || 12000
 );
 const ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS = parseBooleanEnv(process.env.RAI_ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS, false);
-const EMAIL_CODE_TTL_MS = Math.max(
-    60 * 1000,
-    parseInt(cleanEnvValue(process.env.RAI_EMAIL_CODE_TTL_SECONDS) || '600', 10) * 1000 || 10 * 60 * 1000
-);
+const EMAIL_CODE_TTL_MS = 5 * 60 * 1000;
 const EMAIL_CODE_MAX_ATTEMPTS = Math.max(
     3,
     parseInt(cleanEnvValue(process.env.RAI_EMAIL_CODE_MAX_ATTEMPTS) || '6', 10) || 6
 );
 const EMAIL_CODE_PURPOSES = new Set(['register', 'login', 'password_reset']);
-const EMAIL_CODE_MIN_LENGTH = Math.max(10, parseInt(cleanEnvValue(process.env.RAI_EMAIL_CODE_MIN_LENGTH) || '10', 10) || 10);
-const EMAIL_CODE_MAX_LENGTH = Math.max(
-    EMAIL_CODE_MIN_LENGTH,
-    Math.min(32, parseInt(cleanEnvValue(process.env.RAI_EMAIL_CODE_MAX_LENGTH) || '16', 10) || 16)
-);
-const EMAIL_CODE_ALLOWED_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*_-+=?';
+const EMAIL_CODE_LENGTH = 6;
 const ENV_API_KEYS = {
     TAVILY_API_KEY: cleanEnvValue(process.env.TAVILY_API_KEY),
     DEEPSEEK_API_KEY: cleanEnvValue(process.env.DEEPSEEK_API_KEY),
@@ -550,6 +657,25 @@ function buildGeneratedImageMarkdown(result = {}) {
         })
         .filter(Boolean)
         .join('\n\n');
+}
+
+function buildArtifactDownloadMarkdown(result = {}) {
+    const rawUrl = String(result?.downloadPath || '').trim();
+    try {
+        const parsed = new URL(rawUrl, 'http://rai.local');
+        if (
+            parsed.origin !== 'http://rai.local'
+            || !/^\/api\/file-jobs\/[a-f0-9]{48}\/artifacts\/[a-f0-9]{32}$/i.test(parsed.pathname)
+            || !parsed.searchParams.get('sessionId')
+            || [...parsed.searchParams.keys()].some((key) => key !== 'sessionId')
+        ) return '';
+        const label = String(result?.fileName || 'RAI 文件产物')
+            .replace(/[\u0000-\u001f\u007f\[\]();\\]/g, '_')
+            .slice(0, 96) || 'RAI 文件产物';
+        return `[下载 ${label}](${parsed.pathname}${parsed.search})`;
+    } catch (_) {
+        return '';
+    }
 }
 
 function appendRaiRuntimeReport(entry = {}) {
@@ -590,6 +716,56 @@ function appendRaiRuntimeReport(entry = {}) {
 
 function buildUserFacingApiFailureMessage() {
     return `AI 服务暂时不可用，RAI 已记录报错并尝试备用线路；如果仍失败，请联系 ${RAI_RUNTIME_REPORT_CONTACT}。`;
+}
+
+function isRaiProductIdentityQuestion(content = '') {
+    const normalized = String(content || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[，,。.!！?？;；:\s]+/g, ' ');
+    if (!normalized) return false;
+    return /(?:你是谁|你叫什么|谁开发了你|你由谁开发|谁创造了你|你由谁创造)/.test(normalized)
+        || /\b(?:who are you|what are you|who (?:made|created|developed) you)\b/.test(normalized);
+}
+
+function requiresRaiProductSkill(content = '') {
+    const normalized = String(content || '').trim().toLowerCase();
+    if (!normalized) return false;
+    const mentionsProduct = /\bcx[\s-]*rai\b/i.test(normalized)
+        || /(?:^|[^a-z0-9])rai(?:[^a-z0-9]|$)/i.test(normalized);
+    if (!mentionsProduct) return false;
+    const requestsCurrentExternalInfo = /(?:最新|当前|现在|今天|发布|版本|下载|链接|官网|搜索|联网|latest|current|today|release|version|download|link|website|search|web)/i.test(normalized);
+    return !requestsCurrentExternalInfo;
+}
+
+function shouldEnableWorkspaceTools(content = '', attachments = []) {
+    if (Array.isArray(attachments) && attachments.length > 0) return true;
+    return /(?:文件|附件|代码|脚本|压缩|解压|zip|7z|tar|docx|xlsx|pptx|csv|读取|修改|编辑|运行|执行|终端|sandbox|file|code|script|archive|extract|edit|run)/i.test(String(content || ''));
+}
+
+function buildRaiProductIdentityGuard(promptLanguage = 'zh-CN') {
+    return String(promptLanguage || '').trim().toLowerCase().startsWith('en')
+        ? '[RAI product identity] Answer this identity question as the RAI application: RAI is an AI chat application made by Rick. Do not identify as an upstream model, provider, company, or coding agent.'
+        : '[RAI 产品身份] 这是产品身份问题：只回答 RAI 是由 Rick 开发的 AI 对话软件。不得自称上游模型、服务商、公司或编程代理。';
+}
+
+function appendRaiProductIdentityGuard(messages = [], promptLanguage = 'zh-CN') {
+    const guarded = [...messages];
+    for (let index = guarded.length - 1; index >= 0; index -= 1) {
+        const message = guarded[index];
+        if (message?.role !== 'user') continue;
+        const guard = buildRaiProductIdentityGuard(promptLanguage);
+        if (typeof message.content === 'string') {
+            guarded[index] = { ...message, content: `${message.content}\n\n${guard}` };
+        } else if (Array.isArray(message.content)) {
+            guarded[index] = {
+                ...message,
+                content: [...message.content, { type: 'text', text: guard }]
+            };
+        }
+        break;
+    }
+    return guarded;
 }
 
 const KOLORS_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
@@ -979,8 +1155,8 @@ const ADMIN_MODEL_CATALOG = [
 
 const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
-const AUTO_MODEL_PREFERENCE = ['deepseek-pro', 'gpt-5.6-luna'];
-const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-5.6-luna', 'qwen3.6-35b-a3b', 'kimi-k2.6', 'gemini-3-flash', 'anthropic/claude-3-haiku'];
+const AUTO_MODEL_PREFERENCE = ['deepseek-flash', 'gpt-5.6-luna', 'kimi-k2.6', 'nemotron-3-ultra'];
+const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-5.6-luna', 'kimi-k2.6', 'qwen3.6-35b-a3b'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
@@ -1018,7 +1194,8 @@ function buildRuntimeConfigPayload() {
         brandTitle: BRAND_TITLE,
         publicBaseUrl: PUBLIC_BASE_URL,
         defaultDomainNoticeEnabled: !!(DEFAULT_DOMAIN_NOTICE_ENABLED && DEFAULT_DOMAIN_NOTICE_URL),
-        defaultDomainNoticeUrl: DEFAULT_DOMAIN_NOTICE_URL || ''
+        defaultDomainNoticeUrl: DEFAULT_DOMAIN_NOTICE_URL || '',
+        documentSandboxEnabled: DOCUMENT_SANDBOX_RUNTIME_ENABLED
     };
 }
 
@@ -1833,7 +2010,9 @@ async function requestAndPersistGeneratedImages({
     throwIfExternalRequestAborted(externalSignal);
     let response;
     let releaseSelectedAttempt = () => undefined;
-    const maxAttempts = 2;
+    // Image 2 is billed per generation. Never retry that upstream implicitly;
+    // one failed attempt may still use the cheaper fallback provider below.
+    const maxAttempts = providerName === 'rai_gpt_image' ? 1 : 2;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         throwIfExternalRequestAborted(externalSignal);
         const controller = new AbortController();
@@ -2046,6 +2225,8 @@ async function generateImages(rawArgs = {}, context = {}) {
     };
 
     let reservation = null;
+    let imagePoints = null;
+    let imagePointsRefunded = false;
     try {
         if (requestedModel === 'kolors-free' || !context?.userId) return await requestSiliconflowFallback();
         reservation = await reserveImage2Quota(context.userId, requestId);
@@ -2059,7 +2240,7 @@ async function generateImages(rawArgs = {}, context = {}) {
             const fallback = await requestSiliconflowFallback({ quotaReason });
             return { ...fallback, quota: quotaSnapshot, routingReason: quotaReason };
         }
-        const imagePoints = await checkAndDeductPoints(context.userId, GPT_GATEWAY_IMAGE_MODEL);
+        imagePoints = await checkAndDeductPoints(context.userId, GPT_GATEWAY_IMAGE_MODEL);
         if (imagePoints.useFreeModel) {
             await settleImage2QuotaReservation(requestId, false);
             reservation = null;
@@ -2090,17 +2271,36 @@ async function generateImages(rawArgs = {}, context = {}) {
         const usedImage2 = result?.provider === 'rai_gpt_image' && !result?.fallbackUsed;
         await settleImage2QuotaReservation(requestId, usedImage2);
         reservation = null;
+        let remainingPoints = imagePoints.remainingPoints;
+        if (!usedImage2 && imagePoints.pointsDeducted > 0) {
+            const refund = await refundPointDeduction(context.userId, imagePoints);
+            imagePointsRefunded = true;
+            remainingPoints = refund.remainingPoints;
+        }
         return {
             ...result,
             requestedModel,
             actualModel: usedImage2 ? 'gpt-image-2' : 'kolors-free',
             routingReason: usedImage2 ? 'quota_available' : 'upstream_fallback',
             pointsDeducted: usedImage2 ? imagePoints.pointsDeducted : 0,
-            remainingPoints: imagePoints.remainingPoints,
+            remainingPoints,
             quota: await getImage2QuotaSnapshot(context.userId)
         };
     } catch (error) {
         if (reservation?.allowed) await settleImage2QuotaReservation(requestId, false).catch(() => null);
+        if (imagePoints?.pointsDeducted > 0 && !imagePointsRefunded) {
+            try {
+                await refundPointDeduction(context.userId, imagePoints);
+                imagePointsRefunded = true;
+            } catch (refundError) {
+                appendRaiRuntimeReport({
+                    level: '报错',
+                    tag: 'image_points_refund_failed',
+                    message: refundError.message,
+                    context: { userId: context?.userId, requestId }
+                });
+            }
+        }
         if (externalSignal?.aborted || error?.externalRequestAbort) {
             await cleanupFailedChatGeneratedImagesBestEffort({
                 userId: context?.userId,
@@ -2196,6 +2396,38 @@ const TOOL_DEFINITIONS = [{
     }
 }];
 
+const MEMORY_SAVE_TOOL_DEFINITION = {
+    type: "function",
+    function: {
+        name: "save_memory",
+        description: "按需保存一条对未来跨对话回答有持续帮助的长期记忆。不要每轮调用，也不要保存寒暄、应和、随口反应、短暂状态、一次性任务、仅对当前问题有用的细节、推测、假设、玩笑、公开常识或任何秘密。必须由用户自己的原话直接支持；每次只保存一条原子化、脱离当前上下文仍可理解的事实。",
+        parameters: {
+            type: "object",
+            additionalProperties: false,
+            required: ["category", "content", "evidence", "reason"],
+            properties: {
+                category: {
+                    type: "string",
+                    enum: ["identity", "profile", "preference", "interest", "ability", "weakness", "health", "relationship", "work", "other"],
+                    description: "最贴切的记忆类别。类别只是整理方式，不是保存理由。"
+                },
+                content: {
+                    type: "string",
+                    description: "一条简短、自包含、面向未来的用户事实，例如“用户偏好直接给出可执行结论”。不要复制整段对话。"
+                },
+                evidence: {
+                    type: "string",
+                    description: "支持这条记忆的简短用户原话，必须逐字来自用户消息，不能引用助手的话或自行改写。"
+                },
+                reason: {
+                    type: "string",
+                    description: "简短说明这条信息会如何实质改善未来跨对话回答；如果说不清，就不要调用工具。"
+                }
+            }
+        }
+    }
+};
+
 const MEMORY_DELETE_TOOL_DEFINITION = {
     type: "function",
     function: {
@@ -2229,21 +2461,619 @@ const MEMORY_DELETE_TOOL_DEFINITION = {
     }
 };
 
+const READ_SKILL_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'read_skill',
+        description: 'Load one named RAI capability guide when its detailed rules are needed.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['name'],
+            properties: {
+                name: { type: 'string', enum: getSkillCatalog().map((entry) => entry.name) }
+            }
+        }
+    }
+};
+
+const READ_FILE_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'read_file',
+        description: 'Read one already-uploaded file from the current user and session using a fixed metadata/text/markdown operation. Never provide a path or command.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'mode'],
+            properties: {
+                file_id: {
+                    type: 'string',
+                    description: 'The opaque uploaded file id from the current user message attachment.'
+                },
+                mode: {
+                    type: 'string',
+                    enum: [...READ_MODES],
+                    description: 'Fixed read mode: metadata, text, or markdown.'
+                }
+            }
+        }
+    }
+};
+
+const TRANSFORM_FILE_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'transform_file',
+        description: 'Transform one owned upload with a fixed operation and return a short-lived downloadable artifact. No scripts, shell, URLs, or arbitrary paths are accepted.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'operation'],
+            properties: {
+                file_id: {
+                    type: 'string',
+                    description: 'The opaque uploaded file id from the current user message attachment.'
+                },
+                operation: {
+                    type: 'string',
+                    enum: [...TRANSFORM_OPERATIONS],
+                    description: 'Fixed transform operation.'
+                },
+                file_name: {
+                    type: 'string',
+                    description: 'Optional display name only; it is never used as a filesystem path.'
+                }
+            }
+        }
+    }
+};
+
+const EDIT_FILE_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'edit_file',
+        description: 'Modify one owned UTF-8 text/code/CSV file or modern Office DOCX/XLSX/PPTX file by exact text replacements, preserving the original file format and returning a short-lived download.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'replacements'],
+            properties: {
+                file_id: {
+                    type: 'string',
+                    description: 'The opaque uploaded file id from the current user message attachment.'
+                },
+                replacements: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 32,
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['old_text', 'new_text'],
+                        properties: {
+                            old_text: { type: 'string', description: 'Exact existing text to replace.' },
+                            new_text: { type: 'string', description: 'Replacement text.' }
+                        }
+                    }
+                },
+                file_name: {
+                    type: 'string',
+                    description: 'Optional output display name. The original file extension is enforced.'
+                }
+            }
+        }
+    }
+};
+
+const CREATE_ARTIFACT_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'create_artifact',
+        description: 'Create a downloadable text artifact from bounded data using a fixed format. This tool never executes content as code or a command.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['format', 'content'],
+            properties: {
+                format: {
+                    type: 'string',
+                    enum: [...ARTIFACT_FORMATS],
+                    description: 'Fixed output format: text, markdown, json, or csv.'
+                },
+                content: {
+                    type: 'string',
+                    description: 'Bounded literal artifact content, not a command.'
+                },
+                file_name: {
+                    type: 'string',
+                    description: 'Optional display name only; it is never used as a filesystem path.'
+                }
+            }
+        }
+    }
+};
+
+const SANDBOX_EXEC_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'sandbox_exec',
+        description: 'Run a bounded POSIX shell script inside a fresh no-network Linux sandbox. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive; each call still uses a fresh workspace.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['script'],
+            properties: {
+                script: {
+                    type: 'string',
+                    description: 'POSIX shell script to run inside /workspace. The server enforces time, memory, process, file, output, disk, and concurrency limits.'
+                },
+                file_ids: {
+                    type: 'array',
+                    maxItems: 8,
+                    uniqueItems: true,
+                    items: { type: 'string' },
+                    description: 'Optional opaque file ids from attachments in the current user message.'
+                },
+                output_path: {
+                    type: 'string',
+                    description: 'Recommended relative path of one regular output file to return as a short-lived download. Archive multiple outputs first. It may be omitted only when the script creates exactly one supported output file.'
+                }
+            }
+        }
+    }
+};
+
+const READ_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'read_file',
+        description: '读取工作目录内文件。file_id 为相对工作目录路径（可含子目录）。mode=metadata 返回文件大小与修改时间；text 返回文本内容（Word/Excel/PPT/PDF 自动提取文本）；markdown 返回适合阅读的 Markdown 内容',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id'],
+            properties: {
+                file_id: { type: 'string', description: '相对工作目录的文件路径，如 notes.txt 或 docs/报告.docx' },
+                mode: { type: 'string', enum: ['metadata', 'text', 'markdown'], description: '默认 text' }
+            }
+        }
+    }
+};
+
+const TRANSFORM_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'transform_file',
+        description: '将工作目录内的文件转换为文本格式。operation：extract_markdown（提取为 Markdown）、csv_to_markdown（CSV 转 Markdown 表格）、json_pretty（JSON 美化）、text_to_markdown（文本转 Markdown）',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'operation'],
+            properties: {
+                file_id: { type: 'string', description: '相对工作目录的文件路径' },
+                operation: { type: 'string', enum: ['extract_markdown', 'csv_to_markdown', 'json_pretty', 'text_to_markdown'] }
+            }
+        }
+    }
+};
+
+const EDIT_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'edit_file',
+        description: '在工作目录内的文件中做精确文本替换（支持文本文件与 Word/PPT/Excel 文档）。replacements 为 1-32 组 {old_text,new_text}，每组精确匹配替换；Word/PPT/Excel 中在文本段落/单元格内匹配。修改会覆盖原文件',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'replacements'],
+            properties: {
+                file_id: { type: 'string', description: '相对工作目录的文件路径' },
+                replacements: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 32,
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['old_text'],
+                        properties: {
+                            old_text: { type: 'string', description: '要替换的精确文本' },
+                            new_text: { type: 'string', description: '替换后的文本' }
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
+
+const CREATE_ARTIFACT_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'create_artifact',
+        description: '在工作目录内创建新文件（artifact）。format 支持 text/markdown/json/csv/docx/xlsx/pptx，content 为文件内容，file_name 指定文件名（未指定则自动命名，可含子目录）。docx 内容约定：Markdown 风格——# 到 ##### 五级标题、- 或 * 列表、**粗体**、*斜体*；| 开头连续行为表格（首行表头加粗蓝底）；!img:相对路径 行嵌入工作目录图片（居中自动缩放）；#smartart: 流程 后跟 - 节点生成编号流程。xlsx 内容约定：每行一个数据行、单元格 Tab 分隔；独立一行 ### 工作表名 开始新工作表；首行自动表头样式；以 = 开头的单元格为公式；**值** 加粗。pptx 内容约定：--- 分页（首行标题其余正文）；首行 #theme: 名称 指定主题色 office/blue/green/purple/red/orange/dark；!img:相对路径 行在页内插入工作目录图片（底部并排）；#smartart: 流程 后跟 - 节点生成图形节点列表；标题自动应用艺术字渐变',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['format', 'content'],
+            properties: {
+                format: { type: 'string', enum: ['text', 'markdown', 'json', 'csv', 'docx', 'xlsx', 'pptx'] },
+                content: { type: 'string', description: '文件内容（按上述格式约定）' },
+                file_name: { type: 'string', description: '文件名（可选，如 报告.docx），未指定则自动命名' }
+            }
+        }
+    }
+};
+
+const SANDBOX_EXEC_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'sandbox_exec',
+        description: '在客户端本机执行 PowerShell 脚本（Windows PowerShell，区别于网页版 POSIX shell）。脚本在用户授权的工作目录内运行，60 秒上限。file_ids 为脚本可访问的文件（相对路径，可选）；output_path 为脚本输出文件（相对路径，可选），执行后其内容会一并返回。适合文件批量处理、格式化、调用本机工具。注意：文档相关操作（创建/修改/插入图片等）请用专门文档工具 create_artifact / edit_file / insert_image / update_sheet，不要用 PowerShell 处理 Office 文档。特别是 Excel：update_sheet 已支持写入值/公式/生成图表，绝对禁止用 PowerShell COM（Microsoft.Office.Interop.Excel）操作 xlsx——update_sheet 执行成功即完成，不要重复操作',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['script'],
+            properties: {
+                script: { type: 'string', description: 'PowerShell 脚本内容' },
+                file_ids: { type: 'array', items: { type: 'string' }, description: '脚本可访问的文件路径数组（可选）' },
+                output_path: { type: 'string', description: '脚本输出文件相对路径（可选），执行后返回其内容' }
+            }
+        }
+    }
+};
+
+const INSERT_IMAGE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'insert_image',
+        description: '向文档插入一张图片，支持 Word（docx）与 PPT（pptx）。file_id 为文档路径（相对工作目录），image_file 为工作目录内已有图片（png/jpg/jpeg/gif/bmp）。docx 插入到文档末尾；pptx 插入到 slide 参数指定页（1-based，不传则最后一页），请根据内容逻辑选择合适的页码。图片自动缩放适配页面。图片必须来自工作目录内已有文件（客户端不能凭空生成图片）。不要用 sandbox_exec 处理文档图片',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'image_file'],
+            properties: {
+                file_id: { type: 'string', description: '文档路径（相对工作目录，docx 或 pptx）' },
+                image_file: { type: 'string', description: '图片文件路径（相对工作目录，png/jpg/jpeg/gif/bmp）' },
+                slide: { type: 'integer', description: 'PPT 页码（可选，1-based，默认最后一页；按内容逻辑选择页码）' }
+            }
+        }
+    }
+};
+
+const UPDATE_SHEET_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'update_sheet',
+        description: '定向更新 Excel（xlsx）：向指定单元格写入值/公式，并可附加图表。cells 为 {单元格引用: 值} 对象，如 {"B11":"=SUM(B2:B10)","A13":"总计","C5":123}——以 = 开头视为公式，纯数字写入数值，其余写入文本；已有单元格会被覆盖。charts 为可选数组：[{type:"bar|line|pie",range:"B2:B10",title:"标题",position:"D2"}]，range 为数据区域（类别标签取 range 左侧一列）；position 为图表左上角锚定单元格（可选，省略时自动避让已有数据区，绝不覆盖数据）；图表自动避让数据区域、横轴标题取类别列名、纵轴标题取数值列名含单位、底部显示图例、尺寸随数据量自适应。适合：在已有 Excel 中补计算、加汇总行、生成图表',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'cells'],
+            properties: {
+                file_id: { type: 'string', description: 'xlsx 文件路径（相对工作目录）' },
+                sheet: { type: 'string', description: '工作表名或序号（可选，默认第一个）' },
+                cells: { type: 'object', description: '单元格写入对象：{"A1":"文本","B2":123,"B3":"=SUM(B1:B2)"}' },
+                charts: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['type', 'range'],
+                        properties: {
+                            type: { type: 'string', enum: ['bar', 'line', 'pie'] },
+                            range: { type: 'string', description: '数据区域，如 B2:B10' },
+                            title: { type: 'string', description: '图表标题（可选）' },
+                            position: { type: 'string', description: '图表左上角锚定单元格，如 D2' }
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
+
+const LIST_FILES_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'list_files',
+        description: '列出工作目录内容（path 可选，默认根目录），返回目录与文件（含大小）',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: [],
+            properties: {
+                path: { type: 'string', description: '相对子目录，留空 = 根' }
+            }
+        }
+    }
+};
+
+const WRITE_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'write_file',
+        description: '写入（覆盖）工作目录内文本文件',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id', 'content'],
+            properties: {
+                file_id: { type: 'string', description: '相对工作目录的文件路径' },
+                content: { type: 'string', description: '文件内容' }
+            }
+        }
+    }
+};
+
+const COPY_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'copy_file',
+        description: '工作目录内复制文件（from 源路径，to 目标路径，同名覆盖）',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['from', 'to'],
+            properties: {
+                from: { type: 'string', description: '源文件相对路径' },
+                to: { type: 'string', description: '目标文件相对路径' }
+            }
+        }
+    }
+};
+
+const MOVE_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'move_file',
+        description: '工作目录内移动/重命名文件（from 源路径，to 目标路径）',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['from', 'to'],
+            properties: {
+                from: { type: 'string', description: '源文件相对路径' },
+                to: { type: 'string', description: '目标文件相对路径' }
+            }
+        }
+    }
+};
+
+const DELETE_FILE_TOOL_DEFINITION_LOCAL = {
+    type: 'function',
+    function: {
+        name: 'delete_file',
+        description: '删除工作目录内文件',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file_id'],
+            properties: {
+                file_id: { type: 'string', description: '相对工作目录的文件路径' }
+            }
+        }
+    }
+};
+
+
+// ==================== 客户端文件工具挂起管理（UWP 本地执行） ====================
+
+const PENDING_CLIENT_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
+const clientToolPending = new Map(); // requestId -> { userId, sessionId, toolCall, toolName, args, resolve, timer, createdAt, resolved }
+
+function createClientToolPending({ requestId, userId, sessionId, toolCall, toolName, args, resolve }) {
+    if (clientToolPending.has(String(requestId))) {
+        resolve({ success: false, error: 'client_tool_busy' });
+        return;
+    }
+    const entry = {
+        userId,
+        sessionId,
+        toolCall,
+        toolName,
+        args,
+        resolve,
+        timer: null,
+        createdAt: Date.now(),
+        resolved: false
+    };
+    entry.timer = setTimeout(() => {
+        if (entry.resolved) return;
+        entry.resolved = true;
+        clientToolPending.delete(String(requestId));
+        console.warn(` 客户端文件工具执行超时: requestId=${requestId}, tool=${toolName}, sessionId=${sessionId}`);
+        appendRaiRuntimeReport({
+            level: '报错',
+            tag: 'client_tool_timeout',
+            message: '客户端文件工具执行超时（5分钟）',
+            context: { requestId, sessionId, toolName }
+        });
+        entry.resolve({ success: false, error: 'client_tool_timeout' });
+    }, PENDING_CLIENT_TOOL_TIMEOUT_MS);
+    clientToolPending.set(String(requestId), entry);
+}
+
+function resolveClientToolPending(requestId, result) {
+    const entry = clientToolPending.get(String(requestId));
+    if (!entry || entry.resolved) return false;
+    entry.resolved = true;
+    if (entry.timer) clearTimeout(entry.timer);
+    clientToolPending.delete(String(requestId));
+    entry.resolve(result === undefined ? { success: true } : result);
+    return true;
+}
+
+function rejectClientToolPending(requestId, reason) {
+    return resolveClientToolPending(requestId, { success: false, error: String(reason || 'rejected') });
+}
+
+function getPendingClientToolCountBySession(sessionId) {
+    let count = 0;
+    for (const entry of clientToolPending.values()) {
+        if (entry.sessionId === sessionId) count += 1;
+    }
+    return count;
+}
+
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files']);
+
+function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
+    let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
+    const normalize = (value) => {
+        if (remaining <= 0) return undefined;
+        if (typeof value === 'string') {
+            const bytes = Buffer.byteLength(value, 'utf8');
+            if (bytes <= remaining) {
+                remaining -= bytes;
+                return value;
+            }
+            let truncated = value;
+            while (truncated.length > 0 && Buffer.byteLength(truncated, 'utf8') > remaining) {
+                truncated = truncated.slice(0, -1);
+            }
+            if (!truncated) return undefined;
+            remaining -= Buffer.byteLength(truncated, 'utf8');
+            return truncated;
+        }
+        if (Array.isArray(value)) {
+            const next = [];
+            for (const item of value) {
+                const normalized = normalize(item);
+                if (normalized === undefined) break;
+                next.push(normalized);
+            }
+            return next;
+        }
+        if (value && typeof value === 'object') {
+            const next = {};
+            for (const [key, item] of Object.entries(value)) {
+                if (!CLIENT_TOOL_RESULT_ALLOWED_KEYS.has(key)) continue;
+                const keyBytes = Buffer.byteLength(String(key), 'utf8');
+                if (keyBytes > remaining) break;
+                remaining -= keyBytes;
+                const normalized = normalize(item);
+                if (normalized === undefined) continue;
+                next[key] = normalized;
+            }
+            return next;
+        }
+        if (value === null || value === undefined) return value;
+        const text = String(value);
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > remaining) return undefined;
+        remaining -= bytes;
+        return value;
+    };
+    const normalized = normalize(result);
+    return normalized && typeof normalized === 'object' && !Array.isArray(normalized) ? normalized : {};
+}
+
 function hasToolDefinition(toolDefinitions = [], toolName = '') {
     return toolDefinitions.some((tool) => tool?.function?.name === toolName);
+}
+
+const FILE_WORKSPACE_TOOL_NAMES = new Set(['read_file', 'transform_file', 'edit_file', 'create_artifact', 'sandbox_exec', 'insert_image', 'update_sheet', 'list_files', 'write_file', 'copy_file', 'move_file', 'delete_file']);
+
+function isFileWorkspaceToolName(toolName = '') {
+    return FILE_WORKSPACE_TOOL_NAMES.has(String(toolName || '').trim());
+}
+
+function messageContentAsText(content) {
+    return typeof content === 'string' ? content : JSON.stringify(content || '');
+}
+
+function getCanonicalSystemInstruction(messages = []) {
+    return messages
+        .filter((message) => message?.role === 'system')
+        .map((message) => messageContentAsText(message.content))
+        .filter(Boolean)
+        .join('\n\n');
+}
+
+function appendTrustedSkillToCanonicalSystemMessage(messages = [], trustedSkill) {
+    const skillInstruction = `[Trusted RAI skill: ${trustedSkill.name}]\n${trustedSkill.content}`;
+    const nextMessages = messages.map((message) => ({ ...message }));
+    const systemIndex = nextMessages.findIndex((message) => message.role === 'system');
+    if (systemIndex === -1) {
+        nextMessages.unshift({ role: 'system', content: skillInstruction });
+        return nextMessages;
+    }
+    const current = messageContentAsText(nextMessages[systemIndex].content);
+    nextMessages[systemIndex].content = current ? `${current}\n\n${skillInstruction}` : skillInstruction;
+    return nextMessages;
+}
+
+function buildGeminiContinuationContents(messages = []) {
+    const toolNames = new Map();
+    return messages.flatMap((message) => {
+        if (message?.role === 'system') return [];
+        if (message?.role === 'assistant' && Array.isArray(message.tool_calls)) {
+            const parts = message.tool_calls.map((call) => {
+                const name = String(call?.function?.name || '');
+                toolNames.set(call.id, name);
+                let args = {};
+                try { args = JSON.parse(call?.function?.arguments || '{}'); } catch (_) {}
+                return { functionCall: { name, args } };
+            });
+            return parts.length ? [{ role: 'model', parts }] : [];
+        }
+        if (message?.role === 'tool') {
+            const name = toolNames.get(message.tool_call_id);
+            if (!name) return [];
+            let response = {};
+            try { response = JSON.parse(message.content || '{}'); } catch (_) { response = { error: 'invalid_tool_result' }; }
+            return [{ role: 'user', parts: [{ functionResponse: { name, response } }] }];
+        }
+        const role = message?.role === 'assistant' ? 'model' : 'user';
+        const text = typeof message?.content === 'string' ? message.content : JSON.stringify(message?.content || '');
+        return text ? [{ role, parts: [{ text }] }] : [];
+    });
 }
 
 function buildChatToolDefinitions({
     internetMode = false,
     imageGenerationRequested = false,
-    memoryDeleteToolRequested = false
+    memoryToolsEnabled = false,
+    skillToolsEnabled = false,
+    fileToolsEnabled = false,
+    clientFileExecution = false
 } = {}) {
     const definitions = [];
     if (internetMode || imageGenerationRequested) {
         definitions.push(...TOOL_DEFINITIONS);
     }
-    if (memoryDeleteToolRequested && !hasToolDefinition(definitions, 'delete_memory')) {
-        definitions.push(MEMORY_DELETE_TOOL_DEFINITION);
+    if (memoryToolsEnabled) {
+        if (!hasToolDefinition(definitions, 'save_memory')) definitions.push(MEMORY_SAVE_TOOL_DEFINITION);
+        if (!hasToolDefinition(definitions, 'delete_memory')) definitions.push(MEMORY_DELETE_TOOL_DEFINITION);
+    }
+    if (skillToolsEnabled) definitions.push(READ_SKILL_TOOL_DEFINITION);
+    if (fileToolsEnabled) {
+        if (clientFileExecution) {
+            definitions.push(
+                READ_FILE_TOOL_DEFINITION_LOCAL,
+                TRANSFORM_FILE_TOOL_DEFINITION_LOCAL,
+                EDIT_FILE_TOOL_DEFINITION_LOCAL,
+                CREATE_ARTIFACT_TOOL_DEFINITION_LOCAL,
+                SANDBOX_EXEC_TOOL_DEFINITION_LOCAL,
+                INSERT_IMAGE_TOOL_DEFINITION_LOCAL,
+                UPDATE_SHEET_TOOL_DEFINITION_LOCAL,
+                LIST_FILES_TOOL_DEFINITION_LOCAL,
+                WRITE_FILE_TOOL_DEFINITION_LOCAL,
+                COPY_FILE_TOOL_DEFINITION_LOCAL,
+                MOVE_FILE_TOOL_DEFINITION_LOCAL,
+                DELETE_FILE_TOOL_DEFINITION_LOCAL
+            );
+        } else {
+            definitions.push(
+                READ_FILE_TOOL_DEFINITION,
+                TRANSFORM_FILE_TOOL_DEFINITION,
+                EDIT_FILE_TOOL_DEFINITION,
+                CREATE_ARTIFACT_TOOL_DEFINITION,
+                SANDBOX_EXEC_TOOL_DEFINITION
+            );
+        }
     }
     return definitions;
 }
@@ -2315,6 +3145,183 @@ function normalizeDeleteMemoryToolArgs(args = {}) {
     };
 }
 
+const WORKSPACE_UPLOAD_FILENAME_RE = /^\d{10,17}-[a-f0-9]{12}\.[a-z0-9]{1,10}$/i;
+
+function normalizeWorkspaceFileId(value, localMode = false) {
+    const raw = String(value || '').trim();
+    if (localMode) {
+        // 本地模式：file_id 为工作目录内任意相对路径（含中文/子目录）
+        // 仅拒绝绝对路径、盘符与 .. 穿越（客户端也会二次拦截）
+        if (!raw) return null;
+        if (raw.startsWith('/') || raw.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(raw)) return null;
+        if (raw.split(/[\\/]/).includes('..')) return null;
+        return raw;
+    }
+    const safe = path.basename(raw);
+    if (!raw || safe !== raw || !WORKSPACE_UPLOAD_FILENAME_RE.test(raw)) {
+        throw new FileWorkspaceError('workspace_source_invalid', 'workspace_source_invalid', 400);
+    }
+    return raw;
+}
+
+function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+    const allowedKeysByTool = {
+        read_file: new Set(['file_id', 'mode']),
+        transform_file: new Set(['file_id', 'operation', 'file_name']),
+        edit_file: new Set(['file_id', 'replacements', 'file_name']),
+        create_artifact: new Set(['format', 'content', 'file_name']),
+        sandbox_exec: new Set(['script', 'file_ids', 'output_path']),
+        insert_image: new Set(['file_id', 'image_file', 'slide']),
+        update_sheet: new Set(['file_id', 'sheet', 'cells', 'charts']),
+        list_files: new Set(['path']),
+        write_file: new Set(['file_id', 'content']),
+        copy_file: new Set(['from', 'to']),
+        move_file: new Set(['from', 'to']),
+        delete_file: new Set(['file_id'])
+    };
+    const allowedKeys = allowedKeysByTool[toolName];
+    if (!allowedKeys || Object.keys(args).some((key) => !allowedKeys.has(key))) return null;
+    try {
+        if (toolName === 'read_file') {
+            const mode = String(args.mode || '').trim().toLowerCase();
+            if (!READ_MODES.has(mode)) return null;
+            return { file_id: normalizeWorkspaceFileId(args.file_id, localMode), mode };
+        }
+        if (toolName === 'transform_file') {
+            const operation = String(args.operation || '').trim().toLowerCase();
+            if (!TRANSFORM_OPERATIONS.has(operation)) return null;
+            return {
+                file_id: normalizeWorkspaceFileId(args.file_id, localMode),
+                operation,
+                ...(typeof args.file_name === 'string' && args.file_name.trim()
+                    ? { file_name: args.file_name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 128) }
+                    : {})
+            };
+        }
+        if (toolName === 'edit_file') {
+            const replacements = normalizeEditReplacements(args.replacements);
+            return {
+                file_id: normalizeWorkspaceFileId(args.file_id, localMode),
+                replacements,
+                ...(typeof args.file_name === 'string' && args.file_name.trim()
+                    ? { file_name: args.file_name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 128) }
+                    : {})
+            };
+        }
+        if (toolName === 'sandbox_exec') {
+            if (typeof args.script !== 'string' || !args.script.trim() || Buffer.byteLength(args.script, 'utf8') > 32 * 1024) return null;
+            const fileIds = Array.isArray(args.file_ids) ? [...new Set(args.file_ids.map(normalizeWorkspaceFileId))] : [];
+            if (fileIds.length > 8) return null;
+            const outputPath = typeof args.output_path === 'string' ? args.output_path.trim().slice(0, 240) : '';
+            return {
+                script: args.script,
+                ...(fileIds.length ? { file_ids: fileIds } : {}),
+                ...(outputPath ? { output_path: outputPath } : {})
+            };
+        }
+        if (toolName === 'insert_image') {
+            const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
+            const imageFile = normalizeWorkspaceFileId(args.image_file, localMode);
+            if (!fileId || !imageFile) return null;
+            const slide = Number(args.slide);
+            return {
+                file_id: fileId,
+                image_file: imageFile,
+                ...(Number.isInteger(slide) && slide > 0 ? { slide } : {})
+            };
+        }
+        if (toolName === 'update_sheet') {
+            const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
+            if (!fileId) return null;
+            if (!args.cells || typeof args.cells !== 'object' || Array.isArray(args.cells)) return null;
+            const cells = {};
+            for (const [ref, value] of Object.entries(args.cells)) {
+                const normalizedRef = String(ref || '').trim().toUpperCase();
+                if (!/^[A-Z]+\d+$/.test(normalizedRef)) return null;
+                if (typeof value !== 'string' && typeof value !== 'number') return null;
+                cells[normalizedRef] = value;
+            }
+            if (Object.keys(cells).length === 0) return null;
+            const charts = Array.isArray(args.charts) ? args.charts.slice(0, 8) : [];
+            return {
+                file_id: fileId,
+                cells,
+                ...(typeof args.sheet === 'string' && args.sheet.trim() ? { sheet: args.sheet.trim().slice(0, 64) } : {}),
+                ...(charts.length ? { charts } : {})
+            };
+        }
+        if (toolName === 'list_files') {
+            const p = typeof args.path === 'string' ? args.path.trim().slice(0, 240) : '';
+            return p ? { path: p } : {};
+        }
+        if (toolName === 'write_file') {
+            const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
+            if (!fileId || typeof args.content !== 'string') return null;
+            return { file_id: fileId, content: args.content.slice(0, 512 * 1024) };
+        }
+        if (toolName === 'copy_file' || toolName === 'move_file') {
+            const from = normalizeWorkspaceFileId(args.from, localMode);
+            const to = normalizeWorkspaceFileId(args.to, localMode);
+            if (!from || !to) return null;
+            return { from, to };
+        }
+        if (toolName === 'delete_file') {
+            const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
+            if (!fileId) return null;
+            return { file_id: fileId };
+        }
+        const format = String(args.format || '').trim().toLowerCase();
+        const allowedFormats = localMode
+            ? new Set(['text', 'markdown', 'json', 'csv', 'docx', 'xlsx', 'pptx'])
+            : ARTIFACT_FORMATS;
+        return {
+            format,
+            content: args.content.slice(0, 512 * 1024),
+            ...(typeof args.file_name === 'string' && args.file_name.trim()
+                ? { file_name: args.file_name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 128) }
+                : {})
+        };
+    } catch (_) {
+        return null;
+    }
+}
+
+async function resolveOwnedWorkspaceSource({ fileId, userId, sessionId }) {
+    const normalizedFileId = normalizeWorkspaceFileId(fileId);
+    const numericUserId = Number(userId);
+    if (!Number.isSafeInteger(numericUserId) || numericUserId <= 0 || !String(sessionId || '').trim()) {
+        throw new FileWorkspaceError('workspace_owner_invalid', 'workspace_owner_invalid', 401);
+    }
+    const session = await dbGetAsync(
+        'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
+        [String(sessionId), numericUserId]
+    );
+    if (!session) throw new FileWorkspaceError('workspace_session_forbidden', 'workspace_session_forbidden', 404);
+    const row = await dbGetAsync(
+        `SELECT filename, original_name, mime_type, size
+         FROM file_uploads
+         WHERE filename = ? AND user_id = ? AND upload_kind = 'attachment'`,
+        [normalizedFileId, numericUserId]
+    );
+    if (!row) throw new FileWorkspaceError('workspace_source_forbidden', 'workspace_source_forbidden', 404);
+    const uploadsRoot = path.resolve(__dirname, 'uploads');
+    const sourcePath = path.resolve(uploadsRoot, row.filename);
+    if (!sourcePath.startsWith(`${uploadsRoot}${path.sep}`)) {
+        throw new FileWorkspaceError('workspace_source_invalid', 'workspace_source_invalid', 400);
+    }
+    return {
+        rootDir: uploadsRoot,
+        path: sourcePath,
+        storageName: row.filename,
+        fileId: row.filename,
+        fileName: String(row.original_name || row.filename).slice(0, 255),
+        mimeType: String(row.mime_type || 'application/octet-stream').slice(0, 120),
+        ownerUserId: String(numericUserId),
+        ownerSessionId: String(sessionId)
+    };
+}
+
 // 工具执行器映射
 const TOOL_EXECUTORS = {
     web_search: async (args, searchDepth = 'basic') => {
@@ -2334,6 +3341,17 @@ const TOOL_EXECUTORS = {
         console.log(` 执行工具 generate_image: provider=${GPT_IMAGE_CONFIGURED ? 'preferred_gateway' : 'siliconflow_fallback'}, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
         return await generateImages(safeArgs, context);
     },
+    save_memory: async (args, context = {}) => {
+        const safeArgs = normalizeSaveMemoryToolArgs(args);
+        console.log(` 执行工具 save_memory: userId=${context?.userId || 'missing'}, category=${safeArgs?.category || 'invalid'}, contentLength=${String(safeArgs?.content || '').length}, evidenceLength=${String(safeArgs?.evidence || '').length}`);
+        return await saveUserMemoryByTool({
+            userId: context?.userId,
+            sessionId: context?.sessionId,
+            sourceMessageId: context?.sourceMessageId,
+            userMessages: context?.userMessages,
+            args
+        });
+    },
     delete_memory: async (args, context = {}) => {
         const safeArgs = normalizeDeleteMemoryToolArgs(args);
         console.log(` 执行工具 delete_memory: userId=${context?.userId || 'missing'}, ids=${formatMemoryIdList(safeArgs?.memory_ids || safeArgs?.memory_id || []) || 'none'}, targetLength=${String(safeArgs?.target || '').length}`);
@@ -2343,6 +3361,77 @@ const TOOL_EXECUTORS = {
             memoryIds: safeArgs?.memory_ids,
             target: safeArgs?.target,
             reason: safeArgs?.reason
+        });
+    },
+    read_file: async (args, context = {}) => {
+        const source = await resolveOwnedWorkspaceSource({
+            fileId: args?.file_id,
+            userId: context?.userId,
+            sessionId: context?.sessionId
+        });
+        return await fileWorkspace.readFile({
+            userId: context?.userId,
+            sessionId: context?.sessionId,
+            source,
+            mode: args?.mode
+        });
+    },
+    transform_file: async (args, context = {}) => {
+        const source = await resolveOwnedWorkspaceSource({
+            fileId: args?.file_id,
+            userId: context?.userId,
+            sessionId: context?.sessionId
+        });
+        return await fileWorkspace.transformFile({
+            userId: context?.userId,
+            sessionId: context?.sessionId,
+            source,
+            operation: args?.operation,
+            fileName: args?.file_name
+        });
+    },
+    edit_file: async (args, context = {}) => {
+        const source = await resolveOwnedWorkspaceSource({
+            fileId: args?.file_id,
+            userId: context?.userId,
+            sessionId: context?.sessionId
+        });
+        const extension = normalizeEditableExtension(path.extname(source.fileName));
+        const replacements = normalizeEditReplacements(args?.replacements);
+        const outputFileName = normalizeEditedFileName(args?.file_name, source.fileName);
+        return await linuxSandbox.run({
+            userId: context?.userId,
+            sessionId: context?.sessionId,
+            sources: [source],
+            script: buildEditScript({ extension, replacements }),
+            outputPath: `edited.${extension}`,
+            artifactFileName: outputFileName
+        });
+    },
+    create_artifact: async (args, context = {}) => {
+        return await fileWorkspace.createArtifact({
+            userId: context?.userId,
+            sessionId: context?.sessionId,
+            format: args?.format,
+            content: args?.content,
+            fileName: args?.file_name
+        });
+    },
+    sandbox_exec: async (args, context = {}) => {
+        const sources = [];
+        for (const fileId of (args?.file_ids || [])) {
+            sources.push(await resolveOwnedWorkspaceSource({
+                fileId,
+                userId: context?.userId,
+                sessionId: context?.sessionId
+            }));
+        }
+        return await linuxSandbox.run({
+            userId: context?.userId,
+            sessionId: context?.sessionId,
+            sources,
+            script: args?.script,
+            outputPath: args?.output_path
         });
     }
 };
@@ -3207,143 +4296,6 @@ function detectImageGenerationNeed(message = '') {
     return /(?:画|绘制|生成|做|设计|出)(?:一张|张|个|幅)?[^，。,.!?]{0,40}(?:图|图片|海报|插画|头像|封面|壁纸|视觉|logo|图像)|(?:生图|文生图|图生图|draw|generate|create|make)[^.!?]{0,60}(?:image|picture|poster|illustration|wallpaper|logo)/i.test(text);
 }
 
-function isShortMemoryDeleteConfirmation(message = '') {
-    const text = sanitizeMemoryContent(message).toLowerCase();
-    return /^(删|删除|删掉|清理|可以|好|好的|行|对|是|帮我删|那就删|删了吧|delete|remove|yes|ok|okay)$/.test(text);
-}
-
-function isVagueMemoryDeleteReference(message = '') {
-    const text = sanitizeMemoryContent(message).toLowerCase();
-    if (!text || !/(?:删|删除|删掉|清理|移除|忘掉|忘记|delete|remove|forget|clear)/i.test(text)) return false;
-    return /(?:这俩|那俩|这两|那两|两个|两条|几条|几个|这些|那些|它们|他们|上面|以上|刚才|刚刚|前面|都|全部|一起)/i.test(text)
-        || /^(?:这|那|它|这条|那条)[\s\S]{0,16}(?:删|删除|删掉|清理|移除|忘掉|忘记|delete|remove|forget|clear)/i.test(text)
-        || /(?:删|删除|删掉|清理|移除|忘掉|忘记|delete|remove|forget|clear)[\s\S]{0,16}(?:这|那|它|这些|那些|这俩|那俩|这两|那两|两个|两条|上面|以上|都|全部|一起)/i.test(text);
-}
-
-function isPluralMemoryDeleteReference(message = '') {
-    const text = sanitizeMemoryContent(message).toLowerCase();
-    return /(?:这俩|那俩|这两|那两|两个|两条|几条|几个|这些|那些|它们|他们|都|全部|一起|both|these|those|them|all)/i.test(text);
-}
-
-function scoreMemoryDeleteSegment(segment = '') {
-    const text = String(segment || '');
-    let score = 0;
-    if (/(删|删除|删掉|清理|移除|忘掉|忘记|该删|delete|remove|forget|clean)/i.test(text)) score += 5;
-    if (/(不合理|异常|错误|误会|不准|冲突|奇怪|提示词注入|攻击|不是正常|wrong|mistake|bad|incorrect|injection)/i.test(text)) score += 4;
-    if (/(需要我|是否|要我|帮你|吗|should i|want me)/i.test(text)) score += 2;
-    if (/(准确|正确|保留|不要删|别删|正常|keep|correct|accurate)/i.test(text)) score -= 5;
-    return score;
-}
-
-function pickMemoryDeleteIdsFromAssistantText(text = '', userText = '') {
-    const content = String(text || '');
-    const allIds = extractMemoryIdsFromText(content);
-    if (allIds.length === 0) return [];
-
-    const scored = [];
-    const segments = content
-        .split(/[\n\r。！？!?；;]+/)
-        .map((segment) => segment.trim())
-        .filter(Boolean);
-    for (const segment of segments) {
-        const segmentIds = extractMemoryIdsFromText(segment);
-        const leadingIdMatch = segment.match(/^\s*(?:[-*]\s*)?#\s*(\d+)/);
-        const hasExplicitIdGroup = /(?:和|与|及|、|,|，)\s*#\s*\d+/.test(segment);
-        const ids = leadingIdMatch && !hasExplicitIdGroup
-            ? [Number(leadingIdMatch[1])]
-            : segmentIds;
-        if (ids.length === 0) continue;
-        scored.push({
-            ids,
-            score: scoreMemoryDeleteSegment(segment),
-            index: content.indexOf(segment)
-        });
-    }
-
-    if (scored.length === 0) {
-        return allIds.length === 1 ? allIds : [];
-    }
-
-    scored.sort((a, b) => b.score - a.score || b.index - a.index);
-    const positive = scored.filter((item) => item.score > 0);
-    if (positive.length === 0) {
-        return allIds.length === 1 ? allIds : [];
-    }
-
-    const top = positive[0];
-    if (isPluralMemoryDeleteReference(userText)) {
-        return uniquePositiveMemoryIds(
-            positive
-                .sort((a, b) => b.index - a.index)
-                .flatMap((item) => item.ids)
-        );
-    }
-
-    if (top.ids.length > 1) {
-        return uniquePositiveMemoryIds(
-            positive
-                .filter((item) => item.score >= top.score - 2)
-                .sort((a, b) => b.index - a.index)
-                .flatMap((item) => item.ids)
-        );
-    }
-
-    return top.ids.length > 0 ? [top.ids[0]] : [];
-}
-
-
-
-function buildMemoryDeleteArgsFromIds(ids = [], reason = 'user_confirmed_recent_memory_delete') {
-    const memoryIds = uniquePositiveMemoryIds(ids);
-    if (memoryIds.length === 0) return null;
-    return {
-        ...(memoryIds.length > 1 ? { memory_ids: memoryIds } : {}),
-        ...(memoryIds.length === 1 ? { memory_id: memoryIds[0] } : {}),
-        reason
-    };
-}
-
-function buildMemoryDeleteToolArgsFromConversation(userText = '', messages = []) {
-    const clean = sanitizeMemoryContent(userText);
-    if (!clean) return null;
-    const hasDeleteVerb = /(?:删|删除|删掉|清理|移除|忘掉|忘记|不要记|别记|delete|remove|forget|clear)/i.test(clean);
-    const explicitIds = extractMemoryIdsFromText(clean);
-    if (hasDeleteVerb && explicitIds.length > 0) {
-        return buildMemoryDeleteArgsFromIds(explicitIds, 'user_explicit_memory_ids');
-    }
-
-    const recentAssistantMessages = (Array.isArray(messages) ? messages : [])
-        .slice(0, -1)
-        .filter((message) => message?.role === 'assistant' && message.content)
-        .slice(-4)
-        .reverse();
-
-    const isContextualConfirmation = isShortMemoryDeleteConfirmation(clean) || isVagueMemoryDeleteReference(clean);
-    if (isContextualConfirmation) {
-        for (const message of recentAssistantMessages) {
-            const memoryIds = pickMemoryDeleteIdsFromAssistantText(message.content, clean);
-            const args = buildMemoryDeleteArgsFromIds(memoryIds, 'user_confirmed_recent_memory_delete');
-            if (args) return args;
-        }
-        return null;
-    }
-
-    const explicitArgs = normalizeDeleteMemoryToolArgs({ target: clean });
-    if (hasDeleteVerb && explicitArgs?.target && clean.length > 1) {
-        return explicitArgs;
-    }
-
-    return null;
-}
-
-function detectMemoryDeleteToolNeed(message = '', messages = []) {
-    const text = String(message || '');
-    if (!text.trim()) return false;
-    return /(?:忘掉|忘记|删除|删掉|移除|清除|取消|不要记|别记|不需要记)[\s\S]{0,80}(?:记忆|长期记忆|你记得|关于我|#\s*\d+)/i.test(text)
-        || /(?:delete|remove|forget|clear)[\s\S]{0,80}(?:memory|remember|about me|#\s*\d+)/i.test(text)
-        || !!buildMemoryDeleteToolArgsFromConversation(text, messages);
-}
-
 function detectRiskLevel(message = '') {
     const lower = String(message || '').toLowerCase();
     return HIGH_RISK_KEYWORDS.some(k => lower.includes(k.toLowerCase())) ? 'high' : 'low';
@@ -4062,6 +5014,20 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
         };
     }
 
+    if (toolName === 'save_memory') {
+        return {
+            success: !!result?.success,
+            saved_memory: result?.savedMemory || null,
+            code: result?.code || '',
+            message: result?.message || '',
+            reply_instruction: result?.success
+                ? (result?.explicitMemoryRequest
+                    ? 'Briefly confirm that the requested memory was saved, then answer the user normally.'
+                    : 'Continue answering normally. Do not announce or discuss the background memory save.')
+                : 'Continue answering normally without claiming that the memory was saved. Do not retry unless the user supplies clearer durable information.'
+        };
+    }
+
     if (toolName === 'delete_memory') {
         return {
             success: !!result?.success,
@@ -4073,6 +5039,51 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             reply_instruction: result?.success
                 ? 'Tell the user briefly that the requested memory was deleted. Do not repeat or rely on the deleted memory afterward.'
                 : 'Tell the user briefly that the memory was not found or could not be deleted, and ask for the exact memory if needed.'
+        };
+    }
+
+    if (toolName === 'read_file') {
+        return {
+            metadata: result?.metadata || {},
+            text: typeof result?.text === 'string' ? result.text : '',
+            reply_instruction: 'Use the returned file content only for the current answer. Do not expose server paths, internal IDs, or tool protocol.'
+        };
+    }
+
+    if (toolName === 'transform_file' || toolName === 'edit_file' || toolName === 'create_artifact') {
+        return {
+            success: true,
+            file_name: result?.fileName || '',
+            mime_type: result?.mimeType || '',
+            size: Number(result?.size || 0),
+            expires_at: result?.expiresAt || null,
+            download_available: true,
+            reply_instruction: 'A trusted download link was already sent to the user interface. Briefly confirm the artifact is ready, but do not repeat a URL, task ID, filesystem path, or tool protocol.'
+        };
+    }
+
+    if (toolName === 'sandbox_exec') {
+        const downloadAvailable = Boolean(result?.downloadPath && result?.artifactId && result?.taskId);
+        return {
+            ok: result?.ok === true,
+            exit_code: Number(result?.exit_code ?? 1),
+            timed_out: result?.timed_out === true,
+            limit_exceeded: result?.limit_exceeded === true,
+            stdout: String(result?.stdout || ''),
+            stderr: String(result?.stderr || ''),
+            output_truncated: result?.output_truncated === true,
+            auto_output: result?.auto_output === true,
+            inputs: Array.isArray(result?.inputs) ? result.inputs.map((item) => ({ path: item.path, size: item.size })) : [],
+            ...(downloadAvailable ? {
+                file_name: result.fileName || '',
+                mime_type: result.mimeType || '',
+                size: Number(result.size || 0),
+                expires_at: result.expiresAt || null,
+                download_available: true
+            } : {}),
+            reply_instruction: downloadAvailable
+                ? 'A trusted download link was already sent to the user interface. Summarize the execution and confirm the artifact is ready without repeating a URL, task ID, filesystem path, or tool protocol.'
+                : 'Summarize the bounded sandbox execution from stdout, stderr, and exit_code. Do not claim a download exists or expose tool protocol.'
         };
     }
 
@@ -4258,7 +5269,7 @@ function createSearchBudget(totalLimit = 8, perTaskLimit = 2) {
     };
 }
 
-function normalizeToolCalls(toolCalls = []) {
+function normalizeToolCalls(toolCalls = [], localMode = false) {
     const normalized = [];
     for (const toolCall of toolCalls) {
         if (!toolCall || toolCall.type !== 'function' || !toolCall.function?.name) continue;
@@ -4332,8 +5343,38 @@ function normalizeToolCalls(toolCalls = []) {
             continue;
         }
 
+        if (toolName === 'save_memory') {
+            const normalizedArgs = normalizeSaveMemoryToolArgs(args);
+            if (!normalizedArgs) continue;
+            normalized.push({
+                id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
+                type: 'function',
+                function: {
+                    name: toolName,
+                    arguments: JSON.stringify(normalizedArgs)
+                },
+                _args: normalizedArgs
+            });
+            continue;
+        }
+
         if (toolName === 'delete_memory') {
             const normalizedArgs = normalizeDeleteMemoryToolArgs(args);
+            if (!normalizedArgs) continue;
+            normalized.push({
+                id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
+                type: 'function',
+                function: {
+                    name: toolName,
+                    arguments: JSON.stringify(normalizedArgs)
+                },
+                _args: normalizedArgs
+            });
+            continue;
+        }
+
+        if (isFileWorkspaceToolName(toolName)) {
+            const normalizedArgs = normalizeWorkspaceToolArgs(toolName, args, localMode);
             if (!normalizedArgs) continue;
             normalized.push({
                 id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
@@ -4443,6 +5484,7 @@ async function executeNormalizedToolCall({
     userId = null,
     sessionId = null,
     requestId = null,
+    userMessages = [],
     signal
 }) {
     const toolName = toolCall?.function?.name;
@@ -4482,6 +5524,15 @@ async function executeNormalizedToolCall({
         };
     }
 
+    if (toolName === 'save_memory') {
+        const memoryResult = await TOOL_EXECUTORS.save_memory(args, { userId, sessionId, userMessages });
+        return {
+            result: memoryResult,
+            sources: [],
+            searchCountInc: 0
+        };
+    }
+
     if (toolName === 'delete_memory') {
         const memoryResult = await TOOL_EXECUTORS.delete_memory(args, { userId, sessionId });
         return {
@@ -4489,6 +5540,11 @@ async function executeNormalizedToolCall({
             sources: [],
             searchCountInc: 0
         };
+    }
+
+    if (isFileWorkspaceToolName(toolName)) {
+        const result = await TOOL_EXECUTORS[toolName](args, { userId, sessionId, requestId });
+        return { result, sources: [], searchCountInc: 0 };
     }
 
     throw new Error(`不支持的工具: ${toolName}`);
@@ -4679,6 +5735,7 @@ async function callK2p5Stream({
                 userId,
                 sessionId,
                 requestId,
+                userMessages: messages.filter((message) => message?.role === 'user').map((message) => message.content),
                 signal
             });
             searchCount += Number(toolResult.searchCountInc || 0);
@@ -4709,7 +5766,7 @@ async function callK2p5Stream({
                 }
             }))
         };
-        if (thinkingMode) {
+        if (isKimiK25ActualModel(actualModel) || thinkingMode) {
             assistantToolCallMessage.reasoning_content = roundReasoningContent || 'Tool call continuation reasoning.';
         }
 
@@ -4741,6 +5798,8 @@ function researchModelLabel(modelId = '') {
         'nemotron-3-ultra': 'Nemotron 3 Ultra',
         'deepseek-flash': 'DeepSeek v4',
         'deepseek-pro': 'DeepSeek Pro',
+        'claude-sonnet-5': 'Claude Sonnet 5',
+        'gemini-3.6-flash-low': 'Gemini 3.6',
         'gemini-3-flash': 'Gemini 3 Flash',
         'openrouter-free': 'OpenRouter Free'
     };
@@ -5053,7 +6112,7 @@ function buildResearchRequest({
         const reasoningEffort = resolveOpenAIChatReasoningEffort(actualModel, !!thinkingMode, reasoningProfile);
         applyGatewayChatRequestPolicy(body, { thinkingMode: !!thinkingMode, reasoningEffort });
     }
-    if (routing.provider === 'rai_fast_gateway') {
+    if (['rai_fast_gateway', 'rai_claude_gateway'].includes(routing.provider)) {
         const reasoningEffort = resolveOpenAIChatReasoningEffort(actualModel, !!thinkingMode, reasoningProfile);
         applyFastGatewayThinkingPolicy(body, { thinkingMode: !!thinkingMode, reasoningEffort });
     }
@@ -6407,7 +7466,7 @@ function sanitizeClientMessageContent(content) {
 function sanitizeClientAttachment(attachment = {}) {
     if (!attachment || typeof attachment !== 'object') return null;
     const type = String(attachment.type || '').trim().toLowerCase();
-    if (!['image', 'audio', 'video', 'file', 'document'].includes(type)) return null;
+    if (!['image', 'audio', 'video', 'file', 'document', 'text', 'code'].includes(type)) return null;
     const data = typeof attachment.data === 'string'
         ? attachment.data.slice(0, 12 * 1024 * 1024)
         : '';
@@ -6438,7 +7497,7 @@ function attachmentTypeFromMime(mimeType, fallback = 'file') {
     if (value.startsWith('image/')) return 'image';
     if (value.startsWith('audio/')) return 'audio';
     if (value.startsWith('video/')) return 'video';
-    return ['file', 'document'].includes(fallback) ? fallback : 'file';
+    return ['file', 'document', 'text', 'code'].includes(fallback) ? fallback : 'file';
 }
 
 function uploadedFilenameFromAttachment(attachment = {}) {
@@ -6498,6 +7557,27 @@ async function canonicalizeOwnedMessageAttachments(messages, userId) {
         message.attachments = canonical;
     }
     return messages;
+}
+
+function buildStoredMessageAttachments(attachments) {
+    if (!Array.isArray(attachments)) return [];
+    return sanitizeClientAttachments(attachments).map((attachment) => {
+        const filename = uploadedFilenameFromAttachment(attachment);
+        const stored = {
+            type: attachment.type,
+            fileName: attachment.fileName || attachment.originalName || '',
+            originalName: attachment.originalName || attachment.fileName || '',
+            mimeType: attachment.mimeType || attachment.fileType || '',
+            size: Math.max(0, Number(attachment.size || 0))
+        };
+        if (filename) {
+            stored.fileId = filename;
+            stored.filePath = `/api/uploads/${encodeURIComponent(filename)}`;
+        } else if (attachment.type === 'image' && attachment.data) {
+            stored.data = attachment.data;
+        }
+        return stored;
+    });
 }
 
 function sanitizeClientChatMessages(rawMessages = []) {
@@ -6798,6 +7878,8 @@ function getMultimodalTypeDescription(types) {
 const ATTACHMENT_PARSE_MAX_FILE_CHARS = 60000;   // 单文件字符上限
 const ATTACHMENT_PARSE_TOTAL_CHARS = 80000;       // 总字符上限
 const ATTACHMENT_TEXT_READ_MAX_BYTES = 512 * 1024;
+const ATTACHMENT_PROMPT_CONTEXT_MARKER = '\n\n--- 附件内容 ---\n';
+const attachmentOriginalContentByMessage = new WeakMap();
 
 function classifyAttachmentType(fileName, mimeType) {
     const lowerName = String(fileName || '').toLowerCase();
@@ -6819,12 +7901,15 @@ function classifyAttachmentType(fileName, mimeType) {
         return 'code';
     }
     // 文本
-    if (/\.(txt|md|json|xml|csv|log|yaml|yml|ini|conf)$/i.test(lowerName) || lowerMime === 'text/plain' || lowerMime === 'application/json') {
+    if (/\.(txt|md|json|xml|log|yaml|yml|ini|conf)$/i.test(lowerName) || lowerMime === 'text/plain' || lowerMime === 'application/json') {
         return 'text';
     }
     // 文档
     if (/\.(pdf|docx|xlsx|xls|pptx|ppt|csv)$/i.test(lowerName) || lowerMime === 'application/pdf' || lowerMime.includes('officedocument') || lowerMime.includes('spreadsheet')) {
         return 'document';
+    }
+    if (/\.(zip|7z|tar|gz|bz2|xz)$/i.test(lowerName) || /(?:zip|7z|tar|gzip|bzip2|xz)/i.test(lowerMime)) {
+        return 'archive';
     }
     return 'other';
 }
@@ -6855,14 +7940,28 @@ async function readTextFileContent(filePath) {
 }
 
 async function tryExtractDocumentText(filePath, kind) {
-    if (!DOCUMENT_PARSER_ENABLED) return null;
+    if (!DOCUMENT_SANDBOX_RUNTIME_ENABLED) return null;
     try {
         const result = await parseDocumentFile(filePath, kind);
         return String(result?.text || '').trim() || null;
     } catch (err) {
         console.warn(` 文档解析被拒绝或失败: kind=${kind}, code=${err.code || 'parse_failed'}`);
-        return null;
+        throw err;
     }
+}
+
+function stripInjectedAttachmentPromptContext(content) {
+    const value = String(content || '');
+    const markerIndex = value.indexOf(ATTACHMENT_PROMPT_CONTEXT_MARKER);
+    return markerIndex >= 0 ? value.slice(0, markerIndex) : value;
+}
+
+function getPersistableUserMessageContent(message, { stripTimeHint = false } = {}) {
+    const source = attachmentOriginalContentByMessage.has(message)
+        ? attachmentOriginalContentByMessage.get(message)
+        : message?.content;
+    const content = typeof source === 'string' ? source : JSON.stringify(source ?? '');
+    return stripTimeHint ? stripInlinePromptTimeHint(content) : content;
 }
 
 /**
@@ -6924,18 +8023,10 @@ async function buildAttachmentPromptContext(attachments, userId) {
             if (filePath) {
                 const ext = path.extname(fileName).toLowerCase();
                 let extracted = null;
-                if (ext === '.pdf' || mimeType === 'application/pdf') {
-                    extracted = await tryExtractDocumentText(filePath, 'pdf');
-                } else if (ext === '.docx') {
+                if (ext === '.docx') {
                     extracted = await tryExtractDocumentText(filePath, 'docx');
-                } else if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
-                    if (ext === '.csv') {
-                        extracted = await readTextFileContent(filePath);
-                    } else if (ext === '.xlsx') {
-                        extracted = await tryExtractDocumentText(filePath, 'xlsx');
-                    }
-                } else if (ext === '.pptx' || ext === '.ppt') {
-                    if (ext === '.pptx') extracted = await tryExtractDocumentText(filePath, 'pptx');
+                } else if (ext === '.xlsx') {
+                    extracted = await tryExtractDocumentText(filePath, 'xlsx');
                 }
                 if (extracted) {
                     const truncated = extracted.length > ATTACHMENT_PARSE_MAX_FILE_CHARS
@@ -6949,6 +8040,8 @@ async function buildAttachmentPromptContext(attachments, userId) {
             } else {
                 parts.push(`[附件文档: ${fileName} (文件不可用)]`);
             }
+        } else if (attType === 'archive') {
+            parts.push(`[压缩包: ${fileName}，请使用受控 Linux 沙箱检查、解压或重新压缩]`);
         } else if (attType === 'image' || attType === 'video' || attType === 'audio') {
             // 媒体类型：如果模型支持多模态，会通过 convertToOmniFormat 传递原始数据
             // 这里仅添加一个提示，方便不支持多模态的模型知道有媒体附件
@@ -6977,23 +8070,30 @@ const API_PROVIDERS = {
         apiKey: FAST_GATEWAY_API_KEY,
         envKey: 'RAI_FAST_GATEWAY_API_KEY_FILE',
         baseURL: FAST_GATEWAY_BASE_URL ? joinGatewayEndpoint(FAST_GATEWAY_BASE_URL, 'chat/completions') : '',
-        models: ['claude-sonnet-5', 'gemini-3.6-flash-low'],
+        models: ['gemini-3.6-flash-low'],
+        optional: true
+    },
+    rai_claude_gateway: {
+        apiKey: CLAUDE_GATEWAY_API_KEY,
+        envKey: 'RAI_CLAUDE_GATEWAY_API_KEY_FILE',
+        baseURL: CLAUDE_GATEWAY_BASE_URL ? joinGatewayEndpoint(CLAUDE_GATEWAY_BASE_URL, 'chat/completions') : '',
+        models: ['claude-sonnet-5'],
         optional: true
     },
     deepseek: {
         apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
         envKey: 'DEEPSEEK_API_KEY',
-        baseURL: 'https://api.deepseek.com/v1/chat/completions',
+        baseURL: DEEPSEEK_CHAT_COMPLETIONS_URL,
         models: ['deepseek-v4-flash', 'deepseek-v4-pro']
     },
 
-    // 硅基流动 SiliconFlow - Qwen 多模态与 Kimi K2.6
+    // 硅基流动 SiliconFlow - Qwen、Kimi K2.6 与 DeepSeek V4 Flash
     siliconflow: {
         apiKey: ENV_API_KEYS.SILICONFLOW_API_KEY,
         envKey: 'SILICONFLOW_API_KEY',
-        baseURL: 'https://api.siliconflow.cn/v1/chat/completions',
+        baseURL: SILICONFLOW_CHAT_COMPLETIONS_URL,
         imageGenerationURL: SILICONFLOW_IMAGE_GENERATION_URL,
-        models: ['Qwen/Qwen3.6-35B-A3B', 'Pro/moonshotai/Kimi-K2.6']
+        models: ['Qwen/Qwen3.6-35B-A3B', 'Pro/moonshotai/Kimi-K2.6', 'deepseek-ai/DeepSeek-V4-Flash']
     },
     // Google Generative Language API - Gemini/Gemma models
     google_gemini: {
@@ -7040,8 +8140,9 @@ function logApiKeyReadiness() {
 logApiKeyReadiness();
 
 const LEGACY_MODEL_ALIASES = {
-    // GPT 5.6 is now backed by Luna. Preserve saved preferences and stale clients.
+    // Normalize the short-lived Terra preference back to the stable Luna product route.
     'gpt-5.6-terra': 'gpt-5.6-luna',
+    'claude-opus-5': 'claude-sonnet-5',
     'qwen3-vl': 'qwen3.6-35b-a3b',
     'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
     'Qwen/Qwen3.6-35B-A3B': 'qwen3.6-35b-a3b',
@@ -7072,6 +8173,8 @@ const LEGACY_MODEL_ALIASES = {
 const SUPPORTED_INCOMING_MODEL_IDS = new Set([
     ...PUBLIC_MODEL_IDS,
     'auto',
+    'fast-auto',
+    'think-auto',
     'kimi-k2',
     'claude-haiku',
     'gemini-3-flash',
@@ -7125,7 +8228,7 @@ const MODEL_ROUTING = {
         multimodal: true
     },
     'claude-sonnet-5': {
-        provider: 'rai_fast_gateway',
+        provider: 'rai_claude_gateway',
         model: 'claude-sonnet-5',
         supportsThinking: true,
         supportsWebSearch: true,
@@ -7251,17 +8354,25 @@ const MODEL_ROUTING = {
 };
 
 const MODE_RUNTIME_FALLBACK_MODELS = Object.freeze({
-    'deepseek-pro': ['gpt-5.6-luna'],
-    'deepseek-flash': ['gpt-5.6-luna']
+    'gpt-5.6-luna': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6'],
+    'kimi-k2.6': ['deepseek-pro', 'deepseek-flash', 'gemini-3.6-flash-low'],
+    'nemotron-3-ultra': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6'],
+    'claude-sonnet-5': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6'],
+    'gemini-3.6-flash-low': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6']
 });
 
 const UNIVERSAL_RUNTIME_FALLBACK_MODELS = [
+    'deepseek-pro',
+    'deepseek-flash',
+    'kimi-k2.6',
+    'gemini-3.6-flash-low',
+    'gpt-5.6-luna',
+    'qwen3.6-35b-a3b',
+    'claude-sonnet-5',
     'chatgpt-gpt-oss-120b',
     'gemma',
     'nemotron-3-ultra',
     'gemini-3-flash',
-    'qwen3.6-35b-a3b',
-    'kimi-k2.6',
     'openrouter-free'
 ];
 
@@ -7305,6 +8416,30 @@ dirs.forEach(dir => {
 
 // 数据库初始化
 const dbPath = path.resolve(process.env.RAI_DB_PATH || path.join(__dirname, 'ai_data.db'));
+const CONVERSATION_INTEGRITY_ISSUER = cleanEnvValue(process.env.RAI_CONVERSATION_INTEGRITY_ISSUER)
+    || PUBLIC_BASE_URL
+    || 'https://rai.rick.sarl';
+const CONVERSATION_INTEGRITY_PRIMARY_DIR = path.resolve(
+    cleanEnvValue(process.env.RAI_CONVERSATION_LEDGER_DIR)
+    || path.join(path.dirname(dbPath), 'conversation-integrity-ledger')
+);
+const CONVERSATION_INTEGRITY_MIRROR_DIR = cleanEnvValue(process.env.RAI_CONVERSATION_LEDGER_MIRROR_DIR);
+let conversationIntegritySigner = null;
+let conversationIntegritySignerError = null;
+
+function getConversationIntegritySigner() {
+    if (conversationIntegritySigner) return conversationIntegritySigner;
+    if (conversationIntegritySignerError) throw conversationIntegritySignerError;
+    try {
+        conversationIntegritySigner = loadConversationSigner(
+            cleanEnvValue(process.env.RAI_CONVERSATION_SIGNING_PRIVATE_KEY_FILE)
+        );
+        return conversationIntegritySigner;
+    } catch (error) {
+        conversationIntegritySignerError = error;
+        throw error;
+    }
+}
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error(' 数据库连接失败:', sanitizeReportContext(err));
@@ -7334,12 +8469,7 @@ const authDb = new sqlite3.Database(dbPath, (err) => {
         process.exit(1);
     }
 });
-authDb.serialize(() => {
-    authDb.run('PRAGMA foreign_keys=ON;');
-    authDb.run('PRAGMA busy_timeout=5000;');
-    authDb.run('PRAGMA synchronous=NORMAL;');
-});
-
+authDb.configure('busyTimeout', 30000);
 const authSessionStore = createAuthSessionStore({
     db: authDb,
     jwtSecret: JWT_SECRET,
@@ -7360,12 +8490,7 @@ const passkeyDb = new sqlite3.Database(dbPath, (err) => {
         process.exit(1);
     }
 });
-passkeyDb.serialize(() => {
-    passkeyDb.run('PRAGMA foreign_keys=ON;');
-    passkeyDb.run('PRAGMA busy_timeout=5000;');
-    passkeyDb.run('PRAGMA synchronous=NORMAL;');
-});
-
+passkeyDb.configure('busyTimeout', 30000);
 let resolveDatabaseSchemaReady;
 let rejectDatabaseSchemaReady;
 const databaseSchemaReady = new Promise((resolve, reject) => {
@@ -7405,12 +8530,13 @@ databaseInitializationSettled.then(() => {
             rejectTransactionDbReady(err);
         }
     });
+    transactionDb.configure('busyTimeout', 30000);
     transactionDb.serialize(() => {
         const rejectPragmaError = (err) => {
             if (err) rejectTransactionDbReady(err);
         };
         transactionDb.run('PRAGMA foreign_keys=ON;', rejectPragmaError);
-        transactionDb.run('PRAGMA busy_timeout=5000;', rejectPragmaError);
+        transactionDb.run('PRAGMA busy_timeout=30000;', rejectPragmaError);
         transactionDb.run('PRAGMA synchronous=NORMAL;', rejectPragmaError);
         // Bound this extra connection's page cache on the small production VPS.
         transactionDb.run('PRAGMA cache_size=-1024;', rejectPragmaError);
@@ -7432,7 +8558,7 @@ const selectionExplanationDbReady = new Promise((resolve, reject) => {
     rejectSelectionExplanationDbReady = reject;
 });
 let selectionExplanationDb = null;
-databaseInitializationSettled.then(() => {
+transactionDbReady.then(() => {
     if (selectionExplanationDbClosing) {
         const error = new Error('selection_explanation_database_closing');
         error.code = 'selection_explanation_database_closing';
@@ -7445,12 +8571,13 @@ databaseInitializationSettled.then(() => {
             rejectSelectionExplanationDbReady(err);
         }
     });
+    selectionExplanationDb.configure('busyTimeout', 30000);
     selectionExplanationDb.serialize(() => {
         const rejectPragmaError = (err) => {
             if (err) rejectSelectionExplanationDbReady(err);
         };
         selectionExplanationDb.run('PRAGMA foreign_keys=ON;', rejectPragmaError);
-        selectionExplanationDb.run('PRAGMA busy_timeout=5000;', rejectPragmaError);
+        selectionExplanationDb.run('PRAGMA busy_timeout=30000;', rejectPragmaError);
         selectionExplanationDb.run('PRAGMA synchronous=NORMAL;', rejectPragmaError);
         selectionExplanationDb.get('SELECT 1 AS ready', (err) => {
             if (err) rejectSelectionExplanationDbReady(err);
@@ -7693,6 +8820,26 @@ db.serialize(() => {
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS conversation_integrity_receipts (
+    session_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    digest_sha256 TEXT NOT NULL,
+    messages_revision INTEGER NOT NULL DEFAULT 0,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    signed_at TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    primary_ledger_written INTEGER NOT NULL DEFAULT 0,
+    mirror_ledger_written INTEGER NOT NULL DEFAULT 0,
+    mirror_error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, digest_sha256)
+  )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_conversation_integrity_digest
+      ON conversation_integrity_receipts(digest_sha256, key_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_conversation_integrity_user_session
+      ON conversation_integrity_receipts(user_id, session_id, signed_at DESC)`);
+
     // 设备指纹表
     db.run(`CREATE TABLE IF NOT EXISTS device_fingerprints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7708,12 +8855,14 @@ db.serialize(() => {
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     title TEXT DEFAULT '新 ChatFlow',
-    session_id TEXT,
+    session_id TEXT NOT NULL,
     chat_history TEXT DEFAULT '[]',
     canvas_state TEXT DEFAULT '{"nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    canvas_revision INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS auth_ztx6d_rt (
@@ -8188,6 +9337,12 @@ db.serialize(() => {
             }
         });
 
+        db.run(`ALTER TABLE flows ADD COLUMN canvas_revision INTEGER NOT NULL DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加flows.canvas_revision列失败:`, sanitizeReportContext(err));
+            }
+        });
+
         db.run(`ALTER TABLE users ADD COLUMN external_provider TEXT`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
                 console.warn(` 添加external_provider列失败(可能已存在):`, sanitizeReportContext(err));
@@ -8623,7 +9778,45 @@ databaseSchemaReady
     .then(() => resolveDatabaseInitializationSettled(true))
     .catch((error) => rejectDatabaseInitializationSettled(error));
 
-const authSessionStartupReady = databaseSchemaReady
+databaseInitializationSettled.then(() => {
+    if (!cleanEnvValue(process.env.RAI_CONVERSATION_SIGNING_PRIVATE_KEY_FILE)) {
+        console.warn(' 对话完整性签名未启用: conversation_signing_key_unavailable');
+        return;
+    }
+    setTimeout(() => {
+        backfillConversationIntegrityReceipts().catch((error) => {
+            console.error(' 对话完整性存证回填失败:', sanitizeReportContext(error));
+        });
+    }, 1500).unref?.();
+});
+
+function configureAuxiliarySqliteConnection(connection, label) {
+    return new Promise((resolve, reject) => {
+        connection.serialize(() => {
+            const fail = (error) => {
+                if (error) reject(error);
+            };
+            connection.run('PRAGMA foreign_keys=ON;', fail);
+            connection.run('PRAGMA busy_timeout=30000;', fail);
+            connection.run('PRAGMA synchronous=NORMAL;', fail);
+            connection.get('SELECT 1 AS ready', (error) => {
+                if (error) reject(error);
+                else resolve(true);
+            });
+        });
+    }).catch((error) => {
+        console.error(` ${label}数据库初始化失败:`, sanitizeReportContext(error));
+        throw error;
+    });
+}
+
+// Do not race WAL/schema initialization with auxiliary connection PRAGMAs.
+const authDbReady = selectionExplanationDbReady
+    .then(() => configureAuxiliarySqliteConnection(authDb, '认证会话'));
+const passkeyDbReady = authDbReady
+    .then(() => configureAuxiliarySqliteConnection(passkeyDb, 'Passkey'));
+
+const authSessionStartupReady = Promise.all([databaseSchemaReady, authDbReady, passkeyDbReady])
     .then(() => authSessionStore.migrate())
     .then(() => migratePlaintextUserTotpSecrets())
     .then(() => {
@@ -8666,7 +9859,7 @@ async function verifySelectionExplanationSchema() {
 }
 
 const selectionExplanationStartupReady = Promise.all([
-    databaseInitializationSettled,
+    softwareClientStartupReady,
     selectionExplanationDbReady
 ]).then(async () => {
     await verifySelectionExplanationSchema();
@@ -8914,6 +10107,12 @@ app.get('/runtime-config.js', (req, res) => {
     res.send(`window.__RAI_RUNTIME_CONFIG = ${JSON.stringify(buildRuntimeConfigPayload())};\n`);
 });
 
+app.get(['/', '/index.html'], (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.type('html');
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.get('/site.webmanifest', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.type('application/manifest+json');
@@ -8928,6 +10127,12 @@ app.get('/site.webmanifest', (req, res) => {
         console.error(' 读取站点清单失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '读取站点清单失败' });
     }
+});
+
+app.get(['/UWP-SignUP', '/UWP-SignUP/'], (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.type('html');
+    res.sendFile(path.join(__dirname, 'public', 'uwp-signup.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), staticCacheOptions));
@@ -8998,15 +10203,45 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     chat_per_minute: parseBoundedInteger(process.env.RAI_CHAT_QUOTA_PER_MINUTE, 6, 0, 1000),
     chat_per_5h: parseBoundedInteger(process.env.RAI_CHAT_QUOTA_PER_5H, 120, 0, 10000),
     chat_per_week: parseBoundedInteger(process.env.RAI_CHAT_QUOTA_PER_WEEK, 800, 0, 100000),
-    concurrent_requests: MAX_CONCURRENT_REQUESTS_PER_USER,
+    concurrent_requests_free: FREE_CONCURRENT_REQUESTS_DEFAULT,
+    concurrent_requests_pro_max: PRO_MAX_CONCURRENT_REQUESTS_DEFAULT,
     upload_per_minute: parseBoundedInteger(process.env.RAI_UPLOAD_QUOTA_PER_MINUTE, 6, 0, 1000),
     upload_max_file_mb: parseBoundedInteger(process.env.RAI_UPLOAD_MAX_FILE_MB, 20, 1, 50),
     upload_user_total_mb: parseBoundedInteger(process.env.RAI_UPLOAD_USER_TOTAL_MB, 100, 0, 102400),
     upload_user_max_files: parseBoundedInteger(process.env.RAI_UPLOAD_USER_MAX_FILES, 50, 0, 100000),
     pwa_reward_enabled: parseBooleanEnv(process.env.RAI_PWA_REWARD_ENABLED, true) ? 1 : 0,
     pwa_reward_min_account_age_minutes: parseBoundedInteger(process.env.RAI_PWA_REWARD_MIN_ACCOUNT_AGE_MINUTES, 30, 0, 10080),
-    invite_reward_immediate_enabled: parseBooleanEnv(process.env.RAI_INVITE_REWARD_IMMEDIATE_ENABLED, false) ? 1 : 0
+    invite_reward_immediate_enabled: parseBooleanEnv(process.env.RAI_INVITE_REWARD_IMMEDIATE_ENABLED, false) ? 1 : 0,
+    // 模型路由设置：管理员可配置智能/快速/思考首选模型与视觉备用路由模型
+    smart_default_model: 'deepseek-flash',
+    fast_default_model: 'deepseek-flash',
+    thinking_default_model: 'deepseek-pro',
+    vision_fallback_model: 'qwen3.6-35b-a3b'
 });
+
+async function resolveUserConcurrentRequestLimit(userId, runtimeSettings = null) {
+    const settings = runtimeSettings || await getAdminRuntimeSettings();
+    const membership = await getUserMembershipSnapshot(userId);
+    const tier = String(membership?.membership || 'free').trim().toLowerCase();
+    const paid = tier === 'pro' || tier === 'max';
+    const configured = paid
+        ? settings.concurrent_requests_pro_max
+        : settings.concurrent_requests_free;
+    return {
+        limit: Math.max(1, Number(configured || (paid ? PRO_MAX_CONCURRENT_REQUESTS_DEFAULT : FREE_CONCURRENT_REQUESTS_DEFAULT))),
+        tier: paid ? tier : 'free'
+    };
+}
+
+// 管理员可配置的模型路由设置键（值为模型 ID，必须属于公开模型白名单）
+const MODEL_ROUTING_SETTING_KEYS = ['smart_default_model', 'fast_default_model', 'thinking_default_model', 'vision_fallback_model'];
+
+function isSupportedAdminModelSettingValue(value) {
+    const normalized = normalizeAdminModelId(String(value || '').trim());
+    if (!normalized || !PUBLIC_MODEL_IDS.includes(normalized)) return false;
+    // 排除纯图像生成模型（如 kolors-free / gpt-image-2），它们不能作为对话首选或视觉备用
+    return MODEL_ROUTING[normalized]?.imageOnly !== true;
+}
 
 function parseBoundedInteger(value, defaultValue, min, max) {
     const parsed = Number.parseInt(cleanEnvValue(value), 10);
@@ -9121,6 +10356,113 @@ const authenticateToken = async (req, res, next) => {
         return res.status(401).json({ error: '令牌无效、已过期或会话已撤销' });
     }
 };
+
+// ================= CRF 签名与导入导出（防篡改，CRF-FORMAT.md）=================
+app.get('/api/crf/public-key', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, keys: [{ keyId: crfSignature.KEY_ID, pem: crfSignature.getPublicKeyPem() }] });
+});
+
+app.post('/api/crf/sign', authenticateToken, authLimiter, (req, res) => {
+    try {
+        const contentHash = String(req.body?.contentHash || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(contentHash)) {
+            return res.status(400).json({ success: false, error: 'invalid_content_hash' });
+        }
+        const { signature, ts } = crfSignature.signHash(contentHash);
+        return res.json({ success: true, signature, ts, keyId: crfSignature.KEY_ID });
+    } catch (error) {
+        console.error(' CRF sign 失败:', error);
+        return res.status(500).json({ success: false, error: 'sign_failed' });
+    }
+});
+
+// 网页版导出：服务端取会话消息组装 CRF/JSON 并签名（?format=crf|json，默认 crf）
+app.get('/api/sessions/:id/export-crf', authenticateToken, async (req, res) => {
+    try {
+        const format = String(req.query.format || 'crf').toLowerCase() === 'json' ? 'json' : 'crf';
+        const session = await dbGetAsync(
+            'SELECT id, title, model, user_id FROM sessions WHERE id = ? AND user_id = ?',
+            [req.params.id, req.user.userId]
+        );
+        if (!session) return res.status(404).json({ success: false, error: 'session_not_found' });
+        const rows = await dbAllAsync(
+            'SELECT role, content, model FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC',
+            [req.params.id]
+        );
+        const messages = (rows || []).map((r) => ({ role: r.role, content: r.content }));
+        const content = format === 'json'
+            ? crfSignature.buildSignedJson({
+                title: session.title || '对话',
+                model: session.model || 'auto',
+                source: 'official',
+                messages
+            })
+            : crfSignature.buildSignedCrf({
+                title: session.title || '对话',
+                model: session.model || 'auto',
+                source: 'official',
+                messages
+            });
+        const shortId = String(session.id).replace(/^session_/, '').slice(0, 10);
+        const filename = format === 'json'
+            ? `对话_${shortId}.json`
+            : `对话_${shortId}.crf`;
+        return res.json({ success: true, filename, content, format });
+    } catch (error) {
+        console.error(' CRF 导出失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: 'export_failed' });
+    }
+});
+
+// 网页版导入：验签 + 解析 + 入库（硬约束，官方无签名/篡改一律拒绝；支持 CRF 与 JSON 格式）
+app.post('/api/crf/import', authenticateToken, async (req, res) => {
+    try {
+        const content = String(req.body?.content || '');
+        const format = crfSignature.detectFormat(content);
+        const validShape = format === 'json'
+            ? (() => { try { return Array.isArray(JSON.parse(content).messages); } catch (e) { return false; } })()
+            : content.includes('<!-- message:');
+        if (!validShape) {
+            return res.status(400).json({ success: false, error: 'invalid_crf' });
+        }
+        const verification = crfSignature.verifyContentText(content);
+        const source = verification.source || crfSignature.parseSource(content) || 'official';
+        if (verification.status === 'tampered') {
+            return res.status(403).json({ success: false, error: 'crf_tampered', verification });
+        }
+        if (verification.status === 'unsigned' && source === 'official') {
+            return res.status(403).json({ success: false, error: 'crf_unsigned_official', verification });
+        }
+        const title = crfSignature.parseTitle(content);
+        const model = crfSignature.parseModel(content);
+        const messages = crfSignature.parseMessages(content);
+        if (!messages.length) return res.status(400).json({ success: false, error: 'invalid_crf' });
+        await ensureSessionKindColumn();
+        const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const safeTitle = sanitizeGeneratedConversationTitle(title) || '导入对话';
+        await dbRunAsync(
+            'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
+            [sessionId, req.user.userId, safeTitle, model || 'auto', 'chat']
+        );
+        for (const msg of messages) {
+            await dbRunAsync(
+                'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+                [sessionId, msg.role, msg.content]
+            );
+        }
+        scheduleConversationIntegritySeal(sessionId, req.user.userId);
+        return res.json({ success: true, sessionId, verification: { status: verification.status, source } });
+    } catch (error) {
+        console.error(' CRF 导入失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: 'import_failed' });
+    }
+});
+
+// 公开验证页
+app.get('/verify', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'verify.html'));
+});
 
 app.get(`${GENERATED_IMAGE_PUBLIC_PREFIX}/:filename`, authenticateToken, async (req, res) => {
     const filename = path.basename(String(req.params.filename || ''));
@@ -9384,10 +10726,13 @@ const ATTACHMENT_EXTENSIONS = new Set([
     'py', 'java', 'c', 'cpp', 'h', 'hpp', 'css', 'scss', 'less',
     'vue', 'svelte', 'swift', 'kt', 'go', 'rs',
     'sh', 'bash', 'zsh', 'sql', 'php', 'pl', 'rb',
+    'zip', '7z', 'tar', 'gz', 'bz2', 'xz',
     'mp4', 'webm', 'mkv', 'flv', 'wmv', 'avi', 'mov', 'm4v',
     'mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'wma', 'opus'
 ]);
-const DOCUMENT_ATTACHMENT_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']);
+const SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS = new Set(['docx', 'xlsx', 'pptx']);
+const SANDBOXED_ARCHIVE_ATTACHMENT_EXTENSIONS = new Set(['zip', '7z', 'tar', 'gz', 'bz2', 'xz']);
+const BLOCKED_DOCUMENT_ATTACHMENT_EXTENSIONS = new Set(['pdf', 'doc', 'xls', 'ppt']);
 
 function getUploadExtension(file) {
     return path.extname(file.originalname || '').toLowerCase().slice(1);
@@ -9415,11 +10760,14 @@ function validateAttachmentUpload(req, file, cb) {
     if (!ext || filenameHasBlockedExtension(file) || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext)) {
         return cb(new Error('不支持的文件类型'));
     }
-    if (ext === 'pdf') {
-        return cb(new Error('PDF 解析暂停，等待独立操作系统级沙箱'));
+    if (BLOCKED_DOCUMENT_ATTACHMENT_EXTENSIONS.has(ext)) {
+        return cb(new Error('PDF、旧 Office 与演示文稿格式暂不支持'));
     }
-    if (!DOCUMENT_PARSER_ENABLED && DOCUMENT_ATTACHMENT_EXTENSIONS.has(ext)) {
-        return cb(new Error('安全维护期间暂不支持 PDF 或 Office 文档'));
+    if (SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS.has(ext) && !DOCUMENT_SANDBOX_RUNTIME_ENABLED) {
+        return cb(new Error('安全维护期间暂不支持 Office 文档'));
+    }
+    if (SANDBOXED_ARCHIVE_ATTACHMENT_EXTENSIONS.has(ext) && !DOCUMENT_SANDBOX_RUNTIME_ENABLED) {
+        return cb(new Error('安全维护期间暂不支持压缩包'));
     }
     // 仅拒绝真正的可执行 MIME，代码/HTML 文件允许作为文本附件上传
     if (/x-msdownload|x-msdos-program|x-msi/i.test(file.mimetype || '')) {
@@ -9513,6 +10861,26 @@ async function validateUploadedFileContent(file, uploadKind) {
             || zipSignature.equals(Buffer.from([0x50, 0x4b, 0x07, 0x08]));
         if (!validZip) {
             const error = new Error('Office 文件内容与扩展名不匹配');
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    if (SANDBOXED_ARCHIVE_ATTACHMENT_EXTENSIONS.has(ext)) {
+        const magicMatches = (
+            (ext === 'zip' && (
+                prefix.slice(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+                || prefix.slice(0, 4).equals(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
+                || prefix.slice(0, 4).equals(Buffer.from([0x50, 0x4b, 0x07, 0x08]))
+            ))
+            || (ext === '7z' && prefix.slice(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])))
+            || (ext === 'gz' && prefix.slice(0, 2).equals(Buffer.from([0x1f, 0x8b])))
+            || (ext === 'bz2' && prefix.slice(0, 3).toString('ascii') === 'BZh')
+            || (ext === 'xz' && prefix.slice(0, 6).equals(Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])))
+            || (ext === 'tar' && prefix.slice(257, 262).toString('ascii') === 'ustar')
+        );
+        if (!magicMatches) {
+            const error = new Error('压缩包内容与扩展名不匹配');
             error.statusCode = 400;
             throw error;
         }
@@ -9961,6 +11329,17 @@ app.get('/api/version', (req, res) => {
         version: PACKAGE_VERSION,
         timestamp: new Date().toISOString()
     });
+});
+
+app.get('/api/windows-downloads', async (req, res) => {
+    try {
+        const release = await resolveWindowsDownloads();
+        res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+        return res.json({ success: true, release });
+    } catch (error) {
+        console.warn(' Windows 下载信息获取失败:', sanitizeReportContext(error));
+        return res.status(503).json({ success: false, error: 'windows_downloads_unavailable' });
+    }
 });
 
 app.get('/api/quote/:symbol', financeQuoteLimiter, async (req, res) => {
@@ -10676,7 +12055,7 @@ async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authCl
 	    };
 	}
 
-async function completeRegistrationEmailVerification({ user, req, fingerprint = '', referrerId = '', bypassReason = '' }) {
+async function completeRegistrationEmailVerification({ user, req, fingerprint = '', referrerId = '', bypassReason = '', issueSession = true }) {
     const userId = Number(user?.id || 0);
     if (!Number.isInteger(userId) || userId <= 0) {
         throw new Error('invalid_registration_user');
@@ -10758,6 +12137,16 @@ async function completeRegistrationEmailVerification({ user, req, fingerprint = 
             ...buildPasswordUpgradeRequiredPayload(updatedUser?.email || user.email || ''),
             email_verified: true,
             isNewUser: true,
+            inviteReward,
+            emailVerificationBypassed: !!bypassReason
+        };
+    }
+    if (!issueSession) {
+        return {
+            success: true,
+            isNewUser: true,
+            email_verified: true,
+            registrationOnly: true,
             inviteReward,
             emailVerificationBypassed: !!bypassReason
         };
@@ -10852,7 +12241,8 @@ app.post('/api/auth/register', authLimiter, emailAuthLimiter, async (req, res) =
 	                    user,
 	                    req,
 	                    referrerId: normalizedReferrerId || user.pending_referrer_id || '',
-	                    bypassReason: 'resend_testing_domain_restricted'
+	                    bypassReason: 'resend_testing_domain_restricted',
+	                    issueSession: req.body?.registrationOnly !== true
 	                });
 	                return res.json(payload);
 	            }
@@ -10909,7 +12299,8 @@ app.post('/api/auth/register/resend', authLimiter, emailAuthLimiter, async (req,
 	                    user,
 	                    req,
 	                    referrerId: user.pending_referrer_id || '',
-	                    bypassReason: 'resend_testing_domain_restricted'
+	                    bypassReason: 'resend_testing_domain_restricted',
+	                    issueSession: req.body?.registrationOnly !== true
 	                });
 	                return res.json(payload);
 	            }
@@ -10957,7 +12348,8 @@ app.post('/api/auth/register/verify', authLimiter, async (req, res) => {
 	            user,
 	            req,
 	            fingerprint,
-	            referrerId: user.pending_referrer_id || verification.metadata?.referrerId || ''
+	            referrerId: user.pending_referrer_id || verification.metadata?.referrerId || '',
+	            issueSession: req.body?.registrationOnly !== true
 	        });
 	        return res.json(payload);
     } catch (error) {
@@ -11406,7 +12798,7 @@ app.post('/api/auth/passkeys/authentication/options', authLimiter, async (req, r
             context,
             req
         });
-        setPasskeyLoginCookie(res, token, context.secure);
+        setPasskeyLoginCookie(res, token, context.secure, req);
         return res.json({ success: true, options, rpId: context.rpID });
     } catch (error) {
         return sendPasskeyRouteError(res, error, '无法开始通行密钥登录');
@@ -11419,7 +12811,7 @@ app.post('/api/auth/passkeys/authentication/verify', authLimiter, async (req, re
         await databaseSchemaReady;
         context = getPasskeyRequestContext(req);
         setPasskeyNoStore(res);
-        clearPasskeyLoginCookie(res, context.secure);
+        clearPasskeyLoginCookie(res, context.secure, req);
 
         const token = String(parseCookieHeader(req)[PASSKEY_LOGIN_COOKIE] || '');
         const response = req.body?.response;
@@ -12997,16 +14389,20 @@ app.delete('/api/conversation-folders/:folderId', authenticateToken, async (req,
 
 app.get('/api/conversation-folders/:folderId/sessions', authenticateToken, async (req, res) => {
     try {
-        await ensureConversationOrganizationSchema();
+        await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
         const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
         const limit = parseBoundedInteger(req.query.limit, 50, 1, 100);
         const folder = await dbGetAsync('SELECT id FROM conversation_folders WHERE id = ? AND user_id = ?', [req.params.folderId, req.user.userId]);
         if (!folder) return res.status(404).json({ error: '文件夹不存在' });
         const rows = await dbAllAsync(
             `SELECT s.id, s.title, s.model, s.session_kind, s.updated_at, s.created_at,
-                    CASE WHEN p.session_id IS NULL THEN 0 ELSE 1 END AS pinned, p.position AS pin_position
+                    CASE WHEN p.session_id IS NULL THEN 0 ELSE 1 END AS pinned, p.position AS pin_position,
+                    CASE WHEN f.id IS NULL THEN 0 ELSE 1 END AS has_canvas,
+                    f.id AS flow_id, COALESCE(f.canvas_revision, 0) AS canvas_revision,
+                    f.updated_at AS canvas_updated_at
              FROM conversation_folder_sessions m JOIN sessions s ON s.id = m.session_id
              LEFT JOIN session_pins p ON p.session_id = s.id AND p.user_id = s.user_id
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
              WHERE m.folder_id = ? AND m.user_id = ? AND s.user_id = ? AND s.is_archived = 0
              ORDER BY pinned DESC, p.position ASC, s.updated_at DESC, s.id DESC LIMIT ? OFFSET ?`,
             [req.params.folderId, req.user.userId, req.user.userId, limit, offset]
@@ -13170,6 +14566,88 @@ function normalizeSessionPromptLanguage(value) {
     return raw.startsWith('zh') ? 'zh-CN' : null;
 }
 
+function inferSessionPromptModelIdentity({ model, thinkingMode, researchMode, researchMasterModel } = {}) {
+    const normalizedResearchMode = normalizeResearchMode(researchMode);
+    if (normalizedResearchMode !== 'off') {
+        const masterModel = normalizeResearchMasterModel(researchMasterModel || model || 'deepseek-pro');
+        return normalizeSessionPromptModelIdentity(`model:${masterModel}`) || 'research';
+    }
+    const normalizedModel = normalizeIncomingModelId(model || 'auto');
+    if (normalizedModel === 'auto') return thinkingMode ? 'think' : 'smart';
+    if (normalizedModel === 'deepseek-flash') return 'fast';
+    if (normalizedModel === 'deepseek-pro' && thinkingMode) return 'think';
+    return normalizeSessionPromptModelIdentity(`model:${normalizedModel}`) || 'smart';
+}
+
+function resolveSessionPromptModelLabel(identity, promptLanguage, fallbackModel = 'auto') {
+    const english = normalizeSessionPromptLanguage(promptLanguage) === 'en';
+    const normalizedIdentity = normalizeSessionPromptModelIdentity(identity) || 'smart';
+    if (normalizedIdentity === 'smart') return english ? 'Smart model' : '智能模型';
+    if (normalizedIdentity === 'fast') return english ? 'Fast model' : '快速模型';
+    if (normalizedIdentity === 'think') return english ? 'Thinking model' : '思考模型';
+    const modelId = normalizedIdentity.startsWith('model:')
+        ? normalizedIdentity.slice('model:'.length)
+        : normalizeIncomingModelId(fallbackModel || 'auto');
+    return researchModelLabel(modelId) || (english ? 'Smart model' : '智能模型');
+}
+
+async function lockAndResolveSessionPromptContext({
+    sessionId,
+    userId,
+    session,
+    model,
+    thinkingMode,
+    researchMode,
+    researchMasterModel,
+    uiLanguage
+}) {
+    const inferredIdentity = inferSessionPromptModelIdentity({
+        model,
+        thinkingMode,
+        researchMode,
+        researchMasterModel
+    });
+    const inferredLanguage = normalizeSessionPromptLanguage(uiLanguage) || 'zh-CN';
+    let resolvedSession = session || null;
+
+    if (sessionId && resolvedSession) {
+        if (!normalizeSessionPromptModelIdentity(resolvedSession.prompt_model_identity)
+            || !normalizeSessionPromptLanguage(resolvedSession.prompt_language)) {
+            await dbRunAsync(
+                `UPDATE sessions
+                 SET prompt_model_identity = COALESCE(NULLIF(prompt_model_identity, ''), ?),
+                     prompt_language = COALESCE(NULLIF(prompt_language, ''), ?)
+                 WHERE id = ? AND user_id = ?`,
+                [inferredIdentity, inferredLanguage, sessionId, userId]
+            );
+            resolvedSession = await dbGetAsync(
+                `SELECT user_id, session_kind, prompt_model_identity, prompt_language
+                 FROM sessions WHERE id = ? AND user_id = ?`,
+                [sessionId, userId]
+            );
+        }
+    }
+
+    const promptModelIdentity = normalizeSessionPromptModelIdentity(resolvedSession?.prompt_model_identity)
+        || inferredIdentity;
+    const promptLanguage = normalizeSessionPromptLanguage(resolvedSession?.prompt_language)
+        || inferredLanguage;
+    return {
+        promptModelIdentity,
+        promptLanguage,
+        modelIdentity: resolveSessionPromptModelLabel(promptModelIdentity, promptLanguage, model)
+    };
+}
+
+async function getWebControlledCustomSystemPrompt(userId) {
+    const row = await dbGetAsync(
+        `SELECT COALESCE(system_prompt, '') AS system_prompt
+         FROM user_configs WHERE user_id = ?`,
+        [userId]
+    );
+    return String(row?.system_prompt || '').slice(0, 12000).trim();
+}
+
 function makePrivateEtag(value) {
     return `"rai-${crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 32)}"`;
 }
@@ -13181,28 +14659,213 @@ function requestMatchesEtag(req, etag) {
         .includes(etag);
 }
 
-function extractMessageAttachmentRefs(rawAttachments, content = '') {
-    const refs = new Set();
-    const addRef = (value) => {
-        const raw = String(value || '').trim();
-        const match = raw.match(/(?:^|https?:\/\/[^/]+)(\/api\/uploads\/[A-Za-z0-9][A-Za-z0-9._-]{0,254}|\/generated-images\/[A-Za-z0-9][A-Za-z0-9._-]{0,254})/);
-        if (match) refs.add(match[1]);
+async function readConversationIntegrityDocument(sessionId, userId = null) {
+    const ownershipSql = userId === null ? '' : ' AND user_id = ?';
+    const session = await dbGetAsync(
+        `SELECT id, user_id, title, created_at, updated_at, COALESCE(messages_revision, 0) AS messages_revision
+         FROM sessions WHERE id = ?${ownershipSql}`,
+        userId === null ? [sessionId] : [sessionId, userId]
+    );
+    if (!session) return null;
+    const messages = await dbAllAsync(
+        `SELECT id, role, content, attachments, model, sources, created_at
+         FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
+        [session.id]
+    );
+    return {
+        session,
+        document: buildConversationDocument({
+            session,
+            messages,
+            issuer: CONVERSATION_INTEGRITY_ISSUER
+        })
     };
-    const visit = (value) => {
-        if (typeof value === 'string') return addRef(value);
-        if (Array.isArray(value)) return value.forEach(visit);
-        if (value && typeof value === 'object') Object.values(value).forEach(visit);
-    };
-    try { visit(typeof rawAttachments === 'string' ? JSON.parse(rawAttachments) : rawAttachments); } catch (_) { /* legacy/base64 attachment payloads stay uncached */ }
-    String(content || '').replace(/(?:^|[('"\s])((?:\/generated-images\/)[A-Za-z0-9][A-Za-z0-9._-]{0,254})/g, (_, value) => {
-        addRef(value);
-        return _;
+}
+
+function parseStoredConversationReceipt(value) {
+    try {
+        const parsed = JSON.parse(String(value || ''));
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+async function sealConversationIntegrity({ sessionId, userId = null }) {
+    await databaseSchemaReady;
+    const source = await readConversationIntegrityDocument(sessionId, userId);
+    if (!source) return null;
+    const signer = getConversationIntegritySigner();
+    const candidate = createConversationReceipt({
+        document: source.document,
+        messagesRevision: source.session.messages_revision,
+        signer
     });
-    return [...refs];
+    await dbRunAsync(
+        `INSERT OR IGNORE INTO conversation_integrity_receipts
+            (session_id, user_id, digest_sha256, messages_revision, message_count, signed_at, key_id, receipt_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            source.session.id,
+            source.session.user_id,
+            candidate.digest,
+            candidate.messagesRevision,
+            candidate.messageCount,
+            candidate.signedAt,
+            candidate.keyId,
+            JSON.stringify(candidate)
+        ]
+    );
+    const stored = await dbGetAsync(
+        `SELECT receipt_json FROM conversation_integrity_receipts
+         WHERE session_id = ? AND digest_sha256 = ?`,
+        [source.session.id, candidate.digest]
+    );
+    const receipt = parseStoredConversationReceipt(stored?.receipt_json) || candidate;
+    const ledgers = await writeConversationReceiptLedgers({
+        receipt,
+        primaryDir: CONVERSATION_INTEGRITY_PRIMARY_DIR,
+        mirrorDir: CONVERSATION_INTEGRITY_MIRROR_DIR
+    });
+    await dbRunAsync(
+        `UPDATE conversation_integrity_receipts
+         SET primary_ledger_written = 1,
+             mirror_ledger_written = ?,
+             mirror_error = ?
+         WHERE session_id = ? AND digest_sha256 = ?`,
+        [ledgers.mirror ? 1 : 0, ledgers.mirrorError || null, source.session.id, receipt.digest]
+    );
+    return {
+        document: source.document,
+        receipt,
+        replication: {
+            server: true,
+            mirrorConfigured: Boolean(CONVERSATION_INTEGRITY_MIRROR_DIR),
+            mirror: Boolean(ledgers.mirror),
+            mirrorError: ledgers.mirrorError || null
+        }
+    };
+}
+
+const conversationIntegritySealQueue = new Map();
+const CONVERSATION_INTEGRITY_BACKFILL_CONCURRENCY = Math.min(
+    8,
+    Math.max(1, parseInt(cleanEnvValue(process.env.RAI_CONVERSATION_BACKFILL_CONCURRENCY) || '4', 10) || 4)
+);
+
+function scheduleConversationIntegritySeal(sessionId, userId = null) {
+    const key = String(sessionId || '');
+    if (!key) return Promise.resolve(null);
+    const previous = conversationIntegritySealQueue.get(key) || Promise.resolve();
+    const next = previous
+        .catch(() => null)
+        .then(() => sealConversationIntegrity({ sessionId: key, userId }))
+        .catch((error) => {
+            console.warn(' 对话完整性存证失败:', sanitizeReportContext(error));
+            return null;
+        })
+        .finally(() => {
+            if (conversationIntegritySealQueue.get(key) === next) conversationIntegritySealQueue.delete(key);
+        });
+    conversationIntegritySealQueue.set(key, next);
+    return next;
+}
+
+async function backfillConversationIntegrityReceipts() {
+    const mirrorRequired = Boolean(CONVERSATION_INTEGRITY_MIRROR_DIR);
+    const sessions = await dbAllAsync(
+        `SELECT s.id, s.user_id
+         FROM sessions s
+         WHERE NOT EXISTS (
+             SELECT 1
+             FROM conversation_integrity_receipts r
+             WHERE r.session_id = s.id
+               AND r.messages_revision = COALESCE(s.messages_revision, 0)
+               AND r.primary_ledger_written = 1
+               AND (? = 0 OR r.mirror_ledger_written = 1)
+               AND julianday(r.signed_at) >= julianday(s.updated_at)
+         )
+         ORDER BY s.created_at ASC, s.id ASC`,
+        [mirrorRequired ? 1 : 0]
+    );
+    let sealed = 0;
+    let failed = 0;
+    let cursor = 0;
+    const worker = async () => {
+        while (cursor < sessions.length) {
+            const session = sessions[cursor];
+            cursor += 1;
+            const result = await scheduleConversationIntegritySeal(session.id, session.user_id);
+            if (result) sealed += 1;
+            else failed += 1;
+        }
+    };
+    const workerCount = Math.min(CONVERSATION_INTEGRITY_BACKFILL_CONCURRENCY, sessions.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    console.log(` 对话完整性存证回填完成: sealed=${sealed}, failed=${failed}`);
+}
+
+function extractMessageAttachmentRefs(rawAttachments) {
+    let attachments;
+    try {
+        attachments = typeof rawAttachments === 'string'
+            ? JSON.parse(rawAttachments)
+            : rawAttachments;
+    } catch (_) {
+        return [];
+    }
+    if (!Array.isArray(attachments)) return [];
+    return attachments
+        .slice(0, CHAT_CLIENT_MAX_ATTACHMENTS)
+        .map((attachment) => sanitizeClientAttachment(attachment))
+        .filter(Boolean)
+        .map((attachment) => {
+            const filename = uploadedFilenameFromAttachment(attachment);
+            return {
+                type: attachment.type,
+                fileName: attachment.fileName || attachment.originalName || '',
+                originalName: attachment.originalName || attachment.fileName || '',
+                mimeType: attachment.mimeType || attachment.fileType || '',
+                size: Math.max(0, Number(attachment.size || 0)),
+                fileId: filename || '',
+                filePath: filename ? `/api/uploads/${encodeURIComponent(filename)}` : ''
+            };
+        });
+}
+
+async function hydrateMessageAttachmentRefs(rawAttachments, userId, messageCreatedAt) {
+    const refs = extractMessageAttachmentRefs(rawAttachments);
+    return Promise.all(refs.map(async (attachment) => {
+        if ((attachment.filePath && attachment.fileId) || !attachment.fileName) return attachment;
+        try {
+            const row = await dbGetAsync(
+                `SELECT filename, original_name, mime_type, size
+                 FROM file_uploads
+                 WHERE user_id = ? AND upload_kind = 'attachment' AND original_name = ?
+                   AND julianday(created_at) <= julianday(?)
+                   AND julianday(created_at) >= julianday(?) - (30.0 / 1440.0)
+                 ORDER BY julianday(created_at) DESC
+                 LIMIT 1`,
+                [userId, attachment.fileName, messageCreatedAt, messageCreatedAt]
+            );
+            if (!row?.filename) return attachment;
+            return {
+                type: attachmentTypeFromMime(row.mime_type, attachment.type),
+                fileName: String(row.original_name || attachment.fileName).slice(0, 255),
+                originalName: String(row.original_name || attachment.originalName || attachment.fileName).slice(0, 255),
+                mimeType: String(row.mime_type || attachment.mimeType || '').slice(0, 120),
+                size: Math.max(0, Number(row.size || attachment.size || 0)),
+                fileId: row.filename,
+                filePath: `/api/uploads/${encodeURIComponent(row.filename)}`
+            };
+        } catch (_) {
+            return attachment;
+        }
+    }));
 }
 
 async function buildConversationManifestForUser(userId) {
-    await ensureConversationOrganizationSchema();
+    await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
     await dbRunAsync('INSERT OR IGNORE INTO conversation_sync_state (user_id, revision) VALUES (?, 1)', [userId]);
     const [state, sessions] = await Promise.all([
         dbGetAsync('SELECT revision FROM conversation_sync_state WHERE user_id = ?', [userId]),
@@ -13210,12 +14873,16 @@ async function buildConversationManifestForUser(userId) {
             `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind,
                     s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision,
                     CASE WHEN p.session_id IS NULL THEN 0 ELSE 1 END AS pinned, p.position AS pin_position,
+                    CASE WHEN f.id IS NULL THEN 0 ELSE 1 END AS has_canvas,
+                    f.id AS flow_id, COALESCE(f.canvas_revision, 0) AS canvas_revision,
+                    f.updated_at AS canvas_updated_at,
                     GROUP_CONCAT(DISTINCT m.folder_id) AS folder_ids
              FROM sessions s
              LEFT JOIN session_pins p ON p.user_id = s.user_id AND p.session_id = s.id
              LEFT JOIN conversation_folder_sessions m ON m.user_id = s.user_id AND m.session_id = s.id
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
              WHERE s.user_id = ? AND s.is_archived = 0
-               AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
+               AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved', 'flow')
              GROUP BY s.id
              ORDER BY CASE WHEN p.session_id IS NULL THEN 1 ELSE 0 END, p.position ASC, s.updated_at DESC, s.id DESC`,
             [userId]
@@ -13230,6 +14897,77 @@ async function buildConversationManifestForUser(userId) {
         }))
     };
 }
+
+app.get('/api/conversation-integrity/public-key', apiLimiter, (req, res) => {
+    try {
+        const signer = getConversationIntegritySigner();
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        return res.json({
+            issuer: CONVERSATION_INTEGRITY_ISSUER,
+            algorithm: 'Ed25519',
+            keyId: signer.keyId,
+            publicKey: signer.publicKeyPem
+        });
+    } catch (error) {
+        return res.status(503).json({ error: '对话验证服务尚未就绪', code: 'conversation_integrity_unavailable' });
+    }
+});
+
+app.post('/api/conversation-integrity/verify', apiLimiter, async (req, res) => {
+    try {
+        const document = req.body?.document;
+        const receipt = req.body?.receipt;
+        if (!document || !receipt || typeof document !== 'object' || typeof receipt !== 'object') {
+            return res.status(400).json({ authentic: false, reason: 'bundle_required' });
+        }
+        const verification = verifyConversationReceipt({ document, receipt });
+        if (!verification.authentic) return res.json(verification);
+        const ledger = await dbGetAsync(
+            `SELECT receipt_json, primary_ledger_written, mirror_ledger_written, mirror_error
+             FROM conversation_integrity_receipts
+             WHERE session_id = ? AND digest_sha256 = ? AND key_id = ?`,
+            [receipt.conversationId, receipt.digest, receipt.keyId]
+        );
+        const officialReceipt = parseStoredConversationReceipt(ledger?.receipt_json);
+        if (!ledger || officialReceipt?.signature !== receipt.signature || officialReceipt?.signedAt !== receipt.signedAt) {
+            return res.json({ ...verification, authentic: false, reason: 'receipt_not_in_official_ledger' });
+        }
+        return res.json({
+            ...verification,
+            officialLedger: true,
+            replication: {
+                server: Number(ledger.primary_ledger_written || 0) === 1,
+                mirrorConfigured: Boolean(CONVERSATION_INTEGRITY_MIRROR_DIR),
+                mirror: Number(ledger.mirror_ledger_written || 0) === 1,
+                mirrorError: ledger.mirror_error || null
+            }
+        });
+    } catch (error) {
+        console.warn(' 验证对话完整性收据失败:', sanitizeReportContext(error));
+        return res.status(503).json({ authentic: false, reason: 'verification_temporarily_unavailable' });
+    }
+});
+
+app.get('/api/sessions/:id/export', authenticateToken, async (req, res) => {
+    try {
+        const sealed = await sealConversationIntegrity({ sessionId: req.params.id, userId: req.user.userId });
+        if (!sealed) return res.status(404).json({ error: '对话不存在' });
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.json({
+            format: 'rai-verifiable-conversation/v1',
+            document: sealed.document,
+            receipt: sealed.receipt,
+            verification: {
+                url: `${CONVERSATION_INTEGRITY_ISSUER.replace(/\/$/, '')}/api/conversation-integrity/verify`,
+                publicKeyUrl: `${CONVERSATION_INTEGRITY_ISSUER.replace(/\/$/, '')}/api/conversation-integrity/public-key`
+            },
+            replication: sealed.replication
+        });
+    } catch (error) {
+        console.error(' 导出可验证对话失败:', sanitizeReportContext(error));
+        return res.status(503).json({ error: '可验证对话导出暂时不可用', code: 'conversation_integrity_unavailable' });
+    }
+});
 
 app.get('/api/sessions/manifest', authenticateToken, async (req, res) => {
     try {
@@ -13254,17 +14992,26 @@ app.get('/api/sessions', authenticateToken, async (req, res) => {
         const offset = parseBoundedInteger(req.query.offset, 0, 0, 100000);
         const limit = parseBoundedInteger(req.query.limit, 20, 1, 100);
 
-        await ensureConversationOrganizationSchema();
+        await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
         const pinned = await dbAllAsync(
-            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 1 AS pinned, p.position AS pin_position
+            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 1 AS pinned, p.position AS pin_position,
+                    CASE WHEN f.id IS NULL THEN 0 ELSE 1 END AS has_canvas,
+                    f.id AS flow_id, COALESCE(f.canvas_revision, 0) AS canvas_revision,
+                    f.updated_at AS canvas_updated_at
              FROM session_pins p JOIN sessions s ON s.id = p.session_id AND s.user_id = p.user_id
-             WHERE p.user_id = ? AND s.is_archived = 0 AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
+             WHERE p.user_id = ? AND s.is_archived = 0 AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved', 'flow')
              ORDER BY p.position ASC, s.id ASC`, [req.user.userId]
         );
         const sessions = await dbAllAsync(
-            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 0 AS pinned, NULL AS pin_position
-             FROM sessions s WHERE s.user_id = ? AND s.is_archived = 0
-               AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved')
+            `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 0 AS pinned, NULL AS pin_position,
+                    CASE WHEN f.id IS NULL THEN 0 ELSE 1 END AS has_canvas,
+                    f.id AS flow_id, COALESCE(f.canvas_revision, 0) AS canvas_revision,
+                    f.updated_at AS canvas_updated_at
+             FROM sessions s
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
+             WHERE s.user_id = ? AND s.is_archived = 0
+               AND COALESCE(s.session_kind, 'chat') IN ('chat', 'temporary_saved', 'flow')
                AND NOT EXISTS (SELECT 1 FROM session_pins p WHERE p.user_id = s.user_id AND p.session_id = s.id)
              ORDER BY s.updated_at DESC, s.id DESC LIMIT ? OFFSET ?`, [req.user.userId, limit, offset]
         );
@@ -13295,6 +15042,7 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
                     return res.status(500).json({ error: '创建失败' });
                 }
                 console.log(' 创建会话成功:', sessionId);
+                scheduleConversationIntegritySeal(sessionId, req.user.userId);
                 res.json({ success: true, sessionId, prompt_model_identity: normalizeSessionPromptModelIdentity(promptModelIdentity) });
             }
         );
@@ -13335,55 +15083,44 @@ app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res
     }
 });
 
-app.put('/api/sessions/:id', authenticateToken, (req, res) => {
+app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     const { title, model, is_archived } = req.body;
     const safeTitle = title === undefined ? null : sanitizeGeneratedConversationTitle(title);
 
-    db.run(
-        'UPDATE sessions SET title = COALESCE(?, title), model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-        [safeTitle, model, is_archived, req.params.id, req.user.userId],
-        (err) => {
-            if (err) {
-                console.error(' 更新会话失败:', sanitizeReportContext(err));
-                return res.status(500).json({ error: '更新失败' });
+    try {
+        await ensureChatFlowSchemaColumns();
+        const updated = await withMainDbTransaction(async (tx) => {
+            const result = await tx.run(
+                'UPDATE sessions SET title = COALESCE(?, title), model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                [safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
+            );
+            if (Number(result?.changes || 0) !== 1) return false;
+            if (safeTitle) {
+                await tx.run(
+                    'UPDATE flows SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND user_id = ?',
+                    [safeTitle, req.params.id, req.user.userId]
+                );
             }
-            res.json({ success: true });
-        }
-    );
+            return true;
+        });
+        if (!updated) return res.status(404).json({ error: '会话不存在' });
+        scheduleConversationIntegritySeal(req.params.id, req.user.userId);
+        return res.json({ success: true });
+    } catch (error) {
+        console.error(' 更新会话失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '更新失败' });
+    }
 });
 
 app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
     try {
-        await ensureConversationOrganizationSchema();
+        await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
         const deleted = await withMainDbTransaction(async (tx) => {
-            const existing = await tx.get(
-                'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
-                [req.params.id, req.user.userId]
-            );
-            if (!existing) return false;
-            await stageGeneratedImageDeletionsForSession({
+            return Boolean(await deleteOwnedSessionWithRelatedData({
                 tx,
                 sessionId: req.params.id,
                 userId: req.user.userId
-            });
-            await tx.run(
-                'UPDATE selection_explanation_threads SET session_id = NULL WHERE user_id = ? AND session_id = ?',
-                [req.user.userId, req.params.id]
-            );
-            await tx.run(
-                'UPDATE selection_explanation_requests SET session_id = NULL WHERE user_id = ? AND session_id = ?',
-                [req.user.userId, req.params.id]
-            );
-            const result = await tx.run(
-                'DELETE FROM sessions WHERE id = ? AND user_id = ?',
-                [req.params.id, req.user.userId]
-            );
-            if (Number(result?.changes || 0) !== 1) {
-                const error = new Error('session_delete_target_changed');
-                error.code = 'session_delete_target_changed';
-                throw error;
-            }
-            return true;
+            }));
         });
         if (!deleted) return res.status(404).json({ error: '会话不存在' });
         await drainQueuedGeneratedImageDeletionsBestEffort();
@@ -13406,8 +15143,7 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
             return res.status(403).json({ error: '无权访问此会话' });
         }
 
-        // 优化：只查询必要字段，避免加载大的attachments Base64数据
-        // 附件数据可以按需加载（懒加载）
+        // 只返回轻量附件元数据；不把历史 Base64 附件正文放进消息列表。
         db.all(
             `SELECT id, session_id, role, content, request_id, reasoning_content, model, attachments,
                     enable_search, thinking_mode, internet_mode, sources, process_trace, created_at,
@@ -13415,19 +15151,29 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
                          THEN 1 ELSE 0 END as has_attachments
              FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
             [req.params.id],
-            (err, messages) => {
+            async (err, messages) => {
                 if (err) {
                     console.error(' 获取消息失败:', sanitizeReportContext(err));
                     return res.status(500).json({ error: '数据库错误' });
                 }
-                // Keep the historical array response contract. attachment_refs is
-                // additive and contains only private server assets, never Base64.
-                const payload = messages.map((message) => {
-                    const attachment_refs = extractMessageAttachmentRefs(message.attachments, message.content);
+                // Keep the historical array response contract. attachment_refs contains
+                // display metadata and private server references, never Base64.
+                const payload = await Promise.all(messages.map(async (message) => {
+                    const attachment_refs = await hydrateMessageAttachmentRefs(
+                        message.attachments,
+                        req.user.userId,
+                        message.created_at
+                    );
                     delete message.attachments;
-                    return { ...message, attachment_refs };
-                });
-                const etag = makePrivateEtag(`${req.user.userId}:${req.params.id}:${session.messages_revision}`);
+                    return {
+                        ...message,
+                        content: message.role === 'user' && attachment_refs.length > 0
+                            ? stripInjectedAttachmentPromptContext(message.content)
+                            : message.content,
+                        attachment_refs
+                    };
+                }));
+                const etag = makePrivateEtag(`${PACKAGE_VERSION}:${req.user.userId}:${req.params.id}:${session.messages_revision}`);
                 res.setHeader('Cache-Control', 'private, no-cache');
                 res.setHeader('ETag', etag);
                 res.setHeader('X-RAI-Messages-Revision', String(session.messages_revision));
@@ -13609,16 +15355,48 @@ function normalizeFlowCanvasState(rawCanvasState) {
     };
 }
 
-function normalizeLegacyFlowMessages(rawChatHistory) {
+function canonicalizeJsonValue(value) {
+    if (Array.isArray(value)) return value.map((item) => canonicalizeJsonValue(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.keys(value).sort().reduce((result, key) => {
+        result[key] = canonicalizeJsonValue(value[key]);
+        return result;
+    }, {});
+}
+
+function flowCanvasStatesEqual(left, right) {
+    return JSON.stringify(canonicalizeJsonValue(normalizeFlowCanvasState(left))) ===
+        JSON.stringify(canonicalizeJsonValue(normalizeFlowCanvasState(right)));
+}
+
+function normalizeLegacyFlowMessageTimestamp(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    const milliseconds = Number.isFinite(numeric)
+        ? (Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric)
+        : Date.parse(String(value));
+    return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : null;
+}
+
+function normalizeLegacyFlowMessageEntries(rawChatHistory) {
     const parsedChatHistory = safeJsonParse(rawChatHistory, []);
     if (!Array.isArray(parsedChatHistory)) return [];
 
     return parsedChatHistory
-        .filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
-        .map((item) => ({
+        .map((item, sourceIndex) => item && (item.role === 'user' || item.role === 'assistant') ? ({
             role: item.role,
-            content: typeof item.content === 'string' ? item.content : String(item.content || '')
-        }));
+            content: typeof item.content === 'string' ? item.content : String(item.content || ''),
+            sourceIndex,
+            createdAt: normalizeLegacyFlowMessageTimestamp(item.timestamp || item.created_at)
+        }) : null)
+        .filter(Boolean);
+}
+
+function normalizeLegacyFlowMessages(rawChatHistory) {
+    return normalizeLegacyFlowMessageEntries(rawChatHistory).map((item) => ({
+        role: item.role,
+        content: item.content
+    }));
 }
 
 function trimStructuredTokenPrefix(text = '') {
@@ -13906,6 +15684,7 @@ async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId,
             title: trimmedTitle
         })}\n\n`);
     }
+    scheduleConversationIntegritySeal(sessionId, userId);
     return trimmedTitle;
 }
 
@@ -14081,8 +15860,120 @@ async function getSessionMessagesBySessionId(sessionId) {
     );
 }
 
+async function deleteOwnedSessionWithRelatedData({ tx, sessionId, userId = null } = {}) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!tx || !normalizedSessionId) return null;
+    const hasOwner = userId !== null && userId !== undefined;
+    const existing = await tx.get(
+        `SELECT id, user_id FROM sessions WHERE id = ?${hasOwner ? ' AND user_id = ?' : ''}`,
+        hasOwner ? [normalizedSessionId, userId] : [normalizedSessionId]
+    );
+    if (!existing) return null;
+
+    await stageGeneratedImageDeletionsForSession({
+        tx,
+        sessionId: normalizedSessionId,
+        userId: existing.user_id
+    });
+    await tx.run(
+        'UPDATE selection_explanation_threads SET session_id = NULL WHERE user_id = ? AND session_id = ?',
+        [existing.user_id, normalizedSessionId]
+    );
+    await tx.run(
+        'UPDATE selection_explanation_requests SET session_id = NULL WHERE user_id = ? AND session_id = ?',
+        [existing.user_id, normalizedSessionId]
+    );
+    await tx.run(
+        'DELETE FROM flows WHERE session_id = ? AND user_id = ?',
+        [normalizedSessionId, existing.user_id]
+    );
+    const result = await tx.run(
+        'DELETE FROM sessions WHERE id = ? AND user_id = ?',
+        [normalizedSessionId, existing.user_id]
+    );
+    if (Number(result?.changes || 0) !== 1) {
+        const error = new Error('session_delete_target_changed');
+        error.code = 'session_delete_target_changed';
+        throw error;
+    }
+    return existing;
+}
+
+function migrateFlowCanvasMessageReferences(rawCanvasState, insertedMessageIds = []) {
+    const normalizedCanvasState = normalizeFlowCanvasState(rawCanvasState);
+    return normalizeFlowCanvasState({
+        ...normalizedCanvasState,
+        nodes: normalizedCanvasState.nodes.map((node) => {
+            const sourceIndex = Number(node.sourceIndex);
+            if (!Number.isInteger(sourceIndex) || !insertedMessageIds[sourceIndex]) return node;
+            const migratedNode = {
+                ...node,
+                sourceMessageId: insertedMessageIds[sourceIndex]
+            };
+            delete migratedNode.sourceIndex;
+            return migratedNode;
+        })
+    });
+}
+
+async function migrateLegacyFlowInTransaction(tx, currentFlow, userId) {
+    const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const legacyMessages = normalizeLegacyFlowMessageEntries(currentFlow.chat_history);
+    const insertedMessageIds = [];
+
+    await tx.run(
+        `INSERT INTO sessions (id, user_id, title, model, session_kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))`,
+        [
+            sessionId,
+            userId,
+            currentFlow.title || '新 ChatFlow',
+            'auto',
+            'flow',
+            currentFlow.created_at || null,
+            currentFlow.updated_at || currentFlow.created_at || null
+        ]
+    );
+
+    for (const legacyMessage of legacyMessages) {
+        const insertResult = await tx.run(
+            `INSERT INTO messages (session_id, role, content, created_at)
+             VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))`,
+            [
+                sessionId,
+                legacyMessage.role,
+                legacyMessage.content,
+                legacyMessage.createdAt || currentFlow.created_at || null
+            ]
+        );
+        insertedMessageIds[legacyMessage.sourceIndex] = insertResult.lastID;
+    }
+
+    const migratedCanvasState = migrateFlowCanvasMessageReferences(
+        currentFlow.canvas_state,
+        insertedMessageIds
+    );
+    const updateResult = await tx.run(
+        `UPDATE flows
+         SET session_id = ?, canvas_state = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND user_id = ?`,
+        [sessionId, JSON.stringify(migratedCanvasState), currentFlow.id, userId]
+    );
+    if (Number(updateResult?.changes || 0) !== 1) {
+        const error = new Error('legacy_flow_migration_target_changed');
+        error.code = 'legacy_flow_migration_target_changed';
+        throw error;
+    }
+
+    return {
+        ...currentFlow,
+        session_id: sessionId,
+        canvas_state: JSON.stringify(migratedCanvasState)
+    };
+}
+
 async function migrateLegacyFlowRow(flowRow, userId) {
-    await ensureChatFlowSchemaColumns();
+    await ensureChatFlowBaseColumns();
     const flowId = String(flowRow?.id || '').trim();
     if (!flowId) return null;
 
@@ -14090,68 +15981,98 @@ async function migrateLegacyFlowRow(flowRow, userId) {
         // The caller's row was read before entering the FIFO. Re-read here so two
         // concurrent legacy GETs cannot each create a session from the same stale row.
         const currentFlow = await tx.get(
-            'SELECT * FROM flows WHERE id = ? AND user_id = ?',
+            `SELECT f.*, s.id AS linked_session_id, s.user_id AS linked_session_user_id
+             FROM flows f LEFT JOIN sessions s ON s.id = f.session_id
+             WHERE f.id = ? AND f.user_id = ?`,
             [flowId, userId]
         );
         if (!currentFlow) return null;
-        if (currentFlow.session_id) {
-            const linkedSession = await tx.get(
-                'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
-                [currentFlow.session_id, userId]
-            );
-            if (linkedSession) return currentFlow;
+        if (currentFlow.session_id &&
+            currentFlow.linked_session_id === currentFlow.session_id &&
+            Number(currentFlow.linked_session_user_id) === Number(userId)) {
+            return currentFlow;
         }
+        return migrateLegacyFlowInTransaction(tx, currentFlow, userId);
+    });
+}
 
-        const sessionId = `session_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-        const legacyMessages = normalizeLegacyFlowMessages(currentFlow.chat_history);
-        const normalizedCanvasState = normalizeFlowCanvasState(currentFlow.canvas_state);
-        const insertedMessageIds = [];
+async function finalizeChatFlowSchemaInTransaction(tx) {
+    await tx.run(
+        `UPDATE flows SET canvas_revision = 0
+         WHERE canvas_revision IS NULL OR CAST(canvas_revision AS INTEGER) < 0`
+    );
+    const columns = await tx.all('PRAGMA table_info(flows)');
+    const sessionIdColumn = columns.find((column) => String(column?.name || '') === 'session_id');
+    if (!sessionIdColumn || Number(sessionIdColumn.notnull || 0) !== 1) {
+        await tx.run('DROP TABLE IF EXISTS flows_v01162_migration');
+        await tx.run(`CREATE TABLE flows_v01162_migration (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            title TEXT DEFAULT '新 ChatFlow',
+            session_id TEXT NOT NULL,
+            chat_history TEXT DEFAULT '[]',
+            canvas_state TEXT DEFAULT '{"nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+            canvas_revision INTEGER NOT NULL DEFAULT 0 CHECK(canvas_revision >= 0),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )`);
+        await tx.run(`INSERT INTO flows_v01162_migration
+            (id, user_id, title, session_id, chat_history, canvas_state, canvas_revision, created_at, updated_at)
+            SELECT id, user_id, title, session_id, chat_history, canvas_state,
+                   CAST(COALESCE(canvas_revision, 0) AS INTEGER), created_at, updated_at
+            FROM flows`);
+        await tx.run('DROP TABLE flows');
+        await tx.run('ALTER TABLE flows_v01162_migration RENAME TO flows');
+    }
 
-        await tx.run(
-            'INSERT INTO sessions (id, user_id, title, model, session_kind) VALUES (?, ?, ?, ?, ?)',
-            [sessionId, userId, currentFlow.title || '新 ChatFlow', 'auto', 'flow']
+    await tx.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_flows_session_id_unique ON flows(session_id)');
+    await tx.run('CREATE INDEX IF NOT EXISTS idx_flows_user_updated ON flows(user_id, updated_at DESC, id)');
+    const invalid = await tx.get(
+        `SELECT COUNT(*) AS count
+         FROM flows f LEFT JOIN sessions s ON s.id = f.session_id
+         WHERE f.session_id IS NULL OR TRIM(f.session_id) = '' OR s.id IS NULL OR s.user_id != f.user_id`
+    );
+    if (Number(invalid?.count || 0) !== 0) {
+        const error = new Error('chatflow_session_constraint_invalid');
+        error.code = 'chatflow_session_constraint_invalid';
+        throw error;
+    }
+}
+
+async function migrateAllLegacyFlows() {
+    await ensureChatFlowBaseColumns();
+    return withMainDbTransaction(async (tx) => {
+        const flows = await tx.all(
+            `SELECT f.*, s.id AS linked_session_id, s.user_id AS linked_session_user_id
+             FROM flows f LEFT JOIN sessions s ON s.id = f.session_id
+             ORDER BY f.created_at ASC, f.id ASC`
         );
+        const claimedSessionIds = new Set();
+        let migrated = 0;
+        let migratedMessages = 0;
 
-        for (let index = 0; index < legacyMessages.length; index += 1) {
-            const legacyMessage = legacyMessages[index];
-            const createdAt = new Date(Date.now() + index).toISOString();
-            const insertResult = await tx.run(
-                'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
-                [sessionId, legacyMessage.role, legacyMessage.content, createdAt]
-            );
-            insertedMessageIds.push(insertResult.lastID);
+        for (const flow of flows) {
+            const sessionId = String(flow.session_id || '').trim();
+            const validLink = Boolean(sessionId) &&
+                flow.linked_session_id === sessionId &&
+                Number(flow.linked_session_user_id) === Number(flow.user_id) &&
+                !claimedSessionIds.has(sessionId);
+            if (validLink) {
+                claimedSessionIds.add(sessionId);
+                continue;
+            }
+
+            const legacyMessageCount = normalizeLegacyFlowMessages(flow.chat_history).length;
+            const migratedFlow = await migrateLegacyFlowInTransaction(tx, flow, flow.user_id);
+            claimedSessionIds.add(migratedFlow.session_id);
+            migrated += 1;
+            migratedMessages += legacyMessageCount;
         }
 
-        const migratedCanvasState = normalizeFlowCanvasState({
-            ...normalizedCanvasState,
-            nodes: normalizedCanvasState.nodes.map((node) => {
-                if ((node.sourceMessageId === undefined || node.sourceMessageId === null || node.sourceMessageId === '') &&
-                    Number.isInteger(node.sourceIndex) &&
-                    insertedMessageIds[node.sourceIndex]) {
-                    return {
-                        ...node,
-                        sourceMessageId: insertedMessageIds[node.sourceIndex]
-                    };
-                }
-                return node;
-            })
-        });
-
-        const updateResult = await tx.run(
-            'UPDATE flows SET session_id = ?, canvas_state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-            [sessionId, JSON.stringify(migratedCanvasState), currentFlow.id, userId]
-        );
-        if (Number(updateResult?.changes || 0) !== 1) {
-            const error = new Error('legacy_flow_migration_target_changed');
-            error.code = 'legacy_flow_migration_target_changed';
-            throw error;
-        }
-
-        return {
-            ...currentFlow,
-            session_id: sessionId,
-            canvas_state: JSON.stringify(migratedCanvasState)
-        };
+        await finalizeChatFlowSchemaInTransaction(tx);
+        return { total: flows.length, migrated, migratedMessages };
     });
 }
 
@@ -14256,12 +16177,151 @@ function buildFlowCanvasSystemInstruction({ flowRecord, canvasContext, uiSurface
     ].filter(Boolean).join('\n');
 }
 
+function buildSessionCanvasPayload(row = {}) {
+    const enabled = Boolean(row.flow_id);
+    return {
+        enabled,
+        flow_id: enabled ? row.flow_id : null,
+        canvas_state: enabled ? normalizeFlowCanvasState(row.canvas_state) : cloneFlowDefaultCanvasState(),
+        revision: enabled ? Number(row.canvas_revision || 0) : 0,
+        updated_at: enabled ? row.canvas_updated_at || null : null
+    };
+}
+
+function parseCanvasBaseRevision(value) {
+    if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+    const revision = Number(value);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+app.get('/api/sessions/:id/canvas', authenticateToken, async (req, res) => {
+    try {
+        await ensureChatFlowSchemaColumns();
+        const row = await dbGetAsync(
+            `SELECT s.id, f.id AS flow_id, f.canvas_state, f.canvas_revision,
+                    f.updated_at AS canvas_updated_at
+             FROM sessions s
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
+             WHERE s.id = ? AND s.user_id = ?`,
+            [req.params.id, req.user.userId]
+        );
+        if (!row) return res.status(404).json({ error: '会话不存在' });
+        return res.json(buildSessionCanvasPayload(row));
+    } catch (error) {
+        console.error(' 读取会话画布失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '读取画布失败', code: 'canvas_read_failed' });
+    }
+});
+
+app.put('/api/sessions/:id/canvas', authenticateToken, async (req, res) => {
+    const hasCanvasState = Object.prototype.hasOwnProperty.call(req.body || {}, 'canvas_state');
+    const baseRevision = parseCanvasBaseRevision(req.body?.base_revision);
+    if (!hasCanvasState) {
+        return res.status(400).json({ error: '缺少画布状态', code: 'canvas_state_required' });
+    }
+    if (baseRevision === null) {
+        return res.status(400).json({ error: '画布基础revision无效', code: 'canvas_base_revision_invalid' });
+    }
+    const canvasState = normalizeFlowCanvasState(req.body.canvas_state);
+
+    try {
+        await ensureChatFlowSchemaColumns();
+        const outcome = await withMainDbTransaction(async (tx) => {
+            const current = await tx.get(
+                `SELECT s.id, s.title, f.id AS flow_id, f.canvas_state, f.canvas_revision,
+                        f.updated_at AS canvas_updated_at
+                 FROM sessions s
+                 LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
+                 WHERE s.id = ? AND s.user_id = ?`,
+                [req.params.id, req.user.userId]
+            );
+            if (!current) return { missing: true };
+
+            const currentRevision = current.flow_id ? Number(current.canvas_revision || 0) : 0;
+            if (current.flow_id && flowCanvasStatesEqual(current.canvas_state, canvasState) && baseRevision <= currentRevision) {
+                return {
+                    saved: {
+                        flow_id: current.flow_id,
+                        canvas_state: current.canvas_state,
+                        canvas_revision: currentRevision,
+                        canvas_updated_at: current.canvas_updated_at || null
+                    }
+                };
+            }
+            if (baseRevision !== currentRevision) {
+                return {
+                    conflict: true,
+                    revision: currentRevision,
+                    updated_at: current.canvas_updated_at || null
+                };
+            }
+
+            let flowId = current.flow_id;
+            if (flowId) {
+                const updated = await tx.run(
+                    `UPDATE flows
+                     SET canvas_state = ?, canvas_revision = canvas_revision + 1,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ? AND user_id = ? AND canvas_revision = ?`,
+                    [JSON.stringify(canvasState), flowId, req.user.userId, baseRevision]
+                );
+                if (Number(updated?.changes || 0) !== 1) {
+                    const latest = await tx.get(
+                        'SELECT canvas_revision, updated_at FROM flows WHERE id = ? AND user_id = ?',
+                        [flowId, req.user.userId]
+                    );
+                    return {
+                        conflict: true,
+                        revision: Number(latest?.canvas_revision || 0),
+                        updated_at: latest?.updated_at || null
+                    };
+                }
+            } else {
+                flowId = `flow-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+                await tx.run(
+                    `INSERT INTO flows
+                     (id, user_id, title, session_id, canvas_state, canvas_revision)
+                     VALUES (?, ?, ?, ?, ?, 1)`,
+                    [flowId, req.user.userId, current.title || '新对话', req.params.id, JSON.stringify(canvasState)]
+                );
+            }
+
+            await tx.run(
+                'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                [req.params.id, req.user.userId]
+            );
+            const saved = await tx.get(
+                `SELECT id AS flow_id, canvas_state, canvas_revision,
+                        updated_at AS canvas_updated_at
+                 FROM flows WHERE id = ? AND user_id = ?`,
+                [flowId, req.user.userId]
+            );
+            return { saved };
+        });
+
+        if (outcome.missing) return res.status(404).json({ error: '会话不存在' });
+        if (outcome.conflict) {
+            return res.status(409).json({
+                error: '画布已在其他设备更新，请重新加载',
+                code: 'canvas_revision_conflict',
+                revision: outcome.revision,
+                updated_at: outcome.updated_at
+            });
+        }
+        return res.json(buildSessionCanvasPayload(outcome.saved));
+    } catch (error) {
+        console.error(' 保存会话画布失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '保存画布失败', code: 'canvas_save_failed' });
+    }
+});
+
 // 获取用户的 Flow 列表
 app.get('/api/flows', authenticateToken, async (req, res) => {
     try {
         await ensureChatFlowSchemaColumns();
         db.all(
-            `SELECT f.id, f.title, f.session_id, f.created_at, f.updated_at,
+            `SELECT f.id, f.title, f.session_id, f.canvas_revision,
+                    f.created_at, f.updated_at, f.updated_at AS canvas_updated_at,
                     (SELECT content FROM messages WHERE session_id = f.session_id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message
              FROM flows f
              WHERE f.user_id = ?
@@ -14308,6 +16368,7 @@ app.post('/api/flows', authenticateToken, async (req, res) => {
             id,
             title,
             session_id: sessionId,
+            canvas_revision: 0,
             created_at: new Date().toISOString()
         });
     } catch (error) {
@@ -14337,44 +16398,84 @@ app.get('/api/flows/:id', authenticateToken, async (req, res) => {
 
 // 更新 Flow
 app.put('/api/flows/:id', authenticateToken, async (req, res) => {
-    const { title, chat_history, canvas_state: canvasStateInput } = req.body;
+    const { title, chat_history, canvas_state: canvasStateInput, base_revision: baseRevisionInput } = req.body;
+    const hasBaseRevision = Object.prototype.hasOwnProperty.call(req.body || {}, 'base_revision');
+    const baseRevision = hasBaseRevision ? parseCanvasBaseRevision(baseRevisionInput) : null;
+    if (hasBaseRevision && baseRevision === null) {
+        return res.status(400).json({ error: '画布基础revision无效', code: 'canvas_base_revision_invalid' });
+    }
 
     try {
         await ensureChatFlowSchemaColumns();
-        const currentFlow = await dbGetAsync(
-            'SELECT id, user_id, session_id FROM flows WHERE id = ? AND user_id = ?',
-            [req.params.id, req.user.userId]
-        );
-        if (!currentFlow) {
-            return res.status(404).json({ error: 'Flow not found' });
-        }
-
-        const updates = [];
-        const params = [];
-
-        if (title !== undefined) {
-            updates.push('title = ?');
-            params.push(String(title || '').trim() || '新 ChatFlow');
-        }
-
-        if (canvasStateInput !== undefined) {
-            updates.push('canvas_state = ?');
-            params.push(JSON.stringify(normalizeFlowCanvasState(canvasStateInput)));
-        }
-
-        updates.push('updated_at = CURRENT_TIMESTAMP');
-        params.push(req.params.id, req.user.userId);
-
-        await dbRunAsync(
-            `UPDATE flows SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
-            params
-        );
-
-        if (title !== undefined && currentFlow.session_id) {
-            await dbRunAsync(
-                'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-                [String(title || '').trim() || '新 ChatFlow', currentFlow.session_id, req.user.userId]
+        const outcome = await withMainDbTransaction(async (tx) => {
+            const currentFlow = await tx.get(
+                `SELECT id, user_id, session_id, canvas_state, canvas_revision, updated_at
+                 FROM flows WHERE id = ? AND user_id = ?`,
+                [req.params.id, req.user.userId]
             );
+            if (!currentFlow) return { missing: true };
+
+            const currentRevision = Number(currentFlow.canvas_revision || 0);
+            const canvasChanged = canvasStateInput !== undefined &&
+                !flowCanvasStatesEqual(currentFlow.canvas_state, canvasStateInput);
+            if (canvasStateInput !== undefined && hasBaseRevision && baseRevision !== currentRevision &&
+                (canvasChanged || baseRevision > currentRevision)) {
+                return {
+                    conflict: true,
+                    revision: currentRevision,
+                    updated_at: currentFlow.updated_at || null
+                };
+            }
+
+            const updates = [];
+            const params = [];
+            const nextTitle = String(title || '').trim() || '新 ChatFlow';
+            if (title !== undefined) {
+                updates.push('title = ?');
+                params.push(nextTitle);
+            }
+            if (canvasChanged) {
+                updates.push('canvas_state = ?');
+                params.push(JSON.stringify(normalizeFlowCanvasState(canvasStateInput)));
+                updates.push('canvas_revision = canvas_revision + 1');
+            }
+            if (updates.length > 0) {
+                updates.push('updated_at = CURRENT_TIMESTAMP');
+                params.push(req.params.id, req.user.userId);
+                await tx.run(
+                    `UPDATE flows SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
+                    params
+                );
+            }
+
+            if (currentFlow.session_id && (title !== undefined || canvasChanged)) {
+                if (title !== undefined) {
+                    await tx.run(
+                        'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                        [nextTitle, currentFlow.session_id, req.user.userId]
+                    );
+                } else {
+                    await tx.run(
+                        'UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                        [currentFlow.session_id, req.user.userId]
+                    );
+                }
+            }
+
+            const saved = await tx.get(
+                'SELECT canvas_revision, updated_at FROM flows WHERE id = ? AND user_id = ?',
+                [req.params.id, req.user.userId]
+            );
+            return { saved };
+        });
+        if (outcome.missing) return res.status(404).json({ error: 'Flow not found' });
+        if (outcome.conflict) {
+            return res.status(409).json({
+                error: '画布已在其他设备更新，请重新加载',
+                code: 'canvas_revision_conflict',
+                revision: outcome.revision,
+                updated_at: outcome.updated_at
+            });
         }
 
         if (chat_history !== undefined) {
@@ -14382,7 +16483,11 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
         }
 
         console.log(` 更新ChatFlow成功: ${formatPrivateLogFingerprint(req.params.id, 'flowId')}`);
-        res.json({ success: true });
+        res.json({
+            success: true,
+            revision: Number(outcome.saved?.canvas_revision || 0),
+            updated_at: outcome.saved?.updated_at || null
+        });
     } catch (error) {
         console.error(' 更新Flow失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '更新 ChatFlow 暂时不可用', code: 'flow_update_failed' });
@@ -14403,26 +16508,26 @@ app.delete('/api/flows/:id', authenticateToken, async (req, res) => {
             if (!flow) return null;
 
             if (flow.session_id) {
-                await stageGeneratedImageDeletionsForSession({
+                const deletedSession = await deleteOwnedSessionWithRelatedData({
                     tx,
                     sessionId: flow.session_id,
                     userId: req.user.userId
                 });
-            }
-            const deleteResult = await tx.run(
-                'DELETE FROM flows WHERE id = ? AND user_id = ?',
-                [req.params.id, req.user.userId]
-            );
-            if (Number(deleteResult?.changes || 0) !== 1) {
-                const error = new Error('flow_delete_target_changed');
-                error.code = 'flow_delete_target_changed';
-                throw error;
-            }
-            if (flow.session_id) {
-                await tx.run(
-                    'DELETE FROM sessions WHERE id = ? AND user_id = ? AND COALESCE(session_kind, ?) = ?',
-                    [flow.session_id, req.user.userId, 'flow', 'flow']
+                if (!deletedSession) {
+                    const error = new Error('flow_delete_session_missing');
+                    error.code = 'flow_delete_session_missing';
+                    throw error;
+                }
+            } else {
+                const deleteResult = await tx.run(
+                    'DELETE FROM flows WHERE id = ? AND user_id = ?',
+                    [req.params.id, req.user.userId]
                 );
+                if (Number(deleteResult?.changes || 0) !== 1) {
+                    const error = new Error('flow_delete_target_changed');
+                    error.code = 'flow_delete_target_changed';
+                    throw error;
+                }
             }
             return flow;
         });
@@ -14516,6 +16621,7 @@ app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, as
         if (result.forbidden) return res.status(403).json({ error: '无权访问此会话' });
         if (result.notFound) return res.status(404).json({ error: '消息不存在' });
         await drainQueuedGeneratedImageDeletionsBestEffort();
+        scheduleConversationIntegritySeal(sessionId, req.user.userId);
         console.log(` 已删除消息 ID: ${messageId}`);
         return res.json({ success: true, deletedId: messageId });
     } catch (error) {
@@ -14558,6 +16664,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
                 }
 
                 console.log(` 已更新消息 ID: ${messageId}`);
+                scheduleConversationIntegritySeal(sessionId, req.user.userId);
                 res.json({ success: true, updatedId: messageId, content });
             }
         );
@@ -15646,7 +17753,8 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         cardId = `selcard_${crypto.randomUUID().replace(/-/g, '')}`;
         const runtimeSettings = await getAdminRuntimeSettings();
         ensureRequestCanContinue();
-        const concurrentLimit = Math.max(1, Number(runtimeSettings.concurrent_requests || MAX_CONCURRENT_REQUESTS_PER_USER));
+        const concurrency = await resolveUserConcurrentRequestLimit(req.user.userId, runtimeSettings);
+        const concurrentLimit = concurrency.limit;
         const activeRegistration = await registerSelectionExplanationActiveRequest({
             requestId,
             userId: req.user.userId,
@@ -15666,6 +17774,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                 error: `每个用户最多同时运行 ${concurrentLimit} 个请求，请等待其中一个完成或停止后再试`,
                 code: 'user_concurrency_limit',
                 limit: concurrentLimit,
+                membership: concurrency.tier,
                 active: activeRegistration.active
             });
         }
@@ -16636,6 +18745,41 @@ app.get('/api/uploads/:filename', authenticateToken, async (req, res) => {
     }
 });
 
+// Short-lived artifacts are private, bound to both the authenticated user and
+// the session that created them, and consumed after one download attempt.
+app.get('/api/file-jobs/:taskId/artifacts/:artifactId', authenticateToken, async (req, res) => {
+    const sessionId = String(req.query.sessionId || req.headers['x-rai-session-id'] || '').trim();
+    if (!sessionId || sessionId.length > 160 || /[\u0000-\u001f\u007f]/.test(sessionId)) {
+        return res.status(404).json({ error: '文件产物不存在' });
+    }
+    try {
+        const ownedSession = await dbGetAsync(
+            'SELECT id FROM sessions WHERE id = ? AND user_id = ?',
+            [sessionId, req.user.userId]
+        );
+        if (!ownedSession) return res.status(404).json({ error: '文件产物不存在' });
+        const prepared = await fileWorkspace.prepareDownload({
+            userId: req.user.userId,
+            sessionId,
+            taskId: req.params.taskId,
+            artifactId: req.params.artifactId
+        });
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-RAI-Artifact-Expires-At', String(prepared.expiresAt));
+        res.setHeader('Content-Type', prepared.mimeType);
+        res.download(prepared.filePath, prepared.fileName, async (error) => {
+            await prepared.finalize().catch(() => null);
+            if (error && !res.headersSent) {
+                res.status(error.code === 'ENOENT' ? 404 : 500).json({ error: '文件产物下载失败' });
+            }
+        });
+    } catch (error) {
+        const statusCode = error instanceof FileWorkspaceError ? Number(error.statusCode || 404) : 404;
+        return res.status(statusCode >= 400 && statusCode < 500 ? statusCode : 404).json({ error: '文件产物不存在、已过期或无权访问' });
+    }
+});
+
 const activeRequestInterjections = new Map();
 
 function normalizeStreamingInterjection(value = '') {
@@ -16676,6 +18820,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
     let chatRequestSucceeded = false;
     let clientAborted = false;
     let chatRequestCancelled = false;
+    let chatRequestBudget = null;
+    let chatRequestDeadlineTimer = null;
     const chatAbortControllers = new Set();
 
     const createChatAbortController = () => {
@@ -16692,6 +18838,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (!controller.signal.aborted) controller.abort();
         }
         if (requestId) {
+            rejectClientToolPending(requestId, 'client_aborted');
             db.run(
                 'UPDATE active_requests SET is_cancelled = 1 WHERE id = ? AND user_id = ?',
                 [requestId, req.user.userId],
@@ -16710,7 +18857,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             model: requestedModel = 'auto',  // 默认为auto模式
             thinkingMode: thinkingModeInput = false,
             thinkingBudget = 1024,
-            internetMode = true,
+            internetMode: requestedInternetMode = true,
             agentMode = 'off',
             agentPolicy = AGENT_DEFAULT_POLICY,
             qualityProfile = AGENT_DEFAULT_QUALITY,
@@ -16725,7 +18872,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             max_tokens = 2000,
             frequency_penalty = 0,
             presence_penalty = 0,
-            systemPrompt,
             promptTimeContext = null,
             domainMode = '',
             uiLanguage = '',
@@ -16733,18 +18879,34 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             canvasApplyMode = 'review',
             uiSurface = '',
             memoryMode = 'normal',
-            skipUserSave = false
+            skipUserSave = false,
+            lowLatencyMode = false,
+            client_file_execution: rawClientFileExecution = false,
+            workdir_configured = false
         } = req.body;
+        // 工具下发只看 client_file_execution（UWP 固定携带）；workdir_configured 仅作提示字段：
+        // true=已有工作目录可直接操作；false=工具到达时客户端先引导用户选择目录（含移动端首用）
+        const clientFileExecution = rawClientFileExecution === true;
+        if (clientFileExecution) {
+            console.log(` 客户端文件执行已启用: requestId=${requestId || 'pending'}, sessionId=${requestedSessionId || 'pending'}, rawClientFileExecution=${rawClientFileExecution}, workdirConfigured=${workdir_configured}`);
+        }
+        let systemPrompt = '';
         let sessionId = requestedSessionId;
         let flowRecord = null;
         let activeSessionKind = '';
+        let ownedSession = null;
         let thinkingMode = !!thinkingModeInput;
+        // 本地文件执行模式：强制关闭思考（推理模式会吞掉工具调用，导致"思考不行动"）
+        if (clientFileExecution) {
+            thinkingMode = false;
+        }
+        let internetMode = !!requestedInternetMode;
         let model = normalizeIncomingModelId(requestedModel);
         let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;
         if (gptImageModelSelected) thinkingMode = false;
         const shouldSkipUserSave = skipUserSave === true || skipUserSave === 1 || skipUserSave === '1';
         let normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
-        const normalizedResearchMode = gptImageModelSelected ? 'off' : normalizeResearchMode(researchMode);
+        let normalizedResearchMode = gptImageModelSelected ? 'off' : normalizeResearchMode(researchMode);
         const rawResearchAgentModels = Array.isArray(researchAgentModels)
             ? researchAgentModels
             : (typeof researchAgentModels === 'string' ? researchAgentModels.split(',') : []);
@@ -16817,18 +18979,31 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         ), 0);
         console.log(` 收到消息结构: count=${messages.length}, attachments=${attachmentCount}`);
 
-        //  附件解析层：将最后一条用户消息的附件内容转为文本上下文追加到 prompt
+        // 将当前或最近一条附件消息的内容注入最后一条用户请求，保持后续读取/修改可用。
         if (messages.length > 0) {
             const lastMsg = messages[messages.length - 1];
-            if (lastMsg.role === 'user' && Array.isArray(lastMsg.attachments) && lastMsg.attachments.length > 0) {
+            const latestAttachmentMessage = [...messages].reverse().find((message) => (
+                message?.role === 'user'
+                && Array.isArray(message.attachments)
+                && message.attachments.length > 0
+            ));
+            const activeAttachments = Array.isArray(lastMsg?.attachments) && lastMsg.attachments.length > 0
+                ? lastMsg.attachments
+                : latestAttachmentMessage?.attachments;
+            if (lastMsg.role === 'user' && Array.isArray(activeAttachments) && activeAttachments.length > 0) {
                 try {
-                    const attachmentContext = await buildAttachmentPromptContext(lastMsg.attachments, req.user.userId);
+                    const attachmentContext = await buildAttachmentPromptContext(activeAttachments, req.user.userId);
                     if (attachmentContext) {
+                        attachmentOriginalContentByMessage.set(lastMsg, lastMsg.content);
                         lastMsg.content = (typeof lastMsg.content === 'string' ? lastMsg.content : '') + attachmentContext;
-                        console.log(` 已注入附件上下文到用户消息 (${attachmentContext.length} 字符)`);
+                        console.log(` 已注入附件上下文到当前用户请求 (${attachmentContext.length} 字符)`);
                     }
                 } catch (attCtxErr) {
                     console.warn(' 构建附件上下文失败:', sanitizeReportContext(attCtxErr));
+                    return res.status(503).json({
+                        error: '附件内容暂时无法解析，请重新发送。',
+                        code: 'attachment_parse_temporarily_unavailable'
+                    });
                 }
             }
         }
@@ -16843,21 +19018,38 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         // 验证会话所有权
         if (sessionId) {
-            const session = await new Promise((resolve, reject) => {
-                db.get('SELECT user_id, session_kind FROM sessions WHERE id = ?', [sessionId], (err, row) => {
+            ownedSession = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT user_id, session_kind, prompt_model_identity, prompt_language
+                     FROM sessions WHERE id = ?`,
+                    [sessionId],
+                    (err, row) => {
                     if (err) reject(err);
                     else resolve(row);
-                });
+                    }
+                );
             });
 
-            if (!session || session.user_id !== req.user.userId) {
+            if (!ownedSession || ownedSession.user_id !== req.user.userId) {
                 return res.status(403).json({ error: '无权访问此会话' });
             }
-            activeSessionKind = String(session.session_kind || 'chat');
+            activeSessionKind = String(ownedSession.session_kind || 'chat');
         }
 
+        const sessionPromptContext = await lockAndResolveSessionPromptContext({
+            sessionId,
+            userId: req.user.userId,
+            session: ownedSession,
+            model,
+            thinkingMode,
+            researchMode: normalizedResearchMode,
+            researchMasterModel: normalizedResearchMasterModel,
+            uiLanguage
+        });
+
         const runtimeSettings = await getAdminRuntimeSettings();
-        const concurrentLimit = Math.max(1, Number(runtimeSettings.concurrent_requests || MAX_CONCURRENT_REQUESTS_PER_USER));
+        const concurrency = await resolveUserConcurrentRequestLimit(req.user.userId, runtimeSettings);
+        const concurrentLimit = concurrency.limit;
         requestId = `req_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
         const activeRegistration = await registerActiveRequestForUser({
             requestId,
@@ -16870,6 +19062,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 error: `每个用户最多同时运行 ${concurrentLimit} 个请求，请等待其中一个完成或停止后再试`,
                 code: 'user_concurrency_limit',
                 limit: concurrentLimit,
+                membership: concurrency.tier,
                 active: activeRegistration.active
             });
         }
@@ -16898,25 +19091,52 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         const memoryModeOff = String(memoryMode || '').toLowerCase() === 'off' || activeSessionKind === 'temporary_saved';
         let promptUserProfile = null;
+        let longMemoryEnabled = false;
         let conversationMemoryInstruction = '';
         if (!memoryModeOff) {
             try {
                 promptUserProfile = await getPromptUserProfile(req.user.userId, req.user.email);
-                if (await isUserLongMemoryEnabled(req.user.userId)) {
-                    conversationMemoryInstruction = await buildConversationMemoryPrompt(req.user.userId);
-                }
             } catch (promptUserProfileError) {
                 console.warn(' 获取Prompt用户信息失败，使用令牌回退:', sanitizeReportContext(promptUserProfileError));
                 promptUserProfile = await getPromptUserProfile(null, req.user.email);
             }
+            try {
+                longMemoryEnabled = await isUserLongMemoryEnabled(req.user.userId);
+                if (longMemoryEnabled) {
+                    conversationMemoryInstruction = await buildConversationMemoryPrompt(req.user.userId);
+                }
+            } catch (memoryContextError) {
+                console.warn(' 获取长期记忆上下文失败，本轮禁用记忆工具:', sanitizeReportContext(memoryContextError));
+                longMemoryEnabled = false;
+            }
         } else {
             console.log(` 临时对话 memoryMode=off，跳过用户身份/偏好/长期记忆注入: userId=${req.user.userId}, sessionKind=${activeSessionKind || 'none'}`);
+        }
+
+        if (memoryModeOff) {
+            systemPrompt = '';
+        } else {
+            const customPrompt = await getWebControlledCustomSystemPrompt(req.user.userId);
+            systemPrompt = buildCanonicalRaiSystemPrompt({
+                promptLanguage: sessionPromptContext.promptLanguage,
+                modelIdentity: sessionPromptContext.modelIdentity,
+                includeMemory: longMemoryEnabled,
+                customPrompt,
+                skillCatalog: getSkillCatalog()
+            });
+            console.log(
+                ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, customPromptLength=${customPrompt.length}`
+            );
         }
         const userIdentityInstruction = memoryModeOff ? '' : buildUserIdentityPrompt(promptUserProfile);
         if (userIdentityInstruction) {
             console.log(` 已注入当前用户信息到Prompt: userId=${req.user.userId}, hasUsername=${!!promptUserProfile?.username}, hasEmail=${!!promptUserProfile?.email}`);
         }
 
+// 本地文件执行模式：系统提示追加本地工作目录说明（替代沙箱引导）
+if (clientFileExecution && systemPrompt) {
+    systemPrompt += '\n\n## 本地文件执行模式\n当前对话已启用本地文件执行：用户授权了本地工作目录，文件工具在用户电脑上直接执行，无需沙箱。创建文本文件用 create_artifact（format: text/markdown/json/csv）；创建 Office 文档用 create_artifact 的 docx/xlsx/pptx 格式（客户端原生生成，不要用 Python/python-docx/openpyxl 脚本）；需要插图时先用 sandbox_exec 下载图片到工作目录再引用（!img: 或 insert_image），不得引用不存在的文件；修改用 edit_file；执行命令用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒，无 Python 环境）。Excel 更新一律用 update_sheet（含图表），禁止 PowerShell COM 操作 Office 文档，工具成功即完成不要重复操作。不要请求沙箱或声称需要服务器沙箱。当用户请求涉及文件/文档/命令操作时，你必须实际调用对应工具完成（create_artifact/edit_file/sandbox_exec/insert_image/update_sheet/list_files 等），禁止只输出计划或假装完成。';
+}
         if (
             model === 'claude-haiku' ||
             model === 'anthropic/claude-sonnet-4.6' ||
@@ -16960,9 +19180,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         const requestedGptModelUnavailable = GPT_GATEWAY_CHAT_MODELS.includes(model)
             ? !GPT_GATEWAY_CONFIGURED
-            : (['claude-sonnet-5', 'gemini-3.6-flash-low'].includes(model)
-                ? !FAST_GATEWAY_CONFIGURED
-                : (model === GPT_GATEWAY_IMAGE_MODEL && !GPT_IMAGE_CONFIGURED));
+            : (model === 'claude-sonnet-5'
+                ? !CLAUDE_GATEWAY_CONFIGURED
+                : (model === 'gemini-3.6-flash-low'
+                    ? !FAST_GATEWAY_CONFIGURED
+                    : (model === GPT_GATEWAY_IMAGE_MODEL && !GPT_IMAGE_CONFIGURED)));
         if (requestedGptModelUnavailable) {
             appendRaiRuntimeReport({
                 level: '报错',
@@ -16986,17 +19208,37 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             ? lastUserMsg.content
             : JSON.stringify(lastUserMsg.content);
         const userContent = stripInlinePromptTimeHint(rawUserContent);
+        const raiProductSkillRequired = requiresRaiProductSkill(userContent);
         const imageGenerationRequested = gptImageModelSelected || detectImageGenerationNeed(userContent);
-        const memoryDeleteToolArgs = !memoryModeOff
-            ? buildMemoryDeleteToolArgsFromConversation(userContent, messages)
-            : null;
-        const memoryDeleteToolRequested = !memoryModeOff && (
-            !!memoryDeleteToolArgs || detectMemoryDeleteToolNeed(userContent, messages)
-        );
+        const memoryToolsEnabled = !memoryModeOff && longMemoryEnabled;
+        const workspaceAttachmentCatalog = messages
+            .flatMap((message) => (Array.isArray(message?.attachments) ? message.attachments : []))
+            .map((attachment) => ({
+                file_id: String(attachment?.fileId || attachment?.filename || ''),
+                file_name: String(attachment?.fileName || attachment?.originalName || '').slice(0, 128),
+                mime_type: String(attachment?.mimeType || attachment?.fileType || '').slice(0, 120),
+                size: Math.max(0, Number(attachment?.size || 0))
+            }))
+            .filter((attachment) => WORKSPACE_UPLOAD_FILENAME_RE.test(attachment.file_id))
+            .filter((attachment, index, rows) => (
+                rows.findIndex((row) => row.file_id === attachment.file_id) === index
+            ));
+        const lowLatencyRequest = lowLatencyMode === true || lowLatencyMode === 1 || lowLatencyMode === '1';
+        const workspaceToolsEnabled = shouldEnableWorkspaceTools(userContent, workspaceAttachmentCatalog);
+        const skillToolsEnabled = !memoryModeOff && (!lowLatencyRequest || raiProductSkillRequired || workspaceToolsEnabled);
+        if (workspaceAttachmentCatalog.length > 0) {
+            if (internetMode) console.log(' 附件任务已禁用联网搜索');
+            if (normalizedResearchMode !== 'off') console.log(' 附件任务已禁用研究讨论');
+            internetMode = false;
+            normalizedResearchMode = 'off';
+        }
         const runtimeToolDefinitions = buildChatToolDefinitions({
-            internetMode,
+            internetMode: internetMode && !raiProductSkillRequired,
             imageGenerationRequested,
-            memoryDeleteToolRequested
+            memoryToolsEnabled,
+            skillToolsEnabled,
+            fileToolsEnabled: Boolean(sessionId) && (clientFileExecution || workspaceToolsEnabled),
+            clientFileExecution
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
 
@@ -17012,84 +19254,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         }
 
         console.log(` 分析消息: ${formatPrivateLogFingerprint(userContent, 'content')}`);
-
-        if (memoryDeleteToolArgs && sessionId && !flowId && !shouldSkipUserSave) {
-            console.log(` 记忆删除直达路径: userId=${req.user.userId}, ids=${formatMemoryIdList(memoryDeleteToolArgs.memory_ids || memoryDeleteToolArgs.memory_id || []) || 'none'}, ${formatPrivateLogFingerprint(memoryDeleteToolArgs.target || '', 'target')}, ${formatPrivateLogFingerprint(memoryDeleteToolArgs.reason || '', 'reason')}`);
-            res.write(`data: ${JSON.stringify({
-                type: 'tool_status',
-                tool: 'delete_memory',
-                status: 'running',
-                message: '正在删除指定记忆'
-            })}\n\n`);
-
-            const deleteResult = await deleteUserMemoryByModel({
-                userId: req.user.userId,
-                memoryId: memoryDeleteToolArgs.memory_id,
-                memoryIds: memoryDeleteToolArgs.memory_ids,
-                target: memoryDeleteToolArgs.target,
-                reason: memoryDeleteToolArgs.reason
-            });
-            const deletedMemoryIds = uniquePositiveMemoryIds([
-                Array.isArray(deleteResult?.deletedMemories) ? deleteResult.deletedMemories.map((memory) => memory?.id) : [],
-                deleteResult?.deletedMemory?.id,
-                memoryDeleteToolArgs.memory_ids,
-                memoryDeleteToolArgs.memory_id
-            ]);
-            const deletedMemoryIdList = formatMemoryIdList(deletedMemoryIds);
-            const deletedCount = Number(deleteResult?.deletedCount || deletedMemoryIds.length || 0);
-            const assistantReply = deleteResult?.success
-                ? (deletedMemoryIdList
-                    ? (deletedCount > 1 ? `已删除 ${deletedMemoryIdList} 这 ${deletedCount} 条记忆。` : `已删除 ${deletedMemoryIdList} 这条记忆。`)
-                    : `已删除 ${deletedCount} 条匹配的记忆。`)
-                : (deleteResult?.message || '没有找到要删除的那条记忆。你可以告诉我记忆编号，例如“删除 #12”。');
-
-            await dbRunAsync(
-                'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
-                [sessionId, 'user', userContent, new Date().toISOString()]
-            );
-            await dbRunAsync(
-                'INSERT INTO messages (session_id, role, content, model, enable_search, thinking_mode, internet_mode, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [
-                    sessionId,
-                    'assistant',
-                    assistantReply,
-                    'memory-tool',
-                    0,
-                    0,
-                    0,
-                    promptContextTrace ? JSON.stringify(promptContextTrace) : null,
-                    new Date().toISOString()
-                ]
-            );
-
-            await updateSessionOrFlowTitleAndEmit({
-                res,
-                sessionId,
-                flowId,
-                userId: req.user.userId,
-                title: '记忆清理'
-            });
-            await dbRunAsync('UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [sessionId]);
-
-            const updatedMemories = await listActiveUserMemories(req.user.userId, 200).catch(() => []);
-            res.write(`data: ${JSON.stringify({
-                type: 'tool_status',
-                tool: 'delete_memory',
-                status: deleteResult?.success ? 'complete' : 'no_results',
-                message: deleteResult?.message || assistantReply
-            })}\n\n`);
-            res.write(`data: ${JSON.stringify({
-                type: 'memory_update',
-                enabled: true,
-                memories: updatedMemories
-            })}\n\n`);
-            res.write(`data: ${JSON.stringify({ type: 'content', content: assistantReply })}\n\n`);
-            chatRequestSucceeded = true;
-            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-            res.end();
-            console.log(` 记忆删除直达完成: success=${!!deleteResult?.success}, deleted=${Number(deleteResult?.deletedCount || 0)}`);
-            return;
-        }
 
         let agentRuntime = {
             enabled: false,
@@ -17109,7 +19273,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             'hi': 'Hi there! How can I help you?',
             'thank you': 'You\'re welcome!',
             'thanks': 'You\'re welcome!',
-            'bye': 'Goodbye! See you next time!'
+            'bye': 'Goodbye! See you next time!',
+            '你是谁': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
+            '你是谁？': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
+            '你是谁，由谁开发': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
+            '你是谁，由谁开发？': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
+            'who are you': 'I am RAI, an AI chat application made by Rick.\n\n[TITLE]RAI identity[/TITLE]',
+            'who are you?': 'I am RAI, an AI chat application made by Rick.\n\n[TITLE]RAI identity[/TITLE]',
+            'who are you and who made you?': 'I am RAI, an AI chat application made by Rick.\n\n[TITLE]RAI identity[/TITLE]'
         };
 
         const trimmedContent = userContent.trim().toLowerCase();
@@ -17164,14 +19335,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     );
                 });
 
-                if (!memoryModeOff && !flowId) {
-                    scheduleConversationMemoryProcessing({
-                        userId: req.user.userId,
-                        sessionId,
-                        userContent,
-                        assistantContent: presetAnswer
-                    });
-                }
 
                 const presetTitle = buildPresetConversationTitle(userContent, uiLanguage);
                 if (presetTitle) {
@@ -17185,6 +19348,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             }
 
+            if (sessionId) scheduleConversationIntegritySeal(sessionId, req.user.userId);
             chatRequestSucceeded = true;
             res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
             res.end();
@@ -17238,6 +19402,19 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let pointsAlreadyDeducted = false;
         let forceFreeModelByQuota = false;
         let freeModelFallbackCause = '';
+
+        if (normalizedAgentMode === 'on' && workspaceAttachmentCatalog.length > 0) {
+            effectiveAgentMode = 'off';
+            emitAgentEvent(res, {
+                type: 'agent_status',
+                role: 'master',
+                scope: 'stage',
+                stepId: 'master',
+                status: 'done',
+                detail: '附件任务已切换到单模型受控文件工具链'
+            });
+            console.log(' 当前消息包含附件，Agent模式切换到单模型文件工具链');
+        }
 
         if (normalizedAgentMode === 'on' && normalizedMembershipTier !== 'max') {
             effectiveAgentMode = 'off';
@@ -17500,25 +19677,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                         const lastUserMessage = messages[messages.length - 1];
                         if (lastUserMessage && lastUserMessage.role === 'user') {
-                            const lastUserContent = typeof lastUserMessage.content === 'string'
-                                ? lastUserMessage.content
-                                : JSON.stringify(lastUserMessage.content);
+                            const lastUserContent = getPersistableUserMessageContent(lastUserMessage);
 
                             let attachmentsJson = null;
                             if (Array.isArray(lastUserMessage.attachments) && lastUserMessage.attachments.length > 0) {
-                                const previewAttachments = lastUserMessage.attachments.map(att => {
-                                    if (att.type === 'image' && att.data) {
-                                        return {
-                                            type: 'image',
-                                            fileName: att.fileName,
-                                            data: att.data
-                                        };
-                                    }
-                                    return {
-                                        type: att.type,
-                                        fileName: att.fileName
-                                    };
-                                });
+                                const previewAttachments = buildStoredMessageAttachments(lastUserMessage.attachments);
                                 attachmentsJson = JSON.stringify(previewAttachments);
                             }
 
@@ -17580,14 +19743,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             );
                         });
 
-                        if (!memoryModeOff && !flowId) {
-                            scheduleConversationMemoryProcessing({
-                                userId: req.user.userId,
-                                sessionId,
-                                userContent,
-                                assistantContent: contentToSave || ''
-                            });
-                        }
                     }
 
                     if (flowId && structuredAgentOutput.canvasPatchRaw) {
@@ -17611,6 +19766,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         cleanupSessionStreamState(sessionId, requestId);
                     }
 
+                    if (sessionId) scheduleConversationIntegritySeal(sessionId, req.user.userId);
                     chatRequestSucceeded = true;
                     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
                     res.end();
@@ -17685,18 +19841,26 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (supportsNativeMultimodal) {
                 finalModel = defaultMultimodalModel;
                 autoRoutingReason = model === 'auto'
-                    ? `${userMembershipTier} 用户 智能模型使用 Qwen 3.6 处理${multimodalTypesText}`
+                    ? `${userMembershipTier} 用户 智能模型使用 ${researchModelLabel(finalModel)} 处理${multimodalTypesText}`
                     : `${defaultMultimodalModel} 原生支持多模态，直接处理${multimodalTypesText}`;
                 console.log(`    模型 ${finalModel} 原生支持多模态，无需切换`);
             } else {
-                finalModel = 'qwen3.6-35b-a3b';
-                autoRoutingReason = `${model || 'auto'} 不支持多模态，自动切换到 Qwen 3.6 处理${multimodalTypesText}`;
-                console.log(`    ${model || 'auto'} 不支持多模态，切换到 qwen3.6-35b-a3b (Qwen/Qwen3.6-35B-A3B)`);
+                finalModel = await resolveVisionFallbackModel();
+                autoRoutingReason = `${model || 'auto'} 不支持多模态，自动切换到 ${researchModelLabel(finalModel)} 处理${multimodalTypesText}`;
+                console.log(`    ${model || 'auto'} 不支持多模态，切换到 ${finalModel} (视觉备用路由模型)`);
             }
-        } else if (model === 'auto') {
-            // 智能模型策略：纯文本默认 DeepSeek Pro；文档类附件会被转成文本后继续走这里。
-            finalModel = await resolveVisibleAutoModel();
-            autoRoutingReason = `${userMembershipTier} 用户 智能模型默认使用 ${finalModel}`;
+        } else if (model === 'auto' || model === 'fast-auto' || model === 'think-auto') {
+            // 智能/快速/思考模式：按模式路由到管理员配置的首选模型，失败后走固定备用链。
+            if (model === 'fast-auto') {
+                finalModel = await resolveVisibleFastModel();
+                autoRoutingReason = `${userMembershipTier} 用户 快速模型使用 ${researchModelLabel(finalModel)}`;
+            } else if (model === 'think-auto') {
+                finalModel = await resolveVisibleThinkingModel();
+                autoRoutingReason = `${userMembershipTier} 用户 思考模型使用 ${researchModelLabel(finalModel)}`;
+            } else {
+                finalModel = await resolveVisibleAutoModel();
+                autoRoutingReason = `${userMembershipTier} 用户 智能模型默认使用 ${researchModelLabel(finalModel)}`;
+            }
             console.log(` auto_route_decision: ${autoRoutingReason}`);
         }
 
@@ -17820,6 +19984,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
         }
 
+        // 本地文件执行模式（UWP 本地电脑）：GPT 请求强制切换到 gpt-5.6-terra
+        // （fast 上游上 luna 续传不稳定，terra 通道更稳——Rick 2026-08-10 要求）
+        if (clientFileExecution && finalModel === 'gpt-5.6-luna') {
+            console.warn(` 本地文件执行模式: gpt-5.6-luna → gpt-5.6-terra (客户端本地执行专用路由)`);
+            finalModel = 'gpt-5.6-terra';
+        }
+
         // 关键修复：现在finalModel已经是具体的模型名，再获取routing
         routing = MODEL_ROUTING[finalModel];
         if (!routing) {
@@ -17850,7 +20021,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let providerConfig = API_PROVIDERS[routing.provider];
         if ((!providerConfig || !providerConfig.apiKey)
             && routing.provider !== 'rai_gpt_gateway'
-            && routing.provider !== 'rai_fast_gateway') {
+            && routing.provider !== 'rai_fast_gateway'
+            && routing.provider !== 'rai_claude_gateway') {
             const fallbackModel = findAvailableRuntimeFallbackModelId(finalModel);
             if (fallbackModel) {
                 const missingReason = !providerConfig
@@ -17930,8 +20102,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let searchContext = '';
         let searchSources = [];
         let useStreamingTools = false;  // 标记是否启用流式工具调用
+        let forcedClientListFilesDone = false;
+        let clientNonStreamRetryDone = false;
 
-        if (enableResearchDebate && internetMode) {
+        if (enableResearchDebate && internetMode && !raiProductSkillRequired) {
             try {
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
@@ -17972,8 +20146,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     message: '搜索暂不可用，已继续深度研究'
                 })}\n\n`);
             }
-        } else if (shouldUseServerSideSearchContext({
-            internetMode,
+        } else if (!lowLatencyRequest && shouldUseServerSideSearchContext({
+            internetMode: internetMode && !raiProductSkillRequired,
             routing,
             userMessage: userContent,
             enableResearchDebate,
@@ -18030,10 +20204,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
         if (
             !enableResearchDebate &&
+            !lowLatencyRequest &&
             runtimeToolDefinitions.length > 0 &&
-            (routing.supportsWebSearch !== false || imageGenerationRequested || memoryDeleteToolRequested)
+            (routing.supportsWebSearch !== false || imageGenerationRequested || memoryToolsEnabled || skillToolsEnabled || Boolean(sessionId))
         ) {
-            console.log(` 工具模式: 启用流式工具调用 (Streaming Function Calling), tools=${runtimeToolDefinitions.length}, internet=${internetMode}, image=${imageGenerationRequested}, memoryDelete=${memoryDeleteToolRequested}`);
+            console.log(` 工具模式: 启用流式工具调用 (Streaming Function Calling), tools=${runtimeToolDefinitions.length}, internet=${internetMode}, image=${imageGenerationRequested}, memory=${memoryToolsEnabled}`);
             useStreamingTools = true;
             // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
         } else if (!enableResearchDebate && internetMode && finalModel === 'deepseek-pro') {
@@ -18050,12 +20225,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             finalMessages = await convertMessagesToOmniFormat(finalMessages, req.user.userId);
             console.log(` 消息已转换为多模态格式`);
         }
+        if (isRaiProductIdentityQuestion(userContent)) {
+            finalMessages = appendRaiProductIdentityGuard(finalMessages, sessionPromptContext.promptLanguage);
+            console.log(' 已追加服务端 RAI 产品身份约束');
+        }
 
         // 添加系统提示词（包含搜索结果）
         // 注意: Mermaid 图表生成指南已内置在前端的 buildSystemPrompt() 中
         let systemContent = searchContext
             ? `${systemPrompt || ''}\n${searchContext}`.trim()
             : systemPrompt || '';
+        if (memoryToolsEnabled) {
+            const memoryPolicyLanguage = /^\s*#\s*RAI\s+System\s+Prompt/i.test(String(systemPrompt || '')) ? 'en' : 'zh';
+            const memoryToolPolicyInstruction = buildMemoryToolPolicyInstruction(memoryPolicyLanguage);
+            systemContent = systemContent
+                ? `${memoryToolPolicyInstruction}\n\n${systemContent}`
+                : memoryToolPolicyInstruction;
+        }
 
         if (routing.provider === 'deepseek') {
             const deepseekOutputGuard = searchContext
@@ -18074,6 +20260,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
             if (imageGenerationRequested) {
                 toolHints.push(`用户正在请求生成图片。请调用 generate_image 工具；只传 prompt/image_size/batch_size 等文生图参数，禁止传 image、image_url、示例图片 URL 或上游临时 URL。服务端会选择已配置的图片提供商、优先生成并展示本站短链接图片，后续回复只需简短说明。`);
+            }
+            if (memoryToolsEnabled) {
+                toolHints.push('save_memory 与 delete_memory 已按需可用；严格遵守系统提示词顶部的记忆规则，不得为了使用工具而制造记忆。');
+            }
+            if (skillToolsEnabled) {
+                toolHints.push('需要某项能力的详细规则时，调用 read_skill，name 只能为已列出的技能名。询问 RAI 或 CX RAI 的稳定产品知识时，先读取 rai-product 且不联网；文件操作、压缩包、命令或代码执行前，先读取 sandbox。');
+            }
+            if (sessionId) {
+                toolHints.push('当前会话可使用隔离且无网络的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。禁止网络、宿主机访问、提权和绕过资源限制。');
+                if (workspaceAttachmentCatalog.length > 0) {
+                    toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
+                }
             }
             const toolHint = `\n\n[系统提示] ${toolHints.join(' ')}`;
             systemContent = systemContent ? `${systemContent}${toolHint}` : toolHint.trim();
@@ -18130,7 +20328,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             });
         }
 
-        const isKimiK25Model = (finalModel === 'kimi-k2.6' || finalModel === 'kimi-k2' || isKimiK25ActualModel(actualModel));
+        const isCurrentKimiK25Model = () => (
+            finalModel === 'kimi-k2.6'
+            || finalModel === 'kimi-k2'
+            || isKimiK25ActualModel(actualModel)
+        );
+        const isKimiK25Model = isCurrentKimiK25Model();
         const isQwen36A3BModel = (finalModel === 'qwen3.6-35b-a3b' || isQwen36A3BActualModel(actualModel));
 
         // 构建API请求体
@@ -18216,7 +20419,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             );
             applyGatewayChatRequestPolicy(requestBody, { thinkingMode: !!thinkingMode, reasoningEffort });
         }
-        if (routing.provider === 'rai_fast_gateway') {
+        if (['rai_fast_gateway', 'rai_claude_gateway'].includes(routing.provider)) {
             const reasoningEffort = resolveOpenAIChatReasoningEffort(
                 actualModel,
                 !!thinkingMode,
@@ -18259,15 +20462,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 已发送 ${searchSources.length} 个搜索来源到前端`);
         }
 
-        console.log(`\n 发送请求到 ${routing.provider} - ${actualModel}\n`);
+        if (gptImageModelSelected) {
+            console.log('\n Image 2 直达模式: 跳过聊天模型规划，只执行一次图像工具\n');
+        } else {
+            console.log(`\n 发送请求到 ${routing.provider} - ${actualModel}\n`);
+            console.log(` 正在调用: ${providerConfig.baseURL}`);
+            console.log(`   API密钥: 已配置`);
+        }
 
-        //  关键修复：调用API
-        console.log(` 正在调用: ${providerConfig.baseURL}`);
-        console.log(`   API密钥: 已配置`);
-
-        //  修复：添加超时控制 (120秒) - 增加超时时间以应对网络不稳定
+        // One bounded deadline covers the primary request, ordered fallback, and tool continuations.
+        chatRequestBudget = createChatRequestBudget();
         const controller = createChatAbortController();
-        let timeoutId = setTimeout(() => controller.abort(), 120000);
+        chatRequestDeadlineTimer = setTimeout(() => {
+            for (const activeController of chatAbortControllers) {
+                if (!activeController.signal.aborted) activeController.abort();
+            }
+        }, chatRequestBudget.remainingMs());
+        const primaryAttemptTimeoutMs = chatRequestBudget.nextAttemptTimeoutMs();
+        const boundedPrimaryAttemptTimeoutMs = routing.provider === 'openrouter'
+            ? Math.min(primaryAttemptTimeoutMs, 6000)
+            : primaryAttemptTimeoutMs;
+        let timeoutId = setTimeout(() => controller.abort(), boundedPrimaryAttemptTimeoutMs);
 
         //  关键修复：将变量声明移到try块外部，避免作用域问题
         let fullContent = '';
@@ -18275,7 +20490,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let rawToolContent = '';
         let agentSynthesizerRunning = false;
         let agentResearcherRunning = false;
+        let directImageToolSucceeded = false;
+        let directImageToolFailed = false;
         let rawAssistantStructuredBuffer = '';
+        // A provider can close a stream after emitting useful reasoning/content
+        // (most often when the bounded request deadline is reached). Keep that
+        // partial answer usable and persist it instead of turning it into an
+        // unsaved client-side error.
+        let streamDegraded = false;
         let assistantVisibleStarted = false;
         let latestStructuredAssistantOutput = {
             visibleContent: '',
@@ -18478,25 +20700,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                     const lastUserMessage = messages[messages.length - 1];
                     if (lastUserMessage && lastUserMessage.role === 'user') {
-                        const lastUserContent = typeof lastUserMessage.content === 'string'
-                            ? stripInlinePromptTimeHint(lastUserMessage.content)
-                            : JSON.stringify(lastUserMessage.content);
+                        const lastUserContent = getPersistableUserMessageContent(lastUserMessage, { stripTimeHint: true });
 
                         let attachmentsJson = null;
                         if (Array.isArray(lastUserMessage.attachments) && lastUserMessage.attachments.length > 0) {
-                            const previewAttachments = lastUserMessage.attachments.map(att => {
-                                if (att.type === 'image' && att.data) {
-                                    return {
-                                        type: 'image',
-                                        fileName: att.fileName,
-                                        data: att.data
-                                    };
-                                }
-                                return {
-                                    type: att.type,
-                                    fileName: att.fileName
-                                };
-                            });
+                            const previewAttachments = buildStoredMessageAttachments(lastUserMessage.attachments);
                             attachmentsJson = JSON.stringify(previewAttachments);
                         }
 
@@ -18601,16 +20809,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         [sessionId]
                     );
 
-                    if (!memoryModeOff && !flowId) {
-                        scheduleConversationMemoryProcessing({
-                            userId: req.user.userId,
-                            sessionId,
-                            userContent,
-                            assistantContent: contentToSave || ''
-                        });
-                    }
                 }
 
+                if (sessionId) scheduleConversationIntegritySeal(sessionId, req.user.userId);
                 chatRequestSucceeded = true;
                 res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
                 res.end();
@@ -18632,7 +20833,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     res.end();
                     return;
                 }
-                timeoutId = setTimeout(() => controller.abort(), 120000);
+                timeoutId = setTimeout(() => controller.abort(), chatRequestBudget.nextAttemptTimeoutMs());
             }
         }
 
@@ -18640,7 +20841,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let isGeminiAPI = providerConfig.isGemini || routing.isGemini;
         const shouldEnableToolsForRoute = (candidateRouting) => !!(
             runtimeToolDefinitions.length > 0 &&
-            (candidateRouting?.supportsWebSearch !== false || imageGenerationRequested || memoryDeleteToolRequested)
+            (candidateRouting?.supportsWebSearch !== false || imageGenerationRequested || memoryToolsEnabled || skillToolsEnabled || Boolean(sessionId))
         );
 
         const buildRuntimeFallbackRequestBody = (fallbackModelId, fallbackRouting, fallbackActualModel) => {
@@ -18681,6 +20882,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             if (fallbackRouting.provider === 'openrouter') {
                 applyOpenRouterReasoningParams(body, fallbackActualModel, !!thinkingMode, normalizedReasoningProfile);
+            }
+            if (fallbackRouting.provider === 'deepseek') {
+                applyDeepSeekV4ModeParams(body, !!thinkingMode, normalizedReasoningProfile);
             }
 
             if (fallbackModelId === 'qwen3.6-35b-a3b' || isQwen36A3BActualModel(fallbackActualModel)) {
@@ -18771,11 +20975,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             };
 
-            const systemMsg = finalMessages.find(m => m.role === 'system');
-            if (systemMsg) {
+            const canonicalSystemInstruction = getCanonicalSystemInstruction(finalMessages);
+            if (canonicalSystemInstruction) {
                 fetchBody.systemInstruction = {
-                    parts: [{ text: typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content) }]
+                    parts: [{ text: canonicalSystemInstruction }]
                 };
+            }
+            if (shouldEnableToolsForRoute(attemptRouting)) {
+                fetchBody.tools = [{
+                    functionDeclarations: runtimeToolDefinitions.map((tool) => ({
+                        name: tool.function.name,
+                        description: tool.function.description,
+                        parametersJsonSchema: tool.function.parameters
+                    }))
+                }];
+                fetchBody.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
             }
 
             return {
@@ -18812,6 +21026,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             for (const fallbackModel of candidates) {
                 const fallbackRouting = MODEL_ROUTING[fallbackModel];
                 const fallbackProviderConfig = fallbackRouting ? API_PROVIDERS[fallbackRouting.provider] : null;
+                if (runtimeFallbackCircuit.isOpen(fallbackModel)) {
+                    console.warn(` runtime_fallback skip=${fallbackModel} circuit_open=true`);
+                    continue;
+                }
                 if (!fallbackRouting || !fallbackProviderConfig?.apiKey) {
                     const missingEnv = fallbackProviderConfig?.envKey || fallbackRouting?.provider || fallbackModel;
                     console.warn(` runtime_fallback skip=${fallbackModel} missing=${missingEnv}`);
@@ -18828,8 +21046,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     fallbackRequestBody
                 );
 
+                const fallbackTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
+                if (fallbackTimeoutMs <= 0) {
+                    console.warn(` runtime_fallback stop=${fallbackModel} request_deadline_exhausted=true`);
+                    break;
+                }
                 const fallbackController = createChatAbortController();
-                const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 120000);
+                const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), fallbackTimeoutMs);
                 let fallbackResponse;
                 try {
                     const safeFallbackUrl = payload.isGeminiAPI
@@ -18844,6 +21067,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     });
                 } catch (fallbackErr) {
                     clearTimeout(fallbackTimeoutId);
+                    if (clientAborted || chatRequestCancelled) throw fallbackErr;
+                    if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ error: fallbackErr })) {
+                        runtimeFallbackCircuit.recordFailure(fallbackModel);
+                    }
                     console.warn(` runtime_fallback network_failed model=${fallbackModel}`, sanitizeReportContext(fallbackErr));
                     appendRaiRuntimeReport({
                         level: '报错',
@@ -18863,6 +21090,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                 if (!fallbackResponse.ok) {
                     const fallbackErrorText = await readBoundedResponseText(fallbackResponse);
+                    if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ status: fallbackResponse.status })) {
+                        runtimeFallbackCircuit.recordFailure(fallbackModel);
+                    }
                     console.warn(` runtime_fallback failed model=${fallbackModel} status=${fallbackResponse.status} bodyLength=${fallbackErrorText.length}`);
                     appendRaiRuntimeReport({
                         level: '报错',
@@ -18888,6 +21118,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 requestBody = fallbackRequestBody;
                 useStreamingTools = fallbackUseStreamingTools;
                 isGeminiAPI = payload.isGeminiAPI;
+                runtimeFallbackCircuit.recordSuccess(fallbackModel);
 
                 const fallbackReason = reason || `primary_failed_${failedStatus || 'network'}`;
                 res.write(`data: ${JSON.stringify({
@@ -19040,7 +21271,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
 
                 // 提取 system prompt
-                const systemMsg = finalMessages.find(m => m.role === 'system');
+                const canonicalSystemInstruction = getCanonicalSystemInstruction(finalMessages);
 
                 fetchBody = {
                     contents: geminiContents,
@@ -19052,10 +21283,20 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 };
 
                 // 如果有 system prompt，添加为 systemInstruction
-                if (systemMsg) {
+                if (canonicalSystemInstruction) {
                     fetchBody.systemInstruction = {
-                        parts: [{ text: typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content) }]
+                        parts: [{ text: canonicalSystemInstruction }]
                     };
+                }
+                if (useStreamingTools) {
+                    fetchBody.tools = [{
+                        functionDeclarations: runtimeToolDefinitions.map((tool) => ({
+                            name: tool.function.name,
+                            description: tool.function.description,
+                            parametersJsonSchema: tool.function.parameters
+                        }))
+                    }];
+                    fetchBody.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
                 }
 
                 const safeGeminiApiUrl = apiUrl.replace(/key=[^&]+/, 'key=***');
@@ -19072,34 +21313,63 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 fetchBody = requestBody;
             }
 
-            const safeApiUrl = isGeminiAPI ? apiUrl.replace(/key=[^&]+/, 'key=***') : apiUrl;
-            console.log(` 正在调用: ${safeApiUrl}`);
-            console.log(`   API密钥: 已配置`);
-
             let apiResponse;
-            try {
-                apiResponse = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: fetchHeaders,
-                    body: JSON.stringify(fetchBody),
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId); // 清除超时定时器
-            } catch (primaryFetchError) {
+            if (gptImageModelSelected) {
                 clearTimeout(timeoutId);
-                const primaryFailureStatus = primaryFetchError.name === 'AbortError'
-                    || primaryFetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT'
-                    ? 'timeout'
-                    : 'network';
-                const fallbackResult = await tryUniversalRuntimeFallback({
-                    failedStatus: primaryFailureStatus,
-                    failedBody: primaryFetchError.message,
-                    reason: `${routing.provider}_${actualModel}_${primaryFailureStatus === 'timeout' ? 'timeout' : 'network_error'}`
-                });
-                if (fallbackResult?.response) {
-                    apiResponse = fallbackResult.response;
+                apiResponse = new Response(
+                    buildDirectImageToolCallSse(userContent, `direct_image_${requestId}`),
+                    {
+                        status: 200,
+                        headers: { 'Content-Type': 'text/event-stream; charset=utf-8' }
+                    }
+                );
+            } else {
+                const safeApiUrl = isGeminiAPI ? apiUrl.replace(/key=[^&]+/, 'key=***') : apiUrl;
+                console.log(` 正在调用: ${safeApiUrl}`);
+                console.log(`   API密钥: 已配置`);
+                if (runtimeFallbackCircuit.isOpen(finalModel)) {
+                    clearTimeout(timeoutId);
+                    const fallbackResult = await tryUniversalRuntimeFallback({
+                        failedStatus: 'circuit_open',
+                        failedBody: 'primary model temporarily suppressed after transient failures',
+                        reason: `${routing.provider}_${actualModel}_circuit_open`
+                    });
+                    if (fallbackResult?.response) apiResponse = fallbackResult.response;
+                    else throw new Error('primary_model_circuit_open');
                 } else {
-                    throw primaryFetchError;
+                    try {
+                        apiResponse = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: fetchHeaders,
+                            body: JSON.stringify(fetchBody),
+                            signal: controller.signal
+                        });
+                        clearTimeout(timeoutId); // Clear this connection timer; the request deadline remains active.
+                        if (apiResponse.ok) runtimeFallbackCircuit.recordSuccess(finalModel);
+                        else if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ status: apiResponse.status })) {
+                            runtimeFallbackCircuit.recordFailure(finalModel);
+                        }
+                    } catch (primaryFetchError) {
+                        clearTimeout(timeoutId);
+                        if (clientAborted || chatRequestCancelled) throw primaryFetchError;
+                        if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ error: primaryFetchError })) {
+                            runtimeFallbackCircuit.recordFailure(finalModel);
+                        }
+                        const primaryFailureStatus = primaryFetchError.name === 'AbortError'
+                            || primaryFetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT'
+                            ? 'timeout'
+                            : 'network';
+                        const fallbackResult = await tryUniversalRuntimeFallback({
+                            failedStatus: primaryFailureStatus,
+                            failedBody: primaryFetchError.message,
+                            reason: `${routing.provider}_${actualModel}_${primaryFailureStatus === 'timeout' ? 'timeout' : 'network_error'}`
+                        });
+                        if (fallbackResult?.response) {
+                            apiResponse = fallbackResult.response;
+                        } else {
+                            throw primaryFetchError;
+                        }
+                    }
                 }
             }
 
@@ -19217,8 +21487,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 provider: routing.provider
                             })}\n\n`);
 
+                            const fallbackTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
+                            if (fallbackTimeoutMs <= 0) {
+                                sendFinalApiFailure('siliconflow_balance_fallback_deadline', 'request deadline exhausted', { fallbackModel });
+                                return;
+                            }
                             const fallbackController = createChatAbortController();
-                            const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 120000);
+                            const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), fallbackTimeoutMs);
                             try {
                                 apiResponse = await fetch(fallbackPayload.apiUrl, {
                                     method: 'POST',
@@ -19275,60 +21550,17 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             let accumulatedToolCalls = [];  // 累积的工具调用
             let pendingToolCall = null;     // 当前正在累积的工具调用
             let streamFinishReason = null;  // 流结束原因
-            let toolMarkerCarry = '';
-            let inToolCallSection = false;
-            const TOOL_CALL_SECTION_START = '<|tool_calls_section_begin|>';
-            const TOOL_CALL_SECTION_END = '<|tool_calls_section_end|>';
+            let currentToolCallReasoningContent = '';
+            const streamToolProtocolFilter = createToolProtocolFilter({
+                toolNames: runtimeToolDefinitions.map((tool) => tool.function.name)
+            });
             let thinkTagCarry = '';
             let inThinkSection = false;
             const THINK_SECTION_START = '<think>';
             const THINK_SECTION_END = '</think>';
 
             const sanitizeStreamingContent = (chunk = '') => {
-                if (!useStreamingTools || !chunk) return chunk;
-
-                let text = toolMarkerCarry + chunk;
-                toolMarkerCarry = '';
-                let visible = '';
-
-                while (text.length > 0) {
-                    if (inToolCallSection) {
-                        const endIdx = text.indexOf(TOOL_CALL_SECTION_END);
-                        if (endIdx === -1) {
-                            const carryLen = Math.min(text.length, TOOL_CALL_SECTION_END.length - 1);
-                            toolMarkerCarry = text.slice(-carryLen);
-                            return visible;
-                        }
-                        text = text.slice(endIdx + TOOL_CALL_SECTION_END.length);
-                        inToolCallSection = false;
-                        continue;
-                    }
-
-                    const startIdx = text.indexOf(TOOL_CALL_SECTION_START);
-                    if (startIdx === -1) {
-                        visible += text;
-                        text = '';
-                    } else {
-                        visible += text.slice(0, startIdx);
-                        text = text.slice(startIdx + TOOL_CALL_SECTION_START.length);
-                        inToolCallSection = true;
-                    }
-                }
-
-                const incompleteMarkerIdx = visible.lastIndexOf('<|');
-                if (incompleteMarkerIdx !== -1 && visible.indexOf('|>', incompleteMarkerIdx) === -1) {
-                    toolMarkerCarry = visible.slice(incompleteMarkerIdx);
-                    visible = visible.slice(0, incompleteMarkerIdx);
-                }
-
-                visible = visible.replace(/<\|[^|]+\|>/g, '');
-                visible = visible.replace(/functions\.\w+:\d+/g, '');
-
-                if (/^\s*\{[\s\S]*"query"[\s\S]*\}\s*$/.test(visible)) {
-                    return '';
-                }
-
-                return visible;
+                return streamToolProtocolFilter.push(chunk);
             };
 
             const splitEmbeddedThinkContent = (chunk = '', allowReasoning = false) => {
@@ -19451,6 +21683,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                             const responseEventReasoning = extractReasoningTextFromResponseEvent(parsed);
                             if (responseEventReasoning) {
+                                const toolReasoningDelta = extractIncrementalChunk(currentToolCallReasoningContent, responseEventReasoning);
+                                if (toolReasoningDelta) currentToolCallReasoningContent += toolReasoningDelta;
                                 if (thinkingMode) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, responseEventReasoning);
                                     if (reasoningDelta) {
@@ -19487,6 +21721,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 if (candidate) {
                                     const parts = candidate.content?.parts || [];
                                     for (const part of parts) {
+                                        if (part.functionCall && useStreamingTools) {
+                                            accumulatedToolCalls.push({
+                                                id: `gemini_call_${Date.now()}_${accumulatedToolCalls.length}`,
+                                                type: 'function',
+                                                function: {
+                                                    name: String(part.functionCall.name || ''),
+                                                    arguments: JSON.stringify(part.functionCall.args || {})
+                                                }
+                                            });
+                                            streamFinishReason = 'tool_calls';
+                                            continue;
+                                        }
                                         if (!part.text) continue;
                                         if (part.thought) {
                                             if (thinkingMode) {
@@ -19499,7 +21745,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                             continue;
                                         }
 
-                                        const visibleDelta = extractIncrementalChunk(fullContent, part.text);
+                                        rawToolContent += part.text;
+                                        const filteredGeminiContent = sanitizeStreamingContent(part.text);
+                                        const visibleDelta = extractIncrementalChunk(fullContent, filteredGeminiContent);
                                         if (visibleDelta) {
                                             emitStructuredAssistantChunk(visibleDelta);
                                         }
@@ -19514,11 +21762,15 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 const reasoning = extractReasoningTextFromPayload(delta);
                                 const content = delta.content;
 
-                                if (reasoning && thinkingMode) {
-                                    const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
-                                    if (reasoningDelta) {
-                                        reasoningContent += reasoningDelta;
-                                        res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                if (reasoning) {
+                                    const toolReasoningDelta = extractIncrementalChunk(currentToolCallReasoningContent, reasoning);
+                                    if (toolReasoningDelta) currentToolCallReasoningContent += toolReasoningDelta;
+                                    if (thinkingMode) {
+                                        const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
+                                        if (reasoningDelta) {
+                                            reasoningContent += reasoningDelta;
+                                            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                        }
                                     }
                                 }
 
@@ -19605,12 +21857,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 if (!trimmedText) return fallbackCalls;
 
                 // 1) JSON 数组格式
-                if (trimmedText.startsWith('[') && /(web_search|finance_quote|generate_image|delete_memory)/.test(trimmedText)) {
+                if (trimmedText.startsWith('[') && /(web_search|finance_quote|generate_image|save_memory|delete_memory|read_skill|read_file|transform_file|edit_file|create_artifact|sandbox_exec)/.test(trimmedText)) {
                     try {
                         const parsedCalls = JSON.parse(trimmedText);
                         if (Array.isArray(parsedCalls)) {
                             for (const call of parsedCalls) {
-                                if ((call?.name === 'web_search' || call?.name === 'finance_quote' || call?.name === 'generate_image' || call?.name === 'delete_memory') && call.arguments) {
+                                if ((call?.name === 'web_search' || call?.name === 'finance_quote' || call?.name === 'generate_image' || call?.name === 'save_memory' || call?.name === 'delete_memory' || call?.name === 'read_skill' || isFileWorkspaceToolName(call?.name)) && call.arguments) {
                                     fallbackCalls.push({
                                         name: call.name,
                                         arguments: call.arguments
@@ -19630,7 +21882,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     while ((markerMatch = markerRegex.exec(trimmedText)) !== null) {
                         const functionName = markerMatch[1];
                         const argumentText = markerMatch[2];
-                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image' && functionName !== 'delete_memory') continue;
+                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image' && functionName !== 'save_memory' && functionName !== 'delete_memory' && functionName !== 'read_skill' && !isFileWorkspaceToolName(functionName)) continue;
 
                         try {
                             fallbackCalls.push({
@@ -19646,7 +21898,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 // 3) DeepSeek 风格 XML 伪工具调用:
                 // <function_calls><invoke name="web_search"><parameter name="query">...</parameter></invoke></function_calls>
                 if (fallbackCalls.length === 0 && trimmedText.includes('<invoke')) {
-                    const xmlInvokeRegex = /<invoke\s+name=["'](web_search|finance_quote|generate_image|delete_memory)["'][^>]*>([\s\S]*?)<\/invoke>/g;
+                    const xmlInvokeRegex = /<invoke\s+name=["'](web_search|finance_quote|generate_image|save_memory|delete_memory|read_skill|read_file|transform_file|edit_file|create_artifact|sandbox_exec)["'][^>]*>([\s\S]*?)<\/invoke>/g;
                     let invokeMatch;
                     while ((invokeMatch = xmlInvokeRegex.exec(trimmedText)) !== null) {
                         const functionName = invokeMatch[1];
@@ -19663,7 +21915,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             fallbackCalls.push({ name: functionName, arguments: args });
                         } else if (functionName === 'generate_image' && args.prompt) {
                             fallbackCalls.push({ name: functionName, arguments: args });
+                        } else if (functionName === 'save_memory' && args.content && args.evidence && args.reason) {
+                            fallbackCalls.push({ name: functionName, arguments: args });
                         } else if (functionName === 'delete_memory' && (args.memory_id || args.memory_ids || args.memoryId || args.memoryIds || args.id || args.ids || args.target || args.memory || args.content)) {
+                            fallbackCalls.push({ name: functionName, arguments: args });
+                        } else if (functionName === 'read_skill' && args.name) {
+                            fallbackCalls.push({ name: functionName, arguments: args });
+                        } else if (isFileWorkspaceToolName(functionName)) {
                             fallbackCalls.push({ name: functionName, arguments: args });
                         }
                     }
@@ -19671,12 +21929,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                 // 4) 松散文本格式
                 if (fallbackCalls.length === 0 && trimmedText.includes('functions.')) {
-                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,200}?(\{[\s\S]*?"(?:query|symbol|prompt|memory_id|memory_ids|memoryId|memoryIds|target)"[\s\S]*?\})/g;
+                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,200}?(\{[\s\S]*?"(?:query|symbol|prompt|content|evidence|memory_id|memory_ids|memoryId|memoryIds|target|name|file_id|operation|format|mode)"[\s\S]*?\})/g;
                     let looseMatch;
                     while ((looseMatch = looseRegex.exec(trimmedText)) !== null) {
                         const functionName = looseMatch[1];
                         const argumentText = looseMatch[2];
-                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image' && functionName !== 'delete_memory') continue;
+                        if (functionName !== 'web_search' && functionName !== 'finance_quote' && functionName !== 'generate_image' && functionName !== 'save_memory' && functionName !== 'delete_memory' && functionName !== 'read_skill' && !isFileWorkspaceToolName(functionName)) continue;
 
                         try {
                             fallbackCalls.push({
@@ -19770,6 +22028,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                         continue;
                     }
 
+                    if (toolName === 'save_memory') {
+                        const normalizedArgs = normalizeSaveMemoryToolArgs(args);
+                        if (!normalizedArgs) {
+                            continue;
+                        }
+
+                        normalized.push({
+                            ...toolCall,
+                            function: {
+                                ...toolCall.function,
+                                arguments: JSON.stringify(normalizedArgs)
+                            },
+                            _args: normalizedArgs
+                        });
+                        continue;
+                    }
+
                     if (toolName === 'delete_memory') {
                         const normalizedArgs = normalizeDeleteMemoryToolArgs(args);
                         if (!normalizedArgs) {
@@ -19782,6 +22057,28 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 ...toolCall.function,
                                 arguments: JSON.stringify(normalizedArgs)
                             },
+                            _args: normalizedArgs
+                        });
+                        continue;
+                    }
+
+                    if (toolName === 'read_skill') {
+                        const name = typeof args?.name === 'string' ? args.name : '';
+                        if (!name || !hasToolDefinition(runtimeToolDefinitions, 'read_skill')) continue;
+                        normalized.push({
+                            ...toolCall,
+                            function: { ...toolCall.function, arguments: JSON.stringify({ name }) },
+                            _args: { name }
+                        });
+                        continue;
+                    }
+
+                    if (isFileWorkspaceToolName(toolName)) {
+                        const normalizedArgs = normalizeWorkspaceToolArgs(toolName, args, clientFileExecution);
+                        if (!normalizedArgs) continue;
+                        normalized.push({
+                            ...toolCall,
+                            function: { ...toolCall.function, arguments: JSON.stringify(normalizedArgs) },
                             _args: normalizedArgs
                         });
                     }
@@ -19807,6 +22104,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     }
                 }
             }
+            const initialEofContent = streamToolProtocolFilter.flush({ fallbackDetected: accumulatedToolCalls.length > 0 });
+            if (initialEofContent) {
+                const splitEofThink = splitEmbeddedThinkContent(initialEofContent, !!thinkingMode);
+                const incrementalEofContent = extractIncrementalChunk(fullContent, splitEofThink.visible);
+                if (incrementalEofContent) emitStructuredAssistantChunk(incrementalEofContent);
+            }
 
             if (useStreamingTools && imageGenerationRequested && accumulatedToolCalls.length === 0) {
                 console.warn(' 图片生成意图已识别，但模型未触发工具调用，服务端合成 generate_image 调用');
@@ -19816,6 +22119,32 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     function: {
                         name: 'generate_image',
                         arguments: JSON.stringify({ prompt: userContent })
+                    }
+                });
+                streamFinishReason = 'tool_calls';
+            }
+
+            if (useStreamingTools && raiProductSkillRequired) {
+                accumulatedToolCalls = [{
+                    id: `forced_rai_product_skill_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                        name: 'read_skill',
+                        arguments: JSON.stringify({ name: 'rai-product' })
+                    }
+                }];
+                streamFinishReason = 'tool_calls';
+            }
+
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
+                forcedClientListFilesDone = true;
+                console.warn(` 本地文件任务但模型未触发工具调用，自动发起 list_files 引导工具链: model=${actualModel}`);
+                accumulatedToolCalls.push({
+                    id: `forced_list_files_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                        name: 'list_files',
+                        arguments: '{}'
                     }
                 });
                 streamFinishReason = 'tool_calls';
@@ -19835,12 +22164,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
             // 流式 + 多轮工具调用
             if (useStreamingTools && accumulatedToolCalls.length > 0) {
-                let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls);
+                let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls, clientFileExecution);
                 if (pendingToolCalls.length === 0) {
                     console.warn(` 收到 tool_calls 但均无效，已跳过`);
                 } else {
                     let toolRound = 0;
                     const maxToolRounds = 5;
+                    const loadedSkillNames = new Set();
                     let conversationMessages = [...finalMessages];
 
                     while (pendingToolCalls.length > 0 && toolRound < maxToolRounds) {
@@ -19855,7 +22185,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             console.log(` 执行工具: ${toolName}, argKeys=${Object.keys(args || {}).sort().join(',')}`);
                             const isSearchTool = toolName === 'web_search';
                             const isImageTool = toolName === 'generate_image';
+                            const isMemorySaveTool = toolName === 'save_memory';
                             const isMemoryDeleteTool = toolName === 'delete_memory';
+                            const isReadSkillTool = toolName === 'read_skill';
+                            const isFileTool = isFileWorkspaceToolName(toolName);
                             if (isSearchTool && agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
@@ -19889,6 +22222,127 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     message: '正在删除指定记忆'
                                 })}\n\n`);
                             }
+                            if (isMemorySaveTool) {
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: 'save_memory',
+                                    status: 'running',
+                                    message: '正在按需保存长期记忆'
+                                })}\n\n`);
+                            }
+                            if (isFileTool) {
+                                const fileToolMessage = toolName === 'read_file'
+                                    ? '正在读取当前附件'
+                                    : (toolName === 'sandbox_exec'
+                                        ? (clientFileExecution ? '正在请求本地执行 PowerShell 命令' : '正在隔离 Linux 沙箱中执行')
+                                        : (clientFileExecution ? '正在请求本地文件操作' : '正在生成受控文件产物'));
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: toolName,
+                                    status: 'running',
+                                    message: fileToolMessage
+                                })}\n\n`);
+                            }
+
+                            if (isReadSkillTool) {
+                                const requestedSkill = String(args?.name || '');
+                                if (loadedSkillNames.has(requestedSkill) || loadedSkillNames.size >= 3) {
+                                    executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_load_limit' } });
+                                    continue;
+                                }
+                                // 本地文件执行模式：sandbox 技能替换为本地工作目录说明
+                                if (clientFileExecution && requestedSkill === 'sandbox') {
+                                    const localSkill = {
+                                        name: 'local_workdir',
+                                        content: `# 本地工作目录执行模式
+
+当前对话已启用本地文件执行：用户授权了一个本地工作目录，所有文件工具在用户电脑上直接执行，不需要沙箱。
+
+- 创建文本/代码文件：用 create_artifact（format: text/markdown/json/csv + content + file_name），文件直接写入工作目录
+- 创建 Office 文档：用 create_artifact，format 传 docx/xlsx/pptx（客户端原生生成，无需任何脚本库、**不存在模板文件**，不要寻找或引用任何 .pptx 模板路径；#theme 只是主题色选择不是文件）——docx 内容用 Markdown 风格（# 标题、- 列表、**粗体**、*斜体*）；| 开头连续行为表格；!img:相对路径 行嵌入工作目录图片；xlsx 每行一个数据行、单元格 Tab 分隔、### 开头行切分工作表、= 开头为公式；pptx 用 --- 分页、#theme: 名称 指定主题
+- 修改文件：用 edit_file 精确替换（支持文本与 Word/PPT/Excel）
+- 给文档插图：先下载图片到工作目录（用 sandbox_exec 执行 PowerShell：Invoke-WebRequest -Uri 图片URL -OutFile 图片名.png），再引用：create_artifact 的 content 里用 !img:图片名.png 行，或 insert_image（docx 末尾 / pptx 指定页）。注意：图片必须真实存在于工作目录后才能引用，绝不能引用不存在的文件或直接写 URL
+- 更新 Excel：用 update_sheet（定向写单元格/公式/图表）；update_sheet 成功即完成，禁止再用 sandbox_exec 的 PowerShell COM 重复操作 Excel
+- 管理文件：list_files / write_file / copy_file / move_file / delete_file
+- 执行命令：用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒）。注意：本地环境只有 Windows PowerShell，**没有 Python/python-docx/openpyxl**，不要写 Python 脚本创建 Office 文档；文档操作一律用上述专门工具
+- 读取文件：用 read_file / transform_file
+
+不要请求沙箱、不要声称需要服务器沙箱。用户请求涉及文件/文档/命令操作时，你必须实际调用工具完成，禁止只输出计划、假装完成或跳过工具。**工具执行结果未确认成功（未收到 success:true 回传）时，禁止声称已生成/已完成/已写入，必须如实告知用户实际状态**。`
+                                    };
+                                    loadedSkillNames.add(localSkill.name);
+                                    executedToolResults.push({ toolCall, result: { loaded: true, name: localSkill.name } });
+                                    conversationMessages = appendTrustedSkillToCanonicalSystemMessage(conversationMessages, localSkill);
+                                    console.log(' 本地文件执行模式：已注入本地工作目录技能（替换 sandbox）');
+                                    continue;
+                                }
+                                try {
+                                    const trustedSkill = loadTrustedSkill(requestedSkill);
+                                    loadedSkillNames.add(trustedSkill.name);
+                                    executedToolResults.push({ toolCall, result: { loaded: true, name: trustedSkill.name } });
+                                    conversationMessages = appendTrustedSkillToCanonicalSystemMessage(
+                                        conversationMessages,
+                                        trustedSkill
+                                    );
+                                } catch (skillError) {
+                                    // Layer 1 remains in the canonical prompt; never use model text as a fallback instruction.
+                                    executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_unavailable' } });
+                                    console.warn(` 受信技能加载失败: ${requestedSkill}`);
+                                }
+                                continue;
+                            }
+
+                            if (isFileTool && clientFileExecution) {
+                                if (getPendingClientToolCountBySession(sessionId) > 0) {
+                                    executedToolResults.push({ toolCall, result: { success: false, error: 'client_tool_busy' } });
+                                    continue;
+                                }
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_pending_client',
+                                    request_id: requestId,
+                                    tool_call_id: toolCall.id,
+                                    tool: toolName,
+                                    parameters: args
+                                })}\n\n`);
+                                // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
+                                console.log(` 已下发 tool_pending_client: requestId=${requestId}, tool=${toolName}, toolCallId=${toolCall.id}`);
+                                // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
+                                const toolPauseStartedAt = Date.now();
+                                if (chatRequestDeadlineTimer) {
+                                    clearTimeout(chatRequestDeadlineTimer);
+                                    chatRequestDeadlineTimer = null;
+                                }
+                                // 挂起期间发 SSE 心跳保活（防客户端/网关空闲超时断流），并监听写错误
+                                const toolHeartbeat = setInterval(() => {
+                                    try { res.write(': keepalive\n\n'); } catch (e) { /* 流已断 */ }
+                                }, 25000);
+                                const toolResErrorHandler = (err) => {
+                                    console.warn(` 客户端工具等待期间 SSE 流错误: requestId=${requestId}, err=${err?.code || err?.message}`);
+                                    rejectClientToolPending(requestId, 'stream_error');
+                                };
+                                res.once('error', toolResErrorHandler);
+                                let localResult;
+                                try {
+                                    localResult = await new Promise((resolve) => {
+                                        createClientToolPending({ requestId, userId: req.user.userId, sessionId, toolCall, toolName, args, resolve });
+                                    });
+                                } finally {
+                                    clearInterval(toolHeartbeat);
+                                    res.removeListener('error', toolResErrorHandler);
+                                    if (chatRequestBudget && typeof chatRequestBudget.deadlineAt === 'number') {
+                                        chatRequestBudget.deadlineAt += (Date.now() - toolPauseStartedAt);
+                                    }
+                                    const remaining = chatRequestBudget ? chatRequestBudget.remainingMs() : 0;
+                                    chatRequestDeadlineTimer = setTimeout(() => {
+                                        for (const activeController of chatAbortControllers) {
+                                            if (!activeController.signal.aborted) activeController.abort();
+                                        }
+                                    }, Math.max(0, remaining));
+                                }
+                                executedToolResults.push({ toolCall, result: localResult });
+                                const ok = localResult && localResult.success !== false;
+                                res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: toolName, status: ok ? 'complete' : 'failed', message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成') })}\n\n`);
+                                continue;
+                            }
 
                             const executor = TOOL_EXECUTORS[toolName];
                             if (!executor) {
@@ -19900,7 +22354,6 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             let result;
                             try {
                                 if (isImageTool) {
-                                    const waitingLinePromise = buildImageWaitingLineFromUserPrompt(userContent);
                                     const resultPromise = executor(args, {
                                         userId: req.user.userId,
                                         sessionId,
@@ -19909,37 +22362,57 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         requestedImageModel: gptImageModelSelected ? 'gpt-image-2' : (model === 'kolors-free' ? 'kolors-free' : 'auto'),
                                         signal: controller.signal
                                     });
-                                    const firstImageEvent = await Promise.race([
-                                        waitingLinePromise.then((line) => ({ kind: 'line', line })).catch(() => ({ kind: 'line', line: '' })),
-                                        resultPromise.then((value) => ({ kind: 'result', value }), (error) => ({ kind: 'error', error })),
-                                        new Promise((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 1800))
-                                    ]);
-                                    if (firstImageEvent.kind === 'line' && firstImageEvent.line) {
-                                        res.write(`data: ${JSON.stringify({
-                                            type: 'tool_status',
-                                            tool: 'generate_image',
-                                            status: 'running',
-                                            message: firstImageEvent.line,
-                                            generatedBy: IMAGE_WAITING_LINE_MODEL_ID
-                                        })}\n\n`);
-                                    } else if (firstImageEvent.kind === 'result') {
-                                        result = firstImageEvent.value;
-                                    } else if (firstImageEvent.kind === 'error') {
-                                        throw firstImageEvent.error;
-                                    }
-                                    if (!result) {
+                                    if (gptImageModelSelected) {
                                         result = await resultPromise;
+                                    } else {
+                                        const waitingLinePromise = buildImageWaitingLineFromUserPrompt(userContent);
+                                        const firstImageEvent = await Promise.race([
+                                            waitingLinePromise.then((line) => ({ kind: 'line', line })).catch(() => ({ kind: 'line', line: '' })),
+                                            resultPromise.then((value) => ({ kind: 'result', value }), (error) => ({ kind: 'error', error })),
+                                            new Promise((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 1800))
+                                        ]);
+                                        if (firstImageEvent.kind === 'line' && firstImageEvent.line) {
+                                            res.write(`data: ${JSON.stringify({
+                                                type: 'tool_status',
+                                                tool: 'generate_image',
+                                                status: 'running',
+                                                message: firstImageEvent.line,
+                                                generatedBy: IMAGE_WAITING_LINE_MODEL_ID
+                                            })}\n\n`);
+                                        } else if (firstImageEvent.kind === 'result') {
+                                            result = firstImageEvent.value;
+                                        } else if (firstImageEvent.kind === 'error') {
+                                            throw firstImageEvent.error;
+                                        }
+                                        if (!result) {
+                                            result = await resultPromise;
+                                        }
                                     }
                                 } else {
                                     if (isSearchTool) {
                                         result = await executor(args, searchDepth);
-                                    } else if (isMemoryDeleteTool) {
-                                        result = await executor(args, { userId: req.user.userId, sessionId });
+                                    } else if (isMemorySaveTool || isMemoryDeleteTool || isFileTool) {
+                                        result = await executor(args, {
+                                            userId: req.user.userId,
+                                            sessionId,
+                                            userMessages: messages
+                                                .filter((message) => message?.role === 'user')
+                                                .map((message) => typeof message.content === 'string' ? stripInlinePromptTimeHint(message.content) : JSON.stringify(message.content || ''))
+                                        });
                                     } else {
                                         result = await executor(args);
                                     }
                                 }
                             } catch (toolError) {
+                                if (gptImageModelSelected && isImageTool) {
+                                    directImageToolFailed = true;
+                                }
+                                if (isFileTool) {
+                                    const safeToolErrorCode = String(toolError?.code || toolError?.name || 'file_tool_error')
+                                        .replace(/[^a-zA-Z0-9_.-]/g, '_')
+                                        .slice(0, 80);
+                                    console.warn(` 文件工具执行失败: tool=${toolName}, code=${safeToolErrorCode}, status=${Number(toolError?.statusCode || 500)}`);
+                                }
                                 appendRaiRuntimeReport({
                                     level: '报错',
                                     tag: 'tool_execution_failed',
@@ -19950,15 +22423,35 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                         toolName,
                                         model: finalModel,
                                         provider: routing?.provider,
-                                        args
+                                        args: (isMemorySaveTool || isMemoryDeleteTool)
+                                            ? {
+                                                category: args?.category || '',
+                                                contentLength: String(args?.content || '').length,
+                                                evidenceLength: String(args?.evidence || '').length,
+                                                targetLength: String(args?.target || '').length,
+                                                memoryIdCount: uniquePositiveMemoryIds(args?.memory_ids || args?.memory_id || []).length
+                                            }
+                                            : (isFileTool
+                                                ? {
+                                                    operation: args?.operation || '',
+                                                    format: args?.format || '',
+                                                    mode: args?.mode || '',
+                                                    contentLength: String(args?.content || '').length,
+                                                    fileNameLength: String(args?.file_name || '').length
+                                                }
+                                                : args)
                                     }
                                 });
                                 res.write(`data: ${JSON.stringify({
-                                    type: (isImageTool || isMemoryDeleteTool) ? 'tool_status' : 'search_status',
+                                    type: (isImageTool || isMemorySaveTool || isMemoryDeleteTool || isFileTool) ? 'tool_status' : 'search_status',
                                     tool: toolName,
                                     status: 'failed',
                                     query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
-                                    message: isImageTool ? '图片生成失败，已记录报错' : (isMemoryDeleteTool ? '记忆删除失败，已记录报错' : '工具调用失败，已记录报错')
+                                    message: isImageTool
+                                        ? '图片生成失败，已记录报错'
+                                        : ((isMemorySaveTool || isMemoryDeleteTool)
+                                            ? '记忆工具执行失败，已记录报错'
+                                            : (isFileTool ? '文件工作区操作失败' : '工具调用失败，已记录报错'))
                                 })}\n\n`);
                                 executedToolResults.push({
                                     toolCall,
@@ -20059,6 +22552,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 });
                                 console.log(` 工具执行完成: finance_quote ${formatPrivateLogFingerprint(result?.resolvedSymbol || args.symbol, 'symbol')}`);
                             } else if (isImageTool) {
+                                if (gptImageModelSelected) {
+                                    directImageToolSucceeded = true;
+                                }
                                 const imageMarkdown = buildGeneratedImageMarkdown(result);
                                 if (imageMarkdown) {
                                     emitStructuredAssistantChunk(`\n\n${imageMarkdown}\n\n`);
@@ -20090,6 +22586,31 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                             : `使用 ${result?.actualModel || result?.model || '图像模型'} 生成 ${result?.images?.length || 0} 张图片`
                                 })}\n\n`);
                                 console.log(` 工具执行完成: generate_image provider=${result?.provider || 'unknown'}, model=${result?.model || 'unknown'}, fallback=${result?.fallbackUsed === true}, count=${result?.images?.length || 0}`);
+                            } else if (isMemorySaveTool) {
+                                executedToolResults.push({
+                                    toolCall,
+                                    result: buildToolResultForLLM({
+                                        toolName,
+                                        result,
+                                        sources: [],
+                                        args
+                                    })
+                                });
+                                const updatedMemories = await listActiveUserMemories(req.user.userId, 200).catch(() => []);
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: 'save_memory',
+                                    status: result?.success ? 'complete' : 'rejected',
+                                    message: result?.message || (result?.success ? '长期记忆已保存' : '本轮内容不符合长期记忆标准')
+                                })}\n\n`);
+                                if (result?.success) {
+                                    res.write(`data: ${JSON.stringify({
+                                        type: 'memory_update',
+                                        enabled: true,
+                                        memories: updatedMemories
+                                    })}\n\n`);
+                                }
+                                console.log(` 工具执行完成: save_memory success=${!!result?.success}, code=${result?.code || 'unknown'}`);
                             } else if (isMemoryDeleteTool) {
                                 executedToolResults.push({
                                     toolCall,
@@ -20113,11 +22634,37 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     memories: updatedMemories
                                 })}\n\n`);
                                 console.log(` 工具执行完成: delete_memory success=${!!result?.success}, deleted=${Number(result?.deletedCount || 0)}`);
+                            } else if (isFileTool) {
+                                const toolResult = buildToolResultForLLM({
+                                    toolName,
+                                    result,
+                                    sources: [],
+                                    args
+                                });
+                                executedToolResults.push({ toolCall, result: toolResult });
+                                const artifactMarkdown = buildArtifactDownloadMarkdown(result);
+                                if (artifactMarkdown) emitStructuredAssistantChunk(`\n\n${artifactMarkdown}\n\n`);
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: toolName,
+                                    status: 'complete',
+                                    message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
+                                })}\n\n`);
+                                console.log(` 工具执行完成: ${toolName}, bytes=${Number(result?.size || result?.text?.length || 0)}`);
                             }
                         }
 
                         if (executedToolResults.length === 0) {
                             console.warn(` 本轮没有可执行的工具结果，结束工具循环`);
+                            break;
+                        }
+
+                        if (gptImageModelSelected && (directImageToolSucceeded || directImageToolFailed)) {
+                            emitStructuredAssistantChunk(directImageToolSucceeded
+                                ? '\n\n图片已生成。'
+                                : '\n\n图片生成失败，请稍后重试。');
+                            pendingToolCalls = [];
+                            console.log(' Image 2 直达模式完成，跳过聊天模型续传');
                             break;
                         }
 
@@ -20134,6 +22681,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 }
                             }))
                         };
+                        if (isCurrentKimiK25Model()) {
+                            assistantToolCallMessage.reasoning_content = currentToolCallReasoningContent || 'Tool call continuation reasoning.';
+                        }
                         const toolResultMessages = executedToolResults.map(({ toolCall, result }) => ({
                             role: 'tool',
                             tool_call_id: toolCall.id,
@@ -20149,11 +22699,40 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             tools: runtimeToolDefinitions,
                             tool_choice: "auto"
                         };
+                        let continueApiUrl = providerConfig.baseURL;
+                        let continueHeaders = buildProviderFetchHeaders(providerConfig, routing.provider);
+                        if (isGeminiAPI) {
+                            const canonicalSystemInstruction = getCanonicalSystemInstruction(conversationMessages);
+                            continueApiUrl = `${providerConfig.baseURL}/${actualModel}:streamGenerateContent?key=${providerConfig.apiKey}&alt=sse`;
+                            continueHeaders = { 'Content-Type': 'application/json' };
+                            continueRequestBody.contents = buildGeminiContinuationContents(conversationMessages);
+                            continueRequestBody.generationConfig = {
+                                temperature: normalizedTemperature,
+                                topP: normalizedTopP,
+                                maxOutputTokens: Math.min(normalizedMaxTokens, routing.maxOutputTokens || 8000)
+                            };
+                            continueRequestBody.systemInstruction = canonicalSystemInstruction
+                                ? { parts: [{ text: canonicalSystemInstruction }] }
+                                : undefined;
+                            continueRequestBody.tools = [{
+                                functionDeclarations: runtimeToolDefinitions.map((tool) => ({
+                                    name: tool.function.name,
+                                    description: tool.function.description,
+                                    parametersJsonSchema: tool.function.parameters
+                                }))
+                            }];
+                            continueRequestBody.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
+                            delete continueRequestBody.model;
+                            delete continueRequestBody.messages;
+                            delete continueRequestBody.max_tokens;
+                            delete continueRequestBody.stream;
+                            delete continueRequestBody.tool_choice;
+                        }
                         if (routing.provider === 'openrouter' && Array.isArray(routing.fallbackModels) && routing.fallbackModels.length > 1) {
                             continueRequestBody.models = routing.fallbackModels;
                         }
 
-                        if (isKimiK25Model) {
+                        if (isCurrentKimiK25Model()) {
                             if (routing.provider === 'siliconflow') {
                                 continueRequestBody.enable_thinking = !!thinkingMode;
                             } else {
@@ -20184,7 +22763,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 reasoningEffort: continueReasoningEffort
                             });
                         }
-                        if (routing.provider === 'rai_fast_gateway') {
+                        if (['rai_fast_gateway', 'rai_claude_gateway'].includes(routing.provider)) {
                             const continueReasoningEffort = resolveOpenAIChatReasoningEffort(
                                 actualModel,
                                 !!thinkingMode,
@@ -20196,22 +22775,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             });
                         }
                         console.log(` 发起续传流式调用 (round=${toolRound})...`);
-                        // 重置工具标记清洗器状态，避免跨轮污染
-                        toolMarkerCarry = '';
-                        inToolCallSection = false;
+                        // Each model continuation has an independent protocol stream.
+                        streamToolProtocolFilter.reset();
                         thinkTagCarry = '';
                         inThinkSection = false;
 
                         let continueRawToolContent = '';
                         let continueStreamFinishReason = null;
+                        let continueToolCallReasoningContent = '';
                         const continueAccumulatedToolCalls = [];
+                        const continueTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
+                        if (continueTimeoutMs <= 0) {
+                            console.warn(` 工具续传跳过: request_deadline_exhausted=true, round=${toolRound}`);
+                            break;
+                        }
                         const continueController = createChatAbortController();
-                        const continueTimeoutId = setTimeout(() => continueController.abort(), 120000);
+                        const continueTimeoutId = setTimeout(() => continueController.abort(), continueTimeoutMs);
 
                         try {
-                            const continueResponse = await fetch(providerConfig.baseURL, {
+                            const continueResponse = await fetch(continueApiUrl, {
                                 method: 'POST',
-                                headers: buildProviderFetchHeaders(providerConfig, routing.provider),
+                                headers: continueHeaders,
                                 body: JSON.stringify(continueRequestBody),
                                 signal: continueController.signal
                             });
@@ -20246,6 +22830,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     const continueParsed = JSON.parse(continueTrimmed.slice(6));
                                     const continueEventReasoning = extractReasoningTextFromResponseEvent(continueParsed);
                                     if (continueEventReasoning) {
+                                        const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, continueEventReasoning);
+                                        if (toolReasoningDelta) continueToolCallReasoningContent += toolReasoningDelta;
                                         if (thinkingMode) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, continueEventReasoning);
                                             if (reasoningDelta) {
@@ -20279,16 +22865,44 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     const continueChoice = continueParsed.choices?.[0];
                                     const continueDelta = continueChoice?.delta || {};
 
+                                    if (isGeminiAPI) {
+                                        const candidate = continueParsed.candidates?.[0];
+                                        for (const part of candidate?.content?.parts || []) {
+                                            if (part.functionCall) {
+                                                continueAccumulatedToolCalls.push({
+                                                    id: `gemini_continue_${Date.now()}_${continueAccumulatedToolCalls.length}`,
+                                                    type: 'function',
+                                                    function: {
+                                                        name: String(part.functionCall.name || ''),
+                                                        arguments: JSON.stringify(part.functionCall.args || {})
+                                                    }
+                                                });
+                                                continueStreamFinishReason = 'tool_calls';
+                                            } else if (part.text) {
+                                                continueRawToolContent += part.text;
+                                                rawToolContent += part.text;
+                                                const filteredGeminiContinueContent = sanitizeStreamingContent(part.text);
+                                                const incrementalContinueContent = extractIncrementalChunk(fullContent, filteredGeminiContinueContent);
+                                                if (incrementalContinueContent) emitStructuredAssistantChunk(incrementalContinueContent);
+                                            }
+                                        }
+                                        continue;
+                                    }
+
                                     if (continueChoice?.finish_reason) {
                                         continueStreamFinishReason = continueChoice.finish_reason;
                                     }
 
                                     const reasoning = extractReasoningTextFromPayload(continueDelta);
-                                    if (reasoning && thinkingMode) {
-                                        const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
-                                        if (reasoningDelta) {
-                                            reasoningContent += reasoningDelta;
-                                            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                    if (reasoning) {
+                                        const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, reasoning);
+                                        if (toolReasoningDelta) continueToolCallReasoningContent += toolReasoningDelta;
+                                        if (thinkingMode) {
+                                            const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
+                                            if (reasoningDelta) {
+                                                reasoningContent += reasoningDelta;
+                                                res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
+                                            }
                                         }
                                     }
 
@@ -20370,12 +22984,71 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 }
                             }
                         }
+                        const continueEofContent = streamToolProtocolFilter.flush({ fallbackDetected: continueAccumulatedToolCalls.length > 0 });
+                        if (continueEofContent) {
+                            const splitContinueEofThink = splitEmbeddedThinkContent(continueEofContent, !!thinkingMode);
+                            const incrementalContinueEofContent = extractIncrementalChunk(fullContent, splitContinueEofThink.visible);
+                            if (incrementalContinueEofContent) emitStructuredAssistantChunk(incrementalContinueEofContent);
+                        }
 
-                        pendingToolCalls = normalizeToolCalls(continueAccumulatedToolCalls);
+                        pendingToolCalls = normalizeToolCalls(continueAccumulatedToolCalls, clientFileExecution);
+                        currentToolCallReasoningContent = continueToolCallReasoningContent;
                         const safeContinueFinishReason = ['stop', 'length', 'tool_calls', 'content_filter'].includes(String(continueStreamFinishReason))
                             ? String(continueStreamFinishReason)
                             : 'other';
                         console.log(` 续传流式调用完成 (round=${toolRound}), next_tool_calls=${pendingToolCalls.length}, finish_reason=${safeContinueFinishReason}`);
+
+                        // 空工具调用兜底：流式分片可能导致工具参数丢失（Kimi 大参数 JSON 跨 chunk），改用非流式重试
+                        if (pendingToolCalls.length === 0 && clientFileExecution
+                            && String(continueStreamFinishReason) === 'tool_calls' && !clientNonStreamRetryDone) {
+                            clientNonStreamRetryDone = true;
+                            console.warn(` 空工具调用，尝试非流式重试获取完整参数: model=${actualModel}`);
+                            try {
+                                const retryBody = {
+                                    ...continueRequestBody,
+                                    stream: false,
+                                    messages: [
+                                        ...(continueRequestBody.messages || []),
+                                        { role: 'user', content: '（系统提示）你声明要调用工具但参数未完整输出。请直接以标准 tool_calls 输出完整的工具调用（含全部必填参数），只输出工具调用，不要解释。' }
+                                    ]
+                                };
+                                const retryRes = await fetch(continueApiUrl, {
+                                    method: 'POST',
+                                    headers: continueHeaders,
+                                    body: JSON.stringify(retryBody),
+                                    signal: continueController.signal
+                                });
+                                if (retryRes.ok) {
+                                    const retryJson = await retryRes.json();
+                                    const rawCalls = retryJson?.choices?.[0]?.message?.tool_calls || [];
+                                    const retryCalls = normalizeToolCalls(rawCalls, clientFileExecution);
+                                    if (retryCalls.length > 0) {
+                                        pendingToolCalls = retryCalls;
+                                        console.log(` 非流式重试获得 ${retryCalls.length} 个工具调用`);
+                                    } else {
+                                        console.warn(' 非流式重试仍未获得有效工具调用');
+                                    }
+                                } else {
+                                    console.warn(` 非流式重试失败: status=${retryRes.status}`);
+                                }
+                            } catch (retryErr) {
+                                console.warn(` 非流式重试异常: ${retryErr?.message}`);
+                            }
+                        }
+
+                        // 续传路径兜底：模型声明调用工具但未输出参数（Kimi 流式 bug），强制 list_files 引导
+                        if (pendingToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone
+                            && String(continueStreamFinishReason) === 'tool_calls'
+                            && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
+                            forcedClientListFilesDone = true;
+                            console.warn(` 续传声明工具调用但未输出参数，自动发起 list_files 引导: model=${actualModel}`);
+                            pendingToolCalls = [{
+                                id: `forced_list_files_${Date.now()}`,
+                                type: 'function',
+                                function: { name: 'list_files', arguments: '{}' },
+                                _args: {}
+                            }];
+                        }
                     }
 
                     if (toolRound >= maxToolRounds && pendingToolCalls.length > 0) {
@@ -20388,8 +23061,33 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             clearTimeout(timeoutId);
             if (clientAborted || chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
                 console.log(` 聊天请求已中止: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
+                return;
+            } else if ((fetchError.name === 'AbortError' || fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT')
+                && (String(fullContent || '').trim() || String(reasoningContent || '').trim())) {
+                streamDegraded = true;
+                const hasVisibleContent = Boolean(String(fullContent || '').trim());
+                console.warn(` 流式响应在已有${hasVisibleContent ? '正文' : '思考'}后中断，保留已生成内容并完成落库`);
+                appendRaiRuntimeReport({
+                    level: '警告',
+                    tag: 'model_api_partial_stream_saved',
+                    message: 'stream interrupted after useful output; partial response was saved',
+                    context: {
+                        sessionId,
+                        requestId,
+                        errorName: fetchError.name,
+                        contentLength: String(fullContent || '').length,
+                        reasoningLength: String(reasoningContent || '').length
+                    }
+                });
+                res.write(`data: ${JSON.stringify({
+                    type: 'stream_warning',
+                    code: 'partial_stream_saved',
+                    message: hasVisibleContent
+                        ? '上游连接中断，已保存已生成的回答。'
+                        : '上游连接中断，已保存思考记录；请重新生成以获得完整回答。'
+                })}\n\n`);
             } else if (fetchError.name === 'AbortError') {
-                console.error(' API请求超时 (120s)');
+                console.error(` API请求超时 (${chatRequestBudget?.totalMs || 0}ms)`);
                 sendFinalApiFailure('model_api_timeout', fetchError.message, {
                     errorName: fetchError.name
                 });
@@ -20406,7 +23104,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     causeCode: fetchError.cause?.code
                 });
             }
-            return;
+            if (!streamDegraded) return;
         }
 
         if (agentRuntime.enabled) {
@@ -20522,31 +23220,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (shouldSkipUserSave) {
                 console.log(' 重新生成请求: 跳过重复保存用户消息');
             } else if (lastUserMsg && lastUserMsg.role === 'user') {
-                const userContent = typeof lastUserMsg.content === 'string'
-                    ? stripInlinePromptTimeHint(lastUserMsg.content)
-                    : JSON.stringify(lastUserMsg.content);
+                const userContent = getPersistableUserMessageContent(lastUserMsg, { stripTimeHint: true });
 
                 // 提取附件信息用于保存（仅保存预览所需的精简数据）
                 let attachmentsJson = null;
                 // 防御性检查：确保 attachments 是数组
                 if (lastUserMsg.attachments && Array.isArray(lastUserMsg.attachments) && lastUserMsg.attachments.length > 0) {
-                    const previewAttachments = lastUserMsg.attachments.map(att => {
-                        // 对于图片，保存缩小的预览版本（减少数据库存储）
-                        // 对于视频/音频，只保存类型和文件名
-                        if (att.type === 'image' && att.data) {
-                            return {
-                                type: 'image',
-                                fileName: att.fileName,
-                                // 保存原始data用于预览（Base64）
-                                data: att.data
-                            };
-                        } else {
-                            return {
-                                type: att.type,
-                                fileName: att.fileName
-                            };
-                        }
-                    });
+                    const previewAttachments = buildStoredMessageAttachments(lastUserMsg.attachments);
                     attachmentsJson = JSON.stringify(previewAttachments);
                     console.log(` 保存 ${previewAttachments.length} 个附件信息`);
                 }
@@ -20571,7 +23251,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             }
 
             // 2. 提取并处理标题 / 画布Patch (如果存在)
-            let contentToSave = fullContent || (reasoningContent ? '(纯思考内容)' : '(生成中断)');
+            let contentToSave = fullContent || (reasoningContent
+                ? (streamDegraded ? '上游连接中断，正文尚未生成。请点击重新生成。' : '(纯思考内容)')
+                : '(生成中断)');
             // 兜底清洗：避免工具调用标记残留到数据库
             contentToSave = contentToSave
                 .replace(/<\|[^|]+\|>/g, '')
@@ -20660,13 +23342,14 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 );
             });
 
-            if (!memoryModeOff && !flowId && !shouldSkipUserSave && !memoryDeleteToolRequested) {
-                scheduleConversationMemoryProcessing({
-                    userId: req.user.userId,
-                    sessionId,
-                    userContent,
-                    assistantContent: contentToSave || ''
-                });
+            // When the provider stopped during reasoning, surface the saved
+            // user-facing placeholder before the terminal done event so the
+            // client does not finish with an empty assistant bubble.
+            if (streamDegraded && !String(fullContent || '').trim()) {
+                res.write(`data: ${JSON.stringify({
+                    type: 'content',
+                    content: contentToSave
+                })}\n\n`);
             }
 
             if (liveStreamState) {
@@ -20679,6 +23362,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 broadcastSessionStreamState(liveStreamState, 'session_stream_done');
                 cleanupSessionStreamState(sessionId, requestId);
             }
+            scheduleConversationIntegritySeal(sessionId, req.user.userId);
         }
 
         if (agentRuntime.enabled) {
@@ -20694,10 +23378,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
         res.end();
 
+        if (requestId) rejectClientToolPending(requestId, 'request_finished');
         console.log('\n 聊天处理完成\n');
 
     } catch (error) {
         console.error(' 聊天错误:', sanitizeReportContext(error));
+        if (requestId) rejectClientToolPending(requestId, 'request_finished');
         if (liveStreamState && liveStreamState.status === 'running') {
             liveStreamState.status = 'failed';
             liveStreamState.updatedAt = Date.now();
@@ -20712,6 +23398,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.error(' 写入响应错误:', sanitizeReportContext(writeError));
         }
     } finally {
+        if (requestId) rejectClientToolPending(requestId, 'request_finished');
+        if (chatRequestDeadlineTimer) {
+            clearTimeout(chatRequestDeadlineTimer);
+            chatRequestDeadlineTimer = null;
+        }
         if (liveStreamState && liveStreamState.status === 'running') {
             try {
                 liveStreamState.status = 'failed';
@@ -20742,6 +23433,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
     }
 });
 
+app.post('/api/agent/tool-result', authenticateToken, apiLimiter, (req, res) => {
+    const { request_id: requestId, tool_call_id: toolCallId, result } = req.body || {};
+    if (!requestId || !toolCallId || !result) return res.status(400).json({ error: 'missing_fields' });
+    const pending = clientToolPending.get(String(requestId));
+    if (!pending) return res.status(404).json({ error: 'pending_not_found' });
+    if (pending.userId !== req.user.userId) return res.status(403).json({ error: 'forbidden' });
+    if (pending.toolCall.id !== toolCallId) return res.status(409).json({ error: 'tool_call_mismatch' });
+    const resolved = resolveClientToolPending(String(requestId), normalizeClientToolResult(result));
+    if (!resolved) return res.status(410).json({ error: 'already_resolved' });
+    res.json({ success: true });
+});
+
 app.post('/api/chat/stop', authenticateToken, (req, res) => {
     const { requestId } = req.body;
 
@@ -20769,6 +23472,7 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
                         return res.status(500).json({ error: '停止失败' });
                     }
                     console.log(' 停止请求:', requestId);
+                    rejectClientToolPending(requestId, 'client_cancelled');
                     res.json({ success: true, message: '已发送停止信号' });
                 }
             );
@@ -21234,10 +23938,20 @@ function parseCookieHeader(req) {
     return output;
 }
 
-function setPasskeyLoginCookie(res, token, secure) {
+function getPasskeyLoginCookiePath(req) {
+    try {
+        const publicUrl = new URL(resolvePublicBaseUrl(req));
+        const basePath = publicUrl.pathname.replace(/\/+$/, '');
+        return `${basePath || ''}/api/auth/passkeys`;
+    } catch (error) {
+        return '/api/auth/passkeys';
+    }
+}
+
+function setPasskeyLoginCookie(res, token, secure, req) {
     const parts = [
         `${PASSKEY_LOGIN_COOKIE}=${encodeURIComponent(token)}`,
-        'Path=/api/auth/passkeys',
+        `Path=${getPasskeyLoginCookiePath(req)}`,
         'HttpOnly',
         'SameSite=Strict',
         `Max-Age=${Math.floor(PASSKEY_CHALLENGE_TTL_MS / 1000)}`
@@ -21246,10 +23960,10 @@ function setPasskeyLoginCookie(res, token, secure) {
     res.setHeader('Set-Cookie', parts.join('; '));
 }
 
-function clearPasskeyLoginCookie(res, secure) {
+function clearPasskeyLoginCookie(res, secure, req) {
     const parts = [
         `${PASSKEY_LOGIN_COOKIE}=`,
-        'Path=/api/auth/passkeys',
+        `Path=${getPasskeyLoginCookiePath(req)}`,
         'HttpOnly',
         'SameSite=Strict',
         'Max-Age=0'
@@ -22178,6 +24892,13 @@ async function getAdminRuntimeSettings() {
         const rows = await dbAllAsync('SELECT setting_key, setting_value FROM admin_runtime_settings');
         for (const row of rows) {
             if (!Object.prototype.hasOwnProperty.call(settings, row.setting_key)) continue;
+            if (MODEL_ROUTING_SETTING_KEYS.includes(row.setting_key)) {
+                const candidate = String(row.setting_value || '').trim();
+                if (isSupportedAdminModelSettingValue(candidate)) {
+                    settings[row.setting_key] = normalizeAdminModelId(candidate);
+                }
+                continue;
+            }
             const defaultValue = ADMIN_RUNTIME_LIMIT_DEFAULTS[row.setting_key];
             if (defaultValue === 0 || defaultValue === 1) {
                 settings[row.setting_key] = parseBoundedInteger(row.setting_value, defaultValue, 0, 1);
@@ -22196,7 +24917,8 @@ async function setAdminRuntimeSettings(patch = {}) {
         chat_per_minute: [0, 1000],
         chat_per_5h: [0, 10000],
         chat_per_week: [0, 100000],
-        concurrent_requests: [1, 20],
+        concurrent_requests_free: [1, 20],
+        concurrent_requests_pro_max: [1, 20],
         upload_per_minute: [0, 1000],
         upload_max_file_mb: [1, 50],
         upload_user_total_mb: [0, 102400],
@@ -22219,6 +24941,20 @@ async function setAdminRuntimeSettings(patch = {}) {
             [key, String(value)]
         );
         saved[key] = value;
+    }
+    for (const key of MODEL_ROUTING_SETTING_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+        const candidate = String(patch[key] || '').trim();
+        if (!isSupportedAdminModelSettingValue(candidate)) continue;
+        await dbRunAsync(
+            `INSERT INTO admin_runtime_settings (setting_key, setting_value, updated_at)
+             VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(setting_key) DO UPDATE SET
+                setting_value = excluded.setting_value,
+                updated_at = CURRENT_TIMESTAMP`,
+            [key, normalizeAdminModelId(candidate)]
+        );
+        saved[key] = normalizeAdminModelId(candidate);
     }
     return { ...(await getAdminRuntimeSettings()), ...saved };
 }
@@ -22462,9 +25198,58 @@ function isRuntimeConfiguredModel(modelId = '') {
 }
 
 async function resolveVisibleAutoModel() {
+    const settings = await getAdminRuntimeSettings();
+    const preferred = settings.smart_default_model;
+    if (preferred && !(await isPublicModelDisabled(preferred)) && isRuntimeConfiguredModel(preferred)) {
+        return preferred;
+    }
     const disabled = await getDisabledModelSet();
-    const preferred = AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId));
-    return preferred || findAvailableRuntimeFallbackModelId('') || 'openrouter-free';
+    const fallback = AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId));
+    return fallback || findAvailableRuntimeFallbackModelId('') || 'openrouter-free';
+}
+
+async function resolveVisibleFastModel() {
+    const settings = await getAdminRuntimeSettings();
+    const preferred = settings.fast_default_model;
+    if (preferred && !(await isPublicModelDisabled(preferred)) && isRuntimeConfiguredModel(preferred)) {
+        return preferred;
+    }
+    if (!(await isPublicModelDisabled('deepseek-flash')) && isRuntimeConfiguredModel('deepseek-flash')) {
+        return 'deepseek-flash';
+    }
+    // 快速首选被禁用/不可用时，回落到智能模型备用链的首个可用模型
+    const disabled = await getDisabledModelSet();
+    const fallback = AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId));
+    return fallback || 'deepseek-flash';
+}
+
+async function resolveVisibleThinkingModel() {
+    const settings = await getAdminRuntimeSettings();
+    const preferred = settings.thinking_default_model;
+    if (preferred && !(await isPublicModelDisabled(preferred)) && isRuntimeConfiguredModel(preferred)) {
+        return preferred;
+    }
+    if (!(await isPublicModelDisabled('deepseek-pro')) && isRuntimeConfiguredModel('deepseek-pro')) {
+        return 'deepseek-pro';
+    }
+    // 思考首选被禁用/不可用时，回落到智能模型备用链的首个可用模型；若全部不可用则由统一备用链拦截并回退
+    const disabled = await getDisabledModelSet();
+    const fallback = AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId));
+    return fallback || 'deepseek-pro';
+}
+
+async function resolveVisionFallbackModel() {
+    const settings = await getAdminRuntimeSettings();
+    const preferred = settings.vision_fallback_model;
+    if (preferred && !(await isPublicModelDisabled(preferred)) && isRuntimeConfiguredModel(preferred)) {
+        return preferred;
+    }
+    for (const modelId of AUTO_MULTIMODAL_MODEL_PREFERENCE) {
+        if (!(await isPublicModelDisabled(modelId)) && isRuntimeConfiguredModel(modelId)) {
+            return modelId;
+        }
+    }
+    return 'qwen3.6-35b-a3b';
 }
 
 async function resolveVisibleAutoMultimodalModel() {
@@ -22552,6 +25337,8 @@ app.get('/api/model-availability', async (req, res) => {
 
 let ensureSessionKindColumnPromise = null;
 let ensureFlowSessionIdColumnPromise = null;
+let ensureFlowCanvasRevisionColumnPromise = null;
+let ensureChatFlowSchemaPromise = null;
 
 async function ensureColumnExists(tableName, columnName, alterSql) {
     const columns = await dbAllAsync(`PRAGMA table_info(${tableName})`);
@@ -22597,10 +25384,43 @@ async function ensureFlowSessionIdColumn() {
     return ensureFlowSessionIdColumnPromise;
 }
 
-async function ensureChatFlowSchemaColumns() {
+async function ensureFlowCanvasRevisionColumn() {
+    if (!ensureFlowCanvasRevisionColumnPromise) {
+        ensureFlowCanvasRevisionColumnPromise = ensureColumnExists(
+            'flows',
+            'canvas_revision',
+            `ALTER TABLE flows ADD COLUMN canvas_revision INTEGER NOT NULL DEFAULT 0`
+        ).catch((error) => {
+            ensureFlowCanvasRevisionColumnPromise = null;
+            throw error;
+        });
+    }
+
+    return ensureFlowCanvasRevisionColumnPromise;
+}
+
+async function ensureChatFlowBaseColumns() {
     await ensureSessionKindColumn();
     await ensureFlowSessionIdColumn();
+    await ensureFlowCanvasRevisionColumn();
 }
+
+async function ensureChatFlowSchemaColumns() {
+    if (!ensureChatFlowSchemaPromise) {
+        ensureChatFlowSchemaPromise = migrateAllLegacyFlows().catch((error) => {
+            ensureChatFlowSchemaPromise = null;
+            throw error;
+        });
+    }
+    return ensureChatFlowSchemaPromise;
+}
+
+const chatFlowStartupReady = selectionExplanationStartupReady
+    .then(async () => {
+        const summary = await ensureChatFlowSchemaColumns();
+        console.log(` ChatFlow会话映射与画布revision就绪: ${summary.total}条, 迁移${summary.migrated}条/${summary.migratedMessages}条消息`);
+        return summary;
+    });
 
 let ensureConversationOrganizationSchemaPromise = null;
 async function ensureConversationOrganizationSchema() {
@@ -22682,7 +25502,7 @@ function image2LimitForMembership(membership) {
     return membership === 'MAX' ? 10 : membership === 'Pro' ? 3 : 0;
 }
 
-const conversationOrganizationStartupReady = databaseInitializationSettled
+const conversationOrganizationStartupReady = chatFlowStartupReady
     .then(() => ensureConversationOrganizationSchema())
     .then(() => {
         console.log(' 对话文件夹、置顶和图片配额结构就绪');
@@ -22839,11 +25659,6 @@ function sanitizeMemoryContent(value) {
         .slice(0, MEMORY_CONTENT_MAX_LENGTH);
 }
 
-function normalizeMemoryCategory(category) {
-    const normalized = String(category || '').trim().toLowerCase().replace(/[^a-z_]/g, '');
-    return MEMORY_CATEGORIES.has(normalized) ? normalized : 'other';
-}
-
 function normalizeMemoryKeyText(value) {
     return String(value || '')
         .normalize('NFKC')
@@ -22979,129 +25794,6 @@ async function setUserLongMemoryEnabled(userId, enabled) {
     };
 }
 
-async function getRecentSessionMessagesForMemory(userId, sessionId, limit = MEMORY_CONTEXT_MESSAGE_LIMIT) {
-    if (!sessionId) return [];
-    const rows = await dbAllAsync(
-        `SELECT m.id, m.role, m.content, m.created_at
-         FROM messages m
-         JOIN sessions s ON s.id = m.session_id
-         WHERE m.session_id = ?
-           AND s.user_id = ?
-           AND COALESCE(s.session_kind, 'chat') = 'chat'
-           AND m.role IN ('user', 'assistant')
-         ORDER BY m.created_at DESC, m.id DESC
-         LIMIT ?`,
-        [sessionId, userId, Math.max(2, Math.min(Number(limit) || MEMORY_CONTEXT_MESSAGE_LIMIT, 16))]
-    ).catch(() => []);
-
-    return rows
-        .reverse()
-        .map((message) => ({
-            id: message.id,
-            role: message.role,
-            content: sanitizeMemoryContent(message.content).slice(0, 700)
-        }))
-        .filter((message) => message.content);
-}
-
-function buildMemoryExtractionContext(messages = []) {
-    return (Array.isArray(messages) ? messages : [])
-        .slice(-MEMORY_CONTEXT_MESSAGE_LIMIT)
-        .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content}`)
-        .join('\n')
-        .slice(-2400);
-}
-
-function looksLikeMemoryQuestion(text) {
-    return /(?:你|您|user|your).{0,30}(?:名字|姓名|年龄|几岁|职业|工作|职位|身份|身高|体重|喜欢|不喜欢|兴趣|爱好|擅长|优点|缺点|name|age|job|role|height|weight|like|interest|good at|weakness)/i.test(String(text || ''));
-}
-
-function looksLikeShortMemoryFollowupAnswer(userText, recentMessages = []) {
-    const cleanUserText = sanitizeMemoryContent(userText);
-    if (!cleanUserText || cleanUserText.length > 120 || looksLikeMemorySignal(cleanUserText)) return false;
-    const normalizedUserText = normalizeMemoryKeyText(cleanUserText);
-    if (!normalizedUserText || normalizedUserText.length > 80) return false;
-    if (/^(是|不是|对|不对|嗯|好的|可以|ok|yes|no|好|行|不用|不要|不需要)$/i.test(normalizedUserText)) return false;
-
-    const messages = Array.isArray(recentMessages) ? recentMessages : [];
-    let latestUserIndex = -1;
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-        if (messages[i]?.role !== 'user') continue;
-        const normalizedMessageText = normalizeMemoryKeyText(messages[i]?.content || '');
-        if (
-            normalizedMessageText === normalizedUserText ||
-            normalizedMessageText.endsWith(normalizedUserText) ||
-            normalizedUserText.endsWith(normalizedMessageText)
-        ) {
-            latestUserIndex = i;
-            break;
-        }
-    }
-    if (latestUserIndex <= 0) return false;
-
-    const priorText = messages
-        .slice(Math.max(0, latestUserIndex - 4), latestUserIndex)
-        .map((message) => message.content)
-        .join('\n');
-    return looksLikeMemoryQuestion(priorText);
-}
-
-function getPriorMemoryQuestionText(userText, recentMessages = []) {
-    if (!looksLikeShortMemoryFollowupAnswer(userText, recentMessages)) return '';
-    const cleanUserText = sanitizeMemoryContent(userText);
-    const normalizedUserText = normalizeMemoryKeyText(cleanUserText);
-    const messages = Array.isArray(recentMessages) ? recentMessages : [];
-    let latestUserIndex = -1;
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-        if (messages[i]?.role !== 'user') continue;
-        const normalizedMessageText = normalizeMemoryKeyText(messages[i]?.content || '');
-        if (
-            normalizedMessageText === normalizedUserText ||
-            normalizedMessageText.endsWith(normalizedUserText) ||
-            normalizedUserText.endsWith(normalizedMessageText)
-        ) {
-            latestUserIndex = i;
-            break;
-        }
-    }
-    if (latestUserIndex <= 0) return '';
-    return messages
-        .slice(Math.max(0, latestUserIndex - 4), latestUserIndex)
-        .map((message) => message.content)
-        .join('\n');
-}
-
-function extractFollowupMemoryActions(text, recentMessages = []) {
-    const clean = sanitizeMemoryContent(text);
-    const questionText = getPriorMemoryQuestionText(clean, recentMessages);
-    if (!clean || !questionText) return [];
-
-    const actions = [];
-    if (/(名字|姓名|怎么称呼|叫什么|name)/i.test(questionText)) {
-        pushMemoryAction(actions, { category: 'identity', content: `用户名字是 ${clean}`, confidence: 0.82 });
-    } else if (/(年龄|几岁|age)/i.test(questionText) && /^\d{1,3}\s*(?:岁|years? old)?$/i.test(clean)) {
-        const age = clean.match(/\d{1,3}/)?.[0];
-        if (age) pushMemoryAction(actions, { category: 'profile', content: `用户年龄是 ${age} 岁`, confidence: 0.82 });
-    } else if (/(身高|height)/i.test(questionText) && /\d{2,3}/.test(clean)) {
-        const height = clean.match(/\d{2,3}/)?.[0];
-        if (height) pushMemoryAction(actions, { category: 'profile', content: `用户身高是 ${height} 厘米`, confidence: 0.78 });
-    } else if (/(体重|weight)/i.test(questionText) && /\d{2,3}/.test(clean)) {
-        const weight = clean.match(/\d{2,3}/)?.[0];
-        if (weight) pushMemoryAction(actions, { category: 'profile', content: `用户体重是 ${weight}${/斤/.test(clean) ? ' 斤' : ' 公斤'}`, confidence: 0.78 });
-    } else if (/(职业|工作|职位|身份|做什么|job|role|work)/i.test(questionText)) {
-        pushMemoryAction(actions, { category: 'work', content: `用户身份/职业是 ${clean}`, confidence: 0.78 });
-    } else if (/(喜欢|兴趣|爱好|感兴趣|like|interest|hobby)/i.test(questionText)) {
-        pushMemoryAction(actions, { category: 'interest', content: `用户喜欢 ${clean}`, confidence: 0.76 });
-    } else if (/(不喜欢|讨厌|dislike|hate)/i.test(questionText)) {
-        pushMemoryAction(actions, { category: 'preference', content: `用户不喜欢 ${clean}`, confidence: 0.76 });
-    } else if (/(擅长|能力|优点|good at|strength)/i.test(questionText)) {
-        pushMemoryAction(actions, { category: 'ability', content: `用户擅长 ${clean}`, confidence: 0.76 });
-    } else if (/(不擅长|缺点|弱点|weakness)/i.test(questionText)) {
-        pushMemoryAction(actions, { category: 'weakness', content: `用户不擅长/弱点是 ${clean}`, confidence: 0.76 });
-    }
-    return actions;
-}
-
 async function buildConversationMemoryPrompt(userId) {
     const [memories, recentTitles] = await Promise.all([
         listActiveUserMemories(userId, LONG_MEMORY_PROMPT_LIMIT),
@@ -23127,210 +25819,6 @@ async function buildConversationMemoryPrompt(userId) {
     }
 
     return sections.join('\n\n');
-}
-
-function looksLikeMemorySignal(text) {
-    const value = String(text || '');
-    return /记住|记得|长期记|忘掉|忘记|删除记忆|删掉记忆|移除记忆|清除记忆|取消记忆|不要记|别记|不需要记|我叫|我的名字|我是|我是一名|我是一位|我的年龄|我\s*\d{1,3}\s*岁|我的身高|我身高|我的体重|我体重|我喜欢|我不喜欢|我讨厌|兴趣|爱好|擅长|不擅长|优点|缺点|职位|职业|身份|my name is|remember|forget|delete memory|remove memory|I am|I'm|I like|I dislike|I hate|my job|my role/i.test(value);
-}
-
-function pushMemoryAction(actions, action) {
-    const normalizedAction = String(action?.action || 'upsert').toLowerCase() === 'delete' ? 'delete' : 'upsert';
-    const content = sanitizeMemoryContent(action?.content || action?.target || '');
-    if (!content) return;
-    if (
-        normalizedAction !== 'delete' &&
-        /(?:api[_ -]?key|secret|token|password|密码|密钥|验证码|银行卡|信用卡|身份证)/i.test(content)
-    ) {
-        return;
-    }
-    if (
-        normalizedAction !== 'delete' &&
-        /用户身份\/职业是\s*(?:想|要|来|在|问|说|准备|打算|需要|希望|可以|不能|不是)/.test(content)
-    ) {
-        return;
-    }
-    actions.push({
-        action: normalizedAction,
-        category: normalizeMemoryCategory(action?.category),
-        content,
-        target: sanitizeMemoryContent(action?.target || content),
-        confidence: Math.max(0.1, Math.min(Number(action?.confidence) || 0.85, 1))
-    });
-}
-
-function extractHeuristicMemoryActions(text, recentMessages = []) {
-    const source = String(text || '').normalize('NFKC');
-    const actions = [];
-    const explicitRemember = source.match(/(?:请|帮我)?(?:记住|记得|以后记得|长期记住)[:：\s]*(.{2,160})/);
-
-    const deleteMatch = source.match(/(?:忘掉|删除|删掉|不要记住|别记住|不要记|别记|不需要记住)[:：\s]*(.{0,160})/);
-    if (deleteMatch) {
-        pushMemoryAction(actions, { action: 'delete', category: 'other', target: deleteMatch[1] || '全部记忆', content: deleteMatch[1] || '全部记忆', confidence: 0.9 });
-        return actions;
-    }
-
-    const patterns = [
-        { category: 'identity', regex: /(?:我叫|我的名字叫|我的名字是)\s*([^，。！？,.!\n]{1,40})/g, build: (v) => `用户名字是 ${v}` },
-        { category: 'profile', regex: /(?:我的年龄是|我)\s*(\d{1,3})\s*岁/g, build: (v) => `用户年龄是 ${v} 岁` },
-        { category: 'profile', regex: /(?:我的身高是|我身高)\s*(\d{2,3})\s*(?:cm|厘米|公分)?/gi, build: (v) => `用户身高是 ${v} 厘米` },
-        { category: 'profile', regex: /(?:我的体重是|我体重)\s*(\d{2,3})\s*(?:kg|公斤|斤)?/gi, build: (v, match) => `用户体重是 ${v}${/斤/.test(match[0]) ? ' 斤' : ' 公斤'}` },
-        { category: 'work', regex: /(?:我是|我是一名|我是一位)\s*([^，。！？,.!\n]{2,80})/g, build: (v) => `用户身份/职业是 ${v}` },
-        { category: 'work', regex: /(?:我的职位是|我的职业是|我的工作是)\s*([^，。！？,.!\n]{2,80})/g, build: (v) => `用户职位/职业是 ${v}` },
-        { category: 'interest', regex: /(?:我喜欢|我的兴趣是|我的爱好是|我对.+?感兴趣)\s*([^。！？!\n]{2,100})/g, build: (v) => `用户喜欢 ${v}` },
-        { category: 'preference', regex: /(?:我不喜欢|我讨厌)\s*([^。！？!\n]{2,100})/g, build: (v) => `用户不喜欢 ${v}` },
-        { category: 'ability', regex: /(?:我擅长|我的能力是|我会)\s*([^。！？!\n]{2,100})/g, build: (v) => `用户擅长 ${v}` },
-        { category: 'weakness', regex: /(?:我不擅长|我的缺点是|我的弱点是)\s*([^。！？!\n]{2,100})/g, build: (v) => `用户不擅长/弱点是 ${v}` },
-        { category: 'identity', regex: /my name is\s+([^,.!\n]{1,60})/gi, build: (v) => `User's name is ${v}` },
-        { category: 'preference', regex: /I (?:like|love)\s+([^,.!\n]{2,100})/gi, build: (v) => `User likes ${v}` },
-        { category: 'preference', regex: /I (?:dislike|hate)\s+([^,.!\n]{2,100})/gi, build: (v) => `User dislikes ${v}` }
-    ];
-
-    for (const pattern of patterns) {
-        for (const match of source.matchAll(pattern.regex)) {
-            const raw = sanitizeMemoryContent(match[1]);
-            if (!raw) continue;
-            pushMemoryAction(actions, {
-                category: pattern.category,
-                content: pattern.build(raw, match),
-                confidence: 0.86
-            });
-        }
-    }
-
-    if (explicitRemember?.[1] && !actions.some((action) => action.action === 'upsert')) {
-        pushMemoryAction(actions, { category: 'other', content: explicitRemember[1], confidence: 0.9 });
-    }
-
-    for (const action of extractFollowupMemoryActions(source, recentMessages)) {
-        pushMemoryAction(actions, action);
-    }
-
-    return actions;
-}
-
-function extractJsonObjectText(text) {
-    const value = String(text || '').trim();
-    const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1].trim() : value;
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start === -1 || end <= start) return '';
-    return candidate.slice(start, end + 1);
-}
-
-function parseMemoryActionsFromModelText(text) {
-    try {
-        const jsonText = extractJsonObjectText(text);
-        if (!jsonText) return [];
-        const parsed = JSON.parse(jsonText);
-        const actions = Array.isArray(parsed?.actions) ? parsed.actions : [];
-        const normalized = [];
-        actions.forEach((action) => pushMemoryAction(normalized, action));
-        return normalized;
-    } catch (error) {
-        console.warn(' 记忆提取 JSON 解析失败:', sanitizeReportContext(error));
-        return [];
-    }
-}
-
-async function callMemoryExtractionModel({ userText, assistantText = '', existingMemories = [], conversationContext = '' }) {
-    const modelId = MEMORY_EXTRACTION_MODEL_ID;
-    if (!isRuntimeConfiguredModel(modelId)) {
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'memory_extraction_model_unavailable',
-            message: 'DeepSeek V4 Flash is not configured for memory extraction',
-            context: { modelId }
-        });
-        return [];
-    }
-
-    const routing = MODEL_ROUTING[modelId];
-    const providerConfig = routing ? API_PROVIDERS[routing.provider] : null;
-    if (!routing || !providerConfig?.apiKey || providerConfig.isGemini || routing.isGemini) return [];
-
-    const system = [
-        'You extract durable user memories for an assistant.',
-        'Return strict JSON only: {"actions":[{"action":"upsert|delete","category":"identity|profile|preference|interest|ability|weakness|health|relationship|work|other","content":"...","target":"...","confidence":0.1-1}]}',
-        'Save only stable personal facts about the user, such as name, age, identity, job, body stats, interests, preferences, abilities, weaknesses, or important background.',
-        'Do not save one-off tasks, temporary requests, secrets, passwords, API keys, payment data, or guesses.',
-        'If the user asks to forget/delete/correct a memory, output delete actions with target text.',
-        'Keep each content self-contained and short.'
-    ].join('\n');
-    const existing = existingMemories
-        .slice(0, 40)
-        .map((memory) => `- #${memory.id} ${memory.category}: ${memory.content}`)
-        .join('\n') || '(none)';
-    const user = [
-        `Existing memories:\n${existing}`,
-        '',
-        `Recent conversation context:\n${String(conversationContext || '').slice(0, 2400) || '(none)'}`,
-        '',
-        `Latest user message:\n${String(userText || '').slice(0, 1800)}`,
-        '',
-        `Assistant reply summary/content:\n${String(assistantText || '').slice(0, 1200)}`
-    ].join('\n');
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), MEMORY_MODEL_TIMEOUT_MS);
-    try {
-        const response = await fetch(providerConfig.baseURL, {
-            method: 'POST',
-            headers: buildProviderFetchHeaders(providerConfig, routing.provider),
-            body: JSON.stringify({
-                model: routing.model,
-                messages: [
-                    { role: 'system', content: system },
-                    { role: 'user', content: user }
-                ],
-                temperature: 0,
-                max_tokens: MEMORY_MODEL_MAX_TOKENS,
-                stream: false
-            }),
-            signal: controller.signal
-        });
-        const payloadText = await readBoundedResponseText(response, 256 * 1024);
-        if (!response.ok) {
-            appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'memory_extraction_http_failed',
-                message: `Memory extraction HTTP ${response.status}`,
-                context: { modelId, provider: routing.provider, bodyLength: payloadText.length }
-            });
-            return [];
-        }
-        let payload = null;
-        try {
-            payload = JSON.parse(payloadText);
-        } catch {
-            payload = null;
-        }
-        const content = payload?.choices?.[0]?.message?.content || payloadText;
-        return parseMemoryActionsFromModelText(content);
-    } catch (error) {
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'memory_extraction_failed',
-            message: error.message,
-            context: { modelId, provider: routing.provider }
-        });
-        return [];
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-function dedupeMemoryActions(actions = []) {
-    const seen = new Set();
-    const result = [];
-    for (const action of actions) {
-        const key = `${action.action}:${normalizeMemoryCategory(action.category)}:${normalizeMemoryKeyText(action.target || action.content)}`;
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        result.push(action);
-    }
-    return result;
 }
 
 async function upsertUserMemory({ userId, category, content, confidence = 0.8, sourceSessionId = null, sourceMessageId = null }) {
@@ -23362,6 +25850,50 @@ async function upsertUserMemory({ userId, category, content, confidence = 0.8, s
         ]
     );
     return result;
+}
+
+async function saveUserMemoryByTool({ userId, sessionId = null, sourceMessageId = null, userMessages = [], args = {} } = {}) {
+    const safeUserId = Number(userId);
+    if (!Number.isInteger(safeUserId) || safeUserId <= 0) {
+        return { success: false, code: 'memory_user_missing', message: '缺少用户身份，无法保存记忆。' };
+    }
+    if (!await isUserLongMemoryEnabled(safeUserId)) {
+        return { success: false, code: 'memory_disabled', message: '长期记忆未开启，本轮没有保存。' };
+    }
+
+    const validation = validateSaveMemoryRequest(args, userMessages);
+    if (!validation.ok) {
+        return {
+            success: false,
+            code: validation.code,
+            message: validation.message
+        };
+    }
+
+    const safeArgs = validation.args;
+    await upsertUserMemory({
+        userId: safeUserId,
+        category: safeArgs.category,
+        content: safeArgs.content,
+        confidence: 1,
+        sourceSessionId: sessionId,
+        sourceMessageId
+    });
+    const memoryKey = buildMemoryKey(safeArgs.category, safeArgs.content);
+    const savedMemory = await dbGetAsync(
+        `SELECT id, category, content, confidence, source_session_id, source_message_id, created_at, updated_at
+         FROM user_memories
+         WHERE user_id = ? AND memory_key = ? AND deleted_at IS NULL`,
+        [safeUserId, memoryKey]
+    ).catch(() => null);
+
+    return {
+        success: !!savedMemory,
+        code: savedMemory ? 'memory_saved' : 'memory_save_failed',
+        savedMemory: savedMemory || null,
+        explicitMemoryRequest: validation.explicitMemoryRequest,
+        message: savedMemory ? '长期记忆已保存。' : '长期记忆保存失败。'
+    };
 }
 
 async function softDeleteUserMemory(userId, memoryId) {
@@ -23471,117 +26003,6 @@ async function deleteUserMemoryByModel({ userId, memoryId = null, memoryIds = []
             ? `已删除 ${matches.length} 条匹配的长期记忆。`
             : '没有找到匹配的长期记忆。'
     };
-}
-
-async function deleteMemoriesByTarget(userId, target) {
-    const safeTarget = sanitizeMemoryContent(target);
-    const memoryIds = extractMemoryIdsFromText(safeTarget);
-    if (memoryIds.length > 0) {
-        let changes = 0;
-        for (const memoryId of memoryIds) {
-            const result = await softDeleteUserMemory(userId, memoryId);
-            changes += Number(result?.changes || 0);
-        }
-        return { changes };
-    }
-
-    const normalizedTarget = normalizeMemoryKeyText(safeTarget);
-    if (!normalizedTarget || /^(全部记忆|所有记忆|allmemories|everything)$/.test(normalizedTarget)) {
-        return dbRunAsync(
-            `UPDATE user_memories
-             SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ? AND deleted_at IS NULL`,
-            [userId]
-        );
-    }
-
-    const memories = await listActiveUserMemories(userId, 200);
-    const matches = memories.filter((memory) => {
-        const normalizedContent = normalizeMemoryKeyText(memory.content);
-        return normalizedContent.includes(normalizedTarget) || normalizedTarget.includes(normalizedContent);
-    });
-
-    for (const memory of matches) {
-        await softDeleteUserMemory(userId, memory.id);
-    }
-    return { changes: matches.length };
-}
-
-async function applyMemoryActions({ userId, sessionId, sourceMessageId = null, actions = [] }) {
-    const normalizedActions = dedupeMemoryActions(actions);
-    if (normalizedActions.length === 0) return 0;
-    for (const action of normalizedActions) {
-        if (action.action === 'delete') {
-            await deleteMemoriesByTarget(userId, action.target || action.content);
-        } else {
-            await upsertUserMemory({
-                userId,
-                category: action.category,
-                content: action.content,
-                confidence: action.confidence,
-                sourceSessionId: sessionId,
-                sourceMessageId
-            });
-        }
-    }
-    return normalizedActions.length;
-}
-
-async function processConversationMemory({ userId, sessionId, userContent, assistantContent = '', sourceMessageId = null }) {
-    const cleanUserContent = sanitizeMemoryContent(stripInlinePromptTimeHint(userContent));
-    if (!cleanUserContent) return;
-    const enabled = await isUserLongMemoryEnabled(userId);
-    if (!enabled) return;
-
-    const recentMessages = await getRecentSessionMessagesForMemory(userId, sessionId, MEMORY_CONTEXT_MESSAGE_LIMIT);
-    const shouldProcess = looksLikeMemorySignal(cleanUserContent) || looksLikeShortMemoryFollowupAnswer(cleanUserContent, recentMessages);
-    if (!shouldProcess) return;
-
-    const existingMemories = await listActiveUserMemories(userId, 80);
-    const heuristicActions = extractHeuristicMemoryActions(cleanUserContent, recentMessages);
-    const heuristicCount = await applyMemoryActions({
-        userId,
-        sessionId,
-        sourceMessageId,
-        actions: heuristicActions
-    });
-    if (heuristicCount > 0) {
-        console.log(` 长期记忆规则处理完成: userId=${userId}, actions=${heuristicCount}`);
-        return;
-    }
-
-    const modelActions = await callMemoryExtractionModel({
-        userText: cleanUserContent,
-        assistantText: sanitizeMemoryContent(assistantContent),
-        existingMemories,
-        conversationContext: buildMemoryExtractionContext(recentMessages)
-    });
-    const modelCount = await applyMemoryActions({
-        userId,
-        sessionId,
-        sourceMessageId,
-        actions: modelActions
-    });
-    if (modelCount > 0) {
-        console.log(` 长期记忆模型处理完成: userId=${userId}, actions=${modelCount}`);
-    }
-}
-
-function scheduleConversationMemoryProcessing(payload) {
-    setTimeout(() => {
-        processConversationMemory(payload).catch((error) => {
-            console.warn(' 长期记忆处理失败:', sanitizeReportContext(error));
-            appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'memory_processing_failed',
-                message: error.message,
-                context: {
-                    userId: payload?.userId,
-                    sessionId: payload?.sessionId
-                }
-            });
-        });
-    }, 0);
 }
 
 function buildMembershipEndISO(currentEnd, durationDays) {
@@ -23988,6 +26409,8 @@ async function checkAndDeductPoints(userId, modelUsed) {
             return {
                 allowed: true,
                 pointsDeducted: 0,
+                deductedFromPoints: 0,
+                deductedFromPurchasedPoints: 0,
                 remainingPoints: totalPoints,
                 useFreeModel: false
             };
@@ -23997,6 +26420,8 @@ async function checkAndDeductPoints(userId, modelUsed) {
             return {
                 allowed: true,
                 pointsDeducted: 0,
+                deductedFromPoints: 0,
+                deductedFromPurchasedPoints: 0,
                 remainingPoints: totalPoints,
                 useFreeModel: true,
                 requiredPoints: pointCost,
@@ -24007,14 +26432,18 @@ async function checkAndDeductPoints(userId, modelUsed) {
         let newPoints = points;
         let newPurchasedPoints = purchasedPoints;
         let remainingCost = pointCost;
+        let deductedFromPoints = 0;
+        let deductedFromPurchasedPoints = 0;
 
         if (newPoints > 0) {
             const deducted = Math.min(newPoints, remainingCost);
             newPoints -= deducted;
             remainingCost -= deducted;
+            deductedFromPoints = deducted;
         }
         if (remainingCost > 0) {
             newPurchasedPoints -= remainingCost;
+            deductedFromPurchasedPoints = remainingCost;
         }
 
         const result = await tx.run(
@@ -24028,8 +26457,33 @@ async function checkAndDeductPoints(userId, modelUsed) {
         return {
             allowed: true,
             pointsDeducted: pointCost,
+            deductedFromPoints,
+            deductedFromPurchasedPoints,
             remainingPoints: newPoints + newPurchasedPoints,
             useFreeModel: false
+        };
+    });
+}
+
+async function refundPointDeduction(userId, deduction = {}) {
+    const points = Math.max(0, Number(deduction.deductedFromPoints || 0));
+    const purchasedPoints = Math.max(0, Number(deduction.deductedFromPurchasedPoints || 0));
+    if (points + purchasedPoints <= 0) {
+        return { pointsRefunded: 0, remainingPoints: Number(deduction.remainingPoints || 0) };
+    }
+    return withMainDbTransaction(async (tx) => {
+        const user = await tx.get('SELECT points, purchased_points FROM users WHERE id = ?', [userId]);
+        if (!user) throw new Error('用户不存在');
+        const nextPoints = Number(user.points || 0) + points;
+        const nextPurchasedPoints = Number(user.purchased_points || 0) + purchasedPoints;
+        const result = await tx.run(
+            'UPDATE users SET points = ?, purchased_points = ? WHERE id = ?',
+            [nextPoints, nextPurchasedPoints, userId]
+        );
+        if (Number(result?.changes || 0) !== 1) throw new Error('points_refund_failed');
+        return {
+            pointsRefunded: points + purchasedPoints,
+            remainingPoints: nextPoints + nextPurchasedPoints
         };
     });
 }
@@ -25009,17 +27463,7 @@ app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, async (req, res)
 
     try {
         const deleted = await withMainDbTransaction(async (tx) => {
-            const existing = await tx.get('SELECT id FROM sessions WHERE id = ?', [sessionId]);
-            if (!existing) return false;
-            await stageGeneratedImageDeletionsForSession({ tx, sessionId });
-            await tx.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-            const result = await tx.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
-            if (Number(result?.changes || 0) !== 1) {
-                const error = new Error('admin_session_delete_target_changed');
-                error.code = 'admin_session_delete_target_changed';
-                throw error;
-            }
-            return true;
+            return Boolean(await deleteOwnedSessionWithRelatedData({ tx, sessionId }));
         });
         if (!deleted) {
             return res.status(404).json({ error: '会话不存在' });
@@ -25077,9 +27521,12 @@ async function startHttpServer() {
         selectionExplanationStartupReady,
         authSessionStartupReady,
         softwareClientStartupReady,
-        transactionDbReady
+        passkeyDbReady,
+        transactionDbReady,
+        chatFlowStartupReady,
+        conversationOrganizationStartupReady,
+        fileWorkspaceStartupReady
     ]);
-    await conversationOrganizationStartupReady;
     await cleanupExpiredGeneratedImages().catch((error) => {
         console.warn(' 过期生成图片初始清理失败:', sanitizeReportContext(error));
     });
@@ -25149,6 +27596,7 @@ async function gracefulShutdown(signalName, exitCode = 0) {
     if (selectionExplanationRecoveryTimer) clearInterval(selectionExplanationRecoveryTimer);
     if (generatedImageCleanupTimer) clearInterval(generatedImageCleanupTimer);
     if (authSessionCleanupTimer) clearInterval(authSessionCleanupTimer);
+    fileWorkspace.stopCleanup();
     const httpClosePromise = !httpServer?.listening
         ? Promise.resolve(true)
         : new Promise((resolve) => {
