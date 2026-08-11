@@ -200,11 +200,12 @@ assert.notEqual(
   'private stdout must not use an unkeyed enumerable digest'
 );
 assert.match(server, /DOCUMENT_PARSER_FORCE_DISABLED[\s\S]{0,260}DOCUMENT_PARSER_ENABLED/);
-assert.match(server, /resolveDocumentSandboxEnabled\(\{[\s\S]{0,240}sandboxAvailable:\s*isProductionDocumentSandboxAvailable\(\)/);
+assert.match(server, /resolveDocumentSandboxEnabled\(\{[\s\S]{0,240}sandboxAvailable:\s*isProductionDocumentSandboxAvailable\(process\.env\.RAI_DOCUMENT_PARSER_PROFILE\)/);
 assert.match(server, /production_requires_totp_encryption_key_file/);
 assert.match(server, /production_requires_refresh_token_pepper_file/);
 assert.match(parser, /NODE_ENV \|\| ''\)\.toLowerCase\(\) === 'production'[\s\S]{0,120}productionSandboxCommand\(kind\)/);
 assert.match(parser, /document_parser_sandbox_unavailable/);
+assert.match(parser, /path\.join\(appRoot, 'workers', 'document-parser-worker\.js'\)/);
 assert.ok(!/ALLOWED_KINDS[^\n]*pdf/.test(parser), 'PDF must remain blocked until it has an OS sandbox without native addon bypass');
 assert.match(envExample, /^RAI_DOCUMENT_PARSER_ENABLED=true$/m);
 assert.match(envExample, /^RAI_DOCUMENT_PARSER_FORCE_DISABLED=false$/m);

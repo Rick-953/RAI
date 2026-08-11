@@ -38,7 +38,10 @@ const {
     createSoftwareClientAuth
 } = require('./lib/software-client-auth');
 const { runSensitiveAccountMutation } = require('./lib/sensitive-account-session');
-const { parseDocumentFile } = require('./lib/document-parser');
+const {
+    isProductionDocumentSandboxAvailable,
+    parseDocumentFile
+} = require('./lib/document-parser');
 const { resolveDocumentSandboxEnabled } = require('./lib/document-sandbox-runtime');
 const {
     ARTIFACT_FORMATS,
@@ -217,26 +220,10 @@ const DOCUMENT_PARSER_FORCE_DISABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_
 const DOCUMENT_PARSER_ENABLED = !DOCUMENT_PARSER_FORCE_DISABLED && (
     IS_PRODUCTION || parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, true)
 );
-function isProductionDocumentSandboxAvailable() {
-    if (process.platform !== 'linux') return false;
-    try {
-        for (const executable of [
-            '/usr/bin/prlimit',
-            path.resolve(__dirname, 'scripts', 'rai-document-parser-sandbox.sh'),
-            '/usr/bin/bwrap',
-            '/bin/sh'
-        ]) {
-            fs.accessSync(executable, fs.constants.X_OK);
-        }
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
 const DOCUMENT_SANDBOX_RUNTIME_ENABLED = resolveDocumentSandboxEnabled({
     parserEnabled: DOCUMENT_PARSER_ENABLED,
     isProduction: IS_PRODUCTION,
-    sandboxAvailable: isProductionDocumentSandboxAvailable()
+    sandboxAvailable: isProductionDocumentSandboxAvailable(process.env.RAI_DOCUMENT_PARSER_PROFILE)
 });
 // The production workspace path is fixed and must be provisioned by systemd
 // tmpfiles/RuntimeDirectory. Non-production tests may opt into a temporary
