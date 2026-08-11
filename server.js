@@ -210,9 +210,13 @@ const DUMMY_LOGIN_PASSWORD_HASH = '$2b$11$xYF/mQpFTR86DLR2VZc5ge6NpuZcDGVF.HRZHb
 // password. This never relaxes verification or password policy for any other
 // account, including accounts whose email merely resembles this address.
 const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1.com';
-// Node <25 的 Permission Model 不限制网络。生产默认关闭不受信文档解析，
-// 直到运行时能提供确定性无网络隔离；开发/回归环境仍可直接测试解析器。
-const DOCUMENT_PARSER_ENABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, !IS_PRODUCTION);
+// Formal Web v0.11.94 enables parsing only when the production sandbox is
+// actually available. The separate force-disable flag remains an emergency
+// kill switch without relying on the retired opt-in value in the live .env.
+const DOCUMENT_PARSER_FORCE_DISABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_FORCE_DISABLED, false);
+const DOCUMENT_PARSER_ENABLED = !DOCUMENT_PARSER_FORCE_DISABLED && (
+    IS_PRODUCTION || parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, true)
+);
 function isProductionDocumentSandboxAvailable() {
     if (process.platform !== 'linux') return false;
     try {

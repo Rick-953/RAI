@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.93';
-const RAI_BUILD_ID = '20260811-office-audio-title-v01193-r2';
+const RAI_APP_VERSION = '0.11.94';
+const RAI_BUILD_ID = '20260811-office-audio-title-v01194-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -6203,7 +6203,7 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-08-11',
-    version: 'v0.11.93',
+    version: 'v0.11.94',
     zh: {
       summary: '正式版文件理解、Gemini 音频理解与对话重命名已补齐。',
       details: [
@@ -13476,7 +13476,7 @@ function retryStartupAuthentication() {
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
-  console.log(' RAI v0.11.93 初始化 (office-audio-title-r2)');
+  console.log(' RAI v0.11.94 初始化 (office-audio-title-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
