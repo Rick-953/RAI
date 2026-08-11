@@ -784,8 +784,8 @@ async function testMessageRenderingStability() {
     'stream completion must bind title work to the originating session and navigation generation');
   assert.match(sendMessage, /else if \(parsed\.type === 'title'\)[\s\S]{0,300}parsed\.title && isActiveStreamSession\(\)[\s\S]{0,260}updateSessionInList\(streamSessionId, \{ title: parsed\.title \}\)/,
     'a title event from an old stream must not mutate the currently selected conversation');
-  assert.match(sendMessage, /sessions\/\$\{encodeURIComponent\(streamSessionId\)\}/,
-    'a stream title update must address its captured session rather than whichever session is current later');
+  assert.doesNotMatch(sendMessage, /extractTrailingTitleMarker\(fullContent\)[\s\S]{0,900}method:\s*'PUT'/,
+    'the browser must not perform a post-stream fallback PUT that can overwrite a manually renamed title');
 
   const stopCharRenderStart = sendMessage.indexOf('function stopCharRender()');
   const stopCharRenderEnd = sendMessage.indexOf('// ==================== 渲染队列结束 ====================', stopCharRenderStart);
@@ -1035,15 +1035,15 @@ async function testMessageRenderingStability() {
 }
 
 function testVersionContract() {
-  const expectedVersion = '0.11.94';
-  const expectedBuild = '20260811-office-audio-title-v01194-r1';
+  const expectedVersion = '0.11.95';
+  const expectedBuild = '20260811-title-lock-v01195-r1';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.94'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260811-office-audio-title-v01194-r1'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.94/);
-  assert.match(serviceWorker, /0\.11\.94-20260811-office-audio-title-v01194-r1/);
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.95'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260811-title-lock-v01195-r1'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.95/);
+  assert.match(serviceWorker, /0\.11\.95-20260811-title-lock-v01195-r1/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
@@ -1056,7 +1056,7 @@ function testVersionContract() {
     'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260811-office-audio-title-v01194-r1/);
+  assert.match(index, /conversation-cache\.js\?v=20260811-title-lock-v01195-r1/);
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
     'fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
@@ -1224,6 +1224,23 @@ function testVersionContract() {
   const sessionRename = extractNamedFunction(app, 'showSessionRenameCard');
   assert.match(sessionMenu, /data-action="rename"[\s\S]*showSessionRenameCard\(session\)/,
     'conversation menus must expose the user rename command');
+  assert.match(sessionMenu, /data-action="ai-title-regenerate"[\s\S]*data-action="ai-title-continue"/,
+    'conversation menus must expose explicit AI title actions');
+  const requestAiTitleUpdate = extractNamedFunction(app, 'requestAiTitleUpdate');
+  assert.match(requestAiTitleUpdate, /title\/regenerate[\s\S]{0,500}mode,\s*uiLanguage/,
+    'explicit AI title actions must call the guarded title regeneration endpoint');
+  assert.match(server, /title_user_locked\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0/,
+    'sessions must persist a manual-title lock');
+  assert.match(server, /title_user_locked\s*=\s*CASE WHEN \? IS NULL THEN title_user_locked ELSE 1 END/,
+    'manual session title updates must enable the title lock');
+  assert.match(server, /titleAction === 'ai'[\s\S]{0,900}COALESCE\(title_user_locked,\s*0\)\s*=\s*0/,
+    'legacy AI title sync requests must not overwrite a manually locked title');
+  assert.match(server, /app\.post\('\/api\/sessions\/:id\/title\/regenerate'[\s\S]{0,2600}allowLockedTitle:\s*true/,
+    'explicit title regeneration must be the only path allowed to override the lock');
+  assert.match(server, /allowLockedTitle = false[\s\S]{0,1200}title_user_locked[\s\S]{0,500}allowLockedTitle\s*\?\s*''\s*:/,
+    'normal AI title synchronization must remain guarded by the lock');
+  assert.match(server, /UPDATE sessions SET title = \?, title_user_locked = 1/,
+    'manual ChatFlow title edits must enable the same title lock');
   assert.match(sessionRename, /maxlength="60"[\s\S]*method:\s*'PUT'[\s\S]*JSON\.stringify\(\{ title \}\)/,
     'conversation rename must submit one bounded title to the owned session endpoint');
   assert.match(sessionRename, /appState\.currentSession\.title = savedTitle[\s\S]*renderSessions\(\{ preserveScroll: true \}\)/,
