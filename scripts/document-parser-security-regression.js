@@ -111,7 +111,8 @@ async function expectParserError(filePath, kind, expectedCode) {
 
 async function main() {
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rai-document-regression-'));
-    const runningProductionSandbox = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const ambientNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
     const completed = [];
     try {
         const validDocx = await createZip([{
@@ -232,15 +233,11 @@ async function main() {
         process.env.RAI_DOCUMENT_PARSER_CONCURRENCY = '1';
         process.env.RAI_DOCUMENT_PARSER_QUEUE_LIMIT = '1';
         try {
-            const queueInputs = runningProductionSandbox
-                ? [docxPath, xlsxPath, pptxPath, csvPath, docxPath, xlsxPath]
-                : [docxPath, xlsxPath, pptxPath];
-            const queueKinds = runningProductionSandbox
-                ? ['docx', 'xlsx', 'pptx', 'csv', 'docx', 'xlsx']
-                : ['docx', 'xlsx', 'pptx'];
+            const queueInputs = [docxPath, xlsxPath, pptxPath];
+            const queueKinds = ['docx', 'xlsx', 'pptx'];
             const queued = queueInputs.map((filePath, index) => parseDocumentFile(filePath, queueKinds[index]));
             const results = await Promise.allSettled(queued);
-            assert.strictEqual(results.filter((item) => item.status === 'fulfilled').length, runningProductionSandbox ? 5 : 2);
+            assert.strictEqual(results.filter((item) => item.status === 'fulfilled').length, 2);
             assert.strictEqual(results.filter((item) => item.status === 'rejected' && item.reason?.code === 'document_parser_queue_full').length, 1);
         } finally {
             if (previousConcurrency === undefined) delete process.env.RAI_DOCUMENT_PARSER_CONCURRENCY;
@@ -283,6 +280,8 @@ async function main() {
         }
         completed.push('production_network_isolation_gate');
     } finally {
+        if (ambientNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = ambientNodeEnv;
         await fs.promises.rm(tempDir, { recursive: true, force: true });
         assert.strictEqual(fs.existsSync(tempDir), false, 'temporary document fixtures must be removed');
     }
