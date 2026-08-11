@@ -67,14 +67,15 @@ for (const [mimeType, extension] of [
 }
 assert.match(app, /if \(originalName && isUiAllowedUploadFile\(file\)\) return file/);
 
-const processUploadStart = app.indexOf('async function processUploadedFile(file)');
-const processUploadSource = app.slice(processUploadStart, processUploadStart + 2400);
+const processUploadStart = app.indexOf('async function processUploadedFile(file, options = {})');
+const processUploadSource = app.slice(processUploadStart, processUploadStart + 6200);
 assert.ok(processUploadStart >= 0, 'missing processUploadedFile');
 assert.match(processUploadSource, /if \(!isUiAllowedUploadFile\(file\)\)/);
 assert.ok(
-    processUploadSource.indexOf('!isUiAllowedUploadFile(file)') < processUploadSource.indexOf('fetch(`${API_BASE}/upload`'),
+    processUploadSource.indexOf('!isUiAllowedUploadFile(file)') < processUploadSource.indexOf('createUploadSession(file, context)'),
     'processUploadedFile must reject before upload'
 );
+assert.match(app, /function uploadFileWithProgress[\s\S]*xhr\.open\('POST', `\$\{API_BASE\}\/upload`\)/);
 
 const dragDropStart = app.indexOf("function initDragAndDrop()");
 const dragDropSource = app.slice(dragDropStart, dragDropStart + 2600);

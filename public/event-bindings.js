@@ -23,7 +23,7 @@
     'cancelTwoFactorSetup', 'canvasResetView', 'canvasZoomIn', 'canvasZoomOut',
     'claimAlreadyInstalledPwaReward', 'claimBookmarkDomainTask', 'claimPwaInstallTask',
     'clearAllUserMemories', 'closeAdminLogin', 'closeAdminPanel', 'closeAdminPasswordEditor',
-    'closeChatFlow', 'closeForgotPasswordHelp', 'closeMembershipPlans', 'closeModelModal',
+    'closeChatFlow', 'closeFileLibrary', 'closeForgotPasswordHelp', 'closeMembershipPlans', 'closeModelModal',
     'closePwaRewardPrompt', 'closeRegenerateModal', 'closeSettings', 'closeUserDetailModal',
     'confirmPasswordResetWithCode', 'confirmRegenerate', 'confirmTwoFactorSetup',
     'copyInviteLink', 'copyMermaidCode', 'copyTwoFactorSecret',
@@ -39,14 +39,14 @@
     'handleSendButtonClick', 'handleTemporaryChatClick', 'handleTextInputCompositionEnd',
     'handleTextInputCompositionStart', 'handleTwoFactorKeydown', 'hideDesktopWindows',
     'hideNavTooltip', 'loadAdminFeedback', 'loadAdminMessages', 'loadMessageAttachments',
-    'leaveCustomApiMode', 'loadSessionMessages', 'loginWithPasskey', 'logoutAllSecurityDevices', 'markRaiNotificationsRead',
+    'leaveCustomApiMode', 'loadMoreFileLibrary', 'loadSessionMessages', 'loginWithPasskey', 'logoutAllSecurityDevices', 'markRaiNotificationsRead',
     'navigateToResponse', 'openAdminPasswordEditor', 'openAvatarPicker', 'openBookmarkDomain',
     'openDesktopMainWindow', 'openDesktopQuickWindow', 'openFlow', 'openGitHubStarTask',
-    'openMembershipEditor', 'openMembershipPlans', 'openModelModal',
+    'openFileLibrary', 'openMembershipEditor', 'openMembershipPlans', 'openModelModal',
     'openNotificationsFromSidebar', 'openPointsEditor', 'openSettings', 'openUserDetailModal',
     'redeemMembership', 'removeAttachment', 'removeQuote', 'renderAdminAnnouncements',
     'replayOnboarding', 'requestPasswordResetCode', 'resendAuthEmailCode',
-    'saveAdminAnnouncement', 'saveAdminLimits', 'saveAdminUserPassword', 'saveSettings',
+    'saveAdminAnnouncement', 'saveAdminLimits', 'saveAdminUserPassword', 'saveSettings', 'searchFileLibrary',
     'selectModelFromMenu',
     'selectRaiModeFromMenu', 'selectSpace', 'sendAdminBroadcastAll', 'sendAdminBroadcastTest',
     'setAuthLoginMethod', 'setCanvasTool', 'setFontPreference',
@@ -65,7 +65,7 @@
     'toggleMermaidFullscreen', 'toggleMoreMenu', 'toggleNotificationsPaused',
     'toggleResearchAgentModel', 'toggleResearchModeFromMenu', 'toggleSessionCanvas', 'toggleSidebar', 'toggleTheme',
     'toggleThinkingFromMenu', 'toggleCustomApiMode', 'startCustomApiMode', 'undoLastCanvasPatch', 'updateSliderValue',
-    'updateThinkingBudget', 'userCheckin'
+    'updateThinkingBudget', 'uploadFilesToLibrary', 'userCheckin'
   ]);
 
   const boundEvents = new WeakMap();

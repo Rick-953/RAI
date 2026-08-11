@@ -332,6 +332,10 @@ const CHAT_CLIENT_MAX_MESSAGE_CHARS = Math.max(1000, Math.min(parseInt(cleanEnvV
 const CHAT_CLIENT_MAX_TOTAL_CHARS = Math.max(CHAT_CLIENT_MAX_MESSAGE_CHARS, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_TOTAL_CHARS) || '140000', 10) || 140000, 240000));
 const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
 const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
+const UPLOAD_PROGRESS_TTL_MS = 30 * 60 * 1000;
+const UPLOAD_PROGRESS_MAX_SESSIONS = 10000;
+const UPLOAD_PROGRESS_ID_PATTERN = /^upl_[a-f0-9]{32}$/;
+const uploadProgressSessions = new Map();
 const GENERIC_SESSION_TITLE_RE = /^(新对话|新 ChatFlow|临时对话|New Chat|Temporary chat|Untitled|未命名)$/i;
 
 function normalizeUsernameForStorage(username) {
@@ -7615,6 +7619,24 @@ function sanitizeClientChatMessages(rawMessages = []) {
     return { messages, rejectedRoles };
 }
 
+function mergeContinuationTextForStorage(previous = '', next = '') {
+    const left = String(previous || '');
+    const right = String(next || '');
+    if (!right) return left;
+    if (!left) return right;
+    if (right === left || left.endsWith(right)) return left;
+    if (right.startsWith(left)) return right;
+
+    const maxOverlap = Math.min(left.length, right.length, 12000);
+    for (let length = maxOverlap; length > 0; length -= 1) {
+        if (left.slice(-length) === right.slice(0, length)) {
+            return left + right.slice(length);
+        }
+    }
+    const separator = /\s$/.test(left) || /^\s/.test(right) ? '' : '\n\n';
+    return `${left}${separator}${right}`;
+}
+
 /**
  * 检测消息中是否包含多模态内容
  * @param {object} message - 消息对象
@@ -10207,7 +10229,7 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     concurrent_requests_pro_max: PRO_MAX_CONCURRENT_REQUESTS_DEFAULT,
     upload_per_minute: parseBoundedInteger(process.env.RAI_UPLOAD_QUOTA_PER_MINUTE, 6, 0, 1000),
     upload_max_file_mb: parseBoundedInteger(process.env.RAI_UPLOAD_MAX_FILE_MB, 20, 1, 50),
-    upload_user_total_mb: parseBoundedInteger(process.env.RAI_UPLOAD_USER_TOTAL_MB, 100, 0, 102400),
+    upload_user_total_mb: parseBoundedInteger(process.env.RAI_UPLOAD_USER_TOTAL_MB, 0, 0, 102400),
     upload_user_max_files: parseBoundedInteger(process.env.RAI_UPLOAD_USER_MAX_FILES, 50, 0, 100000),
     pwa_reward_enabled: parseBooleanEnv(process.env.RAI_PWA_REWARD_ENABLED, true) ? 1 : 0,
     pwa_reward_min_account_age_minutes: parseBoundedInteger(process.env.RAI_PWA_REWARD_MIN_ACCOUNT_AGE_MINUTES, 30, 0, 10080),
@@ -10218,6 +10240,189 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     thinking_default_model: 'deepseek-pro',
     vision_fallback_model: 'qwen3.6-35b-a3b'
 });
+
+const FILE_LIBRARY_QUOTA_BYTES = Object.freeze({
+    free: 100 * 1024 * 1024,
+    pro: 200 * 1024 * 1024,
+    max: 800 * 1024 * 1024
+});
+
+function normalizeUploadProgressId(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return UPLOAD_PROGRESS_ID_PATTERN.test(normalized) ? normalized : '';
+}
+
+function pruneUploadProgressSessions(now = Date.now()) {
+    for (const [uploadId, session] of uploadProgressSessions) {
+        if (Number(session?.expiresAt || 0) <= now) uploadProgressSessions.delete(uploadId);
+    }
+}
+
+function createUploadProgressSession({ userId, fileName = '', mimeType = '', totalBytes = 0 } = {}) {
+    const now = Date.now();
+    pruneUploadProgressSessions(now);
+    if (uploadProgressSessions.size >= UPLOAD_PROGRESS_MAX_SESSIONS) {
+        let evictionId = '';
+        for (const [uploadId, session] of uploadProgressSessions) {
+            if (session?.status === 'completed' || session?.status === 'failed') {
+                evictionId = uploadId;
+                break;
+            }
+        }
+        if (!evictionId) {
+            for (const [uploadId, session] of uploadProgressSessions) {
+                if (session?.status === 'pending') {
+                    evictionId = uploadId;
+                    break;
+                }
+            }
+        }
+        if (evictionId) uploadProgressSessions.delete(evictionId);
+    }
+    if (uploadProgressSessions.size >= UPLOAD_PROGRESS_MAX_SESSIONS) return null;
+    const uploadId = `upl_${crypto.randomBytes(16).toString('hex')}`;
+    const session = {
+        id: uploadId,
+        userId: Number(userId),
+        fileName: String(fileName || '').slice(0, 255),
+        mimeType: String(mimeType || '').slice(0, 120),
+        totalBytes: Math.max(0, Number(totalBytes || 0)),
+        uploadedBytes: 0,
+        requestBytesReceived: 0,
+        requestBytesTotal: 0,
+        status: 'pending',
+        file: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+        expiresAt: now + UPLOAD_PROGRESS_TTL_MS
+    };
+    uploadProgressSessions.set(uploadId, session);
+    return session;
+}
+
+function updateUploadProgressSession(session, updates = {}) {
+    if (!session) return null;
+    const now = Date.now();
+    if (updates.status) session.status = updates.status;
+    if (updates.fileName !== undefined) session.fileName = String(updates.fileName || '').slice(0, 255);
+    if (updates.mimeType !== undefined) session.mimeType = String(updates.mimeType || '').slice(0, 120);
+    if (updates.totalBytes !== undefined) session.totalBytes = Math.max(0, Number(updates.totalBytes || 0));
+    if (updates.uploadedBytes !== undefined) {
+        const uploadedBytes = Math.max(0, Number(updates.uploadedBytes || 0));
+        session.uploadedBytes = session.totalBytes > 0 ? Math.min(uploadedBytes, session.totalBytes) : uploadedBytes;
+    }
+    if (updates.requestBytesReceived !== undefined) session.requestBytesReceived = Math.max(0, Number(updates.requestBytesReceived || 0));
+    if (updates.requestBytesTotal !== undefined) session.requestBytesTotal = Math.max(0, Number(updates.requestBytesTotal || 0));
+    if (updates.file !== undefined) session.file = updates.file;
+    if (updates.errorCode !== undefined) {
+        const errorCode = String(updates.errorCode || '').trim().toLowerCase();
+        session.errorCode = /^[a-z0-9_]{1,64}$/.test(errorCode) ? errorCode : null;
+    }
+    session.updatedAt = now;
+    session.expiresAt = now + UPLOAD_PROGRESS_TTL_MS;
+    return session;
+}
+
+function serializeUploadProgressSession(session) {
+    const totalBytes = Math.max(0, Number(session?.totalBytes || 0));
+    const uploadedBytes = Math.max(0, Number(session?.uploadedBytes || 0));
+    const complete = session?.status === 'completed';
+    const progressPercent = complete
+        ? 100
+        : (totalBytes > 0 ? Math.min(99, Math.floor((uploadedBytes / totalBytes) * 100)) : 0);
+    return {
+        success: true,
+        uploadId: session.id,
+        status: session.status,
+        uploadedBytes,
+        totalBytes,
+        progressPercent,
+        fileName: session.fileName,
+        mimeType: session.mimeType,
+        file: session.file || null,
+        errorCode: session.errorCode || null,
+        createdAt: new Date(session.createdAt).toISOString(),
+        updatedAt: new Date(session.updatedAt).toISOString(),
+        expiresAt: new Date(session.expiresAt).toISOString()
+    };
+}
+
+function failUploadProgressSession(req, errorCode = 'upload_failed') {
+    if (!req?.uploadProgressSession || ['completed', 'failed'].includes(req.uploadProgressSession.status)) return;
+    updateUploadProgressSession(req.uploadProgressSession, { status: 'failed', errorCode });
+}
+
+function trackUploadProgress(req, res, next) {
+    pruneUploadProgressSessions();
+    const presentedId = req.get('X-RAI-Upload-ID');
+    const uploadId = normalizeUploadProgressId(presentedId);
+    if (presentedId && !uploadId) {
+        return res.status(400).json({ success: false, error: '上传 ID 无效', code: 'upload_id_invalid' });
+    }
+
+    let session = uploadId ? uploadProgressSessions.get(uploadId) : null;
+    if (uploadId && (!session || Number(session.userId) !== Number(req.user.userId))) {
+        return res.status(404).json({ success: false, error: '上传会话不存在', code: 'upload_session_not_found' });
+    }
+    if (session && session.status !== 'pending') {
+        return res.status(409).json({ success: false, error: '上传会话已使用', code: 'upload_session_not_pending' });
+    }
+    if (!session) session = createUploadProgressSession({ userId: req.user.userId });
+    if (!session) {
+        return res.status(503).json({ success: false, error: '上传任务繁忙，请稍后再试', code: 'upload_sessions_busy' });
+    }
+
+    req.uploadProgressSession = session;
+    res.setHeader('X-RAI-Upload-ID', session.id);
+    const requestBytesTotal = Math.max(0, Number(req.headers['content-length'] || 0));
+    updateUploadProgressSession(session, {
+        status: 'uploading',
+        requestBytesTotal,
+        errorCode: null
+    });
+
+    req.once('aborted', () => failUploadProgressSession(req, 'upload_aborted'));
+    req.once('error', () => failUploadProgressSession(req, 'upload_transport_error'));
+    res.once('finish', () => {
+        if (session.status === 'completed' || session.status === 'failed') return;
+        failUploadProgressSession(req, res.statusCode >= 400 ? 'upload_rejected' : 'upload_incomplete');
+    });
+    return next();
+}
+
+function startUploadByteTracking(req) {
+    const session = req?.uploadProgressSession;
+    if (!session || req.uploadByteTrackingStarted) return;
+    req.uploadByteTrackingStarted = true;
+    let requestBytesReceived = 0;
+    req.on('data', (chunk) => {
+        requestBytesReceived += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk || ''));
+        const requestBytesTotal = Math.max(0, Number(session.requestBytesTotal || 0));
+        const uploadedBytes = session.totalBytes > 0 && requestBytesTotal > 0
+            ? Math.round(session.totalBytes * Math.min(1, requestBytesReceived / requestBytesTotal))
+            : requestBytesReceived;
+        updateUploadProgressSession(session, { requestBytesReceived, uploadedBytes });
+    });
+}
+
+async function resolveUserFileStorageQuota(userId, runtimeSettings = null) {
+    const membership = await getUserMembershipSnapshot(userId);
+    const rawTier = String(membership?.membership || 'free').trim().toLowerCase();
+    const tier = Object.prototype.hasOwnProperty.call(FILE_LIBRARY_QUOTA_BYTES, rawTier) ? rawTier : 'free';
+    const tierLimitBytes = FILE_LIBRARY_QUOTA_BYTES[tier];
+    const settings = runtimeSettings || await getAdminRuntimeSettings();
+    const configuredGlobalLimitBytes = Number(settings.upload_user_total_mb || 0) > 0
+        ? Number(settings.upload_user_total_mb) * 1024 * 1024
+        : 0;
+    return {
+        tier,
+        tierLimitBytes,
+        limitBytes: configuredGlobalLimitBytes > 0
+            ? Math.min(tierLimitBytes, configuredGlobalLimitBytes)
+            : tierLimitBytes
+    };
+}
 
 async function resolveUserConcurrentRequestLimit(userId, runtimeSettings = null) {
     const settings = runtimeSettings || await getAdminRuntimeSettings();
@@ -10657,6 +10862,19 @@ function isServerGeneratedUploadPath(filePath) {
         && /^\d{10,17}-[a-f0-9]{12}\.[a-z0-9]{1,10}$/i.test(filename);
 }
 
+function resolveValidatedUploadedFilePath(file, uploadKind) {
+    const rawFilename = String(file?.filename || '');
+    const filename = path.basename(rawFilename);
+    const storageRoot = uploadKind === 'avatar' ? UPLOAD_STORAGE_ROOTS[1] : UPLOAD_STORAGE_ROOTS[0];
+    const resolvedPath = path.join(storageRoot, filename);
+    if (filename !== rawFilename || !isServerGeneratedUploadPath(resolvedPath)) {
+        const error = new Error('上传文件路径无效');
+        error.statusCode = 400;
+        throw error;
+    }
+    return resolvedPath;
+}
+
 function trackRequestUploadPath(req, filePath) {
     const resolvedPath = path.resolve(String(filePath || ''));
     if (!isServerGeneratedUploadPath(resolvedPath)) return;
@@ -10790,6 +11008,9 @@ function runUpload(middleware, req, res, next) {
         }
         return res.status(400).json({ error: err.message || '文件上传失败' });
     });
+    // Multer/Busboy must subscribe first; an earlier data listener would put the
+    // request into flowing mode and could consume multipart bytes before parsing.
+    startUploadByteTracking(req);
 }
 
 function hasImageMagic(buffer, ext) {
@@ -10834,7 +11055,7 @@ function isTextualAttachmentExtension(ext) {
 
 async function validateUploadedFileContent(file, uploadKind) {
     const ext = getUploadExtension(file);
-    const prefix = await readFilePrefix(file.path);
+    const prefix = await readFilePrefix(resolveValidatedUploadedFilePath(file, uploadKind));
 
     if (uploadKind === 'avatar' && !hasImageMagic(prefix, ext)) {
         const error = new Error('头像文件内容与类型不匹配');
@@ -10907,9 +11128,8 @@ async function recordUploadedFileWithinQuota(req, file, uploadKind = 'attachment
     const userId = Number(req.user.userId);
     const fileSize = Number(file.size || 0);
     const maxFileBytes = Math.max(1, Number(settings.upload_max_file_mb || 20)) * 1024 * 1024;
-    const maxTotalBytes = Number(settings.upload_user_total_mb || 0) > 0
-        ? Number(settings.upload_user_total_mb) * 1024 * 1024
-        : 0;
+    const storageQuota = await resolveUserFileStorageQuota(userId, settings);
+    const maxTotalBytes = storageQuota.limitBytes;
     const maxFiles = Number(settings.upload_user_max_files || 0);
     const result = await dbRunAsync(
         `INSERT INTO file_uploads
@@ -10950,7 +11170,7 @@ async function recordUploadedFileWithinQuota(req, file, uploadKind = 'attachment
             ? `单个文件不能超过 ${settings.upload_max_file_mb}MB`
             : (maxFiles > 0 && stats.fileCount >= maxFiles
                 ? `上传文件数量已达上限（${maxFiles} 个）`
-                : `上传空间已达上限（${settings.upload_user_total_mb}MB）`)
+                : `上传空间已达上限（${Math.round(maxTotalBytes / (1024 * 1024))}MB）`)
     );
     error.statusCode = 413;
     throw error;
@@ -14296,13 +14516,14 @@ app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
+app.post('/api/user/avatar', apiLimiter, authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+    const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'avatar');
 
     try {
         await validateUploadedFileContent(req.file, 'avatar');
     } catch (error) {
-        fs.unlink(req.file.path, () => null);
+        fs.unlink(uploadedFilePath, () => null);
         return res.status(error.statusCode || 400).json({ error: error.message || '头像上传失败' });
     }
 
@@ -18680,27 +18901,261 @@ async function enforceUploadPreflight(req, res, next) {
     }
 }
 
-app.post('/api/upload', authenticateToken, enforceUploadPreflight, (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+app.post('/api/uploads/sessions', apiLimiter, authenticateToken, (req, res) => {
+    const fileName = String(req.body?.fileName || '').trim();
+    const mimeType = String(req.body?.mimeType || '').trim();
+    const size = Number(req.body?.size);
+    if (
+        !fileName
+        || fileName.length > 255
+        || mimeType.length > 120
+        || /[\u0000-\u001f\u007f]/.test(fileName)
+        || /[\u0000-\u001f\u007f]/.test(mimeType)
+        || !Number.isSafeInteger(size)
+        || size < 0
+    ) {
+        return res.status(400).json({ success: false, error: '上传文件信息无效', code: 'upload_metadata_invalid' });
+    }
+    if (size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) {
+        return res.status(413).json({ success: false, error: '文件大小超过限制', code: 'upload_too_large' });
+    }
+    const session = createUploadProgressSession({
+        userId: req.user.userId,
+        fileName,
+        mimeType,
+        totalBytes: size
+    });
+    if (!session) {
+        return res.status(503).json({ success: false, error: '上传任务繁忙，请稍后再试', code: 'upload_sessions_busy' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(201).json({
+        ...serializeUploadProgressSession(session),
+        uploadUrl: '/api/upload',
+        statusUrl: `/api/uploads/${session.id}/status`
+    });
+});
 
-    try {
-        await validateUploadedFileContent(req.file, 'attachment');
-        await recordUploadedFileWithinQuota(req, req.file, 'attachment');
-        console.log(' 文件上传成功:', req.file.filename);
-        res.json({
-            success: true,
-            file: {
+app.get('/api/uploads/:uploadId/status', apiLimiter, authenticateToken, (req, res) => {
+    pruneUploadProgressSessions();
+    const uploadId = normalizeUploadProgressId(req.params.uploadId);
+    const session = uploadId ? uploadProgressSessions.get(uploadId) : null;
+    if (!session || Number(session.userId) !== Number(req.user.userId)) {
+        return res.status(404).json({ success: false, error: '上传会话不存在', code: 'upload_session_not_found' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json(serializeUploadProgressSession(session));
+});
+
+app.post(
+    '/api/upload',
+    apiLimiter,
+    authenticateToken,
+    trackUploadProgress,
+    enforceUploadPreflight,
+    (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next),
+    (req, res, next) => {
+        if (req.file) {
+            updateUploadProgressSession(req.uploadProgressSession, {
+                status: 'processing',
+                fileName: req.file.originalname,
+                mimeType: req.file.mimetype,
+                totalBytes: req.file.size,
+                uploadedBytes: req.file.size
+            });
+        }
+        next();
+    },
+    async (req, res) => {
+        if (!req.file) {
+            failUploadProgressSession(req, 'upload_file_missing');
+            return res.status(400).json({ success: false, error: '没有文件上传' });
+        }
+        const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'attachment');
+
+        try {
+            await validateUploadedFileContent(req.file, 'attachment');
+            await recordUploadedFileWithinQuota(req, req.file, 'attachment');
+            const file = {
                 filename: req.file.filename,
                 originalName: req.file.originalname,
                 filePath: `/api/uploads/${req.file.filename}`,
                 fileType: req.file.mimetype,
                 size: req.file.size
+            };
+            updateUploadProgressSession(req.uploadProgressSession, {
+                status: 'completed',
+                uploadedBytes: req.file.size,
+                totalBytes: req.file.size,
+                file,
+                errorCode: null
+            });
+            console.log(` 文件上传成功: ${formatPrivateLogFingerprint(req.file.filename, 'upload')}`);
+            res.json({
+                success: true,
+                uploadId: req.uploadProgressSession.id,
+                status: 'completed',
+                file
+            });
+        } catch (error) {
+            fs.unlink(uploadedFilePath, () => null);
+            failUploadProgressSession(req, Number(error.statusCode || 500) === 413 ? 'upload_quota_exceeded' : 'upload_validation_failed');
+            console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
+            res.status(error.statusCode || 500).json({
+                success: false,
+                uploadId: req.uploadProgressSession.id,
+                status: 'failed',
+                error: error.statusCode ? error.message : '文件上传失败'
+            });
+        }
+    }
+);
+
+app.get('/api/files', apiLimiter, authenticateToken, async (req, res) => {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
+    const offset = Math.max(0, Math.min(parseInt(req.query.offset, 10) || 0, 1000000));
+    const query = String(req.query.query || '').trim().slice(0, 120);
+    try {
+        const [storageQuota, stats, rows] = await Promise.all([
+            resolveUserFileStorageQuota(req.user.userId),
+            getUserUploadStats(req.user.userId),
+            dbAllAsync(
+                `SELECT filename, original_name, mime_type, size, created_at
+                 FROM file_uploads
+                 WHERE user_id = ? AND upload_kind = 'attachment'
+                   AND (? = '' OR instr(lower(COALESCE(original_name, filename)), lower(?)) > 0)
+                 ORDER BY julianday(created_at) DESC, filename DESC
+                 LIMIT ? OFFSET ?`,
+                [req.user.userId, query, query, limit + 1, offset]
+            )
+        ]);
+        const hasMore = rows.length > limit;
+        const files = rows.slice(0, limit).map((row) => ({
+            id: row.filename,
+            fileName: String(row.original_name || row.filename).slice(0, 255),
+            originalName: String(row.original_name || row.filename).slice(0, 255),
+            mimeType: String(row.mime_type || 'application/octet-stream').slice(0, 120),
+            size: Math.max(0, Number(row.size || 0)),
+            type: attachmentTypeFromMime(row.mime_type, 'file'),
+            createdAt: row.created_at,
+            filePath: `/api/uploads/${encodeURIComponent(row.filename)}`
+        }));
+        return res.json({
+            success: true,
+            files,
+            nextOffset: hasMore ? offset + limit : null,
+            storage: {
+                tier: storageQuota.tier,
+                usedBytes: stats.totalSize,
+                limitBytes: storageQuota.limitBytes,
+                remainingBytes: Math.max(0, storageQuota.limitBytes - stats.totalSize),
+                fileCount: stats.fileCount
             }
         });
     } catch (error) {
-        fs.unlink(req.file.path, () => null);
-        console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
-        res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : '文件上传失败' });
+        console.error(' 加载文件库失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: '文件库加载失败' });
+    }
+});
+
+app.delete('/api/files/:filename', apiLimiter, authenticateToken, async (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    if (!filename || filename !== req.params.filename || filename.includes('..')) {
+        return res.status(400).json({ success: false, error: '无效文件名' });
+    }
+    try {
+        const result = await dbRunAsync(
+            `DELETE FROM file_uploads
+             WHERE filename = ? AND user_id = ? AND upload_kind = 'attachment'`,
+            [filename, req.user.userId]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            return res.status(404).json({ success: false, error: '文件不存在' });
+        }
+        const uploadRoot = path.resolve(__dirname, 'uploads');
+        const filePath = path.resolve(uploadRoot, filename);
+        if (filePath.startsWith(`${uploadRoot}${path.sep}`)) {
+            await fs.promises.unlink(filePath).catch((error) => {
+                if (error?.code !== 'ENOENT') console.warn(' 删除文件库文件失败:', sanitizeReportContext(error));
+            });
+        }
+        const [storageQuota, stats] = await Promise.all([
+            resolveUserFileStorageQuota(req.user.userId),
+            getUserUploadStats(req.user.userId)
+        ]);
+        return res.json({
+            success: true,
+            storage: {
+                tier: storageQuota.tier,
+                usedBytes: stats.totalSize,
+                limitBytes: storageQuota.limitBytes,
+                remainingBytes: Math.max(0, storageQuota.limitBytes - stats.totalSize),
+                fileCount: stats.fileCount
+            }
+        });
+    } catch (error) {
+        console.error(' 删除文件库文件失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: '删除文件失败' });
+    }
+});
+
+app.get('/api/uploads/:filename/preview', apiLimiter, authenticateToken, async (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    if (!filename || filename !== req.params.filename || filename.includes('..')) {
+        return res.status(400).json({ error: '无效文件名' });
+    }
+
+    const ext = path.extname(filename).toLowerCase().slice(1);
+    if (!ATTACHMENT_EXTENSIONS.has(ext) || BLOCKED_UPLOAD_EXTENSIONS.has(ext)) {
+        return res.status(404).json({ error: '文件不存在' });
+    }
+
+    try {
+        const row = await dbGetAsync(
+            `SELECT original_name, mime_type, size
+             FROM file_uploads
+             WHERE filename = ? AND user_id = ? AND upload_kind = 'attachment'`,
+            [filename, req.user.userId]
+        );
+        if (!row) return res.status(404).json({ error: '文件不存在' });
+
+        const uploadRoot = path.resolve(__dirname, 'uploads');
+        const filePath = path.resolve(uploadRoot, filename);
+        if (!filePath.startsWith(`${uploadRoot}${path.sep}`)) {
+            return res.status(400).json({ error: '无效文件名' });
+        }
+        const stat = await fs.promises.lstat(filePath);
+        if (!stat.isFile() || stat.isSymbolicLink()) {
+            return res.status(404).json({ error: '文件不存在' });
+        }
+
+        let content = null;
+        if (isTextualAttachmentExtension(ext) || ext === 'csv') {
+            content = await readTextFileContent(filePath);
+        } else if (SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS.has(ext)) {
+            if (!DOCUMENT_SANDBOX_RUNTIME_ENABLED) {
+                return res.status(503).json({ error: '文档预览服务暂不可用' });
+            }
+            const parsed = await parseDocumentFile(filePath, ext);
+            content = String(parsed?.text || '');
+        }
+
+        if (content === null) {
+            return res.status(415).json({ error: '此文件类型暂不支持文本预览' });
+        }
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.json({
+            kind: 'text',
+            fileName: String(row.original_name || filename).slice(0, 255),
+            mimeType: String(row.mime_type || 'text/plain').slice(0, 120),
+            size: Math.max(0, Number(row.size || stat.size || 0)),
+            content: String(content || '').slice(0, ATTACHMENT_TEXT_READ_MAX_BYTES)
+        });
+    } catch (error) {
+        if (error?.code === 'ENOENT') return res.status(404).json({ error: '文件不存在' });
+        console.warn(' 生成附件预览失败:', sanitizeReportContext(error));
+        return res.status(error?.statusCode || 500).json({ error: '附件预览暂时不可用' });
     }
 });
 
@@ -18880,6 +19335,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             uiSurface = '',
             memoryMode = 'normal',
             skipUserSave = false,
+            continuationOfRequestId = '',
+            continuationPrefix = '',
+            continuationAttempt = 0,
             lowLatencyMode = false,
             client_file_execution: rawClientFileExecution = false,
             workdir_configured = false
@@ -18904,7 +19362,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let model = normalizeIncomingModelId(requestedModel);
         let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;
         if (gptImageModelSelected) thinkingMode = false;
-        const shouldSkipUserSave = skipUserSave === true || skipUserSave === 1 || skipUserSave === '1';
+        const normalizedContinuationRequestId = /^req_\d+_[a-f0-9]{16}$/i.test(String(continuationOfRequestId || '').trim())
+            ? String(continuationOfRequestId).trim()
+            : '';
+        const normalizedContinuationPrefix = sanitizeClientMessageContent(continuationPrefix);
+        const normalizedContinuationAttempt = Math.max(0, Math.min(parseInt(continuationAttempt, 10) || 0, 2));
+        const isContinuationRequest = Boolean(normalizedContinuationRequestId && normalizedContinuationAttempt > 0);
+        const shouldSkipUserSave = isContinuationRequest
+            || skipUserSave === true
+            || skipUserSave === 1
+            || skipUserSave === '1';
         let normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
         let normalizedResearchMode = gptImageModelSelected ? 'off' : normalizeResearchMode(researchMode);
         const rawResearchAgentModels = Array.isArray(researchAgentModels)
@@ -21550,6 +22017,7 @@ if (clientFileExecution && systemPrompt) {
             let accumulatedToolCalls = [];  // 累积的工具调用
             let pendingToolCall = null;     // 当前正在累积的工具调用
             let streamFinishReason = null;  // 流结束原因
+            let providerDoneSignalReceived = false;
             let currentToolCallReasoningContent = '';
             const streamToolProtocolFilter = createToolProtocolFilter({
                 toolNames: runtimeToolDefinitions.map((tool) => tool.function.name)
@@ -21666,12 +22134,22 @@ if (clientFileExecution && systemPrompt) {
                 buffer = done ? '' : (lines.pop() || '');
                 for (const line of lines) {
                     const trimmed = line.trim();
-                    if (!trimmed || trimmed === 'data: [DONE]') continue;
+                    if (!trimmed) continue;
+                    if (trimmed === 'data: [DONE]') {
+                        providerDoneSignalReceived = true;
+                        continue;
+                    }
 
                     if (trimmed.startsWith('data: ')) {
                         const data = trimmed.slice(6);
                         try {
                             const parsed = JSON.parse(data);
+                            if (
+                                ['response.completed', 'response.done', 'message_stop'].includes(String(parsed?.type || ''))
+                                || String(parsed?.response?.status || '').toLowerCase() === 'completed'
+                            ) {
+                                providerDoneSignalReceived = true;
+                            }
                             if (parsed?.error) {
                                 const errPayload = parsed.error;
                                 const errMessage = typeof errPayload === 'string'
@@ -21719,6 +22197,10 @@ if (clientFileExecution && systemPrompt) {
                                 // Gemini 响应结构: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
                                 const candidate = parsed.candidates?.[0];
                                 if (candidate) {
+                                    if (candidate.finishReason) {
+                                        streamFinishReason = String(candidate.finishReason).toLowerCase();
+                                        providerDoneSignalReceived = true;
+                                    }
                                     const parts = candidate.content?.parts || [];
                                     for (const part of parts) {
                                         if (part.functionCall && useStreamingTools) {
@@ -21835,6 +22317,7 @@ if (clientFileExecution && systemPrompt) {
                                 // 记录 finish_reason
                                 if (choice?.finish_reason) {
                                     streamFinishReason = choice.finish_reason;
+                                    providerDoneSignalReceived = true;
                                 }
 
                             }
@@ -21848,6 +22331,12 @@ if (clientFileExecution && systemPrompt) {
                     console.log(' 流式响应结束');
                     break;
                 }
+            }
+
+            if (!providerDoneSignalReceived) {
+                const incompleteStreamError = new Error('provider_stream_missing_terminal_signal');
+                incompleteStreamError.code = 'provider_stream_missing_terminal_signal';
+                throw incompleteStreamError;
             }
 
             const extractFallbackToolCalls = (rawText = '') => {
@@ -22782,6 +23271,7 @@ if (clientFileExecution && systemPrompt) {
 
                         let continueRawToolContent = '';
                         let continueStreamFinishReason = null;
+                        let continueProviderDoneSignalReceived = false;
                         let continueToolCallReasoningContent = '';
                         const continueAccumulatedToolCalls = [];
                         const continueTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
@@ -22823,11 +23313,21 @@ if (clientFileExecution && systemPrompt) {
                             continueBuffer = continueDone ? '' : (continueLines.pop() || '');
                             for (const continueLine of continueLines) {
                                 const continueTrimmed = continueLine.trim();
-                                if (!continueTrimmed || continueTrimmed === 'data: [DONE]') continue;
+                                if (!continueTrimmed) continue;
+                                if (continueTrimmed === 'data: [DONE]') {
+                                    continueProviderDoneSignalReceived = true;
+                                    continue;
+                                }
                                 if (!continueTrimmed.startsWith('data: ')) continue;
 
                                 try {
                                     const continueParsed = JSON.parse(continueTrimmed.slice(6));
+                                    if (
+                                        ['response.completed', 'response.done', 'message_stop'].includes(String(continueParsed?.type || ''))
+                                        || String(continueParsed?.response?.status || '').toLowerCase() === 'completed'
+                                    ) {
+                                        continueProviderDoneSignalReceived = true;
+                                    }
                                     const continueEventReasoning = extractReasoningTextFromResponseEvent(continueParsed);
                                     if (continueEventReasoning) {
                                         const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, continueEventReasoning);
@@ -22867,6 +23367,10 @@ if (clientFileExecution && systemPrompt) {
 
                                     if (isGeminiAPI) {
                                         const candidate = continueParsed.candidates?.[0];
+                                        if (candidate?.finishReason) {
+                                            continueStreamFinishReason = String(candidate.finishReason).toLowerCase();
+                                            continueProviderDoneSignalReceived = true;
+                                        }
                                         for (const part of candidate?.content?.parts || []) {
                                             if (part.functionCall) {
                                                 continueAccumulatedToolCalls.push({
@@ -22891,6 +23395,7 @@ if (clientFileExecution && systemPrompt) {
 
                                     if (continueChoice?.finish_reason) {
                                         continueStreamFinishReason = continueChoice.finish_reason;
+                                        continueProviderDoneSignalReceived = true;
                                     }
 
                                     const reasoning = extractReasoningTextFromPayload(continueDelta);
@@ -22965,6 +23470,12 @@ if (clientFileExecution && systemPrompt) {
                             }
                         } finally {
                             clearTimeout(continueTimeoutId);
+                        }
+
+                        if (!continueProviderDoneSignalReceived) {
+                            const incompleteContinueStreamError = new Error('provider_stream_missing_terminal_signal');
+                            incompleteContinueStreamError.code = 'provider_stream_missing_terminal_signal';
+                            throw incompleteContinueStreamError;
                         }
 
                         // 续传流 fallback：处理文本型工具调用标记
@@ -23264,6 +23775,9 @@ if (clientFileExecution && systemPrompt) {
             if (!contentToSave) {
                 contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
             }
+            if (isContinuationRequest && normalizedContinuationPrefix) {
+                contentToSave = mergeContinuationTextForStorage(normalizedContinuationPrefix, contentToSave).trim();
+            }
             const directTitle = sanitizeGeneratedConversationTitle(structuredAssistantOutput.extractedTitle || '', uiLanguage);
             if (directTitle) {
                 console.log(` 已取得会话标题: ${formatPrivateLogFingerprint(directTitle, 'title')}`);
@@ -23274,29 +23788,55 @@ if (clientFileExecution && systemPrompt) {
             const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
             const assistantProcessTraceJson = promptContextTrace ? JSON.stringify(promptContextTrace) : null;
 
-            // 使用毫秒级时间戳，确保AI消息严格晚于用户消息
-            const aiMsgTimestamp = new Date().toISOString();
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp],
-                    (err) => {
-                        if (err) {
-                            console.error(' 保存AI消息失败:', sanitizeReportContext(err));
-                            reject(err);
-                        } else {
-                            console.log(` AI回复已保存:`);
-                            console.log(`   - 内容: ${contentToSave.length}字符`);
-                            console.log(`   - 思考: ${reasoningContent.length}字符`);
-                            console.log(`   - 模型: ${finalModel}`);
-                            console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
-                            console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);
-                            console.log(`   - 来源数: ${searchSources?.length || 0}`);
-                            resolve();
-                        }
-                    }
+            // 自动续传更新原回复；若原请求尚未落库，则以本次请求保存完整合并文本。
+            const previousAssistant = isContinuationRequest
+                ? await dbGetAsync(
+                    `SELECT m.id, m.content, m.reasoning_content
+                     FROM messages m
+                     JOIN sessions s ON s.id = m.session_id
+                     WHERE m.request_id = ? AND m.role = 'assistant'
+                       AND m.session_id = ? AND s.user_id = ?
+                     ORDER BY m.id DESC LIMIT 1`,
+                    [normalizedContinuationRequestId, sessionId, req.user.userId]
+                )
+                : null;
+            if (previousAssistant?.id) {
+                contentToSave = mergeContinuationTextForStorage(previousAssistant.content, contentToSave).trim();
+                const mergedReasoning = mergeContinuationTextForStorage(previousAssistant.reasoning_content, reasoningContent).trim();
+                await dbRunAsync(
+                    `UPDATE messages
+                     SET content = ?, reasoning_content = ?, model = ?, enable_search = ?, thinking_mode = ?,
+                         internet_mode = ?, sources = COALESCE(?, sources), process_trace = COALESCE(?, process_trace)
+                     WHERE id = ?`,
+                    [
+                        contentToSave,
+                        mergedReasoning || null,
+                        finalModel,
+                        internetMode ? 1 : 0,
+                        thinkingMode ? 1 : 0,
+                        internetMode ? 1 : 0,
+                        sourcesJson,
+                        assistantProcessTraceJson,
+                        previousAssistant.id
+                    ]
                 );
-            });
+                console.log(
+                    ` 自动续传已合并到原AI回复: ${formatPrivateLogFingerprint(normalizedContinuationRequestId, 'request')}, attempt=${normalizedContinuationAttempt}`
+                );
+            } else {
+                const aiMsgTimestamp = new Date().toISOString();
+                await dbRunAsync(
+                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
+                );
+            }
+            console.log(` AI回复已保存:`);
+            console.log(`   - 内容: ${formatPrivateLogFingerprint(contentToSave, 'content')}`);
+            console.log(`   - 思考: ${formatPrivateLogFingerprint(reasoningContent, 'reasoning')}`);
+            console.log(`   - 模型: ${finalModel}`);
+            console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
+            console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);
+            console.log(`   - 来源数: ${searchSources?.length || 0}`);
 
 
             // 4. 更新会话标题：AI 直接输出 [TITLE] 时同步更新；未输出时后台兜底，不阻塞 done。
