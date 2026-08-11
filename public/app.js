@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.94';
-const RAI_BUILD_ID = '20260811-office-audio-title-v01194-r1';
+const RAI_APP_VERSION = '0.11.95';
+const RAI_BUILD_ID = '20260811-title-lock-v01195-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -13476,7 +13476,7 @@ function retryStartupAuthentication() {
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
-  console.log(' RAI v0.11.94 初始化 (office-audio-title-r1)');
+  console.log(' RAI v0.11.95 初始化 (title-lock-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -18196,6 +18196,8 @@ function openSessionMenu(event, session) {
   menu.dataset.sessionId = String(session.id);
   menu.dataset.triggerSessionMenu = trigger.dataset.sessionMenuId || '';
   menu.innerHTML = `<button type="button" data-action="rename">${isZh ? '重命名' : 'Rename'}</button>
+    <button type="button" data-action="ai-title-regenerate">${isZh ? 'AI 重新生成标题' : 'Ask AI to regenerate title'}</button>
+    <button type="button" data-action="ai-title-continue">${isZh ? '继续总结标题' : 'Continue summarizing title'}</button>
     <button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
     <button type="button" data-action="pin">${session.pinned ? (isZh ? '取消置顶' : 'Unpin') : (isZh ? '置顶' : 'Pin')}</button>
     <button type="button" data-action="export">${isZh ? '导出可验证对话' : 'Export verifiable conversation'}</button>
@@ -18211,6 +18213,8 @@ function openSessionMenu(event, session) {
     if (action === 'pin') return toggleSessionPin(session.id, !session.pinned).catch((error) => showToast(error.message));
     if (action === 'delete') return deleteSession(menuEvent, session.id);
     if (action === 'rename') return showSessionRenameCard(session);
+    if (action === 'ai-title-regenerate') return requestAiTitleUpdate(session, 'regenerate');
+    if (action === 'ai-title-continue') return requestAiTitleUpdate(session, 'continue_summary');
     if (action === 'folder') return showSessionFolderManager(session);
     if (action === 'export') return exportVerifiableConversation(session);
     if (action === 'explain') {
@@ -18222,6 +18226,34 @@ function openSessionMenu(event, session) {
     if (!menu.isConnected || menu.contains(outsideEvent.target) || trigger.contains(outsideEvent.target)) return;
     closeSessionMenu();
   }, { once: true }), 0);
+}
+
+async function requestAiTitleUpdate(session, mode = 'regenerate') {
+  const isZh = isChineseLanguage(appState.language);
+  try {
+    const response = await sessionApi(`/sessions/${encodeURIComponent(session.id)}/title/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, uiLanguage: appState.language })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || (isZh ? '无法生成对话标题' : 'Could not generate conversation title'));
+    const savedTitle = String(data.title || '').trim();
+    if (!savedTitle) throw new Error(isZh ? 'AI 没有返回有效标题' : 'AI returned no valid title');
+    for (const rows of [appState.sessions, appState.pinnedSessions]) {
+      const item = Array.isArray(rows) ? rows.find((row) => String(row.id) === String(session.id)) : null;
+      if (item) item.title = savedTitle;
+    }
+    if (String(appState.currentSession?.id || '') === String(session.id)) {
+      appState.currentSession.title = savedTitle;
+      updateChatFlowHeaderMeta();
+    }
+    renderSessions({ preserveScroll: true });
+    if (typeof startTitleAnimation === 'function') startTitleAnimation();
+    showToast(isZh ? 'AI 标题已更新' : 'AI title updated');
+  } catch (error) {
+    showToast(error.message || (isZh ? '无法生成对话标题' : 'Could not generate conversation title'));
+  }
 }
 
 function showSessionRenameCard(session) {
@@ -20699,35 +20731,6 @@ async function sendMessage(message = null, options = {}) {
     // 用户关闭仅限本次请求；下一次仍默认开启联网。
     restoreInternetSearchDefault();
 
-    // 修复：在流式传输结束后处理标题
-    // 提取标题 <<<标题>>> - 匹配回复末尾的三角括号内容
-    const fallbackTitle = extractTrailingTitleMarker(fullContent).title;
-    const streamSessionStillCurrent = isActiveStreamSession();
-    if (fallbackTitle && streamSessionStillCurrent) {
-      const newTitle = fallbackTitle;
-      console.log(` 检测到新标题: length=${String(newTitle).length}`);
-
-      if (appState.currentSession && streamSessionId) {
-        // 1. 更新本地状态
-        appState.currentSession.title = newTitle;
-        // 立即更新侧边栏
-        updateSessionInList(streamSessionId, { title: newTitle });
-
-        // 2. 更新服务器
-        fetch(`${API_BASE}/sessions/${encodeURIComponent(streamSessionId)}`, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${appState.token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ title: newTitle })
-        }).then(() => {
-          console.log(' 标题已同步到服务器');
-          // 3. 后台刷新侧边栏
-          loadSessions();
-        }).catch(err => console.error(' 同步标题失败:', err));
-      }
-    }
   }
 }
 

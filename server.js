@@ -8704,6 +8704,7 @@ db.serialize(() => {
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     title TEXT DEFAULT '新对话',
+    title_user_locked INTEGER NOT NULL DEFAULT 0,
     model TEXT DEFAULT 'auto',
     prompt_model_identity TEXT,
     prompt_language TEXT,
@@ -9403,6 +9404,12 @@ db.serialize(() => {
                 console.warn(` 添加session_kind列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加session_kind列到sessions表');
+            }
+        });
+
+        db.run(`ALTER TABLE sessions ADD COLUMN title_user_locked INTEGER NOT NULL DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加title_user_locked列失败:`, sanitizeReportContext(err));
             }
         });
 
@@ -15362,6 +15369,8 @@ app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res
 app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     const { title, model, is_archived } = req.body;
     const safeTitle = title === undefined ? null : sanitizeGeneratedConversationTitle(title);
+    const titleAction = String(req.body?.title_action || '').trim().toLowerCase();
+    const isAiTitleSync = title !== undefined && titleAction === 'ai';
     if (title !== undefined && !safeTitle) {
         return res.status(400).json({ error: '对话标题不能为空或使用默认标题' });
     }
@@ -15369,10 +15378,15 @@ app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     try {
         await ensureChatFlowSchemaColumns();
         const updated = await withMainDbTransaction(async (tx) => {
-            const result = await tx.run(
-                'UPDATE sessions SET title = COALESCE(?, title), model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-                [safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
-            );
+            const result = isAiTitleSync
+                ? await tx.run(
+                    'UPDATE sessions SET title = ?, model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND COALESCE(title_user_locked, 0) = 0',
+                    [safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
+                )
+                : await tx.run(
+                    'UPDATE sessions SET title = COALESCE(?, title), title_user_locked = CASE WHEN ? IS NULL THEN title_user_locked ELSE 1 END, model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                    [safeTitle, safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
+                );
             if (Number(result?.changes || 0) !== 1) return false;
             if (safeTitle) {
                 await tx.run(
@@ -15388,6 +15402,53 @@ app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(' 更新会话失败:', sanitizeReportContext(error));
         return res.status(500).json({ error: '更新失败' });
+    }
+});
+
+app.post('/api/sessions/:id/title/regenerate', authLimiter, authenticateToken, async (req, res) => {
+    const mode = String(req.body?.mode || 'regenerate').trim().toLowerCase();
+    if (!['regenerate', 'continue_summary'].includes(mode)) {
+        return res.status(400).json({ error: '标题生成模式无效' });
+    }
+
+    try {
+        await ensureSessionKindColumn();
+        const session = await dbGetAsync(
+            `SELECT s.id, s.user_id, s.title, f.id AS flow_id
+             FROM sessions s
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
+             WHERE s.id = ? AND s.user_id = ?
+             LIMIT 1`,
+            [req.params.id, req.user.userId]
+        );
+        if (!session) return res.status(404).json({ error: '会话不存在' });
+
+        const rows = await dbAllAsync(
+            `SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT 80`,
+            [req.params.id]
+        );
+        const userContent = rows.filter((row) => row.role === 'user').at(-1)?.content || '';
+        const assistantContent = rows
+            .slice(mode === 'continue_summary' ? -24 : -12)
+            .map((row) => `${row.role}: ${String(row.content || '').slice(0, 4000)}`)
+            .join('\n');
+        const uiLanguage = String(req.body?.uiLanguage || req.body?.language || req.headers['accept-language'] || 'zh-CN');
+        const title = await generateFallbackConversationTitle({ userContent, assistantContent, uiLanguage });
+        if (!title) return res.status(422).json({ error: '无法生成对话标题' });
+
+        const saved = await updateSessionOrFlowTitleAndEmit({
+            res: null,
+            sessionId: req.params.id,
+            flowId: session.flow_id,
+            userId: req.user.userId,
+            title,
+            allowLockedTitle: true
+        });
+        if (!saved) return res.status(404).json({ error: '会话不存在' });
+        return res.json({ success: true, title: saved, mode });
+    } catch (error) {
+        console.error(' AI 标题生成失败:', sanitizeReportContext(error));
+        return res.status(503).json({ error: '暂时无法生成对话标题' });
     }
 });
 
@@ -15942,18 +16003,27 @@ function buildPresetConversationTitle(userContent = '', uiLanguage = '') {
     return sanitizeGeneratedConversationTitle(titleMap[text] || userContent, uiLanguage);
 }
 
-async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId, title } = {}) {
+async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId, title, allowLockedTitle = false } = {}) {
     const trimmedTitle = sanitizeGeneratedConversationTitle(title || '');
     if (!trimmedTitle || !sessionId) return null;
 
+    await ensureSessionKindColumn();
+    const session = await dbGetAsync(
+        'SELECT title_user_locked FROM sessions WHERE id = ? AND user_id = ?',
+        [sessionId, userId]
+    );
+    if (!session || (!allowLockedTitle && Number(session.title_user_locked || 0) === 1)) return null;
+
     if (flowId) {
-        await syncFlowTitle(flowId, userId, trimmedTitle);
+        const synced = await syncFlowTitle(flowId, userId, trimmedTitle, { allowLockedTitle });
+        if (!synced) return null;
         console.log(` Flow标题已更新: ${formatPrivateLogFingerprint(trimmedTitle, 'title')}`);
     } else {
-        await dbRunAsync(
-            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [trimmedTitle, sessionId]
+        const updated = await dbRunAsync(
+            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?' + (allowLockedTitle ? '' : ' AND COALESCE(title_user_locked, 0) = 0'),
+            [trimmedTitle, sessionId, userId]
         );
+        if (Number(updated?.changes || 0) !== 1) return null;
         console.log(` 会话标题已更新: ${formatPrivateLogFingerprint(trimmedTitle, 'title')}`);
     }
 
@@ -16385,13 +16455,22 @@ async function ensureFlowRecord(flowId, userId) {
     };
 }
 
-async function syncFlowTitle(flowId, userId, title) {
+async function syncFlowTitle(flowId, userId, title, { allowLockedTitle = false } = {}) {
     await ensureChatFlowSchemaColumns();
+    await ensureSessionKindColumn();
     const trimmedTitle = String(title || '').trim();
     if (!trimmedTitle) return null;
 
     const flowRow = await dbGetAsync('SELECT id, session_id FROM flows WHERE id = ? AND user_id = ?', [flowId, userId]);
     if (!flowRow) return null;
+
+    if (flowRow.session_id && !allowLockedTitle) {
+        const session = await dbGetAsync(
+            'SELECT title_user_locked FROM sessions WHERE id = ? AND user_id = ?',
+            [flowRow.session_id, userId]
+        );
+        if (Number(session?.title_user_locked || 0) === 1) return null;
+    }
 
     await dbRunAsync(
         'UPDATE flows SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
@@ -16400,7 +16479,7 @@ async function syncFlowTitle(flowId, userId, title) {
 
     if (flowRow.session_id) {
         await dbRunAsync(
-            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?' + (allowLockedTitle ? '' : ' AND COALESCE(title_user_locked, 0) = 0'),
             [trimmedTitle, flowRow.session_id, userId]
         );
     }
@@ -16685,7 +16764,7 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
     }
 
     try {
-        await ensureChatFlowSchemaColumns();
+        await Promise.all([ensureChatFlowSchemaColumns(), ensureSessionKindColumn()]);
         const outcome = await withMainDbTransaction(async (tx) => {
             const currentFlow = await tx.get(
                 `SELECT id, user_id, session_id, canvas_state, canvas_revision, updated_at
@@ -16730,7 +16809,7 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
             if (currentFlow.session_id && (title !== undefined || canvasChanged)) {
                 if (title !== undefined) {
                     await tx.run(
-                        'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                        'UPDATE sessions SET title = ?, title_user_locked = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
                         [nextTitle, currentFlow.session_id, req.user.userId]
                     );
                 } else {
@@ -21315,15 +21394,13 @@ if (clientFileExecution && systemPrompt) {
                     );
 
                     if (extractedTitle) {
-                        if (flowId) {
-                            await syncFlowTitle(flowId, req.user.userId, extractedTitle);
-                        } else {
-                            await dbRunAsync(
-                                'UPDATE sessions SET title = ? WHERE id = ?',
-                                [extractedTitle, sessionId]
-                            );
-                        }
-                        res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
+                        await updateSessionOrFlowTitleAndEmit({
+                            res,
+                            sessionId,
+                            flowId,
+                            userId: req.user.userId,
+                            title: extractedTitle
+                        });
                     }
 
                     if (flowId && structuredResearchOutput.canvasPatchRaw) {
@@ -25991,6 +26068,7 @@ async function ensureSessionKindColumn() {
             await ensureColumnExists('sessions', 'session_kind', `ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`);
             await ensureColumnExists('sessions', 'prompt_model_identity', `ALTER TABLE sessions ADD COLUMN prompt_model_identity TEXT`);
             await ensureColumnExists('sessions', 'prompt_language', `ALTER TABLE sessions ADD COLUMN prompt_language TEXT`);
+            await ensureColumnExists('sessions', 'title_user_locked', `ALTER TABLE sessions ADD COLUMN title_user_locked INTEGER NOT NULL DEFAULT 0`);
             await dbRunAsync(`CREATE INDEX IF NOT EXISTS idx_sessions_user_kind_updated ON sessions(user_id, session_kind, is_archived, updated_at DESC)`);
         })().catch((error) => {
             ensureSessionKindColumnPromise = null;
