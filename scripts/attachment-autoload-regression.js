@@ -37,7 +37,26 @@ assert.match(server, /stripInjectedAttachmentPromptContext\(message\.content\)/)
 assert.match(app, /message\.attachments \|\| message\.attachment_refs/);
 assert.match(app, /let attachments = m\.attachments \|\| m\.attachment_refs/);
 assert.match(app, /Number\(att\.size\) > 0 \? formatFileSize/);
+assert.match(app, /async function fetchPrivateAttachmentBlob[\s\S]*Authorization: `Bearer \$\{appState\.token\}`/);
+assert.match(app, /async function previewAttachment[\s\S]*fetch\(`\$\{url\}\/preview`/);
+assert.match(app, /async function downloadAttachment[\s\S]*a\.download = att\.fileName/);
+assert.match(app, /attachment-preview-btn[\s\S]*attachment-download-btn/);
+assert.match(app, /function addGeneratedImageActions[\s\S]*generated-image-preview[\s\S]*generated-image-download/);
+assert.match(app, /async function fetchPrivateGeneratedImageBlob[\s\S]*Authorization: `Bearer \$\{context\.token\}`/);
+assert.match(app, /async function previewGeneratedImage[\s\S]*showPrivateFilePreview/);
+assert.match(app, /async function downloadGeneratedImage[\s\S]*link\.download = generatedImageFileName/);
+assert.match(app, /const safeLocalThumbnail = rawLocalThumbnail\.startsWith\('blob:'\)[\s\S]*safeLocalThumbnail === rawLocalThumbnail/);
 assert.doesNotMatch(app, /点击加载附件|Click to load attachments|loadMessageAttachments|lazy-attachment-placeholder/);
+assert.match(server, /app\.get\('\/api\/uploads\/:filename\/preview', apiLimiter, authenticateToken/);
+assert.match(server, /WHERE filename = \? AND user_id = \? AND upload_kind = 'attachment'/);
+assert.match(server, /SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS\.has\(ext\)[\s\S]*parseDocumentFile\(filePath, ext\)/);
+for (const [extension, kind] of [['.docx', 'docx'], ['.xlsx', 'xlsx'], ['.pptx', 'pptx'], ['.csv', 'csv']]) {
+    assert.ok(
+        server.includes(`ext === '${extension}'`) && server.includes(`tryExtractDocumentText(filePath, '${kind}')`),
+        `${extension} attachments must be extracted into trusted prompt context`
+    );
+}
+assert.match(server, /Cache-Control', 'private, no-store'/);
 assert.match(cache, /MESSAGE_FORMAT_VERSION = 3/);
 assert.match(cache, /formatVersion: MESSAGE_FORMAT_VERSION/);
 assert.match(cache, /Number\(row\.formatVersion \|\| 0\) !== MESSAGE_FORMAT_VERSION/);

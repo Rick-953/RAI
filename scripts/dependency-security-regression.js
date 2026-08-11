@@ -57,7 +57,7 @@ assert.match(busboyMultipartSource, /const MAX_HEADER_SIZE = 16 \* 1024;/, 'Busb
 assert.doesNotMatch(serverSource, /headerPairs\s*:/, 'Multer must not claim that Busboy honors an unsupported headerPairs option');
 
 const expectedVendors = new Map([
-  ['dompurify', '3.4.12'],
+  ['dompurify', '3.4.13'],
   ['katex', '0.16.47']
 ]);
 for (const [name, expectedVersion] of expectedVendors) {

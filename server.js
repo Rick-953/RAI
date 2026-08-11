@@ -38,7 +38,10 @@ const {
     createSoftwareClientAuth
 } = require('./lib/software-client-auth');
 const { runSensitiveAccountMutation } = require('./lib/sensitive-account-session');
-const { parseDocumentFile } = require('./lib/document-parser');
+const {
+    isProductionDocumentSandboxAvailable,
+    parseDocumentFile
+} = require('./lib/document-parser');
 const { resolveDocumentSandboxEnabled } = require('./lib/document-sandbox-runtime');
 const {
     ARTIFACT_FORMATS,
@@ -210,29 +213,17 @@ const DUMMY_LOGIN_PASSWORD_HASH = '$2b$11$xYF/mQpFTR86DLR2VZc5ge6NpuZcDGVF.HRZHb
 // password. This never relaxes verification or password policy for any other
 // account, including accounts whose email merely resembles this address.
 const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1.com';
-// Node <25 的 Permission Model 不限制网络。生产默认关闭不受信文档解析，
-// 直到运行时能提供确定性无网络隔离；开发/回归环境仍可直接测试解析器。
-const DOCUMENT_PARSER_ENABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, !IS_PRODUCTION);
-function isProductionDocumentSandboxAvailable() {
-    if (process.platform !== 'linux') return false;
-    try {
-        for (const executable of [
-            '/usr/bin/prlimit',
-            path.resolve(__dirname, 'scripts', 'rai-document-parser-sandbox.sh'),
-            '/usr/bin/bwrap',
-            '/bin/sh'
-        ]) {
-            fs.accessSync(executable, fs.constants.X_OK);
-        }
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
+// Formal Web v0.11.94 enables parsing only when the production sandbox is
+// actually available. The separate force-disable flag remains an emergency
+// kill switch without relying on the retired opt-in value in the live .env.
+const DOCUMENT_PARSER_FORCE_DISABLED = parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_FORCE_DISABLED, false);
+const DOCUMENT_PARSER_ENABLED = !DOCUMENT_PARSER_FORCE_DISABLED && (
+    IS_PRODUCTION || parseBooleanEnv(process.env.RAI_DOCUMENT_PARSER_ENABLED, true)
+);
 const DOCUMENT_SANDBOX_RUNTIME_ENABLED = resolveDocumentSandboxEnabled({
     parserEnabled: DOCUMENT_PARSER_ENABLED,
     isProduction: IS_PRODUCTION,
-    sandboxAvailable: isProductionDocumentSandboxAvailable()
+    sandboxAvailable: isProductionDocumentSandboxAvailable(process.env.RAI_DOCUMENT_PARSER_PROFILE)
 });
 // The production workspace path is fixed and must be provisioned by systemd
 // tmpfiles/RuntimeDirectory. Non-production tests may opt into a temporary
@@ -332,6 +323,11 @@ const CHAT_CLIENT_MAX_MESSAGE_CHARS = Math.max(1000, Math.min(parseInt(cleanEnvV
 const CHAT_CLIENT_MAX_TOTAL_CHARS = Math.max(CHAT_CLIENT_MAX_MESSAGE_CHARS, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_TOTAL_CHARS) || '140000', 10) || 140000, 240000));
 const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
 const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
+const AUDIO_UNDERSTANDING_MAX_BYTES = 20 * 1024 * 1024;
+const UPLOAD_PROGRESS_TTL_MS = 30 * 60 * 1000;
+const UPLOAD_PROGRESS_MAX_SESSIONS = 10000;
+const UPLOAD_PROGRESS_ID_PATTERN = /^upl_[a-f0-9]{32}$/;
+const uploadProgressSessions = new Map();
 const GENERIC_SESSION_TITLE_RE = /^(新对话|新 ChatFlow|临时对话|New Chat|Temporary chat|Untitled|未命名)$/i;
 
 function normalizeUsernameForStorage(username) {
@@ -1157,6 +1153,7 @@ const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
 const AUTO_MODEL_PREFERENCE = ['deepseek-flash', 'gpt-5.6-luna', 'kimi-k2.6', 'nemotron-3-ultra'];
 const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-5.6-luna', 'kimi-k2.6', 'qwen3.6-35b-a3b'];
+const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gemini-3-flash', 'gemini-3.6-flash-low'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
@@ -3275,7 +3272,6 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         const allowedFormats = localMode
             ? new Set(['text', 'markdown', 'json', 'csv', 'docx', 'xlsx', 'pptx'])
             : ARTIFACT_FORMATS;
-        if (!allowedFormats.has(format) || typeof args.content !== 'string' || !args.content.trim()) return null;
         return {
             format,
             content: args.content.slice(0, 512 * 1024),
@@ -7498,7 +7494,7 @@ function attachmentTypeFromMime(mimeType, fallback = 'file') {
     if (value.startsWith('image/')) return 'image';
     if (value.startsWith('audio/')) return 'audio';
     if (value.startsWith('video/')) return 'video';
-    return ['file', 'document', 'text', 'code'].includes(fallback) ? fallback : 'file';
+    return ['image', 'audio', 'video', 'file', 'document', 'text', 'code'].includes(fallback) ? fallback : 'file';
 }
 
 function uploadedFilenameFromAttachment(attachment = {}) {
@@ -7614,6 +7610,24 @@ function sanitizeClientChatMessages(rawMessages = []) {
     }
 
     return { messages, rejectedRoles };
+}
+
+function mergeContinuationTextForStorage(previous = '', next = '') {
+    const left = String(previous || '');
+    const right = String(next || '');
+    if (!right) return left;
+    if (!left) return right;
+    if (right === left || left.endsWith(right)) return left;
+    if (right.startsWith(left)) return right;
+
+    const maxOverlap = Math.min(left.length, right.length, 12000);
+    for (let length = maxOverlap; length > 0; length -= 1) {
+        if (left.slice(-length) === right.slice(0, length)) {
+            return left + right.slice(length);
+        }
+    }
+    const separator = /\s$/.test(left) || /^\s/.test(right) ? '' : '\n\n';
+    return `${left}${separator}${right}`;
 }
 
 /**
@@ -7765,6 +7779,65 @@ async function buildAttachmentImageDataUrl(attachment = {}, userId = null) {
     return `data:${mimeType};base64,${buffer.toString('base64')}`;
 }
 
+function resolveAudioMimeType(attachment = {}, filename = '') {
+    const declared = String(attachment.mimeType || attachment.fileType || '').trim().toLowerCase();
+    if (declared.startsWith('audio/')) return declared.split(';')[0];
+    const extension = path.extname(filename).toLowerCase().slice(1);
+    return ({
+        mp3: 'audio/mpeg',
+        wav: 'audio/wav',
+        m4a: 'audio/mp4',
+        ogg: 'audio/ogg',
+        flac: 'audio/flac',
+        aac: 'audio/aac',
+        wma: 'audio/x-ms-wma',
+        opus: 'audio/opus'
+    })[extension] || '';
+}
+
+async function buildAttachmentAudioInput(attachment = {}, userId = null) {
+    const existing = String(attachment.data || '').trim();
+    if (existing) {
+        const dataMatch = existing.match(/^data:(audio\/[^;]+);base64,(.+)$/i);
+        const data = dataMatch ? dataMatch[2] : existing;
+        const mimeType = dataMatch ? dataMatch[1].toLowerCase() : resolveAudioMimeType(attachment);
+        return data ? { data, format: mimeType.split('/')[1] || 'wav', mimeType } : null;
+    }
+
+    const filename = getAttachmentUploadFilename(attachment);
+    if (!filename || filename !== path.basename(filename) || filename.includes('..')) return null;
+    if (userId && !(await userCanAccessUploadedFile(filename, userId))) return null;
+
+    const uploadsRoot = path.resolve(__dirname, 'uploads');
+    const filePath = path.resolve(uploadsRoot, filename);
+    if (!(filePath === uploadsRoot || filePath.startsWith(`${uploadsRoot}${path.sep}`))) return null;
+
+    const noFollow = Number(fs.constants.O_NOFOLLOW || 0);
+    let handle;
+    try {
+        handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow);
+        const stats = await handle.stat();
+        if (!stats.isFile() || stats.size <= 0 || stats.size > AUDIO_UNDERSTANDING_MAX_BYTES) return null;
+        const buffer = Buffer.alloc(stats.size);
+        let offset = 0;
+        while (offset < buffer.length) {
+            const result = await handle.read(buffer, offset, buffer.length - offset, offset);
+            if (!result.bytesRead) break;
+            offset += result.bytesRead;
+        }
+        if (offset !== buffer.length) return null;
+        const mimeType = resolveAudioMimeType(attachment, filename);
+        if (!mimeType) return null;
+        return {
+            data: buffer.toString('base64'),
+            format: path.extname(filename).toLowerCase().slice(1) || mimeType.split('/')[1] || 'wav',
+            mimeType
+        };
+    } finally {
+        if (handle) await handle.close().catch(() => null);
+    }
+}
+
 async function convertToOmniFormat(message, userId = null) {
     if (!message) return message;
 
@@ -7807,12 +7880,11 @@ async function convertToOmniFormat(message, userId = null) {
                 });
             }
         } else if (attachment.type === 'audio') {
-            // 音频使用input_audio格式
-            const data = attachment.data || '';
-            if (data) {
+            const audio = await buildAttachmentAudioInput(attachment, userId);
+            if (audio?.data) {
                 contentArray.push({
                     type: 'input_audio',
-                    input_audio: { data }
+                    input_audio: audio
                 });
             }
         } else if (attachment.type === 'video') {
@@ -8028,6 +8100,10 @@ async function buildAttachmentPromptContext(attachments, userId) {
                     extracted = await tryExtractDocumentText(filePath, 'docx');
                 } else if (ext === '.xlsx') {
                     extracted = await tryExtractDocumentText(filePath, 'xlsx');
+                } else if (ext === '.pptx') {
+                    extracted = await tryExtractDocumentText(filePath, 'pptx');
+                } else if (ext === '.csv') {
+                    extracted = await tryExtractDocumentText(filePath, 'csv');
                 }
                 if (extracted) {
                     const truncated = extracted.length > ATTACHMENT_PARSE_MAX_FILE_CHARS
@@ -8628,6 +8704,7 @@ db.serialize(() => {
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     title TEXT DEFAULT '新对话',
+    title_user_locked INTEGER NOT NULL DEFAULT 0,
     model TEXT DEFAULT 'auto',
     prompt_model_identity TEXT,
     prompt_language TEXT,
@@ -9327,6 +9404,12 @@ db.serialize(() => {
                 console.warn(` 添加session_kind列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加session_kind列到sessions表');
+            }
+        });
+
+        db.run(`ALTER TABLE sessions ADD COLUMN title_user_locked INTEGER NOT NULL DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加title_user_locked列失败:`, sanitizeReportContext(err));
             }
         });
 
@@ -10208,7 +10291,7 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     concurrent_requests_pro_max: PRO_MAX_CONCURRENT_REQUESTS_DEFAULT,
     upload_per_minute: parseBoundedInteger(process.env.RAI_UPLOAD_QUOTA_PER_MINUTE, 6, 0, 1000),
     upload_max_file_mb: parseBoundedInteger(process.env.RAI_UPLOAD_MAX_FILE_MB, 20, 1, 50),
-    upload_user_total_mb: parseBoundedInteger(process.env.RAI_UPLOAD_USER_TOTAL_MB, 100, 0, 102400),
+    upload_user_total_mb: parseBoundedInteger(process.env.RAI_UPLOAD_USER_TOTAL_MB, 0, 0, 102400),
     upload_user_max_files: parseBoundedInteger(process.env.RAI_UPLOAD_USER_MAX_FILES, 50, 0, 100000),
     pwa_reward_enabled: parseBooleanEnv(process.env.RAI_PWA_REWARD_ENABLED, true) ? 1 : 0,
     pwa_reward_min_account_age_minutes: parseBoundedInteger(process.env.RAI_PWA_REWARD_MIN_ACCOUNT_AGE_MINUTES, 30, 0, 10080),
@@ -10219,6 +10302,189 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     thinking_default_model: 'deepseek-pro',
     vision_fallback_model: 'qwen3.6-35b-a3b'
 });
+
+const FILE_LIBRARY_QUOTA_BYTES = Object.freeze({
+    free: 100 * 1024 * 1024,
+    pro: 200 * 1024 * 1024,
+    max: 800 * 1024 * 1024
+});
+
+function normalizeUploadProgressId(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return UPLOAD_PROGRESS_ID_PATTERN.test(normalized) ? normalized : '';
+}
+
+function pruneUploadProgressSessions(now = Date.now()) {
+    for (const [uploadId, session] of uploadProgressSessions) {
+        if (Number(session?.expiresAt || 0) <= now) uploadProgressSessions.delete(uploadId);
+    }
+}
+
+function createUploadProgressSession({ userId, fileName = '', mimeType = '', totalBytes = 0 } = {}) {
+    const now = Date.now();
+    pruneUploadProgressSessions(now);
+    if (uploadProgressSessions.size >= UPLOAD_PROGRESS_MAX_SESSIONS) {
+        let evictionId = '';
+        for (const [uploadId, session] of uploadProgressSessions) {
+            if (session?.status === 'completed' || session?.status === 'failed') {
+                evictionId = uploadId;
+                break;
+            }
+        }
+        if (!evictionId) {
+            for (const [uploadId, session] of uploadProgressSessions) {
+                if (session?.status === 'pending') {
+                    evictionId = uploadId;
+                    break;
+                }
+            }
+        }
+        if (evictionId) uploadProgressSessions.delete(evictionId);
+    }
+    if (uploadProgressSessions.size >= UPLOAD_PROGRESS_MAX_SESSIONS) return null;
+    const uploadId = `upl_${crypto.randomBytes(16).toString('hex')}`;
+    const session = {
+        id: uploadId,
+        userId: Number(userId),
+        fileName: String(fileName || '').slice(0, 255),
+        mimeType: String(mimeType || '').slice(0, 120),
+        totalBytes: Math.max(0, Number(totalBytes || 0)),
+        uploadedBytes: 0,
+        requestBytesReceived: 0,
+        requestBytesTotal: 0,
+        status: 'pending',
+        file: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+        expiresAt: now + UPLOAD_PROGRESS_TTL_MS
+    };
+    uploadProgressSessions.set(uploadId, session);
+    return session;
+}
+
+function updateUploadProgressSession(session, updates = {}) {
+    if (!session) return null;
+    const now = Date.now();
+    if (updates.status) session.status = updates.status;
+    if (updates.fileName !== undefined) session.fileName = String(updates.fileName || '').slice(0, 255);
+    if (updates.mimeType !== undefined) session.mimeType = String(updates.mimeType || '').slice(0, 120);
+    if (updates.totalBytes !== undefined) session.totalBytes = Math.max(0, Number(updates.totalBytes || 0));
+    if (updates.uploadedBytes !== undefined) {
+        const uploadedBytes = Math.max(0, Number(updates.uploadedBytes || 0));
+        session.uploadedBytes = session.totalBytes > 0 ? Math.min(uploadedBytes, session.totalBytes) : uploadedBytes;
+    }
+    if (updates.requestBytesReceived !== undefined) session.requestBytesReceived = Math.max(0, Number(updates.requestBytesReceived || 0));
+    if (updates.requestBytesTotal !== undefined) session.requestBytesTotal = Math.max(0, Number(updates.requestBytesTotal || 0));
+    if (updates.file !== undefined) session.file = updates.file;
+    if (updates.errorCode !== undefined) {
+        const errorCode = String(updates.errorCode || '').trim().toLowerCase();
+        session.errorCode = /^[a-z0-9_]{1,64}$/.test(errorCode) ? errorCode : null;
+    }
+    session.updatedAt = now;
+    session.expiresAt = now + UPLOAD_PROGRESS_TTL_MS;
+    return session;
+}
+
+function serializeUploadProgressSession(session) {
+    const totalBytes = Math.max(0, Number(session?.totalBytes || 0));
+    const uploadedBytes = Math.max(0, Number(session?.uploadedBytes || 0));
+    const complete = session?.status === 'completed';
+    const progressPercent = complete
+        ? 100
+        : (totalBytes > 0 ? Math.min(99, Math.floor((uploadedBytes / totalBytes) * 100)) : 0);
+    return {
+        success: true,
+        uploadId: session.id,
+        status: session.status,
+        uploadedBytes,
+        totalBytes,
+        progressPercent,
+        fileName: session.fileName,
+        mimeType: session.mimeType,
+        file: session.file || null,
+        errorCode: session.errorCode || null,
+        createdAt: new Date(session.createdAt).toISOString(),
+        updatedAt: new Date(session.updatedAt).toISOString(),
+        expiresAt: new Date(session.expiresAt).toISOString()
+    };
+}
+
+function failUploadProgressSession(req, errorCode = 'upload_failed') {
+    if (!req?.uploadProgressSession || ['completed', 'failed'].includes(req.uploadProgressSession.status)) return;
+    updateUploadProgressSession(req.uploadProgressSession, { status: 'failed', errorCode });
+}
+
+function trackUploadProgress(req, res, next) {
+    pruneUploadProgressSessions();
+    const presentedId = req.get('X-RAI-Upload-ID');
+    const uploadId = normalizeUploadProgressId(presentedId);
+    if (presentedId && !uploadId) {
+        return res.status(400).json({ success: false, error: '上传 ID 无效', code: 'upload_id_invalid' });
+    }
+
+    let session = uploadId ? uploadProgressSessions.get(uploadId) : null;
+    if (uploadId && (!session || Number(session.userId) !== Number(req.user.userId))) {
+        return res.status(404).json({ success: false, error: '上传会话不存在', code: 'upload_session_not_found' });
+    }
+    if (session && session.status !== 'pending') {
+        return res.status(409).json({ success: false, error: '上传会话已使用', code: 'upload_session_not_pending' });
+    }
+    if (!session) session = createUploadProgressSession({ userId: req.user.userId });
+    if (!session) {
+        return res.status(503).json({ success: false, error: '上传任务繁忙，请稍后再试', code: 'upload_sessions_busy' });
+    }
+
+    req.uploadProgressSession = session;
+    res.setHeader('X-RAI-Upload-ID', session.id);
+    const requestBytesTotal = Math.max(0, Number(req.headers['content-length'] || 0));
+    updateUploadProgressSession(session, {
+        status: 'uploading',
+        requestBytesTotal,
+        errorCode: null
+    });
+
+    req.once('aborted', () => failUploadProgressSession(req, 'upload_aborted'));
+    req.once('error', () => failUploadProgressSession(req, 'upload_transport_error'));
+    res.once('finish', () => {
+        if (session.status === 'completed' || session.status === 'failed') return;
+        failUploadProgressSession(req, res.statusCode >= 400 ? 'upload_rejected' : 'upload_incomplete');
+    });
+    return next();
+}
+
+function startUploadByteTracking(req) {
+    const session = req?.uploadProgressSession;
+    if (!session || req.uploadByteTrackingStarted) return;
+    req.uploadByteTrackingStarted = true;
+    let requestBytesReceived = 0;
+    req.on('data', (chunk) => {
+        requestBytesReceived += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk || ''));
+        const requestBytesTotal = Math.max(0, Number(session.requestBytesTotal || 0));
+        const uploadedBytes = session.totalBytes > 0 && requestBytesTotal > 0
+            ? Math.round(session.totalBytes * Math.min(1, requestBytesReceived / requestBytesTotal))
+            : requestBytesReceived;
+        updateUploadProgressSession(session, { requestBytesReceived, uploadedBytes });
+    });
+}
+
+async function resolveUserFileStorageQuota(userId, runtimeSettings = null) {
+    const membership = await getUserMembershipSnapshot(userId);
+    const rawTier = String(membership?.membership || 'free').trim().toLowerCase();
+    const tier = Object.prototype.hasOwnProperty.call(FILE_LIBRARY_QUOTA_BYTES, rawTier) ? rawTier : 'free';
+    const tierLimitBytes = FILE_LIBRARY_QUOTA_BYTES[tier];
+    const settings = runtimeSettings || await getAdminRuntimeSettings();
+    const configuredGlobalLimitBytes = Number(settings.upload_user_total_mb || 0) > 0
+        ? Number(settings.upload_user_total_mb) * 1024 * 1024
+        : 0;
+    return {
+        tier,
+        tierLimitBytes,
+        limitBytes: configuredGlobalLimitBytes > 0
+            ? Math.min(tierLimitBytes, configuredGlobalLimitBytes)
+            : tierLimitBytes
+    };
+}
 
 async function resolveUserConcurrentRequestLimit(userId, runtimeSettings = null) {
     const settings = runtimeSettings || await getAdminRuntimeSettings();
@@ -10658,6 +10924,19 @@ function isServerGeneratedUploadPath(filePath) {
         && /^\d{10,17}-[a-f0-9]{12}\.[a-z0-9]{1,10}$/i.test(filename);
 }
 
+function resolveValidatedUploadedFilePath(file, uploadKind) {
+    const rawFilename = String(file?.filename || '');
+    const filename = path.basename(rawFilename);
+    const storageRoot = uploadKind === 'avatar' ? UPLOAD_STORAGE_ROOTS[1] : UPLOAD_STORAGE_ROOTS[0];
+    const resolvedPath = path.join(storageRoot, filename);
+    if (filename !== rawFilename || !isServerGeneratedUploadPath(resolvedPath)) {
+        const error = new Error('上传文件路径无效');
+        error.statusCode = 400;
+        throw error;
+    }
+    return resolvedPath;
+}
+
 function trackRequestUploadPath(req, filePath) {
     const resolvedPath = path.resolve(String(filePath || ''));
     if (!isServerGeneratedUploadPath(resolvedPath)) return;
@@ -10791,6 +11070,9 @@ function runUpload(middleware, req, res, next) {
         }
         return res.status(400).json({ error: err.message || '文件上传失败' });
     });
+    // Multer/Busboy must subscribe first; an earlier data listener would put the
+    // request into flowing mode and could consume multipart bytes before parsing.
+    startUploadByteTracking(req);
 }
 
 function hasImageMagic(buffer, ext) {
@@ -10835,7 +11117,7 @@ function isTextualAttachmentExtension(ext) {
 
 async function validateUploadedFileContent(file, uploadKind) {
     const ext = getUploadExtension(file);
-    const prefix = await readFilePrefix(file.path);
+    const prefix = await readFilePrefix(resolveValidatedUploadedFilePath(file, uploadKind));
 
     if (uploadKind === 'avatar' && !hasImageMagic(prefix, ext)) {
         const error = new Error('头像文件内容与类型不匹配');
@@ -10908,9 +11190,8 @@ async function recordUploadedFileWithinQuota(req, file, uploadKind = 'attachment
     const userId = Number(req.user.userId);
     const fileSize = Number(file.size || 0);
     const maxFileBytes = Math.max(1, Number(settings.upload_max_file_mb || 20)) * 1024 * 1024;
-    const maxTotalBytes = Number(settings.upload_user_total_mb || 0) > 0
-        ? Number(settings.upload_user_total_mb) * 1024 * 1024
-        : 0;
+    const storageQuota = await resolveUserFileStorageQuota(userId, settings);
+    const maxTotalBytes = storageQuota.limitBytes;
     const maxFiles = Number(settings.upload_user_max_files || 0);
     const result = await dbRunAsync(
         `INSERT INTO file_uploads
@@ -10951,7 +11232,7 @@ async function recordUploadedFileWithinQuota(req, file, uploadKind = 'attachment
             ? `单个文件不能超过 ${settings.upload_max_file_mb}MB`
             : (maxFiles > 0 && stats.fileCount >= maxFiles
                 ? `上传文件数量已达上限（${maxFiles} 个）`
-                : `上传空间已达上限（${settings.upload_user_total_mb}MB）`)
+                : `上传空间已达上限（${Math.round(maxTotalBytes / (1024 * 1024))}MB）`)
     );
     error.statusCode = 413;
     throw error;
@@ -14297,13 +14578,14 @@ app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
+app.post('/api/user/avatar', apiLimiter, authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+    const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'avatar');
 
     try {
         await validateUploadedFileContent(req.file, 'avatar');
     } catch (error) {
-        fs.unlink(req.file.path, () => null);
+        fs.unlink(uploadedFilePath, () => null);
         return res.status(error.statusCode || 400).json({ error: error.message || '头像上传失败' });
     }
 
@@ -15087,14 +15369,24 @@ app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res
 app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     const { title, model, is_archived } = req.body;
     const safeTitle = title === undefined ? null : sanitizeGeneratedConversationTitle(title);
+    const titleAction = String(req.body?.title_action || '').trim().toLowerCase();
+    const isAiTitleSync = title !== undefined && titleAction === 'ai';
+    if (title !== undefined && !safeTitle) {
+        return res.status(400).json({ error: '对话标题不能为空或使用默认标题' });
+    }
 
     try {
         await ensureChatFlowSchemaColumns();
         const updated = await withMainDbTransaction(async (tx) => {
-            const result = await tx.run(
-                'UPDATE sessions SET title = COALESCE(?, title), model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
-                [safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
-            );
+            const result = isAiTitleSync
+                ? await tx.run(
+                    'UPDATE sessions SET title = ?, model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND COALESCE(title_user_locked, 0) = 0',
+                    [safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
+                )
+                : await tx.run(
+                    'UPDATE sessions SET title = COALESCE(?, title), title_user_locked = CASE WHEN ? IS NULL THEN title_user_locked ELSE 1 END, model = COALESCE(?, model), is_archived = COALESCE(?, is_archived), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                    [safeTitle, safeTitle, model ?? null, is_archived ?? null, req.params.id, req.user.userId]
+                );
             if (Number(result?.changes || 0) !== 1) return false;
             if (safeTitle) {
                 await tx.run(
@@ -15106,10 +15398,57 @@ app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
         });
         if (!updated) return res.status(404).json({ error: '会话不存在' });
         scheduleConversationIntegritySeal(req.params.id, req.user.userId);
-        return res.json({ success: true });
+        return res.json({ success: true, ...(safeTitle ? { title: safeTitle } : {}) });
     } catch (error) {
         console.error(' 更新会话失败:', sanitizeReportContext(error));
         return res.status(500).json({ error: '更新失败' });
+    }
+});
+
+app.post('/api/sessions/:id/title/regenerate', authLimiter, authenticateToken, async (req, res) => {
+    const mode = String(req.body?.mode || 'regenerate').trim().toLowerCase();
+    if (!['regenerate', 'continue_summary'].includes(mode)) {
+        return res.status(400).json({ error: '标题生成模式无效' });
+    }
+
+    try {
+        await ensureSessionKindColumn();
+        const session = await dbGetAsync(
+            `SELECT s.id, s.user_id, s.title, f.id AS flow_id
+             FROM sessions s
+             LEFT JOIN flows f ON f.session_id = s.id AND f.user_id = s.user_id
+             WHERE s.id = ? AND s.user_id = ?
+             LIMIT 1`,
+            [req.params.id, req.user.userId]
+        );
+        if (!session) return res.status(404).json({ error: '会话不存在' });
+
+        const rows = await dbAllAsync(
+            `SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT 80`,
+            [req.params.id]
+        );
+        const userContent = rows.filter((row) => row.role === 'user').at(-1)?.content || '';
+        const assistantContent = rows
+            .slice(mode === 'continue_summary' ? -24 : -12)
+            .map((row) => `${row.role}: ${String(row.content || '').slice(0, 4000)}`)
+            .join('\n');
+        const uiLanguage = String(req.body?.uiLanguage || req.body?.language || req.headers['accept-language'] || 'zh-CN');
+        const title = await generateFallbackConversationTitle({ userContent, assistantContent, uiLanguage });
+        if (!title) return res.status(422).json({ error: '无法生成对话标题' });
+
+        const saved = await updateSessionOrFlowTitleAndEmit({
+            res: null,
+            sessionId: req.params.id,
+            flowId: session.flow_id,
+            userId: req.user.userId,
+            title,
+            allowLockedTitle: true
+        });
+        if (!saved) return res.status(404).json({ error: '会话不存在' });
+        return res.json({ success: true, title: saved, mode });
+    } catch (error) {
+        console.error(' AI 标题生成失败:', sanitizeReportContext(error));
+        return res.status(503).json({ error: '暂时无法生成对话标题' });
     }
 });
 
@@ -15664,18 +16003,27 @@ function buildPresetConversationTitle(userContent = '', uiLanguage = '') {
     return sanitizeGeneratedConversationTitle(titleMap[text] || userContent, uiLanguage);
 }
 
-async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId, title } = {}) {
+async function updateSessionOrFlowTitleAndEmit({ res, sessionId, flowId, userId, title, allowLockedTitle = false } = {}) {
     const trimmedTitle = sanitizeGeneratedConversationTitle(title || '');
     if (!trimmedTitle || !sessionId) return null;
 
+    await ensureSessionKindColumn();
+    const session = await dbGetAsync(
+        'SELECT title_user_locked FROM sessions WHERE id = ? AND user_id = ?',
+        [sessionId, userId]
+    );
+    if (!session || (!allowLockedTitle && Number(session.title_user_locked || 0) === 1)) return null;
+
     if (flowId) {
-        await syncFlowTitle(flowId, userId, trimmedTitle);
+        const synced = await syncFlowTitle(flowId, userId, trimmedTitle, { allowLockedTitle });
+        if (!synced) return null;
         console.log(` Flow标题已更新: ${formatPrivateLogFingerprint(trimmedTitle, 'title')}`);
     } else {
-        await dbRunAsync(
-            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [trimmedTitle, sessionId]
+        const updated = await dbRunAsync(
+            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?' + (allowLockedTitle ? '' : ' AND COALESCE(title_user_locked, 0) = 0'),
+            [trimmedTitle, sessionId, userId]
         );
+        if (Number(updated?.changes || 0) !== 1) return null;
         console.log(` 会话标题已更新: ${formatPrivateLogFingerprint(trimmedTitle, 'title')}`);
     }
 
@@ -16107,13 +16455,22 @@ async function ensureFlowRecord(flowId, userId) {
     };
 }
 
-async function syncFlowTitle(flowId, userId, title) {
+async function syncFlowTitle(flowId, userId, title, { allowLockedTitle = false } = {}) {
     await ensureChatFlowSchemaColumns();
+    await ensureSessionKindColumn();
     const trimmedTitle = String(title || '').trim();
     if (!trimmedTitle) return null;
 
     const flowRow = await dbGetAsync('SELECT id, session_id FROM flows WHERE id = ? AND user_id = ?', [flowId, userId]);
     if (!flowRow) return null;
+
+    if (flowRow.session_id && !allowLockedTitle) {
+        const session = await dbGetAsync(
+            'SELECT title_user_locked FROM sessions WHERE id = ? AND user_id = ?',
+            [flowRow.session_id, userId]
+        );
+        if (Number(session?.title_user_locked || 0) === 1) return null;
+    }
 
     await dbRunAsync(
         'UPDATE flows SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
@@ -16122,7 +16479,7 @@ async function syncFlowTitle(flowId, userId, title) {
 
     if (flowRow.session_id) {
         await dbRunAsync(
-            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+            'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?' + (allowLockedTitle ? '' : ' AND COALESCE(title_user_locked, 0) = 0'),
             [trimmedTitle, flowRow.session_id, userId]
         );
     }
@@ -16407,7 +16764,7 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
     }
 
     try {
-        await ensureChatFlowSchemaColumns();
+        await Promise.all([ensureChatFlowSchemaColumns(), ensureSessionKindColumn()]);
         const outcome = await withMainDbTransaction(async (tx) => {
             const currentFlow = await tx.get(
                 `SELECT id, user_id, session_id, canvas_state, canvas_revision, updated_at
@@ -16452,7 +16809,7 @@ app.put('/api/flows/:id', authenticateToken, async (req, res) => {
             if (currentFlow.session_id && (title !== undefined || canvasChanged)) {
                 if (title !== undefined) {
                     await tx.run(
-                        'UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+                        'UPDATE sessions SET title = ?, title_user_locked = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
                         [nextTitle, currentFlow.session_id, req.user.userId]
                     );
                 } else {
@@ -18681,27 +19038,261 @@ async function enforceUploadPreflight(req, res, next) {
     }
 }
 
-app.post('/api/upload', authenticateToken, enforceUploadPreflight, (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+app.post('/api/uploads/sessions', apiLimiter, authenticateToken, (req, res) => {
+    const fileName = String(req.body?.fileName || '').trim();
+    const mimeType = String(req.body?.mimeType || '').trim();
+    const size = Number(req.body?.size);
+    if (
+        !fileName
+        || fileName.length > 255
+        || mimeType.length > 120
+        || /[\u0000-\u001f\u007f]/.test(fileName)
+        || /[\u0000-\u001f\u007f]/.test(mimeType)
+        || !Number.isSafeInteger(size)
+        || size < 0
+    ) {
+        return res.status(400).json({ success: false, error: '上传文件信息无效', code: 'upload_metadata_invalid' });
+    }
+    if (size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) {
+        return res.status(413).json({ success: false, error: '文件大小超过限制', code: 'upload_too_large' });
+    }
+    const session = createUploadProgressSession({
+        userId: req.user.userId,
+        fileName,
+        mimeType,
+        totalBytes: size
+    });
+    if (!session) {
+        return res.status(503).json({ success: false, error: '上传任务繁忙，请稍后再试', code: 'upload_sessions_busy' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(201).json({
+        ...serializeUploadProgressSession(session),
+        uploadUrl: '/api/upload',
+        statusUrl: `/api/uploads/${session.id}/status`
+    });
+});
 
-    try {
-        await validateUploadedFileContent(req.file, 'attachment');
-        await recordUploadedFileWithinQuota(req, req.file, 'attachment');
-        console.log(' 文件上传成功:', req.file.filename);
-        res.json({
-            success: true,
-            file: {
+app.get('/api/uploads/:uploadId/status', apiLimiter, authenticateToken, (req, res) => {
+    pruneUploadProgressSessions();
+    const uploadId = normalizeUploadProgressId(req.params.uploadId);
+    const session = uploadId ? uploadProgressSessions.get(uploadId) : null;
+    if (!session || Number(session.userId) !== Number(req.user.userId)) {
+        return res.status(404).json({ success: false, error: '上传会话不存在', code: 'upload_session_not_found' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json(serializeUploadProgressSession(session));
+});
+
+app.post(
+    '/api/upload',
+    apiLimiter,
+    authenticateToken,
+    trackUploadProgress,
+    enforceUploadPreflight,
+    (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next),
+    (req, res, next) => {
+        if (req.file) {
+            updateUploadProgressSession(req.uploadProgressSession, {
+                status: 'processing',
+                fileName: req.file.originalname,
+                mimeType: req.file.mimetype,
+                totalBytes: req.file.size,
+                uploadedBytes: req.file.size
+            });
+        }
+        next();
+    },
+    async (req, res) => {
+        if (!req.file) {
+            failUploadProgressSession(req, 'upload_file_missing');
+            return res.status(400).json({ success: false, error: '没有文件上传' });
+        }
+        const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'attachment');
+
+        try {
+            await validateUploadedFileContent(req.file, 'attachment');
+            await recordUploadedFileWithinQuota(req, req.file, 'attachment');
+            const file = {
                 filename: req.file.filename,
                 originalName: req.file.originalname,
                 filePath: `/api/uploads/${req.file.filename}`,
                 fileType: req.file.mimetype,
                 size: req.file.size
+            };
+            updateUploadProgressSession(req.uploadProgressSession, {
+                status: 'completed',
+                uploadedBytes: req.file.size,
+                totalBytes: req.file.size,
+                file,
+                errorCode: null
+            });
+            console.log(` 文件上传成功: ${formatPrivateLogFingerprint(req.file.filename, 'upload')}`);
+            res.json({
+                success: true,
+                uploadId: req.uploadProgressSession.id,
+                status: 'completed',
+                file
+            });
+        } catch (error) {
+            fs.unlink(uploadedFilePath, () => null);
+            failUploadProgressSession(req, Number(error.statusCode || 500) === 413 ? 'upload_quota_exceeded' : 'upload_validation_failed');
+            console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
+            res.status(error.statusCode || 500).json({
+                success: false,
+                uploadId: req.uploadProgressSession.id,
+                status: 'failed',
+                error: error.statusCode ? error.message : '文件上传失败'
+            });
+        }
+    }
+);
+
+app.get('/api/files', apiLimiter, authenticateToken, async (req, res) => {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
+    const offset = Math.max(0, Math.min(parseInt(req.query.offset, 10) || 0, 1000000));
+    const query = String(req.query.query || '').trim().slice(0, 120);
+    try {
+        const [storageQuota, stats, rows] = await Promise.all([
+            resolveUserFileStorageQuota(req.user.userId),
+            getUserUploadStats(req.user.userId),
+            dbAllAsync(
+                `SELECT filename, original_name, mime_type, size, created_at
+                 FROM file_uploads
+                 WHERE user_id = ? AND upload_kind = 'attachment'
+                   AND (? = '' OR instr(lower(COALESCE(original_name, filename)), lower(?)) > 0)
+                 ORDER BY julianday(created_at) DESC, filename DESC
+                 LIMIT ? OFFSET ?`,
+                [req.user.userId, query, query, limit + 1, offset]
+            )
+        ]);
+        const hasMore = rows.length > limit;
+        const files = rows.slice(0, limit).map((row) => ({
+            id: row.filename,
+            fileName: String(row.original_name || row.filename).slice(0, 255),
+            originalName: String(row.original_name || row.filename).slice(0, 255),
+            mimeType: String(row.mime_type || 'application/octet-stream').slice(0, 120),
+            size: Math.max(0, Number(row.size || 0)),
+            type: attachmentTypeFromMime(row.mime_type, 'file'),
+            createdAt: row.created_at,
+            filePath: `/api/uploads/${encodeURIComponent(row.filename)}`
+        }));
+        return res.json({
+            success: true,
+            files,
+            nextOffset: hasMore ? offset + limit : null,
+            storage: {
+                tier: storageQuota.tier,
+                usedBytes: stats.totalSize,
+                limitBytes: storageQuota.limitBytes,
+                remainingBytes: Math.max(0, storageQuota.limitBytes - stats.totalSize),
+                fileCount: stats.fileCount
             }
         });
     } catch (error) {
-        fs.unlink(req.file.path, () => null);
-        console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
-        res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : '文件上传失败' });
+        console.error(' 加载文件库失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: '文件库加载失败' });
+    }
+});
+
+app.delete('/api/files/:filename', apiLimiter, authenticateToken, async (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    if (!filename || filename !== req.params.filename || filename.includes('..')) {
+        return res.status(400).json({ success: false, error: '无效文件名' });
+    }
+    try {
+        const result = await dbRunAsync(
+            `DELETE FROM file_uploads
+             WHERE filename = ? AND user_id = ? AND upload_kind = 'attachment'`,
+            [filename, req.user.userId]
+        );
+        if (Number(result?.changes || 0) !== 1) {
+            return res.status(404).json({ success: false, error: '文件不存在' });
+        }
+        const uploadRoot = path.resolve(__dirname, 'uploads');
+        const filePath = path.resolve(uploadRoot, filename);
+        if (filePath.startsWith(`${uploadRoot}${path.sep}`)) {
+            await fs.promises.unlink(filePath).catch((error) => {
+                if (error?.code !== 'ENOENT') console.warn(' 删除文件库文件失败:', sanitizeReportContext(error));
+            });
+        }
+        const [storageQuota, stats] = await Promise.all([
+            resolveUserFileStorageQuota(req.user.userId),
+            getUserUploadStats(req.user.userId)
+        ]);
+        return res.json({
+            success: true,
+            storage: {
+                tier: storageQuota.tier,
+                usedBytes: stats.totalSize,
+                limitBytes: storageQuota.limitBytes,
+                remainingBytes: Math.max(0, storageQuota.limitBytes - stats.totalSize),
+                fileCount: stats.fileCount
+            }
+        });
+    } catch (error) {
+        console.error(' 删除文件库文件失败:', sanitizeReportContext(error));
+        return res.status(500).json({ success: false, error: '删除文件失败' });
+    }
+});
+
+app.get('/api/uploads/:filename/preview', apiLimiter, authenticateToken, async (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    if (!filename || filename !== req.params.filename || filename.includes('..')) {
+        return res.status(400).json({ error: '无效文件名' });
+    }
+
+    const ext = path.extname(filename).toLowerCase().slice(1);
+    if (!ATTACHMENT_EXTENSIONS.has(ext) || BLOCKED_UPLOAD_EXTENSIONS.has(ext)) {
+        return res.status(404).json({ error: '文件不存在' });
+    }
+
+    try {
+        const row = await dbGetAsync(
+            `SELECT original_name, mime_type, size
+             FROM file_uploads
+             WHERE filename = ? AND user_id = ? AND upload_kind = 'attachment'`,
+            [filename, req.user.userId]
+        );
+        if (!row) return res.status(404).json({ error: '文件不存在' });
+
+        const uploadRoot = path.resolve(__dirname, 'uploads');
+        const filePath = path.resolve(uploadRoot, filename);
+        if (!filePath.startsWith(`${uploadRoot}${path.sep}`)) {
+            return res.status(400).json({ error: '无效文件名' });
+        }
+        const stat = await fs.promises.lstat(filePath);
+        if (!stat.isFile() || stat.isSymbolicLink()) {
+            return res.status(404).json({ error: '文件不存在' });
+        }
+
+        let content = null;
+        if (isTextualAttachmentExtension(ext) || ext === 'csv') {
+            content = await readTextFileContent(filePath);
+        } else if (SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS.has(ext)) {
+            if (!DOCUMENT_SANDBOX_RUNTIME_ENABLED) {
+                return res.status(503).json({ error: '文档预览服务暂不可用' });
+            }
+            const parsed = await parseDocumentFile(filePath, ext);
+            content = String(parsed?.text || '');
+        }
+
+        if (content === null) {
+            return res.status(415).json({ error: '此文件类型暂不支持文本预览' });
+        }
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.json({
+            kind: 'text',
+            fileName: String(row.original_name || filename).slice(0, 255),
+            mimeType: String(row.mime_type || 'text/plain').slice(0, 120),
+            size: Math.max(0, Number(row.size || stat.size || 0)),
+            content: String(content || '').slice(0, ATTACHMENT_TEXT_READ_MAX_BYTES)
+        });
+    } catch (error) {
+        if (error?.code === 'ENOENT') return res.status(404).json({ error: '文件不存在' });
+        console.warn(' 生成附件预览失败:', sanitizeReportContext(error));
+        return res.status(error?.statusCode || 500).json({ error: '附件预览暂时不可用' });
     }
 });
 
@@ -18881,6 +19472,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             uiSurface = '',
             memoryMode = 'normal',
             skipUserSave = false,
+            continuationOfRequestId = '',
+            continuationPrefix = '',
+            continuationAttempt = 0,
             lowLatencyMode = false,
             client_file_execution: rawClientFileExecution = false,
             workdir_configured = false
@@ -18905,7 +19499,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let model = normalizeIncomingModelId(requestedModel);
         let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;
         if (gptImageModelSelected) thinkingMode = false;
-        const shouldSkipUserSave = skipUserSave === true || skipUserSave === 1 || skipUserSave === '1';
+        const normalizedContinuationRequestId = /^req_\d+_[a-f0-9]{16}$/i.test(String(continuationOfRequestId || '').trim())
+            ? String(continuationOfRequestId).trim()
+            : '';
+        const normalizedContinuationPrefix = sanitizeClientMessageContent(continuationPrefix);
+        const normalizedContinuationAttempt = Math.max(0, Math.min(parseInt(continuationAttempt, 10) || 0, 2));
+        const isContinuationRequest = Boolean(normalizedContinuationRequestId && normalizedContinuationAttempt > 0);
+        const shouldSkipUserSave = isContinuationRequest
+            || skipUserSave === true
+            || skipUserSave === 1
+            || skipUserSave === '1';
         let normalizedReasoningProfile = normalizeReasoningProfile(reasoningProfile);
         let normalizedResearchMode = gptImageModelSelected ? 'off' : normalizeResearchMode(researchMode);
         const rawResearchAgentModels = Array.isArray(researchAgentModels)
@@ -19134,11 +19737,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 已注入当前用户信息到Prompt: userId=${req.user.userId}, hasUsername=${!!promptUserProfile?.username}, hasEmail=${!!promptUserProfile?.email}`);
         }
 
-        // 本地文件执行模式：系统提示追加本地工作目录说明（替代沙箱引导）
-        if (clientFileExecution && systemPrompt) {
-            systemPrompt += '\n\n## 本地文件执行模式\n当前对话已启用本地文件执行：用户授权了本地工作目录，文件工具在用户电脑上直接执行，无需沙箱。创建文本文件用 create_artifact（format: text/markdown/json/csv）；创建 Office 文档用 create_artifact 的 docx/xlsx/pptx 格式（客户端原生生成，不要用 Python/python-docx/openpyxl 脚本）；需要插图时先用 sandbox_exec 下载图片到工作目录再引用（!img: 或 insert_image），不得引用不存在的文件；修改用 edit_file；执行命令用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒，无 Python 环境）。Excel 更新一律用 update_sheet（含图表），禁止 PowerShell COM 操作 Office 文档，工具成功即完成不要重复操作。不要请求沙箱或声称需要服务器沙箱。当用户请求涉及文件/文档/命令操作时，你必须实际调用对应工具完成（create_artifact/edit_file/sandbox_exec/insert_image/update_sheet/list_files 等），禁止只输出计划或假装完成。';
-        }
-
+// 本地文件执行模式：系统提示追加本地工作目录说明（替代沙箱引导）
+if (clientFileExecution && systemPrompt) {
+    systemPrompt += '\n\n## 本地文件执行模式\n当前对话已启用本地文件执行：用户授权了本地工作目录，文件工具在用户电脑上直接执行，无需沙箱。创建文本文件用 create_artifact（format: text/markdown/json/csv）；创建 Office 文档用 create_artifact 的 docx/xlsx/pptx 格式（客户端原生生成，不要用 Python/python-docx/openpyxl 脚本）；需要插图时先用 sandbox_exec 下载图片到工作目录再引用（!img: 或 insert_image），不得引用不存在的文件；修改用 edit_file；执行命令用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒，无 Python 环境）。Excel 更新一律用 update_sheet（含图表），禁止 PowerShell COM 操作 Office 文档，工具成功即完成不要重复操作。不要请求沙箱或声称需要服务器沙箱。当用户请求涉及文件/文档/命令操作时，你必须实际调用对应工具完成（create_artifact/edit_file/sandbox_exec/insert_image/update_sheet/list_files 等），禁止只输出计划或假装完成。';
+}
         if (
             model === 'claude-haiku' ||
             model === 'anthropic/claude-sonnet-4.6' ||
@@ -19836,11 +20438,18 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
             const multimodalTypesText = getMultimodalTypeDescription(currentMessageMultimodal.types);
-            const defaultMultimodalModel = model === 'auto' ? await resolveVisibleAutoMultimodalModel() : model;
+            const hasAudioAttachment = currentMessageMultimodal.types.includes('audio');
+            const defaultMultimodalModel = hasAudioAttachment
+                ? await resolveAudioUnderstandingModel()
+                : (model === 'auto' ? await resolveVisibleAutoMultimodalModel() : model);
             const requestedRouting = MODEL_ROUTING[defaultMultimodalModel];
-            const supportsNativeMultimodal = model === 'auto' || !!requestedRouting?.multimodal;
+            const supportsNativeMultimodal = hasAudioAttachment || model === 'auto' || !!requestedRouting?.multimodal;
 
-            if (supportsNativeMultimodal) {
+            if (hasAudioAttachment) {
+                finalModel = defaultMultimodalModel;
+                autoRoutingReason = `检测到音频附件，使用 ${researchModelLabel(finalModel)} 理解音频内容`;
+                console.log(`    音频附件强制路由到 Gemini: ${finalModel}`);
+            } else if (supportsNativeMultimodal) {
                 finalModel = defaultMultimodalModel;
                 autoRoutingReason = model === 'auto'
                     ? `${userMembershipTier} 用户 智能模型使用 ${researchModelLabel(finalModel)} 处理${multimodalTypesText}`
@@ -20785,15 +21394,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     );
 
                     if (extractedTitle) {
-                        if (flowId) {
-                            await syncFlowTitle(flowId, req.user.userId, extractedTitle);
-                        } else {
-                            await dbRunAsync(
-                                'UPDATE sessions SET title = ? WHERE id = ?',
-                                [extractedTitle, sessionId]
-                            );
-                        }
-                        res.write(`data: ${JSON.stringify({ type: 'title', title: extractedTitle })}\n\n`);
+                        await updateSessionOrFlowTitleAndEmit({
+                            res,
+                            sessionId,
+                            flowId,
+                            userId: req.user.userId,
+                            title: extractedTitle
+                        });
                     }
 
                     if (flowId && structuredResearchOutput.canvasPatchRaw) {
@@ -20940,6 +21547,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             } else {
                                 parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/jpeg' } });
                             }
+                        } else if (item.type === 'input_audio' && item.input_audio?.data) {
+                            parts.push({
+                                inlineData: {
+                                    mimeType: item.input_audio.mimeType || `audio/${item.input_audio.format || 'wav'}`,
+                                    data: item.input_audio.data
+                                }
+                            });
                         }
                     }
                 } else {
@@ -21241,6 +21855,13 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     // 外部URL图片
                                     parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/jpeg' } });
                                 }
+                            } else if (item.type === 'input_audio' && item.input_audio?.data) {
+                                parts.push({
+                                    inlineData: {
+                                        mimeType: item.input_audio.mimeType || `audio/${item.input_audio.format || 'wav'}`,
+                                        data: item.input_audio.data
+                                    }
+                                });
                             }
                         }
                     } else {
@@ -21552,6 +22173,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             let accumulatedToolCalls = [];  // 累积的工具调用
             let pendingToolCall = null;     // 当前正在累积的工具调用
             let streamFinishReason = null;  // 流结束原因
+            let providerDoneSignalReceived = false;
             let currentToolCallReasoningContent = '';
             const streamToolProtocolFilter = createToolProtocolFilter({
                 toolNames: runtimeToolDefinitions.map((tool) => tool.function.name)
@@ -21668,12 +22290,22 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 buffer = done ? '' : (lines.pop() || '');
                 for (const line of lines) {
                     const trimmed = line.trim();
-                    if (!trimmed || trimmed === 'data: [DONE]') continue;
+                    if (!trimmed) continue;
+                    if (trimmed === 'data: [DONE]') {
+                        providerDoneSignalReceived = true;
+                        continue;
+                    }
 
                     if (trimmed.startsWith('data: ')) {
                         const data = trimmed.slice(6);
                         try {
                             const parsed = JSON.parse(data);
+                            if (
+                                ['response.completed', 'response.done', 'message_stop'].includes(String(parsed?.type || ''))
+                                || String(parsed?.response?.status || '').toLowerCase() === 'completed'
+                            ) {
+                                providerDoneSignalReceived = true;
+                            }
                             if (parsed?.error) {
                                 const errPayload = parsed.error;
                                 const errMessage = typeof errPayload === 'string'
@@ -21721,6 +22353,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 // Gemini 响应结构: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
                                 const candidate = parsed.candidates?.[0];
                                 if (candidate) {
+                                    if (candidate.finishReason) {
+                                        streamFinishReason = String(candidate.finishReason).toLowerCase();
+                                        providerDoneSignalReceived = true;
+                                    }
                                     const parts = candidate.content?.parts || [];
                                     for (const part of parts) {
                                         if (part.functionCall && useStreamingTools) {
@@ -21837,6 +22473,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                 // 记录 finish_reason
                                 if (choice?.finish_reason) {
                                     streamFinishReason = choice.finish_reason;
+                                    providerDoneSignalReceived = true;
                                 }
 
                             }
@@ -21852,6 +22489,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                 }
             }
 
+            if (!providerDoneSignalReceived) {
+                const incompleteStreamError = new Error('provider_stream_missing_terminal_signal');
+                incompleteStreamError.code = 'provider_stream_missing_terminal_signal';
+                throw incompleteStreamError;
+            }
 
             const extractFallbackToolCalls = (rawText = '') => {
                 const trimmedText = String(rawText || '').trim();
@@ -22306,6 +22948,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     tool: toolName,
                                     parameters: args
                                 })}\n\n`);
+                                // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
                                 console.log(` 已下发 tool_pending_client: requestId=${requestId}, tool=${toolName}, toolCallId=${toolCall.id}`);
                                 // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
                                 const toolPauseStartedAt = Date.now();
@@ -22784,6 +23427,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                         let continueRawToolContent = '';
                         let continueStreamFinishReason = null;
+                        let continueProviderDoneSignalReceived = false;
                         let continueToolCallReasoningContent = '';
                         const continueAccumulatedToolCalls = [];
                         const continueTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
@@ -22825,11 +23469,21 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             continueBuffer = continueDone ? '' : (continueLines.pop() || '');
                             for (const continueLine of continueLines) {
                                 const continueTrimmed = continueLine.trim();
-                                if (!continueTrimmed || continueTrimmed === 'data: [DONE]') continue;
+                                if (!continueTrimmed) continue;
+                                if (continueTrimmed === 'data: [DONE]') {
+                                    continueProviderDoneSignalReceived = true;
+                                    continue;
+                                }
                                 if (!continueTrimmed.startsWith('data: ')) continue;
 
                                 try {
                                     const continueParsed = JSON.parse(continueTrimmed.slice(6));
+                                    if (
+                                        ['response.completed', 'response.done', 'message_stop'].includes(String(continueParsed?.type || ''))
+                                        || String(continueParsed?.response?.status || '').toLowerCase() === 'completed'
+                                    ) {
+                                        continueProviderDoneSignalReceived = true;
+                                    }
                                     const continueEventReasoning = extractReasoningTextFromResponseEvent(continueParsed);
                                     if (continueEventReasoning) {
                                         const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, continueEventReasoning);
@@ -22869,6 +23523,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                                     if (isGeminiAPI) {
                                         const candidate = continueParsed.candidates?.[0];
+                                        if (candidate?.finishReason) {
+                                            continueStreamFinishReason = String(candidate.finishReason).toLowerCase();
+                                            continueProviderDoneSignalReceived = true;
+                                        }
                                         for (const part of candidate?.content?.parts || []) {
                                             if (part.functionCall) {
                                                 continueAccumulatedToolCalls.push({
@@ -22893,6 +23551,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
                                     if (continueChoice?.finish_reason) {
                                         continueStreamFinishReason = continueChoice.finish_reason;
+                                        continueProviderDoneSignalReceived = true;
                                     }
 
                                     const reasoning = extractReasoningTextFromPayload(continueDelta);
@@ -22969,6 +23628,12 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                             clearTimeout(continueTimeoutId);
                         }
 
+                        if (!continueProviderDoneSignalReceived) {
+                            const incompleteContinueStreamError = new Error('provider_stream_missing_terminal_signal');
+                            incompleteContinueStreamError.code = 'provider_stream_missing_terminal_signal';
+                            throw incompleteContinueStreamError;
+                        }
+
                         // 续传流 fallback：处理文本型工具调用标记
                         if (continueAccumulatedToolCalls.length === 0 && continueRawToolContent) {
                             const fallbackCalls = extractFallbackToolCalls(continueRawToolContent);
@@ -23021,7 +23686,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                                     signal: continueController.signal
                                 });
                                 if (retryRes.ok) {
-                                    const retryJson = await retryRes.json();
+                                    const retryJson = JSON.parse(
+                                        await readBoundedResponseText(retryRes, 256 * 1024)
+                                    );
                                     const rawCalls = retryJson?.choices?.[0]?.message?.tool_calls || [];
                                     const retryCalls = normalizeToolCalls(rawCalls, clientFileExecution);
                                     if (retryCalls.length > 0) {
@@ -23266,6 +23933,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             if (!contentToSave) {
                 contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
             }
+            if (isContinuationRequest && normalizedContinuationPrefix) {
+                contentToSave = mergeContinuationTextForStorage(normalizedContinuationPrefix, contentToSave).trim();
+            }
             const directTitle = sanitizeGeneratedConversationTitle(structuredAssistantOutput.extractedTitle || '', uiLanguage);
             if (directTitle) {
                 console.log(` 已取得会话标题: ${formatPrivateLogFingerprint(directTitle, 'title')}`);
@@ -23276,29 +23946,55 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
             const assistantProcessTraceJson = promptContextTrace ? JSON.stringify(promptContextTrace) : null;
 
-            // 使用毫秒级时间戳，确保AI消息严格晚于用户消息
-            const aiMsgTimestamp = new Date().toISOString();
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp],
-                    (err) => {
-                        if (err) {
-                            console.error(' 保存AI消息失败:', sanitizeReportContext(err));
-                            reject(err);
-                        } else {
-                            console.log(` AI回复已保存:`);
-                            console.log(`   - 内容: ${contentToSave.length}字符`);
-                            console.log(`   - 思考: ${reasoningContent.length}字符`);
-                            console.log(`   - 模型: ${finalModel}`);
-                            console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
-                            console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);
-                            console.log(`   - 来源数: ${searchSources?.length || 0}`);
-                            resolve();
-                        }
-                    }
+            // 自动续传更新原回复；若原请求尚未落库，则以本次请求保存完整合并文本。
+            const previousAssistant = isContinuationRequest
+                ? await dbGetAsync(
+                    `SELECT m.id, m.content, m.reasoning_content
+                     FROM messages m
+                     JOIN sessions s ON s.id = m.session_id
+                     WHERE m.request_id = ? AND m.role = 'assistant'
+                       AND m.session_id = ? AND s.user_id = ?
+                     ORDER BY m.id DESC LIMIT 1`,
+                    [normalizedContinuationRequestId, sessionId, req.user.userId]
+                )
+                : null;
+            if (previousAssistant?.id) {
+                contentToSave = mergeContinuationTextForStorage(previousAssistant.content, contentToSave).trim();
+                const mergedReasoning = mergeContinuationTextForStorage(previousAssistant.reasoning_content, reasoningContent).trim();
+                await dbRunAsync(
+                    `UPDATE messages
+                     SET content = ?, reasoning_content = ?, model = ?, enable_search = ?, thinking_mode = ?,
+                         internet_mode = ?, sources = COALESCE(?, sources), process_trace = COALESCE(?, process_trace)
+                     WHERE id = ?`,
+                    [
+                        contentToSave,
+                        mergedReasoning || null,
+                        finalModel,
+                        internetMode ? 1 : 0,
+                        thinkingMode ? 1 : 0,
+                        internetMode ? 1 : 0,
+                        sourcesJson,
+                        assistantProcessTraceJson,
+                        previousAssistant.id
+                    ]
                 );
-            });
+                console.log(
+                    ` 自动续传已合并到原AI回复: ${formatPrivateLogFingerprint(normalizedContinuationRequestId, 'request')}, attempt=${normalizedContinuationAttempt}`
+                );
+            } else {
+                const aiMsgTimestamp = new Date().toISOString();
+                await dbRunAsync(
+                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
+                );
+            }
+            console.log(` AI回复已保存:`);
+            console.log(`   - 内容: ${formatPrivateLogFingerprint(contentToSave, 'content')}`);
+            console.log(`   - 思考: ${formatPrivateLogFingerprint(reasoningContent, 'reasoning')}`);
+            console.log(`   - 模型: ${finalModel}`);
+            console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
+            console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);
+            console.log(`   - 来源数: ${searchSources?.length || 0}`);
 
 
             // 4. 更新会话标题：AI 直接输出 [TITLE] 时同步更新；未输出时后台兜底，不阻塞 done。
@@ -25260,6 +25956,13 @@ async function resolveVisibleAutoMultimodalModel() {
         || await resolveVisibleAutoModel();
 }
 
+async function resolveAudioUnderstandingModel() {
+    const disabled = await getDisabledModelSet();
+    return AUDIO_UNDERSTANDING_MODEL_PREFERENCE.find((modelId) => (
+        !disabled.has(modelId) && isRuntimeConfiguredModel(modelId)
+    )) || AUDIO_UNDERSTANDING_MODEL_PREFERENCE.find((modelId) => isRuntimeConfiguredModel(modelId)) || 'gemini-3-flash';
+}
+
 async function getModelVisibilityPayload({ forceRefresh = false } = {}) {
     const disabled = await getDisabledModelSet({ forceRefresh });
     return ADMIN_MODEL_CATALOG.map((model) => ({
@@ -25365,6 +26068,7 @@ async function ensureSessionKindColumn() {
             await ensureColumnExists('sessions', 'session_kind', `ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`);
             await ensureColumnExists('sessions', 'prompt_model_identity', `ALTER TABLE sessions ADD COLUMN prompt_model_identity TEXT`);
             await ensureColumnExists('sessions', 'prompt_language', `ALTER TABLE sessions ADD COLUMN prompt_language TEXT`);
+            await ensureColumnExists('sessions', 'title_user_locked', `ALTER TABLE sessions ADD COLUMN title_user_locked INTEGER NOT NULL DEFAULT 0`);
             await dbRunAsync(`CREATE INDEX IF NOT EXISTS idx_sessions_user_kind_updated ON sessions(user_id, session_kind, is_archived, updated_at DESC)`);
         })().catch((error) => {
             ensureSessionKindColumnPromise = null;
