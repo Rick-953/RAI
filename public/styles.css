@@ -6861,6 +6861,86 @@ video.private-file-preview-media {
   border-color: #E5E7EB;
 }
 
+.upload-progress {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  margin-bottom: var(--spacing-sm);
+  padding: 8px 0 6px;
+  color: var(--text-primary);
+}
+
+.upload-progress[hidden] {
+  display: none;
+}
+
+.upload-progress-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 7px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.upload-progress-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-progress-detail {
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.upload-progress-track {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+}
+
+.upload-progress-bar {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-saturn-yellow);
+  transition: width 0.15s ease;
+}
+
+.upload-progress[data-state="completed"] .upload-progress-bar {
+  background: var(--success-color);
+}
+
+.upload-progress[data-state="failed"] .upload-progress-detail {
+  color: var(--error-color);
+}
+
+.upload-progress[data-state="failed"] .upload-progress-bar {
+  background: var(--error-color);
+}
+
+@media (max-width: 520px) {
+  .upload-progress-copy {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .upload-progress-detail {
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+  }
+}
+
 /* 底部工具栏：左侧按钮 + 右侧发送 */
 .input-toolbar {
   display: flex;

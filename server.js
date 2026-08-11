@@ -332,6 +332,10 @@ const CHAT_CLIENT_MAX_MESSAGE_CHARS = Math.max(1000, Math.min(parseInt(cleanEnvV
 const CHAT_CLIENT_MAX_TOTAL_CHARS = Math.max(CHAT_CLIENT_MAX_MESSAGE_CHARS, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_TOTAL_CHARS) || '140000', 10) || 140000, 240000));
 const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
 const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
+const UPLOAD_PROGRESS_TTL_MS = 30 * 60 * 1000;
+const UPLOAD_PROGRESS_MAX_SESSIONS = 10000;
+const UPLOAD_PROGRESS_ID_PATTERN = /^upl_[a-f0-9]{32}$/;
+const uploadProgressSessions = new Map();
 const GENERIC_SESSION_TITLE_RE = /^(新对话|新 ChatFlow|临时对话|New Chat|Temporary chat|Untitled|未命名)$/i;
 
 function normalizeUsernameForStorage(username) {
@@ -10243,6 +10247,165 @@ const FILE_LIBRARY_QUOTA_BYTES = Object.freeze({
     max: 800 * 1024 * 1024
 });
 
+function normalizeUploadProgressId(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return UPLOAD_PROGRESS_ID_PATTERN.test(normalized) ? normalized : '';
+}
+
+function pruneUploadProgressSessions(now = Date.now()) {
+    for (const [uploadId, session] of uploadProgressSessions) {
+        if (Number(session?.expiresAt || 0) <= now) uploadProgressSessions.delete(uploadId);
+    }
+}
+
+function createUploadProgressSession({ userId, fileName = '', mimeType = '', totalBytes = 0 } = {}) {
+    const now = Date.now();
+    pruneUploadProgressSessions(now);
+    if (uploadProgressSessions.size >= UPLOAD_PROGRESS_MAX_SESSIONS) {
+        let evictionId = '';
+        for (const [uploadId, session] of uploadProgressSessions) {
+            if (session?.status === 'completed' || session?.status === 'failed') {
+                evictionId = uploadId;
+                break;
+            }
+        }
+        if (!evictionId) {
+            for (const [uploadId, session] of uploadProgressSessions) {
+                if (session?.status === 'pending') {
+                    evictionId = uploadId;
+                    break;
+                }
+            }
+        }
+        if (evictionId) uploadProgressSessions.delete(evictionId);
+    }
+    if (uploadProgressSessions.size >= UPLOAD_PROGRESS_MAX_SESSIONS) return null;
+    const uploadId = `upl_${crypto.randomBytes(16).toString('hex')}`;
+    const session = {
+        id: uploadId,
+        userId: Number(userId),
+        fileName: String(fileName || '').slice(0, 255),
+        mimeType: String(mimeType || '').slice(0, 120),
+        totalBytes: Math.max(0, Number(totalBytes || 0)),
+        uploadedBytes: 0,
+        requestBytesReceived: 0,
+        requestBytesTotal: 0,
+        status: 'pending',
+        file: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+        expiresAt: now + UPLOAD_PROGRESS_TTL_MS
+    };
+    uploadProgressSessions.set(uploadId, session);
+    return session;
+}
+
+function updateUploadProgressSession(session, updates = {}) {
+    if (!session) return null;
+    const now = Date.now();
+    if (updates.status) session.status = updates.status;
+    if (updates.fileName !== undefined) session.fileName = String(updates.fileName || '').slice(0, 255);
+    if (updates.mimeType !== undefined) session.mimeType = String(updates.mimeType || '').slice(0, 120);
+    if (updates.totalBytes !== undefined) session.totalBytes = Math.max(0, Number(updates.totalBytes || 0));
+    if (updates.uploadedBytes !== undefined) {
+        const uploadedBytes = Math.max(0, Number(updates.uploadedBytes || 0));
+        session.uploadedBytes = session.totalBytes > 0 ? Math.min(uploadedBytes, session.totalBytes) : uploadedBytes;
+    }
+    if (updates.requestBytesReceived !== undefined) session.requestBytesReceived = Math.max(0, Number(updates.requestBytesReceived || 0));
+    if (updates.requestBytesTotal !== undefined) session.requestBytesTotal = Math.max(0, Number(updates.requestBytesTotal || 0));
+    if (updates.file !== undefined) session.file = updates.file;
+    if (updates.errorCode !== undefined) {
+        const errorCode = String(updates.errorCode || '').trim().toLowerCase();
+        session.errorCode = /^[a-z0-9_]{1,64}$/.test(errorCode) ? errorCode : null;
+    }
+    session.updatedAt = now;
+    session.expiresAt = now + UPLOAD_PROGRESS_TTL_MS;
+    return session;
+}
+
+function serializeUploadProgressSession(session) {
+    const totalBytes = Math.max(0, Number(session?.totalBytes || 0));
+    const uploadedBytes = Math.max(0, Number(session?.uploadedBytes || 0));
+    const complete = session?.status === 'completed';
+    const progressPercent = complete
+        ? 100
+        : (totalBytes > 0 ? Math.min(99, Math.floor((uploadedBytes / totalBytes) * 100)) : 0);
+    return {
+        success: true,
+        uploadId: session.id,
+        status: session.status,
+        uploadedBytes,
+        totalBytes,
+        progressPercent,
+        fileName: session.fileName,
+        mimeType: session.mimeType,
+        file: session.file || null,
+        errorCode: session.errorCode || null,
+        createdAt: new Date(session.createdAt).toISOString(),
+        updatedAt: new Date(session.updatedAt).toISOString(),
+        expiresAt: new Date(session.expiresAt).toISOString()
+    };
+}
+
+function failUploadProgressSession(req, errorCode = 'upload_failed') {
+    if (!req?.uploadProgressSession || ['completed', 'failed'].includes(req.uploadProgressSession.status)) return;
+    updateUploadProgressSession(req.uploadProgressSession, { status: 'failed', errorCode });
+}
+
+function trackUploadProgress(req, res, next) {
+    pruneUploadProgressSessions();
+    const presentedId = req.get('X-RAI-Upload-ID');
+    const uploadId = normalizeUploadProgressId(presentedId);
+    if (presentedId && !uploadId) {
+        return res.status(400).json({ success: false, error: '上传 ID 无效', code: 'upload_id_invalid' });
+    }
+
+    let session = uploadId ? uploadProgressSessions.get(uploadId) : null;
+    if (uploadId && (!session || Number(session.userId) !== Number(req.user.userId))) {
+        return res.status(404).json({ success: false, error: '上传会话不存在', code: 'upload_session_not_found' });
+    }
+    if (session && session.status !== 'pending') {
+        return res.status(409).json({ success: false, error: '上传会话已使用', code: 'upload_session_not_pending' });
+    }
+    if (!session) session = createUploadProgressSession({ userId: req.user.userId });
+    if (!session) {
+        return res.status(503).json({ success: false, error: '上传任务繁忙，请稍后再试', code: 'upload_sessions_busy' });
+    }
+
+    req.uploadProgressSession = session;
+    res.setHeader('X-RAI-Upload-ID', session.id);
+    const requestBytesTotal = Math.max(0, Number(req.headers['content-length'] || 0));
+    updateUploadProgressSession(session, {
+        status: 'uploading',
+        requestBytesTotal,
+        errorCode: null
+    });
+
+    req.once('aborted', () => failUploadProgressSession(req, 'upload_aborted'));
+    req.once('error', () => failUploadProgressSession(req, 'upload_transport_error'));
+    res.once('finish', () => {
+        if (session.status === 'completed' || session.status === 'failed') return;
+        failUploadProgressSession(req, res.statusCode >= 400 ? 'upload_rejected' : 'upload_incomplete');
+    });
+    return next();
+}
+
+function startUploadByteTracking(req) {
+    const session = req?.uploadProgressSession;
+    if (!session || req.uploadByteTrackingStarted) return;
+    req.uploadByteTrackingStarted = true;
+    let requestBytesReceived = 0;
+    req.on('data', (chunk) => {
+        requestBytesReceived += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk || ''));
+        const requestBytesTotal = Math.max(0, Number(session.requestBytesTotal || 0));
+        const uploadedBytes = session.totalBytes > 0 && requestBytesTotal > 0
+            ? Math.round(session.totalBytes * Math.min(1, requestBytesReceived / requestBytesTotal))
+            : requestBytesReceived;
+        updateUploadProgressSession(session, { requestBytesReceived, uploadedBytes });
+    });
+}
+
 async function resolveUserFileStorageQuota(userId, runtimeSettings = null) {
     const membership = await getUserMembershipSnapshot(userId);
     const rawTier = String(membership?.membership || 'free').trim().toLowerCase();
@@ -10832,6 +10995,9 @@ function runUpload(middleware, req, res, next) {
         }
         return res.status(400).json({ error: err.message || '文件上传失败' });
     });
+    // Multer/Busboy must subscribe first; an earlier data listener would put the
+    // request into flowing mode and could consume multipart bytes before parsing.
+    startUploadByteTracking(req);
 }
 
 function hasImageMagic(buffer, ext) {
@@ -18721,29 +18887,113 @@ async function enforceUploadPreflight(req, res, next) {
     }
 }
 
-app.post('/api/upload', authenticateToken, enforceUploadPreflight, (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: '没有文件上传' });
+app.post('/api/uploads/sessions', apiLimiter, authenticateToken, (req, res) => {
+    const fileName = String(req.body?.fileName || '').trim();
+    const mimeType = String(req.body?.mimeType || '').trim();
+    const size = Number(req.body?.size);
+    if (
+        !fileName
+        || fileName.length > 255
+        || mimeType.length > 120
+        || /[\u0000-\u001f\u007f]/.test(fileName)
+        || /[\u0000-\u001f\u007f]/.test(mimeType)
+        || !Number.isSafeInteger(size)
+        || size < 0
+    ) {
+        return res.status(400).json({ success: false, error: '上传文件信息无效', code: 'upload_metadata_invalid' });
+    }
+    if (size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) {
+        return res.status(413).json({ success: false, error: '文件大小超过限制', code: 'upload_too_large' });
+    }
+    const session = createUploadProgressSession({
+        userId: req.user.userId,
+        fileName,
+        mimeType,
+        totalBytes: size
+    });
+    if (!session) {
+        return res.status(503).json({ success: false, error: '上传任务繁忙，请稍后再试', code: 'upload_sessions_busy' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(201).json({
+        ...serializeUploadProgressSession(session),
+        uploadUrl: '/api/upload',
+        statusUrl: `/api/uploads/${session.id}/status`
+    });
+});
 
-    try {
-        await validateUploadedFileContent(req.file, 'attachment');
-        await recordUploadedFileWithinQuota(req, req.file, 'attachment');
-        console.log(' 文件上传成功:', req.file.filename);
-        res.json({
-            success: true,
-            file: {
+app.get('/api/uploads/:uploadId/status', apiLimiter, authenticateToken, (req, res) => {
+    pruneUploadProgressSessions();
+    const uploadId = normalizeUploadProgressId(req.params.uploadId);
+    const session = uploadId ? uploadProgressSessions.get(uploadId) : null;
+    if (!session || Number(session.userId) !== Number(req.user.userId)) {
+        return res.status(404).json({ success: false, error: '上传会话不存在', code: 'upload_session_not_found' });
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json(serializeUploadProgressSession(session));
+});
+
+app.post(
+    '/api/upload',
+    authenticateToken,
+    trackUploadProgress,
+    enforceUploadPreflight,
+    (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next),
+    (req, res, next) => {
+        if (req.file) {
+            updateUploadProgressSession(req.uploadProgressSession, {
+                status: 'processing',
+                fileName: req.file.originalname,
+                mimeType: req.file.mimetype,
+                totalBytes: req.file.size,
+                uploadedBytes: req.file.size
+            });
+        }
+        next();
+    },
+    async (req, res) => {
+        if (!req.file) {
+            failUploadProgressSession(req, 'upload_file_missing');
+            return res.status(400).json({ success: false, error: '没有文件上传' });
+        }
+
+        try {
+            await validateUploadedFileContent(req.file, 'attachment');
+            await recordUploadedFileWithinQuota(req, req.file, 'attachment');
+            const file = {
                 filename: req.file.filename,
                 originalName: req.file.originalname,
                 filePath: `/api/uploads/${req.file.filename}`,
                 fileType: req.file.mimetype,
                 size: req.file.size
-            }
-        });
-    } catch (error) {
-        fs.unlink(req.file.path, () => null);
-        console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
-        res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : '文件上传失败' });
+            };
+            updateUploadProgressSession(req.uploadProgressSession, {
+                status: 'completed',
+                uploadedBytes: req.file.size,
+                totalBytes: req.file.size,
+                file,
+                errorCode: null
+            });
+            console.log(' 文件上传成功:', req.file.filename);
+            res.json({
+                success: true,
+                uploadId: req.uploadProgressSession.id,
+                status: 'completed',
+                file
+            });
+        } catch (error) {
+            fs.unlink(req.file.path, () => null);
+            failUploadProgressSession(req, Number(error.statusCode || 500) === 413 ? 'upload_quota_exceeded' : 'upload_validation_failed');
+            console.error(' 记录上传文件归属失败:', sanitizeReportContext(error));
+            res.status(error.statusCode || 500).json({
+                success: false,
+                uploadId: req.uploadProgressSession.id,
+                status: 'failed',
+                error: error.statusCode ? error.message : '文件上传失败'
+            });
+        }
     }
-});
+);
 
 app.get('/api/files', apiLimiter, authenticateToken, async (req, res) => {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));

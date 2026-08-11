@@ -86,7 +86,7 @@ function listUploadFiles() {
   );
 }
 
-function abortMultipartUpload(token) {
+function abortMultipartUpload(token, { uploadId = '', onPartial = null } = {}) {
   const target = new URL(BASE_URL);
   assert.strictEqual(target.protocol, 'http:', 'transport-abort smoke requires the isolated HTTP server');
   const boundary = `rai-abort-${RUN_ID}`;
@@ -111,14 +111,23 @@ function abortMultipartUpload(token) {
         'POST /api/upload HTTP/1.1',
         `Host: ${target.host}`,
         `Authorization: Bearer ${token}`,
+        uploadId ? `X-RAI-Upload-ID: ${uploadId}` : '',
         `Content-Type: multipart/form-data; boundary=${boundary}`,
         `Content-Length: ${partialBody.length + 1024}`,
         'Connection: close',
         '',
         ''
-      ].join('\r\n');
+      ].filter(Boolean).join('\r\n') + '\r\n\r\n';
       socket.write(headers);
-      socket.write(partialBody, () => setTimeout(() => socket.destroy(), 20));
+      socket.write(partialBody, async () => {
+        try {
+          if (typeof onPartial === 'function') await onPartial();
+          setTimeout(() => socket.destroy(), 20);
+        } catch (error) {
+          socket.destroy();
+          finish(error);
+        }
+      });
     });
     const deadline = setTimeout(() => {
       socket.destroy();
@@ -1059,17 +1068,46 @@ async function main() {
       assert.strictEqual(malformedUploadBudget.response.status, 200, 'isolated smoke should reserve enough upload attempts for the malformed multipart matrix');
     }
 
+    const uploadSession = await request('/api/uploads/sessions', {
+      method: 'POST',
+      headers: authHeaders(userA.token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        fileName: `owned-${RUN_ID}.txt`,
+        size: Buffer.byteLength('RAI security smoke'),
+        mimeType: 'text/plain'
+      })
+    });
+    assert.strictEqual(uploadSession.response.status, 201, `upload session creation should succeed: ${JSON.stringify(uploadSession.body)}`);
+    assert.match(String(uploadSession.body?.uploadId || ''), /^upl_[a-f0-9]{32}$/, 'upload session should return a bounded opaque ID');
+    assert.strictEqual(uploadSession.body?.status, 'pending', 'new upload session should be pending');
+    const uploadId = uploadSession.body.uploadId;
+
+    const peerUploadStatus = await request(`/api/uploads/${encodeURIComponent(uploadId)}/status`, {
+      headers: authHeaders(userB.token)
+    });
+    assert.strictEqual(peerUploadStatus.response.status, 404, 'another user cannot query a known upload session');
+
     const uploadForm = new FormData();
     uploadForm.append('file', new Blob(['RAI security smoke'], { type: 'text/plain' }), `owned-${RUN_ID}.txt`);
     const upload = await request('/api/upload', {
       method: 'POST',
-      headers: authHeaders(userA.token),
+      headers: authHeaders(userA.token, { 'X-RAI-Upload-ID': uploadId }),
       body: uploadForm
     });
     assert.strictEqual(upload.response.status, 200, `allowed text upload should succeed: ${JSON.stringify(upload.body)}`);
+    assert.strictEqual(upload.body?.uploadId, uploadId, 'upload response should retain the client upload ID');
+    assert.strictEqual(upload.body?.status, 'completed', 'upload response should confirm server-side completion');
     const filename = upload.body?.file?.filename;
     assert.ok(filename, 'upload should return stored filename');
     uploadedFiles.push(filename);
+
+    const ownerUploadStatus = await request(`/api/uploads/${encodeURIComponent(uploadId)}/status`, {
+      headers: authHeaders(userA.token)
+    });
+    assert.strictEqual(ownerUploadStatus.response.status, 200, 'upload owner can query upload status');
+    assert.strictEqual(ownerUploadStatus.body?.status, 'completed', 'status API should report completed after validation and quota recording');
+    assert.strictEqual(ownerUploadStatus.body?.progressPercent, 100, 'completed upload status should report 100 percent');
+    assert.strictEqual(ownerUploadStatus.body?.file?.filename, filename, 'completed upload status should expose the stored file metadata');
 
     const aDownload = await request(`/api/uploads/${encodeURIComponent(filename)}`, {
       headers: authHeaders(userA.token)
@@ -1285,9 +1323,41 @@ async function main() {
     });
     assert.strictEqual(tooManyFilesMultipart.response.status, 400, 'raw multipart bodies exceeding the file-part limit must be rejected');
 
-    await abortMultipartUpload(userB.token);
+    const interruptedSession = await request('/api/uploads/sessions', {
+      method: 'POST',
+      headers: authHeaders(userB.token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        fileName: `aborted-${RUN_ID}.txt`,
+        size: 1024,
+        mimeType: 'text/plain'
+      })
+    });
+    assert.strictEqual(interruptedSession.response.status, 201, 'interrupted upload should create a progress session');
+    const interruptedUploadId = interruptedSession.body.uploadId;
+    let observedUploadingProgress = null;
+    await abortMultipartUpload(userB.token, {
+      uploadId: interruptedUploadId,
+      onPartial: async () => {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const status = await request(`/api/uploads/${encodeURIComponent(interruptedUploadId)}/status`, {
+            headers: authHeaders(userB.token)
+          });
+          if (status.body?.status === 'uploading' && Number(status.body?.uploadedBytes || 0) > 0) {
+            observedUploadingProgress = status.body;
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      }
+    });
+    assert.ok(observedUploadingProgress, 'status API should expose nonzero progress while multipart bytes are arriving');
 
     await new Promise((resolve) => setTimeout(resolve, 200));
+    const interruptedStatus = await request(`/api/uploads/${encodeURIComponent(interruptedUploadId)}/status`, {
+      headers: authHeaders(userB.token)
+    });
+    assert.strictEqual(interruptedStatus.body?.status, 'failed', 'aborted multipart upload should reach the failed terminal state');
+    assert.strictEqual(interruptedStatus.body?.errorCode, 'upload_aborted', 'aborted multipart upload should expose a bounded failure code');
     const uploadFilesAfterMalformed = listUploadFiles();
     assert.deepStrictEqual(
       [...uploadFilesAfterMalformed].sort(),

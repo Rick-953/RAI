@@ -28304,6 +28304,152 @@ function handleFileUpload() {
   input.click();
 }
 
+let uploadProgressGeneration = 0;
+let uploadProgressHideTimer = null;
+
+function ensureUploadProgressElement({ attachToComposer = true } = {}) {
+  let progress = document.getElementById('uploadProgress');
+  if (!progress) {
+    progress = document.createElement('div');
+    progress.id = 'uploadProgress';
+    progress.className = 'upload-progress';
+    progress.setAttribute('role', 'status');
+    progress.setAttribute('aria-live', 'polite');
+    progress.innerHTML = `
+      <div class="upload-progress-copy">
+        <strong class="upload-progress-name"></strong>
+        <span class="upload-progress-detail"></span>
+      </div>
+      <div class="upload-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span class="upload-progress-bar"></span>
+      </div>
+    `;
+  }
+
+  const fileLibraryStatus = document.getElementById('fileLibraryStatus');
+  const inputContainer = document.getElementById('inputContainer');
+  const inputRow = inputContainer?.querySelector('.input-row');
+  if (!attachToComposer && fileLibraryStatus?.parentNode) {
+    fileLibraryStatus.parentNode.insertBefore(progress, fileLibraryStatus);
+  } else if (inputContainer && inputRow) {
+    inputContainer.insertBefore(progress, inputRow);
+  }
+  return progress;
+}
+
+function uploadProgressStateLabel(state) {
+  const isZh = isChineseLanguage(appState.language);
+  const labels = {
+    preparing: isZh ? '准备上传' : 'Preparing',
+    uploading: isZh ? '正在上传' : 'Uploading',
+    processing: isZh ? '服务器处理中' : 'Processing',
+    completed: isZh ? '上传完成' : 'Upload complete',
+    failed: isZh ? '上传失败' : 'Upload failed'
+  };
+  return labels[state] || labels.uploading;
+}
+
+function renderUploadProgress({ generation, fileName, state, loaded = 0, total = 0, attachToComposer = true }) {
+  if (generation !== uploadProgressGeneration) return;
+  const progress = ensureUploadProgressElement({ attachToComposer });
+  const safeTotal = Math.max(0, Number(total || 0));
+  const safeLoaded = Math.min(safeTotal || Number.MAX_SAFE_INTEGER, Math.max(0, Number(loaded || 0)));
+  const percent = state === 'completed'
+    ? 100
+    : (safeTotal > 0 ? Math.min(99, Math.round((safeLoaded / safeTotal) * 100)) : 0);
+  const name = progress.querySelector('.upload-progress-name');
+  const detail = progress.querySelector('.upload-progress-detail');
+  const track = progress.querySelector('.upload-progress-track');
+  const bar = progress.querySelector('.upload-progress-bar');
+  if (name) {
+    name.textContent = String(fileName || '');
+    name.title = String(fileName || '');
+  }
+  if (detail) {
+    const byteText = safeTotal > 0 ? `${formatFileSize(safeLoaded)} / ${formatFileSize(safeTotal)}` : formatFileSize(safeLoaded);
+    detail.textContent = `${uploadProgressStateLabel(state)} · ${percent}% · ${byteText}`;
+  }
+  if (track) {
+    track.setAttribute('aria-valuenow', String(percent));
+    track.setAttribute('aria-label', `${uploadProgressStateLabel(state)} ${percent}%`);
+  }
+  if (bar) bar.style.width = `${percent}%`;
+  progress.dataset.state = state;
+  progress.hidden = false;
+}
+
+function scheduleUploadProgressHide(generation, delay = 2600) {
+  if (uploadProgressHideTimer) clearTimeout(uploadProgressHideTimer);
+  uploadProgressHideTimer = window.setTimeout(() => {
+    if (generation !== uploadProgressGeneration) return;
+    const progress = document.getElementById('uploadProgress');
+    if (progress) progress.hidden = true;
+    uploadProgressHideTimer = null;
+  }, delay);
+}
+
+async function createUploadSession(file, context) {
+  const response = await fetch(`${API_BASE}/uploads/sessions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${context.token}`,
+      'Content-Type': 'application/json'
+    },
+    cache: 'no-store',
+    body: JSON.stringify({
+      fileName: file.name,
+      size: Number(file.size || 0),
+      mimeType: file.type || 'application/octet-stream'
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success || !/^upl_[a-f0-9]{32}$/.test(String(data.uploadId || ''))) {
+    throw new Error(data.error || (isChineseLanguage(appState.language) ? '无法创建上传任务' : 'Could not create upload'));
+  }
+  return data;
+}
+
+function uploadFileWithProgress(file, session, context, onProgress, onProcessing) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append('file', file);
+    xhr.open('POST', `${API_BASE}/upload`);
+    xhr.setRequestHeader('Authorization', `Bearer ${context.token}`);
+    xhr.setRequestHeader('X-RAI-Upload-ID', session.uploadId);
+    xhr.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable) return;
+      const uploadedFileBytes = file.size > 0
+        ? Math.round(file.size * Math.min(1, event.loaded / event.total))
+        : 0;
+      onProgress(uploadedFileBytes, Number(file.size || 0));
+    });
+    xhr.upload.addEventListener('load', () => onProcessing(Number(file.size || 0)));
+    xhr.addEventListener('load', () => {
+      let data = null;
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch (error) {
+        data = null;
+      }
+      if (xhr.status < 200 || xhr.status >= 300 || !data?.success || data.status !== 'completed') {
+        const uploadError = new Error(data?.error || data?.message || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
+        uploadError.status = xhr.status;
+        reject(uploadError);
+        return;
+      }
+      resolve(data);
+    });
+    xhr.addEventListener('error', () => reject(new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted')));
+    xhr.addEventListener('abort', () => {
+      const abortError = new Error('Upload aborted');
+      abortError.name = 'AbortError';
+      reject(abortError);
+    });
+    xhr.send(formData);
+  });
+}
+
 // 独立的文件处理函数（供拖拽上传复用）
 async function processUploadedFile(file, options = {}) {
   const attachToComposer = options.attachToComposer !== false;
@@ -28349,23 +28495,40 @@ async function processUploadedFile(file, options = {}) {
     localThumbnail = URL.createObjectURL(file);
   }
 
+  const context = captureUserAuthContext();
+  if (!isUserAuthContextCurrent(context)) {
+    if (localThumbnail) URL.revokeObjectURL(localThumbnail);
+    showToast(isChineseLanguage(appState.language) ? '登录状态已变化，请重试' : 'Your session changed; please try again');
+    return false;
+  }
+  const generation = ++uploadProgressGeneration;
+  if (uploadProgressHideTimer) {
+    clearTimeout(uploadProgressHideTimer);
+    uploadProgressHideTimer = null;
+  }
+  renderUploadProgress({
+    generation,
+    fileName: file.name,
+    state: 'preparing',
+    loaded: 0,
+    total: file.size,
+    attachToComposer
+  });
+
   try {
-    const formData = new FormData();
-    formData.append('file', file);
-    const response = await fetch(`${API_BASE}/upload`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${appState.token}` },
-      body: formData
-    });
-    const responseText = await response.text();
-    let data = null;
-    try {
-      data = responseText ? JSON.parse(responseText) : null;
-    } catch (parseError) {
-      data = null;
-    }
-    if (!response.ok || !data?.success) {
-      throw new Error(data?.error || data?.message || responseText || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
+    const session = await createUploadSession(file, context);
+    renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded: 0, total: file.size, attachToComposer });
+    const data = await uploadFileWithProgress(
+      file,
+      session,
+      context,
+      (loaded, total) => renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded, total, attachToComposer }),
+      (total) => renderUploadProgress({ generation, fileName: file.name, state: 'processing', loaded: total, total, attachToComposer })
+    );
+    if (!isUserAuthContextCurrent(context)) {
+      const contextError = new Error('Upload account context changed');
+      contextError.name = 'AbortError';
+      throw contextError;
     }
     const uploadedAttachment = {
       type: attachmentType,
@@ -28390,9 +28553,13 @@ async function processUploadedFile(file, options = {}) {
     } else if (localThumbnail) {
       URL.revokeObjectURL(localThumbnail);
     }
+    renderUploadProgress({ generation, fileName: file.name, state: 'completed', loaded: file.size, total: file.size, attachToComposer });
+    scheduleUploadProgressHide(generation);
     return true;
   } catch (error) {
-    if (error?.name === 'AbortError') return;
+    renderUploadProgress({ generation, fileName: file.name, state: 'failed', loaded: 0, total: file.size, attachToComposer });
+    scheduleUploadProgressHide(generation, 4800);
+    if (error?.name === 'AbortError') return false;
     console.error(' 文件上传失败:', {
       errorName: String(error?.name || 'Error').slice(0, 80),
       status: Number(error?.status || 0) || undefined,
