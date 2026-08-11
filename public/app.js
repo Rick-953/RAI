@@ -5743,10 +5743,10 @@ async function previewAttachment(att = {}) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.kind !== 'text') throw new Error(data.error || `HTTP ${response.status}`);
-    const preview = document.createElement('pre');
-    preview.className = 'private-file-preview-text';
-    preview.textContent = String(data.content || '');
-    showPrivateFilePreview({ title: data.fileName || title, contentNode: preview });
+    const previewNode = document.createElement('pre');
+    previewNode.className = 'private-file-preview-text';
+    previewNode.textContent = String(data.content || '');
+    showPrivateFilePreview({ title: data.fileName || title, contentNode: previewNode });
     return true;
   } catch (error) {
     console.warn('附件预览失败:', error?.message || error);

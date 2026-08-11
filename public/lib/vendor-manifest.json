@@ -24,12 +24,12 @@
     },
     {
       "name": "dompurify",
-      "version": "3.4.12",
-      "purl": "pkg:npm/dompurify@3.4.12",
+      "version": "3.4.13",
+      "purl": "pkg:npm/dompurify@3.4.13",
       "license": "Apache-2.0 OR MPL-2.0",
-      "source": "https://github.com/cure53/DOMPurify/releases/tag/3.4.12",
-      "npmTarball": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.12.tgz",
-      "npmIntegrity": "sha512-zQvGet8Z2sWbQhCmfFz/T5QWH2oBmjnqK3qvOjaqaNLrLEF912WamU+ohnTp0TCep/MFVHpdJuCZEdFOdTnEFg==",
+      "source": "https://github.com/cure53/DOMPurify/releases/tag/3.4.13",
+      "npmTarball": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.13.tgz",
+      "npmIntegrity": "sha512-2vmYIoqjze2d+kakP8S/nS5shfsl587kzwEjcGlTdiksUVgFHnFCsLYDVj/JNqJVOQZGSYBTmuycv0PodwmnMQ==",
       "upstreamFiles": {
         "purify.min.js": "package/dist/purify.min.js",
         "licenses/dompurify/LICENSE": "package/LICENSE",
@@ -38,10 +38,10 @@
       "upstreamDirectories": {},
       "roots": ["purify.min.js", "licenses/dompurify/LICENSE", "licenses/dompurify/LICENSE-MPL"],
       "entrypoint": "purify.min.js",
-      "entrypointSha256": "c45ba939765574f96cbf35ee9b6d89f73756a17921814425e74b82f7c54603ce",
+      "entrypointSha256": "9ab3d44d73c3e3947f9ab72e0f0bc15c7f1931d60b365ba261fc85fe59013c56",
       "fileCount": 3,
-      "bytes": 57293,
-      "treeSha256": "10abf916c7ced015b1496568539a2102d5553c0153755d5958907b924bb1036b"
+      "bytes": 57558,
+      "treeSha256": "c5e0ad98ebb2dfd23408e7a138722069eda1c9044d9717f48135a541b1489baa"
     },
     {
       "name": "@highlightjs/cdn-assets",

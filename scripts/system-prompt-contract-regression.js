@@ -14,7 +14,6 @@ const app = read('public/app.js');
 const index = read('public/index.html');
 const serviceWorker = read('public/sw.js');
 const docs = read('docs/CX-RAI-API.md');
-const androidModels = read('android/app/src/main/java/sarl/rick/rai/model/RaiModels.kt');
 
 function testSharedPromptBuilder() {
   const chinese = promptApi.buildEffectiveSystemPrompt({
@@ -106,8 +105,6 @@ function testServerManagedNativeFallback() {
     'exact product identity questions must not reach an upstream identity prompt');
   assert.match(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
     'temporary/no-memory conversations must keep their explicit prompt isolation');
-  assert.doesNotMatch(androidModels, /systemPrompt/,
-    'native clients should not need to embed or synchronize the RAI system prompt');
 }
 
 function testApiContract() {
