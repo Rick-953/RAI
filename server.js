@@ -25584,6 +25584,10 @@ function shouldBypassResendTestingRestriction(error) {
     return ALLOW_RESEND_TEST_MODE_EMAIL_BYPASS && isResendTestingRestrictionError(error);
 }
 
+// 布尔开关型管理员运行设置（0/1）。注意不能用 defaultValue===0||1 判断：
+// upload_user_total_mb 等数值型设置的默认值可能恰好为 0，会被误 clamp 成 1。
+const BOOLEAN_RUNTIME_SETTING_KEYS = new Set(['pwa_reward_enabled', 'invite_reward_immediate_enabled']);
+
 async function getAdminRuntimeSettings() {
     const settings = { ...ADMIN_RUNTIME_LIMIT_DEFAULTS };
     try {
@@ -25598,7 +25602,7 @@ async function getAdminRuntimeSettings() {
                 continue;
             }
             const defaultValue = ADMIN_RUNTIME_LIMIT_DEFAULTS[row.setting_key];
-            if (defaultValue === 0 || defaultValue === 1) {
+            if (BOOLEAN_RUNTIME_SETTING_KEYS.has(row.setting_key)) {
                 settings[row.setting_key] = parseBoundedInteger(row.setting_value, defaultValue, 0, 1);
             } else {
                 settings[row.setting_key] = parseBoundedInteger(row.setting_value, defaultValue, 0, 100000);
