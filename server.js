@@ -7470,7 +7470,7 @@ function sanitizeClientAttachment(attachment = {}) {
     return {
         type,
         fileName: String(attachment.fileName || attachment.originalName || '').slice(0, 255),
-        originalName: String(attachment.originalName || '').slice(0, 255),
+        originalName: normalizeUploadOriginalName(attachment.originalName).slice(0, 255),
         fileId: path.basename(String(attachment.fileId || attachment.filename || '').slice(0, 255)),
         filename: path.basename(String(attachment.filename || '').slice(0, 255)),
         filePath: String(attachment.filePath || '').slice(0, 512),
@@ -10971,6 +10971,21 @@ async function cleanupRejectedRequestUploads(req) {
     }
 }
 
+function normalizeUploadOriginalName(value) {
+    // multer/express 常把 multipart 头里的 UTF-8 中文按 latin1 解码（经典乱码坑）。
+    // 检测 latin1 误码字节并还原为 UTF-8；已是合法 UTF-8 或纯 ASCII 时原样返回。
+    const raw = String(value || '').trim();
+    if (!raw) return raw;
+    try {
+        const restored = Buffer.from(raw, 'latin1').toString('utf8');
+        if (restored.includes('\uFFFD')) return raw;       // 还原失败（原值本就是合法 UTF-8）
+        if (restored !== raw) return restored;              // 发生了还原（latin1 误码 → 正常中文）
+        return raw;
+    } catch (_) {
+        return raw;
+    }
+}
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const uploadPath = file.fieldname === 'avatar' ? 'avatars' : 'uploads';
@@ -11209,7 +11224,7 @@ async function recordUploadedFileWithinQuota(req, file, uploadKind = 'attachment
         [
             file.filename,
             userId,
-            String(file.originalname || '').slice(0, 255),
+            normalizeUploadOriginalName(file.originalname).slice(0, 255),
             String(file.mimetype || '').slice(0, 120),
             fileSize,
             uploadKind,
