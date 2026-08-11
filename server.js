@@ -15405,7 +15405,7 @@ app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/sessions/:id/title/regenerate', authenticateToken, async (req, res) => {
+app.post('/api/sessions/:id/title/regenerate', authenticateToken, authLimiter, async (req, res) => {
     const mode = String(req.body?.mode || 'regenerate').trim().toLowerCase();
     if (!['regenerate', 'continue_summary'].includes(mode)) {
         return res.status(400).json({ error: '标题生成模式无效' });
