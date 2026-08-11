@@ -47,7 +47,7 @@ assert.match(app, /async function previewGeneratedImage[\s\S]*showPrivateFilePre
 assert.match(app, /async function downloadGeneratedImage[\s\S]*link\.download = generatedImageFileName/);
 assert.match(app, /const safeLocalThumbnail = rawLocalThumbnail\.startsWith\('blob:'\)[\s\S]*safeLocalThumbnail === rawLocalThumbnail/);
 assert.doesNotMatch(app, /点击加载附件|Click to load attachments|loadMessageAttachments|lazy-attachment-placeholder/);
-assert.match(server, /app\.get\('\/api\/uploads\/:filename\/preview', authenticateToken, apiLimiter/);
+assert.match(server, /app\.get\('\/api\/uploads\/:filename\/preview', apiLimiter, authenticateToken/);
 assert.match(server, /WHERE filename = \? AND user_id = \? AND upload_kind = 'attachment'/);
 assert.match(server, /SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS\.has\(ext\)[\s\S]*parseDocumentFile\(filePath, ext\)/);
 assert.match(server, /Cache-Control', 'private, no-store'/);

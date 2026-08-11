@@ -18745,7 +18745,7 @@ app.post('/api/upload', authenticateToken, enforceUploadPreflight, (req, res, ne
     }
 });
 
-app.get('/api/files', authenticateToken, apiLimiter, async (req, res) => {
+app.get('/api/files', apiLimiter, authenticateToken, async (req, res) => {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
     const offset = Math.max(0, Math.min(parseInt(req.query.offset, 10) || 0, 1000000));
     const query = String(req.query.query || '').trim().slice(0, 120);
@@ -18792,7 +18792,7 @@ app.get('/api/files', authenticateToken, apiLimiter, async (req, res) => {
     }
 });
 
-app.delete('/api/files/:filename', authenticateToken, apiLimiter, async (req, res) => {
+app.delete('/api/files/:filename', apiLimiter, authenticateToken, async (req, res) => {
     const filename = path.basename(req.params.filename || '');
     if (!filename || filename !== req.params.filename || filename.includes('..')) {
         return res.status(400).json({ success: false, error: '无效文件名' });
@@ -18833,7 +18833,7 @@ app.delete('/api/files/:filename', authenticateToken, apiLimiter, async (req, re
     }
 });
 
-app.get('/api/uploads/:filename/preview', authenticateToken, apiLimiter, async (req, res) => {
+app.get('/api/uploads/:filename/preview', apiLimiter, authenticateToken, async (req, res) => {
     const filename = path.basename(req.params.filename || '');
     if (!filename || filename !== req.params.filename || filename.includes('..')) {
         return res.status(400).json({ error: '无效文件名' });

@@ -27,13 +27,13 @@ assert.match(server, /async function resolveUserFileStorageQuota[\s\S]*getUserMe
 assert.match(server, /async function recordUploadedFileWithinQuota[\s\S]*resolveUserFileStorageQuota\(userId, settings\)/);
 assert.match(server, /SELECT COALESCE\(SUM\(size\), 0\) FROM file_uploads[\s\S]*\+ \? <= \?/);
 
-assert.match(server, /app\.get\('\/api\/files', authenticateToken, apiLimiter/);
+assert.match(server, /app\.get\('\/api\/files', apiLimiter, authenticateToken/);
 assert.match(server, /FROM file_uploads[\s\S]*WHERE user_id = \? AND upload_kind = 'attachment'/);
 assert.match(server, /filePath: `\/api\/uploads\/\$\{encodeURIComponent\(row\.filename\)\}`/);
 assert.match(server, /storage:[\s\S]*tier: storageQuota\.tier[\s\S]*usedBytes: stats\.totalSize[\s\S]*limitBytes: storageQuota\.limitBytes/);
-assert.match(server, /app\.delete\('\/api\/files\/:filename', authenticateToken, apiLimiter/);
+assert.match(server, /app\.delete\('\/api\/files\/:filename', apiLimiter, authenticateToken/);
 assert.match(server, /DELETE FROM file_uploads[\s\S]*filename = \? AND user_id = \? AND upload_kind = 'attachment'/);
-assert.match(server, /app\.get\('\/api\/uploads\/:filename\/preview', authenticateToken, apiLimiter/);
+assert.match(server, /app\.get\('\/api\/uploads\/:filename\/preview', apiLimiter, authenticateToken/);
 
 assert.match(index, /id="fileLibraryEntry"[\s\S]*openFileLibrary\(\)/);
 assert.match(index, /id="fileLibraryPage"[\s\S]*id="fileLibraryGrid"/);
