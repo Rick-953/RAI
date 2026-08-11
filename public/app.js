@@ -28479,9 +28479,13 @@ function updateAttachmentUI() {
       `;
 
   // 如果是图片，显示本地缩略图（不发送到服务器）
-  if (currentAttachment.type === 'image' && currentAttachment.localThumbnail) {
+  const rawLocalThumbnail = String(currentAttachment.localThumbnail || '');
+  const safeLocalThumbnail = rawLocalThumbnail.startsWith('blob:')
+    ? rawLocalThumbnail.replace(/[<>"'`\\\r\n]/g, '')
+    : '';
+  if (currentAttachment.type === 'image' && safeLocalThumbnail && safeLocalThumbnail === rawLocalThumbnail) {
     const thumbnail = document.createElement('img');
-    thumbnail.src = currentAttachment.localThumbnail;
+    thumbnail.src = safeLocalThumbnail;
     thumbnail.className = 'attachment-thumbnail';
     attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
   }

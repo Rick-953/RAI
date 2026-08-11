@@ -18745,7 +18745,7 @@ app.post('/api/upload', authenticateToken, enforceUploadPreflight, (req, res, ne
     }
 });
 
-app.get('/api/files', authenticateToken, async (req, res) => {
+app.get('/api/files', authenticateToken, apiLimiter, async (req, res) => {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
     const offset = Math.max(0, Math.min(parseInt(req.query.offset, 10) || 0, 1000000));
     const query = String(req.query.query || '').trim().slice(0, 120);
@@ -18792,7 +18792,7 @@ app.get('/api/files', authenticateToken, async (req, res) => {
     }
 });
 
-app.delete('/api/files/:filename', authenticateToken, async (req, res) => {
+app.delete('/api/files/:filename', authenticateToken, apiLimiter, async (req, res) => {
     const filename = path.basename(req.params.filename || '');
     if (!filename || filename !== req.params.filename || filename.includes('..')) {
         return res.status(400).json({ success: false, error: '无效文件名' });
@@ -18833,7 +18833,7 @@ app.delete('/api/files/:filename', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/uploads/:filename/preview', authenticateToken, async (req, res) => {
+app.get('/api/uploads/:filename/preview', authenticateToken, apiLimiter, async (req, res) => {
     const filename = path.basename(req.params.filename || '');
     if (!filename || filename !== req.params.filename || filename.includes('..')) {
         return res.status(400).json({ error: '无效文件名' });
@@ -23554,7 +23554,9 @@ if (clientFileExecution && systemPrompt) {
                         previousAssistant.id
                     ]
                 );
-                console.log(` 自动续传已合并到原AI回复: requestId=${normalizedContinuationRequestId}, attempt=${normalizedContinuationAttempt}`);
+                console.log(
+                    ` 自动续传已合并到原AI回复: ${formatPrivateLogFingerprint(normalizedContinuationRequestId, 'request')}, attempt=${normalizedContinuationAttempt}`
+                );
             } else {
                 const aiMsgTimestamp = new Date().toISOString();
                 await dbRunAsync(
@@ -23563,8 +23565,8 @@ if (clientFileExecution && systemPrompt) {
                 );
             }
             console.log(` AI回复已保存:`);
-            console.log(`   - 内容: ${contentToSave.length}字符`);
-            console.log(`   - 思考: ${reasoningContent.length}字符`);
+            console.log(`   - 内容: ${formatPrivateLogFingerprint(contentToSave, 'content')}`);
+            console.log(`   - 思考: ${formatPrivateLogFingerprint(reasoningContent, 'reasoning')}`);
             console.log(`   - 模型: ${finalModel}`);
             console.log(`   - 联网: ${internetMode ? '是' : '否'}`);
             console.log(`   - 思考模式: ${thinkingMode ? '是' : '否'}`);

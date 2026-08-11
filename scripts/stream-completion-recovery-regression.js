@@ -73,6 +73,8 @@ assert.match(server, /const shouldSkipUserSave = isContinuationRequest/);
 assert.match(server, /if \(isContinuationRequest && normalizedContinuationPrefix\)/);
 assert.match(server, /SELECT m\.id, m\.content, m\.reasoning_content[\s\S]*WHERE m\.request_id = \?/);
 assert.match(server, /UPDATE messages[\s\S]*content = \?, reasoning_content = \?/);
+assert.match(server, /formatPrivateLogFingerprint\(normalizedContinuationRequestId, 'request'\)/);
+assert.match(server, /formatPrivateLogFingerprint\(contentToSave, 'content'\)/);
 assert.match(server, /res\.write\(`data: \$\{JSON\.stringify\(\{ type: 'done' \}\)\}\\n\\n`\)/);
 
 console.log('stream-completion-recovery-regression ok');
