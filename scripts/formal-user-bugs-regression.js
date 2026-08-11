@@ -1237,6 +1237,8 @@ function testVersionContract() {
     'legacy AI title sync requests must not overwrite a manually locked title');
   assert.match(server, /app\.post\('\/api\/sessions\/:id\/title\/regenerate'[\s\S]{0,2600}allowLockedTitle:\s*true/,
     'explicit title regeneration must be the only path allowed to override the lock');
+  assert.match(server, /app\.post\('\/api\/sessions\/:id\/title\/regenerate',\s*authLimiter,\s*authenticateToken/,
+    'AI title regeneration must be rate-limited before authentication work');
   assert.match(server, /allowLockedTitle = false[\s\S]{0,1200}title_user_locked[\s\S]{0,500}allowLockedTitle\s*\?\s*''\s*:/,
     'normal AI title synchronization must remain guarded by the lock');
   assert.match(server, /UPDATE sessions SET title = \?, title_user_locked = 1/,
