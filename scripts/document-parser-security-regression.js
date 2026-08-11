@@ -262,10 +262,18 @@ async function main() {
         process.env.NODE_ENV = 'production';
         process.env.RAI_DOCUMENT_PARSER_PROFILE = 'beta';
         try {
+            const isExecutable = (filePath) => {
+                try {
+                    fs.accessSync(filePath, fs.constants.X_OK);
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            };
             const sandboxAvailable = process.platform === 'linux'
-                && fs.existsSync('/usr/bin/prlimit')
-                && fs.existsSync('/usr/bin/bwrap')
-                && fs.existsSync(path.join(__dirname, 'rai-document-parser-sandbox.sh'));
+                && isExecutable('/usr/bin/prlimit')
+                && isExecutable('/usr/bin/bwrap')
+                && isExecutable(path.join(__dirname, 'rai-document-parser-sandbox.sh'));
             if (sandboxAvailable) {
                 const productionResult = await parseDocumentFile(docxPath, 'docx');
                 assert.match(productionResult.text, /DOCX & safe/);
