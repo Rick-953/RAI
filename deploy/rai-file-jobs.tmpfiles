@@ -1,0 +1,3 @@
+# v0.11.78 controlled file workspace. The service user owns this volatile
+# directory; systemd removes its contents on reboot/expiry cleanup.
+d /run/rai-file-jobs 0700 rai-runner rai-runner -

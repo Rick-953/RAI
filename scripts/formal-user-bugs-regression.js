@@ -698,17 +698,13 @@ async function testMessageRenderingStability() {
     'AI completion must not recreate its message node and replay the entrance animation');
 
   const positionSessionMenu = extractNamedFunction(app, 'positionSessionMenu');
-  assert.match(positionSessionMenu, /const canOpenRight = rightLeft \+ menuRect\.width <= viewportRight - viewportPadding/,
+  assert.match(positionSessionMenu, /rect\.right \+ anchorGap \+ menuRect\.width <= window\.innerWidth - viewportPadding/,
     'the conversation menu must prefer the open space to the right of its three-dot trigger');
-  assert.match(positionSessionMenu, /canOpenBelow[\s\S]{0,260}belowTop[\s\S]{0,260}canOpenAbove/,
-    'the conversation menu must choose a vertical placement that fits the viewport');
-  assert.match(positionSessionMenu, /visualViewport|viewportHeight/,
-    'the conversation menu must account for the visible viewport on mobile');
+  assert.match(positionSessionMenu, /fitsRight[\s\S]{0,260}rect\.right \+ anchorGap[\s\S]{0,260}rect\.bottom \+ anchorGap/,
+    'the conversation menu must fall below its trigger only when right-side placement does not fit');
   const sessionContextMenuRule = cssRule('.session-context-menu', 'position: fixed');
   assert.match(sessionContextMenuRule, /width:\s*max-content[\s\S]{0,100}min-width:\s*148px[\s\S]{0,100}max-width:\s*min\(220px/,
     'the conversation menu must use a compact content-sized width with a viewport-safe cap');
-  assert.match(sessionContextMenuRule, /max-height:\s*min\(320px[\s\S]{0,60}overflow-y:\s*auto/,
-    'the conversation menu must scroll instead of overflowing a short viewport');
 
   const patchMessages = extractNamedFunction(app, 'patchMessagesById');
   assert.match(patchMessages, /getMessageRenderKey\(/,
@@ -1035,15 +1031,15 @@ async function testMessageRenderingStability() {
 }
 
 function testVersionContract() {
-  const expectedVersion = '0.11.91';
-  const expectedBuild = '20260808-stream-partial-edit-v01191';
+  const expectedVersion = '0.11.88';
+  const expectedBuild = '20260806-beta-integrity-stream-concurrency-v01188';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.91'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260808-stream-partial-edit-v01191'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.91/);
-  assert.match(serviceWorker, /0\.11\.91-20260808-stream-partial-edit-v01191/);
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.88'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260806-beta-integrity-stream-concurrency-v01188'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.88/);
+  assert.match(serviceWorker, /0\.11\.88-20260806-beta-integrity-stream-concurrency-v01188/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
@@ -1056,7 +1052,7 @@ function testVersionContract() {
     'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260808-stream-partial-edit-v01191/);
+  assert.match(index, /conversation-cache\.js\?v=20260806-beta-integrity-stream-concurrency-v01188/);
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
     'fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
@@ -1364,8 +1360,8 @@ async function testMainDatabaseTransactionIsolation() {
     'a Flow deleted during migration must resolve as not found instead of throwing');
   assert.match(
     server,
-    /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*conversationOrganizationStartupReady,\s*fileWorkspaceStartupReady\s*\]\)/,
-    'HTTP startup must fail closed until transaction, software-client authentication, Passkey, ChatFlow, conversation organization, and file-workspace storage are ready'
+    /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*fileWorkspaceStartupReady\s*\]\)/,
+    'HTTP startup must fail closed until transaction, software-client authentication, Passkey, ChatFlow, and file-workspace storage are ready'
   );
   assert.match(server, /await closeTransactionDb\(\);[\s\S]*?closeSqliteConnection\(db, '数据库'\)/,
     'shutdown must drain and close the transaction connection before the shared database');

@@ -1,0 +1,3 @@
+# Copy to client.properties and keep the file outside version control.
+# The server issues this revocable software identity. It is not a user secret.
+RAI_CLIENT_KEY=

@@ -3275,6 +3275,7 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         const allowedFormats = localMode
             ? new Set(['text', 'markdown', 'json', 'csv', 'docx', 'xlsx', 'pptx'])
             : ARTIFACT_FORMATS;
+        if (!allowedFormats.has(format) || typeof args.content !== 'string' || !args.content.trim()) return null;
         return {
             format,
             content: args.content.slice(0, 512 * 1024),
@@ -19133,10 +19134,11 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 已注入当前用户信息到Prompt: userId=${req.user.userId}, hasUsername=${!!promptUserProfile?.username}, hasEmail=${!!promptUserProfile?.email}`);
         }
 
-// 本地文件执行模式：系统提示追加本地工作目录说明（替代沙箱引导）
-if (clientFileExecution && systemPrompt) {
-    systemPrompt += '\n\n## 本地文件执行模式\n当前对话已启用本地文件执行：用户授权了本地工作目录，文件工具在用户电脑上直接执行，无需沙箱。创建文本文件用 create_artifact（format: text/markdown/json/csv）；创建 Office 文档用 create_artifact 的 docx/xlsx/pptx 格式（客户端原生生成，不要用 Python/python-docx/openpyxl 脚本）；需要插图时先用 sandbox_exec 下载图片到工作目录再引用（!img: 或 insert_image），不得引用不存在的文件；修改用 edit_file；执行命令用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒，无 Python 环境）。Excel 更新一律用 update_sheet（含图表），禁止 PowerShell COM 操作 Office 文档，工具成功即完成不要重复操作。不要请求沙箱或声称需要服务器沙箱。当用户请求涉及文件/文档/命令操作时，你必须实际调用对应工具完成（create_artifact/edit_file/sandbox_exec/insert_image/update_sheet/list_files 等），禁止只输出计划或假装完成。';
-}
+        // 本地文件执行模式：系统提示追加本地工作目录说明（替代沙箱引导）
+        if (clientFileExecution && systemPrompt) {
+            systemPrompt += '\n\n## 本地文件执行模式\n当前对话已启用本地文件执行：用户授权了本地工作目录，文件工具在用户电脑上直接执行，无需沙箱。创建文本文件用 create_artifact（format: text/markdown/json/csv）；创建 Office 文档用 create_artifact 的 docx/xlsx/pptx 格式（客户端原生生成，不要用 Python/python-docx/openpyxl 脚本）；需要插图时先用 sandbox_exec 下载图片到工作目录再引用（!img: 或 insert_image），不得引用不存在的文件；修改用 edit_file；执行命令用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒，无 Python 环境）。Excel 更新一律用 update_sheet（含图表），禁止 PowerShell COM 操作 Office 文档，工具成功即完成不要重复操作。不要请求沙箱或声称需要服务器沙箱。当用户请求涉及文件/文档/命令操作时，你必须实际调用对应工具完成（create_artifact/edit_file/sandbox_exec/insert_image/update_sheet/list_files 等），禁止只输出计划或假装完成。';
+        }
+
         if (
             model === 'claude-haiku' ||
             model === 'anthropic/claude-sonnet-4.6' ||
@@ -21850,6 +21852,7 @@ if (clientFileExecution && systemPrompt) {
                 }
             }
 
+
             const extractFallbackToolCalls = (rawText = '') => {
                 const trimmedText = String(rawText || '').trim();
                 const fallbackCalls = [];
@@ -22303,7 +22306,6 @@ if (clientFileExecution && systemPrompt) {
                                     tool: toolName,
                                     parameters: args
                                 })}\n\n`);
-                                // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
                                 console.log(` 已下发 tool_pending_client: requestId=${requestId}, tool=${toolName}, toolCallId=${toolCall.id}`);
                                 // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
                                 const toolPauseStartedAt = Date.now();

@@ -54,7 +54,7 @@
     'setResearchMasterModel', 'setResearchMode', 'setResearchModeFromSlider',
     'setSelectionExplanationDeleteMode', 'setTabTitleCustomTextFromSettings',
     'setTabTitleModeFromSettings', 'setTheme', 'settingsToggleInternetBadgeVisibility',
-    'settingsToggleInternetMode', 'settingsToggleModelBadgeVisibility', 'settingsToggleThinkingBadgeVisibility',
+    'settingsToggleInternetMode', 'settingsToggleModelBadgeVisibility',
     'settingsToggleResearchMode', 'settingsToggleThinkingMode', 'showAdminAnnouncementForm',
     'showForgotPasswordHelp', 'showNavTooltip', 'showRpassPending', 'showSettingsMobileHome',
     'sidebarCheckin', 'startPwaInstallTask', 'startSettingsEmailChangeFlow',

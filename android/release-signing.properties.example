@@ -1,0 +1,4 @@
+storeFile=/absolute/path/to/rai-android-release.jks
+storePassword=
+keyAlias=rai-android-release
+keyPassword=

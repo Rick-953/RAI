@@ -1,0 +1,276 @@
+RAI 提示词与工具提示词代码位置清单
+路径元数据更新时间：2026-07-20；代码位置审查日期：2026-07-03
+审查基准（迁移前快照）：GDrive 当时的正式代码已从服务器 /rick/apps/rai 同步，package.json = v0.10.9.64
+当前正式代码目录：/Users/rick/Library/CloudStorage/GoogleDrive-rick080402@gmail.com/我的云端硬盘/Project/进行中/自有项目/RAI/最新正式版
+
+一、前端主系统提示词
+1. public/app.js:3198-3229
+   getUserTimeContext()
+   生成用户当前时间上下文，包括日期、时间、时区、上午/下午、问候建议等。
+
+2. public/app.js:3231-3242
+   getShortUserTimeHint() / appendUserTimeHintForPrompt()
+   给最后一条用户消息追加精简时间提示，避免模型忽略用户本地时间。
+
+3. public/app.js:3245-3249
+   buildMemoryCapabilityPrompt()
+   记忆能力说明提示词。
+
+4. public/app.js:3256-3345
+   buildSystemPrompt()
+   RAI 前端内置主系统提示词，包含身份、语言、格式、实时性、搜索、图片理解、任务执行等规则。
+
+5. public/app.js:3347-3356
+   buildEffectiveSystemPrompt()
+   合并内置系统提示词、记忆能力提示词、用户自定义系统提示词。
+
+6. public/app.js:10595-10607
+   maybeAddTimeHintToLastUserMessage()
+   实际对最后一条用户消息应用时间提示。
+
+7. public/app.js:12042-12072
+   普通对话请求体
+   把 buildEffectiveSystemPrompt(...) 和 promptTimeContext 发送到后端。
+
+8. public/app.js:13298-13330
+   流式对话请求体
+   把 systemPrompt、domainMode、promptTimeContext 等发送到后端。
+
+二、用户自定义系统提示词
+1. public/app.js:2203-2233
+   appState 默认字段，其中 systemPrompt 保存用户自定义提示词。
+
+2. public/index.html:1500-1510
+   设置页 textarea#systemPrompt。
+
+3. public/app.js:8748-8759
+   打开设置页时把 appState.systemPrompt 回填到输入框。
+
+4. public/app.js:9442-9460
+   从设置页读取自定义 systemPrompt。
+
+5. public/app.js:9540-9556
+   保存自定义 systemPrompt 到 appState/localStorage payload。
+
+6. public/app.js:9653-9670
+   登录用户把 system_prompt 提交到 /api/user/config。
+
+7. public/app.js:20778-20790
+   从 localStorage 加载 systemPrompt。
+
+8. server.js:6937-6955
+   user_configs 表结构，包含 system_prompt 字段。
+
+9. server.js:9748-9818
+   用户配置读取接口返回 system_prompt。
+
+10. server.js:10254-10270
+    sanitizeUserConfigPayload()，system_prompt 最大 12000 字符。
+
+11. server.js:10273-10317
+    保存 system_prompt 到数据库。
+
+三、后端普通对话系统提示词组装
+1. server.js:11700-12025
+   /api/chat/stream 请求解析阶段，处理附件、记忆、用户身份、提示词注入规则、领域模式等。
+
+2. server.js:16644-16686
+   时间上下文规范化、清洗和 trace 构建。
+
+3. server.js:16710-16725
+   buildUserIdentityPrompt()
+   根据用户昵称/邮箱/ID 构造身份提示词。
+
+4. server.js:17000-17024
+   buildConversationMemoryPrompt()
+   长期记忆、近期会话标题等记忆上下文提示词。
+
+5. server.js:11916-11925
+   问候/感谢/告别等无模型快捷回复预设。
+
+6. server.js:12878-12964
+   systemContent 主组装位置。
+   注入搜索上下文、DeepSeek 输出保护、工具提示、用户身份、记忆、领域提示词、注入规则、ChatFlow 画布上下文，并生成 role: system 消息。
+
+7. server.js:13889-13905
+   Gemini 适配时把 system prompt 转成 systemInstruction。
+
+8. server.js:4623-4665
+   Gemini research payload 的 systemInstruction 构造。
+
+四、提示词注入规则与领域模式提示词
+1. server.js:1907-1946
+   PROMPT_INJECTION_RULES
+   提示词注入防护规则定义。
+
+2. server.js:2020-2062
+   resolvePromptInjectionRule() / buildPromptInjectionPrompt()
+   解析注入防护规则并生成注入提示词。
+
+3. server.js:2107-2308
+   DOMAIN_SYSTEM_PROMPTS
+   写作、金融、代码、研究、翻译等领域模式系统提示词，含中文/英文版本。
+
+4. server.js:2328-2357
+   resolveDomainSystemPrompt() / buildDomainSystemPrompt()
+   解析领域模式并生成领域提示词。
+
+五、搜索、附件、联网相关提示词
+1. server.js:3456-3493
+   formatSearchResults()
+   生成 [网页搜索结果] 提示块，包含引用和图片结果说明。
+
+2. server.js:6302-6540
+   附件分类、文本抽取、附件提示块生成。
+   最终向模型注入 --- 附件内容 --- 区块。
+
+3. server.js:12762-12835
+   研究/服务端搜索前置上下文生成。
+
+4. server.js:13054-13064
+   阿里云 search_options citation_format 规则。
+
+六、工具列表与工具提示词
+1. server.js:1781-1862
+   TOOL_DEFINITIONS
+   模型可调用工具总列表。
+
+2. server.js:1785-1794
+   web_search 工具定义。
+
+3. server.js:1801-1834
+   generate_image 工具定义。
+
+4. server.js:1841-1858
+   finance_quote 工具定义。
+
+5. server.js:1864-1880
+   TOOL_EXECUTORS
+   工具名到执行函数的映射。
+
+6. server.js:3614-3660
+   buildToolResultForLLM()
+   工具执行结果回填给模型时的提示词。
+
+7. server.js:3630-3630
+   web_search 结果引用要求。
+
+8. server.js:3640-3640
+   finance_quote 行情引用要求。
+
+9. server.js:3655-3655
+   generate_image 图片展示说明。
+
+10. server.js:3678-3707
+    buildImageWaitingLineFromUserPrompt()
+    根据用户图片请求生成等待提示文案的系统提示词。
+
+11. server.js:4082-4085
+    Kimi K2.6 非流式请求附带 tools 参数。
+
+12. server.js:4252-4255
+    Kimi K2.6 流式请求附带 tools 参数。
+
+13. server.js:13017-13022
+    常规流式请求附带 TOOL_DEFINITIONS。
+
+14. server.js:13507-13560
+    runtime fallback 请求可能附带 TOOL_DEFINITIONS。
+
+15. server.js:14031-14033
+    Poe fallback 到 Kimi 时附带 tools。
+
+16. server.js:14653-14850
+    兜底解析模型文本里的工具调用，并在需要时强制图片工具。
+
+17. server.js:14980-15127
+    执行工具，把结果包装成 role: tool，再继续携带 TOOL_DEFINITIONS 请求模型。
+
+七、ChatFlow 与画布提示词
+1. public/app.js:17291-17319
+   buildChatFlowSystemPrompt()
+   ChatFlow 前端系统提示词。
+
+2. public/app.js:17653-17680
+   ChatFlow 请求体发送 systemPrompt、canvasContext、promptTimeContext。
+
+3. public/app.js:18753-18763
+   AI 拆解选中节点的用户提示词。
+
+4. public/app.js:19326-19394
+   serializeCanvasToPrompt()
+   把画布节点、连线、分组、上下文序列化给模型。
+
+5. server.js:11104-11147
+   buildFlowCanvasSystemInstruction()
+   后端 ChatFlow 画布系统说明。
+
+6. server.js:12944-12956
+   把 ChatFlow 画布上下文注入 systemContent。
+
+八、多 Agent / 深度研究提示词
+1. agent/prompts.js:1-35
+   buildPlannerPrompt()
+   规划 Agent 系统提示词。
+
+2. agent/prompts.js:37-51
+   buildSubAgentPrompt()
+   子 Agent 系统提示词。
+
+3. agent/prompts.js:53-81
+   buildSynthesisPrompt()
+   汇总 Agent 系统提示词。
+
+4. agent/engine.js:157-165
+   调用 planner prompt 的位置。
+
+5. agent/engine.js:273-281
+   调用 sub-agent prompt 的位置。
+
+6. agent/engine.js:372-387
+   调用 synthesis prompt 的位置。
+
+7. server.js:5700-5905
+   runAgentPipeline()
+   后端多 Agent 流程，生成 planner/sub-agent/synthesis system messages。
+
+8. server.js:5110-5595
+   Research debate 气泡讨论流程提示词。
+
+9. server.js:5216-5236
+   每轮发言者指令提示词。
+
+10. server.js:5412-5424
+    master 决策提示词。
+
+11. server.js:5547-5566
+    master 最终综合提示词。
+
+九、长期记忆工具提示词（2026-07-30 v0.11.59 更新）
+1. lib/memory-tool-policy.js
+   buildMemoryToolPolicyInstruction()
+   中英文最高优先级记忆规则：记忆工具按需使用，不是每轮调用；只保存会持续改善未来跨对话回答的用户信息。
+
+2. server.js
+   MEMORY_SAVE_TOOL_DEFINITION / MEMORY_DELETE_TOOL_DEFINITION
+   聊天模型可用的长期记忆保存与删除工具定义；save_memory 强制要求 category/content/evidence/reason。
+
+3. server.js
+   buildChatToolDefinitions() 与 /api/chat/stream 的 systemContent 组装
+   只在普通对话且用户已开启长期记忆时提供工具，并把记忆规则置于系统消息最前面；临时对话完全隔离。
+
+4. lib/memory-tool-policy.js
+   validateSaveMemoryRequest()
+   服务端落库门禁：用户原话证据、秘密、低信息口语、问句、假设/不确定、一次性任务和短暂状态检查。
+
+5. server.js
+   buildConversationMemoryPrompt()
+   注入已保存长期记忆与近期对话标题；后台 DeepSeek 自动抽取及启发式自动写库已在 v0.11.59 移除。
+
+十、审查备注
+1. scripts/security-smoke.js:181-181
+   这里有测试用假 system prompt，只用于安全冒烟测试，不是产品运行时提示词。
+
+2. public/app.js 中还有很多包含 prompt 字样的浏览器/PWA/通知 UI 文案，不属于模型提示词。
+
+3. 本清单按 2026-07-03 当时的 v0.10.9.64 本地文件行号整理；后续代码修改后行号可能变化。

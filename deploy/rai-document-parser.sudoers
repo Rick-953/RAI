@@ -1,0 +1,13 @@
+# RAI document parsing is the only privileged transition exposed to rai-runner.
+# The launcher validates both profile and document kind before systemd-run.
+Cmnd_Alias RAI_DOCUMENT_PARSER = \
+    /usr/local/libexec/rai-document-parser-sandbox beta docx, \
+    /usr/local/libexec/rai-document-parser-sandbox beta xlsx, \
+    /usr/local/libexec/rai-document-parser-sandbox beta pptx, \
+    /usr/local/libexec/rai-document-parser-sandbox beta csv, \
+    /usr/local/libexec/rai-document-parser-sandbox formal docx, \
+    /usr/local/libexec/rai-document-parser-sandbox formal xlsx, \
+    /usr/local/libexec/rai-document-parser-sandbox formal pptx, \
+    /usr/local/libexec/rai-document-parser-sandbox formal csv
+
+rai-runner ALL=(root) NOPASSWD: RAI_DOCUMENT_PARSER
