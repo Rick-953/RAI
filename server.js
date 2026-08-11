@@ -14516,7 +14516,7 @@ app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/user/avatar', authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
+app.post('/api/user/avatar', apiLimiter, authenticateToken, (req, res, next) => runUpload(avatarUpload.single('avatar'), req, res, next), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '没有文件上传' });
     const uploadedFilePath = resolveValidatedUploadedFilePath(req.file, 'avatar');
 
