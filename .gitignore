@@ -1,0 +1,28 @@
+# ---- Runtime state (never commit) ----
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+uploads/
+avatars/
+public/downloads/
+rai运行报告.md
+
+# ---- Secrets ----
+.*-secret-*
+.*-api-key*
+.*-pepper-*
+.*-encryption-key-*
+.*jwt*
+
+# ---- Dependencies / build ----
+node_modules/
+dist/
+release/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

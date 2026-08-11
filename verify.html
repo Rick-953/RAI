@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRF 文件验证 · RAI</title>
+<style>
+  :root { --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --muted: #6b7280; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f3f4f6; color: #111827; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 40px 16px; }
+  .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,.08); max-width: 640px; width: 100%; padding: 32px; }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  #drop { border: 2px dashed #d1d5db; border-radius: 12px; padding: 36px 20px; text-align: center; color: var(--muted); cursor: pointer; transition: all .2s; }
+  #drop:hover, #drop.drag { border-color: #3b82f6; background: #eff6ff; color: #1d4ed8; }
+  #drop input { display: none; }
+  #result { margin-top: 20px; display: none; }
+  .badge { border-radius: 10px; padding: 16px; font-size: 15px; line-height: 1.7; }
+  .badge.ok { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .badge.warn { background: #fffbeb; border: 1px solid #fde68a; }
+  .badge.bad { background: #fef2f2; border: 1px solid #fecaca; }
+  .meta { margin-top: 12px; font-size: 13px; color: #374151; background: #f9fafb; border-radius: 8px; padding: 12px; }
+  .meta div { padding: 2px 0; }
+  .meta b { color: #111827; }
+  .foot { margin-top: 20px; color: var(--muted); font-size: 12px; text-align: center; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 12px; display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔍 CRF 文件验证</h1>
+  <div class="sub">拖入 .crf 对话文件，验证是否为官方导出的未篡改文件</div>
+  <div id="drop">点击选择或拖拽 CRF 文件到此处</div>
+  <input type="file" id="file" accept=".crf,.txt">
+  <div id="result"></div>
+  <div class="err" id="err"></div>
+  <div class="foot">RAI 官方验证 · 签名由 RAI 服务端签发（ECDSA P-256）</div>
+</div>
+<script src="verify.js"></script>
+</body>
+</html>
