@@ -1289,20 +1289,20 @@ async function testStartupReadinessAndInvalidSchema() {
     'selectionExplanationStartupReady.catch',
     'selection startup readiness'
   );
-  assert.match(selectionStartup, /Promise\.all\(\[[\s\S]{0,160}databaseInitializationSettled[\s\S]{0,120}selectionExplanationDbReady[\s\S]{0,160}\]\)/,
-    'selection readiness must wait for both settled migrations and the dedicated connection');
+  assert.match(selectionStartup, /Promise\.all\(\[[\s\S]{0,160}softwareClientStartupReady[\s\S]{0,120}selectionExplanationDbReady[\s\S]{0,160}\]\)/,
+    'selection readiness must wait for serialized migrations and the dedicated connection');
   assert.ok(selectionStartup.indexOf('await verifySelectionExplanationSchema()') >= 0
       && selectionStartup.indexOf('await verifySelectionExplanationSchema()')
         < selectionStartup.indexOf('await recoverStaleSelectionExplanationReservations()'),
   'schema validation must finish before stale reservations or the recovery timer can run');
 
   const httpStartup = sourceBetween(server, 'async function startHttpServer', '// 优雅退出', 'HTTP startup readiness');
-  const startupBarrierPattern = /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*fileWorkspaceStartupReady\s*\]\)/;
+  const startupBarrierPattern = /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*conversationOrganizationStartupReady,\s*fileWorkspaceStartupReady\s*\]\)/;
   const startupBarrierMatch = httpStartup.match(startupBarrierPattern);
   assert.ok(startupBarrierMatch
       && startupBarrierMatch.index < httpStartup.indexOf('app.listen('),
-  'HTTP must not begin listening until selection, authentication, software-client, Passkey, transaction, ChatFlow, and file-workspace readiness complete');
-  assert.match(httpStartup, /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*fileWorkspaceStartupReady\s*\]\)[\s\S]{0,900}if \(gracefulShutdownStarted\) return null[\s\S]{0,300}app\.listen\(/,
+  'HTTP must not begin listening until selection, authentication, software-client, Passkey, transaction, ChatFlow, conversation organization, and file-workspace readiness complete');
+  assert.match(httpStartup, /await Promise\.all\(\[\s*selectionExplanationStartupReady,\s*authSessionStartupReady,\s*softwareClientStartupReady,\s*passkeyDbReady,\s*transactionDbReady,\s*chatFlowStartupReady,\s*conversationOrganizationStartupReady,\s*fileWorkspaceStartupReady\s*\]\)[\s\S]{0,900}if \(gracefulShutdownStarted\) return null[\s\S]{0,300}app\.listen\(/,
     'shutdown requested during initialization must prevent a late HTTP listener');
 
   const selectionClose = sourceBetween(

@@ -199,19 +199,22 @@ assert.notEqual(
   crypto.createHash('sha256').update('AAPL').digest('hex').slice(0, 32),
   'private stdout must not use an unkeyed enumerable digest'
 );
-assert.match(server, /DOCUMENT_PARSER_ENABLED[\s\S]{0,200}!IS_PRODUCTION/);
+assert.match(server, /DOCUMENT_PARSER_FORCE_DISABLED[\s\S]{0,260}DOCUMENT_PARSER_ENABLED/);
+assert.match(server, /resolveDocumentSandboxEnabled\(\{[\s\S]{0,240}sandboxAvailable:\s*isProductionDocumentSandboxAvailable\(process\.env\.RAI_DOCUMENT_PARSER_PROFILE\)/);
 assert.match(server, /production_requires_totp_encryption_key_file/);
 assert.match(server, /production_requires_refresh_token_pepper_file/);
 assert.match(parser, /NODE_ENV \|\| ''\)\.toLowerCase\(\) === 'production'[\s\S]{0,120}productionSandboxCommand\(kind\)/);
 assert.match(parser, /document_parser_sandbox_unavailable/);
+assert.match(parser, /path\.join\(appRoot, 'workers', 'document-parser-worker\.js'\)/);
 assert.ok(!/ALLOWED_KINDS[^\n]*pdf/.test(parser), 'PDF must remain blocked until it has an OS sandbox without native addon bypass');
-assert.match(envExample, /^RAI_DOCUMENT_PARSER_ENABLED=false$/m);
+assert.match(envExample, /^RAI_DOCUMENT_PARSER_ENABLED=true$/m);
+assert.match(envExample, /^RAI_DOCUMENT_PARSER_FORCE_DISABLED=false$/m);
 assert.doesNotMatch(app, /searchParams\.get\(['"](?:rai_token|token)['"]\)/, 'access tokens must never be accepted from URL query parameters');
 assert.match(app, /getSafeResponsePath\(response\)/);
 assert.match(app, /bodyLength:\s*text\.length/);
 assert.match(app, /searchParams\.has\('rai_token'\)[\s\S]{0,300}searchParams\.delete\('rai_token'\)/);
-assert.doesNotMatch(index, /accept=[^>]*(?:\.pdf|\.docx|\.xlsx|\.pptx)/i, 'disabled document formats must not be advertised by the file picker');
-assert.doesNotMatch(app, /input\.accept[\s\S]{0,1200}(?:\.pdf|\.docx|\.xlsx|\.pptx)/i, 'disabled document formats must not be advertised by the dynamic file picker');
+assert.doesNotMatch(index, /accept=[^>]*(?:\.pdf|\.doc(?!x)|\.xls(?!x)|\.ppt(?!x))/i, 'blocked legacy document formats must not be advertised by the file picker');
+assert.doesNotMatch(app, /input\.accept[\s\S]{0,1200}(?:\.pdf|\.doc(?!x)|\.xls(?!x)|\.ppt(?!x))/i, 'blocked legacy document formats must not be advertised by the dynamic file picker');
 assert.doesNotMatch(server, /读 PDF/);
 assert.match(app, /const MERMAID_RENDERING_ENABLED = false;/, 'Mermaid execution must remain fail closed');
 for (const [label, source] of [['index', index], ['service worker', serviceWorker], ['vendor manifest', vendorManifest]]) {

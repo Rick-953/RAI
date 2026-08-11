@@ -1,6 +1,6 @@
 # CX RAI API 接入合同
 
-版本：`v0.11.79`  
+版本：`v0.11.68`  
 客户端：`CX RAI`  
 描述：`WP / Windows 10 / Windows 11 端 RAI`
 
@@ -380,9 +380,9 @@ Accept: text/event-stream
 }
 ```
 
-服务端权威提示词：原生客户端无需发送 `systemPrompt`。聊天接口不接受客户端提示词覆盖；即使旧客户端仍携带该字段，服务端也会忽略它。服务端根据会话首次锁定的模型身份和语言生成与 Web 相同的 RAI 主提示词，并自动追加该账号在 Web 设置中保存的自定义提示词。Web 设置保存后，Windows Phone、Windows 和 Android 的下一次普通聊天请求会直接使用新值，无需更新客户端内置文案。
+服务端权威提示词：原生客户端无需发送 `systemPrompt`。字段缺失时，服务端会根据会话首次锁定的模型身份和语言生成与 Web 相同的 RAI 主提示词，并自动追加该账号在 Web 设置中保存的自定义提示词。Web 设置保存后，Windows Phone、Windows 和 Android 的下一次普通聊天请求会直接使用新值，无需更新客户端内置文案。
 
-新会话创建时建议继续传 `prompt_model_identity`；即使旧客户端没有调用 `prompt-identity`，聊天接口也会根据 `model`、`thinkingMode`、`researchMode` 和 `uiLanguage` 原子补齐会话锁。提示词身份和语言一旦写入便不随客端后续切换而改变。`memoryMode:"off"` 或临时对话保持无 RAI 主提示词、无用户身份/偏好/长期记忆注入；该隔离由服务端的 `memoryMode` 和会话类型决定，不依赖 `systemPrompt` 字段。
+新会话创建时建议继续传 `prompt_model_identity`；即使旧客户端没有调用 `prompt-identity`，聊天接口也会根据 `model`、`thinkingMode`、`researchMode` 和 `uiLanguage` 原子补齐会话锁。提示词身份和语言一旦写入便不随客户端后续切换而改变。`memoryMode:"off"`、临时对话或显式 `systemPrompt:""` 继续保持无提示词隔离。为兼容旧 Web/高级客户端，非空 `systemPrompt` 仍可作为本次请求的显式覆盖，但原生客户端不应复制或硬编码 RAI 主提示词。
 
 其他可选字段还包括 `thinkingBudget`、`agentMode`、`agentPolicy`、`qualityProfile`、`agentTraceLevel`、`reasoningProfile`、`researchMode`、`researchAgentModels`、`researchMasterModel`、`researchMaxRounds`、`frequency_penalty`、`presence_penalty`、`systemPrompt`、`promptTimeContext`、`domainMode`、`canvasContext`、`canvasApplyMode`、`uiSurface`、`flowId`、`skipUserSave`。服务端会重新校验模型、数值范围和附件归属。
 

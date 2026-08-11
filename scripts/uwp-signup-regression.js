@@ -17,7 +17,7 @@ assert.match(packageJson.version, /^\d+\.\d+\.\d+$/, 'package version must remai
 assert.match(html, /^<!DOCTYPE html>/i);
 assert.match(html, /http-equiv="X-UA-Compatible" content="IE=edge"/i);
 assert.match(html, /lang="zh-CN"/);
-assert.match(html, /href="\/uwp-signup\.css\?v=20260801-uwp-signup-v01174"/);
+assert.match(html, /href="\/uwp-signup\.css\?v=20260807-dark-mode"/);
 assert.match(html, /src="\/uwp-signup\.js\?v=20260801-uwp-signup-v01174"/);
 assert.doesNotMatch(html, /<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i);
 assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
