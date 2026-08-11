@@ -332,6 +332,7 @@ const CHAT_CLIENT_MAX_MESSAGE_CHARS = Math.max(1000, Math.min(parseInt(cleanEnvV
 const CHAT_CLIENT_MAX_TOTAL_CHARS = Math.max(CHAT_CLIENT_MAX_MESSAGE_CHARS, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_TOTAL_CHARS) || '140000', 10) || 140000, 240000));
 const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
 const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
+const AUDIO_UNDERSTANDING_MAX_BYTES = 20 * 1024 * 1024;
 const UPLOAD_PROGRESS_TTL_MS = 30 * 60 * 1000;
 const UPLOAD_PROGRESS_MAX_SESSIONS = 10000;
 const UPLOAD_PROGRESS_ID_PATTERN = /^upl_[a-f0-9]{32}$/;
@@ -1161,6 +1162,7 @@ const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
 const AUTO_MODEL_PREFERENCE = ['deepseek-flash', 'gpt-5.6-luna', 'kimi-k2.6', 'nemotron-3-ultra'];
 const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-5.6-luna', 'kimi-k2.6', 'qwen3.6-35b-a3b'];
+const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gemini-3-flash', 'gemini-3.6-flash-low'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
@@ -7501,7 +7503,7 @@ function attachmentTypeFromMime(mimeType, fallback = 'file') {
     if (value.startsWith('image/')) return 'image';
     if (value.startsWith('audio/')) return 'audio';
     if (value.startsWith('video/')) return 'video';
-    return ['file', 'document', 'text', 'code'].includes(fallback) ? fallback : 'file';
+    return ['image', 'audio', 'video', 'file', 'document', 'text', 'code'].includes(fallback) ? fallback : 'file';
 }
 
 function uploadedFilenameFromAttachment(attachment = {}) {
@@ -7786,6 +7788,65 @@ async function buildAttachmentImageDataUrl(attachment = {}, userId = null) {
     return `data:${mimeType};base64,${buffer.toString('base64')}`;
 }
 
+function resolveAudioMimeType(attachment = {}, filename = '') {
+    const declared = String(attachment.mimeType || attachment.fileType || '').trim().toLowerCase();
+    if (declared.startsWith('audio/')) return declared.split(';')[0];
+    const extension = path.extname(filename).toLowerCase().slice(1);
+    return ({
+        mp3: 'audio/mpeg',
+        wav: 'audio/wav',
+        m4a: 'audio/mp4',
+        ogg: 'audio/ogg',
+        flac: 'audio/flac',
+        aac: 'audio/aac',
+        wma: 'audio/x-ms-wma',
+        opus: 'audio/opus'
+    })[extension] || '';
+}
+
+async function buildAttachmentAudioInput(attachment = {}, userId = null) {
+    const existing = String(attachment.data || '').trim();
+    if (existing) {
+        const dataMatch = existing.match(/^data:(audio\/[^;]+);base64,(.+)$/i);
+        const data = dataMatch ? dataMatch[2] : existing;
+        const mimeType = dataMatch ? dataMatch[1].toLowerCase() : resolveAudioMimeType(attachment);
+        return data ? { data, format: mimeType.split('/')[1] || 'wav', mimeType } : null;
+    }
+
+    const filename = getAttachmentUploadFilename(attachment);
+    if (!filename || filename !== path.basename(filename) || filename.includes('..')) return null;
+    if (userId && !(await userCanAccessUploadedFile(filename, userId))) return null;
+
+    const uploadsRoot = path.resolve(__dirname, 'uploads');
+    const filePath = path.resolve(uploadsRoot, filename);
+    if (!(filePath === uploadsRoot || filePath.startsWith(`${uploadsRoot}${path.sep}`))) return null;
+
+    const noFollow = Number(fs.constants.O_NOFOLLOW || 0);
+    let handle;
+    try {
+        handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow);
+        const stats = await handle.stat();
+        if (!stats.isFile() || stats.size <= 0 || stats.size > AUDIO_UNDERSTANDING_MAX_BYTES) return null;
+        const buffer = Buffer.alloc(stats.size);
+        let offset = 0;
+        while (offset < buffer.length) {
+            const result = await handle.read(buffer, offset, buffer.length - offset, offset);
+            if (!result.bytesRead) break;
+            offset += result.bytesRead;
+        }
+        if (offset !== buffer.length) return null;
+        const mimeType = resolveAudioMimeType(attachment, filename);
+        if (!mimeType) return null;
+        return {
+            data: buffer.toString('base64'),
+            format: path.extname(filename).toLowerCase().slice(1) || mimeType.split('/')[1] || 'wav',
+            mimeType
+        };
+    } finally {
+        if (handle) await handle.close().catch(() => null);
+    }
+}
+
 async function convertToOmniFormat(message, userId = null) {
     if (!message) return message;
 
@@ -7828,12 +7889,11 @@ async function convertToOmniFormat(message, userId = null) {
                 });
             }
         } else if (attachment.type === 'audio') {
-            // 音频使用input_audio格式
-            const data = attachment.data || '';
-            if (data) {
+            const audio = await buildAttachmentAudioInput(attachment, userId);
+            if (audio?.data) {
                 contentArray.push({
                     type: 'input_audio',
-                    input_audio: { data }
+                    input_audio: audio
                 });
             }
         } else if (attachment.type === 'video') {
@@ -8049,6 +8109,10 @@ async function buildAttachmentPromptContext(attachments, userId) {
                     extracted = await tryExtractDocumentText(filePath, 'docx');
                 } else if (ext === '.xlsx') {
                     extracted = await tryExtractDocumentText(filePath, 'xlsx');
+                } else if (ext === '.pptx') {
+                    extracted = await tryExtractDocumentText(filePath, 'pptx');
+                } else if (ext === '.csv') {
+                    extracted = await tryExtractDocumentText(filePath, 'csv');
                 }
                 if (extracted) {
                     const truncated = extracted.length > ATTACHMENT_PARSE_MAX_FILE_CHARS
@@ -15307,6 +15371,9 @@ app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res
 app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     const { title, model, is_archived } = req.body;
     const safeTitle = title === undefined ? null : sanitizeGeneratedConversationTitle(title);
+    if (title !== undefined && !safeTitle) {
+        return res.status(400).json({ error: '对话标题不能为空或使用默认标题' });
+    }
 
     try {
         await ensureChatFlowSchemaColumns();
@@ -15326,7 +15393,7 @@ app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
         });
         if (!updated) return res.status(404).json({ error: '会话不存在' });
         scheduleConversationIntegritySeal(req.params.id, req.user.userId);
-        return res.json({ success: true });
+        return res.json({ success: true, ...(safeTitle ? { title: safeTitle } : {}) });
     } catch (error) {
         console.error(' 更新会话失败:', sanitizeReportContext(error));
         return res.status(500).json({ error: '更新失败' });
@@ -20301,11 +20368,18 @@ if (clientFileExecution && systemPrompt) {
             console.log(`   数量: ${currentMessageMultimodal.count}`);
 
             const multimodalTypesText = getMultimodalTypeDescription(currentMessageMultimodal.types);
-            const defaultMultimodalModel = model === 'auto' ? await resolveVisibleAutoMultimodalModel() : model;
+            const hasAudioAttachment = currentMessageMultimodal.types.includes('audio');
+            const defaultMultimodalModel = hasAudioAttachment
+                ? await resolveAudioUnderstandingModel()
+                : (model === 'auto' ? await resolveVisibleAutoMultimodalModel() : model);
             const requestedRouting = MODEL_ROUTING[defaultMultimodalModel];
-            const supportsNativeMultimodal = model === 'auto' || !!requestedRouting?.multimodal;
+            const supportsNativeMultimodal = hasAudioAttachment || model === 'auto' || !!requestedRouting?.multimodal;
 
-            if (supportsNativeMultimodal) {
+            if (hasAudioAttachment) {
+                finalModel = defaultMultimodalModel;
+                autoRoutingReason = `检测到音频附件，使用 ${researchModelLabel(finalModel)} 理解音频内容`;
+                console.log(`    音频附件强制路由到 Gemini: ${finalModel}`);
+            } else if (supportsNativeMultimodal) {
                 finalModel = defaultMultimodalModel;
                 autoRoutingReason = model === 'auto'
                     ? `${userMembershipTier} 用户 智能模型使用 ${researchModelLabel(finalModel)} 处理${multimodalTypesText}`
@@ -21405,6 +21479,13 @@ if (clientFileExecution && systemPrompt) {
                             } else {
                                 parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/jpeg' } });
                             }
+                        } else if (item.type === 'input_audio' && item.input_audio?.data) {
+                            parts.push({
+                                inlineData: {
+                                    mimeType: item.input_audio.mimeType || `audio/${item.input_audio.format || 'wav'}`,
+                                    data: item.input_audio.data
+                                }
+                            });
                         }
                     }
                 } else {
@@ -21706,6 +21787,13 @@ if (clientFileExecution && systemPrompt) {
                                     // 外部URL图片
                                     parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/jpeg' } });
                                 }
+                            } else if (item.type === 'input_audio' && item.input_audio?.data) {
+                                parts.push({
+                                    inlineData: {
+                                        mimeType: item.input_audio.mimeType || `audio/${item.input_audio.format || 'wav'}`,
+                                        data: item.input_audio.data
+                                    }
+                                });
                             }
                         }
                     } else {
@@ -25796,6 +25884,13 @@ async function resolveVisibleAutoMultimodalModel() {
     const disabled = await getDisabledModelSet();
     return AUTO_MULTIMODAL_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId))
         || await resolveVisibleAutoModel();
+}
+
+async function resolveAudioUnderstandingModel() {
+    const disabled = await getDisabledModelSet();
+    return AUDIO_UNDERSTANDING_MODEL_PREFERENCE.find((modelId) => (
+        !disabled.has(modelId) && isRuntimeConfiguredModel(modelId)
+    )) || AUDIO_UNDERSTANDING_MODEL_PREFERENCE.find((modelId) => isRuntimeConfiguredModel(modelId)) || 'gemini-3-flash';
 }
 
 async function getModelVisibilityPayload({ forceRefresh = false } = {}) {

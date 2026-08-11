@@ -30,6 +30,7 @@ const UI_BASE_UPLOAD_EXTENSIONS = new Set([
   ...UI_UPLOAD_EXTENSION_GROUPS.code
 ]);
 const UI_OFFICE_UPLOAD_EXTENSIONS = new Set(UI_UPLOAD_EXTENSION_GROUPS.office);
+const UI_AUDIO_UPLOAD_EXTENSIONS = new Set(UI_UPLOAD_EXTENSION_GROUPS.audio);
 const UI_ARCHIVE_UPLOAD_EXTENSIONS = new Set(UI_UPLOAD_EXTENSION_GROUPS.archive);
 const UI_SANDBOX_UPLOAD_EXTENSIONS = new Set([
   ...UI_OFFICE_UPLOAD_EXTENSIONS,
@@ -2387,7 +2388,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.11.93';
-const RAI_BUILD_ID = '20260811-menu-scroll-undici-v01193';
+const RAI_BUILD_ID = '20260811-office-audio-title-v01193-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -6201,22 +6202,22 @@ function createAttachmentListItem(att = {}) {
 
 const RAI_UPDATE_TIMELINE = [
   {
-    date: '2026-08-06',
+    date: '2026-08-11',
     version: 'v0.11.93',
     zh: {
-      summary: '对话可验证存证、文件产物不中断与会员分级并发已上线。',
+      summary: '正式版文件理解、Gemini 音频理解与对话重命名已补齐。',
       details: [
-        '每个对话可导出带 SHA-256 与 Ed25519 签名的验证收据，收据写入数据库和服务器账本，并支持挂载后的 pCloud 镜像。',
-        '沙箱未显式声明输出路径时会自动捕获唯一生成文档或压缩包，下载链接不再依赖下一次沙箱会话。',
-        'Free 同时请求数保持 2，Pro 与 MAX 提升到 5；管理员限制页可分别配置两个等级。'
+        '正式版启用与 Beta 相同的隔离文档沙箱，可理解 DOCX、XLSX、PPTX、CSV、文本与代码，并可受控处理常见压缩包。',
+        '上传音频后会由 Gemini 读取实际音频字节并理解内容，不再只看到文件名提示。',
+        '对话菜单新增重命名，用户可随时修改自己的对话标题。'
       ]
     },
     en: {
-      summary: 'Verifiable conversation receipts, uninterrupted file artifacts, and tiered concurrency are now available.',
+      summary: 'Formal file understanding, Gemini audio understanding, and conversation renaming are now available.',
       details: [
-        'Conversation exports include SHA-256 and Ed25519 receipts stored in the database and server ledger, with optional replication to a mounted pCloud path.',
-        'The sandbox auto-captures a single generated document or archive when output_path is omitted, so its download no longer depends on a later sandbox run.',
-        'Free remains at 2 concurrent requests while Pro and MAX increase to 5, with separate controls in Admin Limits.'
+        'The formal service now uses the same isolated document sandbox as Beta for DOCX, XLSX, PPTX, CSV, text, code, and controlled archive workflows.',
+        'Audio uploads are routed to Gemini with the owned audio bytes instead of a filename-only hint.',
+        'Conversation menus now let users rename their own conversation titles at any time.'
       ]
     }
   },
@@ -13475,7 +13476,7 @@ function retryStartupAuthentication() {
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
-  console.log(' RAI v0.11.93 初始化 (badges-stream-latency)');
+  console.log(' RAI v0.11.93 初始化 (office-audio-title-r2)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -18194,7 +18195,8 @@ function openSessionMenu(event, session) {
   menu.className = 'session-context-menu';
   menu.dataset.sessionId = String(session.id);
   menu.dataset.triggerSessionMenu = trigger.dataset.sessionMenuId || '';
-  menu.innerHTML = `<button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
+  menu.innerHTML = `<button type="button" data-action="rename">${isZh ? '重命名' : 'Rename'}</button>
+    <button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
     <button type="button" data-action="pin">${session.pinned ? (isZh ? '取消置顶' : 'Unpin') : (isZh ? '置顶' : 'Pin')}</button>
     <button type="button" data-action="export">${isZh ? '导出可验证对话' : 'Export verifiable conversation'}</button>
     <button type="button" data-action="explain">${isZh ? '查看本对话解释' : 'View conversation explanations'}</button>
@@ -18208,6 +18210,7 @@ function openSessionMenu(event, session) {
     closeSessionMenu();
     if (action === 'pin') return toggleSessionPin(session.id, !session.pinned).catch((error) => showToast(error.message));
     if (action === 'delete') return deleteSession(menuEvent, session.id);
+    if (action === 'rename') return showSessionRenameCard(session);
     if (action === 'folder') return showSessionFolderManager(session);
     if (action === 'export') return exportVerifiableConversation(session);
     if (action === 'explain') {
@@ -18219,6 +18222,79 @@ function openSessionMenu(event, session) {
     if (!menu.isConnected || menu.contains(outsideEvent.target) || trigger.contains(outsideEvent.target)) return;
     closeSessionMenu();
   }, { once: true }), 0);
+}
+
+function showSessionRenameCard(session) {
+  const isZh = isChineseLanguage(appState.language);
+  const overlay = document.createElement('div');
+  overlay.className = 'session-folder-overlay';
+  overlay.innerHTML = `<form class="session-folder-card session-folder-name-card" role="dialog" aria-modal="true" aria-labelledby="sessionRenameHeading">
+    <div class="session-folder-heading" id="sessionRenameHeading">${isZh ? '重命名对话' : 'Rename conversation'}</div>
+    <input class="session-folder-name" maxlength="60" value="${escapeHtml(getSessionDisplayTitle(session))}" aria-label="${isZh ? '对话名称' : 'Conversation name'}" autocomplete="off" required>
+    <div class="session-folder-error" role="alert" hidden></div>
+    <div class="session-folder-actions">
+      <button type="button" data-action="cancel">${isZh ? '取消' : 'Cancel'}</button>
+      <button type="submit" class="primary" data-action="save">${isZh ? '保存' : 'Save'}</button>
+    </div>
+  </form>`;
+  document.body.appendChild(overlay);
+  const form = overlay.querySelector('form');
+  const input = overlay.querySelector('.session-folder-name');
+  const errorMessage = overlay.querySelector('.session-folder-error');
+  const saveButton = overlay.querySelector('[data-action="save"]');
+  const closeOnEscape = (keyboardEvent) => { if (keyboardEvent.key === 'Escape') close(); };
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+  const showError = (message) => {
+    errorMessage.textContent = message;
+    errorMessage.hidden = false;
+    input.setAttribute('aria-invalid', 'true');
+    input.focus();
+  };
+  input.addEventListener('input', () => {
+    errorMessage.hidden = true;
+    input.removeAttribute('aria-invalid');
+  });
+  overlay.addEventListener('click', (overlayEvent) => {
+    if (overlayEvent.target === overlay || overlayEvent.target.closest('[data-action="cancel"]')) close();
+  });
+  document.addEventListener('keydown', closeOnEscape);
+  form.addEventListener('submit', async (submitEvent) => {
+    submitEvent.preventDefault();
+    const title = input.value.trim();
+    if (!title) return showError(isZh ? '请输入对话名称' : 'Enter a conversation name');
+    if (title === String(session.title || '').trim()) return close();
+    saveButton.disabled = true;
+    try {
+      const response = await sessionApi(`/sessions/${encodeURIComponent(session.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || (isZh ? '无法重命名对话' : 'Could not rename conversation'));
+      const savedTitle = String(data.title || title).trim();
+      for (const rows of [appState.sessions, appState.pinnedSessions]) {
+        const item = Array.isArray(rows) ? rows.find((row) => String(row.id) === String(session.id)) : null;
+        if (item) item.title = savedTitle;
+      }
+      if (String(appState.currentSession?.id || '') === String(session.id)) {
+        appState.currentSession.title = savedTitle;
+        updateChatFlowHeaderMeta();
+      }
+      close();
+      renderSessions({ preserveScroll: true });
+      if (typeof startTitleAnimation === 'function') startTitleAnimation();
+      showToast(isZh ? '对话名称已更新' : 'Conversation name updated');
+    } catch (error) {
+      saveButton.disabled = false;
+      showError(error.message || (isZh ? '无法重命名对话' : 'Could not rename conversation'));
+    }
+  });
+  input.focus();
+  input.select();
 }
 
 async function showSessionFolderManager(session) {
@@ -28460,8 +28536,13 @@ async function processUploadedFile(file, options = {}) {
 
   const maxSize = 50 * 1024 * 1024; // 50MB
   const maxOfficeSize = 20 * 1024 * 1024;
+  const maxAudioUnderstandingSize = 20 * 1024 * 1024;
   if (UI_OFFICE_UPLOAD_EXTENSIONS.has(getUiUploadExtension(file)) && file.size > maxOfficeSize) {
     showToast(isChineseLanguage(appState.language) ? 'Office 文档不能超过20MB' : 'Office documents cannot exceed 20MB');
+    return false;
+  }
+  if (UI_AUDIO_UPLOAD_EXTENSIONS.has(getUiUploadExtension(file)) && file.size > maxAudioUnderstandingSize) {
+    showToast(isChineseLanguage(appState.language) ? '供 Gemini 理解的音频不能超过20MB' : 'Audio sent to Gemini cannot exceed 20MB');
     return false;
   }
   if (file.size > maxSize) {
