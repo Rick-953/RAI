@@ -1035,15 +1035,15 @@ async function testMessageRenderingStability() {
 }
 
 function testVersionContract() {
-  const expectedVersion = '0.11.92';
-  const expectedBuild = '20260808-badges-stream-latency-v01192';
+  const expectedVersion = '0.11.93';
+  const expectedBuild = '20260811-menu-scroll-undici-v01193';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
-  assert.match(app, /const RAI_APP_VERSION = '0\.11\.92'/);
-  assert.match(app, /const RAI_BUILD_ID = '20260808-badges-stream-latency-v01192'/);
-  assert.match(index, /by Rick \u00b7 v0\.11\.92/);
-  assert.match(serviceWorker, /0\.11\.92-20260808-badges-stream-latency-v01192/);
+  assert.match(app, /const RAI_APP_VERSION = '0\.11\.93'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260811-menu-scroll-undici-v01193'/);
+  assert.match(index, /by Rick \u00b7 v0\.11\.93/);
+  assert.match(serviceWorker, /0\.11\.93-20260811-menu-scroll-undici-v01193/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
@@ -1056,7 +1056,7 @@ function testVersionContract() {
     'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260808-badges-stream-latency-v01192/);
+  assert.match(index, /conversation-cache\.js\?v=20260811-menu-scroll-undici-v01193/);
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
     'fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
