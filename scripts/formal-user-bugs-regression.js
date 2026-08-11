@@ -698,12 +698,12 @@ async function testMessageRenderingStability() {
     'AI completion must not recreate its message node and replay the entrance animation');
 
   const positionSessionMenu = extractNamedFunction(app, 'positionSessionMenu');
-  assert.match(positionSessionMenu, /const canOpenRight = rightLeft \+ menuRect\.width <= viewportRight - viewportPadding/,
+  assert.match(positionSessionMenu, /const fitsRight = rect\.right \+ anchorGap \+ menuRect\.width <= window\.innerWidth - viewportPadding/,
     'the conversation menu must prefer the open space to the right of its three-dot trigger');
-  assert.match(positionSessionMenu, /canOpenBelow[\s\S]{0,260}belowTop[\s\S]{0,260}canOpenAbove/,
-    'the conversation menu must choose a vertical placement that fits the viewport');
-  assert.match(positionSessionMenu, /visualViewport|viewportHeight/,
-    'the conversation menu must account for the visible viewport on mobile');
+  assert.match(positionSessionMenu, /if \(fitsRight\)[\s\S]{0,260}menu\.dataset\.placement = 'below'/,
+    'the conversation menu must open below when the right space does not fit');
+  assert.match(positionSessionMenu, /Math\.min\(top, window\.innerHeight - menuRect\.height - viewportPadding\)/,
+    'the conversation menu must clamp within the visible viewport on mobile');
   const sessionContextMenuRule = cssRule('.session-context-menu', 'position: fixed');
   assert.match(sessionContextMenuRule, /width:\s*max-content[\s\S]{0,100}min-width:\s*148px[\s\S]{0,100}max-width:\s*min\(220px/,
     'the conversation menu must use a compact content-sized width with a viewport-safe cap');
