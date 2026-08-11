@@ -8,7 +8,7 @@
 | feature/* | 任务分支 | — | — |
 
 ## 铁律(违反 = 破坏协作,禁止)
-1. **禁止直接推送或修改 main / beta。** 所有改动必须在 feature 分支上完成,通过 PR 合并,由人类 review。
+1. **禁止直接推送 main / beta。** 所有改动必须在 feature 分支上完成,通过 PR 合并。agent 可自行合并自己的 PR,但合并前必须确认关键检查与门禁通过。
 2. **禁止提交任何密钥、.env、*.db*、node_modules、uploads/、avatars/。**(已由 .gitignore 拦截,提交前用 `git status` 确认无遗漏)
 3. **一台机器同一时刻只允许一个 agent 修改同一工作目录。** 需要并行时,不同机器/不同克隆各自开分支。
 4. **Hermes agent 只允许在 /opt/rai/work/hermes 工作。** 严禁直接编辑 /opt/rai/apps/ 下的部署目录。
@@ -18,7 +18,7 @@
 1. 开始任务:`git fetch origin && git checkout -b feature/<简短描述> origin/main`(涉及预演的从 origin/beta 开)
 2. 修改代码,提交:`git add <具体文件>` + `git commit -m "type(scope): 描述"`(type: feat|fix|refactor|docs|chore|security)
 3. 推送并开 PR:`git push -u origin feature/<简短描述>`,PR 描述写清楚改了什么、为什么、影响范围。
-4. 等人类 review 合并。agent 不自行 merge,不碰服务器部署。
+4. 合并与部署:检查通过后 agent 可自行合并 PR,并按需执行部署脚本;合并与上线结果记录在 PR/提交说明中。
 
 ## 提交前验证(必须)
 - `npm run check` —— 全量语法检查,必须通过。
@@ -32,7 +32,7 @@
 ## 大文件注意
 - `server.js` 是单文件 monolith,多人同时改同一区域必然冲突。改动尽量局部化;需要动大段时先在 PR 讨论或群里打招呼。
 
-## 上线(人类操作)
-- 合并 main 后:`ssh root@服务器 /opt/rai/deploy.sh formal`
-- 合并 beta 后:`/opt/rai/deploy.sh beta`
+## 上线(合并与部署)
+- 合并 main 后执行:`/opt/rai/deploy.sh formal`;合并 beta 后执行:`/opt/rai/deploy.sh beta`(服务器管理员账号下)。
+- agent 与人工均可执行上线。上线前确认对应分支已合并且关键门禁通过;上线后在 PR/提交记录中注明已部署版本。
 - 部署脚本自动:git 同步 → 按需 npm install → 重启服务 → 打印当前版本。
