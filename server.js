@@ -23530,7 +23530,9 @@ if (clientFileExecution && systemPrompt) {
                                     signal: continueController.signal
                                 });
                                 if (retryRes.ok) {
-                                    const retryJson = await retryRes.json();
+                                    const retryJson = JSON.parse(
+                                        await readBoundedResponseText(retryRes, 256 * 1024)
+                                    );
                                     const rawCalls = retryJson?.choices?.[0]?.message?.tool_calls || [];
                                     const retryCalls = normalizeToolCalls(rawCalls, clientFileExecution);
                                     if (retryCalls.length > 0) {
