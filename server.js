@@ -10298,6 +10298,12 @@ const CHAT_USAGE_QUOTAS = [
     }
 ];
 
+const guideStateLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 30,
+    message: { success: false, error: '操作过于频繁,请稍后再试' }
+});
+
 const financeQuoteLimiter = rateLimit({
     windowMs: 1 * 60 * 1000,
     max: 30,
@@ -14530,7 +14536,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
     }
 });
 
-app.patch('/api/user/guide-state', authenticateToken, async (req, res) => {
+app.patch('/api/user/guide-state', guideStateLimiter, authenticateToken, async (req, res) => {
     const body = req.body || {};
     const hasMascotEnabled = Object.prototype.hasOwnProperty.call(body, 'mascotEnabled');
     const hasTapTargetEnabled = Object.prototype.hasOwnProperty.call(body, 'tapTargetEnabled');
