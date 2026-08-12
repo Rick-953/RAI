@@ -271,6 +271,8 @@ function isProvisionedTestAccount(user, normalizedEmail) {
         && normalizeEmailForAuth(user?.email) === PROVISIONED_TEST_ACCOUNT_EMAIL;
 }
 const PACKAGE_VERSION = packageInfo.version || '0.0.0';
+// Onboarding guide version; clients may only mark onboarding as completed for the current guide version.
+const GUIDE_VERSION = 1;
 const resolveWindowsDownloads = createWindowsDownloadsResolver();
 const MAX_CONCURRENT_REQUESTS_PER_USER = Math.max(
     1,
@@ -9344,6 +9346,33 @@ db.serialize(() => {
             }
         });
 
+        // 添加guide_mascot_enabled列（如果不存在）
+        db.run(`ALTER TABLE user_configs ADD COLUMN guide_mascot_enabled INTEGER DEFAULT 1`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加guide_mascot_enabled列失败(可能已存在):`, sanitizeReportContext(err));
+            } else if (!err) {
+                console.log(' 已添加guide_mascot_enabled列到user_configs表');
+            }
+        });
+
+        // 添加guide_tap_target_enabled列（如果不存在）
+        db.run(`ALTER TABLE user_configs ADD COLUMN guide_tap_target_enabled INTEGER DEFAULT 1`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加guide_tap_target_enabled列失败(可能已存在):`, sanitizeReportContext(err));
+            } else if (!err) {
+                console.log(' 已添加guide_tap_target_enabled列到user_configs表');
+            }
+        });
+
+        // 添加onboarding_completed_version列（如果不存在）
+        db.run(`ALTER TABLE user_configs ADD COLUMN onboarding_completed_version INTEGER DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加onboarding_completed_version列失败(可能已存在):`, sanitizeReportContext(err));
+            } else if (!err) {
+                console.log(' 已添加onboarding_completed_version列到user_configs表');
+            }
+        });
+
 
         // 添加model列到messages表（如果不存在）
         db.run(`ALTER TABLE messages ADD COLUMN model TEXT`, (err) => {
@@ -13259,7 +13288,10 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
           COALESCE(c.font_preference, 'system') as font_preference,
           COALESCE(c.tab_title_mode, 'default') as tab_title_mode,
           c.tab_title_custom_text as tab_title_custom_text,
-          COALESCE(c.selection_explanation_delete_mode, 'promote_children') as selection_explanation_delete_mode
+          COALESCE(c.selection_explanation_delete_mode, 'promote_children') as selection_explanation_delete_mode,
+          COALESCE(c.guide_mascot_enabled, 1) as guide_mascot_enabled,
+          COALESCE(c.guide_tap_target_enabled, 1) as guide_tap_target_enabled,
+          COALESCE(c.onboarding_completed_version, 0) as onboarding_completed_version
     FROM users u
     LEFT JOIN user_configs c ON u.id = c.user_id
     WHERE u.id = ?`,
@@ -13311,7 +13343,10 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                     tab_title_custom_text: user.tab_title_custom_text || '',
                     selection_explanation_delete_mode: SELECTION_EXPLANATION_DELETE_MODES.has(user.selection_explanation_delete_mode)
                         ? user.selection_explanation_delete_mode
-                        : 'promote_children'
+                        : 'promote_children',
+                    guideMascotEnabled: user.guide_mascot_enabled === 1,
+                    guideTapTargetEnabled: user.guide_tap_target_enabled === 1,
+                    onboardingCompletedVersion: Number(user.onboarding_completed_version || 0)
             };
 
             console.log(
@@ -14491,6 +14526,74 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
         });
     } catch (err) {
         console.error(' 保存配置失败:', sanitizeReportContext(err));
+        res.status(500).json({ error: '保存失败' });
+    }
+});
+
+app.patch('/api/user/guide-state', authenticateToken, async (req, res) => {
+    const body = req.body || {};
+    const hasMascotEnabled = Object.prototype.hasOwnProperty.call(body, 'mascotEnabled');
+    const hasTapTargetEnabled = Object.prototype.hasOwnProperty.call(body, 'tapTargetEnabled');
+    const hasCompletedVersion = Object.prototype.hasOwnProperty.call(body, 'completedVersion');
+
+    if (!hasMascotEnabled && !hasTapTargetEnabled && !hasCompletedVersion) {
+        return res.status(400).json({ success: false, error: '没有提供可更新的引导状态字段' });
+    }
+    if (hasMascotEnabled && typeof body.mascotEnabled !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'mascotEnabled 必须是布尔值' });
+    }
+    if (hasTapTargetEnabled && typeof body.tapTargetEnabled !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'tapTargetEnabled 必须是布尔值' });
+    }
+    if (hasCompletedVersion && (!Number.isInteger(body.completedVersion) || body.completedVersion !== GUIDE_VERSION)) {
+        return res.status(400).json({ success: false, error: `completedVersion 必须是整数且等于当前引导版本 ${GUIDE_VERSION}` });
+    }
+
+    const mascotEnabled = hasMascotEnabled ? (body.mascotEnabled ? 1 : 0) : null;
+    const tapTargetEnabled = hasTapTargetEnabled ? (body.tapTargetEnabled ? 1 : 0) : null;
+    const completedVersion = hasCompletedVersion ? body.completedVersion : null;
+
+    try {
+        await dbRunAsync(
+            `INSERT INTO user_configs (user_id, guide_mascot_enabled, guide_tap_target_enabled, onboarding_completed_version)
+        VALUES (?, COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 0))
+        ON CONFLICT(user_id) DO UPDATE SET
+          guide_mascot_enabled = CASE
+            WHEN ? IS NULL THEN user_configs.guide_mascot_enabled
+            ELSE excluded.guide_mascot_enabled
+          END,
+          guide_tap_target_enabled = CASE
+            WHEN ? IS NULL THEN user_configs.guide_tap_target_enabled
+            ELSE excluded.guide_tap_target_enabled
+          END,
+          onboarding_completed_version = CASE
+            WHEN ? IS NULL THEN user_configs.onboarding_completed_version
+            ELSE excluded.onboarding_completed_version
+          END`,
+            [
+                req.user.userId, mascotEnabled, tapTargetEnabled, completedVersion,
+                mascotEnabled, tapTargetEnabled, completedVersion
+            ]
+        );
+
+        const current = await dbGetAsync(
+            `SELECT
+          COALESCE(guide_mascot_enabled, 1) AS guide_mascot_enabled,
+          COALESCE(guide_tap_target_enabled, 1) AS guide_tap_target_enabled,
+          COALESCE(onboarding_completed_version, 0) AS onboarding_completed_version
+        FROM user_configs WHERE user_id = ?`,
+            [req.user.userId]
+        );
+
+        console.log(` 引导状态已保存: userId=${req.user.userId}, guideMascotEnabled=${current?.guide_mascot_enabled}, guideTapTargetEnabled=${current?.guide_tap_target_enabled}, onboardingCompletedVersion=${current?.onboarding_completed_version}`);
+        res.json({
+            success: true,
+            guideMascotEnabled: current?.guide_mascot_enabled === 1,
+            guideTapTargetEnabled: current?.guide_tap_target_enabled === 1,
+            onboardingCompletedVersion: Number(current?.onboarding_completed_version || 0)
+        });
+    } catch (err) {
+        console.error(' 保存引导状态失败:', sanitizeReportContext(err));
         res.status(500).json({ error: '保存失败' });
     }
 });

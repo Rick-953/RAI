@@ -18549,3 +18549,394 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 .crf-toast-warn { background: #d97706; }
 .crf-toast-info { background: #1d4ed8; }
 .crf-toast-hide { opacity: 0; }
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* ==================== RAI guide mascot + native tap target ==================== */
+.rai-guide-mascot {
+  --rai-mascot-size: 52px;
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  z-index: 2120;
+  display: none;
+  width: var(--rai-mascot-size);
+  height: var(--rai-mascot-size);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-saturn-yellow);
+  cursor: pointer;
+  touch-action: manipulation;
+  overflow: visible;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.28));
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.rai-guide-mascot:not([hidden]) {
+  display: block;
+}
+
+.rai-guide-mascot:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 4px;
+}
+
+.rai-guide-mascot.is-auth {
+  z-index: 2100;
+}
+
+.rai-guide-mascot.is-dwell {
+  z-index: 130;
+}
+
+.rai-guide-mascot.is-obscured {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.rai-guide-mascot.is-guide {
+  z-index: 2300;
+}
+
+.rai-mascot-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.rai-mascot-ring {
+  vector-effect: non-scaling-stroke;
+}
+
+.rai-mascot-planet {
+  filter: drop-shadow(0 4px 5px rgba(89, 54, 0, 0.22));
+}
+
+.rai-mascot-eyelid {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 0.12s ease;
+}
+
+.rai-guide-mascot.is-blinking .rai-mascot-eyelid {
+  opacity: 1;
+}
+
+.rai-guide-mascot.is-blinking .rai-mascot-pupil,
+.rai-guide-mascot.is-blinking .rai-mascot-eye-glint {
+  opacity: 0;
+}
+
+.rai-guide-mascot.is-looking-left .rai-mascot-pupil,
+.rai-guide-mascot.is-looking-left .rai-mascot-eye-glint {
+  transform: translateX(-8px);
+}
+
+.rai-guide-mascot.is-looking-right .rai-mascot-pupil,
+.rai-guide-mascot.is-looking-right .rai-mascot-eye-glint {
+  transform: translateX(8px);
+}
+
+.rai-guide-mascot.is-guide-hop {
+  animation: raiMascotGuideHop 760ms cubic-bezier(0.2, 0.9, 0.25, 1.05);
+}
+
+.rai-guide-mascot.is-tap-hop {
+  animation: raiMascotTapHop 600ms cubic-bezier(0.2, 0.9, 0.25, 1.05);
+}
+
+.rai-guide-mascot.is-sidebar-demo-drag {
+  animation: raiMascotSidebarDemoDrag 760ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+@keyframes raiMascotGuideHop {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  35% { transform: translateY(-15px) rotate(-4deg); }
+  62% { transform: translateY(2px) rotate(3deg); }
+  82% { transform: translateY(-5px) rotate(-1deg); }
+}
+
+@keyframes raiMascotTapHop {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(-8px); }
+  72% { transform: translateY(1px); }
+}
+
+@keyframes raiMascotSidebarDemoDrag {
+  0% { transform: translateX(0) rotate(0deg); }
+  48% { transform: translateX(34px) rotate(-4deg); }
+  78% { transform: translateX(52px) rotate(2deg); }
+  100% { transform: translateX(42px) rotate(0deg); }
+}
+
+.rai-mascot-speech {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  width: max-content;
+  max-width: min(238px, 58vw);
+  padding: 10px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: color-mix(in srgb, var(--bg-secondary) 94%, #000 6%);
+  color: var(--text-primary);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  text-align: left;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.rai-mascot-speech strong,
+.rai-mascot-speech span {
+  display: block;
+}
+
+.rai-mascot-speech strong {
+  color: var(--color-saturn-yellow);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.rai-mascot-speech span {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.rai-guide-mascot.speech-right .rai-mascot-speech {
+  right: auto;
+  left: calc(100% + 10px);
+  border-radius: 14px 14px 14px 4px;
+}
+
+.rai-guide-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: none;
+  pointer-events: none;
+}
+
+.rai-guide-mask.active {
+  display: block;
+}
+
+.rai-guide-mask-pane {
+  position: fixed;
+  background: rgba(5, 6, 4, 0.46);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.more-menu.rai-guide-readonly .more-menu-item {
+  pointer-events: none;
+}
+
+.rai-guide-ring {
+  position: fixed;
+  z-index: 2300;
+  display: none;
+  min-width: 12px;
+  min-height: 12px;
+  border: 2px solid var(--color-saturn-yellow);
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px rgba(255, 193, 7, 0.16), 0 0 22px rgba(255, 193, 7, 0.42);
+  pointer-events: none;
+}
+
+.rai-guide-ring.active {
+  display: block;
+  animation: raiGuideRingPulse 1.35s ease-in-out infinite;
+}
+
+.rai-guide-ring.static {
+  animation: none;
+  box-shadow: 0 0 0 4px rgba(255, 193, 7, 0.14);
+}
+
+@keyframes raiGuideRingPulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(255, 193, 7, 0.16), 0 0 22px rgba(255, 193, 7, 0.42); }
+  50% { box-shadow: 0 0 0 9px rgba(255, 193, 7, 0.04), 0 0 30px rgba(255, 193, 7, 0.18); }
+}
+
+.rai-guide-focus {
+  outline: 2px solid var(--focus-ring-color) !important;
+  outline-offset: 4px !important;
+}
+
+.onboarding-teaching-panel {
+  display: block;
+  padding: 22px 28px 8px;
+  text-align: left;
+}
+
+.onboarding-teaching-kicker {
+  color: var(--color-saturn-yellow);
+  font-size: 0.75rem;
+  font-weight: 780;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.onboarding-teaching-title {
+  margin-top: 7px;
+  color: #fff;
+  font-size: 1.18rem;
+  line-height: 1.25;
+}
+
+.onboarding-teaching-desc {
+  max-width: 440px;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.onboarding-teaching-status {
+  min-height: 8px;
+  margin-top: 14px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.74rem;
+}
+
+.onboarding-card.guide-teaching {
+  width: min(430px, calc(100vw - 32px));
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.onboarding-card.guide-teaching .onboarding-hero,
+.onboarding-card.guide-teaching .onboarding-body {
+  display: none;
+}
+
+.onboarding-card.guide-teaching .onboarding-teaching-panel {
+  display: block;
+}
+
+.onboarding-card.guide-teaching .onboarding-footer {
+  display: block;
+  padding: 8px 28px 22px;
+  pointer-events: none;
+}
+
+.onboarding-card.guide-teaching .onboarding-footer-left {
+  justify-content: flex-start;
+  pointer-events: auto;
+}
+
+.onboarding-card.guide-teaching .onboarding-footer-center,
+.onboarding-card.guide-teaching .onboarding-footer-right {
+  display: none;
+}
+
+.onboarding-overlay.teaching {
+  align-items: flex-start;
+  padding-top: max(24px, env(safe-area-inset-top, 0px) + 16px);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  pointer-events: none;
+}
+
+.onboarding-overlay.guide-targeting {
+  z-index: 2200;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  pointer-events: none;
+}
+
+.onboarding-overlay.guide-targeting .onboarding-card {
+  pointer-events: none;
+}
+
+.onboarding-overlay.guide-targeting .onboarding-btn-next,
+.onboarding-overlay.guide-targeting .onboarding-btn-start,
+.onboarding-overlay.guide-targeting .onboarding-btn-skip {
+  position: relative;
+  z-index: 2301;
+  pointer-events: auto;
+}
+
+.onboarding-overlay.teaching .onboarding-card {
+  pointer-events: none;
+}
+
+.onboarding-overlay.teaching .onboarding-btn-skip {
+  position: relative;
+  z-index: 2150;
+}
+
+.onboarding-btn-skip {
+  position: relative;
+  z-index: 2150;
+}
+
+@media (max-width: 768px) {
+  .rai-guide-mascot {
+    --rai-mascot-size: 42px;
+  }
+
+  .rai-mascot-speech {
+    max-width: min(210px, 68vw);
+    padding: 8px 10px;
+  }
+
+  .onboarding-card.guide-teaching {
+    width: min(390px, calc(100vw - 24px));
+  }
+
+  .onboarding-card.guide-teaching .onboarding-teaching-panel {
+    padding: 18px 20px 6px;
+  }
+
+  .onboarding-card.guide-teaching .onboarding-footer {
+    padding: 6px 20px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-overlay,
+  .onboarding-card,
+  .onboarding-step.active,
+  .sidebar,
+  .mobile-overlay {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .rai-guide-mascot.is-guide-hop,
+  .rai-guide-mascot.is-tap-hop,
+  .rai-guide-mascot.is-sidebar-demo-drag,
+  .rai-guide-ring.active {
+    animation: none !important;
+  }
+
+  .rai-mascot-eyelid,
+  .rai-mascot-pupil,
+  .rai-mascot-eye-glint {
+    transition: none !important;
+  }
+
+  .rai-guide-focus {
+    outline-offset: 3px !important;
+  }
+}

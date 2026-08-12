@@ -12,36 +12,36 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20260811-title-lock-v01195-r1"></script>
+  <script src="runtime-brand.js?v=20260812-onboarding-mascot-v01196-r1"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260811-title-lock-v01195-r1">
+  <link rel="manifest" href="site.webmanifest?v=20260812-onboarding-mascot-v01196-r1">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260811-title-lock-v01195-r1"></script>
-  <script defer src="lib/purify.min.js?v=20260811-title-lock-v01195-r1"></script>
+  <script defer src="lib/marked.min.js?v=20260812-onboarding-mascot-v01196-r1"></script>
+  <script defer src="lib/purify.min.js?v=20260812-onboarding-mascot-v01196-r1"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260811-title-lock-v01195-r1">
-  <script defer src="lib/katex/katex.min.js?v=20260811-title-lock-v01195-r1"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260811-title-lock-v01195-r1"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260812-onboarding-mascot-v01196-r1">
+  <script defer src="lib/katex/katex.min.js?v=20260812-onboarding-mascot-v01196-r1"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260812-onboarding-mascot-v01196-r1"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20260811-title-lock-v01195-r1"></script>
-  <script defer src="event-bindings.js?v=20260811-title-lock-v01195-r1"></script>
+  <script defer src="rai-system-prompt.js?v=20260812-onboarding-mascot-v01196-r1"></script>
+  <script defer src="event-bindings.js?v=20260812-onboarding-mascot-v01196-r1"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260811-title-lock-v01195-r1">
-  <script defer src="lib/highlight/highlight.min.js?v=20260811-title-lock-v01195-r1"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260812-onboarding-mascot-v01196-r1">
+  <script defer src="lib/highlight/highlight.min.js?v=20260812-onboarding-mascot-v01196-r1"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260811-title-lock-v01195-r1">
-  <link rel="stylesheet" href="selection-explainer.css?v=20260811-title-lock-v01195-r1">
+  <link rel="stylesheet" href="styles.css?v=20260812-onboarding-mascot-v01196-r1">
+  <link rel="stylesheet" href="selection-explainer.css?v=20260812-onboarding-mascot-v01196-r1">
 </head>
 
 <body>
@@ -268,10 +268,17 @@
         </div>
       </div>
 
+      <section class="onboarding-teaching-panel" id="onboardingTeachingPanel" hidden aria-labelledby="onboardingTeachingTitle">
+        <div class="onboarding-teaching-kicker" data-i18n="onb-guide-kicker">一起试试</div>
+        <h2 class="onboarding-teaching-title" id="onboardingTeachingTitle"></h2>
+        <p class="onboarding-teaching-desc" id="onboardingTeachingDesc"></p>
+        <div class="onboarding-teaching-status" id="onboardingTeachingStatus" aria-hidden="true"></div>
+      </section>
+
       <!-- 底部栏：跳过 + 步骤指示器 + 下一步 -->
       <div class="onboarding-footer">
         <div class="onboarding-footer-left">
-          <button class="onboarding-btn onboarding-btn-skip" id="onboardingSkipBtn" data-i18n="onb-skip">跳过</button>
+          <button type="button" class="onboarding-btn onboarding-btn-skip" id="onboardingSkipBtn" data-i18n="onb-skip">跳过</button>
         </div>
         <div class="onboarding-footer-center">
           <div class="onboarding-steps-indicator" id="onboardingStepsIndicator">
@@ -281,8 +288,8 @@
           </div>
         </div>
         <div class="onboarding-footer-right">
-          <button class="onboarding-btn onboarding-btn-next" id="onboardingNextBtn" data-i18n="onb-next">下一步</button>
-          <button class="onboarding-btn onboarding-btn-start" id="onboardingStartBtn" style="display: none;" data-i18n="onb-start">开始使用</button>
+          <button type="button" class="onboarding-btn onboarding-btn-next" id="onboardingNextBtn" data-i18n="onb-next">下一步</button>
+          <button type="button" class="onboarding-btn onboarding-btn-start" id="onboardingStartBtn" style="display: none;" data-i18n="onb-start">开始使用</button>
         </div>
       </div>
     </div>
@@ -366,7 +373,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.11.95</div>
+                <div class="logo-subtitle">by Rick · v0.11.96</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -1143,7 +1150,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260811-title-lock-v01195-r1" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260812-onboarding-mascot-v01196-r1" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1209,7 +1216,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260811-title-lock-v01195-r1" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260812-onboarding-mascot-v01196-r1" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1219,7 +1226,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260811-title-lock-v01195-r1" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260812-onboarding-mascot-v01196-r1" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1379,6 +1386,26 @@
                 <button type="button" class="more-menu-switch settings-row-switch" id="settingsInternetBadgeSwitch"
                   data-rai-click="settingsToggleInternetBadgeVisibility()" aria-pressed="false">
                   <span class="more-menu-item-toggle" id="settingsInternetBadgeToggle"></span>
+                </button>
+              </div>
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="settings-guide-mascot-label">吉祥物助手</div>
+                  <p class="setting-description" data-i18n="settings-guide-mascot-desc">在页面角落显示 RAI 吉祥物，可点击互动。</p>
+                </div>
+                <button type="button" class="more-menu-switch settings-row-switch" id="settingsGuideMascotSwitch"
+                  data-rai-click="settingsToggleGuideMascot()" aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="settingsGuideMascotToggle"></span>
+                </button>
+              </div>
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="settings-guide-tap-target-label">功能聚焦提示</div>
+                  <p class="setting-description" data-i18n="settings-guide-tap-target-desc">在引导流程中高亮当前操作位置，帮助你找到功能入口。</p>
+                </div>
+                <button type="button" class="more-menu-switch settings-row-switch" id="settingsGuideTapTargetSwitch"
+                  data-rai-click="settingsToggleGuideTapTarget()" aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="settingsGuideTapTargetToggle"></span>
                 </button>
               </div>
             </div>
@@ -2031,11 +2058,66 @@
   <canvas id="particleCanvas"
     style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;"></canvas>
 
+  <!-- RAI guide mascot: the Saturn geometry is kept inline so it remains crisp and theme-safe. -->
+  <button type="button" class="rai-guide-mascot" id="raiGuideMascot" hidden
+    data-i18n-aria-label="mascot-aria-label" aria-label="RAI 引导助手">
+    <svg class="rai-mascot-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
+      role="img" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="raiMascotPlanetGradient" x1="96" y1="92" x2="416" y2="420" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#f5d547" />
+          <stop offset="1" stop-color="#e6a824" />
+        </linearGradient>
+        <linearGradient id="raiMascotRingGradient" x1="80" y1="420" x2="432" y2="144" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#f9e79f" />
+          <stop offset="1" stop-color="#fff6d6" />
+        </linearGradient>
+        <radialGradient id="raiMascotEyeGradient" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(238 232) rotate(90) scale(43 60)">
+          <stop offset="0" stop-color="#fffdf3" />
+          <stop offset="1" stop-color="#fff7d8" />
+        </radialGradient>
+      </defs>
+      <g class="rai-mascot-ring rai-mascot-ring-back" fill="none" stroke="url(#raiMascotRingGradient)"
+        stroke-linecap="round">
+        <path d="M80 336C80 280 432 160 432 224C432 256 320 320 256 320" stroke-width="38" opacity=".8" />
+      </g>
+      <circle class="rai-mascot-planet" cx="256" cy="256" r="116" fill="url(#raiMascotPlanetGradient)" />
+      <g class="rai-mascot-face">
+        <g class="rai-mascot-eyes">
+          <path class="rai-mascot-eye" d="M176 246C193 216 232 210 258 244C238 276 196 278 176 246Z"
+            fill="url(#raiMascotEyeGradient)" />
+          <path class="rai-mascot-eye" d="M254 244C280 210 319 216 336 246C316 278 274 276 254 244Z"
+            fill="url(#raiMascotEyeGradient)" />
+          <ellipse class="rai-mascot-pupil" cx="229" cy="244" rx="12" ry="18" fill="#2e260e" />
+          <ellipse class="rai-mascot-pupil" cx="283" cy="244" rx="12" ry="18" fill="#2e260e" />
+          <circle class="rai-mascot-eye-glint" cx="233" cy="238" r="4" fill="#fff" opacity=".9" />
+          <circle class="rai-mascot-eye-glint" cx="287" cy="238" r="4" fill="#fff" opacity=".9" />
+          <path class="rai-mascot-eyelid rai-mascot-eyelid-left" d="M178 247Q218 272 256 246" fill="none"
+            stroke="#9c6b12" stroke-width="12" stroke-linecap="round" />
+          <path class="rai-mascot-eyelid rai-mascot-eyelid-right" d="M256 246Q294 272 334 247" fill="none"
+            stroke="#9c6b12" stroke-width="12" stroke-linecap="round" />
+        </g>
+        <path class="rai-mascot-smile" d="M232 296Q256 310 280 296" fill="none" stroke="#9c6b12"
+          stroke-width="8" stroke-linecap="round" opacity=".72" />
+      </g>
+      <g class="rai-mascot-ring rai-mascot-ring-front" fill="none" stroke="url(#raiMascotRingGradient)"
+        stroke-linecap="round">
+        <path d="M432 224C432 288 80 400 80 336" stroke-width="38" opacity=".9" />
+      </g>
+      <circle class="rai-mascot-highlight" cx="208" cy="208" r="32" fill="#fff" opacity=".2" />
+    </svg>
+    <span class="rai-mascot-speech" id="raiMascotSpeech" role="note" hidden>
+      <strong id="raiMascotSpeechTitle"></strong>
+      <span id="raiMascotSpeechText"></span>
+    </span>
+  </button>
+
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20260811-title-lock-v01195-r1"></script>
-  <script defer src="app.js?v=20260811-title-lock-v01195-r1"></script>
-  <script defer src="crf-ui.js?v=20260811-title-lock-v01195-r1"></script>
-  <script defer src="selection-explainer.js?v=20260811-title-lock-v01195-r1"></script>
+  <script defer src="conversation-cache.js?v=20260812-onboarding-mascot-v01196-r1"></script>
+  <script defer src="app.js?v=20260812-onboarding-mascot-v01196-r1"></script>
+  <script defer src="crf-ui.js?v=20260812-onboarding-mascot-v01196-r1"></script>
+  <script defer src="selection-explainer.js?v=20260812-onboarding-mascot-v01196-r1"></script>
 </body>
 
 </html>
