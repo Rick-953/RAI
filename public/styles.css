@@ -18564,7 +18564,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
 /* ==================== RAI guide mascot + native tap target ==================== */
 .rai-guide-mascot {
-  --rai-mascot-size: 52px;
+  --rai-mascot-size: 58px;
   position: fixed;
   left: 16px;
   top: 16px;
@@ -18580,7 +18580,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   cursor: pointer;
   touch-action: manipulation;
   overflow: visible;
-  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.28));
+  filter: drop-shadow(0 7px 11px rgba(0, 0, 0, 0.22));
   -webkit-user-select: none;
   user-select: none;
 }
@@ -18608,7 +18608,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .rai-guide-mascot.is-guide {
-  z-index: 2300;
+  z-index: 5400;
 }
 
 .rai-mascot-svg {
@@ -18623,7 +18623,15 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .rai-mascot-planet {
-  filter: drop-shadow(0 4px 5px rgba(89, 54, 0, 0.22));
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.rai-mascot-pupil,
+.rai-mascot-eye-glint {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 180ms ease, opacity 120ms ease;
 }
 
 .rai-mascot-eyelid {
@@ -18644,12 +18652,12 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
 .rai-guide-mascot.is-looking-left .rai-mascot-pupil,
 .rai-guide-mascot.is-looking-left .rai-mascot-eye-glint {
-  transform: translateX(-8px);
+  transform: translateX(-4px);
 }
 
 .rai-guide-mascot.is-looking-right .rai-mascot-pupil,
 .rai-guide-mascot.is-looking-right .rai-mascot-eye-glint {
-  transform: translateX(8px);
+  transform: translateX(4px);
 }
 
 .rai-guide-mascot.is-guide-hop {
@@ -18665,10 +18673,10 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 @keyframes raiMascotGuideHop {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  35% { transform: translateY(-15px) rotate(-4deg); }
-  62% { transform: translateY(2px) rotate(3deg); }
-  82% { transform: translateY(-5px) rotate(-1deg); }
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  32% { transform: translate3d(0, -12px, 0) rotate(-2deg); }
+  60% { transform: translate3d(0, 1px, 0) rotate(1deg); }
+  82% { transform: translate3d(0, -3px, 0) rotate(0deg); }
 }
 
 @keyframes raiMascotTapHop {
@@ -18689,9 +18697,9 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   right: calc(100% + 10px);
   top: 50%;
   width: max-content;
-  max-width: min(238px, 58vw);
-  padding: 10px 12px;
-  border-radius: 14px 14px 4px 14px;
+  max-width: min(260px, 64vw);
+  padding: 11px 13px;
+  border-radius: 12px 12px 3px 12px;
   background: color-mix(in srgb, var(--bg-secondary) 94%, #000 6%);
   color: var(--text-primary);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
@@ -18707,27 +18715,48 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
 .rai-mascot-speech strong {
   color: var(--color-saturn-yellow);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.25;
 }
 
 .rai-mascot-speech span {
   margin-top: 3px;
   color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .rai-guide-mascot.speech-right .rai-mascot-speech {
   right: auto;
   left: calc(100% + 10px);
-  border-radius: 14px 14px 14px 4px;
+  border-radius: 12px 12px 12px 3px;
+}
+
+.rai-guide-mascot.speech-left .rai-mascot-speech {
+  right: calc(100% + 10px);
+  left: auto;
+  border-radius: 12px 12px 3px 12px;
+}
+
+.rai-guide-mascot.speech-above .rai-mascot-speech {
+  right: auto;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  top: auto;
+  border-radius: 12px 12px 12px 3px;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 768px) {
+  .rai-guide-mascot {
+    --rai-mascot-size: 48px;
+  }
 }
 
 .rai-guide-mask {
   position: fixed;
   inset: 0;
-  z-index: 2100;
+  z-index: 5100;
   display: none;
   pointer-events: none;
 }
@@ -18749,7 +18778,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
 .rai-guide-ring {
   position: fixed;
-  z-index: 2300;
+  z-index: 5300;
   display: none;
   min-width: 12px;
   min-height: 12px;
@@ -18775,14 +18804,28 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .rai-guide-focus {
-  outline: 2px solid var(--focus-ring-color) !important;
-  outline-offset: 4px !important;
+  outline: none !important;
+  outline-offset: 0 !important;
 }
 
 .onboarding-teaching-panel {
-  display: block;
-  padding: 22px 28px 8px;
+  display: none;
+  position: fixed;
+  top: max(24px, calc(env(safe-area-inset-top, 0px) + 16px));
+  left: max(24px, calc(env(safe-area-inset-left, 0px) + 16px));
+  z-index: 5200;
+  width: min(390px, calc(100vw - 48px));
+  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-secondary) 96%, #000 4%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
   text-align: left;
+  pointer-events: none;
+}
+
+.onboarding-teaching-panel[hidden] {
+  display: none !important;
 }
 
 .onboarding-teaching-kicker {
@@ -18816,10 +18859,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .onboarding-card.guide-teaching {
-  width: min(430px, calc(100vw - 32px));
-  height: auto;
-  max-height: none;
-  overflow: visible;
+  display: contents;
 }
 
 .onboarding-card.guide-teaching .onboarding-hero,
@@ -18832,13 +18872,14 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .onboarding-card.guide-teaching .onboarding-footer {
-  display: block;
-  padding: 8px 28px 22px;
-  pointer-events: none;
+  display: contents;
 }
 
 .onboarding-card.guide-teaching .onboarding-footer-left {
-  justify-content: flex-start;
+  position: fixed;
+  top: max(24px, calc(env(safe-area-inset-top, 0px) + 16px));
+  right: max(24px, calc(env(safe-area-inset-right, 0px) + 16px));
+  z-index: 5200;
   pointer-events: auto;
 }
 
@@ -18848,8 +18889,9 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .onboarding-overlay.teaching {
-  align-items: flex-start;
-  padding-top: max(24px, env(safe-area-inset-top, 0px) + 16px);
+  z-index: 5000;
+  align-items: initial;
+  padding: 0;
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -18857,7 +18899,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .onboarding-overlay.guide-targeting {
-  z-index: 2200;
+  z-index: 5000;
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -18872,7 +18914,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 .onboarding-overlay.guide-targeting .onboarding-btn-start,
 .onboarding-overlay.guide-targeting .onboarding-btn-skip {
   position: relative;
-  z-index: 2301;
+  z-index: 5301;
   pointer-events: auto;
 }
 
@@ -18882,17 +18924,21 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
 .onboarding-overlay.teaching .onboarding-btn-skip {
   position: relative;
-  z-index: 2150;
+  z-index: 5200;
 }
 
 .onboarding-btn-skip {
   position: relative;
   z-index: 2150;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 @media (max-width: 768px) {
   .rai-guide-mascot {
-    --rai-mascot-size: 42px;
+    --rai-mascot-size: 48px;
   }
 
   .rai-mascot-speech {
@@ -18901,15 +18947,26 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   }
 
   .onboarding-card.guide-teaching {
-    width: min(390px, calc(100vw - 24px));
+    display: contents;
   }
 
   .onboarding-card.guide-teaching .onboarding-teaching-panel {
-    padding: 18px 20px 6px;
+    top: max(12px, calc(env(safe-area-inset-top, 0px) + 8px));
+    left: 12px;
+    width: min(320px, calc(100vw - 84px));
+    padding: 15px 16px;
+    border-radius: 14px;
   }
 
-  .onboarding-card.guide-teaching .onboarding-footer {
-    padding: 6px 20px 18px;
+  .onboarding-card.guide-teaching .onboarding-footer-left {
+    top: max(12px, calc(env(safe-area-inset-top, 0px) + 8px));
+    right: 12px;
+  }
+
+  .onboarding-card.guide-teaching .onboarding-btn-skip {
+    min-width: 0;
+    min-height: 42px;
+    padding: 0 14px;
   }
 }
 
