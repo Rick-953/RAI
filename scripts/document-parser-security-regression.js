@@ -124,7 +124,7 @@ async function main() {
         }]);
         const validXlsx = await createZip([
             { name: 'xl/sharedStrings.xml', content: '<sst><si><t>Shared cell</t></si></sst>' },
-            { name: 'xl/worksheets/sheet1.xml', content: '<worksheet><sheetData><row><c t="inlineStr"><is><t>Inline cell</t></is></c></row></sheetData></worksheet>' }
+            { name: 'xl/worksheets/sheet1.xml', content: '<worksheet><sheetData><row><c t="s"><v>0</v></c><c t="inlineStr"><is><t>Inline cell</t></is></c></row></sheetData></worksheet>' }
         ]);
         const validPptx = await createZip([{
             name: 'ppt/slides/slide1.xml',
