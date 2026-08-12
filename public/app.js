@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.97';
-const RAI_BUILD_ID = '20260813-mascot-guide-rework-v01197-r5';
+const RAI_APP_VERSION = '0.11.98';
+const RAI_BUILD_ID = '20260813-onboarding-account-isolation-v01198-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2704,9 +2704,9 @@ function writeGuideCompletionMirror(version, user = appState.user) {
   try {
     localStorage.setItem(getGuideCompletionStorageKey(user), String(normalized));
     if (normalized >= RAI_GUIDE_VERSION) {
-      // Keep the original key readable for clients that predate guide versions.
+      // Keep only the matching account's legacy key readable. A global marker
+      // would leak completion across accounts that share this browser.
       localStorage.setItem(getOnboardingStorageKey(user), '1');
-      localStorage.setItem('rai_onboarding_done', '1');
     }
   } catch (_) {
     // Best effort mirror only.
@@ -2714,20 +2714,22 @@ function writeGuideCompletionMirror(version, user = appState.user) {
 }
 
 function isGuideCompleted(user = appState.user) {
-  const serverCompleted = appState.guide.serverAuthoritative
-    && getGuideUserIdentity(user)
-    && getGuideUserIdentity(user) === appState.guide.serverUserId
-    ? appState.guide.completedVersion
-    : 0;
-  return Math.max(Number(serverCompleted) || 0, readGuideCompletionMirror(user)) >= RAI_GUIDE_VERSION
-    || (() => {
-      try {
-        return localStorage.getItem(getOnboardingStorageKey(user)) === '1'
-          || localStorage.getItem('rai_onboarding_done') === '1';
-      } catch (_) {
-        return false;
-      }
-    })();
+  const identity = getGuideUserIdentity(user);
+  const hasAuthoritativeServerState = appState.guide.serverAuthoritative
+    && identity
+    && identity === appState.guide.serverUserId;
+  if (hasAuthoritativeServerState) {
+    return Number(appState.guide.completedVersion) >= RAI_GUIDE_VERSION;
+  }
+  if (readGuideCompletionMirror(user) >= RAI_GUIDE_VERSION) return true;
+  try {
+    if (identity) {
+      return localStorage.getItem(getOnboardingStorageKey(user)) === '1';
+    }
+    return localStorage.getItem('rai_onboarding_done') === '1';
+  } catch (_) {
+    return false;
+  }
 }
 
 function applyServerGuideState(profile = {}, user = appState.user) {
@@ -14836,7 +14838,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.11.97 初始化 (mascot-guide-rework-r5)');
+  console.log(' RAI v0.11.98 初始化 (onboarding-account-isolation-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -16952,11 +16954,6 @@ async function submitAskUserResponse(answer, prompt, card, stateKey = '') {
     status.className = 'ask-user-status';
     status.textContent = normalizedAnswer;
     card.appendChild(status);
-  }
-
-  if (prompt?.action === 'set_language') {
-    handleOnboardingLanguageChoice(normalizedAnswer);
-    return;
   }
 
   const input = document.getElementById('messageInput');
@@ -22563,80 +22560,6 @@ function maybeShowOnboardingAfterAuth() {
     showOnboarding();
   }
 }
-
-function getOnboardingLanguageQuestionText(lang = appState.language) {
-  const normalized = normalizeLanguage(lang);
-  if (normalized === 'en') return formatRuntimeText('Welcome to RAI.\n\nWhat language would you like to use?');
-  if (normalized === 'zh-TW') return formatRuntimeText('歡迎來到 RAI。\n\n您的語言是？');
-  return formatRuntimeText('欢迎来到 RAI。\n\n您的语言是？');
-}
-
-function getOnboardingStartText(lang = appState.language) {
-  const normalized = normalizeLanguage(lang);
-  if (normalized === 'en') return "Great. Let's get started.";
-  if (normalized === 'zh-TW') return '太棒了，讓我們開始吧。';
-  return '太棒了，让我们开始吧。';
-}
-
-function showNewUserLanguagePrompt() {
-  const askPayload = {
-    question: isChineseLanguage(appState.language) ? '您的语言是？' : 'What language would you like to use?',
-    options: ['简体中文', '繁體中文', 'English'],
-    placeholder: isChineseLanguage(appState.language) ? '输入其他语言，按 Enter 记录' : 'Type another language and press Enter to record',
-    action: 'set_language'
-  };
-
-  appState.currentSession = null;
-  appState.messages = [{
-    role: 'assistant',
-    content: `${getOnboardingLanguageQuestionText()}\n\n\`\`\`rai_ask_user\n${JSON.stringify(askPayload)}\n\`\`\``,
-    created_at: new Date().toISOString(),
-    model: 'auto',
-    localOnboardingLanguagePrompt: true
-  }];
-  renderMessages();
-  focusMessageInputForNewChat(false);
-  focusEntryTextInput('new-user-language-prompt', { delay: 120 });
-}
-
-function resolveOnboardingLanguage(answer) {
-  const value = String(answer || '').trim().toLowerCase();
-  if (!value) return appState.language;
-  if (value.includes('english') || value === 'en' || value.includes('英文')) return 'en';
-  if (value.includes('繁') || value.includes('traditional') || value.includes('tw')) return 'zh-TW';
-  if (value.includes('简') || value.includes('簡') || value.includes('simplified') || value.includes('cn')) return 'zh-CN';
-  return appState.language;
-}
-
-function handleOnboardingLanguageChoice(answer) {
-  const selectedLanguage = resolveOnboardingLanguage(answer);
-  setLanguage(selectedLanguage);
-
-  const promptMessage = appState.messages.find((message) => message.localOnboardingLanguagePrompt);
-  if (promptMessage) {
-    promptMessage.content = getOnboardingLanguageQuestionText(selectedLanguage);
-    delete promptMessage.localOnboardingLanguagePrompt;
-  }
-
-  appState.messages.push(
-    {
-      role: 'user',
-      content: String(answer || '').trim(),
-      created_at: new Date().toISOString()
-    },
-    {
-      role: 'assistant',
-      content: getOnboardingStartText(selectedLanguage),
-      created_at: new Date().toISOString(),
-      model: 'auto'
-    }
-  );
-
-  renderMessages();
-  focusMessageInputForNewChat(false);
-}
-
-
 
 async function verifyToken({ allowRefresh = true } = {}) {
   let refreshAttempted = !allowRefresh;
