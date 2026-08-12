@@ -169,13 +169,13 @@ function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.11\.97'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-mascot-guide-rework-v01197-r5'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.11\.97-20260813-mascot-guide-rework-v01197-r5'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260813-mascot-guide-rework-v01197-r5/g) || []).length;
+  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.11\.98'\s*;/, 'RAI_APP_VERSION mismatch');
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-onboarding-account-isolation-v01198-r1'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.11\.98-20260813-onboarding-account-isolation-v01198-r1'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260813-onboarding-account-isolation-v01198-r1/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.11\.97/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.11.97', 'package.json version mismatch');
+  assert.match(index, /v0\.11\.98/, 'index.html must show the matching app version');
+  assert.equal(packageJson.version, '0.11.98', 'package.json version mismatch');
 }
 
 function testGuideWiring() {
@@ -232,11 +232,96 @@ function testCompletionVersionRecording() {
   assert.doesNotMatch(replay, /completedVersion\s*=/, 'replay must never write completedVersion');
   assert.doesNotMatch(onboarding, /completedVersion\s*=/, 'showOnboarding must never write completedVersion');
 
-  // Mirror + completion read-back are monotonic.
+  // Mirror writes stay monotonic, while an authenticated server profile is
+  // authoritative and cannot be overridden by another account's legacy key.
   assert.match(writeMirror, /Math\.max\(0,\s*Number\.parseInt\(version,\s*10\)\s*\|\|\s*0\)/,
     'mirror write must clamp with Math.max');
-  assert.match(isCompleted, /Math\.max\(Number\(serverCompleted\)\s*\|\|\s*0,\s*readGuideCompletionMirror\(user\)\)\s*>=\s*RAI_GUIDE_VERSION/,
-    'completion check must take the max of server + mirror');
+  assert.match(isCompleted, /if\s*\(hasAuthoritativeServerState\)\s*\{\s*return\s+Number\(appState\.guide\.completedVersion\)\s*>=\s*RAI_GUIDE_VERSION;\s*\}/,
+    'authenticated server state must be the sole completion authority');
+  assert.match(isCompleted, /if\s*\(identity\)\s*\{[\s\S]*?getOnboardingStorageKey\(user\)[\s\S]*?\}\s*return\s+localStorage\.getItem\('rai_onboarding_done'\)\s*===\s*'1'/,
+    'the global legacy key may only be read before an account identity exists');
+  assert.doesNotMatch(writeMirror, /localStorage\.setItem\('rai_onboarding_done',\s*'1'\)/,
+    'authenticated completion must not keep polluting the global legacy key');
+}
+
+function testLegacyCompletionAccountIsolation() {
+  const functionSource = extractNamedFunction(app, 'isGuideCompleted');
+  const storage = new Map([
+    ['rai_onboarding_done', '1'],
+    ['rai_onboarding_done:completed-user', '1'],
+    ['rai_onboarding_completed_version:completed-user', '1']
+  ]);
+  const localStorage = {
+    getItem(key) {
+      return storage.has(key) ? storage.get(key) : null;
+    }
+  };
+  const RAI_GUIDE_VERSION = GUIDE_VERSION;
+  const getGuideUserIdentity = (user) => String(user?.id || user?.email || '').trim();
+  const getOnboardingStorageKey = (user) => {
+    const identity = getGuideUserIdentity(user);
+    return identity ? `rai_onboarding_done:${identity}` : 'rai_onboarding_done';
+  };
+  const getGuideCompletionStorageKey = (user) => {
+    const identity = getGuideUserIdentity(user);
+    return identity ? `rai_onboarding_completed_version:${identity}` : 'rai_onboarding_completed_version';
+  };
+  const readGuideCompletionMirror = (user) => Number.parseInt(
+    localStorage.getItem(getGuideCompletionStorageKey(user)) || '0',
+    10
+  ) || 0;
+  const buildCheck = (guide) => Function(
+    'appState',
+    'localStorage',
+    'RAI_GUIDE_VERSION',
+    'getGuideUserIdentity',
+    'getOnboardingStorageKey',
+    'readGuideCompletionMirror',
+    `${functionSource}; return isGuideCompleted;`
+  )(
+    { guide },
+    localStorage,
+    RAI_GUIDE_VERSION,
+    getGuideUserIdentity,
+    getOnboardingStorageKey,
+    readGuideCompletionMirror
+  );
+
+  const incompleteUser = { id: 'new-user' };
+  const authoritativeIncomplete = buildCheck({
+    serverAuthoritative: true,
+    serverUserId: 'new-user',
+    completedVersion: 0
+  });
+  assert.equal(authoritativeIncomplete(incompleteUser), false,
+    'another account global/account legacy markers must not suppress this account onboarding');
+
+  const authoritativeComplete = buildCheck({
+    serverAuthoritative: true,
+    serverUserId: 'completed-user',
+    completedVersion: 1
+  });
+  assert.equal(authoritativeComplete({ id: 'completed-user' }), true,
+    'the current account server completion must suppress repeat onboarding');
+
+  const preProfileMirror = buildCheck({
+    serverAuthoritative: false,
+    serverUserId: '',
+    completedVersion: 0
+  });
+  assert.equal(preProfileMirror({ id: 'completed-user' }), true,
+    'the matching account mirror must bridge the pre-profile interval');
+  assert.equal(preProfileMirror(incompleteUser), false,
+    'the global legacy key must not cross account boundaries before profile load');
+  assert.equal(preProfileMirror(null), true,
+    'the global legacy key remains a compatibility fallback before identity is known');
+}
+
+function testRegistrationLanguagePromptRemoved() {
+  assert.doesNotMatch(app, /showNewUserLanguagePrompt|localOnboardingLanguagePrompt/,
+    'the duplicate post-registration language prompt must be absent');
+  assert.doesNotMatch(app, /prompt\?\.action\s*===\s*'set_language'/,
+    'ask-user cards must not retain the obsolete onboarding language branch');
 }
 
 function testGuideTriggerPaths() {
@@ -1004,6 +1089,8 @@ async function runStaticTests() {
     { name: 'static:version-constants', run: testVersionConstants },
     { name: 'static:guide-wiring', run: testGuideWiring },
     { name: 'static:completion-version-recording', run: testCompletionVersionRecording },
+    { name: 'static:legacy-completion-account-isolation', run: testLegacyCompletionAccountIsolation },
+    { name: 'static:registration-language-prompt-removed', run: testRegistrationLanguagePromptRemoved },
     { name: 'static:guide-trigger-paths', run: testGuideTriggerPaths },
     { name: 'static:auth-page-behaviors', run: testAuthPageBehaviors },
     { name: 'static:global-hide', run: testGlobalHide },
