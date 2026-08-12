@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.96';
-const RAI_BUILD_ID = '20260812-onboarding-mascot-v01196-r1';
+const RAI_APP_VERSION = '0.11.97';
+const RAI_BUILD_ID = '20260813-mascot-guide-rework-v01197-r5';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2872,7 +2872,7 @@ window.applyGuideTapTargetState = applyGuideTapTargetState;
 window.getGuideState = getGuideState;
 
 function getMascotSize() {
-  return window.matchMedia?.('(max-width: 768px)')?.matches ? 42 : 52;
+  return window.matchMedia?.('(max-width: 768px)')?.matches ? 48 : 58;
 }
 
 function isGuideMotionEnabled() {
@@ -2929,7 +2929,11 @@ function syncMascotSpeechSide() {
   const viewport = getGuideViewportRect();
   const viewportWidth = Math.max(1, viewport.right - viewport.left);
   const left = Number.parseFloat(mascot.style.left) || 0;
-  mascot.classList.toggle('speech-right', left < viewportWidth * 0.3);
+  const nearLeft = left < viewportWidth * 0.3;
+  const nearRight = left > viewportWidth * 0.7;
+  mascot.classList.toggle('speech-right', nearLeft);
+  mascot.classList.toggle('speech-left', nearRight);
+  mascot.classList.toggle('speech-above', !nearLeft && !nearRight);
 }
 
 function setMascotCoordinates(left, top) {
@@ -2990,10 +2994,27 @@ function getGuideObstacles() {
     .filter(Boolean);
 }
 
+function getDwellMascotObstacles() {
+  const selectors = [
+    '.welcome-actions', '.mobile-header', '.selection-explain-dock:not([hidden])',
+    '.chatflow-workspace:not([hidden])', '.custom-api-exit-btn:not([hidden])'
+  ];
+  return [
+    ...getGuideObstacles(),
+    ...selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+      .filter((element) => isVisibleElement(element))
+      .map((element) => getGuideRect(element))
+      .filter(Boolean)
+  ];
+}
+
 function positionMascotAtRect(rect, placement = 'above') {
   const size = getMascotSize();
   let left = rect.left + (rect.width - size) / 2;
   let top = rect.top - size - 14;
+  if (placement === 'above' && top < getGuideViewportRect().top + 8) {
+    top = rect.bottom + 12;
+  }
   if (placement === 'right') {
     left = rect.right + 12;
     top = rect.top + (rect.height - size) / 2;
@@ -3002,6 +3023,7 @@ function positionMascotAtRect(rect, placement = 'above') {
     top = rect.top - size - 12;
   }
   setMascotCoordinates(left, top);
+  syncMascotSpeechSide();
 }
 
 function positionAuthMascot() {
@@ -3022,16 +3044,34 @@ function positionDwellMascot() {
   const size = getMascotSize();
   const viewport = getGuideViewportRect();
   const composer = getGuideRect(document.getElementById('inputContainer'));
+  const composerRightRoom = composer ? viewport.right - composer.right : 0;
+  const composerLeftRoom = composer ? composer.left - viewport.left : 0;
   const desired = composer
-    ? { left: composer.right - size - 8, top: composer.top - size - 10 }
+    ? (composerRightRoom >= size + 20
+      ? { left: composer.right + 12, top: composer.top - Math.round(size * 0.34) }
+      : { left: composer.right - Math.round(size * 0.72), top: composer.top - size - 12 })
     : { left: viewport.right - size - 16, top: viewport.bottom - size - 100 };
+  const mobile = window.matchMedia?.('(max-width: 768px)')?.matches;
+  const welcome = getGuideRect(document.querySelector('.welcome-screen'));
+  const welcomeActions = getGuideRect(document.querySelector('.welcome-actions'));
+  const mobileWelcomeCandidates = mobile && welcome ? [
+    {
+      left: welcome.right - size - 18,
+      top: Math.max(welcome.top + 76, (welcomeActions?.top || welcome.bottom) - size - 72)
+    },
+    { left: welcome.left + 18, top: welcome.top + 92 }
+  ] : [];
   const candidates = [
     desired,
+    ...(composer && composerLeftRoom >= size + 20
+      ? [{ left: composer.left - size - 12, top: composer.top - Math.round(size * 0.34) }]
+      : []),
+    ...(composer ? [{ left: composer.left + 14, top: composer.top - size - 12 }] : []),
+    ...mobileWelcomeCandidates,
     { left: viewport.right - size - 12, top: viewport.top + 14 },
-    { left: viewport.left + 12, top: viewport.top + 14 },
-    { left: viewport.right - size - 12, top: viewport.bottom - size - 18 }
+    { left: viewport.left + 12, top: viewport.top + 14 }
   ];
-  const obstacles = getGuideObstacles();
+  const obstacles = getDwellMascotObstacles();
   const fullViewportObstacle = obstacles.some((obstacle) => (
     obstacle.width >= (viewport.right - viewport.left) * 0.72
     && obstacle.height >= (viewport.bottom - viewport.top) * 0.72
@@ -3049,8 +3089,9 @@ function positionDwellMascot() {
     return rect.right > viewport.left && rect.left < viewport.right
       && rect.bottom > viewport.top && rect.top < viewport.bottom
       && !obstacles.some((obstacle) => rectsOverlap(rect, obstacle, 8));
-  }) || candidates[1];
-  setMascotCoordinates(candidate.left, candidate.top);
+  });
+  mascot.classList.toggle('is-obscured', !candidate);
+  if (candidate) setMascotCoordinates(candidate.left, candidate.top);
 }
 
 function requestMascotPosition() {
@@ -3094,7 +3135,7 @@ function hideMascot() {
   const mascot = getGuideMascotElement();
   if (!mascot) return;
   mascot.hidden = true;
-  mascot.classList.remove('is-auth', 'is-dwell', 'is-guide', 'is-guide-hop', 'is-tap-hop', 'is-sidebar-demo-drag', 'is-obscured', 'speech-right');
+  mascot.classList.remove('is-auth', 'is-dwell', 'is-guide', 'is-guide-hop', 'is-tap-hop', 'is-sidebar-demo-drag', 'is-obscured', 'speech-right', 'speech-left', 'speech-above');
   setMascotSpeech('', '');
   raiMascotState.mode = 'hidden';
   guideRuntime.mascotTarget = null;
@@ -3261,7 +3302,7 @@ function updateGuideTargetLayers(rect) {
     return;
   }
 
-  const padding = 8;
+  const padding = 5;
   const left = Math.max(0, rect.left - padding);
   const top = Math.max(0, rect.top - padding);
   const right = Math.min(window.innerWidth, rect.right + padding);
@@ -3287,6 +3328,12 @@ function updateGuideTargetLayers(rect) {
   guideRuntime.ring.style.top = `${top}px`;
   guideRuntime.ring.style.width = `${width}px`;
   guideRuntime.ring.style.height = `${height}px`;
+  const targetRadius = guideRuntime.currentTarget
+    ? window.getComputedStyle(guideRuntime.currentTarget).borderRadius
+    : '';
+  guideRuntime.ring.style.borderRadius = targetRadius && targetRadius !== '0px'
+    ? `calc(${targetRadius} + ${padding}px)`
+    : '12px';
   guideRuntime.ring.classList.add('active');
   guideRuntime.ring.classList.toggle('static', isGuideReducedMotion());
 }
@@ -3359,7 +3406,7 @@ function refreshGuideTargetPresentation() {
   if (!guideRuntime.edgeSwipeTarget) hideGuideTargetLayers();
 }
 
-function setGuideTarget(target, { focus = true } = {}) {
+function setGuideTarget(target, { focus = false } = {}) {
   clearGuideTarget();
   if (!target) return null;
   const controller = new AbortController();
@@ -3452,7 +3499,7 @@ function setWelcomeMascotCue(step) {
   if (!appState.guide.mascotEnabled && !appState.guide.tapTargetEnabled) return;
   const title = i18nText('onb-guide-ready-title', 'Ready when you are');
   const desc = i18nText('onb-guide-ready-desc', 'Tap the button when you want to continue.');
-  setGuideTarget(target, { focus: true });
+  setGuideTarget(target, { focus: false });
   if (appState.guide.mascotEnabled) {
     moveMascotToElement(target, { placement: 'above', bounce: true, speechTitle: title, speechText: desc });
   }
@@ -3468,7 +3515,9 @@ function scheduleWelcomeMascotCue(step) {
 }
 
 function getGuideStepCopy(step, sidebarTry = false) {
-  const key = sidebarTry ? 'onb-guide-sidebar-try' : `onb-guide-${step}`;
+  const key = sidebarTry
+    ? 'onb-guide-sidebar-try'
+    : (step === 'sidebar' && !isMobileGuideViewport() ? 'onb-guide-sidebar-desktop' : `onb-guide-${step}`);
   return {
     title: i18nText(`${key}-title`, step === 'input' ? 'Try the composer' : step === 'model' ? 'Open the model menu' : step === 'plus' ? 'See the extra controls' : 'Meet the sidebar'),
     desc: i18nText(`${key}-desc`, ''),
@@ -3487,12 +3536,23 @@ function updateGuideTeachingPanel(step, sidebarTry = false) {
   if (statusEl) statusEl.textContent = '';
   announceGuide(copy.live || `${copy.title}. ${copy.desc}`);
   if (appState.guide.mascotEnabled) setMascotSpeech(copy.title, copy.desc);
+  const panel = document.getElementById('onboardingTeachingPanel');
+  if (panel) panel.hidden = appState.guide.mascotEnabled;
 }
 
 function getVisibleModelGuideTarget() {
   return window.matchMedia?.('(max-width: 768px)')?.matches
     ? document.getElementById('mobileModelSelectCustom')
     : document.getElementById('modelSelectCustom');
+}
+
+function isMobileGuideViewport() {
+  return Boolean(window.matchMedia?.('(max-width: 768px)')?.matches);
+}
+
+function getDesktopSidebarGuideTarget() {
+  return document.querySelector('.sidebar-header-fixed .logo-section')
+    || document.getElementById('sidebar');
 }
 
 function addGuideTargetListener(signal, target, type, listener, options = {}) {
@@ -3570,7 +3630,7 @@ function setGuideTeachingStep(step) {
   closeModelModal();
   closeMoreMenu();
 
-  if (step === 'sidebar' && window.matchMedia?.('(max-width: 768px)')?.matches) {
+  if (step === 'sidebar' && isMobileGuideViewport()) {
     beginMobileSidebarDemo();
     return;
   }
@@ -3582,13 +3642,11 @@ function setGuideTeachingStep(step) {
   if (step === 'model') target = getVisibleModelGuideTarget();
   if (step === 'plus') target = document.getElementById('moreBtn');
   if (step === 'sidebar') {
-    target = document.querySelector('.sidebar-header-fixed .logo-section')
-      || document.querySelector('.sidebar-header-fixed')
-      || document.getElementById('sidebar');
+    target = getDesktopSidebarGuideTarget();
   }
   if (!target) return;
 
-  setGuideTarget(target, { focus: true });
+  setGuideTarget(target, { focus: step === 'input' });
   if (appState.guide.mascotEnabled) {
     const copy = getGuideStepCopy(step);
     moveMascotToElement(target, {
@@ -3635,7 +3693,7 @@ function setGuideTeachingStep(step) {
             speechText: copy.desc
           });
         }
-        guideRuntime.plusAdvanceTimer = scheduleGuideTimer(() => setGuideTeachingStep('sidebar'), 1600);
+        guideRuntime.plusAdvanceTimer = scheduleGuideTimer(() => setGuideTeachingStep('sidebar'), 2600);
       }, 80);
     });
     return;
@@ -3661,7 +3719,7 @@ function beginGuideTeaching() {
   appState.guide.teachingActive = true;
   overlay.classList.add('teaching');
   card.classList.add('guide-teaching');
-  panel.hidden = false;
+  panel.hidden = appState.guide.mascotEnabled;
   document.getElementById('onboardingStepsIndicator')?.setAttribute('aria-hidden', 'true');
   const nextBtn = document.getElementById('onboardingNextBtn');
   const startBtn = document.getElementById('onboardingStartBtn');
@@ -3675,6 +3733,7 @@ function beginGuideTeaching() {
 
 function cleanupGuideTeaching() {
   getGuideMascotElement()?.classList.remove('is-sidebar-demo-drag');
+  setMascotSpeech('', '');
   guideRuntime.teachingController?.abort();
   guideRuntime.teachingController = null;
   guideRuntime.teachingActive = false;
@@ -5256,8 +5315,11 @@ const i18n = {
     'onb-guide-plus-desc': '思考模式和研究模式适合更强的能力与更高质量的回答。这里只看一眼，不改变设置。',
     'onb-guide-plus-live': '请打开加号菜单，了解思考模式和研究模式。',
     'onb-guide-sidebar-title': '认识侧边栏',
-    'onb-guide-sidebar-desc': '侧边栏可以管理对话。桌面端请点击顶部聚焦；移动端稍后看我从边缘打开。',
+    'onb-guide-sidebar-desc': '侧边栏可以管理对话。看我从屏幕边缘把它拉出来。',
     'onb-guide-sidebar-live': '请试试侧边栏。',
+    'onb-guide-sidebar-desktop-title': '认识侧边栏',
+    'onb-guide-sidebar-desktop-desc': '桌面端的侧边栏已经展开，点击顶部的 RAI 标志即可完成引导。',
+    'onb-guide-sidebar-desktop-live': '请点击侧边栏顶部的 RAI 标志完成引导。',
     'onb-guide-sidebar-try-title': '你来试一次',
     'onb-guide-sidebar-try-desc': '从屏幕边缘向右滑动，打开侧边栏。',
     'onb-guide-sidebar-try-live': '你来试一次：从屏幕边缘向右滑动，打开侧边栏。',
@@ -5878,8 +5940,11 @@ const i18n = {
     'onb-guide-plus-desc': 'Think and Research modes are made for stronger capability and higher-quality answers. This is just a look — nothing will change.',
     'onb-guide-plus-live': 'Open the plus menu to learn about Think and Research modes.',
     'onb-guide-sidebar-title': 'Meet the sidebar',
-    'onb-guide-sidebar-desc': 'The sidebar keeps your conversations organized. On desktop, click its top to focus it; on mobile, watch me open it from the edge.',
+    'onb-guide-sidebar-desc': 'The sidebar keeps your conversations organized. Watch me pull it in from the edge.',
     'onb-guide-sidebar-live': 'Try the sidebar.',
+    'onb-guide-sidebar-desktop-title': 'Meet the sidebar',
+    'onb-guide-sidebar-desktop-desc': 'The sidebar is already open on desktop. Click the RAI mark at the top to finish the tour.',
+    'onb-guide-sidebar-desktop-live': 'Click the RAI mark at the top of the sidebar to finish the tour.',
     'onb-guide-sidebar-try-title': 'Your turn',
     'onb-guide-sidebar-try-desc': 'Swipe right from the edge of the screen to open the sidebar.',
     'onb-guide-sidebar-try-live': 'Your turn: swipe right from the edge of the screen to open the sidebar.',
@@ -6279,8 +6344,11 @@ Object.assign(i18n['zh-TW'], {
   'onb-guide-plus-desc': '思考模式和研究模式適合更強的能力與更高品質的回答。這裡只看一眼，不改變設定。',
   'onb-guide-plus-live': '請開啟加號選單，了解思考模式和研究模式。',
   'onb-guide-sidebar-title': '認識側邊欄',
-  'onb-guide-sidebar-desc': '側邊欄可以管理對話。桌面端請點擊頂部聚焦它；行動端先看我從邊緣開啟。',
+  'onb-guide-sidebar-desc': '側邊欄可以管理對話。看我從螢幕邊緣把它拉出來。',
   'onb-guide-sidebar-live': '請試試側邊欄。',
+  'onb-guide-sidebar-desktop-title': '認識側邊欄',
+  'onb-guide-sidebar-desktop-desc': '桌面端的側邊欄已經展開，點擊頂部的 RAI 標誌即可完成引導。',
+  'onb-guide-sidebar-desktop-live': '請點擊側邊欄頂部的 RAI 標誌完成引導。',
   'onb-guide-sidebar-try-title': '您來試一次',
   'onb-guide-sidebar-try-desc': '從螢幕邊緣向右滑動，開啟側邊欄。',
   'onb-guide-sidebar-try-live': '您來試一次：從螢幕邊緣向右滑動，開啟側邊欄。',
@@ -14768,7 +14836,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.11.96 初始化 (onboarding-mascot-r1)');
+  console.log(' RAI v0.11.97 初始化 (mascot-guide-rework-r5)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）

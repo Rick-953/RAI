@@ -169,13 +169,13 @@ function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.11\.96'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260812-onboarding-mascot-v01196-r1'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.11\.96-20260812-onboarding-mascot-v01196-r1'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260812-onboarding-mascot-v01196-r1/g) || []).length;
+  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.11\.97'\s*;/, 'RAI_APP_VERSION mismatch');
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-mascot-guide-rework-v01197-r5'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.11\.97-20260813-mascot-guide-rework-v01197-r5'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260813-mascot-guide-rework-v01197-r5/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.11\.96/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.11.96', 'package.json version mismatch');
+  assert.match(index, /v0\.11\.97/, 'index.html must show the matching app version');
+  assert.equal(packageJson.version, '0.11.97', 'package.json version mismatch');
 }
 
 function testGuideWiring() {
@@ -308,6 +308,75 @@ function testGlobalHide() {
   assert.match(hide, /setMascotSpeech\('',\s*''\)/, 'hide must clear speech for every instance');
 }
 
+function testMascotVisualGeometry() {
+  const dwell = extractNamedFunction(app, 'positionDwellMascot');
+  const obstacles = extractNamedFunction(app, 'getDwellMascotObstacles');
+  const size = extractNamedFunction(app, 'getMascotSize');
+
+  assert.match(index, /viewBox="0 0 160 160"/, 'mascot must use the compact 160px artboard');
+  assert.match(index, /class="rai-mascot-planet"\s+cx="80"\s+cy="81"\s+r="50"/,
+    'planet must fill enough of the compact artboard for its face to remain legible');
+  assert.match(index, /class="rai-mascot-eye"[^>]+rx="14"\s+ry="17"/,
+    'eyes must stay large enough to read at dwell size');
+  assert.match(index, /class="rai-mascot-blush"/, 'mascot must retain its friendly cheek details');
+  assert.match(index, /class="rai-mascot-tongue"/, 'mascot must retain its expressive smile detail');
+  assert.match(size, /\?\s*48\s*:\s*58/, 'mascot must use the 48px mobile / 58px desktop sizes');
+  assert.match(styles, /--rai-mascot-size:\s*58px/, 'desktop CSS mascot size must match JS geometry');
+  assert.match(styles, /@media\s*\(max-width:\s*768px\)[\s\S]*?--rai-mascot-size:\s*48px/,
+    'mobile CSS mascot size must match JS geometry');
+  assert.doesNotMatch(styles, /\.rai-guide-mascot\s*\{\s*--rai-mascot-size:\s*42px/,
+    'no late mobile rule may shrink the mascot back to 42px');
+  assert.match(dwell, /composer\.right\s*\+\s*12/,
+    'desktop dwell placement must prefer the outside-right composer edge');
+  assert.match(obstacles, /'\.welcome-actions'/,
+    'dwell placement must treat the welcome action rail as an obstacle');
+  assert.match(dwell, /getDwellMascotObstacles\(\)/,
+    'dwell placement must use the extended non-overlap obstacle set');
+  assert.match(dwell, /classList\.toggle\('is-obscured',\s*!candidate\)/,
+    'dwell mascot must hide instead of knowingly falling back onto an obstacle');
+}
+
+function testGuideLayoutAndDeviceSplit() {
+  const welcomeCue = extractNamedFunction(app, 'setWelcomeMascotCue');
+  const updateLayers = extractNamedFunction(app, 'updateGuideTargetLayers');
+  const step = extractNamedFunction(app, 'setGuideTeachingStep');
+  const copy = extractNamedFunction(app, 'getGuideStepCopy');
+  const placement = extractNamedFunction(app, 'positionMascotAtRect');
+  const speechSide = extractNamedFunction(app, 'syncMascotSpeechSide');
+  const cleanup = extractNamedFunction(app, 'cleanupGuideTeaching');
+
+  assert.match(styles, /\.onboarding-teaching-panel\s*\{[\s\S]*?display:\s*none;/,
+    'teaching panel must not occupy welcome-card layout before teaching starts');
+  assert.match(styles, /\.onboarding-teaching-panel\[hidden\]\s*\{\s*display:\s*none\s*!important;/,
+    'hidden teaching panel must remain hidden despite later component rules');
+  assert.match(styles, /\.onboarding-card\.guide-teaching\s*\{\s*display:\s*contents;/,
+    'teaching controls must float independently instead of squeezing the center content');
+  assert.match(styles, /\.onboarding-btn-skip\s*\{[\s\S]*?align-items:\s*center;[\s\S]*?justify-content:\s*center;/,
+    'skip button label must be centered in both axes');
+  assert.match(welcomeCue, /setGuideTarget\(target,\s*\{\s*focus:\s*false\s*\}\)/,
+    'welcome buttons must not receive a second browser focus outline');
+  assert.match(updateLayers, /getComputedStyle\(guideRuntime\.currentTarget\)\.borderRadius/,
+    'tap-target ring must inherit the target control radius');
+  assert.match(styles, /\.rai-guide-mask\s*\{[\s\S]*?z-index:\s*5100;/,
+    'guide mask must stay above fixed menus');
+  assert.match(styles, /\.rai-guide-ring\s*\{[\s\S]*?z-index:\s*5300;/,
+    'guide ring must stay above fixed menus');
+  assert.match(step, /step\s*===\s*'sidebar'\s*&&\s*isMobileGuideViewport\(\)/,
+    'edge-swipe sidebar demo must run only on mobile viewports');
+  assert.match(copy, /onb-guide-sidebar-desktop/,
+    'desktop sidebar step must use desktop click copy instead of swipe copy');
+  assert.match(step, /getDesktopSidebarGuideTarget\(\)/,
+    'desktop sidebar step must target a desktop sidebar control');
+  assert.match(placement, /top\s*<\s*getGuideViewportRect\(\)\.top\s*\+\s*8[\s\S]*?top\s*=\s*rect\.bottom\s*\+\s*12/,
+    'mascot must move below top-edge controls instead of intercepting their clicks');
+  assert.match(speechSide, /classList\.toggle\('speech-above',\s*!nearLeft\s*&&\s*!nearRight\)/,
+    'centered mascot must place its speech directly above instead of clipping sideways');
+  assert.match(styles, /\.rai-guide-mascot\.speech-above\s+\.rai-mascot-speech/,
+    'centered speech layout must exist in CSS');
+  assert.match(cleanup, /setMascotSpeech\('',\s*''\)/,
+    'finishing the tour must clear the final teaching speech');
+}
+
 function testTeachingStepsNoAutoSelect() {
   // 6f — model/plus steps never auto-select anything.
   const step = extractNamedFunction(app, 'setGuideTeachingStep');
@@ -371,7 +440,7 @@ function testRemediationWiring() {
 
   // R3: speech-side helper flips the bubble when the mascot sits near the left
   // edge, applied at the sidebar demo / "your turn" call sites.
-  assert.match(syncSide, /classList\.toggle\('speech-right',\s*left\s*<\s*viewportWidth\s*\*\s*0\.3\)/,
+  assert.match(syncSide, /const\s+nearLeft\s*=\s*left\s*<\s*viewportWidth\s*\*\s*0\.3[\s\S]*?classList\.toggle\('speech-right',\s*nearLeft\)/,
     'R3: speech-right must flip when the mascot is left of 30% of the viewport');
   assert.match(app, /syncMascotSpeechSide\(\);\s*\}/, 'R3: helper must be invoked at the mascot placement sites');
   assert.match(hide, /'speech-right'/, 'R3: hideMascot must clear the flipped side');
@@ -938,6 +1007,8 @@ async function runStaticTests() {
     { name: 'static:guide-trigger-paths', run: testGuideTriggerPaths },
     { name: 'static:auth-page-behaviors', run: testAuthPageBehaviors },
     { name: 'static:global-hide', run: testGlobalHide },
+    { name: 'static:mascot-visual-geometry', run: testMascotVisualGeometry },
+    { name: 'static:guide-layout-and-device-split', run: testGuideLayoutAndDeviceSplit },
     { name: 'static:teaching-steps-no-auto-select', run: testTeachingStepsNoAutoSelect },
     { name: 'static:pwa-suppression-r1-r2', run: testPwaSuppression },
     { name: 'static:reduced-motion', run: testReducedMotion },
@@ -1064,6 +1135,8 @@ module.exports = {
   testCompletionVersionRecording,
   testAuthPageBehaviors,
   testGlobalHide,
+  testMascotVisualGeometry,
+  testGuideLayoutAndDeviceSplit,
   testTeachingStepsNoAutoSelect,
   testPwaSuppression,
   testReducedMotion,
