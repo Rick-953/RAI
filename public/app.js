@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.95';
-const RAI_BUILD_ID = '20260811-title-lock-v01195-r1';
+const RAI_APP_VERSION = '0.11.96';
+const RAI_BUILD_ID = '20260812-onboarding-mascot-v01196-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2432,6 +2432,21 @@ if (RAI_IS_TAURI_DESKTOP && typeof window.fetch === 'function') {
     return nativeFetch(resource, init);
   };
 }
+
+const RAI_GUIDE_VERSION = 1;
+const RAI_GUIDE_LOCAL_STATE_KEY = 'rai_guide_state';
+
+function readGuideLocalMirror() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RAI_GUIDE_LOCAL_STATE_KEY) || '{}');
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed;
+  } catch (_) {
+    return {};
+  }
+}
+
+const initialGuideLocalMirror = readGuideLocalMirror();
 
 const appState = {
   user: null,
@@ -2503,6 +2518,14 @@ const appState = {
   securityLogoutAllPending: false,
   passkeyLoginPending: false,
   onboardingActive: false,
+  guide: {
+    mascotEnabled: initialGuideLocalMirror.mascotEnabled === undefined ? true : Boolean(initialGuideLocalMirror.mascotEnabled),
+    tapTargetEnabled: initialGuideLocalMirror.tapTargetEnabled === undefined ? true : Boolean(initialGuideLocalMirror.tapTargetEnabled),
+    completedVersion: Number(initialGuideLocalMirror.completedVersion) || 0,
+    serverAuthoritative: false,
+    serverUserId: '',
+    teachingActive: false
+  },
   touchStartX: 0,
   touchStartY: 0,
   touchMoveX: 0,
@@ -2592,6 +2615,1128 @@ const BOOKMARK_DOMAIN_REWARD_POINTS = 10;
 const PWA_INSTALL_CLAIM_SOURCE = 'already-installed-claim';
 let pwaInstallTaskReportPending = false;
 let pwaRewardPromptDismissedThisSession = false;
+
+// ==================== Guide state + mascot runtime ====================
+// The guide has one state surface so the later Settings lane can change the
+// two controls without knowing anything about the onboarding DOM.
+const guideRuntime = {
+  mascot: null,
+  mask: null,
+  ring: null,
+  currentTarget: null,
+  mascotTarget: null,
+  targetObserver: null,
+  targetController: null,
+  targetPositionRaf: 0,
+  mascotPositionRaf: 0,
+  welcomeTimer: null,
+  timers: new Set(),
+  teachingStep: '',
+  teachingController: null,
+  teachingActive: false,
+  plusAdvanceTimer: null,
+  sidebarDemoTimers: [],
+  waitingForSidebarSwipe: false,
+  focusBeforeGuide: null,
+  reducedMotionQuery: null,
+  reducedMotion: false,
+  initialized: false,
+  lastGuideFocusAt: 0,
+  domObserver: null
+};
+
+const raiMascotState = {
+  mode: 'hidden',
+  expression: 'open',
+  tapHandlers: new Set(),
+  onTap(event) {
+    if (this.mode === 'hidden' || appState.guide.mascotEnabled === false) return;
+    const expressions = guideRuntime.reducedMotion
+      ? ['blink', 'look-left', 'look-right']
+      : ['blink', 'look-left', 'look-right', 'hop'];
+    const expression = expressions[Math.floor(Math.random() * expressions.length)];
+    setMascotExpression(expression);
+    if (document.activeElement?.id === 'authPassword') updateMascotPasswordExpression();
+    this.tapHandlers.forEach((handler) => {
+      try {
+        handler({ event, expression, state: this });
+      } catch (error) {
+        console.warn('RAI mascot tap handler failed:', error);
+      }
+    });
+  }
+};
+
+window.raiMascotState = raiMascotState;
+
+function persistGuideLocalMirror() {
+  try {
+    localStorage.setItem(RAI_GUIDE_LOCAL_STATE_KEY, JSON.stringify({
+      mascotEnabled: appState.guide.mascotEnabled,
+      tapTargetEnabled: appState.guide.tapTargetEnabled,
+      completedVersion: appState.guide.completedVersion
+    }));
+  } catch (_) {
+    // A private browsing context may reject localStorage. Server state still wins.
+  }
+}
+
+function getGuideUserIdentity(user = appState.user) {
+  return String(user?.id || user?.email || '').trim();
+}
+
+function getGuideCompletionStorageKey(user = appState.user) {
+  const identity = getGuideUserIdentity(user);
+  return identity ? `rai_onboarding_completed_version:${identity}` : 'rai_onboarding_completed_version';
+}
+
+function readGuideCompletionMirror(user = appState.user) {
+  try {
+    const value = Number.parseInt(localStorage.getItem(getGuideCompletionStorageKey(user)) || '0', 10);
+    return Number.isFinite(value) ? value : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function writeGuideCompletionMirror(version, user = appState.user) {
+  const normalized = Math.max(0, Number.parseInt(version, 10) || 0);
+  try {
+    localStorage.setItem(getGuideCompletionStorageKey(user), String(normalized));
+    if (normalized >= RAI_GUIDE_VERSION) {
+      // Keep the original key readable for clients that predate guide versions.
+      localStorage.setItem(getOnboardingStorageKey(user), '1');
+      localStorage.setItem('rai_onboarding_done', '1');
+    }
+  } catch (_) {
+    // Best effort mirror only.
+  }
+}
+
+function isGuideCompleted(user = appState.user) {
+  const serverCompleted = appState.guide.serverAuthoritative
+    && getGuideUserIdentity(user)
+    && getGuideUserIdentity(user) === appState.guide.serverUserId
+    ? appState.guide.completedVersion
+    : 0;
+  return Math.max(Number(serverCompleted) || 0, readGuideCompletionMirror(user)) >= RAI_GUIDE_VERSION
+    || (() => {
+      try {
+        return localStorage.getItem(getOnboardingStorageKey(user)) === '1'
+          || localStorage.getItem('rai_onboarding_done') === '1';
+      } catch (_) {
+        return false;
+      }
+    })();
+}
+
+function applyServerGuideState(profile = {}, user = appState.user) {
+  if (!profile || typeof profile !== 'object') return;
+  const userId = getGuideUserIdentity(user || profile);
+  const hasMascot = typeof profile.guideMascotEnabled === 'boolean'
+    || profile.guideMascotEnabled === 0 || profile.guideMascotEnabled === 1;
+  const hasTapTarget = typeof profile.guideTapTargetEnabled === 'boolean'
+    || profile.guideTapTargetEnabled === 0 || profile.guideTapTargetEnabled === 1;
+  const hasCompletedVersion = Number.isFinite(Number(profile.onboardingCompletedVersion));
+
+  // The authenticated profile is authoritative. Missing fields are tolerated
+  // during the backend rollout, while pre-login pages continue using the mirror.
+  if (hasMascot) appState.guide.mascotEnabled = profile.guideMascotEnabled === true || profile.guideMascotEnabled === 1;
+  if (hasTapTarget) appState.guide.tapTargetEnabled = profile.guideTapTargetEnabled === true || profile.guideTapTargetEnabled === 1;
+  if (hasCompletedVersion) appState.guide.completedVersion = Math.max(0, Number(profile.onboardingCompletedVersion));
+  if (userId) {
+    appState.guide.serverUserId = userId;
+    appState.guide.serverAuthoritative = true;
+  }
+  persistGuideLocalMirror();
+  syncGuideMascotVisibility();
+  refreshGuideTargetPresentation();
+}
+
+let guideServerPatchQueue = null;
+let guideServerPatchPromise = null;
+
+async function patchGuideState(patch = {}) {
+  if (!appState.token || !appState.user || appState.customApiMode) return null;
+  const response = await fetch(`${API_BASE}/user/guide-state`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${appState.token}`
+    },
+    credentials: 'include',
+    cache: 'no-store',
+    body: JSON.stringify(patch)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    // Guide version contract: a 400 that rejects an outdated completedVersion
+    // means this client is behind the server guide. Refresh the authenticated
+    // profile so the client converges instead of treating it as a plain failure.
+    if (response.status === 400 && /completedVersion/.test(String(data?.error || ''))) {
+      try {
+        const profileResponse = await fetch(`${API_BASE}/user/profile`, {
+          headers: { 'Authorization': `Bearer ${appState.token}` },
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        if (profileResponse.ok) {
+          const profile = await profileResponse.json().catch(() => ({}));
+          if (profile && typeof profile === 'object') applyServerGuideState(profile, appState.user);
+        }
+      } catch (_) {
+        // Best-effort convergence only; the error below still surfaces the failure.
+      }
+    }
+    throw new Error(data?.error || `HTTP ${response.status}`);
+  }
+  applyServerGuideState(data, appState.user);
+  return data;
+}
+
+function syncGuideStateToServer(patch = {}) {
+  // Without a server session the local mirror is authoritative, so nothing to
+  // sync is a successful no-op (keeps pre-login settings toggles quiet).
+  if (!appState.token || !appState.user || appState.customApiMode) return Promise.resolve({ ok: true, failedFields: [] });
+  guideServerPatchQueue = { ...(guideServerPatchQueue || {}), ...patch };
+  if (guideServerPatchPromise) return guideServerPatchPromise;
+
+  guideServerPatchPromise = (async () => {
+    // R5: per-field outcomes — the single-flight queue can merge patches from
+    // several callers, so report which field names failed so each caller can
+    // roll back ONLY its own field. Fire-and-forget callers (e.g. the
+    // onboarding-completion sync) ignore the result entirely.
+    const failedFields = [];
+    while (guideServerPatchQueue) {
+      const nextPatch = guideServerPatchQueue;
+      guideServerPatchQueue = null;
+      try {
+        await patchGuideState(nextPatch);
+      } catch (error) {
+        failedFields.push(...Object.keys(nextPatch));
+        console.warn('Guide state sync failed:', error?.message || error);
+      }
+    }
+    return { ok: failedFields.length === 0, failedFields };
+  })().finally(() => {
+    guideServerPatchPromise = null;
+  });
+  return guideServerPatchPromise;
+}
+
+// Public settings hooks. Keep these names stable for the later settings phase.
+function applyGuideMascotState(enabled) {
+  const previous = appState.guide.mascotEnabled;
+  appState.guide.mascotEnabled = Boolean(enabled);
+  persistGuideLocalMirror();
+  syncGuideMascotVisibility();
+  return syncGuideStateToServer({ mascotEnabled: appState.guide.mascotEnabled }).then((result) => {
+    // R5: roll back only this field — a queued patch from the other toggle may
+    // have failed independently.
+    if (result && Array.isArray(result.failedFields) && result.failedFields.includes('mascotEnabled')) {
+      appState.guide.mascotEnabled = previous;
+      persistGuideLocalMirror();
+      syncGuideMascotVisibility();
+    }
+    return result;
+  });
+}
+
+function applyGuideTapTargetState(enabled) {
+  const previous = appState.guide.tapTargetEnabled;
+  appState.guide.tapTargetEnabled = Boolean(enabled);
+  persistGuideLocalMirror();
+  refreshGuideTargetPresentation();
+  return syncGuideStateToServer({ tapTargetEnabled: appState.guide.tapTargetEnabled }).then((result) => {
+    // R5: roll back only this field — a queued patch from the other toggle may
+    // have failed independently.
+    if (result && Array.isArray(result.failedFields) && result.failedFields.includes('tapTargetEnabled')) {
+      appState.guide.tapTargetEnabled = previous;
+      persistGuideLocalMirror();
+      refreshGuideTargetPresentation();
+    }
+    return result;
+  });
+}
+
+function getGuideState() {
+  return {
+    mascotEnabled: appState.guide.mascotEnabled,
+    tapTargetEnabled: appState.guide.tapTargetEnabled,
+    completedVersion: appState.guide.completedVersion
+  };
+}
+
+window.applyGuideMascotState = applyGuideMascotState;
+window.applyGuideTapTargetState = applyGuideTapTargetState;
+window.getGuideState = getGuideState;
+
+function getMascotSize() {
+  return window.matchMedia?.('(max-width: 768px)')?.matches ? 42 : 52;
+}
+
+function isGuideMotionEnabled() {
+  return !guideRuntime.reducedMotion;
+}
+
+function getGuideMascotElement() {
+  if (!guideRuntime.mascot) guideRuntime.mascot = document.getElementById('raiGuideMascot');
+  return guideRuntime.mascot;
+}
+
+function setMascotExpression(expression = 'open') {
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  mascot.classList.remove('is-blinking', 'is-looking-left', 'is-looking-right', 'is-tap-hop');
+  raiMascotState.expression = expression;
+
+  if (expression === 'blink') {
+    mascot.classList.add('is-blinking');
+    window.setTimeout(() => {
+      if (raiMascotState.expression === 'blink' && !document.getElementById('authPassword')?.matches(':focus')) {
+        mascot.classList.remove('is-blinking');
+        raiMascotState.expression = 'open';
+      }
+    }, guideRuntime.reducedMotion ? 220 : 460);
+  } else if (expression === 'look-left') {
+    mascot.classList.add('is-looking-left');
+    window.setTimeout(() => mascot.classList.remove('is-looking-left'), 680);
+  } else if (expression === 'look-right') {
+    mascot.classList.add('is-looking-right');
+    window.setTimeout(() => mascot.classList.remove('is-looking-right'), 680);
+  } else if (expression === 'hop' && isGuideMotionEnabled()) {
+    mascot.classList.add('is-tap-hop');
+    window.setTimeout(() => mascot.classList.remove('is-tap-hop'), 640);
+  }
+}
+
+function setMascotSpeech(title = '', text = '') {
+  const speech = document.getElementById('raiMascotSpeech');
+  const titleEl = document.getElementById('raiMascotSpeechTitle');
+  const textEl = document.getElementById('raiMascotSpeechText');
+  if (!speech || !titleEl || !textEl) return;
+  titleEl.textContent = title;
+  textEl.textContent = text;
+  speech.hidden = !title && !text;
+}
+
+// R3: when the mascot's clamped horizontal position is near the left edge of
+// the viewport, flip the speech bubble to the other side (speech-right) so it
+// does not clip off-screen (mobile sidebar demo / "your turn" steps).
+function syncMascotSpeechSide() {
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  const viewport = getGuideViewportRect();
+  const viewportWidth = Math.max(1, viewport.right - viewport.left);
+  const left = Number.parseFloat(mascot.style.left) || 0;
+  mascot.classList.toggle('speech-right', left < viewportWidth * 0.3);
+}
+
+function setMascotCoordinates(left, top) {
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  const size = getMascotSize();
+  const viewport = window.visualViewport;
+  const viewportLeft = Math.max(0, Number(viewport?.offsetLeft || 0));
+  const viewportTop = Math.max(0, Number(viewport?.offsetTop || 0));
+  const viewportWidth = Number(viewport?.width || window.innerWidth);
+  const viewportHeight = Number(viewport?.height || window.innerHeight);
+  const minLeft = viewportLeft + 8;
+  const maxLeft = Math.max(minLeft, viewportLeft + viewportWidth - size - 8);
+  const minTop = viewportTop + 8;
+  const maxTop = Math.max(minTop, viewportTop + viewportHeight - size - 8);
+  mascot.style.left = `${Math.round(Math.max(minLeft, Math.min(Number(left) || 0, maxLeft)))}px`;
+  mascot.style.top = `${Math.round(Math.max(minTop, Math.min(Number(top) || 0, maxTop)))}px`;
+  mascot.style.right = 'auto';
+  mascot.style.bottom = 'auto';
+}
+
+function getGuideRect(target) {
+  if (!target || !target.isConnected) return null;
+  const rect = target.getBoundingClientRect();
+  if (!rect.width && !rect.height) return null;
+  return rect;
+}
+
+function rectsOverlap(first, second, gap = 0) {
+  return !(
+    first.right + gap <= second.left
+    || first.left - gap >= second.right
+    || first.bottom + gap <= second.top
+    || first.top - gap >= second.bottom
+  );
+}
+
+function getGuideViewportRect() {
+  const viewport = window.visualViewport;
+  return {
+    left: Math.max(0, Number(viewport?.offsetLeft || 0)),
+    top: Math.max(0, Number(viewport?.offsetTop || 0)),
+    right: Math.max(1, Number(viewport?.offsetLeft || 0) + Number(viewport?.width || window.innerWidth)),
+    bottom: Math.max(1, Number(viewport?.offsetTop || 0) + Number(viewport?.height || window.innerHeight))
+  };
+}
+
+function getGuideObstacles() {
+  const selectors = [
+    '.settings-modal.active', '.forgot-password-overlay.active', '.pwa-reward-overlay.active',
+    '.membership-plans-overlay.active', '.feedback-modal-overlay.active', '.new-chat-mode-modal.active',
+    '.admin-modal-overlay.active', '.model-dropdown-menu.active', '.more-menu.active',
+    '.thinking-budget-modal.active', '.selection-explain-history.is-open',
+    '.selection-explain-delete-dialog-backdrop:not([hidden])'
+  ];
+  return selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+    .map((element) => getGuideRect(element))
+    .filter(Boolean);
+}
+
+function positionMascotAtRect(rect, placement = 'above') {
+  const size = getMascotSize();
+  let left = rect.left + (rect.width - size) / 2;
+  let top = rect.top - size - 14;
+  if (placement === 'right') {
+    left = rect.right + 12;
+    top = rect.top + (rect.height - size) / 2;
+  } else if (placement === 'top-right') {
+    left = rect.right - size * 0.75;
+    top = rect.top - size - 12;
+  }
+  setMascotCoordinates(left, top);
+}
+
+function positionAuthMascot() {
+  const mascot = getGuideMascotElement();
+  const authBox = document.querySelector('#authContainer.active .auth-box');
+  if (!mascot || !authBox) return;
+  const rect = authBox.getBoundingClientRect();
+  const size = getMascotSize();
+  const viewport = getGuideViewportRect();
+  const left = Math.min(viewport.right - size - 12, rect.right - size * 0.4);
+  const top = Math.max(viewport.top + 12, rect.top - size * 0.45);
+  setMascotCoordinates(left, top);
+}
+
+function positionDwellMascot() {
+  const mascot = getGuideMascotElement();
+  if (!mascot || raiMascotState.mode !== 'dwell') return;
+  const size = getMascotSize();
+  const viewport = getGuideViewportRect();
+  const composer = getGuideRect(document.getElementById('inputContainer'));
+  const desired = composer
+    ? { left: composer.right - size - 8, top: composer.top - size - 10 }
+    : { left: viewport.right - size - 16, top: viewport.bottom - size - 100 };
+  const candidates = [
+    desired,
+    { left: viewport.right - size - 12, top: viewport.top + 14 },
+    { left: viewport.left + 12, top: viewport.top + 14 },
+    { left: viewport.right - size - 12, top: viewport.bottom - size - 18 }
+  ];
+  const obstacles = getGuideObstacles();
+  const fullViewportObstacle = obstacles.some((obstacle) => (
+    obstacle.width >= (viewport.right - viewport.left) * 0.72
+    && obstacle.height >= (viewport.bottom - viewport.top) * 0.72
+  ));
+  mascot.classList.toggle('is-obscured', fullViewportObstacle);
+  if (fullViewportObstacle) return;
+  const mascotRect = (candidate) => ({
+    left: candidate.left,
+    top: candidate.top,
+    right: candidate.left + size,
+    bottom: candidate.top + size
+  });
+  const candidate = candidates.find((item) => {
+    const rect = mascotRect(item);
+    return rect.right > viewport.left && rect.left < viewport.right
+      && rect.bottom > viewport.top && rect.top < viewport.bottom
+      && !obstacles.some((obstacle) => rectsOverlap(rect, obstacle, 8));
+  }) || candidates[1];
+  setMascotCoordinates(candidate.left, candidate.top);
+}
+
+function requestMascotPosition() {
+  if (guideRuntime.mascotPositionRaf) return;
+  guideRuntime.mascotPositionRaf = requestAnimationFrame(() => {
+    guideRuntime.mascotPositionRaf = 0;
+    const mascot = getGuideMascotElement();
+    if (!mascot || mascot.hidden) return;
+    if (raiMascotState.mode === 'auth') {
+      positionAuthMascot();
+    } else if (raiMascotState.mode === 'dwell') {
+      positionDwellMascot();
+    } else if (guideRuntime.mascotTarget) {
+      const rect = getGuideRect(guideRuntime.mascotTarget);
+      if (rect) positionMascotAtRect(rect, guideRuntime.mascotTarget.dataset?.mascotPlacement || 'above');
+    }
+  });
+}
+
+function bounceMascot() {
+  const mascot = getGuideMascotElement();
+  if (!mascot || !isGuideMotionEnabled()) return;
+  mascot.classList.remove('is-guide-hop');
+  void mascot.offsetWidth;
+  mascot.classList.add('is-guide-hop');
+  window.setTimeout(() => mascot.classList.remove('is-guide-hop'), 800);
+}
+
+function moveMascotToElement(target, { placement = 'above', bounce = true, speechTitle = '', speechText = '' } = {}) {
+  const mascot = getGuideMascotElement();
+  if (!mascot || !appState.guide.mascotEnabled || !target) return;
+  guideRuntime.mascotTarget = target;
+  target.dataset.mascotPlacement = placement;
+  setMascotSpeech(speechTitle, speechText);
+  const rect = getGuideRect(target);
+  if (rect) positionMascotAtRect(rect, placement);
+  if (bounce) bounceMascot();
+}
+
+function hideMascot() {
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  mascot.hidden = true;
+  mascot.classList.remove('is-auth', 'is-dwell', 'is-guide', 'is-guide-hop', 'is-tap-hop', 'is-sidebar-demo-drag', 'is-obscured', 'speech-right');
+  setMascotSpeech('', '');
+  raiMascotState.mode = 'hidden';
+  guideRuntime.mascotTarget = null;
+}
+
+function syncGuideMascotVisibility() {
+  const mascot = getGuideMascotElement();
+  if (!mascot || !appState.guide.mascotEnabled) {
+    hideMascot();
+    return;
+  }
+  const authVisible = document.getElementById('authContainer')?.classList.contains('active');
+  const guideVisible = appState.onboardingActive || appState.guide.teachingActive;
+  const dwellVisible = appState.authState === 'authenticated'
+    && !guideVisible
+    && !appState.customApiMode
+    && isGuideCompleted();
+  mascot.classList.remove('is-obscured');
+  if (guideVisible) {
+    mascot.hidden = false;
+    mascot.classList.remove('is-auth', 'is-dwell');
+    mascot.classList.add('is-guide');
+    raiMascotState.mode = 'guide';
+  } else if (authVisible) {
+    mascot.hidden = false;
+    mascot.classList.remove('is-guide', 'is-dwell');
+    mascot.classList.add('is-auth');
+    raiMascotState.mode = 'auth';
+  } else if (dwellVisible) {
+    mascot.hidden = false;
+    mascot.classList.remove('is-auth', 'is-guide');
+    mascot.classList.add('is-dwell');
+    raiMascotState.mode = 'dwell';
+  } else {
+    hideMascot();
+    return;
+  }
+  requestMascotPosition();
+}
+
+function updateMascotPasswordExpression() {
+  const password = document.getElementById('authPassword');
+  const mascot = getGuideMascotElement();
+  if (!password || !mascot || !appState.guide.mascotEnabled) return;
+  const closed = document.activeElement === password;
+  if (closed) {
+    mascot.classList.add('is-blinking');
+    raiMascotState.expression = 'blink';
+  } else {
+    mascot.classList.remove('is-blinking');
+    if (raiMascotState.expression === 'blink') raiMascotState.expression = 'open';
+  }
+}
+
+function initMascotAuthBindings() {
+  const password = document.getElementById('authPassword');
+  if (!password || password.dataset.mascotBound === 'true') return;
+  password.dataset.mascotBound = 'true';
+  password.addEventListener('focus', updateMascotPasswordExpression);
+  password.addEventListener('blur', updateMascotPasswordExpression);
+  password.addEventListener('input', updateMascotPasswordExpression);
+}
+
+function isGuideReducedMotion() {
+  return guideRuntime.reducedMotion;
+}
+
+function setGuideReducedMotion(value) {
+  guideRuntime.reducedMotion = Boolean(value);
+  document.documentElement.classList.toggle('rai-reduced-motion', guideRuntime.reducedMotion);
+  if (guideRuntime.reducedMotion) {
+    const mascot = getGuideMascotElement();
+    mascot?.classList.remove('is-guide-hop', 'is-tap-hop');
+    guideRuntime.ring?.classList.add('static');
+  } else {
+    guideRuntime.ring?.classList.remove('static');
+  }
+  refreshGuideTargetPresentation();
+}
+
+function initGuideMotionPreference() {
+  const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  guideRuntime.reducedMotionQuery = query || null;
+  setGuideReducedMotion(Boolean(query?.matches));
+  query?.addEventListener?.('change', (event) => setGuideReducedMotion(event.matches));
+}
+
+function registerRaiMascotTapHandler(handler) {
+  if (typeof handler !== 'function') return () => {};
+  raiMascotState.tapHandlers.add(handler);
+  return () => raiMascotState.tapHandlers.delete(handler);
+}
+
+window.registerRaiMascotTapHandler = registerRaiMascotTapHandler;
+
+function initMascotElement() {
+  const mascot = getGuideMascotElement();
+  if (!mascot || mascot.dataset.mascotBound === 'true') return;
+  mascot.dataset.mascotBound = 'true';
+  mascot.addEventListener('click', (event) => raiMascotState.onTap(event));
+  initMascotAuthBindings();
+  initGuideMotionPreference();
+  window.addEventListener('resize', requestMascotPosition, { passive: true });
+  window.addEventListener('orientationchange', requestMascotPosition, { passive: true });
+  window.visualViewport?.addEventListener('resize', requestMascotPosition, { passive: true });
+  window.visualViewport?.addEventListener('scroll', requestMascotPosition, { passive: true });
+  syncGuideMascotVisibility();
+}
+
+function ensureGuideTargetLayers() {
+  if (!document.body) return;
+  if (!guideRuntime.mask) {
+    const mask = document.createElement('div');
+    mask.id = 'raiGuideMask';
+    mask.className = 'rai-guide-mask';
+    mask.setAttribute('aria-hidden', 'true');
+    ['top', 'right', 'bottom', 'left'].forEach((side) => {
+      const pane = document.createElement('div');
+      pane.className = `rai-guide-mask-pane rai-guide-mask-pane-${side}`;
+      pane.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      pane.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      mask.appendChild(pane);
+    });
+    document.body.appendChild(mask);
+    guideRuntime.mask = mask;
+  }
+  if (!guideRuntime.ring) {
+    const ring = document.createElement('div');
+    ring.id = 'raiGuideRing';
+    ring.className = 'rai-guide-ring';
+    ring.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(ring);
+    guideRuntime.ring = ring;
+  }
+}
+
+function getGuideMaskPanes() {
+  return guideRuntime.mask ? {
+    top: guideRuntime.mask.querySelector('.rai-guide-mask-pane-top'),
+    right: guideRuntime.mask.querySelector('.rai-guide-mask-pane-right'),
+    bottom: guideRuntime.mask.querySelector('.rai-guide-mask-pane-bottom'),
+    left: guideRuntime.mask.querySelector('.rai-guide-mask-pane-left')
+  } : {};
+}
+
+function hideGuideTargetLayers() {
+  guideRuntime.mask?.classList.remove('active');
+  document.getElementById('onboardingOverlay')?.classList.remove('guide-targeting');
+  if (guideRuntime.ring) {
+    guideRuntime.ring.classList.remove('active', 'static');
+    guideRuntime.ring.style.cssText = '';
+  }
+}
+
+function updateGuideTargetLayers(rect) {
+  if (!guideRuntime.mask || !guideRuntime.ring || !rect || !appState.guide.tapTargetEnabled) {
+    hideGuideTargetLayers();
+    return;
+  }
+
+  const padding = 8;
+  const left = Math.max(0, rect.left - padding);
+  const top = Math.max(0, rect.top - padding);
+  const right = Math.min(window.innerWidth, rect.right + padding);
+  const bottom = Math.min(window.innerHeight, rect.bottom + padding);
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  const panes = getGuideMaskPanes();
+  if (panes.top) {
+    panes.top.style.cssText = `left:0;top:0;width:${window.innerWidth}px;height:${top}px;`;
+  }
+  if (panes.right) {
+    panes.right.style.cssText = `left:${right}px;top:${top}px;width:${Math.max(0, window.innerWidth - right)}px;height:${height}px;`;
+  }
+  if (panes.bottom) {
+    panes.bottom.style.cssText = `left:0;top:${bottom}px;width:${window.innerWidth}px;height:${Math.max(0, window.innerHeight - bottom)}px;`;
+  }
+  if (panes.left) {
+    panes.left.style.cssText = `left:0;top:${top}px;width:${left}px;height:${height}px;`;
+  }
+  guideRuntime.mask.classList.add('active');
+  document.getElementById('onboardingOverlay')?.classList.add('guide-targeting');
+  guideRuntime.ring.style.left = `${left}px`;
+  guideRuntime.ring.style.top = `${top}px`;
+  guideRuntime.ring.style.width = `${width}px`;
+  guideRuntime.ring.style.height = `${height}px`;
+  guideRuntime.ring.classList.add('active');
+  guideRuntime.ring.classList.toggle('static', isGuideReducedMotion());
+}
+
+function announceGuide(text) {
+  if (!document.body) return;
+  let live = document.getElementById('raiGuideLiveRegion');
+  if (!live) {
+    live = document.createElement('div');
+    live.id = 'raiGuideLiveRegion';
+    live.className = 'sr-only';
+    live.setAttribute('aria-live', 'polite');
+    live.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(live);
+  }
+  live.textContent = String(text || '');
+}
+
+function makeGuideTargetFocusable(target) {
+  if (!target || target.matches?.('input, textarea, button, select, a, [contenteditable="true"]')) return;
+  if (!target.hasAttribute('tabindex')) {
+    target.setAttribute('tabindex', '0');
+    target.dataset.raiGuideAddedTabindex = 'true';
+  }
+}
+
+function restoreGuideTargetFocusability(target) {
+  if (!target || target.dataset.raiGuideAddedTabindex !== 'true') return;
+  target.removeAttribute('tabindex');
+  delete target.dataset.raiGuideAddedTabindex;
+}
+
+function clearGuideTarget() {
+  guideRuntime.targetController?.abort();
+  guideRuntime.targetController = null;
+  guideRuntime.targetObserver?.disconnect();
+  guideRuntime.targetObserver = null;
+  if (guideRuntime.currentTarget) {
+    guideRuntime.currentTarget.classList.remove('rai-guide-focus');
+    restoreGuideTargetFocusability(guideRuntime.currentTarget);
+  }
+  guideRuntime.currentTarget = null;
+  guideRuntime.mascotTarget = null;
+  hideGuideTargetLayers();
+}
+
+function refreshGuideTargetPresentation() {
+  if (guideRuntime.currentTarget) {
+    const rect = getGuideRect(guideRuntime.currentTarget);
+    if (!rect) {
+      if (guideRuntime.teachingActive && guideRuntime.teachingStep === 'model') {
+        const replacement = getVisibleModelGuideTarget();
+        if (replacement && replacement !== guideRuntime.currentTarget) {
+          setGuideTeachingStep('model');
+          return;
+        }
+      }
+      hideGuideTargetLayers();
+      return;
+    }
+    guideRuntime.currentTarget.classList.toggle('rai-guide-focus', appState.guide.tapTargetEnabled);
+    updateGuideTargetLayers(rect);
+    requestMascotPosition();
+    return;
+  }
+  if (!appState.guide.tapTargetEnabled) {
+    hideGuideTargetLayers();
+    return;
+  }
+  if (!guideRuntime.edgeSwipeTarget) hideGuideTargetLayers();
+}
+
+function setGuideTarget(target, { focus = true } = {}) {
+  clearGuideTarget();
+  if (!target) return null;
+  const controller = new AbortController();
+  guideRuntime.targetController = controller;
+  guideRuntime.currentTarget = target;
+  makeGuideTargetFocusable(target);
+  target.classList.toggle('rai-guide-focus', appState.guide.tapTargetEnabled);
+  target.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    target.click();
+  }, { signal: controller.signal, capture: true });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    guideRuntime.targetObserver = new ResizeObserver(() => refreshGuideTargetPresentation());
+    guideRuntime.targetObserver.observe(target);
+  }
+
+  if (focus && typeof target.focus === 'function') {
+    guideRuntime.lastGuideFocusAt = Date.now();
+    requestAnimationFrame(() => {
+      if (guideRuntime.currentTarget !== target || !target.isConnected) return;
+      try {
+        target.focus({ preventScroll: true });
+      } catch (_) {
+        target.focus();
+      }
+    });
+  }
+  refreshGuideTargetPresentation();
+  return controller.signal;
+}
+
+function setGuideEdgeSwipeTarget() {
+  clearGuideTarget();
+  guideRuntime.edgeSwipeTarget = true;
+  const viewport = getGuideViewportRect();
+  const ring = guideRuntime.ring;
+  if (appState.guide.tapTargetEnabled && ring) {
+    ring.style.left = `${viewport.left + 6}px`;
+    ring.style.top = `${Math.max(viewport.top + 80, viewport.top + (viewport.bottom - viewport.top) * 0.5 - 32)}px`;
+    ring.style.width = '42px';
+    ring.style.height = '64px';
+    ring.classList.add('active');
+    ring.classList.toggle('static', isGuideReducedMotion());
+  }
+  if (appState.guide.mascotEnabled) {
+    const mascot = getGuideMascotElement();
+    if (mascot) {
+      guideRuntime.mascotTarget = null;
+      setMascotCoordinates(viewport.left + 12, viewport.top + (viewport.bottom - viewport.top) * 0.5 - getMascotSize() / 2);
+    }
+  }
+}
+
+function clearGuideEdgeSwipeTarget() {
+  guideRuntime.edgeSwipeTarget = false;
+  hideGuideTargetLayers();
+}
+
+function scheduleGuideTimer(callback, delay) {
+  const timer = window.setTimeout(() => {
+    guideRuntime.timers.delete(timer);
+    callback();
+  }, delay);
+  guideRuntime.timers.add(timer);
+  return timer;
+}
+
+function clearGuideTimers() {
+  if (guideRuntime.welcomeTimer) window.clearTimeout(guideRuntime.welcomeTimer);
+  guideRuntime.welcomeTimer = null;
+  guideRuntime.timers.forEach((timer) => window.clearTimeout(timer));
+  guideRuntime.timers.clear();
+  if (guideRuntime.plusAdvanceTimer) window.clearTimeout(guideRuntime.plusAdvanceTimer);
+  guideRuntime.plusAdvanceTimer = null;
+  guideRuntime.sidebarDemoTimers.forEach((timer) => window.clearTimeout(timer));
+  guideRuntime.sidebarDemoTimers = [];
+}
+
+function getGuideTargetForWelcome(step) {
+  if (step === 2) return document.getElementById('onboardingStartBtn');
+  return document.getElementById('onboardingNextBtn');
+}
+
+function setWelcomeMascotCue(step) {
+  const target = getGuideTargetForWelcome(step);
+  if (!target || target.style.display === 'none') return;
+  if (!appState.guide.mascotEnabled && !appState.guide.tapTargetEnabled) return;
+  const title = i18nText('onb-guide-ready-title', 'Ready when you are');
+  const desc = i18nText('onb-guide-ready-desc', 'Tap the button when you want to continue.');
+  setGuideTarget(target, { focus: true });
+  if (appState.guide.mascotEnabled) {
+    moveMascotToElement(target, { placement: 'above', bounce: true, speechTitle: title, speechText: desc });
+  }
+  announceGuide(`${title}. ${desc}`);
+}
+
+function scheduleWelcomeMascotCue(step) {
+  if (guideRuntime.welcomeTimer) window.clearTimeout(guideRuntime.welcomeTimer);
+  guideRuntime.welcomeTimer = scheduleGuideTimer(() => {
+    if (!appState.onboardingActive || guideRuntime.teachingActive) return;
+    setWelcomeMascotCue(step);
+  }, 2000);
+}
+
+function getGuideStepCopy(step, sidebarTry = false) {
+  const key = sidebarTry ? 'onb-guide-sidebar-try' : `onb-guide-${step}`;
+  return {
+    title: i18nText(`${key}-title`, step === 'input' ? 'Try the composer' : step === 'model' ? 'Open the model menu' : step === 'plus' ? 'See the extra controls' : 'Meet the sidebar'),
+    desc: i18nText(`${key}-desc`, ''),
+    live: i18nText(`${key}-live`, '')
+  };
+}
+
+function updateGuideTeachingPanel(step, sidebarTry = false) {
+  const titleEl = document.getElementById('onboardingTeachingTitle');
+  const descEl = document.getElementById('onboardingTeachingDesc');
+  const statusEl = document.getElementById('onboardingTeachingStatus');
+  if (!titleEl || !descEl) return;
+  const copy = getGuideStepCopy(step, sidebarTry);
+  titleEl.textContent = copy.title;
+  descEl.textContent = copy.desc;
+  if (statusEl) statusEl.textContent = '';
+  announceGuide(copy.live || `${copy.title}. ${copy.desc}`);
+  if (appState.guide.mascotEnabled) setMascotSpeech(copy.title, copy.desc);
+}
+
+function getVisibleModelGuideTarget() {
+  return window.matchMedia?.('(max-width: 768px)')?.matches
+    ? document.getElementById('mobileModelSelectCustom')
+    : document.getElementById('modelSelectCustom');
+}
+
+function addGuideTargetListener(signal, target, type, listener, options = {}) {
+  if (!target || !signal) return;
+  target.addEventListener(type, listener, { ...options, signal });
+}
+
+function beginMobileSidebarDemo() {
+  clearGuideTarget();
+  guideRuntime.edgeSwipeTarget = false;
+  guideRuntime.waitingForSidebarSwipe = false;
+  updateGuideTeachingPanel('sidebar');
+  if (appState.guide.mascotEnabled) {
+    setMascotSpeech(
+      i18nText('onb-guide-sidebar-title', 'Meet the sidebar'),
+      i18nText('onb-guide-sidebar-desc', 'Here is how it opens from the edge.')
+    );
+  }
+
+  if (isGuideReducedMotion()) {
+    openSidebar();
+    closeSidebar();
+    showMobileSidebarSwipePrompt();
+    return;
+  }
+
+  const viewport = getGuideViewportRect();
+  if (appState.guide.mascotEnabled) {
+    setMascotCoordinates(viewport.left + 8, viewport.top + (viewport.bottom - viewport.top) * 0.5 - getMascotSize() / 2);
+    getGuideMascotElement()?.classList.add('is-sidebar-demo-drag');
+    syncMascotSpeechSide();
+  }
+  openSidebar();
+  const closeTimer = window.setTimeout(() => {
+    closeSidebar();
+    getGuideMascotElement()?.classList.remove('is-sidebar-demo-drag');
+  }, 760);
+  const promptTimer = window.setTimeout(() => showMobileSidebarSwipePrompt(), 980);
+  guideRuntime.sidebarDemoTimers = [closeTimer, promptTimer];
+}
+
+function showMobileSidebarSwipePrompt() {
+  if (!guideRuntime.teachingActive || guideRuntime.teachingStep !== 'sidebar') return;
+  guideRuntime.waitingForSidebarSwipe = true;
+  updateGuideTeachingPanel('sidebar', true);
+  setGuideEdgeSwipeTarget();
+  if (appState.guide.mascotEnabled) {
+    moveMascotToElement(document.getElementById('mobileHeader') || document.body, {
+      placement: 'above',
+      bounce: false,
+      speechTitle: i18nText('onb-guide-sidebar-try-title', 'Your turn'),
+      speechText: i18nText('onb-guide-sidebar-try-desc', 'Swipe from the edge to open the sidebar.')
+    });
+    syncMascotSpeechSide();
+  }
+}
+
+function handleGuideSidebarSwipe(event) {
+  if (!guideRuntime.teachingActive || guideRuntime.teachingStep !== 'sidebar') return;
+  if (!guideRuntime.waitingForSidebarSwipe || event?.detail?.direction !== 'open') return;
+  guideRuntime.waitingForSidebarSwipe = false;
+  guideRuntime.finishOnboarding?.();
+}
+
+function setGuideTeachingStep(step) {
+  if (!guideRuntime.teachingActive) return;
+  guideRuntime.teachingStep = step;
+  guideRuntime.teachingController?.abort();
+  guideRuntime.teachingController = new AbortController();
+  clearGuideTarget();
+  clearGuideEdgeSwipeTarget();
+  document.getElementById('moreMenu')?.classList.remove('rai-guide-readonly');
+  if (guideRuntime.plusAdvanceTimer) window.clearTimeout(guideRuntime.plusAdvanceTimer);
+  guideRuntime.plusAdvanceTimer = null;
+  closeModelModal();
+  closeMoreMenu();
+
+  if (step === 'sidebar' && window.matchMedia?.('(max-width: 768px)')?.matches) {
+    beginMobileSidebarDemo();
+    return;
+  }
+
+  updateGuideTeachingPanel(step);
+  const signal = guideRuntime.teachingController.signal;
+  let target = null;
+  if (step === 'input') target = document.getElementById('messageInput');
+  if (step === 'model') target = getVisibleModelGuideTarget();
+  if (step === 'plus') target = document.getElementById('moreBtn');
+  if (step === 'sidebar') {
+    target = document.querySelector('.sidebar-header-fixed .logo-section')
+      || document.querySelector('.sidebar-header-fixed')
+      || document.getElementById('sidebar');
+  }
+  if (!target) return;
+
+  setGuideTarget(target, { focus: true });
+  if (appState.guide.mascotEnabled) {
+    const copy = getGuideStepCopy(step);
+    moveMascotToElement(target, {
+      placement: step === 'sidebar' ? 'right' : 'above',
+      bounce: true,
+      speechTitle: copy.title,
+      speechText: copy.desc
+    });
+  }
+
+  if (step === 'input') {
+    addGuideTargetListener(signal, target, 'click', () => setGuideTeachingStep('model'));
+    return;
+  }
+
+  if (step === 'model') {
+    addGuideTargetListener(signal, target, 'click', () => {
+      scheduleGuideTimer(() => {
+        const menu = document.getElementById('modelDropdownMenu');
+        if (!menu?.classList.contains('active')) return;
+        // R4: hold long enough for the dropdown to be perceivable before
+        // advancing (previously ~80ms made it flicker closed).
+        setGuideTeachingStep('plus');
+      }, 1200);
+    });
+    return;
+  }
+
+  if (step === 'plus') {
+    addGuideTargetListener(signal, target, 'click', () => {
+      scheduleGuideTimer(() => {
+        const menu = document.getElementById('moreMenu');
+        if (!menu?.classList.contains('active')) return;
+        menu.classList.add('rai-guide-readonly');
+        const explanationTarget = menu.querySelector('.reasoning-profile-item') || menu.querySelector('.research-mode-item') || menu;
+        setGuideTarget(explanationTarget, { focus: false });
+        const copy = getGuideStepCopy('plus');
+        announceGuide(copy.desc);
+        if (appState.guide.mascotEnabled) {
+          moveMascotToElement(explanationTarget, {
+            placement: 'right',
+            bounce: true,
+            speechTitle: copy.title,
+            speechText: copy.desc
+          });
+        }
+        guideRuntime.plusAdvanceTimer = scheduleGuideTimer(() => setGuideTeachingStep('sidebar'), 1600);
+      }, 80);
+    });
+    return;
+  }
+
+  if (step === 'sidebar') {
+    addGuideTargetListener(signal, target, 'click', () => guideRuntime.finishOnboarding?.());
+    addGuideTargetListener(signal, target, 'keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      guideRuntime.finishOnboarding?.();
+    });
+  }
+}
+
+function beginGuideTeaching() {
+  const overlay = document.getElementById('onboardingOverlay');
+  const card = overlay?.querySelector('.onboarding-card');
+  const panel = document.getElementById('onboardingTeachingPanel');
+  if (!overlay || !card || !panel) return false;
+  clearGuideTimers();
+  guideRuntime.teachingActive = true;
+  appState.guide.teachingActive = true;
+  overlay.classList.add('teaching');
+  card.classList.add('guide-teaching');
+  panel.hidden = false;
+  document.getElementById('onboardingStepsIndicator')?.setAttribute('aria-hidden', 'true');
+  const nextBtn = document.getElementById('onboardingNextBtn');
+  const startBtn = document.getElementById('onboardingStartBtn');
+  if (nextBtn) nextBtn.style.display = 'none';
+  if (startBtn) startBtn.style.display = 'none';
+  document.getElementById('onboardingSkipBtn')?.style.setProperty('display', 'inline-flex');
+  syncGuideMascotVisibility();
+  setGuideTeachingStep('input');
+  return true;
+}
+
+function cleanupGuideTeaching() {
+  getGuideMascotElement()?.classList.remove('is-sidebar-demo-drag');
+  guideRuntime.teachingController?.abort();
+  guideRuntime.teachingController = null;
+  guideRuntime.teachingActive = false;
+  guideRuntime.waitingForSidebarSwipe = false;
+  guideRuntime.teachingStep = '';
+  appState.guide.teachingActive = false;
+  clearGuideTimers();
+  clearGuideTarget();
+  clearGuideEdgeSwipeTarget();
+  document.getElementById('moreMenu')?.classList.remove('rai-guide-readonly');
+  closeModelModal();
+  closeMoreMenu();
+  const overlay = document.getElementById('onboardingOverlay');
+  const card = overlay?.querySelector('.onboarding-card');
+  const panel = document.getElementById('onboardingTeachingPanel');
+  overlay?.classList.remove('teaching');
+  card?.classList.remove('guide-teaching');
+  if (panel) panel.hidden = true;
+  document.getElementById('onboardingStepsIndicator')?.removeAttribute('aria-hidden');
+}
+
+function initGuideRuntime() {
+  if (guideRuntime.initialized) return;
+  guideRuntime.initialized = true;
+  initMascotElement();
+  ensureGuideTargetLayers();
+  document.addEventListener('rai:sidebar-swipe', handleGuideSidebarSwipe);
+  const refresh = () => {
+    refreshGuideTargetPresentation();
+    requestMascotPosition();
+  };
+  window.addEventListener('resize', refresh, { passive: true });
+  window.addEventListener('orientationchange', refresh, { passive: true });
+  document.addEventListener('scroll', refresh, { passive: true, capture: true });
+  window.visualViewport?.addEventListener('resize', refresh, { passive: true });
+  window.visualViewport?.addEventListener('scroll', refresh, { passive: true });
+  if (typeof MutationObserver !== 'undefined' && document.body) {
+    let guideRefreshScheduled = false;
+    const scheduleGuideRefresh = () => {
+      if (guideRefreshScheduled) return;
+      guideRefreshScheduled = true;
+      requestAnimationFrame(() => {
+        guideRefreshScheduled = false;
+        refresh();
+      });
+    };
+    // guide 系统自维护的节点(#onboardingOverlay 的 guide-targeting、
+    // #raiGuideLiveRegion 的 aria 文案)必须排除在触发源之外,
+    // 否则 refresh 的写入会穿过守卫形成无限微任务循环。
+    guideRuntime.domObserver = new MutationObserver((mutations) => {
+      const guideNode = (node) => node?.closest?.('#raiGuideMask, #raiGuideRing, #raiGuideMascot, #onboardingOverlay, #raiGuideLiveRegion');
+      if (!mutations.some((mutation) => !guideNode(mutation.target))) return;
+      scheduleGuideRefresh();
+    });
+    guideRuntime.domObserver.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden']
+    });
+  }
+}
 
 function isPwaStandaloneMode() {
   return Boolean(
@@ -2703,7 +3848,10 @@ function renderPwaRewardPrompt() {
 function maybeShowPwaRewardPrompt({ force = false } = {}) {
   if (!appState.token || isChatFlowIframeMode) return;
   const onboardingOverlay = document.getElementById('onboardingOverlay');
-  if (appState.onboardingActive || (onboardingOverlay && isVisibleElement(onboardingOverlay))) {
+  const guideFlowActive = appState.onboardingActive
+    || appState.guide.teachingActive
+    || onboardingOverlay?.classList.contains('teaching');
+  if (guideFlowActive || (onboardingOverlay && isVisibleElement(onboardingOverlay))) {
     closePwaRewardPrompt();
     return;
   }
@@ -2732,7 +3880,21 @@ function maybeShowPwaRewardPrompt({ force = false } = {}) {
   }
   if (pwaRewardPromptDismissedThisSession && !force) return;
   const overlay = renderPwaRewardPrompt();
-  requestAnimationFrame(() => overlay.classList.add('active'));
+  requestAnimationFrame(() => {
+    // R1: re-check the guide gate inside the frame callback — showOnboarding's
+    // closePwaRewardPrompt() may have run while the overlay was still inactive,
+    // and blindly re-adding 'active' would layer the reward overlay
+    // (z-index 10020) above the welcome overlay (z-index ~2000).
+    const onboardingOverlay = document.getElementById('onboardingOverlay');
+    const guideFlowActive = appState.onboardingActive
+      || appState.guide.teachingActive
+      || onboardingOverlay?.classList.contains('teaching');
+    if (guideFlowActive || (onboardingOverlay && isVisibleElement(onboardingOverlay))) {
+      closePwaRewardPrompt();
+      return;
+    }
+    overlay.classList.add('active');
+  });
 }
 
 async function handlePwaRewardInstallAction() {
@@ -3845,6 +5007,11 @@ const i18n = {
     'message-model-badge-desc': '在模型回复下显示“模型名 定制版”标签。',
     'message-internet-badge-title': '联网标签',
     'message-internet-badge-desc': '在联网回复下显示“联网”标签。',
+    'settings-guide-mascot-label': '吉祥物助手',
+    'settings-guide-mascot-desc': '在聊天输入框旁常驻显示 RAI 吉祥物，可点击互动。',
+    'settings-guide-tap-target-label': '功能聚焦提示',
+    'settings-guide-tap-target-desc': '在引导流程中高亮当前操作位置，帮助你找到功能入口。',
+    'settings-guide-save-error': '设置保存失败，请重试',
     'message-model-custom-edition': '定制版',
     'browser-notify-settings-title': '回复浏览器通知',
     'browser-notify-settings-desc': '当 RAI 回复好而你未查看页面时，浏览器弹出系统通知提醒你。',
@@ -4075,6 +5242,25 @@ const i18n = {
     'onb-skip': '跳过',
     'onb-next': '下一步',
     'onb-start': '开始使用',
+    'mascot-aria-label': 'RAI 引导助手',
+    'onb-guide-kicker': '一起试试',
+    'onb-guide-ready-title': '轮到你了',
+    'onb-guide-ready-desc': '准备好后点击按钮继续。',
+    'onb-guide-input-title': '先试试输入框',
+    'onb-guide-input-desc': '点击底部输入框，感受一下 RAI 的入口。',
+    'onb-guide-input-live': '请点击底部输入框。',
+    'onb-guide-model-title': '打开模型菜单',
+    'onb-guide-model-desc': '点击当前设备的模型菜单即可，我们不会替你切换模型。',
+    'onb-guide-model-live': '请打开当前设备的模型菜单。',
+    'onb-guide-plus-title': '看看更多能力',
+    'onb-guide-plus-desc': '思考模式和研究模式适合更强的能力与更高质量的回答。这里只看一眼，不改变设置。',
+    'onb-guide-plus-live': '请打开加号菜单，了解思考模式和研究模式。',
+    'onb-guide-sidebar-title': '认识侧边栏',
+    'onb-guide-sidebar-desc': '侧边栏可以管理对话。桌面端请点击顶部聚焦；移动端稍后看我从边缘打开。',
+    'onb-guide-sidebar-live': '请试试侧边栏。',
+    'onb-guide-sidebar-try-title': '你来试一次',
+    'onb-guide-sidebar-try-desc': '从屏幕边缘向右滑动，打开侧边栏。',
+    'onb-guide-sidebar-try-live': '你来试一次：从屏幕边缘向右滑动，打开侧边栏。',
     'sidebar-flows-beta': '测试',
     'model-badge-free': '免费',
     'model-badge-limited-free': '限免',
@@ -4443,6 +5629,11 @@ const i18n = {
     'message-model-badge-desc': 'Show a “Model name Custom Edition” label below model replies.',
     'message-internet-badge-title': 'Web label',
     'message-internet-badge-desc': 'Show a “Web” label below replies that used web search.',
+    'settings-guide-mascot-label': 'Guide mascot',
+    'settings-guide-mascot-desc': 'Show the RAI mascot by the chat composer; it responds to taps.',
+    'settings-guide-tap-target-label': 'Feature focus hint',
+    'settings-guide-tap-target-desc': 'Highlight the current control during the welcome tour so you can find it.',
+    'settings-guide-save-error': 'Could not save this setting. Please try again.',
     'message-model-custom-edition': 'Custom Edition',
     'browser-notify-settings-title': 'Reply Browser Notification',
     'browser-notify-settings-desc': 'When RAI finishes replying while you are not viewing the page, the browser shows a system notification.',
@@ -4673,6 +5864,25 @@ const i18n = {
     'onb-skip': 'Skip',
     'onb-next': 'Next',
     'onb-start': 'Get started',
+    'mascot-aria-label': 'RAI guide mascot',
+    'onb-guide-kicker': 'Try it together',
+    'onb-guide-ready-title': 'Your turn',
+    'onb-guide-ready-desc': 'Select the button when you are ready to continue.',
+    'onb-guide-input-title': 'Try the composer',
+    'onb-guide-input-desc': 'Click the composer at the bottom to meet your starting point in RAI.',
+    'onb-guide-input-live': 'Click the composer at the bottom.',
+    'onb-guide-model-title': 'Open the model menu',
+    'onb-guide-model-desc': 'Open the model menu for this device. We will not switch your model.',
+    'onb-guide-model-live': 'Open the model menu for this device.',
+    'onb-guide-plus-title': 'See the stronger tools',
+    'onb-guide-plus-desc': 'Think and Research modes are made for stronger capability and higher-quality answers. This is just a look — nothing will change.',
+    'onb-guide-plus-live': 'Open the plus menu to learn about Think and Research modes.',
+    'onb-guide-sidebar-title': 'Meet the sidebar',
+    'onb-guide-sidebar-desc': 'The sidebar keeps your conversations organized. On desktop, click its top to focus it; on mobile, watch me open it from the edge.',
+    'onb-guide-sidebar-live': 'Try the sidebar.',
+    'onb-guide-sidebar-try-title': 'Your turn',
+    'onb-guide-sidebar-try-desc': 'Swipe right from the edge of the screen to open the sidebar.',
+    'onb-guide-sidebar-try-live': 'Your turn: swipe right from the edge of the screen to open the sidebar.',
     'sidebar-flows-beta': 'Beta',
     'model-badge-free': 'Free',
     'model-badge-limited-free': 'Limited free',
@@ -5055,6 +6265,25 @@ Object.assign(i18n['zh-TW'], {
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
+  'mascot-aria-label': 'RAI 引導助手',
+  'onb-guide-kicker': '一起試試',
+  'onb-guide-ready-title': '輪到您了',
+  'onb-guide-ready-desc': '準備好後點擊按鈕繼續。',
+  'onb-guide-input-title': '先試試輸入框',
+  'onb-guide-input-desc': '點擊底部輸入框，認識 RAI 的入口。',
+  'onb-guide-input-live': '請點擊底部輸入框。',
+  'onb-guide-model-title': '開啟模型選單',
+  'onb-guide-model-desc': '點擊目前裝置的模型選單即可，我們不會替您切換模型。',
+  'onb-guide-model-live': '請開啟目前裝置的模型選單。',
+  'onb-guide-plus-title': '看看更多能力',
+  'onb-guide-plus-desc': '思考模式和研究模式適合更強的能力與更高品質的回答。這裡只看一眼，不改變設定。',
+  'onb-guide-plus-live': '請開啟加號選單，了解思考模式和研究模式。',
+  'onb-guide-sidebar-title': '認識側邊欄',
+  'onb-guide-sidebar-desc': '側邊欄可以管理對話。桌面端請點擊頂部聚焦它；行動端先看我從邊緣開啟。',
+  'onb-guide-sidebar-live': '請試試側邊欄。',
+  'onb-guide-sidebar-try-title': '您來試一次',
+  'onb-guide-sidebar-try-desc': '從螢幕邊緣向右滑動，開啟側邊欄。',
+  'onb-guide-sidebar-try-live': '您來試一次：從螢幕邊緣向右滑動，開啟側邊欄。',
   'settings-macos-title': 'macOS',
   'settings-windows-title': 'Windows 10 / 11（Phone）',
   'settings-platform-download': '下載',
@@ -12041,6 +13270,52 @@ function settingsToggleInternetBadgeVisibility() {
   updateMessageBadgeVisibilityUI();
 }
 
+function updateSettingsGuideUI() {
+  const mascotSwitch = document.getElementById('settingsGuideMascotSwitch');
+  const mascotToggle = document.getElementById('settingsGuideMascotToggle');
+  const tapTargetSwitch = document.getElementById('settingsGuideTapTargetSwitch');
+  const tapTargetToggle = document.getElementById('settingsGuideTapTargetToggle');
+
+  if (mascotSwitch) mascotSwitch.setAttribute('aria-pressed', appState.guide.mascotEnabled ? 'true' : 'false');
+  if (mascotToggle) mascotToggle.classList.toggle('active', !!appState.guide.mascotEnabled);
+  if (tapTargetSwitch) tapTargetSwitch.setAttribute('aria-pressed', appState.guide.tapTargetEnabled ? 'true' : 'false');
+  if (tapTargetToggle) tapTargetToggle.classList.toggle('active', !!appState.guide.tapTargetEnabled);
+}
+
+async function settingsToggleGuideMascot() {
+  const previous = appState.guide.mascotEnabled;
+  const next = !previous;
+  appState.guide.mascotEnabled = next;
+  updateSettingsGuideUI();
+  const synced = await applyGuideMascotState(next);
+  // R5: roll back only when THIS field failed — the shared sync promise may
+  // also carry a patch from the tap-target toggle.
+  if (synced === false || (synced && Array.isArray(synced.failedFields) && synced.failedFields.includes('mascotEnabled'))) {
+    appState.guide.mascotEnabled = previous;
+    persistGuideLocalMirror();
+    syncGuideMascotVisibility();
+    updateSettingsGuideUI();
+    showToast(i18nText('settings-guide-save-error', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Could not save. Please try again.'));
+  }
+}
+
+async function settingsToggleGuideTapTarget() {
+  const previous = appState.guide.tapTargetEnabled;
+  const next = !previous;
+  appState.guide.tapTargetEnabled = next;
+  updateSettingsGuideUI();
+  const synced = await applyGuideTapTargetState(next);
+  // R5: roll back only when THIS field failed — the shared sync promise may
+  // also carry a patch from the mascot toggle.
+  if (synced === false || (synced && Array.isArray(synced.failedFields) && synced.failedFields.includes('tapTargetEnabled'))) {
+    appState.guide.tapTargetEnabled = previous;
+    persistGuideLocalMirror();
+    refreshGuideTargetPresentation();
+    updateSettingsGuideUI();
+    showToast(i18nText('settings-guide-save-error', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Could not save. Please try again.'));
+  }
+}
+
 function normalizeSelectionExplanationDeleteMode(mode) {
   const normalized = String(mode || '').trim();
   return ['promote_children', 'delete_subtree', 'ask_each_time'].includes(normalized)
@@ -12245,6 +13520,11 @@ function setLanguage(lang) {
   // 更新HTML lang属性
   document.documentElement.lang = lang;
 
+  const mascot = document.getElementById('raiGuideMascot');
+  if (mascot) {
+    mascot.setAttribute('aria-label', i18n[lang]?.['mascot-aria-label'] || i18n['zh-CN']?.['mascot-aria-label'] || 'RAI guide mascot');
+  }
+
   // 更新所有翻译文本
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
@@ -12290,6 +13570,9 @@ function setLanguage(lang) {
     authLangText.textContent = getLanguageToggleLabel(lang);
   }
   updateAuthLanguageButtons();
+  if (guideRuntime.teachingActive && guideRuntime.teachingStep) {
+    updateGuideTeachingPanel(guideRuntime.teachingStep, guideRuntime.waitingForSidebarSwipe);
+  }
   configureAuthSecondFactorInput();
   updatePasskeyLoginEntry();
   renderPasskeySettings();
@@ -13154,6 +14437,10 @@ function showAuthScreen() {
   document.documentElement.dataset.raiAuthState = 'anonymous';
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
+  initMascotAuthBindings();
+  syncGuideMascotVisibility();
+  requestMascotPosition();
+  updateMascotPasswordExpression();
   updatePasskeyLoginEntry();
   focusEntryTextInput('auth-screen', { delay: 120 });
 }
@@ -13434,7 +14721,10 @@ async function resolveStartupAuthentication() {
       const profile = await response.json().catch(() => ({}));
       if (response.ok && isProfileBoundToAuthContext(profile, context)) {
         showApp();
-        if (await loadUserData(profile, { authContext: context })) return 'authenticated';
+        if (await loadUserData(profile, { authContext: context })) {
+          maybeShowOnboardingAfterAuth();
+          return 'authenticated';
+        }
         return 'checking';
       }
       if (!isUserAuthContextCurrent(context)) return 'checking';
@@ -13455,6 +14745,7 @@ async function resolveStartupAuthentication() {
     if (response.ok && profile?.id) {
       showApp();
       await loadUserData(profile);
+      maybeShowOnboardingAfterAuth();
       return 'authenticated';
     }
     return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
@@ -13476,7 +14767,8 @@ function retryStartupAuthentication() {
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
-  console.log(' RAI v0.11.95 初始化 (title-lock-r1)');
+  initGuideRuntime();
+  console.log(' RAI v0.11.96 初始化 (onboarding-mascot-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -14077,6 +15369,7 @@ function updateSettingsUI() {
   if (typeof updateTabTitleModeSettingsUI === 'function') updateTabTitleModeSettingsUI();
   if (typeof updateBrowserNotifySettingsUI === 'function') updateBrowserNotifySettingsUI();
   updateMessageBadgeVisibilityUI();
+  updateSettingsGuideUI();
   updateSettingsCapabilitiesUI();
   renderSettingsTimeline();
   updateSettingsDirtyState();
@@ -21159,36 +22452,47 @@ function getOnboardingStorageKey(user = appState.user) {
 }
 
 function hasCompletedOnboarding(user = appState.user) {
-  return localStorage.getItem(getOnboardingStorageKey(user)) === '1';
+  return isGuideCompleted(user);
 }
 
 function setOnboardingCompleted(done = true, user = appState.user) {
-  const accountKey = getOnboardingStorageKey(user);
-  if (done) {
-    localStorage.setItem(accountKey, '1');
-    localStorage.setItem('rai_onboarding_done', '1');
-    return;
-  }
-  localStorage.removeItem(accountKey);
-  localStorage.removeItem('rai_onboarding_done');
+  if (!done) return false;
+  appState.guide.completedVersion = Math.max(appState.guide.completedVersion, RAI_GUIDE_VERSION);
+  writeGuideCompletionMirror(appState.guide.completedVersion, user);
+  persistGuideLocalMirror();
+  syncGuideMascotVisibility();
+  syncGuideStateToServer({ completedVersion: RAI_GUIDE_VERSION });
+  return true;
 }
 
 async function enterAuthenticatedApp(data) {
   invalidateUserAuthAsyncWork();
   storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
   appState.user = data.user;
+  appState.guide.serverAuthoritative = false;
+  appState.guide.serverUserId = '';
 
   showApp();
   await loadUserData(null, { authContext: captureUserAuthContext() });
 
-  if (data.isNewUser && !hasCompletedOnboarding(data.user)) {
-    showOnboarding(() => {
-      setOnboardingCompleted(true, data.user);
-      showNewUserLanguagePrompt();
-    });
+  // 引导触发条件以账号级完成版本为准（服务器权威 + 本地镜像），
+  // 而不是 isNewUser：引导版本升级后，新老账号都自动观看一次；
+  // 完成或跳过后账号级记录，换设备不重复。
+  if (!hasCompletedOnboarding(appState.user || data.user)) {
+    showOnboarding();
   }
   if (data.isNewUser) {
     clearStoredInviteReferrerId();
+  }
+}
+
+// token 恢复路径（刷新页面 / 带 token 重开 / 换设备）同样以账号级完成版本为准：
+// 未完成的账号每次进入都应看到引导，完成或跳过后不再重复。
+function maybeShowOnboardingAfterAuth() {
+  if (appState.customApiMode) return;
+  if (appState.onboardingActive || appState.guide.teachingActive) return;
+  if (!hasCompletedOnboarding(appState.user)) {
+    showOnboarding();
   }
 }
 
@@ -21330,6 +22634,10 @@ function clearAuthenticatedAppState() {
   appState.securityLogoutAllPending = false;
   appState.internetMode = true;
   appState.confirmedCacheUserId = null;
+  appState.guide.serverAuthoritative = false;
+  appState.guide.serverUserId = '';
+  appState.guide.completedVersion = Number(readGuideLocalMirror().completedVersion) || 0;
+  syncGuideMascotVisibility();
 }
 
 function redirectToLoggedOutAuth(extraParams = {}) {
@@ -21998,6 +23306,7 @@ function showAuthStep(stepId) {
   if (step) {
     step.classList.remove('auth-step-hidden');
     step.classList.add('auth-step-visible');
+    requestMascotPosition();
   }
 }
 
@@ -22007,6 +23316,7 @@ function hideAuthStep(stepId) {
   if (step) {
     step.classList.remove('auth-step-visible');
     step.classList.add('auth-step-hidden');
+    requestMascotPosition();
   }
 }
 
@@ -22018,6 +23328,7 @@ function showAuthError(message) {
     errorEl.classList.remove('notice');
     errorEl.classList.add('show');
   }
+  pointMascotAtAuthError(message);
 }
 
 function showAuthNotice(message) {
@@ -22035,6 +23346,62 @@ function hideAuthError() {
   if (errorEl) {
     errorEl.classList.remove('show');
     errorEl.classList.remove('notice');
+  }
+}
+
+function pointMascotAtAuthField(fieldId) {
+  if (!appState.guide.mascotEnabled || appState.onboardingActive) return;
+  const field = document.getElementById(fieldId);
+  if (!field || !document.getElementById('authContainer')?.classList.contains('active')) return;
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  mascot.hidden = false;
+  mascot.classList.remove('is-dwell', 'is-guide');
+  mascot.classList.add('is-auth');
+  raiMascotState.mode = 'auth';
+  guideRuntime.mascotTarget = field;
+  positionMascotAtRect(field.getBoundingClientRect(), 'above');
+  bounceMascot();
+  window.setTimeout(() => {
+    if (raiMascotState.mode === 'auth') {
+      guideRuntime.mascotTarget = null;
+      requestMascotPosition();
+    }
+  }, 1300);
+}
+
+function pointMascotAtAuthError(message) {
+  const text = String(message || '').toLowerCase();
+  if (!text) return;
+  if (text.includes('network') || text.includes('网络') || text.includes('connect') || text.includes('连接')) return;
+  if (text.includes('username') || text.includes('用户名') || text.includes('昵称')) {
+    pointMascotAtAuthField('authUsername');
+    return;
+  }
+  if (text.includes('password') || text.includes('密码')) {
+    pointMascotAtAuthField('authPassword');
+    return;
+  }
+  if (
+    text.includes('code') || text.includes('验证码') || text.includes('authenticator')
+    || text.includes('two-factor') || text.includes('2fa') || text.includes('恢复码')
+  ) {
+    const codeId = appState.pendingEmailAuth ? 'authEmailCode' : 'authTwoFactorCode';
+    pointMascotAtAuthField(codeId);
+    return;
+  }
+  if (text.includes('email') || text.includes('邮箱') || text.includes('信箱')) {
+    pointMascotAtAuthField('authEmail');
+    return;
+  }
+  if (appState.pendingEmailAuth) {
+    pointMascotAtAuthField('authEmailCode');
+  } else if (appState.pendingTwoFactorToken || appState.authTwoFactorRequired) {
+    pointMascotAtAuthField('authTwoFactorCode');
+  } else if (appState.authEmailValidated) {
+    pointMascotAtAuthField('authPassword');
+  } else {
+    pointMascotAtAuthField('authEmail');
   }
 }
 
@@ -22334,6 +23701,7 @@ function beginPendingTwoFactor(twoFactorToken) {
 async function handleAuthServerResponse(data) {
   const email = data?.email || getCurrentAuthEmail();
   if (data?.code === 'password_upgrade_required' || data?.passwordUpgradeRequired === true) {
+    pointMascotAtAuthField('authPassword');
     clearTwoFactorLoginChallenge();
     clearPendingEmailAuth();
     const passwordInput = document.getElementById('authPassword');
@@ -22593,6 +23961,8 @@ function showApp() {
   document.documentElement.dataset.raiAuthState = 'authenticated';
   document.getElementById('authContainer').classList.remove('active');
   document.getElementById('appContainer').style.display = 'flex';
+  syncGuideMascotVisibility();
+  requestMascotPosition();
   focusEntryTextInput('app-screen', { delay: 80 });
 
   // 延迟初始化滚动监听器，确保 chatContainer 已存在
@@ -22608,23 +23978,44 @@ function showApp() {
 let onboardingEventController = null;
 
 function showOnboarding(onDone) {
+  initGuideRuntime();
+  // R6: replay mid-teaching must not inherit stale sidebar demo timers (or any
+  // other guide timers) from a previous run.
+  clearGuideTimers();
   onboardingEventController?.abort();
   const eventController = new AbortController();
   onboardingEventController = eventController;
   const eventOptions = { signal: eventController.signal };
   const overlay = document.getElementById('onboardingOverlay');
   const card = overlay?.querySelector('.onboarding-card');
+  const teachingPanel = document.getElementById('onboardingTeachingPanel');
   const steps = document.querySelectorAll('.onboarding-step');
   const dots = document.querySelectorAll('.onboarding-dot');
   const skipBtn = document.getElementById('onboardingSkipBtn');
   const nextBtn = document.getElementById('onboardingNextBtn');
   const startBtn = document.getElementById('onboardingStartBtn');
+  if (!overlay || !card || !skipBtn || !nextBtn || !startBtn) return;
+
+  const previousFocus = document.activeElement && document.activeElement !== document.body
+    ? document.activeElement
+    : null;
   let currentStep = 0;
+  let finished = false;
   const totalSteps = steps.length;
   appState.onboardingActive = true;
+  appState.guide.teachingActive = false;
+  guideRuntime.teachingActive = false;
+  guideRuntime.focusBeforeGuide = previousFocus;
+  guideRuntime.finishOnboarding = finish;
   closePwaRewardPrompt();
 
   function goToStep(n) {
+    clearGuideTarget();
+    clearGuideEdgeSwipeTarget();
+    if (appState.guide.mascotEnabled) setMascotSpeech('', '');
+    card.classList.remove('guide-teaching');
+    overlay.classList.remove('teaching');
+    if (teachingPanel) teachingPanel.hidden = true;
     steps.forEach((s, i) => s.classList.toggle('active', i === n));
     dots.forEach((d, i) => d.classList.toggle('active', i === n));
     if (card) {
@@ -22633,28 +24024,60 @@ function showOnboarding(onDone) {
 
     if (n === totalSteps - 1) {
       nextBtn.style.display = 'none';
-      skipBtn.style.display = 'none';
+      skipBtn.style.display = 'inline-flex';
       startBtn.style.display = 'inline-block';
     } else {
       nextBtn.style.display = 'inline-block';
-      skipBtn.style.display = 'inline-block';
+      skipBtn.style.display = 'inline-flex';
       startBtn.style.display = 'none';
     }
     currentStep = n;
+    scheduleWelcomeMascotCue(n);
   }
 
   function finish() {
+    if (finished) return;
+    finished = true;
     eventController.abort();
     if (onboardingEventController === eventController) onboardingEventController = null;
+    cleanupGuideTeaching();
+    setOnboardingCompleted(true, appState.user);
     appState.onboardingActive = false;
+    appState.guide.teachingActive = false;
     overlay.style.display = 'none';
     document.body.style.overflow = '';
+    // R2: guide-flow flags are cleared above and the welcome overlay is gone,
+    // so re-offer the PWA reward prompt. No-op unless a reward is actually due
+    // (the function guards on existing prompt/task state).
+    maybeShowPwaRewardPrompt();
     if (onDone) onDone();
-    focusEntryTextInput('onboarding-finished', { delay: 160 });
+    syncGuideMascotVisibility();
+    requestMascotPosition();
+    const focusTarget = guideRuntime.focusBeforeGuide;
+    guideRuntime.focusBeforeGuide = null;
+    requestAnimationFrame(() => {
+      if (focusTarget?.isConnected && !focusTarget.hidden && focusTarget !== skipBtn) {
+        try {
+          focusTarget.focus({ preventScroll: true });
+        } catch (_) {
+          focusTarget.focus();
+        }
+      } else {
+        focusEntryTextInput('onboarding-finished', { delay: 0 });
+      }
+    });
+    guideRuntime.finishOnboarding = null;
   }
 
   skipBtn.addEventListener('click', finish, eventOptions);
-  startBtn.addEventListener('click', finish, eventOptions);
+  startBtn.addEventListener('click', () => {
+    if (currentStep !== totalSteps - 1) return;
+    if (appState.guide.mascotEnabled || appState.guide.tapTargetEnabled) {
+      beginGuideTeaching();
+    } else {
+      finish();
+    }
+  }, eventOptions);
 
   nextBtn.addEventListener('click', () => {
     if (currentStep < totalSteps - 1) {
@@ -22670,19 +24093,27 @@ function showOnboarding(onDone) {
     }, eventOptions);
   });
 
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      finish();
+    }
+  }, { ...eventOptions, capture: true });
+
   overlay.style.display = 'flex';
   document.body.style.overflow = 'hidden';
+  overlay.classList.remove('teaching');
+  card.classList.remove('guide-teaching');
+  if (teachingPanel) teachingPanel.hidden = true;
+  syncGuideMascotVisibility();
   goToStep(0);
 }
 
-// 从设置页重新观看引导（清除标记后触发）
+// 从设置页重新观看引导（保留完成记录，避免重复触发新用户引导）
 function replayOnboarding() {
-  setOnboardingCompleted(false);
   // 关闭设置面板
   if (typeof closeSettings === 'function') closeSettings();
-  showOnboarding(() => {
-    setOnboardingCompleted(true);
-  });
+  showOnboarding();
 }
 
 
@@ -22739,6 +24170,7 @@ async function loadUserData(profileInput = null, { authContext = captureUserAuth
 	      two_factor_enabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1,
 	      twoFactorEnabled: profile.two_factor_enabled === true || profile.two_factor_enabled === 1
     };
+    applyServerGuideState(profile, appState.user);
     const pendingProfileEmail = String(profile.pending_email || '').trim();
     if (pendingProfileEmail && Number(profile.pending_email_expires_at || 0) > Date.now()) {
       appState.pendingSettingsEmailChange = {
@@ -27699,11 +29131,17 @@ function initSwipeGestures() {
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;
+    const completedGestureMode = appState.sidebarGestureMode;
 
     resetSwipeState();
 
     if (shouldOpen) {
       openSidebar();
+      if (completedGestureMode === 'opening') {
+        document.dispatchEvent(new CustomEvent('rai:sidebar-swipe', {
+          detail: { direction: 'open', source: 'user' }
+        }));
+      }
     } else {
       closeSidebar();
     }

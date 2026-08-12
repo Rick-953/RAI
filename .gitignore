@@ -26,3 +26,6 @@ release/
 # ---- OS ----
 .DS_Store
 Thumbs.db
+
+# deepwork local state
+.slim/deepwork/
