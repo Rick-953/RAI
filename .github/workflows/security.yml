@@ -304,10 +304,15 @@ jobs:
         run: |
           mkdir -p release-artifacts
           version="$(node -p "require('./package.json').version")"
+          release_paths=(
+            .env.example LICENSE README.md README.zh-CN.md docs
+            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json
+          )
+          for release_path in "${release_paths[@]}"; do
+            git ls-files --error-unmatch "$release_path" >/dev/null
+          done
           git archive --format=tar --prefix="rai-v${version}/" HEAD -- \
-            .env.example LICENSE README.md README.zh-CN.md RAI文档.txt 更新运维.txt \
-            docs/readme \
-            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json \
+            "${release_paths[@]}" \
             | gzip -n > "release-artifacts/rai-web-v${version}.tar.gz"
           gzip -t "release-artifacts/rai-web-v${version}.tar.gz"
           tar -tzf "release-artifacts/rai-web-v${version}.tar.gz" >/dev/null
@@ -341,10 +346,15 @@ jobs:
         run: |
           mkdir -p release-artifacts
           version="$(node -p "require('./package.json').version")"
+          release_paths=(
+            .env.example LICENSE README.md README.zh-CN.md docs
+            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json
+          )
+          for release_path in "${release_paths[@]}"; do
+            git ls-files --error-unmatch "$release_path" >/dev/null
+          done
           git archive --format=tar --prefix="rai-v${version}/" HEAD -- \
-            .env.example LICENSE README.md README.zh-CN.md RAI文档.txt 更新运维.txt \
-            docs/readme \
-            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json \
+            "${release_paths[@]}" \
             | gzip -n > "release-artifacts/rai-web-v${version}.tar.gz"
           gzip -t "release-artifacts/rai-web-v${version}.tar.gz"
           tar -tzf "release-artifacts/rai-web-v${version}.tar.gz" >/dev/null
