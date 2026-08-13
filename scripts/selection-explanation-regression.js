@@ -5,6 +5,7 @@
 const assert = require('assert/strict');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 const net = require('net');
 const os = require('os');
 const path = require('path');
@@ -100,6 +101,94 @@ function reserveLoopbackPort() {
       });
     });
   });
+}
+
+function buildFirstVisibleDeadlineHarness() {
+  const source = sourceBetween(
+    server,
+    'async function callResearchModelStream({',
+    'function extractResearchDebateStatus',
+    'research streaming client'
+  );
+  const factory = new Function(
+    'buildResearchRequest',
+    'researchModelLabel',
+    'throwIfExternalRequestAborted',
+    'readBoundedResponseText',
+    'extractReasoningTextFromResponseEvent',
+    'extractReasoningTextFromPayload',
+    'extractOutputTextFromResponseEvent',
+    'normalizeResearchMessageContent',
+    'extractIncrementalChunk',
+    `'use strict'; ${source}; return callResearchModelStream;`
+  );
+  return factory(
+    ({ modelId }) => ({
+      apiUrl: modelId,
+      headers: { 'Content-Type': 'application/json' },
+      body: { stream: true },
+      actualModel: 'test-model',
+      routing: { provider: 'test-provider' },
+      isGeminiAPI: false
+    }),
+    () => 'test-model',
+    (signal) => {
+      if (signal?.aborted) {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+    },
+    async (response) => response.text(),
+    () => '',
+    () => '',
+    () => '',
+    (value) => String(value || ''),
+    (previous, next) => String(next || '').startsWith(previous) ? String(next).slice(previous.length) : String(next || '')
+  );
+}
+
+async function testFirstVisibleDeadlineRuntime() {
+  const port = await reserveLoopbackPort();
+  const delayedServer = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (req.url === '/fast') {
+      res.end('data: {"choices":[{"delta":{"content":"首字"}}]}\n\ndata: [DONE]\n\n');
+      return;
+    }
+    setTimeout(() => {
+      if (!res.destroyed) res.end('data: {"choices":[{"delta":{"content":"太晚"}}]}\n\n');
+    }, 120);
+  });
+  await new Promise((resolve, reject) => {
+    delayedServer.once('error', reject);
+    delayedServer.listen(port, '127.0.0.1', resolve);
+  });
+
+  try {
+    const callStream = buildFirstVisibleDeadlineHarness();
+    const fast = await callStream({
+      modelId: `http://127.0.0.1:${port}/fast`,
+      messages: [],
+      firstVisibleTimeoutMs: 80
+    });
+    assert.equal(fast.content, '首字');
+    assert.ok(Number.isFinite(fast.firstVisibleMs) && fast.firstVisibleMs < 80,
+      `fast first visible latency must beat deadline, got ${fast.firstVisibleMs}`);
+
+    const started = Date.now();
+    await assert.rejects(
+      callStream({
+        modelId: `http://127.0.0.1:${port}/slow`,
+        messages: [],
+        firstVisibleTimeoutMs: 40
+      }),
+      (error) => error?.code === 'selection_explanation_first_visible_timeout'
+    );
+    assert.ok(Date.now() - started < 110, 'slow candidate must abort before its delayed first token');
+  } finally {
+    await new Promise((resolve) => delayedServer.close(resolve));
+  }
 }
 
 function waitForChildExit(child, timeoutMs = 20000) {
@@ -305,8 +394,8 @@ function testPointsNoThinkingAndFallback() {
     'every fresh explanation must have a fixed one-point cost');
   assert.match(server, /\bpoints\s+INTEGER\s+NOT NULL\s+DEFAULT\s+1\s+CHECK\s*\(points\s*=\s*1\)/,
     'the idempotency ledger must reject any explanation charge other than one point');
-  assert.match(server, /SELECTION_EXPLANATION_(?:MODEL|PREFERRED_MODEL)(?:_ID)?\s*=\s*['"]deepseek-flash['"]/,
-    'DeepSeek Flash must be the preferred explainer model');
+  assert.match(server, /SELECTION_EXPLANATION_(?:MODEL|PREFERRED_MODEL)(?:_ID)?\s*=\s*['"]deepseek-flash-siliconflow['"]/,
+    'SiliconFlow DeepSeek V4 Flash must be the default explainer model');
   assert.match(server, /(?:reserve|deduct)[A-Za-z]*SelectionExplanation[A-Za-z]*Point/i,
     'the endpoint must reserve one point before provider work');
   assert.ok(
@@ -331,12 +420,70 @@ function testPointsNoThinkingAndFallback() {
   assert.match(server, /else if \(pointReserved\)[\s\S]{0,700}refundSelectionExplanationPoint/,
     'only full fallback exhaustion before visible output may refund');
 
-  assert.match(server, /preferredModelId\s*=\s*SELECTION_EXPLANATION_MODEL_ID[\s\S]{0,500}getResearchFallbackCandidates\(preferredModelId\)/,
-    'the explainer must prepend DeepSeek Flash to the existing universal fallback chain');
+  assert.match(server, /preferredModelId\s*=\s*SELECTION_EXPLANATION_MODEL_ID[\s\S]{0,900}getResearchFallbackCandidates\(preferredModelId\)/,
+    'the explainer must prepend its configurable preferred model to the existing universal fallback chain');
   assert.match(server, /streamSelectionExplanationWithFallback[\s\S]{0,1800}isRoutableModelAvailable\(candidate\)/,
     'fallback routing must skip disabled or unavailable models');
   assert.match(server, /streamSelectionExplanationWithFallback[\s\S]{0,5000}thinkingMode\s*:\s*false\b/,
     'all selection explanation candidates must explicitly disable thinking');
+  assert.match(server, /['"]deepseek-flash-siliconflow['"]\s*:\s*\{[\s\S]{0,240}provider:\s*['"]siliconflow['"][\s\S]{0,240}model:\s*['"]deepseek-ai\/DeepSeek-V4-Flash['"]/,
+    'the dedicated preferred route must call SiliconFlow DeepSeek V4 Flash');
+  assert.match(server, /SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS\s*=\s*4000\b/,
+    'the preferred explainer must stop after four seconds without visible output');
+  assert.match(server, /firstVisibleTimeoutMs:\s*candidateIndex\s*===\s*0\s*\?\s*SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS\s*:\s*0/,
+    'the four-second first-visible deadline must apply only to the preferred candidate');
+  const fallbackLoop = sourceBetween(server, 'async function streamSelectionExplanationWithFallback', "app.post('/api/selection-explanations/stream'", 'selection fallback loop');
+  assert.ok(
+    fallbackLoop.indexOf('lastError = error;') >= 0
+      && fallbackLoop.indexOf("error.code === 'selection_explanation_first_visible_timeout'") > fallbackLoop.indexOf('lastError = error;'),
+    'a preferred-model first-visible timeout must be retained for the next fallback attempt'
+  );
+  assert.doesNotMatch(fallbackLoop, /if\s*\(error\.code\s*===\s*['"]selection_explanation_first_visible_timeout['"]\)\s*throw/,
+    'a first-visible timeout must not escape the candidate fallback loop');
+  assert.match(server, /selection_explanation_model:\s*SELECTION_EXPLANATION_MODEL_ID/,
+    'admin runtime settings must default selection explanation routing to SiliconFlow');
+  assert.match(server, /MODEL_ROUTING_SETTING_KEYS\s*=\s*\[[^\]]*['"]selection_explanation_model['"]/,
+    'admin runtime settings must persist the selection explanation route');
+  assert.match(app, /modelSelectField\('selection_explanation_model',\s*'划词解释首选模型'/,
+    'the admin routing panel must expose the selection explanation preferred model');
+  assert.match(app, /selectionExplanationModelIds\s*=\s*new Set\([\s\S]{0,500}deepseek-flash-siliconflow[\s\S]{0,500}routingCandidates\.filter\(\(model\)\s*=>\s*selectionExplanationModelIds\.has\(model\.id\)\)/,
+    'the admin explainer selector must show only backend-supported explanation routes');
+  assert.match(server, /tag:\s*routeReportTag\('complete',\s*candidate\)[\s\S]{0,800}firstVisibleMs[\s\S]{0,300}responseHeadersMs[\s\S]{0,300}totalMs/,
+    'successful explainer logs must retain response-header, first-visible, and total latency');
+  assert.match(server, /first_visible_timeout[\s\S]{0,900}timeoutMs:[\s\S]{0,300}durationMs/,
+    'fallback logs must identify first-visible timeout with bounded latency metadata');
+  assert.match(server, /const routeReportTag\s*=\s*\([^)]*\)\s*=>\s*sanitizeReportLabel\([\s\S]{0,300}['"]selx['"]/,
+    'routing event tags must stay below the safe-label limit while retaining stage, provider, and model');
+  for (const message of [
+    '划词解释候选模型不可用，继续路由',
+    '划词解释模型路由成功',
+    '划词解释候选模型失败，继续路由',
+    '划词解释模型在首字后中断，保留部分内容',
+    '划词解释所有候选模型均失败',
+    '划词解释请求已通过校验并开始模型路由',
+    '划词解释草稿暂存失败，将在后续片段或终态重试',
+    '划词解释请求生命周期结束'
+  ]) {
+    const start = server.indexOf(`message: '${message}'`);
+    assert.ok(start >= 0, `missing detailed selection diagnostic: ${message}`);
+    const block = server.slice(start, start + 800);
+    assert.doesNotMatch(block, /\bselectedText\b(?!\.length)|payload\.context(?!\.length)|req\.body/,
+      'selection diagnostics must not log selected text or ephemeral context');
+  }
+  const contentCallback = sourceBetween(server, 'onContent: async (delta, modelId) => {', 'if (rawDelta.length > acceptedDelta.length', 'selection content callback');
+  assert.ok(contentCallback.indexOf('writeSelectionExplanationEvent') < contentCallback.indexOf('await persistSelectionExplanationDraft'),
+    'the first visible SSE delta must be sent before SQLite draft persistence');
+  assert.match(contentCallback, /await persistSelectionExplanationDraft[\s\S]{0,900}catch \(draftError\)[\s\S]{0,900}draft_persist_failed/,
+    'a draft write failure after visible output must be logged for retry instead of triggering model fallback');
+  const draftCatchEnd = contentCallback.indexOf('ensureRequestCanContinue();', contentCallback.indexOf('catch (draftError)'));
+  assert.ok(draftCatchEnd > contentCallback.indexOf("tag: 'selx.draft_persist_failed'"),
+    'request cancellation must be checked after draft persistence error handling');
+  const draftTry = sourceBetween(contentCallback, 'try {', '} catch (draftError)', 'selection draft persistence try block');
+  assert.doesNotMatch(draftTry, /ensureRequestCanContinue/,
+    'request cancellation must not be swallowed and logged as a draft persistence failure');
+  const streamClient = sourceBetween(server, 'async function callResearchModelStream({', 'function extractResearchDebateStatus', 'research streaming client');
+  assert.match(streamClient, /let responseHeadersAt\s*=\s*0[\s\S]{0,500}response\s*=\s*await fetch[\s\S]{0,300}responseHeadersAt\s*=\s*Date\.now\(\)/,
+    'the streaming client must capture response-header latency before reporting it');
   assert.match(server, /(?:max_tokens|maxTokens)\s*:\s*(?:SELECTION_EXPLANATION_MAX_TOKENS|400)\b/,
     'the concise explainer must cap responses at about 400 tokens');
   assert.match(server, /temperature\s*:\s*0\.2\b/,
@@ -1411,8 +1558,9 @@ async function main() {
   ];
   for (const test of tests) test();
   await testConcurrentTransactionsAndDeleteRace();
+  await testFirstVisibleDeadlineRuntime();
   await testStartupReadinessAndInvalidSchema();
-  console.log(`selection-explanation-regression ok (${tests.length + 2}/${tests.length + 2})`);
+  console.log(`selection-explanation-regression ok (${tests.length + 3}/${tests.length + 3})`);
 }
 
 if (require.main === module) {

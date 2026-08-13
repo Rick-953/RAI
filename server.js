@@ -300,7 +300,18 @@ const TITLE_FALLBACK_MAX_TOKENS = 80;
 const TITLE_FALLBACK_TIMEOUT_MS = 10000;
 const IMAGE_WAITING_LINE_MODEL_ID = 'deepseek-flash';
 const IMAGE_WAITING_LINE_TIMEOUT_MS = 5000;
-const SELECTION_EXPLANATION_MODEL_ID = 'deepseek-flash';
+const SELECTION_EXPLANATION_MODEL_ID = 'deepseek-flash-siliconflow';
+const SELECTION_EXPLANATION_MODEL_IDS = Object.freeze([
+    'deepseek-flash-siliconflow',
+    'deepseek-flash',
+    'deepseek-pro',
+    'gemini-3.6-flash-low',
+    'gpt-5.6-luna',
+    'kimi-k2.6',
+    'qwen3.6-35b-a3b',
+    'nemotron-3-ultra'
+]);
+const SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS = 4000;
 const SELECTION_EXPLANATION_MAX_SELECTED_CHARS = 1500;
 const SELECTION_EXPLANATION_MAX_CONTEXT_CHARS = 1200;
 const SELECTION_EXPLANATION_MAX_FORMULAS = 8;
@@ -5811,6 +5822,7 @@ function researchModelLabel(modelId = '') {
         'kimi-k2.6': 'Kimi K2.6',
         'chatgpt-gpt-oss-120b': 'ChatGPT OSS 120B',
         'nemotron-3-ultra': 'Nemotron 3 Ultra',
+        'deepseek-flash-siliconflow': 'DeepSeek v4 Flash（硅基流动）',
         'deepseek-flash': 'DeepSeek v4',
         'deepseek-pro': 'DeepSeek Pro',
         'claude-sonnet-5': 'Claude Sonnet 5',
@@ -5830,7 +5842,7 @@ function researchRoleFromModel(modelId = '') {
     if (modelId === 'kimi-k2.6') return 'kimi';
     if (modelId === 'chatgpt-gpt-oss-120b') return 'chatgpt';
     if (modelId === 'nemotron-3-ultra') return 'nemotron';
-    if (modelId === 'deepseek-flash') return 'deepseek_flash';
+    if (modelId === 'deepseek-flash-siliconflow' || modelId === 'deepseek-flash') return 'deepseek_flash';
     if (modelId === 'deepseek-pro') return 'deepseek';
     if (modelId === 'gemini-3-flash') return 'gemini';
     if (modelId === 'openrouter-free') return 'openrouter';
@@ -5852,6 +5864,7 @@ const DEFAULT_RESEARCH_AGENT_MODEL_IDS = ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-g
 const DEFAULT_RESEARCH_MASTER_MODEL_ID = 'deepseek-pro';
 
 function normalizeResearchModelId(modelId = '') {
+    if (String(modelId || '').trim() === 'deepseek-flash-siliconflow') return 'deepseek-flash-siliconflow';
     const normalized = normalizeIncomingModelId(modelId);
     if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
     if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
@@ -6110,7 +6123,11 @@ function buildResearchRequest({
         stream: !!stream
     };
 
-    if (routing.provider === 'siliconflow' && isKimiK25ActualModel(actualModel)) {
+    if (modelId === 'deepseek-flash-siliconflow') {
+        body.enable_thinking = !!thinkingMode;
+        delete body.thinking;
+        if (!thinkingMode) delete body.reasoning_effort;
+    } else if (routing.provider === 'siliconflow' && isKimiK25ActualModel(actualModel)) {
         body.enable_thinking = !!thinkingMode;
     } else {
         body.temperature = temperature;
@@ -6217,11 +6234,13 @@ async function callResearchModelStream({
     temperature = 0.35,
     topP = 0.9,
     timeoutMs = 120000,
+    firstVisibleTimeoutMs = 0,
     onContent,
     onReasoning,
     signal,
     collectReasoning = true
 }) {
+    const startedAt = Date.now();
     const request = buildResearchRequest({
         modelId,
         messages,
@@ -6244,8 +6263,23 @@ async function callResearchModelStream({
         signal.addEventListener('abort', abortFromExternalSignal, { once: true });
     }
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    let firstVisibleTimedOut = false;
+    let firstVisibleAt = 0;
+    const firstVisibleTimeoutId = firstVisibleTimeoutMs > 0
+        ? setTimeout(() => {
+            firstVisibleTimedOut = true;
+            controller.abort();
+        }, firstVisibleTimeoutMs)
+        : null;
+    firstVisibleTimeoutId?.unref?.();
+    const markFirstVisible = (text = '') => {
+        if (firstVisibleAt || !String(text || '').trim()) return;
+        firstVisibleAt = Date.now();
+        if (firstVisibleTimeoutId) clearTimeout(firstVisibleTimeoutId);
+    };
 
     let response;
+    let responseHeadersAt = 0;
     try {
         response = await fetch(request.apiUrl || request.providerConfig.baseURL, {
             method: 'POST',
@@ -6253,14 +6287,24 @@ async function callResearchModelStream({
             body: JSON.stringify(request.body),
             signal: controller.signal
         });
+        responseHeadersAt = Date.now();
     } catch (error) {
         clearTimeout(timeoutId);
+        if (firstVisibleTimeoutId) clearTimeout(firstVisibleTimeoutId);
         cleanupExternalSignal();
         if (error.name === 'AbortError') {
             if (signal?.aborted) {
                 const cancelledError = new Error(`${researchModelLabel(modelId)} 请求已停止`);
                 cancelledError.code = 'selection_explanation_cancelled';
                 throw cancelledError;
+            }
+            if (firstVisibleTimedOut) {
+                const firstVisibleError = new Error(`${researchModelLabel(modelId)} 首字超时(${firstVisibleTimeoutMs}ms)`);
+                firstVisibleError.code = 'selection_explanation_first_visible_timeout';
+                firstVisibleError.firstVisibleMs = null;
+                firstVisibleError.responseHeadersMs = responseHeadersAt ? responseHeadersAt - startedAt : null;
+                firstVisibleError.durationMs = Date.now() - startedAt;
+                throw firstVisibleError;
             }
             throw new Error(`${researchModelLabel(modelId)} 主控生成超时(${timeoutMs}ms)`);
         }
@@ -6273,6 +6317,7 @@ async function callResearchModelStream({
             errorText = await readBoundedResponseText(response);
         } finally {
             clearTimeout(timeoutId);
+            if (firstVisibleTimeoutId) clearTimeout(firstVisibleTimeoutId);
             cleanupExternalSignal();
         }
         throw new Error(`${researchModelLabel(modelId)} 主控生成失败 ${response.status} (bodyLength=${errorText.length})`);
@@ -6386,6 +6431,7 @@ async function callResearchModelStream({
                         } else {
                             const visibleDelta = extractIncrementalChunk(content, part.text);
                             if (visibleDelta) {
+                                markFirstVisible(visibleDelta);
                                 content += visibleDelta;
                                 if (onContent) await onContent(visibleDelta);
                             }
@@ -6416,6 +6462,7 @@ async function callResearchModelStream({
                         }
                     }
                     if (split.visible) {
+                        markFirstVisible(split.visible);
                         content += split.visible;
                         if (onContent) await onContent(split.visible);
                     }
@@ -6426,9 +6473,23 @@ async function callResearchModelStream({
         }
     } catch (error) {
         await reader.cancel().catch(() => null);
+        if (firstVisibleTimedOut && !firstVisibleAt && !signal?.aborted) {
+            const firstVisibleError = new Error(`${researchModelLabel(modelId)} 首字超时(${firstVisibleTimeoutMs}ms)`);
+            firstVisibleError.code = 'selection_explanation_first_visible_timeout';
+            firstVisibleError.firstVisibleMs = null;
+            firstVisibleError.responseHeadersMs = responseHeadersAt ? responseHeadersAt - startedAt : null;
+            firstVisibleError.durationMs = Date.now() - startedAt;
+            throw firstVisibleError;
+        }
+        if (error && typeof error === 'object') {
+            error.firstVisibleMs = firstVisibleAt ? firstVisibleAt - startedAt : null;
+            error.responseHeadersMs = responseHeadersAt ? responseHeadersAt - startedAt : null;
+            error.durationMs = Date.now() - startedAt;
+        }
         throw error;
     } finally {
         clearTimeout(timeoutId);
+        if (firstVisibleTimeoutId) clearTimeout(firstVisibleTimeoutId);
         cleanupExternalSignal();
     }
 
@@ -6437,7 +6498,10 @@ async function callResearchModelStream({
         actualModel: request.actualModel,
         provider: request.routing.provider,
         content,
-        reasoningContent
+        reasoningContent,
+        firstVisibleMs: firstVisibleAt ? Math.max(0, firstVisibleAt - startedAt) : null,
+        responseHeadersMs: responseHeadersAt ? Math.max(0, responseHeadersAt - startedAt) : null,
+        durationMs: Math.max(0, Date.now() - startedAt)
     };
 }
 
@@ -8286,6 +8350,14 @@ function normalizeIncomingModelId(modelId = 'auto') {
 // 模型路由映射 (支持auto模式)
 const MODEL_ROUTING = {
     // 具体模型配置
+    'deepseek-flash-siliconflow': {
+        provider: 'siliconflow',
+        model: 'deepseek-ai/DeepSeek-V4-Flash',
+        supportsThinking: true,
+        supportsWebSearch: false,
+        multimodal: false,
+        selectionExplanationOnly: true
+    },
     'deepseek-flash': {
         provider: 'deepseek',
         model: 'deepseek-v4-flash',
@@ -10360,7 +10432,8 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     smart_default_model: 'deepseek-flash',
     fast_default_model: 'deepseek-flash',
     thinking_default_model: 'deepseek-pro',
-    vision_fallback_model: 'qwen3.6-35b-a3b'
+    vision_fallback_model: 'qwen3.6-35b-a3b',
+    selection_explanation_model: SELECTION_EXPLANATION_MODEL_ID
 });
 
 const FILE_LIBRARY_QUOTA_BYTES = Object.freeze({
@@ -10561,13 +10634,27 @@ async function resolveUserConcurrentRequestLimit(userId, runtimeSettings = null)
 }
 
 // 管理员可配置的模型路由设置键（值为模型 ID，必须属于公开模型白名单）
-const MODEL_ROUTING_SETTING_KEYS = ['smart_default_model', 'fast_default_model', 'thinking_default_model', 'vision_fallback_model'];
+const MODEL_ROUTING_SETTING_KEYS = ['smart_default_model', 'fast_default_model', 'thinking_default_model', 'vision_fallback_model', 'selection_explanation_model'];
 
 function isSupportedAdminModelSettingValue(value) {
     const normalized = normalizeAdminModelId(String(value || '').trim());
     if (!normalized || !PUBLIC_MODEL_IDS.includes(normalized)) return false;
     // 排除纯图像生成模型（如 kolors-free / gpt-image-2），它们不能作为对话首选或视觉备用
     return MODEL_ROUTING[normalized]?.imageOnly !== true;
+}
+
+function isSupportedSelectionExplanationModelSettingValue(value) {
+    const normalized = normalizeResearchModelId(value);
+    return SELECTION_EXPLANATION_MODEL_IDS.includes(normalized)
+        && MODEL_ROUTING[normalized]?.imageOnly !== true;
+}
+
+function normalizeRuntimeModelSettingValue(key, value) {
+    if (key === 'selection_explanation_model') {
+        const normalized = normalizeResearchModelId(value);
+        return isSupportedSelectionExplanationModelSettingValue(normalized) ? normalized : '';
+    }
+    return isSupportedAdminModelSettingValue(value) ? normalizeAdminModelId(value) : '';
 }
 
 function parseBoundedInteger(value, defaultValue, min, max) {
@@ -18085,13 +18172,29 @@ async function recoverStaleSelectionExplanationReservations() {
     });
 }
 
-async function streamSelectionExplanationWithFallback({ messages, signal, onContent, onFallbackAttempt }) {
-    const preferredModelId = SELECTION_EXPLANATION_MODEL_ID;
+async function streamSelectionExplanationWithFallback({
+    messages,
+    signal,
+    preferredModelId = SELECTION_EXPLANATION_MODEL_ID,
+    traceId = '',
+    onContent,
+    onFallbackAttempt
+}) {
     const deadlineAt = Date.now() + SELECTION_EXPLANATION_TOTAL_DEADLINE_MS;
+    const requestStartedAt = Date.now();
     let lastError = null;
     const attemptedModels = [];
+    const candidates = getResearchFallbackCandidates(preferredModelId);
+    const routeReportTag = (stage, candidate = '') => sanitizeReportLabel([
+        'selx',
+        stage,
+        MODEL_ROUTING[candidate]?.provider || 'none',
+        candidate || 'none'
+    ].join('.'), 'selx.route');
 
-    for (const candidate of getResearchFallbackCandidates(preferredModelId)) {
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+        const candidate = candidates[candidateIndex];
+        const attemptStartedAt = Date.now();
         const remainingMs = deadlineAt - Date.now();
         if (remainingMs <= 500) {
             lastError = new Error('选词解释总生成时限已用完');
@@ -18106,6 +18209,19 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
         if (!(await isRoutableModelAvailable(candidate))) {
             lastError = new Error(`${researchModelLabel(candidate)} 不可用`);
             attemptedModels.push({ modelId: candidate, status: 'unavailable' });
+            appendRaiRuntimeReport({
+                level: '诊断',
+                tag: routeReportTag('candidate_unavailable', candidate),
+                message: '划词解释候选模型不可用，继续路由',
+                context: {
+                    requestId: traceId,
+                    stage: 'candidate_unavailable',
+                    attempt: candidateIndex + 1,
+                    modelId: candidate,
+                    provider: MODEL_ROUTING[candidate]?.provider || null,
+                    durationMs: Date.now() - attemptStartedAt
+                }
+            });
             continue;
         }
 
@@ -18125,6 +18241,7 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
                 temperature: 0.2,
                 topP: 0.85,
                 timeoutMs: Math.max(1000, Math.min(SELECTION_EXPLANATION_ATTEMPT_TIMEOUT_MS, remainingMs)),
+                firstVisibleTimeoutMs: candidateIndex === 0 ? SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS : 0,
                 signal,
                 collectReasoning: false,
                 onContent: async (delta) => {
@@ -18137,11 +18254,37 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
                 },
                 onReasoning: () => {}
             });
-            attemptedModels.push({ modelId: candidate, status: 'success' });
+            attemptedModels.push({
+                modelId: candidate,
+                status: 'success',
+                firstVisibleMs: result.firstVisibleMs,
+                responseHeadersMs: result.responseHeadersMs,
+                durationMs: result.durationMs
+            });
             if (!candidateContent.trim()) {
                 lastError = new Error(`${researchModelLabel(candidate)} 未返回可见内容`);
                 continue;
             }
+            appendRaiRuntimeReport({
+                level: '诊断',
+                tag: routeReportTag('complete', candidate),
+                message: '划词解释模型路由成功',
+                context: {
+                    requestId: traceId,
+                    stage: 'complete',
+                    status: 'success',
+                    attempt: candidateIndex + 1,
+                    fallbackCount: candidateIndex,
+                    modelId: candidate,
+                    model: result.actualModel,
+                    provider: result.provider,
+                    firstVisibleMs: result.firstVisibleMs,
+                    responseHeadersMs: result.responseHeadersMs,
+                    durationMs: result.durationMs,
+                    totalMs: Date.now() - requestStartedAt,
+                    visibleChars: candidateContent.length
+                }
+            });
             return { ...result, content: candidateContent, reasoningContent: '', attemptedModels };
         } catch (error) {
             if (error.code === 'selection_explanation_output_limit') {
@@ -18153,10 +18296,20 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
                     content: candidateContent,
                     reasoningContent: '',
                     truncated: true,
+                    firstVisibleMs: error.firstVisibleMs ?? null,
+                    responseHeadersMs: error.responseHeadersMs ?? null,
+                    durationMs: error.durationMs ?? (Date.now() - attemptStartedAt),
                     attemptedModels
                 };
             }
-            attemptedModels.push({ modelId: candidate, status: 'failed', errorCode: 'selection_model_failed' });
+            attemptedModels.push({
+                modelId: candidate,
+                status: candidateContent.trim() ? 'partial' : 'failed',
+                errorCode: 'selection_model_failed',
+                firstVisibleMs: error.firstVisibleMs ?? null,
+                responseHeadersMs: error.responseHeadersMs ?? null,
+                durationMs: error.durationMs ?? (Date.now() - attemptStartedAt)
+            });
             if (signal?.aborted || error.code === 'selection_explanation_cancelled') {
                 error.code = 'selection_explanation_cancelled';
                 error.partialContent = candidateContent;
@@ -18166,23 +18319,60 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
             if (candidateContent.trim()) {
                 error.code = 'selection_explanation_partial';
                 error.partialContent = candidateContent;
+                appendRaiRuntimeReport({
+                    level: '报错',
+                    tag: routeReportTag('partial', candidate),
+                    message: '划词解释模型在首字后中断，保留部分内容',
+                    context: {
+                        requestId: traceId,
+                        stage: 'partial',
+                        status: 'partial',
+                        attempt: candidateIndex + 1,
+                        modelId: candidate,
+                        provider: MODEL_ROUTING[candidate]?.provider || null,
+                        firstVisibleMs: error.firstVisibleMs ?? null,
+                        responseHeadersMs: error.responseHeadersMs ?? null,
+                        durationMs: error.durationMs ?? (Date.now() - attemptStartedAt),
+                        totalMs: Date.now() - requestStartedAt,
+                        visibleChars: candidateContent.length
+                    }
+                });
                 error.modelResult = {
                     modelId: candidate,
                     actualModel: MODEL_ROUTING[candidate]?.model || candidate,
                     provider: MODEL_ROUTING[candidate]?.provider || null,
+                    firstVisibleMs: error.firstVisibleMs ?? null,
+                    responseHeadersMs: error.responseHeadersMs ?? null,
+                    durationMs: error.durationMs ?? (Date.now() - attemptStartedAt),
                     attemptedModels
                 };
                 throw error;
             }
             lastError = error;
             appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'selection_explanation_model_fallback_failed',
-                message: error.message,
+                level: '诊断',
+                tag: routeReportTag(
+                    error.code === 'selection_explanation_first_visible_timeout'
+                        ? 'first_visible_timeout'
+                        : 'candidate_failed',
+                    candidate
+                ),
+                message: '划词解释候选模型失败，继续路由',
                 context: {
-                    preferredModel: preferredModelId,
-                    candidate,
-                    provider: MODEL_ROUTING[candidate]?.provider
+                    requestId: traceId,
+                    stage: error.code === 'selection_explanation_first_visible_timeout'
+                        ? 'first_visible_timeout'
+                        : 'candidate_failed',
+                    status: 'fallback',
+                    attempt: candidateIndex + 1,
+                    modelId: candidate,
+                    provider: MODEL_ROUTING[candidate]?.provider || null,
+                    errorCode: error.code || error.name || 'selection_model_failed',
+                    timeoutMs: candidateIndex === 0 ? SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS : null,
+                    firstVisibleMs: error.firstVisibleMs ?? null,
+                    responseHeadersMs: error.responseHeadersMs ?? null,
+                    durationMs: Date.now() - attemptStartedAt,
+                    totalMs: Date.now() - requestStartedAt
                 }
             });
         }
@@ -18191,6 +18381,20 @@ async function streamSelectionExplanationWithFallback({ messages, signal, onCont
     const error = lastError || new Error('没有可用的解释模型');
     if (!error.code) error.code = 'selection_explanation_all_models_failed';
     error.attemptedModels = attemptedModels;
+    appendRaiRuntimeReport({
+        level: '报错',
+        tag: routeReportTag('exhausted', preferredModelId),
+        message: '划词解释所有候选模型均失败',
+        context: {
+            requestId: traceId,
+            stage: 'exhausted',
+            status: 'failed',
+            modelId: preferredModelId,
+            errorCode: error.code || 'selection_explanation_all_models_failed',
+            count: attemptedModels.length,
+            totalMs: Date.now() - requestStartedAt
+        }
+    });
     throw error;
 }
 
@@ -18217,6 +18421,10 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
     let lastDraftLength = 0;
     let lastDraftAt = 0;
     let visibleOutputPersisted = false;
+    const diagnosticTraceId = `seltrace_${crypto.randomBytes(12).toString('hex')}`;
+    const diagnosticStartedAt = Date.now();
+    let diagnosticStatus = 'rejected';
+    let preferredModelId = SELECTION_EXPLANATION_MODEL_ID;
 
     const sendDone = (event = {}) => {
         if (doneSent || !res.headersSent) return false;
@@ -18272,6 +18480,9 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         requestId = buildSelectionExplanationRequestId(req.user.userId, payload.clientRequestId);
         cardId = `selcard_${crypto.randomUUID().replace(/-/g, '')}`;
         const runtimeSettings = await getAdminRuntimeSettings();
+        preferredModelId = isSupportedSelectionExplanationModelSettingValue(runtimeSettings.selection_explanation_model)
+            ? normalizeResearchModelId(runtimeSettings.selection_explanation_model)
+            : SELECTION_EXPLANATION_MODEL_ID;
         ensureRequestCanContinue();
         const concurrency = await resolveUserConcurrentRequestLimit(req.user.userId, runtimeSettings);
         const concurrentLimit = concurrency.limit;
@@ -18339,6 +18550,30 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         }
         pointReserved = true;
         ensureRequestCanContinue();
+        diagnosticStatus = 'routing';
+
+        appendRaiRuntimeReport({
+            level: '诊断',
+            tag: sanitizeReportLabel([
+                'selx',
+                'start',
+                MODEL_ROUTING[preferredModelId]?.provider || 'none',
+                preferredModelId
+            ].join('.'), 'selx.start'),
+            message: '划词解释请求已通过校验并开始模型路由',
+            context: {
+                requestId: diagnosticTraceId,
+                stage: 'provider_start',
+                status: 'started',
+                modelId: preferredModelId,
+                provider: MODEL_ROUTING[preferredModelId]?.provider || null,
+                selectedLength: payload.selectedText.length,
+                contextLength: payload.context.length,
+                formulaCount: payload.formulas.length,
+                durationMs: Date.now() - diagnosticStartedAt,
+                timeoutMs: SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS
+            }
+        });
 
         res.status(200);
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -18417,7 +18652,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
             parentCardId: target.parentCardId,
             remainingPoints: reservation.remainingPoints,
             pointsDeducted: SELECTION_EXPLANATION_POINT_COST,
-            preferredModel: SELECTION_EXPLANATION_MODEL_ID,
+            preferredModel: preferredModelId,
             quota
         });
         writeSelectionExplanationEvent(res, {
@@ -18431,12 +18666,14 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         finalModelResult = await streamSelectionExplanationWithFallback({
             messages,
             signal: controller.signal,
+            preferredModelId,
+            traceId: diagnosticTraceId,
             onFallbackAttempt: (candidate, lastError) => {
                 writeSelectionExplanationEvent(res, {
                     type: 'routing_notice',
                     requestId,
                     cause: 'provider_error',
-                    fromModel: SELECTION_EXPLANATION_MODEL_ID,
+                    fromModel: preferredModelId,
                     modelId: candidate,
                     label: researchModelLabel(candidate),
                     previousAttemptFailed: !!lastError
@@ -18457,13 +18694,6 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                     || now - lastDraftAt >= SELECTION_EXPLANATION_DRAFT_FLUSH_MS
                     || nextAnswer.length >= SELECTION_EXPLANATION_MAX_VISIBLE_CHARS
                 );
-                if (shouldPersist) {
-                    await persistSelectionExplanationDraft(req.user.userId, requestId, nextAnswer);
-                    ensureRequestCanContinue();
-                    lastDraftLength = nextAnswer.length;
-                    lastDraftAt = now;
-                    visibleOutputPersisted = nextHasVisibleOutput;
-                }
                 answer = nextAnswer;
                 if (acceptedDelta) {
                     writeSelectionExplanationEvent(res, {
@@ -18474,6 +18704,36 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                         modelId,
                         delta: acceptedDelta
                     });
+                }
+                if (shouldPersist) {
+                    let draftPersisted = false;
+                    try {
+                        await persistSelectionExplanationDraft(req.user.userId, requestId, nextAnswer);
+                        draftPersisted = true;
+                    } catch (draftError) {
+                        appendRaiRuntimeReport({
+                            level: '报错',
+                            tag: 'selx.draft_persist_failed',
+                            message: '划词解释草稿暂存失败，将在后续片段或终态重试',
+                            context: {
+                                requestId: diagnosticTraceId,
+                                stage: 'draft_persist_failed',
+                                status: 'retry_pending',
+                                modelId,
+                                provider: MODEL_ROUTING[modelId]?.provider || null,
+                                errorCode: draftError?.code || draftError?.name || 'selection_draft_persist_failed',
+                                visibleChars: nextAnswer.length,
+                                durationMs: Date.now() - now,
+                                totalMs: Date.now() - diagnosticStartedAt
+                            }
+                        });
+                    }
+                    ensureRequestCanContinue();
+                    if (draftPersisted) {
+                        lastDraftLength = nextAnswer.length;
+                        lastDraftAt = now;
+                        visibleOutputPersisted = nextHasVisibleOutput;
+                    }
                 }
                 if (rawDelta.length > acceptedDelta.length || answer.length >= SELECTION_EXPLANATION_MAX_VISIBLE_CHARS) {
                     const limitError = new Error('解释内容已达到长度上限');
@@ -18515,6 +18775,7 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
             modelResult: finalModelResult
         });
         pointReserved = false;
+        diagnosticStatus = 'complete';
 
         writeSelectionExplanationEvent(res, { type: 'saved', requestId, ...savedPayload });
         sendDone({
@@ -18532,6 +18793,9 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
         const cancelled = !shutdownAborted && (
             stoppedByUser || error.code === 'selection_explanation_cancelled'
         );
+        diagnosticStatus = cancelled
+            ? 'cancelled'
+            : (historyClearedByUser ? 'discarded' : (visibleAnswer ? 'partial' : 'failed'));
 
         try {
         if (pointReserved && historyClearedByUser) {
@@ -18751,6 +19015,30 @@ app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, as
                 await cleanupSelectionExplanationActiveRequest(requestId).catch(() => null);
             }
         }
+        appendRaiRuntimeReport({
+            level: diagnosticStatus === 'failed' ? '报错' : '诊断',
+            tag: sanitizeReportLabel([
+                'selx',
+                'end',
+                diagnosticStatus,
+                finalModelResult?.provider || MODEL_ROUTING[preferredModelId]?.provider || 'none',
+                finalModelResult?.modelId || preferredModelId
+            ].join('.'), 'selx.end'),
+            message: '划词解释请求生命周期结束',
+            context: {
+                requestId: diagnosticTraceId,
+                stage: 'request_end',
+                status: diagnosticStatus,
+                modelId: finalModelResult?.modelId || preferredModelId,
+                model: finalModelResult?.actualModel || null,
+                provider: finalModelResult?.provider || MODEL_ROUTING[preferredModelId]?.provider || null,
+                firstVisibleMs: finalModelResult?.firstVisibleMs ?? null,
+                responseHeadersMs: finalModelResult?.responseHeadersMs ?? null,
+                fallbackCount: Math.max(0, Number(finalModelResult?.attemptedModels?.length || 1) - 1),
+                visibleChars: answer.length,
+                totalMs: Date.now() - diagnosticStartedAt
+            }
+        });
     }
 });
 
@@ -25754,9 +26042,8 @@ async function getAdminRuntimeSettings() {
             if (!Object.prototype.hasOwnProperty.call(settings, row.setting_key)) continue;
             if (MODEL_ROUTING_SETTING_KEYS.includes(row.setting_key)) {
                 const candidate = String(row.setting_value || '').trim();
-                if (isSupportedAdminModelSettingValue(candidate)) {
-                    settings[row.setting_key] = normalizeAdminModelId(candidate);
-                }
+                const normalized = normalizeRuntimeModelSettingValue(row.setting_key, candidate);
+                if (normalized) settings[row.setting_key] = normalized;
                 continue;
             }
             const defaultValue = ADMIN_RUNTIME_LIMIT_DEFAULTS[row.setting_key];
@@ -25805,16 +26092,17 @@ async function setAdminRuntimeSettings(patch = {}) {
     for (const key of MODEL_ROUTING_SETTING_KEYS) {
         if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
         const candidate = String(patch[key] || '').trim();
-        if (!isSupportedAdminModelSettingValue(candidate)) continue;
+        const normalized = normalizeRuntimeModelSettingValue(key, candidate);
+        if (!normalized) continue;
         await dbRunAsync(
             `INSERT INTO admin_runtime_settings (setting_key, setting_value, updated_at)
              VALUES (?, ?, CURRENT_TIMESTAMP)
              ON CONFLICT(setting_key) DO UPDATE SET
                 setting_value = excluded.setting_value,
                 updated_at = CURRENT_TIMESTAMP`,
-            [key, normalizeAdminModelId(candidate)]
+            [key, normalized]
         );
-        saved[key] = normalizeAdminModelId(candidate);
+        saved[key] = normalized;
     }
     return { ...(await getAdminRuntimeSettings()), ...saved };
 }
