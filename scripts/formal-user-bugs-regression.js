@@ -1035,15 +1035,15 @@ async function testMessageRenderingStability() {
 }
 
 function testVersionContract() {
-  const expectedVersion = '0.12.0';
-  const expectedBuild = '20260813-selection-routing-v01200-r1';
+  const expectedVersion = '0.12.1';
+  const expectedBuild = '20260813-selection-dock-session-v01201-r1';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
   assert.match(app, new RegExp(`const RAI_APP_VERSION = '${expectedVersion.replaceAll('.', '\\.')}'`));
-  assert.match(app, /const RAI_BUILD_ID = '20260813-selection-routing-v01200-r1'/);
+  assert.match(app, /const RAI_BUILD_ID = '20260813-selection-dock-session-v01201-r1'/);
   assert.match(index, new RegExp(`by Rick \\u00b7 v${expectedVersion.replaceAll('.', '\\.')}`));
-  assert.match(serviceWorker, /0.12.0-20260813-selection-routing-v01200-r1/);
+  assert.match(serviceWorker, /0.12.1-20260813-selection-dock-session-v01201-r1/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
@@ -1056,7 +1056,7 @@ function testVersionContract() {
     'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260813-selection-routing-v01200-r1/);
+  assert.match(index, /conversation-cache\.js\?v=20260813-selection-dock-session-v01201-r1/);
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
     'fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
@@ -1190,6 +1190,12 @@ function testVersionContract() {
     'today rows must retain their HH:mm timestamp');
   assert.match(renderSessions, /getSessionDateGroup\(session\)[\s\S]{0,400}session-date-group/,
     'conversation rows must be grouped from browser-local dates');
+  assert.match(renderSessions, /const pinnedIds = new Set\(pinned\.map[\s\S]{0,320}const ordinarySessions =[\s\S]{0,260}!pinnedIds\.has/,
+    'ordinary date groups must exclude every conversation rendered in the pinned section');
+  assert.match(renderSessions, /ordinarySessions\.length === 0 && pinned\.length === 0/,
+    'a pinned-only sidebar must not show the empty-conversation state');
+  assert.match(renderSessions, /const sorted = \[\.\.\.ordinarySessions\]\.sort/,
+    'date grouping must consume the de-duplicated ordinary session list');
   const sessionsContainerRule = cssRule('.sessions-container');
   const sessionDateGroupRule = cssRule('.session-date-group', 'padding: 18px 12px 8px');
   const sessionItemRule = cssRule('.session-item', 'display: flex');

@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.12.0';
-const RAI_BUILD_ID = '20260813-selection-routing-v01200-r1';
+const RAI_APP_VERSION = '0.12.1';
+const RAI_BUILD_ID = '20260813-selection-dock-session-v01201-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -7768,6 +7768,26 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-08-13',
+    version: 'v0.12.1',
+    zh: {
+      summary: '解释收集入口不再遮挡界面，并严格跟随当前对话。',
+      details: [
+        '桌面端解释收集入口改到输入区右侧安全位置，不再压住欢迎页快捷操作或新对话内容。',
+        '解释卡、收集数量和最小化列表只在创建它们的对话中显示；切换或新建对话后立即隐藏，返回原对话时恢复。',
+        '置顶对话只显示在置顶分区，不再因浏览器缓存清单而重复出现在普通日期分区。'
+      ]
+    },
+    en: {
+      summary: 'The explanation dock no longer covers the interface and stays scoped to its conversation.',
+      details: [
+        'On desktop, the explanation dock now uses the safe right side of the composer instead of covering welcome shortcuts or new-chat content.',
+        'Explanation cards, counts, and minimized items only appear in their owning conversation; switching or starting a chat hides them until that conversation is reopened.',
+        'Pinned conversations now appear only in the pinned section instead of being duplicated in ordinary date groups by a cached manifest.'
+      ]
+    }
+  },
   {
     date: '2026-08-11',
     version: 'v0.11.94',
@@ -15122,7 +15142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.12.0 初始化 (selection-routing-r1)');
+  console.log(' RAI v0.12.1 初始化 (selection-dock-session-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -18263,6 +18283,7 @@ async function deleteSession(event, sessionId) {
       appState.sessionLoadController = null;
       closeSessionStreamSubscription();
       appState.currentSession = null;
+      window.RAISelectionExplainer?.setConversationContext?.(null, { newContext: true });
       appState.messages = [];
       renderMessages();
     }
@@ -20325,7 +20346,20 @@ function renderSessions(options = {}) {
   container.innerHTML = '';
   initializeConversationSidebarControls();
 
-  if (!appState.sessions || appState.sessions.length === 0) {
+  const pinnedContainer = document.getElementById('pinnedSessionsContainer');
+  const pinnedSection = document.getElementById('pinnedSessionsSection');
+  const pinned = Array.isArray(appState.pinnedSessions) ? appState.pinnedSessions : [];
+  if (pinnedContainer && pinnedSection) {
+    pinnedContainer.innerHTML = '';
+    pinnedSection.hidden = pinned.length === 0;
+    pinned.forEach((session) => pinnedContainer.appendChild(createSessionElement(session, { pinned: true })));
+  }
+
+  const pinnedIds = new Set(pinned.map((session) => String(session?.id || '')).filter(Boolean));
+  const ordinarySessions = (Array.isArray(appState.sessions) ? appState.sessions : [])
+    .filter((session) => !pinnedIds.has(String(session?.id || '')));
+
+  if (ordinarySessions.length === 0 && pinned.length === 0) {
     if (appState.sessionsPagination.isLoading) {
       container.innerHTML = `<div class="sessions-loader"><div class="loader-spinner"></div></div>`;
       restoreSessionsScrollState(container, scrollState);
@@ -20339,17 +20373,8 @@ function renderSessions(options = {}) {
     return;
   }
 
-  const pinnedContainer = document.getElementById('pinnedSessionsContainer');
-  const pinnedSection = document.getElementById('pinnedSessionsSection');
-  if (pinnedContainer && pinnedSection) {
-    pinnedContainer.innerHTML = '';
-    const pinned = appState.pinnedSessions || [];
-    pinnedSection.hidden = pinned.length === 0;
-    pinned.forEach((session) => pinnedContainer.appendChild(createSessionElement(session, { pinned: true })));
-  }
-
   // 按更新时间降序排序（越新越上）
-  const sorted = [...appState.sessions].sort((a, b) => {
+  const sorted = [...ordinarySessions].sort((a, b) => {
     const ta = new Date(a.updated_at || a.created_at || 0).getTime();
     const tb = new Date(b.updated_at || b.created_at || 0).getTime();
     return tb - ta;
@@ -28544,6 +28569,7 @@ function showClassicTemporaryChat() {
   restoreInternetSearchDefault();
   appState.currentSession = null;
   appState.currentSessionMemoryMode = 'classic-temp';
+  window.RAISelectionExplainer?.setConversationContext?.(null, { newContext: true });
   appState.messages = [];
   renderMessages();
   renderSessions();
@@ -28642,6 +28668,7 @@ async function handleNewChatClick() {
   restoreInternetSearchDefault();
   appState.currentSession = null;
   appState.currentSessionMemoryMode = 'normal';
+  window.RAISelectionExplainer?.setConversationContext?.(null, { newContext: true });
   appState.messages = [];
   renderMessages();
   renderSessions();
@@ -28808,6 +28835,7 @@ async function loadSession(sessionId, options = {}) {
       title: isChineseLanguage(appState.language) ? '历史对话' : 'Previous chat',
       session_kind: 'chat'
     };
+    window.RAISelectionExplainer?.setConversationContext?.(sessionId);
     appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
       ? 'saved-temp'
       : 'normal';

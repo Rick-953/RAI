@@ -23,6 +23,8 @@ const checks = [
   ['title-only date-group sidebar', /function getSessionDateGroup[\s\S]*?function createSessionElement[\s\S]*?session-menu-btn/],
   ['session refresh assigns the full pinned collection', /async function loadSessions[\s\S]{0,7000}appState\.pinnedSessions = Array\.isArray\(data\.pinned\)/],
   ['pinned changes participate in sidebar refresh signatures', /function getSessionListRenderSignature[\s\S]{0,1800}pinned:/],
+  ['ordinary session groups exclude pinned ids from cached manifests', /function renderSessions[\s\S]{0,1800}const pinnedIds = new Set\(pinned\.map[\s\S]{0,500}!pinnedIds\.has[\s\S]{0,900}\[\.\.\.ordinarySessions\]\.sort/],
+  ['pinned-only sidebars do not show the empty state', /function renderSessions[\s\S]{0,2400}ordinarySessions\.length === 0 && pinned\.length === 0/],
   ['folder naming uses an in-app card and persists expansion', /function showConversationFolderNameCard[\s\S]{0,4000}rai\.sidebar\.folder\.\$\{folder\.id\}\.open/],
   ['folder duplicate errors explain the conflicting name', /保存失败：已经有名为“\$\{name\}”的文件夹/],
   ['empty folder manager offers folder creation', /还没有文件夹[\s\S]{0,800}data-action="create"/],
