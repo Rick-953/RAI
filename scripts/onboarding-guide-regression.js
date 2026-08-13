@@ -170,13 +170,13 @@ function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.12\.1'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-selection-dock-session-v01201-r1'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0.12.1-20260813-selection-dock-session-v01201-r1'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260813-selection-dock-session-v01201-r1/g) || []).length;
+  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.12\.2'\s*;/, 'RAI_APP_VERSION mismatch');
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260814-mobile-guide-layout-v01202-r2'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0.12.2-20260814-mobile-guide-layout-v01202-r2'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260814-mobile-guide-layout-v01202-r2/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.12\.1/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.12.1', 'package.json version mismatch');
+  assert.match(index, /v0\.12\.2/, 'index.html must show the matching app version');
+  assert.equal(packageJson.version, '0.12.2', 'package.json version mismatch');
 }
 
 function testGuideWiring() {
@@ -546,6 +546,41 @@ function testRemediationWiring() {
   // R6: stale timers cleared at showOnboarding entry (replay mid-teaching).
   assert.match(onboarding, /initGuideRuntime\(\);\s*[\s\S]*?clearGuideTimers\(\);\s*[\s\S]*?onboardingEventController\?\.abort\(\);/,
     'R6: showOnboarding must clear guide timers on entry');
+}
+
+function testMobileGuideCollisionAvoidance() {
+  const panel = extractNamedFunction(app, 'updateGuideTeachingPanel');
+  const position = extractNamedFunction(app, 'positionMascotAtRect');
+  const move = extractNamedFunction(app, 'moveMascotToElement');
+  const step = extractNamedFunction(app, 'setGuideTeachingStep');
+  const begin = extractNamedFunction(app, 'beginGuideTeaching');
+  const cleanup = extractNamedFunction(app, 'cleanupGuideTeaching');
+  const floatingMenu = extractNamedFunction(app, 'positionFloatingMenu');
+
+  assert.match(panel, /const\s+mobile\s*=\s*isMobileGuideViewport\(\)/,
+    'mobile teaching must use an explicit layout branch');
+  assert.match(panel, /panel\.hidden\s*=\s*appState\.guide\.mascotEnabled\s*&&\s*!mobile/,
+    'mobile teaching must keep the standalone teaching panel visible');
+  assert.match(move, /guideRuntime\.teachingActive\s*&&\s*isMobileGuideViewport\(\)/,
+    'mobile teaching must suppress the mascot speech bubble');
+  assert.match(position, /rectsOverlap\(proposed,\s*panelRect,\s*10\)[\s\S]*?panelRect\.bottom\s*\+\s*10/,
+    'mobile mascot placement must avoid the teaching panel');
+  assert.match(step, /isMobileGuideViewport\(\)[\s\S]*?classList\.add\('is-menu-preview-hidden'\)[\s\S]*?setMascotSpeech\('',\s*''\)/,
+    'mobile plus-menu preview must hide the mascot and its speech instead of covering menu controls');
+  assert.match(cleanup, /'is-menu-preview-hidden'/,
+    'guide cleanup must restore a mascot hidden for menu preview');
+  assert.match(begin, /document\.body\.classList\.add\('rai-guide-teaching-active'\)/,
+    'teaching must expose a body-level layout state');
+  assert.match(cleanup, /document\.body\.classList\.remove\('rai-guide-teaching-active'\)/,
+    'guide cleanup must clear the body-level layout state');
+  assert.match(floatingMenu, /guideRuntime\.teachingActive\s*&&\s*isMobileGuideViewport\(\)[\s\S]*?guidePanelRect\.bottom\s*\+\s*12/,
+    'mobile composer menus must reserve the teaching panel as a hard top boundary');
+  assert.match(styles, /@media\s*\(max-width:\s*768px\)[\s\S]*?\.onboarding-card\.guide-teaching\s+\.onboarding-teaching-panel\s*\{[\s\S]*?top:\s*max\(72px,[\s\S]*?width:\s*calc\(100vw\s*-\s*24px\)/,
+    'mobile teaching panel must occupy its own full-width row below the top controls');
+  assert.match(styles, /\.rai-guide-mascot\.is-guide\s+\.rai-mascot-speech\s*\{\s*display:\s*none\s*!important;/,
+    'mobile teaching CSS must fail closed if stale speech content remains');
+  assert.match(styles, /body\.rai-guide-teaching-active\s+\.welcome-actions\s*\{\s*visibility:\s*hidden;/,
+    'mobile teaching must remove inactive welcome shortcuts from the mascot path');
 }
 
 function testPetSelectionAndInteraction() {
@@ -1140,6 +1175,7 @@ async function runStaticTests() {
     { name: 'static:pwa-suppression-r1-r2', run: testPwaSuppression },
     { name: 'static:reduced-motion', run: testReducedMotion },
     { name: 'static:remediation-wiring-r3-r4-r5-r6', run: testRemediationWiring },
+    { name: 'static:mobile-guide-collision-avoidance', run: testMobileGuideCollisionAvoidance },
     { name: 'static:pet-selection-drag-context-hide', run: testPetSelectionAndInteraction }
   ].map(({ name, run }) => ({ name, run }));
 }
@@ -1269,6 +1305,7 @@ module.exports = {
   testPwaSuppression,
   testReducedMotion,
   testRemediationWiring,
+  testMobileGuideCollisionAvoidance,
   assertGuideSchema,
   writeLoopbackNetworkGuard
 };

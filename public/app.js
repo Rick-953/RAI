@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.12.1';
-const RAI_BUILD_ID = '20260813-selection-dock-session-v01201-r1';
+const RAI_APP_VERSION = '0.12.2';
+const RAI_BUILD_ID = '20260814-mobile-guide-layout-v01202-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -3143,6 +3143,13 @@ function positionMascotAtRect(rect, placement = 'above') {
     left = rect.right - size * 0.75;
     top = rect.top - size - 12;
   }
+  if (guideRuntime.teachingActive && isMobileGuideViewport()) {
+    const panelRect = getGuideRect(document.getElementById('onboardingTeachingPanel'));
+    const proposed = { left, top, right: left + size, bottom: top + size };
+    if (panelRect && rectsOverlap(proposed, panelRect, 10)) {
+      top = panelRect.bottom + 10;
+    }
+  }
   setMascotCoordinates(left, top);
   syncMascotSpeechSide();
 }
@@ -3251,7 +3258,8 @@ function moveMascotToElement(target, { placement = 'above', bounce = true, speec
   if (!mascot || !appState.guide.mascotEnabled || !target) return;
   guideRuntime.mascotTarget = target;
   target.dataset.mascotPlacement = placement;
-  setMascotSpeech(speechTitle, speechText);
+  const useSpeech = !(guideRuntime.teachingActive && isMobileGuideViewport());
+  setMascotSpeech(useSpeech ? speechTitle : '', useSpeech ? speechText : '');
   const rect = getGuideRect(target);
   if (rect) positionMascotAtRect(rect, placement);
   if (bounce) bounceMascot();
@@ -3788,9 +3796,11 @@ function updateGuideTeachingPanel(step, sidebarTry = false) {
   descEl.textContent = copy.desc;
   if (statusEl) statusEl.textContent = '';
   announceGuide(copy.live || `${copy.title}. ${copy.desc}`);
-  if (appState.guide.mascotEnabled) setMascotSpeech(copy.title, copy.desc);
+  const mobile = isMobileGuideViewport();
+  if (appState.guide.mascotEnabled && !mobile) setMascotSpeech(copy.title, copy.desc);
+  if (mobile) setMascotSpeech('', '');
   const panel = document.getElementById('onboardingTeachingPanel');
-  if (panel) panel.hidden = appState.guide.mascotEnabled;
+  if (panel) panel.hidden = appState.guide.mascotEnabled && !mobile;
 }
 
 function getVisibleModelGuideTarget() {
@@ -3818,7 +3828,7 @@ function beginMobileSidebarDemo() {
   guideRuntime.edgeSwipeTarget = false;
   guideRuntime.waitingForSidebarSwipe = false;
   updateGuideTeachingPanel('sidebar');
-  if (appState.guide.mascotEnabled) {
+  if (appState.guide.mascotEnabled && !isMobileGuideViewport()) {
     setMascotSpeech(
       i18nText('onb-guide-sidebar-title', 'Meet the sidebar'),
       i18nText('onb-guide-sidebar-desc', 'Here is how it opens from the edge.')
@@ -3877,6 +3887,7 @@ function setGuideTeachingStep(step) {
   guideRuntime.teachingController = new AbortController();
   clearGuideTarget();
   clearGuideEdgeSwipeTarget();
+  getGuideMascotElement()?.classList.remove('is-menu-preview-hidden');
   document.getElementById('moreMenu')?.classList.remove('rai-guide-readonly');
   if (guideRuntime.plusAdvanceTimer) window.clearTimeout(guideRuntime.plusAdvanceTimer);
   guideRuntime.plusAdvanceTimer = null;
@@ -3939,12 +3950,17 @@ function setGuideTeachingStep(step) {
         const copy = getGuideStepCopy('plus');
         announceGuide(copy.desc);
         if (appState.guide.mascotEnabled) {
-          moveMascotToElement(explanationTarget, {
-            placement: 'right',
-            bounce: true,
-            speechTitle: copy.title,
-            speechText: copy.desc
-          });
+          if (isMobileGuideViewport()) {
+            getGuideMascotElement()?.classList.add('is-menu-preview-hidden');
+            setMascotSpeech('', '');
+          } else {
+            moveMascotToElement(explanationTarget, {
+              placement: 'right',
+              bounce: true,
+              speechTitle: copy.title,
+              speechText: copy.desc
+            });
+          }
         }
         guideRuntime.plusAdvanceTimer = scheduleGuideTimer(() => setGuideTeachingStep('sidebar'), 2600);
       }, 80);
@@ -3972,6 +3988,7 @@ function beginGuideTeaching() {
   appState.guide.teachingActive = true;
   overlay.classList.add('teaching');
   card.classList.add('guide-teaching');
+  document.body.classList.add('rai-guide-teaching-active');
   panel.hidden = appState.guide.mascotEnabled;
   document.getElementById('onboardingStepsIndicator')?.setAttribute('aria-hidden', 'true');
   const nextBtn = document.getElementById('onboardingNextBtn');
@@ -3985,7 +4002,7 @@ function beginGuideTeaching() {
 }
 
 function cleanupGuideTeaching() {
-  getGuideMascotElement()?.classList.remove('is-sidebar-demo-drag');
+  getGuideMascotElement()?.classList.remove('is-sidebar-demo-drag', 'is-menu-preview-hidden');
   setMascotSpeech('', '');
   guideRuntime.teachingController?.abort();
   guideRuntime.teachingController = null;
@@ -4004,6 +4021,7 @@ function cleanupGuideTeaching() {
   const panel = document.getElementById('onboardingTeachingPanel');
   overlay?.classList.remove('teaching');
   card?.classList.remove('guide-teaching');
+  document.body.classList.remove('rai-guide-teaching-active');
   if (panel) panel.hidden = true;
   document.getElementById('onboardingStepsIndicator')?.removeAttribute('aria-hidden');
 }
@@ -7768,6 +7786,26 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-08-14',
+    version: 'v0.12.2',
+    zh: {
+      summary: '手机端新用户引导不再与顶栏或更多能力菜单重叠。',
+      details: [
+        '手机教学说明固定在顶栏下方的独立区域，跳过按钮保留在安全区右上角，吉祥物不再携带会遮挡控件的长气泡。',
+        '吉祥物移动时会避开教学说明面板；打开加号菜单查看思考与研究模式时暂时隐藏吉祥物。',
+        '模型与更多能力菜单会把教学面板底部作为顶部边界，菜单内部目标环、文字和开关不再相互覆盖。'
+      ]
+    },
+    en: {
+      summary: 'Mobile onboarding no longer overlaps the header or the extra-tools menu.',
+      details: [
+        'Teaching copy now uses a dedicated row below the mobile header while Skip stays in the top safe area, so the mascot no longer carries a long bubble over controls.',
+        'Mascot placement avoids the teaching panel and the mascot is temporarily hidden while the plus-menu preview is open.',
+        'Model and extra-tools menus treat the teaching panel as a hard top boundary, keeping target rings, labels, and switches readable.'
+      ]
+    }
+  },
   {
     date: '2026-08-13',
     version: 'v0.12.1',
@@ -15142,7 +15180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.12.1 初始化 (selection-dock-session-r1)');
+  console.log(' RAI v0.12.2 初始化 (mobile-guide-layout-r2)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -15299,6 +15337,12 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') 
   const viewportPadding = 12;
   const gap = 8;
   const anchorRect = anchor.getBoundingClientRect();
+  const guidePanelRect = guideRuntime.teachingActive && isMobileGuideViewport()
+    ? getGuideRect(document.getElementById('onboardingTeachingPanel'))
+    : null;
+  const viewportTopBoundary = guidePanelRect
+    ? Math.min(anchorRect.top - gap - 120, guidePanelRect.bottom + 12)
+    : viewportPadding;
 
   // 每次按当前可见锚点重新计算，确保 resize/横竖屏后仍在视口内。
   menu.style.left = '0px';
@@ -15307,8 +15351,8 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') 
   // 限制菜单最大高度为 anchor 上方可用空间
   const availableSpace = vertical === 'below'
     ? window.innerHeight - anchorRect.bottom - viewportPadding - gap
-    : anchorRect.top - viewportPadding - gap;
-  menu.style.maxHeight = `${Math.max(availableSpace, 200)}px`;
+    : anchorRect.top - viewportTopBoundary - gap;
+  menu.style.maxHeight = `${Math.max(120, availableSpace)}px`;
 
   const menuRect = menu.getBoundingClientRect();
 
@@ -15328,7 +15372,7 @@ function positionFloatingMenu(menu, anchor, align = 'left', vertical = 'above') 
 
   if (vertical === 'below') {
     const top = Math.max(
-      viewportPadding,
+      viewportTopBoundary,
       Math.min(anchorRect.bottom + gap, window.innerHeight - menuRect.height - viewportPadding)
     );
     menu.style.top = `${Math.round(top)}px`;
