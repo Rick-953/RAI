@@ -110,6 +110,7 @@ const privateExamples = {
   sourceUrl: 'https://example.test/image?signature=private',
   list: ['private list item'],
   provider: 'siliconflow',
+  responseHeadersMs: 417,
   code: 'ETIMEDOUT',
   apiKey: 'sk-private-secret'
 };
@@ -130,6 +131,36 @@ assert.ok(!serializedExamples.includes('ETIMEDOUT'));
 assert.ok(serializedExamples.includes('[redacted]'));
 assert.ok(!serializedExamples.includes('apiKey'), 'secret field names must not be retained');
 assert.ok(!serializedExamples.includes('subject'), 'unknown field names must be replaced');
+
+const selectionLatencyExample = diagnostics.sanitizeReportContext({
+  requestId: 'seltrace_fixed_test',
+  stage: 'first_visible_timeout',
+  modelId: 'deepseek-flash-siliconflow',
+  provider: 'siliconflow',
+  firstVisibleMs: 3988,
+  responseHeadersMs: 417,
+  timeoutMs: 4000,
+  durationMs: 4003,
+  totalMs: 4012,
+  selectedLength: 18,
+  contextLength: 72,
+  formulaCount: 1,
+  fallbackCount: 1,
+  visibleChars: 0
+});
+assert.equal(selectionLatencyExample.firstVisibleMs, 3988);
+assert.equal(selectionLatencyExample.responseHeadersMs, 417);
+assert.equal(selectionLatencyExample.timeoutMs, 4000);
+assert.equal(selectionLatencyExample.durationMs, 4003);
+assert.equal(selectionLatencyExample.totalMs, 4012);
+assert.equal(selectionLatencyExample.selectedLength, 18);
+assert.equal(selectionLatencyExample.contextLength, 72);
+assert.equal(selectionLatencyExample.formulaCount, 1);
+assert.equal(selectionLatencyExample.fallbackCount, 1);
+assert.equal(selectionLatencyExample.visibleChars, 0);
+for (const key of ['requestId', 'stage', 'modelId', 'provider']) {
+  assert.equal(selectionLatencyExample[key]?.redacted, true, `${key} must remain privacy summarized`);
+}
 
 const nestedAttack = diagnostics.sanitizeReportContext({
   payload: {

@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.99';
-const RAI_BUILD_ID = '20260813-tea-pet-v01199-r3';
+const RAI_APP_VERSION = '0.12.0';
+const RAI_BUILD_ID = '20260813-selection-routing-v01200-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -15122,7 +15122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.11.99 初始化 (tea-pet-r1)');
+  console.log(' RAI v0.12.0 初始化 (selection-routing-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -32957,6 +32957,15 @@ async function loadAdminLimits() {
       .filter(([id, m]) => id !== 'auto' && !m.imageGeneration && !isModelDisabledByAdmin(id))
       .map(([id, m]) => ({ id, name: escapeHtml((m.displayName && m.displayName[appState.language]) || m.name || id) }));
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
+    const selectionExplanationModelIds = new Set([
+      'deepseek-flash-siliconflow', 'deepseek-flash', 'deepseek-pro',
+      'gemini-3.6-flash-low', 'gpt-5.6-luna', 'kimi-k2.6',
+      'qwen3.6-35b-a3b', 'nemotron-3-ultra'
+    ]);
+    const selectionExplanationCandidates = [
+      { id: 'deepseek-flash-siliconflow', name: 'DeepSeek v4 Flash（硅基流动）' },
+      ...routingCandidates.filter((model) => selectionExplanationModelIds.has(model.id))
+    ].filter((model, index, list) => list.findIndex((candidate) => candidate.id === model.id) === index);
     const modelSelectField = (key, label, candidates, current, hint = '') => {
       const matched = candidates.find((m) => m.id === current);
       const placeholder = matched ? '' : `<option value="" selected>${escapeHtml(current || '') || '（当前值不可用）'}</option>`;
@@ -32981,6 +32990,7 @@ async function loadAdminLimits() {
             ${modelSelectField('fast_default_model', '快速模型首选模型', routingCandidates, s.fast_default_model, '快速模型模式实际调用的模型')}
             ${modelSelectField('thinking_default_model', '思考模型首选模型', routingCandidates, s.thinking_default_model, '思考模式实际调用的模型')}
             ${modelSelectField('vision_fallback_model', '视觉备用路由模型', visionCandidates, s.vision_fallback_model, '纯文本模型遇到图片/多模态内容时自动切换到的多模态模型')}
+            ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek v4 Flash；4 秒无首字时自动切换备用模型')}
           </div>
           <div class="admin-model-switch-note">智能/快速/思考首选若被关闭、凭据缺失或上游失败，会自动回落到内置备用链；隐藏模型请在「模型管理」中关闭对应开关。</div>
         </div>
