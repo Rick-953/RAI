@@ -18620,6 +18620,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   z-index: 5400;
 }
 
+.rai-guide-mascot.is-menu-preview-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .rai-mascot-svg {
   display: block;
   width: 100%;
@@ -18889,6 +18894,10 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   .rai-guide-mascot[data-pet-type="tea"].is-dwell {
     --rai-mascot-size: 76px;
   }
+
+  body.rai-guide-teaching-active .welcome-actions {
+    visibility: hidden;
+  }
 }
 
 .rai-guide-mask {
@@ -19093,9 +19102,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   }
 
   .onboarding-card.guide-teaching .onboarding-teaching-panel {
-    top: max(12px, calc(env(safe-area-inset-top, 0px) + 8px));
+    top: max(72px, calc(env(safe-area-inset-top, 0px) + 64px));
     left: 12px;
-    width: min(320px, calc(100vw - 84px));
+    width: calc(100vw - 24px);
+    max-height: min(132px, calc(100dvh - 168px));
+    overflow: hidden auto;
     padding: 15px 16px;
     border-radius: 14px;
   }
@@ -19103,6 +19114,10 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   .onboarding-card.guide-teaching .onboarding-footer-left {
     top: max(12px, calc(env(safe-area-inset-top, 0px) + 8px));
     right: 12px;
+  }
+
+  .rai-guide-mascot.is-guide .rai-mascot-speech {
+    display: none !important;
   }
 
   .onboarding-card.guide-teaching .onboarding-btn-skip {
