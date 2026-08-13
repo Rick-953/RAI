@@ -2728,7 +2728,8 @@ const SANDBOX_EXEC_TOOL_DEFINITION_LOCAL = {
             properties: {
                 script: { type: 'string', description: 'PowerShell 脚本内容' },
                 file_ids: { type: 'array', items: { type: 'string' }, description: '脚本可访问的文件路径数组（可选）' },
-                output_path: { type: 'string', description: '脚本输出文件相对路径（可选），执行后返回其内容' }
+                output_path: { type: 'string', description: '脚本输出文件相对路径（可选），执行后返回其内容' },
+                elevated: { type: 'boolean', description: '是否需要管理员权限执行（默认 false）。改系统设置、写系统盘等需要管理员权限的操作设为 true（客户端会弹 UAC 授权窗口，用户确认后执行）；普通文件操作不要设。破坏性命令先向用户确认' }
             }
         }
     }
@@ -3181,7 +3182,7 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         transform_file: new Set(['file_id', 'operation', 'file_name']),
         edit_file: new Set(['file_id', 'replacements', 'file_name']),
         create_artifact: new Set(['format', 'content', 'file_name']),
-        sandbox_exec: new Set(['script', 'file_ids', 'output_path']),
+        sandbox_exec: new Set(['script', 'file_ids', 'output_path', 'elevated']),
         insert_image: new Set(['file_id', 'image_file', 'slide']),
         update_sheet: new Set(['file_id', 'sheet', 'cells', 'charts']),
         list_files: new Set(['path']),
@@ -3224,10 +3225,25 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
             const fileIds = Array.isArray(args.file_ids) ? [...new Set(args.file_ids.map(normalizeWorkspaceFileId))] : [];
             if (fileIds.length > 8) return null;
             const outputPath = typeof args.output_path === 'string' ? args.output_path.trim().slice(0, 240) : '';
+            // 敏感命令自动提权：涉及系统级操作（HKLM写/服务/系统目录/系统命令）且未显式提权时，自动补 elevated
+            const scriptText = String(args.script || '');
+            const ELEVATION_REQUIRED_PATTERNS = [
+                /HKLM\\/i, /reg add/i, /reg delete/i, /reg import/i, /reg save/i, /reg restore/i,
+                /sc\.exe/i, /net stop/i, /net start/i, /new-service/i, /set-service/i, /restart-service/i, /stop-service/i,
+                /C:\\Windows/i, /C:\\Program Files/i, /system32/i,
+                /bcdedit/i, /diskpart/i, /sfc \//i, /enable-windowsoptionalfeature/i, /dism \//i,
+                /new-netfirewallrule/i, /netsh advfirewall/i, /schtasks \/create/i, /schtasks \/delete/i,
+                /net user/i, /net localgroup/i, /set-itemproperty -path hk/i, /remove-itemproperty -path hk/i
+            ];
+            const autoElevate = ELEVATION_REQUIRED_PATTERNS.some((re) => re.test(scriptText));
+            if (autoElevate && args.elevated !== true) {
+                console.warn(` 检测到敏感命令，自动设置 elevated: scriptHmac=${require('crypto').createHash('sha256').update(scriptText).digest('hex').slice(0, 12)}`);
+            }
             return {
                 script: args.script,
                 ...(fileIds.length ? { file_ids: fileIds } : {}),
-                ...(outputPath ? { output_path: outputPath } : {})
+                ...(outputPath ? { output_path: outputPath } : {}),
+                ...(args.elevated === true || autoElevate ? { elevated: true } : {})
             };
         }
         if (toolName === 'insert_image') {
@@ -23343,7 +23359,7 @@ if (clientFileExecution && systemPrompt) {
 - 给文档插图：先下载图片到工作目录（用 sandbox_exec 执行 PowerShell：Invoke-WebRequest -Uri 图片URL -OutFile 图片名.png），再引用：create_artifact 的 content 里用 !img:图片名.png 行，或 insert_image（docx 末尾 / pptx 指定页）。注意：图片必须真实存在于工作目录后才能引用，绝不能引用不存在的文件或直接写 URL
 - 更新 Excel：用 update_sheet（定向写单元格/公式/图表）；update_sheet 成功即完成，禁止再用 sandbox_exec 的 PowerShell COM 重复操作 Excel
 - 管理文件：list_files / write_file / copy_file / move_file / delete_file
-- 执行命令：用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒）。注意：本地环境只有 Windows PowerShell，**没有 Python/python-docx/openpyxl**，不要写 Python 脚本创建 Office 文档；文档操作一律用上述专门工具
+- 执行命令：用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒）。需要管理员权限的操作（改系统设置、写系统盘、服务管理）把 elevated 设为 true（客户端弹 UAC 授权，用户确认后执行）；破坏性命令（删除/覆盖/格式化）先向用户确认再执行。注意：本地环境只有 Windows PowerShell，**没有 Python/python-docx/openpyxl**，不要写 Python 脚本创建 Office 文档；文档操作一律用上述专门工具
 - 读取文件：用 read_file / transform_file
 
 不要请求沙箱、不要声称需要服务器沙箱。用户请求涉及文件/文档/命令操作时，你必须实际调用工具完成，禁止只输出计划、假装完成或跳过工具。**工具执行结果未确认成功（未收到 success:true 回传）时，禁止声称已生成/已完成/已写入，必须如实告知用户实际状态**。`
