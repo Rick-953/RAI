@@ -103,8 +103,10 @@ assert.match(packageJob, /^    needs:\s*security-gate-summary$/m, 'release packa
 assert.match(rebuildJob, /^    needs:\s*security-gate-summary$/m, 'independent rebuild must wait for the fail-closed security gate summary');
 for (const [label, job] of [['primary build', packageJob], ['independent rebuild', rebuildJob]]) {
   assert.match(job, /git archive --format=tar --prefix=/, `${label} must build from the checked-out Git object`);
-  assert.match(job, /\.env\.example LICENSE README\.md README\.zh-CN\.md RAI文档\.txt 更新运维\.txt/, `${label} must use the documented release allowlist`);
+  assert.match(job, /\.env\.example LICENSE README\.md README\.zh-CN\.md docs/, `${label} must use the documented release allowlist`);
   assert.match(job, /agent lib workers public scripts server\.js user-session-token\.js package\.json package-lock\.json/, `${label} must include the complete Web runtime allowlist`);
+  assert.match(job, /git ls-files --error-unmatch "\$release_path"/, `${label} must fail closed when an allowlisted path is absent`);
+  assert.doesNotMatch(job, /RAI文档\.txt|更新运维\.txt|docs\/readme/, `${label} must not reference retired release paths`);
   assert.match(job, /\| gzip -n >/, `${label} must suppress gzip timestamps`);
   assert.match(job, /sha256sum -c SHA256SUMS/, `${label} must validate its own checksum`);
 }
