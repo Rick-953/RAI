@@ -45,6 +45,7 @@ const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'u
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
+const teaPetAsset = path.join(ROOT, 'public/images/pets/tea-pet.webp');
 const serviceWorker = read('public/sw.js');
 const serverSource = read('server.js');
 const packageJson = JSON.parse(read('package.json'));
@@ -169,13 +170,13 @@ function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.11\.98'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-onboarding-account-isolation-v01198-r1'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.11\.98-20260813-onboarding-account-isolation-v01198-r1'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260813-onboarding-account-isolation-v01198-r1/g) || []).length;
+  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.11\.99'\s*;/, 'RAI_APP_VERSION mismatch');
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-tea-pet-v01199-r3'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.11\.99-20260813-tea-pet-v01199-r3'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260813-tea-pet-v01199-r3/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.11\.98/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.11.98', 'package.json version mismatch');
+  assert.match(index, /v0\.11\.99/, 'index.html must show the matching app version');
+  assert.equal(packageJson.version, '0.11.99', 'package.json version mismatch');
 }
 
 function testGuideWiring() {
@@ -222,8 +223,8 @@ function testCompletionVersionRecording() {
   assert.match(setCompleted, /Math\.max\(appState\.guide\.completedVersion,\s*RAI_GUIDE_VERSION\)/,
     'complete must use Math.max semantics (never lower)');
   assert.match(setCompleted, /writeGuideCompletionMirror\(/, 'complete must write the local mirror');
-  assert.match(setCompleted, /syncGuideStateToServer\(\{\s*completedVersion:\s*RAI_GUIDE_VERSION\s*\}\)/,
-    'complete must mirror the server sync of RAI_GUIDE_VERSION');
+  assert.match(setCompleted, /syncGuideStateToServer\(\{[\s\S]*?completedVersion:\s*RAI_GUIDE_VERSION[\s\S]*?mascotEnabled:\s*false/,
+    'complete must sync RAI_GUIDE_VERSION and the optional first-run mascot hide together');
 
   // Skip button routes through finish(), which calls setOnboardingCompleted.
   assert.match(onboarding, /skipBtn\.addEventListener\('click',\s*finish/, 'skip must go through finish()');
@@ -545,6 +546,30 @@ function testRemediationWiring() {
   // R6: stale timers cleared at showOnboarding entry (replay mid-teaching).
   assert.match(onboarding, /initGuideRuntime\(\);\s*[\s\S]*?clearGuideTimers\(\);\s*[\s\S]*?onboardingEventController\?\.abort\(\);/,
     'R6: showOnboarding must clear guide timers on entry');
+}
+
+function testPetSelectionAndInteraction() {
+  assert.ok(fs.existsSync(teaPetAsset), 'Tea pet WebP asset must exist');
+  assert.ok(fs.statSync(teaPetAsset).size > 1000 && fs.statSync(teaPetAsset).size < 200000,
+    'Tea pet WebP must be non-empty and lightweight');
+  assert.match(index, /id="settingsPetPicker"[\s\S]*?data-pet-type="saturn"[\s\S]*?data-pet-type="tea"/,
+    'settings must expose Saturn and Tea pet choices');
+  assert.match(index, /id="raiPetContextMenu"[\s\S]*?id="raiPetHideAction"/,
+    'pet context menu must expose a hide action');
+  assert.match(styles, /images\/pets\/tea-pet\.webp/, 'Tea pet asset must be rendered by CSS');
+  assert.match(app, /const\s+RAI_PET_TYPES\s*=\s*new Set\(\['saturn',\s*'tea'\]\)/,
+    'client pet type allowlist must be strict');
+  assert.match(app, /RAI_PET_POSITION_PREFIX\s*=\s*'rai_pet_position:'/, 'pet positions must use an account-scoped prefix');
+  assert.match(app, /Math\.hypot\([\s\S]*?<\s*7/, 'drag must use a movement threshold');
+  assert.match(app, /setPointerCapture/, 'drag must capture the pointer');
+  assert.match(app, /guideRuntime\.suppressPetClick\s*=\s*true/, 'drag must suppress the release click');
+  assert.match(app, /addEventListener\('contextmenu'/, 'desktop context menu must be bound');
+  assert.match(app, /any-hover:\s*hover[\s\S]*?any-pointer:\s*fine/, 'right-click menu must be limited to desktop-like pointers');
+  assert.match(app, /applyGuideMascotState\(false\)/, 'context-menu hide must use the shared server-backed setting path');
+  assert.match(app, /event\.key\s*===\s*'Escape'[\s\S]*?closePetContextMenu/, 'Escape must close the context menu');
+  assert.match(app, /shouldDefaultHidePet\s*=\s*!isGuideCompleted/, 'only first completion should default-hide the pet');
+  assert.match(app, /disableMascot:\s*shouldDefaultHidePet/, 'finish and skip must persist the first-run hide state');
+  assert.match(app, /pet-hidden-after-guide/, 'the post-guide Settings notice must exist');
 }
 
 // ---------------------------------------------------------------------------
@@ -930,6 +955,7 @@ async function waitForReady(baseUrl, dbPath, childState, timeoutMs = 60000) {
           const columns = await dbAll(db, 'PRAGMA table_info(user_configs)');
           const names = new Set(columns.map((column) => column.name));
           return names.has('guide_mascot_enabled')
+            && names.has('guide_pet_type')
             && names.has('guide_tap_target_enabled')
             && names.has('onboarding_completed_version');
         });
@@ -1002,6 +1028,10 @@ async function assertGuideSchema(dbPath) {
       assert.equal(column.type, 'INTEGER', `${name} must be INTEGER`);
       assert.equal(String(column.dflt_value), expectedDefault, `${name} default must be ${expectedDefault}`);
     }
+    const petType = byName.guide_pet_type;
+    assert.ok(petType, 'user_configs must have guide_pet_type');
+    assert.equal(petType.type, 'TEXT', 'guide_pet_type must be TEXT');
+    assert.equal(String(petType.dflt_value), "'saturn'", 'guide_pet_type default must be saturn');
     return columns;
   });
 }
@@ -1022,6 +1052,7 @@ async function testFreshUserProfileDefaults(context, user) {
   const profile = await apiRequest(context.baseUrl, '/api/user/profile', { token: user.token, ip: nextAuditIp() });
   assert.equal(profile.status, 200, `fresh profile: ${profile.text}`);
   assert.equal(profile.body?.guideMascotEnabled, true, 'fresh user guideMascotEnabled must be true');
+  assert.equal(profile.body?.guidePetType, 'saturn', 'fresh user guidePetType must be saturn');
   assert.equal(profile.body?.guideTapTargetEnabled, true, 'fresh user guideTapTargetEnabled must be true');
   assert.equal(Number(profile.body?.onboardingCompletedVersion), 0, 'fresh user onboardingCompletedVersion must be 0');
 }
@@ -1050,6 +1081,15 @@ async function testGuideStatePatchMatrix(context, user) {
   assert.equal(mascotOff.status, 200, `mascotEnabled:false: ${mascotOff.text}`);
   assert.equal(mascotOff.body?.guideMascotEnabled, false, 'patch must return mascot disabled');
   assert.equal(mascotOff.body?.guideTapTargetEnabled, true, 'partial patch must leave tap target untouched');
+
+  const teaSelected = await patch({ petType: 'tea' });
+  assert.equal(teaSelected.status, 200, `petType:tea: ${teaSelected.text}`);
+  assert.equal(teaSelected.body?.guidePetType, 'tea', 'Tea selection must persist');
+  const saturnSelected = await patch({ petType: 'saturn' });
+  assert.equal(saturnSelected.status, 200, `petType:saturn: ${saturnSelected.text}`);
+  assert.equal(saturnSelected.body?.guidePetType, 'saturn', 'Saturn selection must persist');
+  const invalidPet = await patch({ petType: 'mars' });
+  assert.equal(invalidPet.status, 400, 'unknown pet types must be rejected');
 
   // Validation matrix.
   const completedVersionTwo = await patch({ completedVersion: 2 });
@@ -1099,7 +1139,8 @@ async function runStaticTests() {
     { name: 'static:teaching-steps-no-auto-select', run: testTeachingStepsNoAutoSelect },
     { name: 'static:pwa-suppression-r1-r2', run: testPwaSuppression },
     { name: 'static:reduced-motion', run: testReducedMotion },
-    { name: 'static:remediation-wiring-r3-r4-r5-r6', run: testRemediationWiring }
+    { name: 'static:remediation-wiring-r3-r4-r5-r6', run: testRemediationWiring },
+    { name: 'static:pet-selection-drag-context-hide', run: testPetSelectionAndInteraction }
   ].map(({ name, run }) => ({ name, run }));
 }
 
