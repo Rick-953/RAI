@@ -27,6 +27,8 @@
     layoutRestoreGeneration: 0,
     cards: new Map(),
     activeWorkspaceId: null,
+    activeChatContextId: '',
+    draftContextSequence: 0,
     zCounter: 10,
     selectionSnapshot: null,
     selectionTimer: null,
@@ -101,6 +103,23 @@
 
   function isAuthenticated() {
     return Boolean(getAppState()?.token && getAppState()?.user?.id);
+  }
+
+  function sessionChatContextId(sessionId) {
+    const normalized = String(sessionId || '').trim();
+    return normalized ? `session:${normalized}` : '';
+  }
+
+  function currentChatContextId() {
+    return state.activeChatContextId || sessionChatContextId(getAppState()?.currentSession?.id);
+  }
+
+  function isCardInCurrentChat(card) {
+    return Boolean(card && card.chatContextId && card.chatContextId === currentChatContextId());
+  }
+
+  function currentChatCards() {
+    return Array.from(state.cards.values()).filter(isCardInCurrentChat);
   }
 
   function isMobileWorkspace() {
@@ -309,6 +328,8 @@
       .map((card) => ({
         cardId: card.cardId,
         threadId: card.threadId || null,
+        sessionId: card.sessionId || null,
+        chatContextId: card.chatContextId || null,
         parentCardId: card.parentCardId || null,
         x: Math.round(card.x || 0),
         y: Math.round(card.y || 0),
@@ -364,6 +385,7 @@
     state.historySearchTimer = null;
     state.selectionSnapshot = null;
     state.preserveSelection = false;
+    state.activeChatContextId = '';
     if (state.deleteResolver) closeDeleteChoice(null);
     if (state.els.historyDrawer) {
       state.els.historyDrawer.classList.remove('is-open');
@@ -508,18 +530,18 @@
   }
 
   function focusCard(card) {
-    if (!card || card.minimized) return;
+    if (!card || card.minimized || !isCardInCurrentChat(card)) return;
     state.zCounter += 1;
     card.z = state.zCounter;
     card.lastFocused = Date.now();
     card.el.style.zIndex = String(card.z);
     state.activeWorkspaceId = card.workspaceId;
-    state.cards.forEach((item) => item.el.classList.toggle('is-active', item.workspaceId === card.workspaceId));
+    state.cards.forEach((item) => item.el.classList.toggle('is-active', isCardInCurrentChat(item) && item.workspaceId === card.workspaceId));
     persistLayout();
   }
 
   function enforceExpandedLimit(activeCard) {
-    const expanded = Array.from(state.cards.values()).filter((card) => !card.minimized);
+    const expanded = currentChatCards().filter((card) => !card.minimized);
     const overflow = expanded.length - getExpandedLimit();
     if (overflow <= 0) return;
     expanded
@@ -531,7 +553,7 @@
 
   function minimizeCard(workspaceId) {
     const card = state.cards.get(workspaceId);
-    if (!card) return;
+    if (!card || !isCardInCurrentChat(card)) return;
     const hadFocus = card.el.contains(document.activeElement);
     card.minimized = true;
     card.el.classList.add('is-minimized');
@@ -544,7 +566,7 @@
 
   function restoreCard(workspaceId) {
     const card = state.cards.get(workspaceId);
-    if (!card) return;
+    if (!card || !isCardInCurrentChat(card)) return;
     card.minimized = false;
     card.el.classList.remove('is-minimized');
     card.el.removeAttribute('aria-hidden');
@@ -664,6 +686,8 @@
     const cardId = data.id || data.cardId || data.card_id || null;
     const threadId = data.threadId || data.thread_id || options.threadId || null;
     const parentCardId = data.parentId || data.parent_id || data.parentCardId || data.parent_card_id || options.parentCardId || null;
+    const sessionId = String(data.sessionId || data.session_id || options.sessionId || '').trim() || null;
+    const chatContextId = options.chatContextId || sessionChatContextId(sessionId) || currentChatContextId();
     const selectedText = normalizeText(data.selectedText || data.selected_text || options.selectedText || '', MAX_SELECTED_TEXT);
     const answer = String(data.answer || options.answer || '');
     const status = String(data.status || options.status || (options.inflight ? 'generating' : 'complete'));
@@ -736,7 +760,7 @@
     state.els.cards.appendChild(element);
 
     const card = {
-      workspaceId, cardId, threadId, parentCardId, selectedText, answer, status,
+      workspaceId, cardId, threadId, parentCardId, sessionId, chatContextId, selectedText, answer, status,
       model: data.model || data.actual_model || options.model || '',
       el: element, headerEl: header, contentEl: content, statusEl: statusElement,
       modelEl: modelElement, stopButton, x: 0, y: 0,
@@ -747,6 +771,7 @@
       keyboardDragging: false
     };
     state.cards.set(workspaceId, card);
+    element.hidden = !isCardInCurrentChat(card);
     element.style.zIndex = String(card.z);
     updateCardContent(card, card.inflight);
     setCardModel(card, card.model);
@@ -781,7 +806,11 @@
     const dockAnchorRect = dockAnchor?.getBoundingClientRect();
     const bounds = visualBounds();
     const dockWidth = Number(state.els.dockButton?.getBoundingClientRect().width || 72);
-    const desktopLeft = Number(dockAnchorRect?.left ?? rootRect?.left ?? bounds.left) + 4;
+    const anchorRight = Number(dockAnchorRect?.right ?? rootRect?.right ?? bounds.right);
+    const outsideRight = anchorRight + 10;
+    const desktopLeft = outsideRight + dockWidth <= bounds.right - 12
+      ? outsideRight
+      : anchorRight - dockWidth - 4;
     const left = isMobileWorkspace()
       ? bounds.left + 10
       : clamp(desktopLeft, bounds.left + 12, bounds.right - dockWidth - 12);
@@ -795,7 +824,7 @@
   function updateDock() {
     const dock = state.els.dock;
     if (!dock) return;
-    const cards = Array.from(state.cards.values());
+    const cards = currentChatCards();
     const hasCards = cards.length > 0;
     dock.hidden = !hasCards;
     state.els.dockCount.textContent = String(cards.length);
@@ -1005,6 +1034,8 @@
       threadId: snapshot.threadId,
       parentCardId: snapshot.parentCardId,
       parentWorkspaceId: snapshot.parentWorkspaceId,
+      sessionId: getAppState()?.currentSession?.id || null,
+      chatContextId: currentChatContextId(),
       snapshot,
       inflight: true,
       requestId: clientRequestId,
@@ -1052,6 +1083,7 @@
     return {
       ...raw,
       id: raw.id || raw.threadId || raw.thread_id,
+      sessionId: raw.sessionId || raw.session_id || null,
       title: normalizeText(raw.title || raw.selectedText || raw.selected_text || raw.rootSelectedText || raw.root_selected_text || ''),
       cardCount: Number(raw.cardCount ?? raw.card_count ?? raw.nodeCount ?? raw.node_count ?? 0),
       updatedAt: raw.updatedAt || raw.updated_at || raw.createdAt || raw.created_at || null
@@ -1487,6 +1519,8 @@
       if (!isOwnedRequestCurrent(owner)) return null;
       const path = pathFromResponse(data);
       if (!path.length) throw new Error('Empty path');
+      const restoredSessionId = String(data.sessionId || data.session_id || layout?.sessionId || '').trim() || null;
+      const restoredChatContextId = sessionChatContextId(restoredSessionId) || layout?.chatContextId || '';
       let parentWorkspaceId = null;
       let restored = null;
       path.forEach((node, index) => {
@@ -1501,6 +1535,8 @@
           parentWorkspaceId,
           parentCardId: node.parentId,
           threadId: node.threadId,
+          sessionId: restoredSessionId,
+          chatContextId: restoredChatContextId,
           x: saved?.x,
           y: saved?.y,
           z: saved?.z,
@@ -1509,7 +1545,7 @@
         });
         parentWorkspaceId = restored.workspaceId;
       });
-      if (restored && !layout?.minimized) restoreCard(restored.workspaceId);
+      if (restored && !layout?.minimized && isCardInCurrentChat(restored)) restoreCard(restored.workspaceId);
       return restored;
     } catch (error) {
       if (error?.name !== 'AbortError' && isOwnedRequestCurrent(owner) && !layout) {
@@ -1577,6 +1613,7 @@
     const isNewUser = state.userId !== nextUserId;
     state.userId = nextUserId;
     if (isNewUser) {
+      setConversationContext(getAppState()?.currentSession?.id, { newContext: !getAppState()?.currentSession?.id });
       restoreSavedWorkspace();
       loadHistory({ reset: true });
     }
@@ -1596,9 +1633,30 @@
     });
   }
 
+  function setConversationContext(sessionId, options = {}) {
+    const sessionContext = sessionChatContextId(sessionId);
+    if (sessionContext) {
+      state.activeChatContextId = sessionContext;
+    } else if (options.newContext === true || !state.activeChatContextId) {
+      state.draftContextSequence += 1;
+      state.activeChatContextId = `draft:${Date.now()}:${state.draftContextSequence}`;
+    }
+    state.selectionSnapshot = null;
+    hidePill();
+    closeDockTray();
+    state.activeWorkspaceId = null;
+    state.cards.forEach((card) => {
+      const visible = isCardInCurrentChat(card);
+      card.el.hidden = !visible;
+      card.el.classList.remove('is-active');
+    });
+    updateDock();
+    reflowWorkspace();
+  }
+
   function reflowWorkspace() {
     updateDockPosition();
-    state.cards.forEach((card) => {
+    currentChatCards().forEach((card) => {
       if (!card.minimized) placeCard(card, card.x, card.y, { persist: false });
     });
     enforceExpandedLimit(state.cards.get(state.activeWorkspaceId));
@@ -1682,6 +1740,7 @@
     if (!state.els.root || !state.els.pill || !state.els.cards) return;
     state.initialized = true;
     state.els.historyDrawer.inert = true;
+    setConversationContext(getAppState()?.currentSession?.id, { newContext: !getAppState()?.currentSession?.id });
 
     state.els.pill.addEventListener('pointerdown', (event) => {
       state.preserveSelection = true;
@@ -1749,6 +1808,7 @@
     init,
     onUserReady,
     clearUserWorkspace,
+    setConversationContext,
     refreshLanguage,
     openHistory,
     closeHistory,

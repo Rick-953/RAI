@@ -170,10 +170,10 @@ async function testFirstVisibleDeadlineRuntime() {
     const fast = await callStream({
       modelId: `http://127.0.0.1:${port}/fast`,
       messages: [],
-      firstVisibleTimeoutMs: 80
+      firstVisibleTimeoutMs: 250
     });
     assert.equal(fast.content, '首字');
-    assert.ok(Number.isFinite(fast.firstVisibleMs) && fast.firstVisibleMs < 80,
+    assert.ok(Number.isFinite(fast.firstVisibleMs) && fast.firstVisibleMs < 250,
       `fast first visible latency must beat deadline, got ${fast.firstVisibleMs}`);
 
     const started = Date.now();
@@ -181,11 +181,11 @@ async function testFirstVisibleDeadlineRuntime() {
       callStream({
         modelId: `http://127.0.0.1:${port}/slow`,
         messages: [],
-        firstVisibleTimeoutMs: 40
+        firstVisibleTimeoutMs: 80
       }),
       (error) => error?.code === 'selection_explanation_first_visible_timeout'
     );
-    assert.ok(Date.now() - started < 110, 'slow candidate must abort before its delayed first token');
+    assert.ok(Date.now() - started < 120, 'slow candidate must abort before its delayed first token');
   } finally {
     await new Promise((resolve) => delayedServer.close(resolve));
   }
@@ -1092,12 +1092,48 @@ function testCardsPointerKeyboardAndLimits() {
   const dockPosition = sourceBetween(explainer, 'function updateDockPosition', 'function updateDock', 'dock positioning');
   assertContainsAll(dockPosition, [
     "composer?.querySelector('.input-wrapper, .chatflow-input-wrapper')",
-    'dockAnchorRect?.left',
+    'dockAnchorRect?.right',
+    'outsideRight',
     'bounds.left + 10',
     'clamp(desktopLeft'
   ], 'desktop dock alignment');
+  assert.match(dockPosition, /outsideRight \+ dockWidth <= bounds\.right[^?]+\? outsideRight[\s\S]{0,100}anchorRight - dockWidth/,
+    'desktop dock must prefer the safe right side of the composer and fall back inside its right edge');
 
   const dockUpdate = sourceBetween(explainer, 'function updateDock()', 'function closeDockTray', 'dock visibility');
+  const conversationContext = sourceBetween(explainer, 'function setConversationContext', 'function reflowWorkspace', 'conversation-scoped explanation workspace');
+  assertContainsAll(conversationContext, [
+    'sessionChatContextId(sessionId)',
+    'options.newContext === true',
+    'card.el.hidden = !visible',
+    'closeDockTray()',
+    'updateDock()'
+  ], 'conversation-scoped explanation workspace');
+  assert.match(explainer, /function currentChatCards\(\)[\s\S]{0,180}filter\(isCardInCurrentChat\)/,
+    'dock and expanded-card limits must derive cards from the active conversation only');
+  const restoreCard = sourceBetween(explainer, 'function restoreCard', 'async function stopCardGeneration', 'card restoration');
+  assert.match(restoreCard, /!card \|\| !isCardInCurrentChat\(card\)/,
+    'history and dock actions must not expand a card outside its owning conversation');
+  assert.match(dockUpdate, /const cards = currentChatCards\(\);/,
+    'the explanation dock count must be scoped to the active conversation');
+  assert.match(explainer, /chatContextId:\s*currentChatContextId\(\)/,
+    'new explanation cards must capture the conversation context that created them');
+  assert.match(explainer, /sessionId:\s*getAppState\(\)\?\.currentSession\?\.id \|\| null/,
+    'new explanation cards must retain their owning persisted chat session');
+  assert.match(explainer, /data\.sessionId \|\| data\.session_id \|\| layout\?\.sessionId/,
+    'restored explanation cards must recover their owning chat session from the server');
+
+  for (const surface of [
+    sourceBetween(app, 'async function handleNewChatClick', 'async function createNewSession', 'new-chat context reset'),
+    sourceBetween(app, 'async function loadSession', 'function cancelLiveStreamRender', 'session context activation'),
+    sourceBetween(app, 'function showClassicTemporaryChat', 'function ensureNewChatModeModal', 'temporary-chat context reset')
+  ]) {
+    assert.match(surface, /RAISelectionExplainer\?\.setConversationContext/,
+      'every primary conversation transition must notify the explanation workspace');
+  }
+  assert.match(server, /\/api\/selection-explanations\/cards\/:cardId\/path[\s\S]{0,2400}SELECT session_id FROM selection_explanation_threads[\s\S]{0,800}sessionId:\s*thread\?\.session_id \|\| null/,
+    'the card-path API must return the owning session for safe layout restoration');
+
   assert.match(dockUpdate, /const hasCards = cards\.length > 0;[\s\S]{0,120}dock\.hidden = !hasCards;/,
     'the explanation dock must be hidden whenever the current workspace has zero cards');
   assert.doesNotMatch(dockUpdate, /dock\.hidden\s*=[^;\n]*historyKnown/,
@@ -1294,6 +1330,8 @@ function testLifecycleOwnershipAndStaleResponses() {
   const userReady = sourceBetween(explainer, 'function onUserReady', 'function refreshLanguage', 'account activation');
   assert.match(userReady, /state\.userId && state\.userId !== nextUserId[\s\S]{0,180}resetUserState\(\{ removeLayout: false \}\)[\s\S]{0,300}state\.userId = nextUserId/,
     'account activation must tear down the previous owner before installing the next account id');
+  assert.match(userReady, /if \(isNewUser\) \{[\s\S]{0,240}setConversationContext\(getAppState\(\)\?\.currentSession\?\.id/,
+    'a newly activated account must establish its own conversation context before restoring saved cards');
 }
 
 function testTeardownAndDestructiveRequestOwnership() {

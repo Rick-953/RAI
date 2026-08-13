@@ -170,13 +170,13 @@ function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.12\.0'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-selection-routing-v01200-r1'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0.12.0-20260813-selection-routing-v01200-r1'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260813-selection-routing-v01200-r1/g) || []).length;
+  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.12\.1'\s*;/, 'RAI_APP_VERSION mismatch');
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260813-selection-dock-session-v01201-r1'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0.12.1-20260813-selection-dock-session-v01201-r1'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260813-selection-dock-session-v01201-r1/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.12\.0/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.12.0', 'package.json version mismatch');
+  assert.match(index, /v0\.12\.1/, 'index.html must show the matching app version');
+  assert.equal(packageJson.version, '0.12.1', 'package.json version mismatch');
 }
 
 function testGuideWiring() {

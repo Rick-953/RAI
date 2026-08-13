@@ -385,7 +385,7 @@
 
 .selection-explain-dock-tray {
   position: absolute;
-  left: 0;
+  right: 0;
   bottom: 46px;
   width: min(286px, calc(100vw - 24px));
   max-height: min(380px, 52vh);
@@ -705,6 +705,11 @@
   .selection-explain-dock {
     left: max(10px, env(safe-area-inset-left, 0px));
     bottom: var(--selection-explain-dock-bottom, calc(var(--composer-height, 180px) + 8px));
+  }
+
+  .selection-explain-dock-tray {
+    right: auto;
+    left: 0;
   }
 
   .selection-explain-dock-button,

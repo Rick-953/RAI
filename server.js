@@ -19270,6 +19270,10 @@ app.get('/api/selection-explanations/cards/:cardId/path', authenticateToken, api
             [cardId, req.user.userId]
         );
         if (!rows.length) return res.status(404).json({ success: false, error: '解释卡不存在' });
+        const thread = await dbGetAsync(
+            'SELECT session_id FROM selection_explanation_threads WHERE id = ? AND user_id = ?',
+            [rows[0].thread_id, req.user.userId]
+        );
         const descendantRow = await dbGetAsync(
             `WITH RECURSIVE descendants(id) AS (
                 SELECT id FROM selection_explanation_cards WHERE id = ?
@@ -19284,6 +19288,7 @@ app.get('/api/selection-explanations/cards/:cardId/path', authenticateToken, api
         return res.json({
             success: true,
             threadId: rows[0].thread_id,
+            sessionId: thread?.session_id || null,
             path: rows.map(mapSelectionExplanationCard),
             descendantCount: Number(descendantRow?.descendant_count || 0)
         });
