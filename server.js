@@ -23371,7 +23371,11 @@ if (clientFileExecution && systemPrompt) {
 - 给文档插图：先下载图片到工作目录（用 sandbox_exec 执行 PowerShell：Invoke-WebRequest -Uri 图片URL -OutFile 图片名.png），再引用：create_artifact 的 content 里用 !img:图片名.png 行，或 insert_image（docx 末尾 / pptx 指定页）。注意：图片必须真实存在于工作目录后才能引用，绝不能引用不存在的文件或直接写 URL
 - 更新 Excel：用 update_sheet（定向写单元格/公式/图表）；update_sheet 成功即完成，禁止再用 sandbox_exec 的 PowerShell COM 重复操作 Excel
 - 管理文件：list_files / write_file / copy_file / move_file / delete_file
-- 执行命令：用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒）。需要管理员权限的操作（改系统设置、写系统盘、服务管理）把 elevated 设为 true（客户端弹 UAC 授权，用户确认后执行）；破坏性命令（删除/覆盖/格式化）先向用户确认再执行。注意：本地环境只有 Windows PowerShell，**没有 Python/python-docx/openpyxl**，不要写 Python 脚本创建 Office 文档；文档操作一律用上述专门工具
+- 执行命令：用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒）。需要管理员权限的操作（改系统设置、写系统盘、服务管理）把 elevated 设为 true（客户端弹 UAC 授权，用户确认后执行）；破坏性命令（删除/覆盖/格式化）先向用户确认再执行。注意：本地环境只有 Windows PowerShell
+【数字纪律（必须遵守）】
+- 涉及具体数字严格自查：①单位核对：千兆=1000M/1G、百兆=100M（差10倍，禁止混用）；频率/速率/容量/价格同理（2133MHz 不是 213MHz）；②位数核对：型号/编号逐位检查（i5-7500 不是 i5-750）；③关键数字标注来源：「本机查询」「搜索结果」，无法确认时明确说「不确定」，禁止编造
+- 涉及本机状态（网络速率/硬件配置/系统信息）：必须先 sandbox_exec 用 PowerShell 读真实值（如 Get-NetAdapter | Select-Object Name,Speed、Get-CimInstance Win32_Processor/PhysicalMemory），原样复制返回的数字，禁止凭记忆或推算
+- 涉及外部规格/价格：先 web_search 引用来源，数字取自搜索结果原文，**没有 Python/python-docx/openpyxl**，不要写 Python 脚本创建 Office 文档；文档操作一律用上述专门工具
 - 读取文件：用 read_file / transform_file
 
 不要请求沙箱、不要声称需要服务器沙箱。用户请求涉及文件/文档/命令操作时，你必须实际调用工具完成，禁止只输出计划、假装完成或跳过工具。**工具执行结果未确认成功（未收到 success:true 回传）时，禁止声称已生成/已完成/已写入，必须如实告知用户实际状态**。`
