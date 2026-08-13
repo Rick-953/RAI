@@ -21173,6 +21173,7 @@ if (clientFileExecution && systemPrompt) {
         let searchSources = [];
         let useStreamingTools = false;  // 标记是否启用流式工具调用
         let forcedClientListFilesDone = false;
+        let forcedMachineQueryDone = false;
         let clientNonStreamRetryDone = false;
 
         if (enableResearchDebate && internetMode && !raiProductSkillRequired) {
@@ -21360,6 +21361,21 @@ if (clientFileExecution && systemPrompt) {
                 ? `${systemContent}\n\n${conversationMemoryInstruction}`
                 : conversationMemoryInstruction;
             console.log(` 已注入跨对话记忆与近期标题到系统提示词`);
+        }
+
+        // 关键数字锚点：从用户消息提取数字/单位，注入系统提示（防 LLM 数字丢位/单位错位）
+        if (clientFileExecution) {
+            const userText = String(userContent || '');
+            const numMatches = userText.match(/\d+(?:[.,]\d+)?\s*(?:mbps?|mb|gbps?|gb|tb|ghz|mhz|g|m|t)\b/gi) || [];
+            const cnMatches = userText.match(/(?:千兆|百兆|十兆|\d+\s*(?:核|线程|位|通道|频率|速率))/g) || [];
+            const keyNums = [...new Set([...numMatches, ...cnMatches])];
+            if (keyNums.length > 0) {
+                const keyNumInstruction = `\n\n[系统提示] 用户消息中的关键数字（原样遵守，禁止改写/少位/单位错误，如 1000mb=千兆≠100Mbps）：${keyNums.join('、')}`;
+                systemContent = systemContent
+                    ? `${systemContent}${keyNumInstruction}`
+                    : keyNumInstruction.trim();
+                console.log(` 已注入关键数字锚点: count=${keyNums.length}`);
+            }
         }
 
         if (activeDomainInstruction) {
@@ -23246,6 +23262,23 @@ if (clientFileExecution && systemPrompt) {
             if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
                 forcedClientListFilesDone = true;
                 console.warn(` 本地文件任务但模型未触发工具调用，自动发起 list_files 引导工具链: model=${actualModel}`);
+
+            // 本机状态类问题兜底：宽带/配置/硬件类提问必须查真实数据，禁止模型编造
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedMachineQueryDone && /(?:宽带|网速|网卡|测速|配置|cpu|内存|硬盘|磁盘|显卡|频率|系统信息|型号|速度|提速)/i.test(String(userContent || ''))) {
+                forcedMachineQueryDone = true;
+                console.warn(` 本机状态类问题但模型未触发查询工具，自动发起 sandbox_exec 查询真实配置: model=${actualModel}`);
+                accumulatedToolCalls.push({
+                    id: `forced_machine_query_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                        name: 'sandbox_exec',
+                        arguments: JSON.stringify({
+                            script: "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object Name,Speed | Format-Table -AutoSize; Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,MaxClockSpeed | Format-Table -AutoSize; Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer,ConfiguredClockSpeed,Capacity | Format-Table -AutoSize"
+                        })
+                    }
+                });
+                streamFinishReason = 'tool_calls';
+            }
                 accumulatedToolCalls.push({
                     id: `forced_list_files_${Date.now()}`,
                     type: 'function',
