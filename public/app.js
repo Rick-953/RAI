@@ -7775,14 +7775,16 @@ const RAI_UPDATE_TIMELINE = [
       summary: '解释收集入口不再遮挡界面，并严格跟随当前对话。',
       details: [
         '桌面端解释收集入口改到输入区右侧安全位置，不再压住欢迎页快捷操作或新对话内容。',
-        '解释卡、收集数量和最小化列表只在创建它们的对话中显示；切换或新建对话后立即隐藏，返回原对话时恢复。'
+        '解释卡、收集数量和最小化列表只在创建它们的对话中显示；切换或新建对话后立即隐藏，返回原对话时恢复。',
+        '置顶对话只显示在置顶分区，不再因浏览器缓存清单而重复出现在普通日期分区。'
       ]
     },
     en: {
       summary: 'The explanation dock no longer covers the interface and stays scoped to its conversation.',
       details: [
         'On desktop, the explanation dock now uses the safe right side of the composer instead of covering welcome shortcuts or new-chat content.',
-        'Explanation cards, counts, and minimized items only appear in their owning conversation; switching or starting a chat hides them until that conversation is reopened.'
+        'Explanation cards, counts, and minimized items only appear in their owning conversation; switching or starting a chat hides them until that conversation is reopened.',
+        'Pinned conversations now appear only in the pinned section instead of being duplicated in ordinary date groups by a cached manifest.'
       ]
     }
   },
@@ -20344,7 +20346,20 @@ function renderSessions(options = {}) {
   container.innerHTML = '';
   initializeConversationSidebarControls();
 
-  if (!appState.sessions || appState.sessions.length === 0) {
+  const pinnedContainer = document.getElementById('pinnedSessionsContainer');
+  const pinnedSection = document.getElementById('pinnedSessionsSection');
+  const pinned = Array.isArray(appState.pinnedSessions) ? appState.pinnedSessions : [];
+  if (pinnedContainer && pinnedSection) {
+    pinnedContainer.innerHTML = '';
+    pinnedSection.hidden = pinned.length === 0;
+    pinned.forEach((session) => pinnedContainer.appendChild(createSessionElement(session, { pinned: true })));
+  }
+
+  const pinnedIds = new Set(pinned.map((session) => String(session?.id || '')).filter(Boolean));
+  const ordinarySessions = (Array.isArray(appState.sessions) ? appState.sessions : [])
+    .filter((session) => !pinnedIds.has(String(session?.id || '')));
+
+  if (ordinarySessions.length === 0 && pinned.length === 0) {
     if (appState.sessionsPagination.isLoading) {
       container.innerHTML = `<div class="sessions-loader"><div class="loader-spinner"></div></div>`;
       restoreSessionsScrollState(container, scrollState);
@@ -20358,17 +20373,8 @@ function renderSessions(options = {}) {
     return;
   }
 
-  const pinnedContainer = document.getElementById('pinnedSessionsContainer');
-  const pinnedSection = document.getElementById('pinnedSessionsSection');
-  if (pinnedContainer && pinnedSection) {
-    pinnedContainer.innerHTML = '';
-    const pinned = appState.pinnedSessions || [];
-    pinnedSection.hidden = pinned.length === 0;
-    pinned.forEach((session) => pinnedContainer.appendChild(createSessionElement(session, { pinned: true })));
-  }
-
   // 按更新时间降序排序（越新越上）
-  const sorted = [...appState.sessions].sort((a, b) => {
+  const sorted = [...ordinarySessions].sort((a, b) => {
     const ta = new Date(a.updated_at || a.created_at || 0).getTime();
     const tb = new Date(b.updated_at || b.created_at || 0).getTime();
     return tb - ta;

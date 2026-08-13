@@ -1190,6 +1190,12 @@ function testVersionContract() {
     'today rows must retain their HH:mm timestamp');
   assert.match(renderSessions, /getSessionDateGroup\(session\)[\s\S]{0,400}session-date-group/,
     'conversation rows must be grouped from browser-local dates');
+  assert.match(renderSessions, /const pinnedIds = new Set\(pinned\.map[\s\S]{0,320}const ordinarySessions =[\s\S]{0,260}!pinnedIds\.has/,
+    'ordinary date groups must exclude every conversation rendered in the pinned section');
+  assert.match(renderSessions, /ordinarySessions\.length === 0 && pinned\.length === 0/,
+    'a pinned-only sidebar must not show the empty-conversation state');
+  assert.match(renderSessions, /const sorted = \[\.\.\.ordinarySessions\]\.sort/,
+    'date grouping must consume the de-duplicated ordinary session list');
   const sessionsContainerRule = cssRule('.sessions-container');
   const sessionDateGroupRule = cssRule('.session-date-group', 'padding: 18px 12px 8px');
   const sessionItemRule = cssRule('.session-item', 'display: flex');
