@@ -9355,6 +9355,15 @@ db.serialize(() => {
             }
         });
 
+        // 添加guide_pet_type列（如果不存在）
+        db.run(`ALTER TABLE user_configs ADD COLUMN guide_pet_type TEXT DEFAULT 'saturn'`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加guide_pet_type列失败(可能已存在):`, sanitizeReportContext(err));
+            } else if (!err) {
+                console.log(' 已添加guide_pet_type列到user_configs表');
+            }
+        });
+
         // 添加guide_tap_target_enabled列（如果不存在）
         db.run(`ALTER TABLE user_configs ADD COLUMN guide_tap_target_enabled INTEGER DEFAULT 1`, (err) => {
             if (err && !err.message.includes('duplicate column')) {
@@ -13296,6 +13305,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
           c.tab_title_custom_text as tab_title_custom_text,
           COALESCE(c.selection_explanation_delete_mode, 'promote_children') as selection_explanation_delete_mode,
           COALESCE(c.guide_mascot_enabled, 1) as guide_mascot_enabled,
+          COALESCE(c.guide_pet_type, 'saturn') as guide_pet_type,
           COALESCE(c.guide_tap_target_enabled, 1) as guide_tap_target_enabled,
           COALESCE(c.onboarding_completed_version, 0) as onboarding_completed_version
     FROM users u
@@ -13351,6 +13361,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                         ? user.selection_explanation_delete_mode
                         : 'promote_children',
                     guideMascotEnabled: user.guide_mascot_enabled === 1,
+                    guidePetType: user.guide_pet_type === 'tea' ? 'tea' : 'saturn',
                     guideTapTargetEnabled: user.guide_tap_target_enabled === 1,
                     onboardingCompletedVersion: Number(user.onboarding_completed_version || 0)
             };
@@ -14539,14 +14550,18 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
 app.patch('/api/user/guide-state', guideStateLimiter, authenticateToken, async (req, res) => {
     const body = req.body || {};
     const hasMascotEnabled = Object.prototype.hasOwnProperty.call(body, 'mascotEnabled');
+    const hasPetType = Object.prototype.hasOwnProperty.call(body, 'petType');
     const hasTapTargetEnabled = Object.prototype.hasOwnProperty.call(body, 'tapTargetEnabled');
     const hasCompletedVersion = Object.prototype.hasOwnProperty.call(body, 'completedVersion');
 
-    if (!hasMascotEnabled && !hasTapTargetEnabled && !hasCompletedVersion) {
+    if (!hasMascotEnabled && !hasPetType && !hasTapTargetEnabled && !hasCompletedVersion) {
         return res.status(400).json({ success: false, error: '没有提供可更新的引导状态字段' });
     }
     if (hasMascotEnabled && typeof body.mascotEnabled !== 'boolean') {
         return res.status(400).json({ success: false, error: 'mascotEnabled 必须是布尔值' });
+    }
+    if (hasPetType && !['saturn', 'tea'].includes(body.petType)) {
+        return res.status(400).json({ success: false, error: 'petType 必须是 saturn 或 tea' });
     }
     if (hasTapTargetEnabled && typeof body.tapTargetEnabled !== 'boolean') {
         return res.status(400).json({ success: false, error: 'tapTargetEnabled 必须是布尔值' });
@@ -14556,17 +14571,22 @@ app.patch('/api/user/guide-state', guideStateLimiter, authenticateToken, async (
     }
 
     const mascotEnabled = hasMascotEnabled ? (body.mascotEnabled ? 1 : 0) : null;
+    const petType = hasPetType ? body.petType : null;
     const tapTargetEnabled = hasTapTargetEnabled ? (body.tapTargetEnabled ? 1 : 0) : null;
     const completedVersion = hasCompletedVersion ? body.completedVersion : null;
 
     try {
         await dbRunAsync(
-            `INSERT INTO user_configs (user_id, guide_mascot_enabled, guide_tap_target_enabled, onboarding_completed_version)
-        VALUES (?, COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 0))
+            `INSERT INTO user_configs (user_id, guide_mascot_enabled, guide_pet_type, guide_tap_target_enabled, onboarding_completed_version)
+        VALUES (?, COALESCE(?, 1), COALESCE(?, 'saturn'), COALESCE(?, 1), COALESCE(?, 0))
         ON CONFLICT(user_id) DO UPDATE SET
           guide_mascot_enabled = CASE
             WHEN ? IS NULL THEN user_configs.guide_mascot_enabled
             ELSE excluded.guide_mascot_enabled
+          END,
+          guide_pet_type = CASE
+            WHEN ? IS NULL THEN user_configs.guide_pet_type
+            ELSE excluded.guide_pet_type
           END,
           guide_tap_target_enabled = CASE
             WHEN ? IS NULL THEN user_configs.guide_tap_target_enabled
@@ -14577,24 +14597,26 @@ app.patch('/api/user/guide-state', guideStateLimiter, authenticateToken, async (
             ELSE excluded.onboarding_completed_version
           END`,
             [
-                req.user.userId, mascotEnabled, tapTargetEnabled, completedVersion,
-                mascotEnabled, tapTargetEnabled, completedVersion
+                req.user.userId, mascotEnabled, petType, tapTargetEnabled, completedVersion,
+                mascotEnabled, petType, tapTargetEnabled, completedVersion
             ]
         );
 
         const current = await dbGetAsync(
             `SELECT
           COALESCE(guide_mascot_enabled, 1) AS guide_mascot_enabled,
+          COALESCE(guide_pet_type, 'saturn') AS guide_pet_type,
           COALESCE(guide_tap_target_enabled, 1) AS guide_tap_target_enabled,
           COALESCE(onboarding_completed_version, 0) AS onboarding_completed_version
         FROM user_configs WHERE user_id = ?`,
             [req.user.userId]
         );
 
-        console.log(` 引导状态已保存: userId=${req.user.userId}, guideMascotEnabled=${current?.guide_mascot_enabled}, guideTapTargetEnabled=${current?.guide_tap_target_enabled}, onboardingCompletedVersion=${current?.onboarding_completed_version}`);
+        console.log(` 引导状态已保存: userId=${req.user.userId}, guideMascotEnabled=${current?.guide_mascot_enabled}, guidePetType=${current?.guide_pet_type}, guideTapTargetEnabled=${current?.guide_tap_target_enabled}, onboardingCompletedVersion=${current?.onboarding_completed_version}`);
         res.json({
             success: true,
             guideMascotEnabled: current?.guide_mascot_enabled === 1,
+            guidePetType: current?.guide_pet_type === 'tea' ? 'tea' : 'saturn',
             guideTapTargetEnabled: current?.guide_tap_target_enabled === 1,
             onboardingCompletedVersion: Number(current?.onboarding_completed_version || 0)
         });

@@ -53,7 +53,7 @@
     'setLanguage', 'setNewChatDefaultModeFromSettings', 'setReasoningProfileFromSlider',
     'setResearchMasterModel', 'setResearchMode', 'setResearchModeFromSlider',
     'setSelectionExplanationDeleteMode', 'setTabTitleCustomTextFromSettings',
-    'setTabTitleModeFromSettings', 'setTheme', 'settingsToggleGuideMascot',
+    'setTabTitleModeFromSettings', 'setTheme', 'settingsSelectPet', 'settingsToggleGuideMascot',
     'settingsToggleGuideTapTarget', 'settingsToggleInternetBadgeVisibility',
     'settingsToggleInternetMode', 'settingsToggleModelBadgeVisibility', 'settingsToggleThinkingBadgeVisibility',
     'settingsToggleResearchMode', 'settingsToggleThinkingMode', 'showAdminAnnouncementForm',

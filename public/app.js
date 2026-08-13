@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.11.98';
-const RAI_BUILD_ID = '20260813-onboarding-account-isolation-v01198-r1';
+const RAI_APP_VERSION = '0.11.99';
+const RAI_BUILD_ID = '20260813-tea-pet-v01199-r3';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2435,6 +2435,8 @@ if (RAI_IS_TAURI_DESKTOP && typeof window.fetch === 'function') {
 
 const RAI_GUIDE_VERSION = 1;
 const RAI_GUIDE_LOCAL_STATE_KEY = 'rai_guide_state';
+const RAI_PET_TYPES = new Set(['saturn', 'tea']);
+const RAI_PET_POSITION_PREFIX = 'rai_pet_position:';
 
 function readGuideLocalMirror() {
   try {
@@ -2520,6 +2522,7 @@ const appState = {
   onboardingActive: false,
   guide: {
     mascotEnabled: initialGuideLocalMirror.mascotEnabled === undefined ? true : Boolean(initialGuideLocalMirror.mascotEnabled),
+    petType: RAI_PET_TYPES.has(initialGuideLocalMirror.petType) ? initialGuideLocalMirror.petType : 'saturn',
     tapTargetEnabled: initialGuideLocalMirror.tapTargetEnabled === undefined ? true : Boolean(initialGuideLocalMirror.tapTargetEnabled),
     completedVersion: Number(initialGuideLocalMirror.completedVersion) || 0,
     serverAuthoritative: false,
@@ -2642,7 +2645,11 @@ const guideRuntime = {
   reducedMotion: false,
   initialized: false,
   lastGuideFocusAt: 0,
-  domObserver: null
+  domObserver: null,
+  petDrag: null,
+  petManualPosition: null,
+  suppressPetClick: false,
+  teaPoseTimer: null
 };
 
 const raiMascotState = {
@@ -2651,6 +2658,15 @@ const raiMascotState = {
   tapHandlers: new Set(),
   onTap(event) {
     if (this.mode === 'hidden' || appState.guide.mascotEnabled === false) return;
+    if (guideRuntime.suppressPetClick) {
+      guideRuntime.suppressPetClick = false;
+      return;
+    }
+    if (this.mode === 'dwell' && appState.guide.petType === 'tea') {
+      const poses = ['wave', 'camera', 'drink', 'phone', 'laptop'];
+      setTeaPetPose(poses[Math.floor(Math.random() * poses.length)], 1800);
+      return;
+    }
     const expressions = guideRuntime.reducedMotion
       ? ['blink', 'look-left', 'look-right']
       : ['blink', 'look-left', 'look-right', 'hop'];
@@ -2673,6 +2689,7 @@ function persistGuideLocalMirror() {
   try {
     localStorage.setItem(RAI_GUIDE_LOCAL_STATE_KEY, JSON.stringify({
       mascotEnabled: appState.guide.mascotEnabled,
+      petType: appState.guide.petType,
       tapTargetEnabled: appState.guide.tapTargetEnabled,
       completedVersion: appState.guide.completedVersion
     }));
@@ -2740,10 +2757,12 @@ function applyServerGuideState(profile = {}, user = appState.user) {
   const hasTapTarget = typeof profile.guideTapTargetEnabled === 'boolean'
     || profile.guideTapTargetEnabled === 0 || profile.guideTapTargetEnabled === 1;
   const hasCompletedVersion = Number.isFinite(Number(profile.onboardingCompletedVersion));
+  const hasPetType = RAI_PET_TYPES.has(profile.guidePetType);
 
   // The authenticated profile is authoritative. Missing fields are tolerated
   // during the backend rollout, while pre-login pages continue using the mirror.
   if (hasMascot) appState.guide.mascotEnabled = profile.guideMascotEnabled === true || profile.guideMascotEnabled === 1;
+  if (hasPetType) appState.guide.petType = profile.guidePetType;
   if (hasTapTarget) appState.guide.tapTargetEnabled = profile.guideTapTargetEnabled === true || profile.guideTapTargetEnabled === 1;
   if (hasCompletedVersion) appState.guide.completedVersion = Math.max(0, Number(profile.onboardingCompletedVersion));
   if (userId) {
@@ -2751,6 +2770,8 @@ function applyServerGuideState(profile = {}, user = appState.user) {
     appState.guide.serverAuthoritative = true;
   }
   persistGuideLocalMirror();
+  loadPetManualPosition();
+  syncPetAppearance();
   syncGuideMascotVisibility();
   refreshGuideTargetPresentation();
 }
@@ -2864,6 +2885,7 @@ function applyGuideTapTargetState(enabled) {
 function getGuideState() {
   return {
     mascotEnabled: appState.guide.mascotEnabled,
+    petType: appState.guide.petType,
     tapTargetEnabled: appState.guide.tapTargetEnabled,
     completedVersion: appState.guide.completedVersion
   };
@@ -2873,8 +2895,90 @@ window.applyGuideMascotState = applyGuideMascotState;
 window.applyGuideTapTargetState = applyGuideTapTargetState;
 window.getGuideState = getGuideState;
 
+function normalizePetType(value) {
+  return RAI_PET_TYPES.has(value) ? value : 'saturn';
+}
+
+function getPetPositionStorageKey(user = appState.user) {
+  const identity = getGuideUserIdentity(user);
+  return identity ? `${RAI_PET_POSITION_PREFIX}${identity}` : '';
+}
+
+function loadPetManualPosition() {
+  guideRuntime.petManualPosition = null;
+  const key = getPetPositionStorageKey();
+  if (!key) return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y)) return null;
+    guideRuntime.petManualPosition = {
+      x: Math.max(0, Math.min(1, value.x)),
+      y: Math.max(0, Math.min(1, value.y))
+    };
+  } catch (_) {
+    guideRuntime.petManualPosition = null;
+  }
+  return guideRuntime.petManualPosition;
+}
+
+function persistPetManualPosition() {
+  const key = getPetPositionStorageKey();
+  if (!key || !guideRuntime.petManualPosition) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(guideRuntime.petManualPosition));
+  } catch (_) {
+    // Server settings still work when device-local storage is unavailable.
+  }
+}
+
+function setTeaPetPose(pose = 'idle', resetAfter = 0) {
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  if (guideRuntime.teaPoseTimer) window.clearTimeout(guideRuntime.teaPoseTimer);
+  guideRuntime.teaPoseTimer = null;
+  mascot.dataset.teaPose = pose;
+  if (resetAfter > 0 && !guideRuntime.reducedMotion) {
+    guideRuntime.teaPoseTimer = window.setTimeout(() => {
+      mascot.dataset.teaPose = 'idle';
+      guideRuntime.teaPoseTimer = null;
+    }, resetAfter);
+  }
+}
+
+function syncPetAppearance() {
+  const mascot = getGuideMascotElement();
+  if (!mascot) return;
+  const activeType = raiMascotState.mode === 'dwell' ? normalizePetType(appState.guide.petType) : 'saturn';
+  mascot.dataset.petType = activeType;
+  if (activeType !== 'tea') setTeaPetPose('idle');
+  mascot.setAttribute('aria-label', i18n[appState.language]?.['mascot-aria-label'] || 'RAI guide mascot');
+}
+
+function applyGuidePetType(type) {
+  const normalized = normalizePetType(type);
+  const previous = appState.guide.petType;
+  appState.guide.petType = normalized;
+  persistGuideLocalMirror();
+  syncPetAppearance();
+  updateSettingsGuideUI();
+  requestMascotPosition();
+  return syncGuideStateToServer({ petType: normalized }).then((result) => {
+    if (result && Array.isArray(result.failedFields) && result.failedFields.includes('petType')) {
+      appState.guide.petType = previous;
+      persistGuideLocalMirror();
+      syncPetAppearance();
+      updateSettingsGuideUI();
+    }
+    return result;
+  });
+}
+
+window.applyGuidePetType = applyGuidePetType;
+
 function getMascotSize() {
-  return window.matchMedia?.('(max-width: 768px)')?.matches ? 48 : 58;
+  const mobile = window.matchMedia?.('(max-width: 768px)')?.matches;
+  if (raiMascotState.mode === 'dwell' && appState.guide.petType === 'tea') return mobile ? 76 : 88;
+  return mobile ? 48 : 58;
 }
 
 function isGuideMotionEnabled() {
@@ -2955,6 +3059,21 @@ function setMascotCoordinates(left, top) {
   mascot.style.top = `${Math.round(Math.max(minTop, Math.min(Number(top) || 0, maxTop)))}px`;
   mascot.style.right = 'auto';
   mascot.style.bottom = 'auto';
+}
+
+function positionManualPet() {
+  if (!guideRuntime.petManualPosition) return false;
+  const viewport = getGuideViewportRect();
+  const size = getMascotSize();
+  const minLeft = viewport.left + 8;
+  const minTop = viewport.top + 8;
+  const availableX = Math.max(0, viewport.right - viewport.left - size - 16);
+  const availableY = Math.max(0, viewport.bottom - viewport.top - size - 16);
+  setMascotCoordinates(
+    minLeft + guideRuntime.petManualPosition.x * availableX,
+    minTop + guideRuntime.petManualPosition.y * availableY
+  );
+  return true;
 }
 
 function getGuideRect(target) {
@@ -3043,6 +3162,10 @@ function positionAuthMascot() {
 function positionDwellMascot() {
   const mascot = getGuideMascotElement();
   if (!mascot || raiMascotState.mode !== 'dwell') return;
+  if (positionManualPet()) {
+    mascot.classList.remove('is-obscured');
+    return;
+  }
   const size = getMascotSize();
   const viewport = getGuideViewportRect();
   const composer = getGuideRect(document.getElementById('inputContainer'));
@@ -3102,6 +3225,7 @@ function requestMascotPosition() {
     guideRuntime.mascotPositionRaf = 0;
     const mascot = getGuideMascotElement();
     if (!mascot || mascot.hidden) return;
+    if (guideRuntime.petDrag?.moved && raiMascotState.mode === 'dwell') return;
     if (raiMascotState.mode === 'auth') {
       positionAuthMascot();
     } else if (raiMascotState.mode === 'dwell') {
@@ -3137,7 +3261,8 @@ function hideMascot() {
   const mascot = getGuideMascotElement();
   if (!mascot) return;
   mascot.hidden = true;
-  mascot.classList.remove('is-auth', 'is-dwell', 'is-guide', 'is-guide-hop', 'is-tap-hop', 'is-sidebar-demo-drag', 'is-obscured', 'speech-right', 'speech-left', 'speech-above');
+  mascot.classList.remove('is-auth', 'is-dwell', 'is-guide', 'is-guide-hop', 'is-tap-hop', 'is-sidebar-demo-drag', 'is-dragging', 'is-obscured', 'speech-right', 'speech-left', 'speech-above');
+  closePetContextMenu();
   setMascotSpeech('', '');
   raiMascotState.mode = 'hidden';
   guideRuntime.mascotTarget = null;
@@ -3175,7 +3300,101 @@ function syncGuideMascotVisibility() {
     hideMascot();
     return;
   }
+  syncPetAppearance();
   requestMascotPosition();
+}
+
+function closePetContextMenu({ restoreFocus = false } = {}) {
+  const menu = document.getElementById('raiPetContextMenu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  menu.style.left = '';
+  menu.style.top = '';
+  if (restoreFocus) getGuideMascotElement()?.focus({ preventScroll: true });
+}
+
+function openPetContextMenu(clientX, clientY) {
+  const menu = document.getElementById('raiPetContextMenu');
+  if (!menu || raiMascotState.mode !== 'dwell') return;
+  menu.hidden = false;
+  const viewport = getGuideViewportRect();
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(viewport.left + 6, Math.min(clientX, viewport.right - rect.width - 6));
+  const top = Math.max(viewport.top + 6, Math.min(clientY, viewport.bottom - rect.height - 6));
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  document.getElementById('raiPetHideAction')?.focus({ preventScroll: true });
+}
+
+async function hidePetFromContextMenu() {
+  closePetContextMenu();
+  const result = await applyGuideMascotState(false);
+  updateSettingsGuideUI();
+  if (result && Array.isArray(result.failedFields) && result.failedFields.includes('mascotEnabled')) {
+    showToast(i18nText('settings-guide-save-error', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Could not save. Please try again.'));
+  }
+}
+
+function updatePetDragPosition(clientX, clientY) {
+  const drag = guideRuntime.petDrag;
+  if (!drag) return;
+  const mascot = getGuideMascotElement();
+  const distance = Math.hypot(clientX - drag.startX, clientY - drag.startY);
+  if (!drag.moved && distance < 7) return;
+  drag.moved = true;
+  mascot?.classList.add('is-dragging');
+  if (appState.guide.petType === 'tea') setTeaPetPose('walk');
+  setMascotCoordinates(drag.originLeft + clientX - drag.startX, drag.originTop + clientY - drag.startY);
+  if (mascot) {
+    const viewport = getGuideViewportRect();
+    const size = getMascotSize();
+    const availableX = Math.max(1, viewport.right - viewport.left - size - 16);
+    const availableY = Math.max(1, viewport.bottom - viewport.top - size - 16);
+    const left = Number.parseFloat(mascot.style.left) || viewport.left + 8;
+    const top = Number.parseFloat(mascot.style.top) || viewport.top + 8;
+    guideRuntime.petManualPosition = {
+      x: Math.max(0, Math.min(1, (left - viewport.left - 8) / availableX)),
+      y: Math.max(0, Math.min(1, (top - viewport.top - 8) / availableY))
+    };
+  }
+}
+
+function finishPetDrag(event) {
+  const drag = guideRuntime.petDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const mascot = getGuideMascotElement();
+  guideRuntime.petDrag = null;
+  mascot?.classList.remove('is-dragging');
+  try { mascot?.releasePointerCapture?.(event.pointerId); } catch (_) { /* capture may already be released */ }
+  if (!drag.moved || !mascot) return;
+  persistPetManualPosition();
+  guideRuntime.suppressPetClick = true;
+  setTeaPetPose('idle');
+}
+
+function beginPetDrag(event) {
+  if (raiMascotState.mode !== 'dwell' || event.button !== 0 || !event.isPrimary) return;
+  closePetContextMenu();
+  const mascot = getGuideMascotElement();
+  const rect = mascot?.getBoundingClientRect();
+  if (!mascot || !rect) return;
+  guideRuntime.petDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originLeft: rect.left,
+    originTop: rect.top,
+    moved: false
+  };
+  const viewport = getGuideViewportRect();
+  const size = getMascotSize();
+  const availableX = Math.max(1, viewport.right - viewport.left - size - 16);
+  const availableY = Math.max(1, viewport.bottom - viewport.top - size - 16);
+  guideRuntime.petManualPosition = {
+    x: Math.max(0, Math.min(1, (rect.left - viewport.left - 8) / availableX)),
+    y: Math.max(0, Math.min(1, (rect.top - viewport.top - 8) / availableY))
+  };
+  mascot.setPointerCapture?.(event.pointerId);
 }
 
 function updateMascotPasswordExpression() {
@@ -3238,11 +3457,43 @@ function initMascotElement() {
   if (!mascot || mascot.dataset.mascotBound === 'true') return;
   mascot.dataset.mascotBound = 'true';
   mascot.addEventListener('click', (event) => raiMascotState.onTap(event));
+  mascot.addEventListener('pointerdown', beginPetDrag);
+  mascot.addEventListener('pointermove', (event) => updatePetDragPosition(event.clientX, event.clientY));
+  mascot.addEventListener('pointerup', finishPetDrag);
+  mascot.addEventListener('pointercancel', finishPetDrag);
+  document.addEventListener('pointerup', finishPetDrag, { capture: true });
+  document.addEventListener('pointercancel', finishPetDrag, { capture: true });
+  mascot.addEventListener('contextmenu', (event) => {
+    if (raiMascotState.mode !== 'dwell' || !window.matchMedia?.('(any-hover: hover) and (any-pointer: fine)')?.matches) return;
+    event.preventDefault();
+    openPetContextMenu(event.clientX, event.clientY);
+  });
+  mascot.addEventListener('keydown', (event) => {
+    if (raiMascotState.mode !== 'dwell' || !((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu')) return;
+    event.preventDefault();
+    const rect = mascot.getBoundingClientRect();
+    openPetContextMenu(rect.right, rect.bottom);
+  });
+  document.getElementById('raiPetHideAction')?.addEventListener('click', hidePetFromContextMenu);
+  document.addEventListener('pointerdown', (event) => {
+    const menu = document.getElementById('raiPetContextMenu');
+    if (!menu?.hidden && !menu.contains(event.target) && !mascot.contains(event.target)) closePetContextMenu();
+  }, { capture: true });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !document.getElementById('raiPetContextMenu')?.hidden) {
+      event.preventDefault();
+      closePetContextMenu({ restoreFocus: true });
+    }
+  });
   initMascotAuthBindings();
   initGuideMotionPreference();
-  window.addEventListener('resize', requestMascotPosition, { passive: true });
-  window.addEventListener('orientationchange', requestMascotPosition, { passive: true });
-  window.visualViewport?.addEventListener('resize', requestMascotPosition, { passive: true });
+  const refreshPetViewport = () => {
+    closePetContextMenu();
+    requestMascotPosition();
+  };
+  window.addEventListener('resize', refreshPetViewport, { passive: true });
+  window.addEventListener('orientationchange', refreshPetViewport, { passive: true });
+  window.visualViewport?.addEventListener('resize', refreshPetViewport, { passive: true });
   window.visualViewport?.addEventListener('scroll', requestMascotPosition, { passive: true });
   syncGuideMascotVisibility();
 }
@@ -5068,8 +5319,13 @@ const i18n = {
     'message-model-badge-desc': '在模型回复下显示“模型名 定制版”标签。',
     'message-internet-badge-title': '联网标签',
     'message-internet-badge-desc': '在联网回复下显示“联网”标签。',
-    'settings-guide-mascot-label': '吉祥物助手',
-    'settings-guide-mascot-desc': '在聊天输入框旁常驻显示 RAI 吉祥物，可点击互动。',
+    'settings-guide-mascot-label': '桌面宠物',
+    'settings-guide-mascot-desc': '在聊天页显示可拖动、可互动的宠物。桌面端也可右键隐藏。',
+    'settings-pet-picker-label': '选择宠物',
+    'settings-pet-saturn': '土星',
+    'settings-pet-tea': '茶',
+    'pet-hide-action': '隐藏宠物',
+    'pet-hidden-after-guide': '宠物已暂时隐藏，可在“设置 > 自定义”中重新开启。',
     'settings-guide-tap-target-label': '功能聚焦提示',
     'settings-guide-tap-target-desc': '在引导流程中高亮当前操作位置，帮助你找到功能入口。',
     'settings-guide-save-error': '设置保存失败，请重试',
@@ -5693,8 +5949,13 @@ const i18n = {
     'message-model-badge-desc': 'Show a “Model name Custom Edition” label below model replies.',
     'message-internet-badge-title': 'Web label',
     'message-internet-badge-desc': 'Show a “Web” label below replies that used web search.',
-    'settings-guide-mascot-label': 'Guide mascot',
-    'settings-guide-mascot-desc': 'Show the RAI mascot by the chat composer; it responds to taps.',
+    'settings-guide-mascot-label': 'Desktop pet',
+    'settings-guide-mascot-desc': 'Show a draggable, interactive pet in chat. On desktop, right-click it to hide.',
+    'settings-pet-picker-label': 'Choose a pet',
+    'settings-pet-saturn': 'Saturn',
+    'settings-pet-tea': 'Tea',
+    'pet-hide-action': 'Hide pet',
+    'pet-hidden-after-guide': 'Your pet is hidden for now. Re-enable it under Settings > Personalization.',
     'settings-guide-tap-target-label': 'Feature focus hint',
     'settings-guide-tap-target-desc': 'Highlight the current control during the welcome tour so you can find it.',
     'settings-guide-save-error': 'Could not save this setting. Please try again.',
@@ -6333,6 +6594,13 @@ Object.assign(i18n['zh-TW'], {
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
   'mascot-aria-label': 'RAI 引導助手',
+  'settings-guide-mascot-label': '桌面寵物',
+  'settings-guide-mascot-desc': '在聊天頁顯示可拖動、可互動的寵物。桌面端也可右鍵隱藏。',
+  'settings-pet-picker-label': '選擇寵物',
+  'settings-pet-saturn': '土星',
+  'settings-pet-tea': '茶',
+  'pet-hide-action': '隱藏寵物',
+  'pet-hidden-after-guide': '寵物已暫時隱藏，可在「設定 > 自訂」中重新開啟。',
   'onb-guide-kicker': '一起試試',
   'onb-guide-ready-title': '輪到您了',
   'onb-guide-ready-desc': '準備好後點擊按鈕繼續。',
@@ -13345,11 +13613,26 @@ function updateSettingsGuideUI() {
   const mascotToggle = document.getElementById('settingsGuideMascotToggle');
   const tapTargetSwitch = document.getElementById('settingsGuideTapTargetSwitch');
   const tapTargetToggle = document.getElementById('settingsGuideTapTargetToggle');
+  const petPicker = document.getElementById('settingsPetPicker');
 
   if (mascotSwitch) mascotSwitch.setAttribute('aria-pressed', appState.guide.mascotEnabled ? 'true' : 'false');
   if (mascotToggle) mascotToggle.classList.toggle('active', !!appState.guide.mascotEnabled);
   if (tapTargetSwitch) tapTargetSwitch.setAttribute('aria-pressed', appState.guide.tapTargetEnabled ? 'true' : 'false');
   if (tapTargetToggle) tapTargetToggle.classList.toggle('active', !!appState.guide.tapTargetEnabled);
+  if (petPicker) petPicker.toggleAttribute('inert', !appState.guide.mascotEnabled);
+  document.querySelectorAll('.settings-pet-option[data-pet-type]').forEach((button) => {
+    button.setAttribute('aria-checked', button.dataset.petType === appState.guide.petType ? 'true' : 'false');
+    button.disabled = !appState.guide.mascotEnabled;
+  });
+}
+
+async function settingsSelectPet(type) {
+  const normalized = normalizePetType(type);
+  if (normalized === appState.guide.petType) return;
+  const synced = await applyGuidePetType(normalized);
+  if (synced && Array.isArray(synced.failedFields) && synced.failedFields.includes('petType')) {
+    showToast(i18nText('settings-guide-save-error', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Could not save. Please try again.'));
+  }
 }
 
 async function settingsToggleGuideMascot() {
@@ -13594,6 +13877,7 @@ function setLanguage(lang) {
   if (mascot) {
     mascot.setAttribute('aria-label', i18n[lang]?.['mascot-aria-label'] || i18n['zh-CN']?.['mascot-aria-label'] || 'RAI guide mascot');
   }
+  syncPetAppearance();
 
   // 更新所有翻译文本
   document.querySelectorAll('[data-i18n]').forEach(el => {
@@ -14838,7 +15122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.11.98 初始化 (onboarding-account-isolation-r1)');
+  console.log(' RAI v0.11.99 初始化 (tea-pet-r1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -22520,13 +22804,17 @@ function hasCompletedOnboarding(user = appState.user) {
   return isGuideCompleted(user);
 }
 
-function setOnboardingCompleted(done = true, user = appState.user) {
+function setOnboardingCompleted(done = true, user = appState.user, { disableMascot = false } = {}) {
   if (!done) return false;
   appState.guide.completedVersion = Math.max(appState.guide.completedVersion, RAI_GUIDE_VERSION);
+  if (disableMascot) appState.guide.mascotEnabled = false;
   writeGuideCompletionMirror(appState.guide.completedVersion, user);
   persistGuideLocalMirror();
   syncGuideMascotVisibility();
-  syncGuideStateToServer({ completedVersion: RAI_GUIDE_VERSION });
+  syncGuideStateToServer({
+    completedVersion: RAI_GUIDE_VERSION,
+    ...(disableMascot ? { mascotEnabled: false } : {})
+  });
   return true;
 }
 
@@ -23992,6 +24280,7 @@ function showOnboarding(onDone) {
     : null;
   let currentStep = 0;
   let finished = false;
+  const shouldDefaultHidePet = !isGuideCompleted(appState.user);
   const totalSteps = steps.length;
   appState.onboardingActive = true;
   appState.guide.teachingActive = false;
@@ -24032,7 +24321,7 @@ function showOnboarding(onDone) {
     eventController.abort();
     if (onboardingEventController === eventController) onboardingEventController = null;
     cleanupGuideTeaching();
-    setOnboardingCompleted(true, appState.user);
+    setOnboardingCompleted(true, appState.user, { disableMascot: shouldDefaultHidePet });
     appState.onboardingActive = false;
     appState.guide.teachingActive = false;
     overlay.style.display = 'none';
@@ -24041,6 +24330,14 @@ function showOnboarding(onDone) {
     // so re-offer the PWA reward prompt. No-op unless a reward is actually due
     // (the function guards on existing prompt/task state).
     maybeShowPwaRewardPrompt();
+    if (shouldDefaultHidePet) {
+      showToast(i18nText(
+        'pet-hidden-after-guide',
+        isChineseLanguage(appState.language)
+          ? '宠物已暂时隐藏，可在“设置 > 自定义”中重新开启。'
+          : 'Your pet is hidden for now. Re-enable it under Settings > Personalization.'
+      ));
+    }
     if (onDone) onDone();
     syncGuideMascotVisibility();
     requestMascotPosition();

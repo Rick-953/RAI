@@ -18585,6 +18585,15 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   user-select: none;
 }
 
+.rai-guide-mascot.is-dwell {
+  touch-action: none;
+}
+
+.rai-guide-mascot.is-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.28));
+}
+
 .rai-guide-mascot:not([hidden]) {
   display: block;
 }
@@ -18616,6 +18625,131 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+.rai-tea-pet {
+  display: none;
+  width: 100%;
+  height: 100%;
+  background-image: url('images/pets/tea-pet.webp');
+  background-repeat: no-repeat;
+  background-size: 700% 100%;
+  background-position: 0 0;
+  image-rendering: pixelated;
+  transform: scale(1);
+  transform-origin: center bottom;
+  pointer-events: none;
+}
+
+.rai-guide-mascot[data-pet-type="tea"].is-dwell .rai-mascot-svg {
+  display: none;
+}
+
+.rai-guide-mascot[data-pet-type="tea"].is-dwell {
+  --rai-mascot-size: 88px;
+}
+
+.rai-guide-mascot[data-pet-type="tea"].is-dwell .rai-tea-pet {
+  display: block;
+}
+
+.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="walk"] .rai-tea-pet { background-position: 16.6667% 0; }
+.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="wave"] .rai-tea-pet { background-position: 33.3333% 0; }
+.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="camera"] .rai-tea-pet { background-position: 50% 0; }
+.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="drink"] .rai-tea-pet { background-position: 66.6667% 0; }
+.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="phone"] .rai-tea-pet { background-position: 83.3333% 0; }
+.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="laptop"] .rai-tea-pet { background-position: 100% 0; }
+
+.rai-pet-context-menu {
+  position: fixed;
+  z-index: 5500;
+  min-width: 132px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 96%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(14px);
+}
+
+.rai-pet-context-menu button {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rai-pet-context-menu button:hover,
+.rai-pet-context-menu button:focus-visible {
+  outline: none;
+  background: var(--bg-tertiary);
+}
+
+.settings-pet-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: -4px 0 14px;
+}
+
+.settings-pet-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 7px 10px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 8px;
+  background: var(--settings-row-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-pet-option[aria-checked="true"] {
+  border-color: var(--color-saturn-yellow);
+  box-shadow: inset 0 0 0 1px var(--color-saturn-yellow);
+}
+
+.settings-pet-option:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.settings-pet-preview {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+}
+
+.settings-pet-preview-saturn {
+  border-radius: 50%;
+  background: var(--color-saturn-yellow);
+  color: #30240d;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.settings-pet-preview-tea {
+  background: url('images/pets/tea-pet.webp') 0 0 / 700% 100% no-repeat;
+  image-rendering: pixelated;
+  transform: scale(1.28);
+  transform-origin: center bottom;
 }
 
 .rai-mascot-ring {
@@ -18750,6 +18884,10 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 @media (max-width: 768px) {
   .rai-guide-mascot {
     --rai-mascot-size: 48px;
+  }
+
+  .rai-guide-mascot[data-pet-type="tea"].is-dwell {
+    --rai-mascot-size: 76px;
   }
 }
 
@@ -18941,6 +19079,10 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     --rai-mascot-size: 48px;
   }
 
+  .rai-guide-mascot[data-pet-type="tea"].is-dwell {
+    --rai-mascot-size: 76px;
+  }
+
   .rai-mascot-speech {
     max-width: min(210px, 68vw);
     padding: 8px 10px;
@@ -18983,6 +19125,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   .rai-guide-mascot.is-guide-hop,
   .rai-guide-mascot.is-tap-hop,
   .rai-guide-mascot.is-sidebar-demo-drag,
+  .rai-guide-mascot.is-dragging,
   .rai-guide-ring.active {
     animation: none !important;
   }
