@@ -19992,12 +19992,16 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             max: 1,
             fallback: 0.9
         });
-        const normalizedMaxTokens = parseStrictBoundedNumber(max_tokens, {
-            min: 100,
-            max: 8000,
-            fallback: 2000,
-            integer: true
-        });
+        const normalizedMaxTokens = Math.max(
+            parseStrictBoundedNumber(max_tokens, {
+                min: 100,
+                max: 8000,
+                fallback: 2000,
+                integer: true
+            }),
+            // 本地文件执行模式：需生成文档内容+工具调用，2000 易 length 截断，强制 >= 6000
+            clientFileExecution ? 6000 : 0
+        );
 
         const sanitizedChatInput = sanitizeClientChatMessages(rawMessages);
         let messages;
@@ -21537,7 +21541,10 @@ if (clientFileExecution && systemPrompt) {
         }
 
         // One bounded deadline covers the primary request, ordered fallback, and tool continuations.
-        chatRequestBudget = createChatRequestBudget();
+        // 本地文件执行模式：任务链长（搜索+多次工具+续传），预算放宽到 300s
+        chatRequestBudget = clientFileExecution
+            ? createChatRequestBudget({ env: { ...process.env, RAI_CHAT_TOTAL_TIMEOUT_MS: '300000' } })
+            : createChatRequestBudget();
         const controller = createChatAbortController();
         chatRequestDeadlineTimer = setTimeout(() => {
             for (const activeController of chatAbortControllers) {
@@ -23269,7 +23276,7 @@ if (clientFileExecution && systemPrompt) {
                     console.warn(` 收到 tool_calls 但均无效，已跳过`);
                 } else {
                     let toolRound = 0;
-                    const maxToolRounds = 5;
+                    const maxToolRounds = clientFileExecution ? 8 : 5;
                     const loadedSkillNames = new Set();
                     let conversationMessages = [...finalMessages];
 
