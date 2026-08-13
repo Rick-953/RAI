@@ -23893,6 +23893,14 @@ if (clientFileExecution && systemPrompt) {
                         const continueController = createChatAbortController();
                         const continueTimeoutId = setTimeout(() => continueController.abort(), continueTimeoutMs);
 
+for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
+                            // 每轮重置续传解析状态（fullContent 增量提取机制保证重试不重复输出）
+                            continueAccumulatedToolCalls.length = 0;
+                            continueRawToolContent = '';
+                            continueStreamFinishReason = null;
+                            continueProviderDoneSignalReceived = false;
+                            continueToolCallReasoningContent = '';
+                            streamToolProtocolFilter.reset();
                         try {
                             const continueResponse = await fetch(continueApiUrl, {
                                 method: 'POST',
@@ -23904,7 +23912,9 @@ if (clientFileExecution && systemPrompt) {
                             if (!continueResponse.ok) {
                                 const continueErr = await readBoundedResponseText(continueResponse);
                                 console.error(` 续传请求失败: status=${continueResponse.status}, bodyLength=${continueErr.length}`);
-                                break;
+                                if (continueAttempt >= 2) break;
+                                console.warn(` 续传请求失败，重试(${continueAttempt}/2)`);
+                                continue;
                             }
 
                             const continueReader = continueResponse.body.getReader();
@@ -24079,14 +24089,28 @@ if (clientFileExecution && systemPrompt) {
                                     break;
                                 }
                             }
+                            if (!continueProviderDoneSignalReceived) {
+                                const incompleteContinueStreamError = new Error('provider_stream_missing_terminal_signal');
+                                incompleteContinueStreamError.code = 'provider_stream_missing_terminal_signal';
+                                throw incompleteContinueStreamError;
+                            }
+                        } catch (continueRetryErr) {
+                            clearTimeout(continueTimeoutId);
+                            if (continueAttempt >= 2) throw continueRetryErr;
+                            const retryBudgetMs = chatRequestBudget ? chatRequestBudget.nextAttemptTimeoutMs() : 0;
+                            if (retryBudgetMs <= 0) {
+                                console.warn(' 续传预算已耗尽，放弃重试');
+                                throw continueRetryErr;
+                            }
+                            const retryable = String(continueRetryErr?.code || continueRetryErr?.name || '');
+                            console.warn(` 续传中断，重试(${continueAttempt}/2): code=${retryable || 'unknown'}`);
+                            continueController = createChatAbortController(); // 重建（旧 controller 可能已被 abort）
+                            continueTimeoutId = setTimeout(() => continueController.abort(), retryBudgetMs);
+                            continue;
                         } finally {
                             clearTimeout(continueTimeoutId);
                         }
-
-                        if (!continueProviderDoneSignalReceived) {
-                            const incompleteContinueStreamError = new Error('provider_stream_missing_terminal_signal');
-                            incompleteContinueStreamError.code = 'provider_stream_missing_terminal_signal';
-                            throw incompleteContinueStreamError;
+                        break;
                         }
 
                         // 续传流 fallback：处理文本型工具调用标记
