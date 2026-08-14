@@ -45,19 +45,121 @@
 }
 
 .local-agent-settings-header { display: flex; align-items: flex-start; gap: 12px; }
+.local-agent-settings-header > div { min-width: 0; }
 .local-agent-settings-header p { margin: 4px 0 0; font-size: 12px; opacity: .68; }
-.local-agent-settings-badge { margin-left: auto; font-size: 11px; opacity: .6; }
-.local-agent-settings-badge.active { color: #2f855a; opacity: 1; }
+.local-agent-settings-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 132px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  opacity: .72;
+}
+.local-agent-settings-badge.connected { color: #2f855a; background: rgba(47, 133, 90, .12); opacity: 1; }
+.local-agent-settings-badge.install,
+.local-agent-settings-badge.unavailable { color: #b45309; background: rgba(180, 83, 9, .12); opacity: 1; }
 .local-agent-settings-actions { display: grid; gap: 8px; margin-top: 14px; }
-.local-agent-settings-actions button { min-height: 34px; border: 0; border-radius: 6px; padding: 0 12px; cursor: pointer; }
+.local-agent-settings-actions button { min-height: 36px; border: 0; border-radius: 6px; padding: 0 12px; cursor: pointer; }
+.local-agent-settings-actions button:disabled { cursor: default; opacity: .48; }
+.local-agent-settings-actions .local-agent-settings-help { background: transparent; color: var(--text-secondary); }
 .local-agent-device-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .local-agent-device-row span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .local-agent-settings-error { color: #b8322a; font-size: 12px; }
 #localAgentMenuItem[data-status="attention"] { color: #c5532d; }
 #localAgentMenuItem[data-status="running"] .more-menu-item-icon { animation: local-agent-pulse 1.1s ease-in-out infinite; }
 
+.settings-connect-install {
+  margin: 18px 0;
+  padding: 18px;
+  border-radius: 8px;
+  background: var(--settings-card-bg, rgba(127, 127, 127, .07));
+}
+
+.settings-connect-install-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.settings-connect-install-header h4,
+.settings-connect-command h5 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.settings-connect-install-header h4 { font-size: 16px; }
+.settings-connect-install-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.settings-connect-install-header a,
+.settings-connect-install-links a { color: var(--accent-color, #4f7bd9); font-size: 13px; text-decoration: none; }
+
+.settings-connect-command-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.settings-connect-command {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--settings-page-bg) 64%, transparent);
+}
+
+.settings-connect-command h5 { margin-bottom: 9px; font-size: 12px; }
+.settings-connect-command-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+.settings-connect-command code {
+  min-width: 0;
+  padding: 9px 10px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.settings-connect-command button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--settings-selected-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-connect-steps {
+  margin: 16px 0 0;
+  padding-left: 22px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settings-connect-steps li + li { margin-top: 6px; }
+.settings-connect-install-links { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 15px; }
+.settings-connect-install-links span { color: var(--text-tertiary); font-size: 12px; line-height: 1.45; }
+
 @keyframes local-agent-pulse { 50% { opacity: .45; } }
 
 @media (max-width: 600px) {
   .local-agent-activity { width: calc(100% - 20px); max-height: min(24vh, 180px); }
+  .local-agent-settings-header { flex-direction: column; }
+  .local-agent-settings-badge { margin-left: 0; }
+  .settings-connect-install { padding: 15px; }
+  .settings-connect-install-header { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .settings-connect-command-list { grid-template-columns: 1fr; }
+  .settings-connect-command-row { grid-template-columns: 1fr; }
+  .settings-connect-command button { justify-self: start; }
 }

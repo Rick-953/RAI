@@ -16113,16 +16113,20 @@ body.chatflow-iframe-mode .message-content::selection {
   .settings-sidebar {
     min-height: 0;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: hidden;
   }
 
   .settings-nav {
-    flex: 0 0 auto;
-    overflow: visible;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
   }
 
   .settings-desktop-logout-link {
-    margin-top: 0;
+    margin-top: auto;
   }
 }
 

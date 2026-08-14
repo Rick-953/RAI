@@ -4,7 +4,7 @@
   const state = {
     extensionAvailable: false,
     extensionVersion: '',
-    serverEnabled: false,
+    serverEnabled: null,
     devices: [],
     activeDeviceId: localStorage.getItem('rai_local_agent_device_id') || '',
     agentSession: null,
@@ -13,6 +13,11 @@
     activitiesConversationId: '',
     initialized: false
   };
+
+  const installCommands = Object.freeze({
+    unix: "curl --fail --location --proto '=https' --tlsv1.2 https://github.com/Rick-953/RAI/releases/latest/download/install.sh | sh",
+    windows: 'irm https://github.com/Rick-953/RAI/releases/latest/download/install.ps1 | iex'
+  });
 
   const text = (zh, en) => {
     const context = getContext();
@@ -158,7 +163,12 @@
   async function enable() {
     const context = getContext();
     if (!context.token) throw new Error(text('请先登录 RAI', 'Sign in to RAI first'));
-    if (!context.conversationId) throw new Error(text('请先创建或打开一个对话', 'Create or open a conversation first'));
+    if (!context.conversationId) {
+      throw new Error(text(
+        '当前是尚未保存的新对话。请先发送第一条消息创建对话，再开启本地 Agent；授权只对这个对话生效。',
+        'This is an unsaved new conversation. Send the first message to create it, then enable Local Agent. Authorization applies only to that conversation.'
+      ));
+    }
     if (!state.activeDeviceId) await pair();
     const pending = await api('/agent/sessions', {
       method: 'POST',
@@ -189,12 +199,50 @@
   }
 
   async function toggle() {
+    if (!state.extensionAvailable) {
+      openInstallGuide();
+      if (typeof window.showToast === 'function') {
+        window.showToast(text('已打开 RAI Connect 与本地 Agent 安装步骤', 'RAI Connect and Local Agent installation steps are open'));
+      }
+      return;
+    }
     try {
       if (connectedHere()) await disable();
       else await enable();
     } catch (error) {
       if (typeof window.showToast === 'function') window.showToast(localizedError(error.message));
       renderError(localizedError(error.message));
+    }
+  }
+
+  function openInstallGuide() {
+    if (typeof window.openSettings === 'function') window.openSettings();
+    window.requestAnimationFrame(() => {
+      if (typeof window.switchSettingsSection === 'function') window.switchSettingsSection('about');
+      window.requestAnimationFrame(() => {
+        document.getElementById('settingsRaiConnectInstall')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }
+
+  async function copyInstallCommand(key) {
+    const command = installCommands[key];
+    if (!command) return;
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch (_) {
+      const input = document.createElement('textarea');
+      input.value = command;
+      input.setAttribute('readonly', '');
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.append(input);
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    if (typeof window.showToast === 'function') {
+      window.showToast(text('安装命令已复制', 'Installation command copied'));
     }
   }
 
@@ -281,25 +329,74 @@
     title.textContent = 'RAI Local Agent';
     const description = document.createElement('p');
     const isConnectedHere = connectedHere();
-    description.textContent = isConnectedHere
-      ? text('当前对话已连接本地终端和浏览器', 'Local terminal and browser are connected to this conversation')
-      : state.extensionAvailable
-        ? text('扩展已安装；绑定设备后可使用本地能力', 'The extension is installed; pair this device to use local tools')
-        : text('安装 RAI Connect 扩展和本地 Agent 后启用', 'Install RAI Connect and the local Agent to enable local tools');
+    const context = getContext();
+    let status = 'checking';
+    let statusLabel = text('检测中', 'Checking');
+    let descriptionText = text('正在检查网页、扩展与本地 Agent 的连接状态。', 'Checking the web app, extension, and Local Agent connection.');
+    let primaryLabel = text('正在检测', 'Checking');
+    let primaryAction = null;
+
+    if (state.serverEnabled === false) {
+      status = 'unavailable';
+      statusLabel = text('服务不可用', 'Unavailable');
+      descriptionText = text('RAI 服务器暂未开放本地 Agent，请稍后重新检测。', 'The RAI server is not currently accepting Local Agent connections. Try again later.');
+      primaryLabel = text('重新检测', 'Check again');
+      primaryAction = refreshStatus;
+    } else if (!state.extensionAvailable) {
+      status = 'install';
+      statusLabel = text('需要安装', 'Install required');
+      descriptionText = text('尚未检测到 RAI Connect。请先按“关于”页的步骤安装本地 Agent，再由浏览器加载扩展。', 'RAI Connect was not detected. Follow the About-page steps to install Local Agent, then load the extension in your browser.');
+      primaryLabel = text('查看安装步骤', 'View installation steps');
+      primaryAction = openInstallGuide;
+    } else if (!state.activeDeviceId) {
+      status = 'pair';
+      statusLabel = text('待绑定', 'Pair device');
+      descriptionText = text('已检测到扩展和本地 Agent。绑定此设备后，每个对话仍会单独授权。', 'The extension and Local Agent were detected. Pair this device; each conversation is still authorized separately.');
+      primaryLabel = text('绑定此设备', 'Pair this device');
+      primaryAction = pair;
+    } else if (!context.conversationId) {
+      status = 'conversation';
+      statusLabel = text('等待创建对话', 'Create conversation');
+      descriptionText = text('设备已绑定。当前是尚未保存的新对话；发送第一条消息创建对话后即可连接。', 'This device is paired. The current conversation is not saved yet; send the first message to create it before connecting.');
+      primaryLabel = text('发送首条消息后连接', 'Connect after first message');
+    } else if (isConnectedHere) {
+      status = 'connected';
+      statusLabel = text('当前对话已连接', 'Connected here');
+      descriptionText = text('本地终端和浏览器已连接到当前对话；高风险操作仍需你确认。', 'Local terminal and browser access is connected to this conversation; high-risk actions still require your approval.');
+      primaryLabel = text('断开当前对话', 'Disconnect conversation');
+      primaryAction = disable;
+    } else {
+      status = 'ready';
+      statusLabel = text('可连接', 'Ready');
+      descriptionText = text('设备已绑定。连接只对当前对话生效，切换对话后需要重新确认。', 'This device is paired. Connection applies only to the current conversation and must be confirmed again after switching conversations.');
+      primaryLabel = text('连接当前对话', 'Connect conversation');
+      primaryAction = enable;
+    }
+
+    description.textContent = descriptionText;
     copy.append(title, description);
     const badge = document.createElement('span');
-    badge.className = `local-agent-settings-badge ${isConnectedHere ? 'active' : ''}`;
-    badge.textContent = isConnectedHere ? text('已连接', 'Connected') : text('未连接', 'Disconnected');
+    badge.className = `local-agent-settings-badge ${status}`;
+    badge.textContent = statusLabel;
     header.append(copy, badge);
     const actions = document.createElement('div');
     actions.className = 'local-agent-settings-actions';
     const primary = document.createElement('button');
     primary.type = 'button';
-    primary.textContent = state.activeDeviceId
-      ? (isConnectedHere ? text('断开当前对话', 'Disconnect') : text('连接当前对话', 'Connect conversation'))
-      : text('绑定此设备', 'Pair this device');
-    primary.addEventListener('click', () => (state.activeDeviceId ? toggle() : pair()).catch((error) => renderError(localizedError(error.message))));
+    primary.textContent = primaryLabel;
+    primary.disabled = !primaryAction;
+    if (primaryAction) {
+      primary.addEventListener('click', () => Promise.resolve(primaryAction()).catch((error) => renderError(localizedError(error.message))));
+    }
     actions.append(primary);
+    if (state.extensionAvailable) {
+      const instructions = document.createElement('button');
+      instructions.type = 'button';
+      instructions.className = 'local-agent-settings-help';
+      instructions.textContent = text('安装与使用说明', 'Installation and usage guide');
+      instructions.addEventListener('click', openInstallGuide);
+      actions.append(instructions);
+    }
     for (const device of state.devices.filter((item) => !item.revokedAt)) {
       const row = document.createElement('div');
       row.className = 'local-agent-device-row';
@@ -350,6 +447,9 @@
     document.getElementById('localAgentMenuItem')?.addEventListener('click', (event) => {
       event.stopPropagation();
       toggle();
+    });
+    document.querySelectorAll('[data-local-agent-copy]').forEach((button) => {
+      button.addEventListener('click', () => copyInstallCommand(button.dataset.localAgentCopy));
     });
     refreshStatus();
     setInterval(() => {
