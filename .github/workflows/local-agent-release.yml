@@ -55,6 +55,21 @@ jobs:
         run: |
           rustup component add clippy
           rustup target add ${{ matrix.target }}
+      - name: Parse the Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path install.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
       - name: Test and lint Agent
         run: |
           cargo test --locked --manifest-path rai-agent/Cargo.toml --target ${{ matrix.target }}
@@ -117,18 +132,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Validate tag and extension channel
-        env:
-          RAI_CHROME_EXTENSION_ID: ${{ vars.RAI_CHROME_EXTENSION_ID }}
-          RAI_EDGE_EXTENSION_ID: ${{ vars.RAI_EDGE_EXTENSION_ID }}
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          test "${GITHUB_REF_NAME}" = "v${version}"
-          node scripts/build-local-agent-channel.js dist "$version" "$GITHUB_REF_NAME" dist/local-agent-channel.json
       - name: Package extension and installers
         run: |
           (cd browser-extension && zip -qr ../dist/rai-connect-extension.zip .)
           cp install.sh install.ps1 dist/
+      - name: Validate tag and build the GitHub extension channel
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+          node scripts/build-local-agent-channel.js dist "$version" "$GITHUB_REF_NAME" dist/local-agent-channel.json
+      - name: Generate release checksums
+        run: |
           find dist -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > dist/SHA256SUMS
       - name: Create signed provenance attestations
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3

@@ -16,9 +16,11 @@ Windows PowerShell:
 irm https://github.com/Rick-953/RAI/releases/latest/download/install.ps1 | iex
 ```
 
-The installer downloads the platform binary from `local-agent-channel.json`, verifies SHA-256, atomically switches the current version, keeps the newest two versions for rollback, registers Chrome/Edge Native Messaging, and opens the browser store plus RAI. When GitHub CLI is installed it also verifies the release's GitHub signed provenance; set `RAI_REQUIRE_ATTESTATION=1` to require that verification.
+The installer downloads both the platform binary and `rai-connect-extension.zip` from `local-agent-channel.json`, verifies SHA-256, atomically switches the current Agent version, installs the unpacked extension into a stable local directory, keeps the newest two Agent versions for rollback, registers Chrome/Edge Native Messaging, and opens the browser extension page plus RAI. When GitHub CLI is installed it also verifies the signed provenance of both archives; set `RAI_REQUIRE_ATTESTATION=1` to require that verification.
 
-Browsers do not allow a normal installer to silently install an extension. The user must confirm the RAI Connect store installation and then bind the device in **RAI Settings > Security**. A release is blocked unless both official store IDs are configured as repository variables `RAI_CHROME_EXTENSION_ID` and `RAI_EDGE_EXTENSION_ID`.
+Browsers do not allow a normal installer to silently install an extension. After the command finishes, enable **Developer mode** on `chrome://extensions` or `edge://extensions`, choose **Load unpacked**, and select the exact `extension` directory printed by the installer. Then bind the device in **RAI Settings > Security**.
+
+The GitHub package has a public manifest key and therefore a stable Chrome/Edge ID: `clnmniaaodjmcgnemigghniekmahgcgi`. The public key is identity data, not a private signing key. This is a GitHub side-load release, not a Chrome Web Store or Edge Add-ons listing; future store listings keep separate reviewed store IDs and must not be represented as published before approval.
 
 ## Trust and protocol
 
@@ -56,7 +58,7 @@ rai-agent uninstall
 
 ## Release process
 
-`.github/workflows/local-agent-release.yml` runs Rust tests and Clippy on Apple Silicon macOS, Intel macOS, x86_64 Linux, and x86_64 Windows. A version tag builds platform archives, generates a CycloneDX SBOM, packages the extension and installers, emits `SHA256SUMS`, creates GitHub signed provenance attestations, and uploads all assets to the matching GitHub Release.
+`.github/workflows/local-agent-release.yml` runs Rust tests and Clippy on Apple Silicon macOS, Intel macOS, x86_64 Linux, and x86_64 Windows. A version tag builds platform archives, generates a CycloneDX SBOM, packages the stable-ID unpacked extension and installers, emits a channel containing the Agent and extension hashes, creates `SHA256SUMS` and GitHub signed provenance attestations, and uploads all assets to the matching GitHub Release. Store IDs are not required for the GitHub side-load channel.
 
 ## OpenCode boundary
 
