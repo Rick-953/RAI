@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.12.2';
-const RAI_BUILD_ID = '20260814-mobile-guide-layout-v01202-r2';
+const RAI_APP_VERSION = '0.13.0';
+const RAI_BUILD_ID = '20260814-local-agent-v01300-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2603,6 +2603,13 @@ const appState = {
     isLoading: false
   }
 };
+
+window.getRaiLocalAgentContext = () => ({
+  token: appState.token,
+  conversationId: appState.currentSession?.id || '',
+  language: appState.language,
+  authenticated: appState.authState === 'authenticated'
+});
 
 let deferredPwaInstallPrompt = null;
 let pwaInstallSupportInitialized = false;
@@ -5386,6 +5393,7 @@ const i18n = {
     'action-code': '代码',
     'action-translate': '翻译',
     'attach': '附件',
+    'local-agent-menu': '本地 Agent',
     'internet': '联网',
     'reasoning': '推理',
     'thinking-budget': '思考预算',
@@ -6016,6 +6024,7 @@ const i18n = {
     'action-code': 'Code',
     'action-translate': 'Translate',
     'attach': 'Attach',
+    'local-agent-menu': 'Local Agent',
     'internet': 'Web',
     'reasoning': 'Reasoning',
     'thinking-budget': 'Thinking Budget',
@@ -7786,6 +7795,26 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-08-14',
+    version: 'v0.13.0',
+    zh: {
+      summary: 'RAI Local Agent 可在明确授权后连接本地文件、终端和独立浏览器标签页。',
+      details: [
+        '新增 macOS、Linux、Windows 本地 Agent 协议，设备、会话、工具信封和结果回执均使用签名校验，并保留旧 Windows 客户端协议兼容。',
+        '扩展侧边栏逐次展示本地动作与风险；目录长期规则保存在本机，提权动作仍由系统管理员弹窗逐次确认。',
+        '本地完整日志加密保存；云端对话只显示当前对话最近 20 条折叠记录，并对凭据脱敏和大输出截断。'
+      ]
+    },
+    en: {
+      summary: 'RAI Local Agent connects local files, terminal tools, and a separate browser tab after explicit approval.',
+      details: [
+        'The signed Local Agent protocol now supports macOS, Linux, and Windows while preserving the legacy Windows client contract.',
+        'The extension side panel shows each action and risk. Persistent directory rules stay local, while elevated actions still require an OS administrator prompt every time.',
+        'Complete logs are encrypted locally. The cloud conversation shows only its latest 20 collapsed, secret-redacted, size-limited records.'
+      ]
+    }
+  },
   {
     date: '2026-08-14',
     version: 'v0.12.2',
@@ -15180,7 +15209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.12.2 初始化 (mobile-guide-layout-r2)');
+  console.log(' RAI v0.13.0 初始化 (local-agent-v1)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -21454,6 +21483,8 @@ async function sendMessage(message = null, options = {}) {
       useRag: appState.useRag,
       ragTopK: appState.ragTopK
     };
+    const localAgentCapability = window.RaiLocalAgent?.getChatCapability?.();
+    if (localAgentCapability) chatRequestPayload.local_agent = localAgentCapability;
     const response = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
       headers: {
@@ -21811,7 +21842,18 @@ async function sendMessage(message = null, options = {}) {
         try {
           const parsed = JSON.parse(data);
 
-          if (parsed.type === 'reasoning') {
+          if (parsed.type === 'local_agent_tool_call') {
+            if (!window.RaiLocalAgent?.handleToolCall) {
+              throw new Error(isChineseLanguage(appState.language)
+                ? 'RAI Connect 未加载，无法执行本地操作'
+                : 'RAI Connect is unavailable for this local action');
+            }
+            await window.RaiLocalAgent.handleToolCall(parsed.envelope);
+            addProcessTraceItem('info', isChineseLanguage(appState.language)
+              ? `本地操作完成: ${parsed.envelope?.tool || ''}`
+              : `Local action completed: ${parsed.envelope?.tool || ''}`);
+          }
+          else if (parsed.type === 'reasoning') {
             // 进入深度思考阶段
             if (!isThinkingPhase) {
               isThinkingPhase = true;

@@ -1,0 +1,149 @@
+name: Local Agent release
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rai-agent/**'
+      - 'browser-extension/**'
+      - 'install.sh'
+      - 'install.ps1'
+      - 'scripts/local-agent-*.js'
+      - 'scripts/build-local-agent-channel.js'
+      - '.github/workflows/local-agent-release.yml'
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-agent:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: rai-agent
+            asset: rai-agent-aarch64-apple-darwin.tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: rai-agent
+            asset: rai-agent-x86_64-apple-darwin.tar.gz
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: rai-agent
+            asset: rai-agent-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: rai-agent.exe
+            asset: rai-agent-x86_64-pc-windows-msvc.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Test and lint Agent
+        run: |
+          cargo test --locked --manifest-path rai-agent/Cargo.toml --target ${{ matrix.target }}
+          cargo clippy --locked --manifest-path rai-agent/Cargo.toml --target ${{ matrix.target }} --all-targets -- -D warnings
+      - name: Build release binary
+        run: cargo build --locked --release --manifest-path rai-agent/Cargo.toml --target ${{ matrix.target }}
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        run: tar -C rai-agent/target/${{ matrix.target }}/release -czf ${{ matrix.asset }} ${{ matrix.binary }}
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path rai-agent/target/${{ matrix.target }}/release/${{ matrix.binary }} -DestinationPath ${{ matrix.asset }}
+      - name: Upload release binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 14
+
+  agent-sbom:
+    name: Agent SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Export locked Cargo metadata
+        run: cargo metadata --locked --format-version=1 --manifest-path rai-agent/Cargo.toml > rai-agent-cargo-metadata.json
+      - name: Generate CycloneDX SBOM
+        run: node scripts/local-agent-sbom.js rai-agent-cargo-metadata.json rai-agent-sbom.cdx.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rai-agent-sbom
+          path: rai-agent-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Attest and attach Agent assets to the gated draft
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-agent, agent-sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download build outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Validate tag and extension channel
+        env:
+          RAI_CHROME_EXTENSION_ID: ${{ vars.RAI_CHROME_EXTENSION_ID }}
+          RAI_EDGE_EXTENSION_ID: ${{ vars.RAI_EDGE_EXTENSION_ID }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+          node scripts/build-local-agent-channel.js dist "$version" "$GITHUB_REF_NAME" dist/local-agent-channel.json
+      - name: Package extension and installers
+        run: |
+          (cd browser-extension && zip -qr ../dist/rai-connect-extension.zip .)
+          cp install.sh install.ps1 dist/
+          find dist -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > dist/SHA256SUMS
+      - name: Create signed provenance attestations
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: 'dist/*'
+      - name: Attach assets to the security-gated draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_json=""
+          for attempt in $(seq 1 180); do
+            release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq -c --arg tag "$GITHUB_REF_NAME" 'map(select(.tag_name == $tag))[0] // empty')"
+            if [[ -n "$release_json" ]]; then break; fi
+            sleep 10
+          done
+          if [[ -z "$release_json" || "$(jq -r .draft <<<"$release_json")" != "true" ]]; then
+            echo "security-gated draft Release is unavailable" >&2
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

@@ -131,6 +131,7 @@ const {
     createProviderCircuitBreaker,
     isTransientProviderFailure
 } = require('./lib/chat-request-budget');
+const { createLocalAgentService } = require('./lib/local-agent-protocol');
 
 // Static source only: fail closed before accepting requests if a bundled skill drifts.
 validateSkillRegistry();
@@ -2735,6 +2736,43 @@ const SANDBOX_EXEC_TOOL_DEFINITION_LOCAL = {
     }
 };
 
+const PROCESS_EXEC_TOOL_DEFINITION_LOCAL_AGENT = {
+    type: 'function',
+    function: {
+        name: 'process_exec',
+        description: '在已连接的本地 Agent 上直接运行一个程序。必须把可执行程序与参数分开传递；只有用户明确要求 shell 脚本时才改用 sandbox_exec',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['program'],
+            properties: {
+                program: { type: 'string', description: '可执行程序名或绝对路径，不包含 shell 拼接语法' },
+                args: { type: 'array', maxItems: 128, items: { type: 'string' }, description: '逐项传递给程序的参数' },
+                cwd: { type: 'string', description: '工作目录；未传时使用本地授权目录' },
+                timeout_seconds: { type: 'integer', minimum: 1, maximum: 300, description: '最长运行秒数，默认 60' },
+                elevated: { type: 'boolean', description: '是否需要系统管理员权限；每次都会触发扩展与系统双重确认' }
+            }
+        }
+    }
+};
+
+const SANDBOX_EXEC_TOOL_DEFINITION_LOCAL_AGENT = {
+    ...SANDBOX_EXEC_TOOL_DEFINITION_LOCAL,
+    function: {
+        ...SANDBOX_EXEC_TOOL_DEFINITION_LOCAL.function,
+        description: '在已连接的本地 Agent 上执行用户明确要求的 shell 脚本。脚本使用当前 macOS、Linux 或 Windows 的原生 shell；普通命令必须优先使用 process_exec 的 program + args',
+        parameters: {
+            ...SANDBOX_EXEC_TOOL_DEFINITION_LOCAL.function.parameters,
+            properties: {
+                ...SANDBOX_EXEC_TOOL_DEFINITION_LOCAL.function.parameters.properties,
+                script: { type: 'string', description: '用户明确要求执行的 shell 脚本内容' },
+                cwd: { type: 'string', description: '工作目录；未传时使用本地授权目录' },
+                timeout_seconds: { type: 'integer', minimum: 1, maximum: 300, description: '最长运行秒数，默认 60' }
+            }
+        }
+    }
+};
+
 const INSERT_IMAGE_TOOL_DEFINITION_LOCAL = {
     type: 'function',
     function: {
@@ -2868,13 +2906,89 @@ const DELETE_FILE_TOOL_DEFINITION_LOCAL = {
     }
 };
 
+const LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS = [
+    {
+        type: 'function',
+        function: {
+            name: 'browser.read',
+            description: '读取当前浏览器标签页的标题、URL 与可见文本。仅在用户要求操作或理解当前网页时调用',
+            parameters: { type: 'object', additionalProperties: false, properties: {} }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'browser.navigate',
+            description: '将当前标签页导航到一个明确的 HTTP(S) URL',
+            parameters: {
+                type: 'object', additionalProperties: false, required: ['url'],
+                properties: { url: { type: 'string' } }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'browser.click',
+            description: '点击当前网页中由 CSS selector 精确定位的元素',
+            parameters: {
+                type: 'object', additionalProperties: false, required: ['selector'],
+                properties: { selector: { type: 'string' } }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'browser.type',
+            description: '向当前网页中由 CSS selector 精确定位的输入元素填写文本，但不提交表单',
+            parameters: {
+                type: 'object', additionalProperties: false, required: ['selector', 'text'],
+                properties: { selector: { type: 'string' }, text: { type: 'string' } }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'browser.scroll',
+            description: '在当前网页按像素纵向滚动',
+            parameters: {
+                type: 'object', additionalProperties: false, required: ['y'],
+                properties: { y: { type: 'number', minimum: -10000, maximum: 10000 } }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'browser.submit',
+            description: '提交由 CSS selector 指向的表单或表单内元素。属于外部副作用，客户端必须逐次确认',
+            parameters: {
+                type: 'object', additionalProperties: false, required: ['selector'],
+                properties: { selector: { type: 'string' } }
+            }
+        }
+    }
+];
+
 
 // ==================== 客户端文件工具挂起管理（UWP 本地执行） ====================
 
 const PENDING_CLIENT_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
 const clientToolPending = new Map(); // requestId -> { userId, sessionId, toolCall, toolName, args, resolve, timer, createdAt, resolved }
 
-function createClientToolPending({ requestId, userId, sessionId, toolCall, toolName, args, resolve }) {
+function createClientToolPending({
+    requestId,
+    userId,
+    sessionId,
+    toolCall,
+    toolName,
+    args,
+    resolve,
+    agentRunId = null,
+    agentSessionId = null
+}) {
     if (clientToolPending.has(String(requestId))) {
         resolve({ success: false, error: 'client_tool_busy' });
         return;
@@ -2885,6 +2999,8 @@ function createClientToolPending({ requestId, userId, sessionId, toolCall, toolN
         toolCall,
         toolName,
         args,
+        agentRunId,
+        agentSessionId,
         resolve,
         timer: null,
         createdAt: Date.now(),
@@ -2914,6 +3030,27 @@ function resolveClientToolPending(requestId, result) {
     clientToolPending.delete(String(requestId));
     entry.resolve(result === undefined ? { success: true } : result);
     return true;
+}
+
+function claimClientToolPending(requestId) {
+    const entry = clientToolPending.get(String(requestId));
+    if (!entry || entry.resolved || entry.resolving) return null;
+    entry.resolving = true;
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
+    return entry;
+}
+
+function releaseClientToolPendingClaim(requestId) {
+    const entry = clientToolPending.get(String(requestId));
+    if (!entry || entry.resolved || !entry.resolving) return;
+    entry.resolving = false;
+    const elapsed = Date.now() - entry.createdAt;
+    const remaining = Math.max(1, PENDING_CLIENT_TOOL_TIMEOUT_MS - elapsed);
+    entry.timer = setTimeout(() => {
+        if (entry.resolved || entry.resolving) return;
+        rejectClientToolPending(requestId, 'client_tool_timeout');
+    }, remaining);
 }
 
 function rejectClientToolPending(requestId, reason) {
@@ -2985,7 +3122,11 @@ function hasToolDefinition(toolDefinitions = [], toolName = '') {
     return toolDefinitions.some((tool) => tool?.function?.name === toolName);
 }
 
-const FILE_WORKSPACE_TOOL_NAMES = new Set(['read_file', 'transform_file', 'edit_file', 'create_artifact', 'sandbox_exec', 'insert_image', 'update_sheet', 'list_files', 'write_file', 'copy_file', 'move_file', 'delete_file']);
+const FILE_WORKSPACE_TOOL_NAMES = new Set([
+    'read_file', 'transform_file', 'edit_file', 'create_artifact', 'sandbox_exec', 'insert_image',
+    'update_sheet', 'list_files', 'write_file', 'copy_file', 'move_file', 'delete_file', 'process_exec',
+    ...LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS.map((tool) => tool.function.name)
+]);
 
 function isFileWorkspaceToolName(toolName = '') {
     return FILE_WORKSPACE_TOOL_NAMES.has(String(toolName || '').trim());
@@ -3049,7 +3190,8 @@ function buildChatToolDefinitions({
     memoryToolsEnabled = false,
     skillToolsEnabled = false,
     fileToolsEnabled = false,
-    clientFileExecution = false
+    clientFileExecution = false,
+    localAgentEnabled = false
 } = {}) {
     const definitions = [];
     if (internetMode || imageGenerationRequested) {
@@ -3067,7 +3209,7 @@ function buildChatToolDefinitions({
                 TRANSFORM_FILE_TOOL_DEFINITION_LOCAL,
                 EDIT_FILE_TOOL_DEFINITION_LOCAL,
                 CREATE_ARTIFACT_TOOL_DEFINITION_LOCAL,
-                SANDBOX_EXEC_TOOL_DEFINITION_LOCAL,
+                localAgentEnabled ? SANDBOX_EXEC_TOOL_DEFINITION_LOCAL_AGENT : SANDBOX_EXEC_TOOL_DEFINITION_LOCAL,
                 INSERT_IMAGE_TOOL_DEFINITION_LOCAL,
                 UPDATE_SHEET_TOOL_DEFINITION_LOCAL,
                 LIST_FILES_TOOL_DEFINITION_LOCAL,
@@ -3076,6 +3218,8 @@ function buildChatToolDefinitions({
                 MOVE_FILE_TOOL_DEFINITION_LOCAL,
                 DELETE_FILE_TOOL_DEFINITION_LOCAL
             );
+            if (localAgentEnabled) definitions.push(...LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS);
+            if (localAgentEnabled) definitions.push(PROCESS_EXEC_TOOL_DEFINITION_LOCAL_AGENT);
         } else {
             definitions.push(
                 READ_FILE_TOOL_DEFINITION,
@@ -3182,14 +3326,21 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         transform_file: new Set(['file_id', 'operation', 'file_name']),
         edit_file: new Set(['file_id', 'replacements', 'file_name']),
         create_artifact: new Set(['format', 'content', 'file_name']),
-        sandbox_exec: new Set(['script', 'file_ids', 'output_path', 'elevated']),
+        sandbox_exec: new Set(['script', 'file_ids', 'output_path', 'elevated', 'cwd', 'timeout_seconds']),
+        process_exec: new Set(['program', 'args', 'cwd', 'timeout_seconds', 'elevated']),
         insert_image: new Set(['file_id', 'image_file', 'slide']),
         update_sheet: new Set(['file_id', 'sheet', 'cells', 'charts']),
         list_files: new Set(['path']),
         write_file: new Set(['file_id', 'content']),
         copy_file: new Set(['from', 'to']),
         move_file: new Set(['from', 'to']),
-        delete_file: new Set(['file_id'])
+        delete_file: new Set(['file_id']),
+        'browser.read': new Set([]),
+        'browser.navigate': new Set(['url']),
+        'browser.click': new Set(['selector']),
+        'browser.type': new Set(['selector', 'text']),
+        'browser.scroll': new Set(['y']),
+        'browser.submit': new Set(['selector'])
     };
     const allowedKeys = allowedKeysByTool[toolName];
     if (!allowedKeys || Object.keys(args).some((key) => !allowedKeys.has(key))) return null;
@@ -3222,7 +3373,7 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         }
         if (toolName === 'sandbox_exec') {
             if (typeof args.script !== 'string' || !args.script.trim() || Buffer.byteLength(args.script, 'utf8') > 32 * 1024) return null;
-            const fileIds = Array.isArray(args.file_ids) ? [...new Set(args.file_ids.map(normalizeWorkspaceFileId))] : [];
+            const fileIds = Array.isArray(args.file_ids) ? [...new Set(args.file_ids.map((value) => normalizeWorkspaceFileId(value, localMode)))] : [];
             if (fileIds.length > 8) return null;
             const outputPath = typeof args.output_path === 'string' ? args.output_path.trim().slice(0, 240) : '';
             // 敏感命令自动提权：涉及系统级操作（HKLM写/服务/系统目录/系统命令）且未显式提权时，自动补 elevated
@@ -3243,8 +3394,21 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
                 script: args.script,
                 ...(fileIds.length ? { file_ids: fileIds } : {}),
                 ...(outputPath ? { output_path: outputPath } : {}),
+                ...(typeof args.cwd === 'string' && args.cwd.trim() ? { cwd: args.cwd.trim().slice(0, 2048) } : {}),
+                ...(args.timeout_seconds != null ? { timeout_seconds: Math.max(1, Math.min(300, Number(args.timeout_seconds) || 60)) } : {}),
                 ...(args.elevated === true || autoElevate ? { elevated: true } : {})
             };
+        }
+        if (toolName === 'process_exec') {
+            const program = String(args.program || '').trim().slice(0, 1024);
+            const argv = Array.isArray(args.args) ? args.args : [];
+            if (!program || argv.length > 128 || argv.some((item) => typeof item !== 'string')) return null;
+            const normalized = { program, args: argv.map((item) => item.slice(0, 8192)) };
+            const cwd = String(args.cwd || '').trim().slice(0, 2048);
+            if (cwd) normalized.cwd = cwd;
+            if (args.timeout_seconds != null) normalized.timeout_seconds = Math.max(1, Math.min(300, Number(args.timeout_seconds) || 60));
+            if (args.elevated === true) normalized.elevated = true;
+            return normalized;
         }
         if (toolName === 'insert_image') {
             const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
@@ -3296,6 +3460,26 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
             const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
             if (!fileId) return null;
             return { file_id: fileId };
+        }
+        if (toolName === 'browser.read') return {};
+        if (toolName === 'browser.navigate') {
+            const url = String(args.url || '').trim();
+            if (!/^https?:\/\/[^\s]{1,2000}$/i.test(url)) return null;
+            return { url };
+        }
+        if (toolName === 'browser.click' || toolName === 'browser.submit') {
+            const selector = String(args.selector || '').trim().slice(0, 500);
+            return selector ? { selector } : null;
+        }
+        if (toolName === 'browser.type') {
+            const selector = String(args.selector || '').trim().slice(0, 500);
+            if (!selector || typeof args.text !== 'string') return null;
+            return { selector, text: args.text.slice(0, 20000) };
+        }
+        if (toolName === 'browser.scroll') {
+            const y = Number(args.y);
+            if (!Number.isFinite(y)) return null;
+            return { y: Math.max(-10000, Math.min(10000, y)) };
         }
         const format = String(args.format || '').trim().toLowerCase();
         const allowedFormats = localMode
@@ -8649,6 +8833,12 @@ const authSessionStore = createAuthSessionStore({
     production: IS_PRODUCTION
 });
 const softwareClientAuth = createSoftwareClientAuth({ db: authDb });
+const localAgentService = createLocalAgentService({
+    db: authDb,
+    signingKeyPath: cleanEnvValue(process.env.RAI_LOCAL_AGENT_SIGNING_PRIVATE_KEY_FILE),
+    fallbackSigningKeyPath: cleanEnvValue(process.env.RAI_CONVERSATION_SIGNING_PRIVATE_KEY_FILE),
+    issuer: cleanEnvValue(process.env.PUBLIC_BASE_URL)
+});
 
 // Passkey 仪式使用独立连接，避免其一次性 challenge 事务与聊天/配额事务交错。
 const passkeyDb = new sqlite3.Database(dbPath, (err) => {
@@ -10039,6 +10229,13 @@ const softwareClientStartupReady = authSessionStartupReady
         console.log(' 软件客户端凭据结构就绪');
         return true;
     });
+const localAgentStartupReady = authSessionStartupReady
+    .then(() => localAgentService.migrate())
+    .then(() => {
+        const status = localAgentService.publicStatus();
+        console.log(` 本地 Agent 协议结构就绪: enabled=${status.enabled}, protocol=${status.protocolVersion}`);
+        return true;
+    });
 
 async function verifySelectionExplanationSchema() {
     const requiredColumns = {
@@ -10770,6 +10967,119 @@ const authenticateToken = async (req, res, next) => {
         return res.status(401).json({ error: '令牌无效、已过期或会话已撤销' });
     }
 };
+
+function sendLocalAgentError(res, error) {
+    const status = Number(error?.statusCode || 500);
+    const code = String(error?.code || error?.message || 'local_agent_failed').slice(0, 120);
+    if (status >= 500) console.error(' 本地 Agent 接口失败:', sanitizeReportContext(error));
+    return res.status(status).json({ success: false, error: code });
+}
+
+app.get('/api/agent/status', async (_req, res) => {
+    try {
+        await localAgentStartupReady;
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json({ success: true, ...localAgentService.publicStatus() });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.get('/.well-known/rai-agent-keys.json', async (_req, res) => {
+    try {
+        await localAgentStartupReady;
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        return res.json({
+            schema: 'rai-local-agent-keys/v1',
+            issuer: localAgentService.publicIssuer(),
+            keys: localAgentService.publicKeys()
+        });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.post('/api/agent/pairings/start', authenticateToken, apiLimiter, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        const pairing = await localAgentService.startPairing(req.user.userId, req.body || {});
+        return res.status(201).json({ success: true, ...pairing });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.post('/api/agent/pairings/:id/complete', authenticateToken, apiLimiter, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        const device = await localAgentService.completePairing(req.user.userId, req.params.id, req.body || {});
+        return res.json({ success: true, ...device });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.get('/api/agent/devices', authenticateToken, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        return res.json({ success: true, devices: await localAgentService.listDevices(req.user.userId) });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.delete('/api/agent/devices/:id', authenticateToken, apiLimiter, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        await localAgentService.revokeDevice(req.user.userId, req.params.id);
+        return res.json({ success: true });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.post('/api/agent/sessions', authenticateToken, apiLimiter, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        const session = await localAgentService.startSession(req.user.userId, req.body || {});
+        return res.status(201).json({ success: true, ...session });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.post('/api/agent/sessions/:id/accept', authenticateToken, apiLimiter, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        const session = await localAgentService.acceptSession(req.user.userId, req.params.id, req.body || {});
+        return res.json({ success: true, ...session });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.delete('/api/agent/sessions/:id', authenticateToken, apiLimiter, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        return res.json({ success: true, closed: await localAgentService.closeSession(req.user.userId, req.params.id) });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
+
+app.get('/api/agent/tool-runs', authenticateToken, async (req, res) => {
+    try {
+        await localAgentStartupReady;
+        const runs = await localAgentService.listConversationRuns(
+            req.user.userId,
+            req.query.conversationId,
+            req.query.limit
+        );
+        return res.json({ success: true, runs });
+    } catch (error) {
+        return sendLocalAgentError(res, error);
+    }
+});
 
 // ================= CRF 签名与导入导出（防篡改，CRF-FORMAT.md）=================
 app.get('/api/crf/public-key', (req, res) => {
@@ -19932,13 +20242,30 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             continuationAttempt = 0,
             lowLatencyMode = false,
             client_file_execution: rawClientFileExecution = false,
+            local_agent: rawLocalAgent = null,
             workdir_configured = false
         } = req.body;
         // 工具下发只看 client_file_execution（UWP 固定携带）；workdir_configured 仅作提示字段：
         // true=已有工作目录可直接操作；false=工具到达时客户端先引导用户选择目录（含移动端首用）
-        const clientFileExecution = rawClientFileExecution === true;
+        let localAgentSession = null;
+        if (rawLocalAgent && typeof rawLocalAgent === 'object') {
+            try {
+                await localAgentStartupReady;
+                if (Number(rawLocalAgent.protocolVersion) !== 1) {
+                    return res.status(409).json({ error: 'unsupported_local_agent_protocol' });
+                }
+                localAgentSession = await localAgentService.authorizeSession(
+                    req.user.userId,
+                    String(rawLocalAgent.sessionId || ''),
+                    requestedSessionId || ''
+                );
+            } catch (error) {
+                return sendLocalAgentError(res, error);
+            }
+        }
+        const clientFileExecution = rawClientFileExecution === true || !!localAgentSession;
         if (clientFileExecution) {
-            console.log(` 客户端文件执行已启用: requestId=${requestId || 'pending'}, sessionId=${requestedSessionId || 'pending'}, rawClientFileExecution=${rawClientFileExecution}, workdirConfigured=${workdir_configured}`);
+            console.log(` 客户端文件执行已启用: requestId=${requestId || 'pending'}, sessionId=${requestedSessionId || 'pending'}, protocol=${localAgentSession ? 'local-agent-v1' : 'uwp-v1'}, workdirConfigured=${workdir_configured}`);
         }
         let systemPrompt = '';
         let sessionId = requestedSessionId;
@@ -20198,7 +20525,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
 
 // 本地文件执行模式：系统提示追加本地工作目录说明（替代沙箱引导）
 if (clientFileExecution && systemPrompt) {
-    systemPrompt += '\n\n## 本地文件执行模式\n当前对话已启用本地文件执行：用户授权了本地工作目录，文件工具在用户电脑上直接执行，无需沙箱。创建文本文件用 create_artifact（format: text/markdown/json/csv）；创建 Office 文档用 create_artifact 的 docx/xlsx/pptx 格式（客户端原生生成，不要用 Python/python-docx/openpyxl 脚本）；需要插图时先用 sandbox_exec 下载图片到工作目录再引用（!img: 或 insert_image），不得引用不存在的文件；修改用 edit_file；执行命令用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒，无 Python 环境）。Excel 更新一律用 update_sheet（含图表），禁止 PowerShell COM 操作 Office 文档，工具成功即完成不要重复操作。不要请求沙箱或声称需要服务器沙箱。当用户请求涉及文件/文档/命令操作时，你必须实际调用对应工具完成（create_artifact/edit_file/sandbox_exec/insert_image/update_sheet/list_files 等），禁止只输出计划或假装完成。';
+        systemPrompt += localAgentSession
+            ? '\n\n## 本地 Agent 执行模式\n当前对话已连接用户明确授权的本地 Agent。普通命令必须优先调用 process_exec，并把 program 与 args 分开；只有用户明确要求 shell 脚本时才调用 sandbox_exec。文件工具直接作用于本地授权目录；提权、高风险命令、敏感路径与外部网页操作必须等待客户端确认。工具没有返回 success:true 时不得声称完成。'
+            : '\n\n## Windows 客户端文件执行模式\n当前对话已启用旧版 Windows/UWP 本地文件执行。文件工具直接作用于用户授权目录，脚本通过 sandbox_exec 使用 PowerShell。工具没有返回 success:true 时不得声称完成。';
 }
         if (
             model === 'claude-haiku' ||
@@ -20301,7 +20630,8 @@ if (clientFileExecution && systemPrompt) {
             memoryToolsEnabled,
             skillToolsEnabled,
             fileToolsEnabled: Boolean(sessionId) && (clientFileExecution || workspaceToolsEnabled),
-            clientFileExecution
+            clientFileExecution,
+            localAgentEnabled: !!localAgentSession
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
 
@@ -23259,26 +23589,36 @@ if (clientFileExecution && systemPrompt) {
                 streamFinishReason = 'tool_calls';
             }
 
-            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
-                forcedClientListFilesDone = true;
-                console.warn(` 本地文件任务但模型未触发工具调用，自动发起 list_files 引导工具链: model=${actualModel}`);
-
             // 本机状态类问题兜底：宽带/配置/硬件类提问必须查真实数据，禁止模型编造
             if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedMachineQueryDone && /(?:宽带|网速|网卡|测速|配置|cpu|内存|硬盘|磁盘|显卡|频率|系统信息|型号|速度|提速)/i.test(String(userContent || ''))) {
                 forcedMachineQueryDone = true;
-                console.warn(` 本机状态类问题但模型未触发查询工具，自动发起 sandbox_exec 查询真实配置: model=${actualModel}`);
+                const localMachineQuery = localAgentSession
+                    ? (localAgentSession.platform === 'macos'
+                        ? { name: 'process_exec', arguments: { program: 'system_profiler', args: ['SPHardwareDataType', 'SPNetworkDataType'], timeout_seconds: 60 } }
+                        : (localAgentSession.platform === 'linux'
+                            ? { name: 'process_exec', arguments: { program: 'uname', args: ['-a'], timeout_seconds: 30 } }
+                            : { name: 'process_exec', arguments: { program: 'systeminfo.exe', args: [], timeout_seconds: 60 } }))
+                    : {
+                        name: 'sandbox_exec',
+                        arguments: {
+                            script: "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object Name,Speed | Format-Table -AutoSize; Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,MaxClockSpeed | Format-Table -AutoSize; Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer,ConfiguredClockSpeed,Capacity | Format-Table -AutoSize"
+                        }
+                    };
+                console.warn(` 本机状态类问题但模型未触发查询工具，自动发起 ${localMachineQuery.name} 查询真实配置: model=${actualModel}`);
                 accumulatedToolCalls.push({
                     id: `forced_machine_query_${Date.now()}`,
                     type: 'function',
                     function: {
-                        name: 'sandbox_exec',
-                        arguments: JSON.stringify({
-                            script: "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object Name,Speed | Format-Table -AutoSize; Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,MaxClockSpeed | Format-Table -AutoSize; Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer,ConfiguredClockSpeed,Capacity | Format-Table -AutoSize"
-                        })
+                        name: localMachineQuery.name,
+                        arguments: JSON.stringify(localMachineQuery.arguments)
                     }
                 });
                 streamFinishReason = 'tool_calls';
             }
+
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
+                forcedClientListFilesDone = true;
+                console.warn(` 本地文件任务但模型未触发工具调用，自动发起 list_files 引导工具链: model=${actualModel}`);
                 accumulatedToolCalls.push({
                     id: `forced_list_files_${Date.now()}`,
                     type: 'function',
@@ -23374,7 +23714,7 @@ if (clientFileExecution && systemPrompt) {
                                 const fileToolMessage = toolName === 'read_file'
                                     ? '正在读取当前附件'
                                     : (toolName === 'sandbox_exec'
-                                        ? (clientFileExecution ? '正在请求本地执行 PowerShell 命令' : '正在隔离 Linux 沙箱中执行')
+                                        ? (localAgentSession ? '正在请求本地 Agent 执行脚本' : (clientFileExecution ? '正在请求本地执行 PowerShell 命令' : '正在隔离 Linux 沙箱中执行'))
                                         : (clientFileExecution ? '正在请求本地文件操作' : '正在生成受控文件产物'));
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
@@ -23401,13 +23741,13 @@ if (clientFileExecution && systemPrompt) {
 - 创建文本/代码文件：用 create_artifact（format: text/markdown/json/csv + content + file_name），文件直接写入工作目录
 - 创建 Office 文档：用 create_artifact，format 传 docx/xlsx/pptx（客户端原生生成，无需任何脚本库、**不存在模板文件**，不要寻找或引用任何 .pptx 模板路径；#theme 只是主题色选择不是文件）——docx 内容用 Markdown 风格（# 标题、- 列表、**粗体**、*斜体*）；| 开头连续行为表格；!img:相对路径 行嵌入工作目录图片；xlsx 每行一个数据行、单元格 Tab 分隔、### 开头行切分工作表、= 开头为公式；pptx 用 --- 分页、#theme: 名称 指定主题
 - 修改文件：用 edit_file 精确替换（支持文本与 Word/PPT/Excel）
-- 给文档插图：先下载图片到工作目录（用 sandbox_exec 执行 PowerShell：Invoke-WebRequest -Uri 图片URL -OutFile 图片名.png），再引用：create_artifact 的 content 里用 !img:图片名.png 行，或 insert_image（docx 末尾 / pptx 指定页）。注意：图片必须真实存在于工作目录后才能引用，绝不能引用不存在的文件或直接写 URL
+- 给文档插图：先用 sandbox_exec 调用当前系统可用的下载工具把图片保存到工作目录，再引用：create_artifact 的 content 里用 !img:图片名.png 行，或 insert_image（docx 末尾 / pptx 指定页）。注意：图片必须真实存在于工作目录后才能引用，绝不能引用不存在的文件或直接写 URL
 - 更新 Excel：用 update_sheet（定向写单元格/公式/图表）；update_sheet 成功即完成，禁止再用 sandbox_exec 的 PowerShell COM 重复操作 Excel
 - 管理文件：list_files / write_file / copy_file / move_file / delete_file
-- 执行命令：用 sandbox_exec（PowerShell，cwd=工作目录，限 60 秒）。需要管理员权限的操作（改系统设置、写系统盘、服务管理）把 elevated 设为 true（客户端弹 UAC 授权，用户确认后执行）；破坏性命令（删除/覆盖/格式化）先向用户确认再执行。注意：本地环境只有 Windows PowerShell
+- 执行命令：${localAgentSession ? `优先用 process_exec 传递 program + args；当前 Agent 平台是 ${localAgentSession.platform}。只有用户明确要求 shell 脚本时才用 sandbox_exec` : '当前 UWP 客户端用 sandbox_exec 执行 Windows PowerShell'}。默认限 60 秒，最长 300 秒；需要管理员权限时把 elevated 设为 true。提权和破坏性操作必须等待客户端确认，未确认时不得声称完成
 【数字纪律（必须遵守）】
 - 涉及具体数字严格自查：①单位核对：千兆=1000M/1G、百兆=100M（差10倍，禁止混用）；频率/速率/容量/价格同理（2133MHz 不是 213MHz）；②位数核对：型号/编号逐位检查（i5-7500 不是 i5-750）；③关键数字标注来源：「本机查询」「搜索结果」，无法确认时明确说「不确定」，禁止编造
-- 涉及本机状态（网络速率/硬件配置/系统信息）：必须先 sandbox_exec 用 PowerShell 读真实值（如 Get-NetAdapter | Select-Object Name,Speed、Get-CimInstance Win32_Processor/PhysicalMemory），原样复制返回的数字，禁止凭记忆或推算
+- 涉及本机状态（网络速率/硬件配置/系统信息）：${localAgentSession ? '必须先用 process_exec 调用当前平台的原生查询程序读取真实值' : '必须先用 sandbox_exec 通过 PowerShell 读取真实值'}，原样复制返回的数字，禁止凭记忆或推算
 - 涉及外部规格/价格：先 web_search 引用来源，数字取自搜索结果原文，**没有 Python/python-docx/openpyxl**，不要写 Python 脚本创建 Office 文档；文档操作一律用上述专门工具
 - 读取文件：用 read_file / transform_file
 
@@ -23440,15 +23780,39 @@ if (clientFileExecution && systemPrompt) {
                                     executedToolResults.push({ toolCall, result: { success: false, error: 'client_tool_busy' } });
                                     continue;
                                 }
-                                res.write(`data: ${JSON.stringify({
-                                    type: 'tool_pending_client',
-                                    request_id: requestId,
-                                    tool_call_id: toolCall.id,
-                                    tool: toolName,
-                                    parameters: args
-                                })}\n\n`);
+                                let agentEnvelope = null;
+                                if (localAgentSession) {
+                                    try {
+                                        agentEnvelope = await localAgentService.createToolEnvelope({
+                                            userId: req.user.userId,
+                                            agentSessionId: localAgentSession.id,
+                                            conversationId: sessionId,
+                                            requestId,
+                                            toolCallId: toolCall.id,
+                                            sequence: toolRound,
+                                            tool: toolName,
+                                            parameters: args
+                                        });
+                                    } catch (error) {
+                                        console.warn(' 本地 Agent 工具信封创建失败:', sanitizeReportContext(error));
+                                        executedToolResults.push({ toolCall, result: { success: false, error: error?.code || 'local_agent_envelope_failed' } });
+                                        continue;
+                                    }
+                                    res.write(`data: ${JSON.stringify({
+                                        type: 'local_agent_tool_call',
+                                        envelope: agentEnvelope
+                                    })}\n\n`);
+                                } else {
+                                    res.write(`data: ${JSON.stringify({
+                                        type: 'tool_pending_client',
+                                        request_id: requestId,
+                                        tool_call_id: toolCall.id,
+                                        tool: toolName,
+                                        parameters: args
+                                    })}\n\n`);
+                                }
                                 // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
-                                console.log(` 已下发 tool_pending_client: requestId=${requestId}, tool=${toolName}, toolCallId=${toolCall.id}`);
+                                console.log(` 已下发 ${agentEnvelope ? 'local_agent_tool_call' : 'tool_pending_client'}: requestId=${requestId}, tool=${toolName}, toolCallId=${toolCall.id}`);
                                 // 挂起等待客户端执行期间，暂停 chat 总 deadline（本地执行耗时不计入预算）
                                 const toolPauseStartedAt = Date.now();
                                 if (chatRequestDeadlineTimer) {
@@ -23467,7 +23831,17 @@ if (clientFileExecution && systemPrompt) {
                                 let localResult;
                                 try {
                                     localResult = await new Promise((resolve) => {
-                                        createClientToolPending({ requestId, userId: req.user.userId, sessionId, toolCall, toolName, args, resolve });
+                                        createClientToolPending({
+                                            requestId,
+                                            userId: req.user.userId,
+                                            sessionId,
+                                            toolCall,
+                                            toolName,
+                                            args,
+                                            resolve,
+                                            agentRunId: agentEnvelope?.runId || null,
+                                            agentSessionId: localAgentSession?.id || null
+                                        });
                                     });
                                 } finally {
                                     clearInterval(toolHeartbeat);
@@ -24654,12 +25028,48 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
     }
 });
 
+app.post('/api/agent/tool-results', authenticateToken, apiLimiter, async (req, res) => {
+    let claimedRequestId = '';
+    try {
+        await localAgentStartupReady;
+        const candidate = await localAgentService.validateToolResult(req.user.userId, req.body || {});
+        if (candidate.idempotent) return res.json({ success: true, idempotent: true });
+        claimedRequestId = String(candidate.row.request_id);
+        const pending = claimClientToolPending(claimedRequestId);
+        if (!pending) return res.status(404).json({ error: 'pending_not_found' });
+        if (pending.userId !== req.user.userId) {
+            releaseClientToolPendingClaim(claimedRequestId);
+            return res.status(403).json({ error: 'forbidden' });
+        }
+        if (
+            pending.agentRunId !== String(req.body?.runId || '')
+            || pending.agentSessionId !== candidate.row.agent_session_id
+            || pending.toolCall.id !== candidate.row.tool_call_id
+        ) {
+            releaseClientToolPendingClaim(claimedRequestId);
+            return res.status(409).json({ error: 'agent_result_pending_mismatch' });
+        }
+        const accepted = await localAgentService.finalizeToolResult(req.user.userId, candidate);
+        if (accepted.idempotent) {
+            releaseClientToolPendingClaim(claimedRequestId);
+            return res.json({ success: true, idempotent: true });
+        }
+        const resolved = resolveClientToolPending(claimedRequestId, accepted.result);
+        if (!resolved) return res.status(410).json({ error: 'already_resolved' });
+        return res.json({ success: true, idempotent: false });
+    } catch (error) {
+        if (claimedRequestId) releaseClientToolPendingClaim(claimedRequestId);
+        return sendLocalAgentError(res, error);
+    }
+});
+
 app.post('/api/agent/tool-result', authenticateToken, apiLimiter, (req, res) => {
     const { request_id: requestId, tool_call_id: toolCallId, result } = req.body || {};
     if (!requestId || !toolCallId || !result) return res.status(400).json({ error: 'missing_fields' });
     const pending = clientToolPending.get(String(requestId));
     if (!pending) return res.status(404).json({ error: 'pending_not_found' });
     if (pending.userId !== req.user.userId) return res.status(403).json({ error: 'forbidden' });
+    if (pending.agentRunId) return res.status(409).json({ error: 'signed_agent_result_required' });
     if (pending.toolCall.id !== toolCallId) return res.status(409).json({ error: 'tool_call_mismatch' });
     const resolved = resolveClientToolPending(String(requestId), normalizeClientToolResult(result));
     if (!resolved) return res.status(410).json({ error: 'already_resolved' });

@@ -216,6 +216,25 @@ jobs:
           # src-tauri/osv-scanner.toml. OSV expiry keeps this list from becoming permanent.
           ignore: RUSTSEC-2024-0370,RUSTSEC-2024-0411,RUSTSEC-2024-0412,RUSTSEC-2024-0413,RUSTSEC-2024-0414,RUSTSEC-2024-0415,RUSTSEC-2024-0416,RUSTSEC-2024-0417,RUSTSEC-2024-0418,RUSTSEC-2024-0419,RUSTSEC-2024-0420,RUSTSEC-2024-0429,RUSTSEC-2025-0075,RUSTSEC-2025-0080,RUSTSEC-2025-0081,RUSTSEC-2025-0098,RUSTSEC-2025-0100
 
+  rustsec-local-agent:
+    name: RustSec Local Agent audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      checks: write
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit Local Agent dependencies
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: rai-agent
+
   codeql:
     name: CodeQL JavaScript analysis
     runs-on: ubuntu-24.04
@@ -259,7 +278,7 @@ jobs:
   security-gate-summary:
     name: Security gate summary
     if: always()
-    needs: [formal-tests, isolated-security-smoke, dependency-audit, osv-audit, rustsec-audit, codeql, secret-scan]
+    needs: [formal-tests, isolated-security-smoke, dependency-audit, osv-audit, rustsec-audit, rustsec-local-agent, codeql, secret-scan]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -270,6 +289,7 @@ jobs:
           DEPENDENCY_AUDIT: ${{ needs.dependency-audit.result }}
           OSV_AUDIT: ${{ needs.osv-audit.result }}
           RUSTSEC_AUDIT: ${{ needs.rustsec-audit.result }}
+          RUSTSEC_LOCAL_AGENT: ${{ needs.rustsec-local-agent.result }}
           CODEQL: ${{ needs.codeql.result }}
           SECRET_SCAN: ${{ needs.secret-scan.result }}
         run: |
@@ -279,6 +299,7 @@ jobs:
             "$DEPENDENCY_AUDIT" \
             "$OSV_AUDIT" \
             "$RUSTSEC_AUDIT" \
+            "$RUSTSEC_LOCAL_AGENT" \
             "$CODEQL" \
             "$SECRET_SCAN"; do
             if [[ "$result" != "success" ]]; then
@@ -589,13 +610,13 @@ jobs:
             actual_digest="$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
             actual_checksums_digest="$(jq -r '.assets[] | select(.name == "SHA256SUMS") | .digest' <<<"$release_json")"
             asset_count="$(jq -r '.assets | length' <<<"$release_json")"
-            if [[ "$asset_count" == "2" \
+            if [[ "$asset_count" -ge 2 \
               && "$actual_digest" == "$expected_digest" \
               && "$actual_checksums_digest" == "$expected_checksums_digest" ]]; then
               break
             fi
             if [[ "$attempt" == "5" ]]; then
-              echo "draft release must contain exactly the two verified assets with matching digests" >&2
+              echo "draft release must contain the two verified Web assets with matching digests" >&2
               exit 1
             fi
             sleep 2

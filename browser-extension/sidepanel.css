@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 300px; background: Canvas; color: CanvasText; }
+header { display: flex; gap: 12px; align-items: center; padding: 18px 16px 14px; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; background: #c5532d; color: white; font-weight: 750; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 16px; }
+h2 { font-size: 14px; }
+header p, .empty p, .approval-meta { margin-top: 3px; font-size: 12px; opacity: .68; }
+main { padding: 14px; }
+.empty { padding: 28px 6px; text-align: center; }
+.approval { padding: 14px; margin-bottom: 10px; border-radius: 8px; background: color-mix(in srgb, CanvasText 7%, Canvas); box-shadow: 0 5px 16px color-mix(in srgb, CanvasText 9%, transparent); }
+.approval pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+button { min-height: 34px; border: 0; border-radius: 6px; padding: 0 12px; cursor: pointer; }
+.allow { background: #276749; color: white; }
+.always { background: #285e61; color: white; }
+.reject { margin-left: auto; background: #b8322a; color: white; }
+footer { padding: 10px 14px; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
