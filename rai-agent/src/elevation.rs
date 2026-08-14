@@ -159,7 +159,7 @@ fn invoke_system_prompt(
     config: &Path,
     timeout: Duration,
 ) -> Result<()> {
-    let args = vec![
+    let args = [
         "elevated-worker".to_string(),
         "--request".to_string(),
         request.to_string_lossy().to_string(),
@@ -276,7 +276,7 @@ fn canonicalize(value: &Value) -> Value {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
