@@ -386,6 +386,8 @@ Accept: text/event-stream
 
 其他可选字段还包括 `thinkingBudget`、`agentMode`、`agentPolicy`、`qualityProfile`、`agentTraceLevel`、`reasoningProfile`、`researchMode`、`researchAgentModels`、`researchMasterModel`、`researchMaxRounds`、`frequency_penalty`、`presence_penalty`、`systemPrompt`、`promptTimeContext`、`domainMode`、`canvasContext`、`canvasApplyMode`、`uiSurface`、`flowId`、`skipUserSave`。服务端会重新校验模型、数值范围和附件归属。
 
+旧 UWP 的本地文件执行仍使用 `client_file_execution:true` 与 `/api/agent/tool-result`，但必须同时携带有效的 `X-RAI-Client-Key`。新跨平台 Agent 使用 `local_agent` 签名会话，不得通过旧结果接口完成签名任务。
+
 SSE 每行格式为 `data: {JSON}\n\n`。客户端至少处理：
 
 ```text

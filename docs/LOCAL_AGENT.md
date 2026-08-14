@@ -26,7 +26,7 @@ Browsers do not allow a normal installer to silently install an extension. The u
 2. Pairing and session challenges prove possession of that key. Sessions are bound to an account, device, and conversation, with a 30-minute idle limit and a four-hour absolute limit.
 3. The server signs each versioned tool envelope. The Agent verifies issuer, key fingerprint, signature, expiry, session, sequence, and run identity.
 4. The Agent signs each result receipt. The server verifies it and matches the in-memory pending tool before marking the database run complete.
-5. Old UWP clients continue to use `/api/agent/tool-result`; signed Agent runs cannot be completed through that legacy endpoint.
+5. Old UWP clients continue to use `client_file_execution` and `/api/agent/tool-result`; this legacy mode requires the existing revocable `X-RAI-Client-Key`, and signed Agent runs cannot be completed through that legacy endpoint.
 
 The server requires `RAI_LOCAL_AGENT_SIGNING_PRIVATE_KEY_FILE`, or falls back to the configured conversation Ed25519 signing key. `PUBLIC_BASE_URL` is the canonical issuer returned during pairing, so legacy redirect domains cannot create an issuer mismatch.
 

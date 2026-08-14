@@ -10999,7 +10999,7 @@ app.get('/.well-known/rai-agent-keys.json', async (_req, res) => {
     }
 });
 
-app.post('/api/agent/pairings/start', authenticateToken, apiLimiter, async (req, res) => {
+app.post('/api/agent/pairings/start', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         const pairing = await localAgentService.startPairing(req.user.userId, req.body || {});
@@ -11009,7 +11009,7 @@ app.post('/api/agent/pairings/start', authenticateToken, apiLimiter, async (req,
     }
 });
 
-app.post('/api/agent/pairings/:id/complete', authenticateToken, apiLimiter, async (req, res) => {
+app.post('/api/agent/pairings/:id/complete', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         const device = await localAgentService.completePairing(req.user.userId, req.params.id, req.body || {});
@@ -11019,7 +11019,7 @@ app.post('/api/agent/pairings/:id/complete', authenticateToken, apiLimiter, asyn
     }
 });
 
-app.get('/api/agent/devices', authenticateToken, async (req, res) => {
+app.get('/api/agent/devices', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         return res.json({ success: true, devices: await localAgentService.listDevices(req.user.userId) });
@@ -11028,7 +11028,7 @@ app.get('/api/agent/devices', authenticateToken, async (req, res) => {
     }
 });
 
-app.delete('/api/agent/devices/:id', authenticateToken, apiLimiter, async (req, res) => {
+app.delete('/api/agent/devices/:id', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         await localAgentService.revokeDevice(req.user.userId, req.params.id);
@@ -11038,7 +11038,7 @@ app.delete('/api/agent/devices/:id', authenticateToken, apiLimiter, async (req, 
     }
 });
 
-app.post('/api/agent/sessions', authenticateToken, apiLimiter, async (req, res) => {
+app.post('/api/agent/sessions', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         const session = await localAgentService.startSession(req.user.userId, req.body || {});
@@ -11048,7 +11048,7 @@ app.post('/api/agent/sessions', authenticateToken, apiLimiter, async (req, res) 
     }
 });
 
-app.post('/api/agent/sessions/:id/accept', authenticateToken, apiLimiter, async (req, res) => {
+app.post('/api/agent/sessions/:id/accept', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         const session = await localAgentService.acceptSession(req.user.userId, req.params.id, req.body || {});
@@ -11058,7 +11058,7 @@ app.post('/api/agent/sessions/:id/accept', authenticateToken, apiLimiter, async 
     }
 });
 
-app.delete('/api/agent/sessions/:id', authenticateToken, apiLimiter, async (req, res) => {
+app.delete('/api/agent/sessions/:id', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         return res.json({ success: true, closed: await localAgentService.closeSession(req.user.userId, req.params.id) });
@@ -11067,7 +11067,7 @@ app.delete('/api/agent/sessions/:id', authenticateToken, apiLimiter, async (req,
     }
 });
 
-app.get('/api/agent/tool-runs', authenticateToken, async (req, res) => {
+app.get('/api/agent/tool-runs', apiLimiter, authenticateToken, async (req, res) => {
     try {
         await localAgentStartupReady;
         const runs = await localAgentService.listConversationRuns(
@@ -20245,27 +20245,27 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             local_agent: rawLocalAgent = null,
             workdir_configured = false
         } = req.body;
-        // 工具下发只看 client_file_execution（UWP 固定携带）；workdir_configured 仅作提示字段：
-        // true=已有工作目录可直接操作；false=工具到达时客户端先引导用户选择目录（含移动端首用）
-        let localAgentSession = null;
-        if (rawLocalAgent && typeof rawLocalAgent === 'object') {
-            try {
-                await localAgentStartupReady;
-                if (Number(rawLocalAgent.protocolVersion) !== 1) {
-                    return res.status(409).json({ error: 'unsupported_local_agent_protocol' });
-                }
-                localAgentSession = await localAgentService.authorizeSession(
-                    req.user.userId,
-                    String(rawLocalAgent.sessionId || ''),
-                    requestedSessionId || ''
-                );
-            } catch (error) {
-                return sendLocalAgentError(res, error);
-            }
+        // 新 Agent 必须解析并验证签名会话；旧 UWP 仅在可撤销的软件客户端身份有效时兼容。
+        // workdir_configured 仅作提示字段：false 时客户端在工具到达后引导用户选择目录。
+        let localAgentSession;
+        try {
+            await localAgentStartupReady;
+            localAgentSession = await localAgentService.resolveChatSession(
+                req.user.userId,
+                rawLocalAgent,
+                requestedSessionId || ''
+            );
+        } catch (error) {
+            return sendLocalAgentError(res, error);
         }
-        const clientFileExecution = rawClientFileExecution === true || !!localAgentSession;
+        if (rawClientFileExecution === true && !req.softwareClient) {
+            return res.status(403).json({ error: 'software_client_key_required' });
+        }
+        const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession;
         if (clientFileExecution) {
-            console.log(` 客户端文件执行已启用: requestId=${requestId || 'pending'}, sessionId=${requestedSessionId || 'pending'}, protocol=${localAgentSession ? 'local-agent-v1' : 'uwp-v1'}, workdirConfigured=${workdir_configured}`);
+            console.log(
+                ` 客户端文件执行已启用: requestId=${requestId || 'pending'}, ${formatPrivateLogFingerprint(requestedSessionId || '', 'sessionId')}, protocol=${localAgentSession ? 'local-agent-v1' : 'uwp-v1'}, workdirConfigured=${workdir_configured === true}`
+            );
         }
         let systemPrompt = '';
         let sessionId = requestedSessionId;
@@ -25028,7 +25028,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
     }
 });
 
-app.post('/api/agent/tool-results', authenticateToken, apiLimiter, async (req, res) => {
+app.post('/api/agent/tool-results', apiLimiter, authenticateToken, async (req, res) => {
     let claimedRequestId = '';
     try {
         await localAgentStartupReady;
@@ -25063,7 +25063,7 @@ app.post('/api/agent/tool-results', authenticateToken, apiLimiter, async (req, r
     }
 });
 
-app.post('/api/agent/tool-result', authenticateToken, apiLimiter, (req, res) => {
+app.post('/api/agent/tool-result', apiLimiter, authenticateToken, (req, res) => {
     const { request_id: requestId, tool_call_id: toolCallId, result } = req.body || {};
     if (!requestId || !toolCallId || !result) return res.status(400).json({ error: 'missing_fields' });
     const pending = clientToolPending.get(String(requestId));

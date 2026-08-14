@@ -80,6 +80,19 @@ async function main() {
     });
     const authorized = await service.authorizeSession(1, pending.sessionId, 'session_1');
     assert.equal(authorized.deviceId, paired.deviceId);
+    assert.equal(await service.resolveChatSession(1, null, 'session_1'), null);
+    assert.equal(
+        (await service.resolveChatSession(1, { protocolVersion: 1, sessionId: pending.sessionId }, 'session_1')).deviceId,
+        paired.deviceId
+    );
+    await assert.rejects(
+        service.resolveChatSession(1, { protocolVersion: 2, sessionId: pending.sessionId }, 'session_1'),
+        (error) => error.code === 'unsupported_local_agent_protocol'
+    );
+    await assert.rejects(
+        service.resolveChatSession(1, 'invalid', 'session_1'),
+        (error) => error.code === 'invalid_local_agent_request'
+    );
     await assert.rejects(
         service.authorizeSession(1, pending.sessionId, 'session_2'),
         (error) => error.code === 'agent_session_conversation_mismatch'

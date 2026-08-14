@@ -28,6 +28,24 @@ try {
     assert.ok(manifest.permissions.includes('nativeMessaging'));
     assert.ok(manifest.host_permissions.includes('https://*/*'));
     const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    for (const route of [
+        '/api/agent/pairings/start',
+        '/api/agent/pairings/:id/complete',
+        '/api/agent/devices',
+        '/api/agent/devices/:id',
+        '/api/agent/sessions',
+        '/api/agent/sessions/:id/accept',
+        '/api/agent/sessions/:id',
+        '/api/agent/tool-runs',
+        '/api/agent/tool-results',
+        '/api/agent/tool-result'
+    ]) {
+        const escaped = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        assert.match(server, new RegExp(`app\\.(?:get|post|delete)\\('${escaped}', apiLimiter, authenticateToken`));
+    }
+    assert.match(server, /rawClientFileExecution === true && !req\.softwareClient/);
+    assert.match(server, /localAgentService\.resolveChatSession/);
+    assert.match(server, /formatPrivateLogFingerprint\(requestedSessionId \|\| '', 'sessionId'\)/);
     const validation = server.indexOf('localAgentService.validateToolResult');
     const claim = server.indexOf('claimClientToolPending(claimedRequestId)', validation);
     const finalize = server.indexOf('localAgentService.finalizeToolResult', validation);
