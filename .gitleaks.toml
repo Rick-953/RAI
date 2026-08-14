@@ -1,0 +1,10 @@
+title = "RAI Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "RAI Connect public manifest identity key; not private signing material"
+regexes = [
+  '''^MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2CCXspEP5C0iXTKNRifI9n/pcVfzcNm4CLaaAFNCvgq8TLTl\+6VapvdiZOe7Mz8V21g2K9WbOZGkC1LUENtkJc4k9A7PkSSLwmiomu6qBpxJwD7UBWsvhgpMiW28lgOBXK1LYSelvk7lO1Fsp9/Hsu\+rZCbvmci3ynP9fjLtwejCT1\+MmJcjcKhgihzENwJwguApgPDxmI9bNHaMos23kcNA48olAHSis3orQZwiZwbCoQ5tTqWXUNcbCXPVmH8aGysCYNRkElgo1ruU/CyvYMnbQwMuCNH9D1YQD9dKsNQ97OCEJQN4stJdcZJ9jYl3YTci79HWfdBpxjvpyUOSJwIDAQAB$'''
+]
