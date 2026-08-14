@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.0';
-const RAI_BUILD_ID = '20260814-local-agent-v01300-r1';
+const RAI_APP_VERSION = '0.13.1';
+const RAI_BUILD_ID = '20260814-local-agent-install-v01301-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5394,6 +5394,18 @@ const i18n = {
     'action-translate': '翻译',
     'attach': '附件',
     'local-agent-menu': '本地 Agent',
+    'local-agent-install-title': 'RAI Connect 与本地 Agent',
+    'local-agent-install-desc': '让 RAI 在你确认后操作本机文件、终端和单独选择的浏览器标签页。',
+    'local-agent-release-link': '发布页',
+    'local-agent-copy-command': '复制命令',
+    'local-agent-install-step-command': '在终端运行与你系统对应的命令；安装器会校验文件、安装本地 Agent，并打印扩展目录。',
+    'local-agent-install-step-browser': '打开 chrome://extensions 或 edge://extensions，开启“开发者模式”，点击“加载已解压的扩展”。',
+    'local-agent-install-step-directory': '选择安装器最后打印的 extension 目录。浏览器不允许安装器跳过这次人工确认。',
+    'local-agent-install-step-pair': '返回 RAI 的“设置 > 能力 > RAI Local Agent”，点击“绑定此设备”。',
+    'local-agent-install-step-chat': '打开已有对话，或在新对话发送第一条消息，然后点击“连接当前对话”。每个对话单独授权。',
+    'local-agent-install-step-use': '向 RAI 描述要完成的本地任务；命令、高风险操作和提权会在 RAI Connect 侧边栏或系统窗口中等待你确认。',
+    'local-agent-extension-download': '单独下载扩展压缩包',
+    'local-agent-extension-store-note': '当前为 GitHub 侧载版，尚未上架 Chrome 或 Edge 扩展商店。',
     'internet': '联网',
     'reasoning': '推理',
     'thinking-budget': '思考预算',
@@ -6025,6 +6037,18 @@ const i18n = {
     'action-translate': 'Translate',
     'attach': 'Attach',
     'local-agent-menu': 'Local Agent',
+    'local-agent-install-title': 'RAI Connect and Local Agent',
+    'local-agent-install-desc': 'Let RAI work with local files, terminal tools, and one selected browser tab after you approve access.',
+    'local-agent-release-link': 'Releases',
+    'local-agent-copy-command': 'Copy command',
+    'local-agent-install-step-command': 'Run the command for your system in a terminal. The installer verifies each file, installs Local Agent, and prints the extension directory.',
+    'local-agent-install-step-browser': 'Open chrome://extensions or edge://extensions, enable Developer mode, then select Load unpacked.',
+    'local-agent-install-step-directory': 'Choose the extension directory printed by the installer. Browsers require this manual confirmation.',
+    'local-agent-install-step-pair': 'Return to RAI Settings > Capabilities > RAI Local Agent and select Pair this device.',
+    'local-agent-install-step-chat': 'Open an existing conversation, or send the first message in a new one, then select Connect conversation. Each conversation is authorized separately.',
+    'local-agent-install-step-use': 'Describe the local task to RAI. Commands, high-risk actions, and elevation wait for your approval in the RAI Connect side panel or an OS dialog.',
+    'local-agent-extension-download': 'Download the extension archive separately',
+    'local-agent-extension-store-note': 'This is the GitHub sideload build and is not yet listed in the Chrome or Edge extension stores.',
     'internet': 'Web',
     'reasoning': 'Reasoning',
     'thinking-budget': 'Thinking Budget',
@@ -7795,6 +7819,26 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-08-14',
+    version: 'v0.13.1',
+    zh: {
+      summary: '本地 Agent 现在提供完整安装说明、准确连接状态和清晰的对话授权提示。',
+      details: [
+        '“关于”页新增 macOS、Linux 与 Windows 一键安装命令，以及浏览器加载扩展、绑定设备和开始使用的完整步骤。',
+        '本地 Agent 状态从“安全”移到“能力”，并区分需要安装、待绑定、等待创建对话、可连接和当前对话已连接。',
+        '空白新对话会明确提示先发送第一条消息完成创建；桌面设置的搜索框、头像和账号信息不再跟随分类列表滚动。'
+      ]
+    },
+    en: {
+      summary: 'Local Agent now has complete installation guidance, accurate connection states, and clear conversation authorization.',
+      details: [
+        'About now includes one-command macOS, Linux, and Windows installation plus complete browser extension, pairing, and first-use steps.',
+        'Local Agent moved from Security to Capabilities and distinguishes installation, pairing, unsaved conversation, ready, and connected states.',
+        'Blank conversations explicitly ask for the first message before connecting, while desktop Settings keeps search and account identity fixed as categories scroll.'
+      ]
+    }
+  },
   {
     date: '2026-08-14',
     version: 'v0.13.0',
@@ -13421,6 +13465,8 @@ const SETTINGS_SEARCH_TARGET_SELECTOR = [
   '.settings-notification-item',
   '.settings-about-card',
   '.settings-install-card',
+  '.settings-connect-install',
+  '.local-agent-settings-card',
   '.memory-item',
   '.memory-toggle-row',
   '.settings-group'
@@ -15209,7 +15255,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.13.0 初始化 (local-agent-v1)');
+  console.log(' RAI v0.13.1 初始化 (local-agent-install-ux)');
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
