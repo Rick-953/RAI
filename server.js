@@ -21693,6 +21693,19 @@ if (clientFileExecution && systemPrompt) {
             console.log(` 已注入跨对话记忆与近期标题到系统提示词`);
         }
 
+        // 「继续执行」续做：短指令检测，引导模型续上未完成的工具链
+        if (clientFileExecution) {
+            const trimmedUser = String(userContent || '').trim();
+            const continueShortCmd = /^(?:继续|接着|继续执行|继续输出|继续操作|完成|做完|go on|continue|next)$/i.test(trimmedUser) || trimmedUser.length <= 6 && /(?:继续|接着|完成|做完)/.test(trimmedUser);
+            if (continueShortCmd) {
+                const continueInstruction = `\n\n[系统提示] 用户发出了「${trimmedUser}」指令，表示之前的任务被中断/未完成。请立即继续执行：①若之前的工具调用链有未完成部分（如工具已下发但未最终完成、或还需后续工具），直接继续调用剩余工具完成整个任务（如 create_artifact/sandbox_exec 等），禁止只输出计划或表态不行动；②若只是文本输出被截断，则继续输出剩余内容。不要重复询问用户。`;
+                systemContent = systemContent
+                    ? `${systemContent}${continueInstruction}`
+                    : continueInstruction.trim();
+                console.log(` 已注入继续执行指令引导`);
+            }
+        }
+
         // 关键数字锚点：从用户消息提取数字/单位，注入系统提示（防 LLM 数字丢位/单位错位）
         if (clientFileExecution) {
             const userText = String(userContent || '');
