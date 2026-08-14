@@ -58,7 +58,7 @@ rai-agent uninstall
 
 ## Release process
 
-`.github/workflows/local-agent-release.yml` runs Rust tests and Clippy on Apple Silicon macOS, Intel macOS, x86_64 Linux, and x86_64 Windows. A version tag builds platform archives, generates a CycloneDX SBOM, packages the stable-ID unpacked extension and installers, emits a channel containing the Agent and extension hashes, creates `SHA256SUMS` and GitHub signed provenance attestations, and uploads all assets to the matching GitHub Release. Store IDs are not required for the GitHub side-load channel.
+`.github/workflows/local-agent-release.yml` runs Rust tests and Clippy on Apple Silicon macOS, Intel macOS, x86_64 Linux, and x86_64 Windows. A version tag builds platform archives, generates a CycloneDX SBOM, packages the stable-ID unpacked extension and installers, emits a channel containing the Agent and extension hashes, creates `LOCAL_AGENT_SHA256SUMS` and GitHub signed provenance attestations, and uploads all assets to the matching GitHub Release. The Web release keeps its separate `SHA256SUMS`, so the two workflows cannot overwrite each other's checksums. Store IDs are not required for the GitHub side-load channel.
 
 ## OpenCode boundary
 

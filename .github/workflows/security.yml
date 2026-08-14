@@ -588,7 +588,12 @@ jobs:
               --title "RAI $RELEASE_TAG" \
               --generate-notes \
               --draft
-            release_json="$(find_release_by_tag)"
+            release_json=""
+            for attempt in $(seq 1 15); do
+              release_json="$(find_release_by_tag)"
+              if [[ -n "$release_json" ]]; then break; fi
+              sleep 2
+            done
             if [[ -z "$release_json" ]]; then
               echo "new draft release could not be resolved by tag" >&2
               exit 1
