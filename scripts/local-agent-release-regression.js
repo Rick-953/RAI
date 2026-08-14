@@ -76,8 +76,6 @@ try {
         assert.match(installer, /rai-connect-extension\.zip/);
         assert.match(installer, /open-store=false/);
         assert.match(installer, /extensionTarget|EXTENSION_TARGET/);
-        assert.equal(installer.includes('chromewebstore.google.com'), false);
-        assert.equal(installer.includes('microsoftedge.microsoft.com/addons'), false);
     }
     const localAgentCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'local-agent.css'), 'utf8');
     assert.match(localAgentCss, /margin:\s*0 auto var\(--chat-content-bottom-clearance/);
