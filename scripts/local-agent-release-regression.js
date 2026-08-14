@@ -4,17 +4,18 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { ARTIFACTS, buildChannel } = require('./build-local-agent-channel');
+const { ARTIFACTS, EXTENSION_ASSET, buildChannel, extensionIdFromManifestKey } = require('./build-local-agent-channel');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-agent-release-test-'));
 try {
     for (const fileName of Object.values(ARTIFACTS)) fs.writeFileSync(path.join(directory, fileName), fileName);
+    fs.writeFileSync(path.join(directory, EXTENSION_ASSET), 'extension archive');
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'manifest.json'), 'utf8'));
     const channel = buildChannel({
         directory,
         version: '0.13.0',
         tag: 'v0.13.0',
-        chromeId: 'a'.repeat(32),
-        edgeId: 'b'.repeat(32)
+        manifest
     });
     assert.equal(channel.schema, 'rai-local-agent-channel/v1');
     assert.equal(Object.keys(channel.artifacts).length, 4);
@@ -22,9 +23,18 @@ try {
         assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
         assert.match(artifact.url, /^https:\/\/github\.com\/Rick-953\/RAI\/releases\/download\/v0\.13\.0\//);
     }
-    assert.throws(() => buildChannel({ directory, version: 'x', tag: 'x', chromeId: '', edgeId: '' }), /extension id/);
-    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'manifest.json'), 'utf8'));
+    assert.equal(channel.extensions.distribution, 'github-unpacked');
+    assert.equal(channel.extensions.id, 'clnmniaaodjmcgnemigghniekmahgcgi');
+    assert.equal(channel.extensions.chrome, channel.extensions.id);
+    assert.equal(channel.extensions.edge, channel.extensions.id);
+    assert.match(channel.extensions.artifact.sha256, /^[a-f0-9]{64}$/);
+    assert.match(channel.extensions.artifact.url, /\/rai-connect-extension\.zip$/);
+    assert.equal(extensionIdFromManifestKey(manifest.key), channel.extensions.id);
+    assert.throws(() => buildChannel({ directory, version: '0.13.1', tag: 'x', manifest }), /version must match/);
+    assert.throws(() => extensionIdFromManifestKey('not-base64'), /manifest key/);
     assert.equal(manifest.manifest_version, 3);
+    assert.equal(manifest.version, '0.13.0');
+    assert.ok(manifest.key);
     assert.ok(manifest.permissions.includes('nativeMessaging'));
     assert.ok(manifest.host_permissions.includes('https://*/*'));
     const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -59,6 +69,15 @@ try {
     assert.match(nativeSource, /RAI_LOCAL_OUTPUT_TRUNCATED_FOR_TRANSPORT/);
     const installSource = fs.readFileSync(path.join(__dirname, '..', 'rai-agent', 'src', 'install.rs'), 'utf8');
     assert.match(installSource, /MOVEFILE_REPLACE_EXISTING/);
+    const unixInstaller = fs.readFileSync(path.join(__dirname, '..', 'install.sh'), 'utf8');
+    const windowsInstaller = fs.readFileSync(path.join(__dirname, '..', 'install.ps1'), 'utf8');
+    for (const installer of [unixInstaller, windowsInstaller]) {
+        assert.match(installer, /github-unpacked/);
+        assert.match(installer, /rai-connect-extension\.zip/);
+        assert.match(installer, /open-store=false/);
+        assert.match(installer, /extensionTarget|EXTENSION_TARGET/);
+        assert.doesNotMatch(installer, /chromewebstore\.google\.com|microsoftedge\.microsoft\.com\/addons/);
+    }
     const localAgentCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'local-agent.css'), 'utf8');
     assert.match(localAgentCss, /margin:\s*0 auto var\(--chat-content-bottom-clearance/);
     assert.match(localAgentCss, /grid-auto-rows:\s*minmax\(56px, max-content\)/);
