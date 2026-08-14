@@ -494,12 +494,12 @@ jobs:
           name: security-reports
           path: security-artifacts
       - name: Attest npm SBOM against the Web release artifact
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-artifacts/rai-web-*.tar.gz
           sbom-path: security-artifacts/rai-sbom.cdx.json
       - name: Attest vendored browser SBOM against the Web release artifact
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-artifacts/rai-web-*.tar.gz
           sbom-path: security-artifacts/rai-vendored-web-sbom.cdx.json
