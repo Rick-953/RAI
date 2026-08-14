@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RAI Connect</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <div class="brand-mark">R</div>
+    <div><h1>RAI Connect</h1><p id="statusText">正在连接本地 Agent</p></div>
+  </header>
+  <main>
+    <section id="emptyState" class="empty" hidden>
+      <h2>没有待确认操作</h2>
+      <p>高风险命令、敏感文件和网页外部操作会出现在这里。</p>
+    </section>
+    <div id="approvalList"></div>
+  </main>
+  <footer><button type="button" id="refreshBtn">刷新</button></footer>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

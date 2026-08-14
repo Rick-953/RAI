@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "RAI Connect",
+  "version": "0.13.0",
+  "description": "Connect RAI Web to browser controls and the local RAI Agent.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging",
+    "notifications",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
+  "optional_permissions": ["downloads"],
+  "host_permissions": [
+    "https://rai.rick.sarl/*",
+    "https://rai.000339.xyz/*",
+    "https://rai.rick.quest/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://rai.rick.sarl/*",
+        "https://rai.000339.xyz/*",
+        "https://rai.rick.quest/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "RAI Connect"
+  }
+}
