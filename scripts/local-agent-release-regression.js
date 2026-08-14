@@ -69,6 +69,12 @@ try {
     assert.match(nativeSource, /RAI_LOCAL_OUTPUT_TRUNCATED_FOR_TRANSPORT/);
     const installSource = fs.readFileSync(path.join(__dirname, '..', 'rai-agent', 'src', 'install.rs'), 'utf8');
     assert.match(installSource, /MOVEFILE_REPLACE_EXISTING/);
+    const localReleaseWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'local-agent-release.yml'), 'utf8');
+    const securityWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'security.yml'), 'utf8');
+    assert.match(localReleaseWorkflow, /dist\/LOCAL_AGENT_SHA256SUMS/);
+    assert.doesNotMatch(localReleaseWorkflow, /dist\/SHA256SUMS/);
+    assert.match(securityWorkflow, /for attempt in \$\(seq 1 15\)/);
+    assert.match(securityWorkflow, /new draft release could not be resolved by tag/);
     const unixInstaller = fs.readFileSync(path.join(__dirname, '..', 'install.sh'), 'utf8');
     const windowsInstaller = fs.readFileSync(path.join(__dirname, '..', 'install.ps1'), 'utf8');
     for (const installer of [unixInstaller, windowsInstaller]) {
