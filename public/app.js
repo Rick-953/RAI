@@ -2388,7 +2388,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.1';
-const RAI_BUILD_ID = '20260814-local-agent-install-v01301-r2';
+const RAI_BUILD_ID = '20260814-local-agent-install-v01301-r3';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2593,6 +2593,9 @@ const appState = {
   sessionStreamRetryTimer: null,
   liveStreamRenderTimer: null,
   liveStreamRenderContext: null,
+  activeStreamSessionId: '',
+  activeStreamRequestId: '',
+  activeStreamUiDetached: false,
   // 引用功能状态
   currentQuote: null,  // 当前引用的消息 { role: 'user'|'assistant', content: string }
   // 会话列表分页状态
@@ -2609,6 +2612,84 @@ window.getRaiLocalAgentContext = () => ({
   conversationId: appState.currentSession?.id || '',
   language: appState.language,
   authenticated: appState.authState === 'authenticated'
+});
+
+// RAI Connect uses the already-authenticated RAI tab as the chat surface. The
+// extension never receives the access token; it asks this page for a bounded
+// conversation snapshot or asks the page to submit text through sendMessage().
+function getRaiConnectChatSnapshot() {
+  const session = appState.currentSession;
+  const messages = (Array.isArray(appState.messages) ? appState.messages : [])
+    .slice(-80)
+    .map((message) => ({
+      role: message?.role === 'assistant' ? 'assistant' : 'user',
+      content: String(message?.content || '').slice(0, 12000),
+      created_at: message?.created_at || '',
+      is_live_stream: message?.is_live_stream === true,
+      stream_request_id: message?.stream_request_id || '',
+      stream_draft_status: message?.stream_draft_status || '',
+      model: message?.model || ''
+    }));
+  if (appState.isStreaming && String(appState.activeStreamSessionId || '') === String(session?.id || '')) {
+    const liveElement = document.querySelector('.message.assistant[data-rai-stream-active="1"] .message-text');
+    if (liveElement) {
+      messages.push({
+        role: 'assistant',
+        content: String(liveElement.textContent || '').slice(0, 12000),
+        created_at: new Date().toISOString(),
+        is_live_stream: true,
+        stream_request_id: String(appState.activeStreamRequestId || ''),
+        stream_draft_status: 'running'
+      });
+    }
+  }
+  return {
+    authenticated: appState.authState === 'authenticated' && !!appState.token,
+    sessionId: String(session?.id || ''),
+    title: String(session?.title || (isChineseLanguage(appState.language) ? '新对话' : 'New chat')),
+    isStreaming: Boolean(appState.isStreaming),
+    activeStreamSessionId: String(appState.activeStreamSessionId || ''),
+    controlledConversationReady: Boolean(session?.id),
+    messages
+  };
+}
+
+function replyToRaiConnectChat(requestId, ok, result, error = '') {
+  window.postMessage({
+    source: 'rai-web',
+    type: 'connect.chat.response',
+    requestId: String(requestId || ''),
+    ok: ok === true,
+    result: ok === true ? result : undefined,
+    error: ok === true ? undefined : String(error || 'chat_bridge_failed')
+  }, window.location.origin);
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  const message = event.data;
+  if (!message || message.source !== 'rai-connect-extension' || message.type !== 'chat.request') return;
+  const requestId = String(message.requestId || '');
+  if (!requestId) return;
+  const operation = String(message.operation || '');
+  if (operation === 'chat.state') {
+    replyToRaiConnectChat(requestId, true, getRaiConnectChatSnapshot());
+    return;
+  }
+  if (operation === 'chat.send') {
+    const content = String(message.payload?.content || '').trim();
+    if (!content) {
+      replyToRaiConnectChat(requestId, false, null, 'empty_message');
+      return;
+    }
+    if (appState.authState !== 'authenticated' || !appState.token) {
+      replyToRaiConnectChat(requestId, false, null, 'rai_login_required');
+      return;
+    }
+    Promise.resolve(sendMessage(content))
+      .then(() => replyToRaiConnectChat(requestId, true, { accepted: true }))
+      .catch((error) => replyToRaiConnectChat(requestId, false, null, error?.message || 'send_failed'));
+  }
 });
 
 let deferredPwaInstallPrompt = null;
@@ -14768,6 +14849,12 @@ async function refreshUserAccessToken() {
   return entry.promise;
 }
 
+// Long-running Local Agent jobs can finish after the normal access token
+// refresh timer has rotated the JWT. Keep the agent bridge on the same token
+// manager used by the page's fetch wrapper.
+window.refreshRaiAccessToken = refreshUserAccessToken;
+window.getRaiAccessToken = () => appState.token || getPersistedUserAccessToken();
+
 function getFetchAuthorizationToken(resource, init) {
   try {
     const headers = new Headers(
@@ -20797,6 +20884,9 @@ async function sendMessage(message = null, options = {}) {
     streamSessionId === String(appState.currentSession?.id || '')
   );
   let streamRequestId = '';
+  appState.activeStreamSessionId = streamSessionId;
+  appState.activeStreamRequestId = requestId;
+  appState.activeStreamUiDetached = false;
   appState.isStreaming = true;
   if (chatFlowState.isOpen) {
     setChatFlowActivityNotice(
@@ -21560,6 +21650,7 @@ async function sendMessage(message = null, options = {}) {
 
     streamRequestId = String(response.headers.get('X-Request-ID') || '').trim();
     appState.currentRequestId = streamRequestId || null;
+    appState.activeStreamRequestId = streamRequestId || requestId;
     if (streamRequestId) {
       aiMsgDiv.dataset.raiMessageKey = `request:${streamRequestId}:assistant`;
     }
@@ -22519,7 +22610,12 @@ async function sendMessage(message = null, options = {}) {
       sendBtn.title = isChineseLanguage(appState.language) ? '发送' : 'Send';
     }
     if (stopBtn) stopBtn.style.display = 'none';
-    appState.isStreaming = false;
+    if (!appState.activeStreamRequestId || appState.activeStreamRequestId === streamRequestId || appState.activeStreamRequestId === requestId) {
+      appState.isStreaming = false;
+      appState.activeStreamSessionId = '';
+      appState.activeStreamRequestId = '';
+      appState.activeStreamUiDetached = false;
+    }
     if (!streamRequestId || appState.currentRequestId === streamRequestId) {
       appState.currentRequestId = null;
     }
@@ -28946,6 +29042,9 @@ async function loadSession(sessionId, options = {}) {
   closeModelModal();
   const previousSessionId = String(appState.currentSession?.id || '');
   const switchingSession = previousSessionId && previousSessionId !== String(sessionId || '');
+  if (switchingSession && String(appState.activeStreamSessionId || '') === previousSessionId) {
+    appState.activeStreamUiDetached = true;
+  }
   if (switchingSession) abortSessionCanvasWork();
   appState.sessionNavigationGeneration += 1;
   const generation = appState.sessionNavigationGeneration;
@@ -29114,7 +29213,15 @@ function removeLiveStreamMessages(requestId = '') {
 function upsertLiveSessionStream(event) {
   if (!event || !appState.currentSession?.id) return;
   if (String(event.sessionId || '') !== String(appState.currentSession.id)) return;
-  if (appState.isStreaming) return;
+  // The foreground reader owns DOM updates for the current request. When the
+  // user returns to a different conversation while that request is still
+  // running, the persisted SSE draft must remain visible and catch up here.
+  if (
+    appState.isStreaming &&
+    !appState.activeStreamUiDetached &&
+    String(appState.activeStreamSessionId || '') === String(event.sessionId || '') &&
+    String(appState.activeStreamRequestId || appState.currentRequestId || '') === String(event.requestId || '')
+  ) return;
 
   const streamSessionId = String(appState.currentSession.id);
   const streamGeneration = appState.sessionNavigationGeneration;
@@ -29293,7 +29400,7 @@ function canRunConversationSync() {
   return Boolean(
     appState.token &&
     !appState.sendStarting &&
-    !appState.isStreaming &&
+    (!appState.isStreaming || String(appState.activeStreamSessionId || '') !== String(appState.currentSession?.id || '')) &&
     document.visibilityState !== 'hidden' &&
     appState.currentSessionMemoryMode !== 'classic-temp'
   );

@@ -79,7 +79,7 @@ try {
         }
     }
 
-    & $binary install --chrome-id $chromeId --edge-id $edgeId --open-store=false
+    & $binary install --chrome-id $chromeId --edge-id $edgeId
     if ($LASTEXITCODE -ne 0) { throw 'Native Messaging registration failed' }
 
     function Open-ExtensionPage([string]$CommandName, [string[]]$Paths, [string]$Page) {
@@ -111,7 +111,7 @@ try {
     Write-Host "RAI Agent $($channel.version) and RAI Connect were downloaded and verified."
     Write-Host 'In chrome://extensions or edge://extensions, enable Developer mode, choose Load unpacked, and select:'
     Write-Host "  $extensionTarget"
-    Write-Host 'Then bind this device in RAI Settings > Security.'
+    Write-Host 'Then bind this device in RAI Settings > Capabilities > RAI Local Agent.'
 } finally {
     if (Test-Path $tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force }
 }

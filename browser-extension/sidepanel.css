@@ -1,19 +1,41 @@
-:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --accent: #c5532d; --muted: color-mix(in srgb, CanvasText 62%, transparent); --line: color-mix(in srgb, CanvasText 14%, transparent); }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 300px; background: Canvas; color: CanvasText; }
-header { display: flex; gap: 12px; align-items: center; padding: 18px 16px 14px; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
-.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; background: #c5532d; color: white; font-weight: 750; }
+body { margin: 0; min-width: 320px; background: Canvas; color: CanvasText; display: flex; min-height: 100vh; flex-direction: column; }
+button, textarea { font: inherit; }
+button { cursor: pointer; }
+.topbar { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; background: Canvas; }
+.brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 800; }
+.brand-copy { min-width: 0; flex: 1; }
 h1, h2, p { margin: 0; }
-h1 { font-size: 16px; }
-h2 { font-size: 14px; }
-header p, .empty p, .approval-meta { margin-top: 3px; font-size: 12px; opacity: .68; }
-main { padding: 14px; }
-.empty { padding: 28px 6px; text-align: center; }
-.approval { padding: 14px; margin-bottom: 10px; border-radius: 8px; background: color-mix(in srgb, CanvasText 7%, Canvas); box-shadow: 0 5px 16px color-mix(in srgb, CanvasText 9%, transparent); }
-.approval pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
-.actions { display: flex; gap: 8px; margin-top: 12px; }
-button { min-height: 34px; border: 0; border-radius: 6px; padding: 0 12px; cursor: pointer; }
-.allow { background: #276749; color: white; }
-.always { background: #285e61; color: white; }
-.reject { margin-left: auto; background: #b8322a; color: white; }
-footer { padding: 10px 14px; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+h1 { font-size: 15px; line-height: 1.2; }
+h2 { font-size: 14px; line-height: 1.35; }
+.brand-copy p, .eyebrow, .approval-meta, .empty p, .approval-empty { color: var(--muted); font-size: 12px; }
+.icon-button { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; font-size: 20px; line-height: 1; }
+.connection-notice { margin: 10px 12px 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent); border-radius: 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+main { padding: 12px; flex: 1; min-height: 0; overflow: auto; }
+.conversation-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 2px 2px 10px; }
+.conversation-head h2 { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream-state { flex: none; padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-size: 11px; }
+.messages { display: grid; gap: 10px; }
+.message { max-width: 94%; padding: 9px 10px; border-radius: 9px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.48; }
+.message.user { margin-left: auto; background: color-mix(in srgb, var(--accent) 18%, Canvas); }
+.message.assistant { margin-right: auto; background: color-mix(in srgb, CanvasText 8%, Canvas); }
+.message-meta { color: var(--muted); font-size: 10px; margin-bottom: 3px; }
+.empty { padding: 34px 8px; text-align: center; color: var(--muted); }
+.empty strong { display: block; color: CanvasText; font-size: 14px; margin-bottom: 6px; }
+.empty p { line-height: 1.5; }
+.approval-section { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+.section-heading { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.section-heading span { min-width: 18px; padding: 2px 6px; border-radius: 999px; background: color-mix(in srgb, CanvasText 10%, Canvas); color: var(--muted); text-align: center; font-size: 11px; }
+.approval { padding: 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, CanvasText 6%, Canvas); }
+.approval h3 { margin: 0; font-size: 13px; }
+.approval-meta { margin-top: 3px; }
+.approval pre { max-height: 140px; margin: 7px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.actions { display: flex; gap: 6px; margin-top: 9px; }
+.actions button { min-height: 30px; border: 0; border-radius: 6px; padding: 0 9px; color: #fff; font-size: 12px; }
+.allow { background: #276749; }.always { background: #285e61; }.reject { margin-left: auto; background: #b8322a; }
+.approval-empty { padding: 3px 0; }
+.composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: Canvas; position: sticky; bottom: 0; }
+.composer textarea { min-width: 0; flex: 1; resize: vertical; max-height: 130px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; font-size: 13px; line-height: 1.35; }
+.composer button { min-height: 36px; border: 0; border-radius: 7px; padding: 0 12px; background: var(--accent); color: #fff; font-weight: 650; }
+.composer button:disabled { cursor: wait; opacity: .55; }

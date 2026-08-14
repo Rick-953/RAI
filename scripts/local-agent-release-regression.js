@@ -63,7 +63,15 @@ try {
     assert.match(server, /name: 'process_exec'/);
     const background = fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'background.js'), 'utf8');
     assert.match(background, /controlledTabId/);
+    assert.match(background, /rai\.chat\.request/);
+    assert.match(background, /findRaiTab/);
     assert.doesNotMatch(background, /executeBrowserAction\([^\n]+sender\.tab/);
+    const content = fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'content.js'), 'utf8');
+    assert.match(content, /chat\.request/);
+    assert.match(content, /connect\.chat\.response/);
+    const sidepanel = fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'sidepanel.js'), 'utf8');
+    assert.match(sidepanel, /当前对话/);
+    assert.match(sidepanel, /chat\.send/);
     const nativeSource = fs.readFileSync(path.join(__dirname, '..', 'rai-agent', 'src', 'native.rs'), 'utf8');
     assert.match(nativeSource, /MAX_TRANSPORT_RESULT_BYTES/);
     assert.match(nativeSource, /RAI_LOCAL_OUTPUT_TRUNCATED_FOR_TRANSPORT/);
@@ -80,7 +88,8 @@ try {
     for (const installer of [unixInstaller, windowsInstaller]) {
         assert.match(installer, /github-unpacked/);
         assert.match(installer, /rai-connect-extension\.zip/);
-        assert.match(installer, /open-store=false/);
+        assert.doesNotMatch(installer, /open-store(?:=false)?/);
+        assert.match(installer, /install --chrome-id[^\n]+--edge-id/);
         assert.match(installer, /extensionTarget|EXTENSION_TARGET/);
     }
     const localAgentCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'local-agent.css'), 'utf8');
@@ -108,6 +117,8 @@ try {
     assert.match(webAgent, /当前是尚未保存的新对话。请先发送第一条消息创建对话/);
     assert.match(webAgent, /等待创建对话/);
     assert.match(webAgent, /function openInstallGuide\(\)/);
+    assert.match(webAgent, /refreshRaiAccessToken/);
+    assert.match(webAgent, /ensureWakeLock/);
     const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
     assert.match(app, /SETTINGS_SEARCH_TARGET_SELECTOR[\s\S]*'\.settings-connect-install'/);
     assert.match(app, /SETTINGS_SEARCH_TARGET_SELECTOR[\s\S]*'\.local-agent-settings-card'/);
