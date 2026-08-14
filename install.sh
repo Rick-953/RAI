@@ -121,7 +121,7 @@ find "$VERSIONS" -mindepth 1 -maxdepth 1 -type d -print | sort -r | tail -n +3 |
   case "$old" in "$VERSIONS"/*) rm -rf "$old" ;; *) exit 1 ;; esac
 done
 
-"$INSTALL_ROOT/current" install --chrome-id "$CHROME_ID" --edge-id "$EDGE_ID" --open-store=false
+"$INSTALL_ROOT/current" install --chrome-id "$CHROME_ID" --edge-id "$EDGE_ID"
 
 case "$(uname -s)" in
   Darwin)
@@ -139,4 +139,4 @@ esac
 echo "RAI Agent $VERSION and RAI Connect were downloaded and verified."
 echo "In chrome://extensions or edge://extensions, enable Developer mode, choose Load unpacked, and select:"
 echo "  $EXTENSION_TARGET"
-echo "Then bind this device in RAI Settings > Security."
+echo "Then bind this device in RAI Settings > Capabilities > RAI Local Agent."

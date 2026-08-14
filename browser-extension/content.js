@@ -30,6 +30,30 @@ if (RAI_ORIGINS.has(window.location.origin)) {
     }
   });
 
+  // The side panel uses this page as the authenticated RAI chat surface. The
+  // access token stays inside the page; only the bounded message snapshot and
+  // send/stream status cross the extension bridge.
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type !== 'rai.chat.request') return false;
+    const requestId = String(message.requestId || '');
+    if (!requestId) return false;
+    postToPage({
+      type: 'chat.request',
+      requestId,
+      operation: message.operation,
+      payload: message.payload || {}
+    });
+    sendResponse({ ok: true, queued: true });
+    return false;
+  });
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const message = event.data;
+    if (!message || message.source !== 'rai-web' || message.type !== 'connect.chat.response') return;
+    chrome.runtime.sendMessage({ type: 'rai.chat.response', ...message }).catch(() => undefined);
+  });
+
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === 'rai.approval.pending') {
       postToPage({ type: 'approval.pending', request: message.request });

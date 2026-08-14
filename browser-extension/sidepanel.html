@@ -7,18 +7,38 @@
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-  <header>
-    <div class="brand-mark">R</div>
-    <div><h1>RAI Connect</h1><p id="statusText">正在连接本地 Agent</p></div>
+  <header class="topbar">
+    <div class="brand-mark" aria-hidden="true">R</div>
+    <div class="brand-copy">
+      <h1>RAI</h1>
+      <p id="statusText">正在连接 RAI 网页</p>
+    </div>
+    <button type="button" class="icon-button" id="refreshBtn" title="刷新对话" aria-label="刷新对话">↻</button>
   </header>
+  <div id="connectionNotice" class="connection-notice" hidden></div>
   <main>
-    <section id="emptyState" class="empty" hidden>
-      <h2>没有待确认操作</h2>
-      <p>高风险命令、敏感文件和网页外部操作会出现在这里。</p>
+    <section class="conversation-head">
+      <div>
+        <span class="eyebrow">当前对话</span>
+        <h2 id="conversationTitle">未连接</h2>
+      </div>
+      <span id="streamState" class="stream-state" hidden>生成中</span>
     </section>
-    <div id="approvalList"></div>
+    <section id="messages" class="messages" aria-live="polite"></section>
+    <section id="emptyState" class="empty" hidden>
+      <strong>打开 RAI 网页即可开始</strong>
+      <p>侧栏显示当前网页对话。发送问题后，RAI 可以在你授权的网页标签页中点击、输入和滚动。</p>
+    </section>
+    <section class="approval-section" aria-labelledby="approvalHeading">
+      <div class="section-heading"><h2 id="approvalHeading">需要确认</h2><span id="approvalCount">0</span></div>
+      <div id="approvalList"></div>
+      <p id="approvalEmpty" class="approval-empty">暂无待确认操作</p>
+    </section>
   </main>
-  <footer><button type="button" id="refreshBtn">刷新</button></footer>
+  <form id="composer" class="composer">
+    <textarea id="messageInput" rows="2" placeholder="询问 RAI，或让它操作当前网页" maxlength="12000"></textarea>
+    <button type="submit" id="sendBtn">发送</button>
+  </form>
   <script type="module" src="sidepanel.js"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ let nativeSequence = 0;
 let controlledTabId = null;
 const nativePending = new Map();
 const approvalPending = new Map();
+const chatPending = new Map();
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
@@ -24,6 +25,8 @@ function connectNative() {
     nativePort = null;
     for (const pending of nativePending.values()) pending.reject(error);
     nativePending.clear();
+    for (const pending of chatPending.values()) pending.reject(error);
+    chatPending.clear();
   });
   return nativePort;
 }
@@ -47,6 +50,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then((result) => sendResponse({ ok: true, result }))
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
+  }
+  if (message?.type === 'rai.chat.request') {
+    requestRaiChat(message.operation, message.payload || {})
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+  if (message?.type === 'rai.chat.response') {
+    const pending = chatPending.get(String(message.requestId || ''));
+    if (!pending) return false;
+    chatPending.delete(String(message.requestId));
+    if (message.ok) pending.resolve(message.result || {});
+    else pending.reject(new Error(message.error || 'rai_chat_bridge_failed'));
+    return false;
   }
   if (message?.type === 'rai.approval.reply') {
     const pending = approvalPending.get(String(message.requestId || ''));
@@ -132,6 +149,38 @@ async function findControlledTab({ createForNavigation = false } = {}) {
   controlledTabId = created.id;
   await chrome.storage.session.set({ controlledTabId });
   return created;
+}
+
+async function findRaiTab() {
+  const tabs = await chrome.tabs.query({ lastFocusedWindow: true });
+  return tabs.find((tab) => tab.id && isRaiOrigin(tab.url))
+    || (await chrome.tabs.query({})).find((tab) => tab.id && isRaiOrigin(tab.url))
+    || null;
+}
+
+async function requestRaiChat(operation, payload = {}) {
+  const tab = await findRaiTab();
+  if (!tab?.id) throw new Error('rai_web_tab_not_found');
+  const requestId = `chat_${Date.now()}_${++nativeSequence}`;
+  const result = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chatPending.delete(requestId);
+      reject(new Error('rai_chat_response_timeout'));
+    }, operation === 'chat.send' ? 30000 : 10000);
+    chatPending.set(requestId, {
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+      reject: (error) => { clearTimeout(timer); reject(error); }
+    });
+  });
+  const queued = await chrome.tabs.sendMessage(tab.id, {
+    type: 'rai.chat.request', requestId, operation, payload
+  }).catch((error) => ({ ok: false, error: error.message }));
+  if (!queued?.ok) {
+    const pending = chatPending.get(requestId);
+    chatPending.delete(requestId);
+    pending?.reject(new Error(queued?.error || 'rai_chat_bridge_unavailable'));
+  }
+  return result;
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {

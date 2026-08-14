@@ -11,6 +11,7 @@
     pending: new Map(),
     sequence: 0,
     activitiesConversationId: '',
+    wakeLock: null,
     initialized: false
   };
 
@@ -51,8 +52,15 @@
       : {};
   }
 
-  function authHeaders() {
-    const token = getContext().token;
+  function latestToken() {
+    try {
+      const stored = String(localStorage.getItem('rai_token') || '').trim();
+      if (stored) return stored;
+    } catch (_) { /* storage can be unavailable in private mode */ }
+    return String(window.getRaiAccessToken?.() || getContext().token || '').trim();
+  }
+
+  function authHeaders(token = latestToken()) {
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }
 
@@ -95,11 +103,16 @@
   });
 
   async function api(path, options = {}) {
-    const response = await fetch(`${window.RAI_API_BASE || '/api'}${path}`, {
+    const request = () => fetch(`${window.RAI_API_BASE || '/api'}${path}`, {
       cache: 'no-store',
       ...options,
       headers: { ...authHeaders(), ...(options.headers || {}) }
     });
+    let response = await request();
+    if (response.status === 401 && typeof window.refreshRaiAccessToken === 'function') {
+      const refreshed = await window.refreshRaiAccessToken().catch(() => false);
+      if (refreshed) response = await request();
+    }
     let data = {};
     try { data = await response.json(); } catch (_) { /* handled below */ }
     if (!response.ok || data.success === false) throw new Error(data.error || `HTTP ${response.status}`);
@@ -183,6 +196,7 @@
       conversationId: context.conversationId,
       deviceId: state.activeDeviceId
     };
+    await ensureWakeLock();
     setMenuStatus('active');
     render();
     return state.agentSession;
@@ -194,6 +208,7 @@
     if (session && getContext().token) {
       await api(`/agent/sessions/${encodeURIComponent(session.id)}`, { method: 'DELETE' }).catch(() => undefined);
     }
+    await releaseWakeLock();
     setMenuStatus('idle');
     render();
   }
@@ -255,6 +270,7 @@
   async function handleToolCall(envelope) {
     if (!envelope || envelope.agentSessionId !== state.agentSession?.id) throw new Error('local_agent_session_mismatch');
     setMenuStatus('running');
+    await ensureWakeLock();
     try {
       const completed = await rpc('tool.execute', { envelope }, 5 * 60 * 1000);
       if (!completed.receipt || !completed.result) throw new Error('local_agent_result_incomplete');
@@ -268,6 +284,26 @@
       setMenuStatus(connectedHere() ? 'active' : 'idle');
     }
   }
+
+  async function ensureWakeLock() {
+    if (!window.isSecureContext || !navigator.wakeLock || !window.matchMedia?.('(max-width: 768px)').matches) return;
+    if (state.wakeLock && !state.wakeLock.released) return;
+    try {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+      state.wakeLock.addEventListener?.('release', () => { state.wakeLock = null; });
+    } catch (_) {
+      state.wakeLock = null;
+    }
+  }
+
+  async function releaseWakeLock() {
+    try { await state.wakeLock?.release?.(); } catch (_) { /* already released */ }
+    state.wakeLock = null;
+  }
+
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && connectedHere()) ensureWakeLock();
+  });
 
   async function refreshActivities(conversationId = getContext().conversationId) {
     const container = document.getElementById('localAgentActivity');
