@@ -18811,7 +18811,8 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
             }),
             signal: AbortSignal.timeout(20000)
         });
-        const data = await resp.json();
+        const respText = await readBoundedResponseText(resp, 1024 * 1024);
+        const data = respText ? JSON.parse(respText) : {};
         let text = String(data && data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '').trim();
         if (!text || text.toUpperCase() === 'SKIP') text = '';
         if (text) {
