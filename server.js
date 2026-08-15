@@ -18759,10 +18759,15 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
     if (!userId) return res.status(401).json({ text: null, error: 'unauthorized' });
     const now = Date.now();
     const last = petChitchatLastAt.get(userId) || 0;
-    if (now - last < PET_CHITCHAT_MIN_INTERVAL_MS) {
+    // 调试模式（?debug=1）：仅白名单用户或环境变量开启时生效，跳过节流
+    const PET_CHITCHAT_DEBUG_ALLOWED = new Set([70]);
+    const debugMode = req.query.debug === '1'
+        && (process.env.PET_CHITCHAT_DEBUG === '1' || PET_CHITCHAT_DEBUG_ALLOWED.has(userId));
+    if (!debugMode && now - last < PET_CHITCHAT_MIN_INTERVAL_MS) {
         console.log(` 桌宠闲话: throttled, userId=${userId}, 距上次 ${Math.round((now - last) / 1000)}s`);
         return res.json({ text: null, reason: 'throttled' });
     }
+    if (debugMode) console.log(` 桌宠闲话: debug 模式（跳过节流）, userId=${userId}`);
     try {
         // 中国标准时间（服务器可能为 UTC，必须用 Asia/Shanghai）
         const cnNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
