@@ -18760,9 +18760,9 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
     const now = Date.now();
     const last = petChitchatLastAt.get(userId) || 0;
     if (now - last < PET_CHITCHAT_MIN_INTERVAL_MS) {
+        console.log(` 桌宠闲话: throttled, userId=${userId}, 距上次 ${Math.round((now - last) / 1000)}s`);
         return res.json({ text: null, reason: 'throttled' });
     }
-    petChitchatLastAt.set(userId, now);
     try {
         // 中国标准时间（服务器可能为 UTC，必须用 Asia/Shanghai）
         const cnNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
@@ -18775,7 +18775,8 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sfKey}` },
             body: JSON.stringify({
-                model: 'deepseek-ai/DeepSeek-V4-Flash',
+                // V3.2 实测 2.5s（V4-Flash 24.7s 太慢）；glm-4-flash/Qwen3-30B 实测不可用
+                model: 'deepseek-ai/DeepSeek-V3.2',
                 messages: [
                     { role: 'system', content: PET_CHITCHAT_SYSTEM_PROMPT },
                     { role: 'user', content: `【背景】${timeContext}\n请说一句桌宠闲话。可以自然地结合当前时间说（比如时间流逝、此时段氛围、星期几的感受），但不要刻意报时，没有合适的就按平常说。` }
@@ -18788,6 +18789,11 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
         const data = await resp.json();
         let text = String(data && data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '').trim();
         if (!text || text.toUpperCase() === 'SKIP') text = '';
+        if (text) {
+            // 仅成功生成闲话时记录节流（失败/断连不占名额，可立即重试）
+            petChitchatLastAt.set(userId, Date.now());
+        }
+        console.log(` 桌宠闲话: ${text ? 'ok' : 'skip'}, userId=${userId}, len=${text.length}, ctx=${timeContext}`);
         res.json({ text: text || null });
     } catch (e) {
         console.warn(` 桌宠闲话生成失败: ${e.message}`);
