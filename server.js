@@ -18764,9 +18764,12 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
     }
     petChitchatLastAt.set(userId, now);
     try {
-        const hour = new Date().getHours();
-        const period = hour < 6 ? '凌晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : '晚上';
-        const timeContext = `当前时间：${hour} 点（${period}）`;
+        // 中国标准时间（服务器可能为 UTC，必须用 Asia/Shanghai）
+        const cnNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+        const hour = cnNow.getHours();
+        const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][cnNow.getDay()];
+        const period = hour < 6 ? '凌晨' : hour < 9 ? '清晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '深夜';
+        const timeContext = `当前中国标准时间：${cnNow.getMonth() + 1}月${cnNow.getDate()}日 ${weekday} ${hour} 点（${period}）`;
         const sfKey = process.env.SILICONFLOW_API_KEY || '';
         const resp = await fetch(SILICONFLOW_CHAT_COMPLETIONS_URL, {
             method: 'POST',
@@ -18775,7 +18778,7 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
                 model: 'deepseek-ai/DeepSeek-V4-Flash',
                 messages: [
                     { role: 'system', content: PET_CHITCHAT_SYSTEM_PROMPT },
-                    { role: 'user', content: `【背景】${timeContext}\n请说一句桌宠闲话。` }
+                    { role: 'user', content: `【背景】${timeContext}\n请说一句桌宠闲话。可以自然地结合当前时间说（比如时间流逝、此时段氛围、星期几的感受），但不要刻意报时，没有合适的就按平常说。` }
                 ],
                 max_tokens: 120,
                 temperature: 0.9
