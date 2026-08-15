@@ -10510,9 +10510,9 @@ app.get('/api/health', (req, res) => {
 });
 
 // /api/network/endpoints：返回可用线路清单与切换参数（客户端测速择优）
+// 仅列真实线路（rai.000339.xyz 是 302 跳转壳，非独立线路，勿加回；新线路需先验证可直连）
 const NETWORK_ENDPOINTS = Object.freeze([
-    { name: 'direct', base: 'https://rai.rick.sarl', health: '/api/health' },
-    { name: 'backup', base: 'https://rai.000339.xyz', health: '/api/health' }
+    { name: 'direct', base: 'https://rai.rick.sarl', health: '/api/health' }
 ]);
 const NETWORK_MEASURE_MS = 30000;
 const NETWORK_SWITCH_THRESHOLD = 0.8;
