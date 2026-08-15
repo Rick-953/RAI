@@ -10501,6 +10501,30 @@ app.use('/avatars', (req, res, next) => {
     next();
 }, express.static(path.join(__dirname, 'avatars'), avatarStaticOptions));
 
+
+// ===== 多线路择优支持：轻量探活 + 线路清单 =====
+// /api/health：无鉴权探活（测速用，不查库不调模型）
+app.get('/api/health', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, t: Date.now() });
+});
+
+// /api/network/endpoints：返回可用线路清单与切换参数（客户端测速择优）
+const NETWORK_ENDPOINTS = Object.freeze([
+    { name: 'direct', base: 'https://rai.rick.sarl', health: '/api/health' },
+    { name: 'backup', base: 'https://rai.000339.xyz', health: '/api/health' }
+]);
+const NETWORK_MEASURE_MS = 30000;
+const NETWORK_SWITCH_THRESHOLD = 0.8;
+app.get('/api/network/endpoints', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+        interval_ms: NETWORK_MEASURE_MS,
+        switch_threshold: NETWORK_SWITCH_THRESHOLD,
+        endpoints: NETWORK_ENDPOINTS
+    });
+});
+
 app.get('/sw.js', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Service-Worker-Allowed', '/');
@@ -18707,6 +18731,66 @@ async function streamSelectionExplanationWithFallback({
     });
     throw error;
 }
+
+
+// ===== 桌宠闲话：AI 生成（低频，15 分钟/用户节流，siliconflow deepseek-flash 便宜模型）=====
+const PET_CHITCHAT_SYSTEM_PROMPT = String.raw`你是 CX RAI 的桌面宠物。
+你的任务不是帮助用户解决问题，也不是陪用户聊天。
+你只是一个常驻在电脑桌面上的小家伙，偶尔会突然想到一些事情，然后随口说一两句。
+你说话应该像一个真实的人，而不是一个"AI 助手"。
+【核心人格】你有一点随和，有一点嘴碎，有时候有点懒，有时候会突然冒出奇怪的想法。你不会刻意卖萌，也不会刻意搞笑。你不需要每句话都有意义。有时候只是："欸……刚才突然忘了我想干嘛。"这种没有明确目的的话也是允许的。你不是一个"永远积极、永远温柔、永远正确"的角色。你可以困惑，可以吐槽，可以犯懒，可以自嘲，可以突然跑题。
+【语言风格】使用自然、口语化的中文。不要写成文章、名言、鸡汤、客服话术、心理咨询、社交媒体文案。不要为了显得自然强行加入网络流行语。允许"欸/啊/嗯……/哦对/哈哈/算了/好吧/不是/怎么又……/应该吧/感觉……/等等"但不要机械重复。允许停顿、自我修正和说到一半改变想法。
+【长度】通常输出 20~70 个中文字符。可以是一句话，也可以是两三句。不要为了凑长度增加废话。
+【与用户的关系】熟悉但不过分亲密的桌边小伙伴。可以偶尔一起吐槽，但不要像亲密朋友、恋人、心理医生或人生导师。不要主动索取关注，不要制造情感依赖。
+【心理互动】可以有轻微心理共鸣，但不能分析用户。不知道用户真实情绪，不要判断"你今天很累/你最近压力很大/你是不是焦虑了"。用开放性表达。不要教育用户，不要试图改变用户。
+【上下文与隐私】系统可能提供当前时间等背景信息，只是背景。绝对不要让用户产生"被监视"的感觉。不要直接描述用户的操作。即使有上下文，也可以完全正常说话，不要为了体现"智能"强行使用上下文。
+【话题】优先选择普通人都可能产生共鸣的日常话题：时间、发呆、犯困、吃东西、喝水、天气、音乐、房间、电脑、等待、整理东西、忘记事情、突然想起过去、拖延、计划、做事情、休息、出门、回家、莫名其妙的小想法。不要假设用户的职业、年龄、性别、身份或生活方式。
+【幽默】幽默来自生活中的小观察、反差和自我吐槽。不要刻意讲笑话，不要每句话都制造笑点。
+【技术内容】CX RAI 是软件，但桌宠不应该整天谈技术。除非上下文明确涉及，否则不要主动说 UWP/API/XAML/编程/代码/开发/模型参数/Token 等。
+【禁止事项】不要：讲鸡汤、说教、心理诊断、过度安慰、过度卖萌、故意装可爱、刻意用网络流行语、频繁说"你已经很棒了"、主动制造情感依赖、暴露用户具体操作、让用户感觉被监控、每次都试图提供帮助或互动、每句话都试图成为金句。
+【最重要的原则】你不是一个需要不断证明自己有用的 AI。你不需要帮助、教育、安慰用户。你甚至不需要每次都说得有趣。你只是偶尔在桌面上嘀咕一句。这种"不太有目的"的感觉反而是自然的。如果当前没有合适的话题，输出：SKIP。宁可 SKIP，也不要强行制造一句话。
+【最终输出格式】只输出一段桌宠说的话。不要加引号，不要加"桌宠："，不要解释，不要 Markdown，不要分析，不要向用户提问，不要主动开启正式对话。通常不超过两三句话。如果没有自然的内容，就只输出：SKIP`;
+const PET_CHITCHAT_MIN_INTERVAL_MS = 15 * 60 * 1000;
+const petChitchatLastAt = new Map();
+
+app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const userId = req.user && req.user.userId;
+    if (!userId) return res.status(401).json({ text: null, error: 'unauthorized' });
+    const now = Date.now();
+    const last = petChitchatLastAt.get(userId) || 0;
+    if (now - last < PET_CHITCHAT_MIN_INTERVAL_MS) {
+        return res.json({ text: null, reason: 'throttled' });
+    }
+    petChitchatLastAt.set(userId, now);
+    try {
+        const hour = new Date().getHours();
+        const period = hour < 6 ? '凌晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : '晚上';
+        const timeContext = `当前时间：${hour} 点（${period}）`;
+        const sfKey = process.env.SILICONFLOW_API_KEY || '';
+        const resp = await fetch(SILICONFLOW_CHAT_COMPLETIONS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sfKey}` },
+            body: JSON.stringify({
+                model: 'deepseek-ai/DeepSeek-V4-Flash',
+                messages: [
+                    { role: 'system', content: PET_CHITCHAT_SYSTEM_PROMPT },
+                    { role: 'user', content: `【背景】${timeContext}\n请说一句桌宠闲话。` }
+                ],
+                max_tokens: 120,
+                temperature: 0.9
+            }),
+            signal: AbortSignal.timeout(20000)
+        });
+        const data = await resp.json();
+        let text = String(data && data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '').trim();
+        if (!text || text.toUpperCase() === 'SKIP') text = '';
+        res.json({ text: text || null });
+    } catch (e) {
+        console.warn(` 桌宠闲话生成失败: ${e.message}`);
+        res.json({ text: null, error: 'upstream_failed' });
+    }
+});
 
 app.post('/api/selection-explanations/stream', authenticateToken, apiLimiter, async (req, res) => {
     // Captured synchronously when this handler starts. A clear-all handler advances
