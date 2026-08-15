@@ -18775,16 +18775,33 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
         const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][cnNow.getDay()];
         const period = hour < 6 ? '凌晨' : hour < 9 ? '清晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '深夜';
         const timeContext = `当前中国标准时间：${cnNow.getMonth() + 1}月${cnNow.getDate()}日 ${weekday} ${hour} 点（${period}）`;
+        // 最近对话联动：拉取该用户最近几条非短指令消息（给桌宠随口一提的素材）
+        let recentTalkContext = '';
+        try {
+            const recentRows = await dbAllAsync(
+                `SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
+                 WHERE s.user_id = ? AND m.role = 'user' AND length(m.content) > 5
+                 ORDER BY m.id DESC LIMIT 4`,
+                [userId]
+            );
+            const recentItems = (recentRows || [])
+                .map((r) => String(r.content || '').replace(/\s+/g, ' ').slice(0, 80))
+                .filter(Boolean);
+            if (recentItems.length) recentTalkContext = recentItems.join(' / ');
+        } catch (ctxErr) {
+            console.warn(` 桌宠闲话: 最近对话读取失败: ${ctxErr.message}`);
+        }
         const sfKey = process.env.SILICONFLOW_API_KEY || '';
         const resp = await fetch(SILICONFLOW_CHAT_COMPLETIONS_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sfKey}` },
             body: JSON.stringify({
-                // V3.2 实测 2.5s（V4-Flash 24.7s 太慢）；glm-4-flash/Qwen3-30B 实测不可用
-                model: 'deepseek-ai/DeepSeek-V3.2',
+                // V4-Flash + enable_thinking:false 实测 0.7s（开 thinking 24.7s）；比 V3.2 便宜
+                model: 'deepseek-ai/DeepSeek-V4-Flash',
+                enable_thinking: false,
                 messages: [
                     { role: 'system', content: PET_CHITCHAT_SYSTEM_PROMPT },
-                    { role: 'user', content: `【背景】${timeContext}\n请说一句桌宠闲话。可以自然地结合当前时间说（比如时间流逝、此时段氛围、星期几的感受），但不要刻意报时，没有合适的就按平常说。` }
+                    { role: 'user', content: `【背景】${timeContext}${recentTalkContext ? `\n【最近对话】用户最近在忙的事：${recentTalkContext}` : ''}\n请说一句桌宠闲话。可以自然地和用户最近在忙的事产生一点点联动（比如他最近在收集资料，可以说"资料收得差不多的时候，也记得出门亲眼看看"这类随口一提），但绝不能说得像在汇报用户的行为（禁止"你正在/你刚刚"句式），要像碰巧想到的日常嘀咕；时间只是背景之一，不要只说时间。没有合适的联动就按平常说。` }
                 ],
                 max_tokens: 120,
                 temperature: 0.9
