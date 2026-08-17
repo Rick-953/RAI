@@ -30,9 +30,11 @@ function testSharedPromptBuilder() {
   assert.match(chinese, /web_sources:/);
   assert.match(chinese, /rai-product:/);
   assert.match(chinese, /sandbox: Use the isolated Linux sandbox/);
-  assert.match(chinese, /read_skill\(\{"name":"rai-product"\}\)/);
-  assert.match(chinese, /read_skill\(\{"name":"sandbox"\}\)/);
-  assert.match(chinese, /隔离且无网络的 Linux 沙箱/);
+  assert.match(chinese, /office: Create new Word, Excel, or PowerPoint documents/);
+  assert.match(chinese, /read_skill[^\n]*rai-product/);
+  assert.match(chinese, /read_skill[^\n]*sandbox/);
+  assert.match(chinese, /隔离的 Linux 沙箱/);
+  assert.match(chinese, /fetch_url/);
   assert.match(chinese, /### 记忆能力/);
   assert.match(chinese, /以下是用户个人偏好，请参考：\n请称呼我为 Rick/);
 
@@ -46,9 +48,10 @@ function testSharedPromptBuilder() {
   assert.match(english, /RAI is an AI chat application made by Rick/);
   assert.match(english, /never the identity of an upstream model, provider, or coding agent/);
   assert.match(english, /## Layer 1: available skills/);
-  assert.match(english, /read_skill\(\{"name":"rai-product"\}\)/);
-  assert.match(english, /isolated, no-network Linux sandbox/);
-  assert.match(english, /shell commands, and code execution/);
+  assert.match(english, /office: Create new Word, Excel, or PowerPoint documents/);
+  assert.match(english, /read_skill[^\n]*rai-product/);
+  assert.match(english, /isolated Linux sandbox/);
+  assert.match(english, /fetch_url/);
   assert.match(english, /personal preferences[\s\S]*Prefer concise answers\./);
 }
 
