@@ -3326,6 +3326,7 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         transform_file: new Set(['file_id', 'operation', 'file_name']),
         edit_file: new Set(['file_id', 'replacements', 'file_name']),
         create_artifact: new Set(['format', 'content', 'file_name']),
+        fetch_url: new Set(['url', 'output_name']),
         sandbox_exec: new Set(['script', 'file_ids', 'output_path', 'elevated', 'cwd', 'timeout_seconds']),
         process_exec: new Set(['program', 'args', 'cwd', 'timeout_seconds', 'elevated']),
         insert_image: new Set(['file_id', 'image_file', 'slide']),
@@ -3368,6 +3369,23 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
                 replacements,
                 ...(typeof args.file_name === 'string' && args.file_name.trim()
                     ? { file_name: args.file_name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 128) }
+                    : {})
+            };
+        }
+        if (toolName === 'fetch_url') {
+            if (localMode) return null; // server-side gate only
+            let parsed;
+            try {
+                parsed = new URL(String(args.url || '').trim());
+            } catch (_) {
+                return null;
+            }
+            if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+            if (!parsed.hostname || String(args.url).length > 4096) return null;
+            return {
+                url: parsed.href,
+                ...(typeof args.output_name === 'string' && args.output_name.trim()
+                    ? { output_name: args.output_name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 128) }
                     : {})
             };
         }
@@ -3460,6 +3478,16 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
             const fileId = normalizeWorkspaceFileId(args.file_id, localMode);
             if (!fileId) return null;
             return { file_id: fileId };
+        }
+        if (toolName === 'cxrai_setting') {
+            const action = String(args.action || '');
+            if (!['list', 'get', 'set'].includes(action)) return null;
+            if (action === 'list') return { action };
+            const name = String(args.name || '').trim();
+            if (!name || !CXRAI_SETTINGS_REGISTRY[name]) return null;
+            if (action === 'get') return { action, name };
+            if (args.value === undefined) return null;
+            return { action, name, value: args.value };
         }
         if (toolName === 'browser.read') return {};
         if (toolName === 'browser.navigate') {
@@ -18758,6 +18786,42 @@ const PET_CHITCHAT_SYSTEM_PROMPT = String.raw`你是 CX RAI 的桌面宠物。
 【最终输出格式】只输出一段桌宠说的话。不要加引号，不要加"桌宠："，不要解释，不要 Markdown，不要分析，不要向用户提问，不要主动开启正式对话。通常不超过两三句话。如果没有自然的内容，就只输出：SKIP`;
 const PET_CHITCHAT_MIN_INTERVAL_MS = 15 * 60 * 1000;
 const petChitchatLastAt = new Map();
+
+
+// ===== CXRAI 设置项注册表：对话式设置管理（UWP 本地执行，服务端提供能力清单）=====
+const CXRAI_SETTINGS_VERSION = 1;
+const CXRAI_SETTINGS_REGISTRY = Object.freeze({
+    notifications: { desktop: true, mobile: true,  type: 'bool',   desc: '通知开关' },
+    auto_start:    { desktop: true, mobile: false, type: 'bool',   desc: '开机自启动' },
+    clear_cache:   { desktop: true, mobile: true,  type: 'action', desc: '清除本地缓存' },
+    custom_api:    { desktop: true, mobile: false, type: 'list',   desc: '自定义 API 列表' },
+    default_model: { desktop: true, mobile: true,  type: 'string', desc: '默认模型' },
+    theme:         { desktop: true, mobile: true,  type: 'string', desc: '主题（浅色/深色/跟随系统）' },
+    language:      { desktop: true, mobile: true,  type: 'string', desc: '语言' }
+});
+app.get('/api/cxrai/settings-registry', authenticateToken, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ version: CXRAI_SETTINGS_VERSION, items: CXRAI_SETTINGS_REGISTRY });
+});
+
+// ===== CXRAI_setting 工具定义（本地模式注入）=====
+const CXRAI_SETTING_TOOL_DEFINITION_LOCAL = Object.freeze({
+    type: 'function',
+    function: {
+        name: 'cxrai_setting',
+        description: '读取或修改 CX RAI 应用设置（本地执行）。先调 list 查看当前设备支持的设置项，再 get/set。设置项按设备平台（桌面版/移动版）有差异，不支持的项目客户端会返回 SETTING_NOT_SUPPORTED。',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['action'],
+            properties: {
+                action: { type: 'string', enum: ['list', 'get', 'set'], description: 'list=列出当前设备可用设置项；get=读取某设置项当前值（需 name）；set=设置某设置项的值（需 name+value）' },
+                name: { type: 'string', description: '设置项名（list 时省略；get/set 时必须）' },
+                value: { description: '设置值（set 时必填；bool=true/false, string=值, action=执行动作）' }
+            }
+        }
+    }
+});
 
 app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
