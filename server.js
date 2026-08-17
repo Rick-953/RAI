@@ -21691,6 +21691,7 @@ if (clientFileExecution && systemPrompt) {
         let useStreamingTools = false;  // 标记是否启用流式工具调用
         let forcedClientListFilesDone = false;
         let forcedMachineQueryDone = false;
+        let forcedCxraiSettingDone = false;
         let clientNonStreamRetryDone = false;
 
         if (enableResearchDebate && internetMode && !raiProductSkillRequired) {
@@ -23789,6 +23790,21 @@ if (clientFileExecution && systemPrompt) {
                 streamFinishReason = 'tool_calls';
             }
 
+            // 设置类问题兜底：模型在设置类消息未调工具时，强制发起 cxrai_setting list 引导
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedCxraiSettingDone && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
+                forcedCxraiSettingDone = true;
+                console.warn(` 设置类问题但模型未触发 cxrai_setting，自动发起 list 引导: model=${actualModel}`);
+                accumulatedToolCalls.push({
+                    id: `forced_cxrai_setting_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                        name: 'cxrai_setting',
+                        arguments: JSON.stringify({ action: 'list' })
+                    }
+                });
+                streamFinishReason = 'tool_calls';
+            }
+
             // 本机状态类问题兜底：宽带/配置/硬件类提问必须查真实数据，禁止模型编造
             if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedMachineQueryDone && /(?:宽带|网速|网卡|测速|配置|cpu|内存|硬盘|磁盘|显卡|频率|系统信息|型号|速度|提速)/i.test(String(userContent || ''))) {
                 forcedMachineQueryDone = true;
@@ -23945,6 +23961,10 @@ if (clientFileExecution && systemPrompt) {
 - 更新 Excel：用 update_sheet（定向写单元格/公式/图表）；update_sheet 成功即完成，禁止再用 sandbox_exec 的 PowerShell COM 重复操作 Excel
 - 管理文件：list_files / write_file / copy_file / move_file / delete_file
 - 执行命令：${localAgentSession ? `优先用 process_exec 传递 program + args；当前 Agent 平台是 ${localAgentSession.platform}。只有用户明确要求 shell 脚本时才用 sandbox_exec` : '当前 UWP 客户端用 sandbox_exec 执行 Windows PowerShell'}。默认限 60 秒，最长 300 秒；需要管理员权限时把 elevated 设为 true。提权和破坏性操作必须等待客户端确认，未确认时不得声称完成
+- 设置类请求的目标层级（重要）：
+  【本地电脑模式已开启】时，设置请求默认指 Windows 系统设置（系统通知、系统开机启动项、系统服务等）→ 用 sandbox_exec + PowerShell 执行（改系统级配置需 elevated，弹 UAC）；用户明确提到「CX RAI/RAI/应用内」时才是应用内设置。
+  【本地电脑模式未开启】时，设置请求默认指 CX RAI 应用内设置 → 用 cxrai_setting 工具（先 action=list 看当前设备可用项，再 get/set；设置项按桌面/移动平台有差异，客户端会返回 SETTING_NOT_SUPPORTED，如实告知用户）。
+  歧义时（用户只说「关闭通知」未指明层级）：本地电脑模式开启→按系统设置处理并可在执行前简短确认；未开启→按应用内 cxrai_setting 处理。禁止只输出操作步骤教程而不实际执行。
 【数字纪律（必须遵守）】
 - 涉及具体数字严格自查：①单位核对：千兆=1000M/1G、百兆=100M（差10倍，禁止混用）；频率/速率/容量/价格同理（2133MHz 不是 213MHz）；②位数核对：型号/编号逐位检查（i5-7500 不是 i5-750）；③关键数字标注来源：「本机查询」「搜索结果」，无法确认时明确说「不确定」，禁止编造
 - 涉及本机状态（网络速率/硬件配置/系统信息）：${localAgentSession ? '必须先用 process_exec 调用当前平台的原生查询程序读取真实值' : '必须先用 sandbox_exec 通过 PowerShell 读取真实值'}，原样复制返回的数字，禁止凭记忆或推算
