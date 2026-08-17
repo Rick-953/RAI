@@ -16037,6 +16037,7 @@ app.post('/api/sessions/:id/title/regenerate', authLimiter, authenticateToken, a
 
 app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
     try {
+        const deleteStartedAt = Date.now();
         await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
         const deleted = await withMainDbTransaction(async (tx) => {
             return Boolean(await deleteOwnedSessionWithRelatedData({
@@ -16046,8 +16047,10 @@ app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
             }));
         });
         if (!deleted) return res.status(404).json({ error: '会话不存在' });
-        await drainQueuedGeneratedImageDeletionsBestEffort();
-        console.log(' 删除会话成功:', req.params.id);
+        const deleteElapsedMs = Date.now() - deleteStartedAt;
+        // 图像文件清理不阻塞响应（尽力而为，后台执行）
+        setImmediate(() => { drainQueuedGeneratedImageDeletionsBestEffort().catch(() => null); });
+        console.log(` 删除会话成功: ${req.params.id}, elapsed=${deleteElapsedMs}ms`);
         return res.json({ success: true });
     } catch (error) {
         console.error(' 删除会话失败:', sanitizeReportContext(error));
@@ -18784,6 +18787,7 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
             const recentRows = await dbAllAsync(
                 `SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
                  WHERE s.user_id = ? AND m.role = 'user' AND length(m.content) > 5
+                   AND (s.session_kind IS NULL OR s.session_kind = 'chat')
                  ORDER BY m.id DESC LIMIT 4`,
                 [userId]
             );
