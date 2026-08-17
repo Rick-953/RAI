@@ -23790,10 +23790,12 @@ if (clientFileExecution && systemPrompt) {
                 streamFinishReason = 'tool_calls';
             }
 
-            // 设置类问题兜底：模型在设置类消息未调工具时，强制发起 cxrai_setting list 引导
-            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedCxraiSettingDone && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
+            // 设置类问题兜底：模型在设置类消息未调设置工具时，强制发起 cxrai_setting list 引导
+            // （无论是否只调了 read_skill 占位；只要还没调 cxrai_setting 就强制）
+            const alreadyCalledSettingTool = accumulatedToolCalls.some((tc) => tc.function?.name === 'cxrai_setting');
+            if (useStreamingTools && clientFileExecution && !forcedCxraiSettingDone && !alreadyCalledSettingTool && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
                 forcedCxraiSettingDone = true;
-                console.warn(` 设置类问题但模型未触发 cxrai_setting，自动发起 list 引导: model=${actualModel}`);
+                console.warn(` 设置类问题但未调用 cxrai_setting，自动发起 list 引导: model=${actualModel}`);
                 accumulatedToolCalls.push({
                     id: `forced_cxrai_setting_${Date.now()}`,
                     type: 'function',
