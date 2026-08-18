@@ -3076,12 +3076,15 @@ const TeaPetRuntime = {
   onAnimTick() {
     if (!this.running) return;
     // 对话生成中 → desktop 坐姿（UWP「工作目录模式」的网页版映射）；结束后回 idle
+    // 状态刚切换的 tick 只落定新状态底帧（snapFrame），下一 tick 再开始交叉溶解
     if (this.state === 'idle' && this.isStreaming()) {
       this.setState('desktop');
+      return;
     } else if (this.state === 'desktop' && !this.isStreaming()) {
       this.setState('idle');
+      return;
     }
-    if (this.frame !== 0) return; // snapFrame 重置过则本 tick 只落定
+    // 双帧 500ms 周期交叉溶解（同 UWP hold300+transition200）：base ↔ base-1 变体无限循环
     const base = this.fileForState();
     const nextFrame = this.frame === 0 ? 1 : 0;
     const nextKey = nextFrame === 1 ? `${base}-1` : base;
@@ -3186,6 +3189,13 @@ const TeaPetRuntime = {
 
   onTap() {
     if (!this.running) return;
+    // 点击快捷动作（映射 UWP DesktopPet 点击动作 "main"：把主对话带到面前）
+    // 网页版：聚焦对话输入框可直接开聊，茶宠同时回一句本地语录作反馈
+    const input = document.getElementById('messageInput');
+    if (input && typeof input.focus === 'function') {
+      input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      input.focus();
+    }
     this.speakLocal();
   }
 };
