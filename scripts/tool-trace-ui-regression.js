@@ -34,6 +34,15 @@ assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'complete'/,
 assert.match(server, /tools: serverToolTrace/, 'server must persist tool traces');
 assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'failed'/, 'server failure trace missing');
 
+// Ordered timeline: search/generating steps append in real SSE event order
+assert.match(app, /id="timelineDynamicSteps"/, 'dynamic timeline step container missing');
+assert.match(app, /function ensureSearchStep\(/, 'search step appender missing');
+assert.match(app, /function getGeneratingStep\(/, 'generating step getter missing');
+assert.match(app, /function finalizeGeneratingStep\(/, 'generating step finalizer missing');
+assert.match(app, /data-kind="search"/, 'search steps must carry a kind marker');
+assert.match(app, /timelineDynamicSteps\.appendChild\(el\)/, 'dynamic steps must append in order');
+assert.doesNotMatch(app, /id="stepGenerating"/, 'fixed generating step must be replaced by dynamic steps');
+
 assert.match(app, /简易文档已生成/, 'client must suppress legacy artifact status labels');
 
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');
