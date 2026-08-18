@@ -2388,8 +2388,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.7';
-const RAI_BUILD_ID = '20260818-version-contract-v0137-r1';
+const RAI_APP_VERSION = '0.13.8';
+const RAI_BUILD_ID = '20260818-stream-timeline-v0138-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -20919,6 +20919,9 @@ async function sendMessage(message = null, options = {}) {
             </div>
             ${processTraceStepHtml}
 
+            <!-- 动态步骤：搜索 / 生成 按真实事件顺序追加 -->
+            <div id="timelineDynamicSteps"></div>
+
             <!-- 当前轮工具调用详情 -->
             <div class="tool-trace-panel" id="toolTracePanel" hidden>
               <div class="tool-trace-heading">
@@ -20926,15 +20929,6 @@ async function sendMessage(message = null, options = {}) {
                 <span class="tool-trace-count" id="toolTraceCount">0</span>
               </div>
               <div class="tool-trace-list" id="toolTraceList" aria-live="polite"></div>
-            </div>
-
-            <!-- 步骤2: 生成回答 -->
-            <div class="thinking-step" id="stepGenerating" data-status="pending">
-              <div class="thinking-step-node"></div>
-              <div class="thinking-step-content">
-                <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
-                <div class="thinking-step-detail" id="generatingDetail"></div>
-              </div>
             </div>
 
           <div class="rai-reasoning-block" id="raiReasoningBlock" data-reasoning-mode="collapsed" style="display: none;">
@@ -20989,11 +20983,11 @@ async function sendMessage(message = null, options = {}) {
   // 时间轴元素引用
   const thinkingTimeline = aiMsgDiv.querySelector('#thinkingTimeline');
   const stepToolDecision = aiMsgDiv.querySelector('#stepToolDecision');
-  const stepGenerating = aiMsgDiv.querySelector('#stepGenerating');
+  const timelineDynamicSteps = aiMsgDiv.querySelector('#timelineDynamicSteps');
   const stepProcessTrace = aiMsgDiv.querySelector('#stepProcessTrace');
   const stepDeepThinking = null;
   const toolDecisionDetail = aiMsgDiv.querySelector('#toolDecisionDetail');
-  const generatingDetail = aiMsgDiv.querySelector('#generatingDetail');
+  let generatingStepEl = null;
   const processTraceDetail = aiMsgDiv.querySelector('#processTraceDetail');
   const processTraceList = aiMsgDiv.querySelector('#processTraceList');
   const processTraceToggle = aiMsgDiv.querySelector('#processTraceToggle');
@@ -21152,13 +21146,13 @@ async function sendMessage(message = null, options = {}) {
     let text = rawMessage || prefix;
     if (event.status === 'running') {
       text = rawMessage && rawMessage !== prefix ? `${prefix} · ${rawMessage}` : prefix;
-      updateStepStatus(stepGenerating, 'active', text);
+      updateStepStatus(getGeneratingStep(), 'active', text);
     } else if (event.status === 'complete') {
       text = isChineseLanguage(appState.language) ? '图片生成完成' : 'Image ready';
-      updateStepStatus(stepGenerating, 'active', text);
+      updateStepStatus(getGeneratingStep(), 'active', text);
     } else if (event.status === 'failed') {
       text = isChineseLanguage(appState.language) ? '图片生成失败，已记录报错' : 'Image generation failed and was logged';
-      updateStepStatus(stepGenerating, 'failed', text);
+      updateStepStatus(getGeneratingStep(), 'failed', text);
     }
 
     if (toolStatusBar && toolStatusText) {
@@ -21495,6 +21489,64 @@ async function sendMessage(message = null, options = {}) {
     if (detailEl && detail) {
       detailEl.textContent = detail;
     }
+  }
+
+  // 动态时间轴：搜索 / 生成步骤按 SSE 事件真实顺序追加，
+  // 避免正文输出到一半时固定时间轴重新出现搜索步骤造成割裂。
+  function appendTimelineStep({ kind, title, detail = '', status = 'pending' }) {
+    if (!timelineDynamicSteps) return null;
+    const el = document.createElement('div');
+    el.className = 'thinking-step';
+    el.dataset.kind = kind;
+    el.dataset.status = status;
+    el.innerHTML = '<div class="thinking-step-node"></div>'
+      + '<div class="thinking-step-content">'
+      + '<div class="thinking-step-title"></div>'
+      + '<div class="thinking-step-detail"></div>'
+      + '</div>';
+    el.querySelector('.thinking-step-title').textContent = title;
+    if (detail) el.querySelector('.thinking-step-detail').textContent = detail;
+    timelineDynamicSteps.appendChild(el);
+    return el;
+  }
+
+  function getGeneratingStep() {
+    if (!generatingStepEl || ['done', 'failed'].includes(generatingStepEl.dataset.status)) {
+      generatingStepEl = appendTimelineStep({
+        kind: 'generating',
+        title: isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response',
+        status: 'pending'
+      });
+    }
+    return generatingStepEl;
+  }
+
+  function finalizeGeneratingStep() {
+    // 新一轮搜索开始时，把当前生成阶段标记为已完成的一段输出；
+    // 下一次正文到达会追加新的生成步骤，时间轴保持真实顺序。
+    if (generatingStepEl && generatingStepEl.dataset.status !== 'done') {
+      updateStepStatus(generatingStepEl, 'done', isChineseLanguage(appState.language)
+        ? '已输出，继续检索'
+        : 'Output sent, continuing search');
+    }
+    generatingStepEl = null;
+  }
+
+  function ensureSearchStep(query = '') {
+    if (!timelineDynamicSteps) return null;
+    const steps = timelineDynamicSteps.querySelectorAll('.thinking-step[data-kind="search"]');
+    const last = steps.length > 0 ? steps[steps.length - 1] : null;
+    if (last && (last.dataset.status === 'running' || last.dataset.status === 'pending')) {
+      return last;
+    }
+    finalizeGeneratingStep();
+    const el = appendTimelineStep({
+      kind: 'search',
+      title: isChineseLanguage(appState.language) ? '联网搜索' : 'Web search',
+      detail: query ? `"${query}"` : '',
+      status: 'running'
+    });
+    return el;
   }
 
   if (processTraceToggle) {
@@ -22157,7 +22209,7 @@ async function sendMessage(message = null, options = {}) {
                 if (stepDeepThinking && !appState.thinkingMode) {
                   stepDeepThinking.style.display = 'none';
                 }
-                updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
+                updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               }
             }
 
@@ -22177,7 +22229,7 @@ async function sendMessage(message = null, options = {}) {
               }
 
               // 更新步骤状态：生成回答进行中
-              updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在组织语言...' : 'Organizing response...');
+              updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在组织语言...' : 'Organizing response...');
 
               // 停止AI头像闪烁
               if (aiAvatar) aiAvatar.classList.remove('thinking');
@@ -22312,7 +22364,7 @@ async function sendMessage(message = null, options = {}) {
               updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
                 ? `讨论记录完成 · ${traceItems}条`
                 : `Discussion logged · ${traceItems} items`);
-              updateStepStatus(stepGenerating, mappedStatus, detail || (mappedStatus === 'done'
+              updateStepStatus(getGeneratingStep(), mappedStatus, detail || (mappedStatus === 'done'
                 ? (isChineseLanguage(appState.language) ? '生成完成' : 'Completed')
                 : (isChineseLanguage(appState.language) ? '最终回答生成中...' : 'Final answer streaming...')));
             } else if (isTaskScope) {
@@ -22332,7 +22384,7 @@ async function sendMessage(message = null, options = {}) {
             } else {
               const stageStepId = String(parsed.stepId || '');
               const targetStep = (stageStepId === 'synthesis' || stageStepId === 'quality')
-                ? stepGenerating
+                ? getGeneratingStep()
                 : (stageStepId === 'master' ? stepProcessTrace : stepToolDecision);
               const fallbackText = detail || (isChineseLanguage(appState.language) ? `${roleName}处理中` : `${roleName} running`);
               updateStepStatus(targetStep, mappedStatus, fallbackText);
@@ -22393,7 +22445,7 @@ async function sendMessage(message = null, options = {}) {
                 updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
                   ? `讨论记录完成 · ${traceItems}条`
                   : `Discussion logged · ${traceItems} items`);
-                updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '最终回答实时生成中...' : 'Final answer streaming...');
+                updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language) ? '最终回答实时生成中...' : 'Final answer streaming...');
               } else {
                 updateStepStatus(stepToolDecision, 'running', isChineseLanguage(appState.language) ? '子AI正在讨论...' : 'Models are discussing...');
                 updateStepStatus(stepProcessTrace, 'running', isChineseLanguage(appState.language) ? '实时展示模型输出...' : 'Showing model output live...');
@@ -22445,7 +22497,7 @@ async function sendMessage(message = null, options = {}) {
           }
           else if (parsed.type === 'agent_retry') {
             agentRetryCount = parsed.round || (agentRetryCount + 1);
-            updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language)
+            updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language)
               ? `返工第${agentRetryCount}轮: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
             addProcessTraceItem('agent', isChineseLanguage(appState.language)
@@ -22476,22 +22528,33 @@ async function sendMessage(message = null, options = {}) {
             } else if (parsed.status === 'searching') {
               // 保存搜索词供后续使用
               currentSearchQuery = parsed.query || '';
-              // 决定使用搜索工具，显示搜索词
-              updateStepStatus(stepToolDecision, 'active', isChineseLanguage(appState.language)
-                ? `联网搜索: "${currentSearchQuery}"`
-                : `Web search: "${currentSearchQuery}"`);
+              // 动态追加"联网搜索"步骤（顺序时间轴：分析 → 搜索 → 生成 → 搜索 → 生成）
+              const searchStep = ensureSearchStep(currentSearchQuery);
+              updateStepStatus(searchStep, 'running', isChineseLanguage(appState.language)
+                ? `"${currentSearchQuery}"`
+                : `"${currentSearchQuery}"`);
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
+                ? '已完成分析'
+                : 'Analysis completed');
               addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `开始搜索: ${currentSearchQuery}`
                 : `Search start: ${currentSearchQuery}`);
             } else if (parsed.status === 'complete') {
               const resultCount = parsed.resultCount || 0;
               currentSearchQuery = parsed.query || currentSearchQuery || '';
-              // 搜索完成
+              // 收尾当前搜索步骤
+              const steps = timelineDynamicSteps?.querySelectorAll('.thinking-step[data-kind="search"]') || [];
+              const lastSearch = steps.length > 0 ? steps[steps.length - 1] : null;
+              if (lastSearch) {
+                updateStepStatus(lastSearch, 'done', isChineseLanguage(appState.language)
+                  ? `找到 ${resultCount} 条结果`
+                  : `${resultCount} results`);
+              }
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → ${resultCount}条结果`
                 : `Search done → ${resultCount} results`);
-              // 开始生成回答
-              updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
+              // 开始生成回答（本轮正文输出）
+              updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `搜索完成: ${resultCount} 条`
                 : `Search complete: ${resultCount}`);
@@ -22502,9 +22565,15 @@ async function sendMessage(message = null, options = {}) {
             } else if (parsed.status === 'no_results') {
               currentSearchQuery = parsed.query || currentSearchQuery || '';
               // 搜索无结果
+              const steps = timelineDynamicSteps?.querySelectorAll('.thinking-step[data-kind="search"]') || [];
+              const lastSearch = steps.length > 0 ? steps[steps.length - 1] : null;
+              if (lastSearch) {
+                updateStepStatus(lastSearch, 'done', isChineseLanguage(appState.language) ? '无结果' : 'No results');
+              }
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → 无结果`
                 : `Search done → No results`);
+              updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               addProcessTraceItem('search', isChineseLanguage(appState.language) ? '搜索无结果' : 'No search results');
             }
             scrollToBottom();
@@ -22517,7 +22586,7 @@ async function sendMessage(message = null, options = {}) {
             stopCharRender();
 
             // 更新步骤状态：生成回答完成
-            updateStepStatus(stepGenerating, 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
+            updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
             updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
               ? `过程完成 · ${traceItems}条记录`
               : `Done · ${traceItems} trace items`);
@@ -22540,7 +22609,7 @@ async function sendMessage(message = null, options = {}) {
             receivedExplicitError = true;
             streamFailureMessage = String(parsed.message || parsed.error || '未知错误');
             stopCharRender();  // 停止字符渲染
-            updateStepStatus(stepGenerating, 'failed', isChineseLanguage(appState.language) ? '工具调用或生成失败' : 'Tool call or generation failed');
+            updateStepStatus(getGeneratingStep(), 'failed', isChineseLanguage(appState.language) ? '工具调用或生成失败' : 'Tool call or generation failed');
             updateStepStatus(stepProcessTrace, 'failed', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
             addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${streamFailureMessage}`);
             // 停止AI头像闪烁
@@ -22559,7 +22628,7 @@ async function sendMessage(message = null, options = {}) {
     }
 
     if (!receivedDoneEvent && !receivedCancelled && !receivedExplicitError) {
-      updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
+      updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '未收到完成事件，开始自动续传' : 'Completion event missing; starting continuation');
       const recovered = await recoverIncompleteChatStream({
         basePayload: chatRequestPayload,
@@ -22587,7 +22656,7 @@ async function sendMessage(message = null, options = {}) {
       }
       if (receivedDoneEvent) {
         stopCharRender();
-        updateStepStatus(stepGenerating, 'done', isChineseLanguage(appState.language) ? '续传完成' : 'Continuation completed');
+        updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '续传完成' : 'Continuation completed');
         updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
           ? `过程完成 · 自动续传 ${recovered.attempts} 次`
           : `Done · ${recovered.attempts} automatic continuation attempt(s)`);
