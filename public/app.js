@@ -2388,8 +2388,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.8';
-const RAI_BUILD_ID = '20260818-stream-timeline-v0138-r1';
+const RAI_APP_VERSION = '0.13.9';
+const RAI_BUILD_ID = '20260819-stream-trace-v0139-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -17850,28 +17850,43 @@ function createMessageElement(message) {
       ? (isChineseLanguage(appState.language) ? '图片已显示' : 'Image displayed')
       : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
 
-    // 构建时间轴HTML
-    let timelineHtml = `
-          <!-- 步骤1: 分析问题 - 已完成 -->
-          <div class="thinking-step" data-status="done">
+    // 优先使用流式阶段快照，确保历史消息保持真实事件顺序。
+    const storedTimeline = Array.isArray(processTrace?.timeline)
+      ? processTrace.timeline.filter((row) => row && typeof row === 'object')
+      : [];
+    const timelineRows = storedTimeline.length > 0
+      ? storedTimeline
+      : [
+        { kind: 'analysis', status: 'done', title: isChineseLanguage(appState.language) ? 'RAI分析' : 'RAI Analysis', detail: toolDetail },
+        { kind: 'generating', status: 'done', title: isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response', detail: generationDetail }
+      ];
+    const timelineToolRows = new Map((processTrace?.tools || []).map((row) => [String(row.id || `${row.tool || 'tool'}:${row.ts || ''}`), row]));
+    let timelineHtml = timelineRows.map((row, index) => {
+      const kind = String(row.kind || 'info');
+      const detail = String(row.detail || '');
+      const isToolRow = kind === 'tool';
+      const traceRow = isToolRow ? Array.from(timelineToolRows.values()).find((tool) =>
+        String(tool.summary || tool.label || tool.tool || '') === String(row.title || '')
+        && String(tool.detail || tool.message || '') === detail
+      ) : null;
+      const traceId = traceRow ? escapeHtml(String(traceRow.id || `tool:${index}`)) : '';
+      return `
+          <div class="thinking-step" data-kind="${escapeHtml(String(row.kind || 'info'))}" data-status="${escapeHtml(String(row.status || 'done'))}">
             <div class="thinking-step-node"></div>
             <div class="thinking-step-content">
-              <div class="thinking-step-title">${isChineseLanguage(appState.language) ? 'RAI分析' : 'RAI Analysis'}</div>
-              <div class="thinking-step-detail">${toolDetail}</div>
-            </div>
-          </div>
-          
-          <!-- 步骤2: 生成回答 - 已完成 -->
-          <div class="thinking-step" data-status="done">
-            <div class="thinking-step-node"></div>
-            <div class="thinking-step-content">
-              <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
-              <div class="thinking-step-detail">${generationDetail}</div>
+              ${isToolRow
+                ? `<div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}">
+                    <button type="button" class="tool-trace-summary" aria-expanded="false">${escapeHtml(String(row.title || '工具调用'))}</button>
+                    <div class="tool-trace-detail" tabindex="0">${escapeHtml(detail)}</div>
+                  </div>`
+                : `<div class="thinking-step-title">${escapeHtml(String(row.title || ''))}</div>
+                   <div class="thinking-step-detail">${escapeHtml(detail)}</div>`}
             </div>
           </div>
         `;
+    }).join('');
 
-    if (hasToolTrace) {
+    if (hasToolTrace && storedTimeline.length === 0) {
       const storedToolRows = processTrace.tools
         .filter((row) => row && typeof row === 'object')
         .slice(-200);
@@ -18026,6 +18041,15 @@ function createMessageElement(message) {
     }
 
     timelineDiv.innerHTML = timelineHtml;
+
+    timelineDiv.querySelectorAll('.tool-trace-summary').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = button.closest('.tool-trace-item');
+      const expanded = item?.classList.toggle('tool-trace-expanded');
+      item?.classList.toggle('tool-trace-collapsed', !expanded);
+      button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+    });
 
     if (hasAgentProcessTrace || hasToolTrace) {
       setTimeout(() => {
@@ -21050,6 +21074,7 @@ async function sendMessage(message = null, options = {}) {
       item.innerHTML = '<button type="button" class="tool-trace-summary" aria-expanded="false"></button><div class="tool-trace-detail" tabindex="0"></div>';
       const summaryButton = item.querySelector('.tool-trace-summary');
       summaryButton?.addEventListener('click', () => {
+        item.dataset.userToggled = '1';
         const expanded = item.classList.toggle('tool-trace-expanded');
         item.classList.toggle('tool-trace-collapsed', !expanded);
         summaryButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -21072,8 +21097,8 @@ async function sendMessage(message = null, options = {}) {
         detail: detailText,
         message: String(event.message || '').slice(0, 1000),
         status,
-        query: String(event.query || args.query || '').slice(0, 500),
-        skill: String(event.skill || args.name || '').slice(0, 200),
+        query: String(event.query || (event.args && event.args.query) || '').slice(0, 500),
+        skill: String(event.skill || (event.args && event.args.name) || '').slice(0, 200),
         file_name: String(event.file_name || '').slice(0, 240),
         url: String(event.url || '').slice(0, 500),
         ts: Date.now()
@@ -21081,9 +21106,11 @@ async function sendMessage(message = null, options = {}) {
     }
     item.dataset.status = status;
     item.classList.toggle('tool-trace-current', isCurrent);
-    item.classList.toggle('tool-trace-expanded', isCurrent);
-    item.classList.toggle('tool-trace-collapsed', !isCurrent);
-    if (summary) summary.setAttribute('aria-expanded', isCurrent ? 'true' : 'false');
+    if (item.dataset.userToggled !== '1') {
+      item.classList.toggle('tool-trace-expanded', isCurrent);
+      item.classList.toggle('tool-trace-collapsed', !isCurrent);
+      if (summary) summary.setAttribute('aria-expanded', isCurrent ? 'true' : 'false');
+    }
     if (activeToolTraceId && activeToolTraceId !== id) {
       const previous = toolTraceItems.get(activeToolTraceId);
       if (previous) {
@@ -21507,6 +21534,7 @@ async function sendMessage(message = null, options = {}) {
     el.querySelector('.thinking-step-title').textContent = title;
     if (detail) el.querySelector('.thinking-step-detail').textContent = detail;
     timelineDynamicSteps.appendChild(el);
+    timelineSequence.push({ kind, title, detail, status });
     return el;
   }
 
@@ -21589,6 +21617,21 @@ async function sendMessage(message = null, options = {}) {
   let traceReasoningChars = 0;
   let traceItems = 0;
   const processTraceEvents = [];
+  const timelineSequence = [];
+
+  function recordTimelineStep(kind, title, detail = '', status = 'done') {
+    const last = timelineSequence[timelineSequence.length - 1];
+    if (last && last.kind === kind && last.title === title) {
+      if (detail) {
+        last.detail = status === 'done' && last.status === 'done'
+          ? `${last.detail || ''}${detail}`
+          : detail;
+      }
+      last.status = status === 'done' ? 'done' : status;
+      return;
+    }
+    timelineSequence.push({ kind, title, detail, status });
+  }
 
   function addProcessTraceItem(kind, text) {
     if (!enableProcessTrace) return;
@@ -22168,6 +22211,7 @@ async function sendMessage(message = null, options = {}) {
             }
 
             reasoningContent += parsed.content;
+            recordTimelineStep('reasoning', isChineseLanguage(appState.language) ? '思考' : 'Thinking', parsed.content || '', 'done');
             traceReasoningChars += (parsed.content || '').length;
             addProcessTraceItem('reasoning', parsed.content || '');
             if (processTraceDetail) {
@@ -22242,6 +22286,9 @@ async function sendMessage(message = null, options = {}) {
               continue;
             }
             fullContent += cleanChunk;
+            if (!timelineSequence.some((row) => row.kind === 'generating' && row.status === 'running')) {
+              recordTimelineStep('generating', isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response', '', 'running');
+            }
 
             // 将新字符推入渲染队列（而非直接渲染整个内容）
             const newChars = cleanChunk;
@@ -22507,6 +22554,7 @@ async function sendMessage(message = null, options = {}) {
           else if (parsed.type === 'tool_status') {
             upsertToolTraceItem(parsed);
             if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
+            recordTimelineStep('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done');
             addProcessTraceItem('tool', summarizeToolTrace(parsed));
             scrollToBottom();
           }
@@ -22530,6 +22578,7 @@ async function sendMessage(message = null, options = {}) {
               currentSearchQuery = parsed.query || '';
               // 动态追加"联网搜索"步骤（顺序时间轴：分析 → 搜索 → 生成 → 搜索 → 生成）
               const searchStep = ensureSearchStep(currentSearchQuery);
+              recordTimelineStep('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', currentSearchQuery, 'running');
               updateStepStatus(searchStep, 'running', isChineseLanguage(appState.language)
                 ? `"${currentSearchQuery}"`
                 : `"${currentSearchQuery}"`);
@@ -22587,6 +22636,12 @@ async function sendMessage(message = null, options = {}) {
 
             // 更新步骤状态：生成回答完成
             updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
+            timelineSequence.forEach((row) => {
+              if (row.kind === 'generating' && row.status === 'running') {
+                row.status = 'done';
+                row.detail = isChineseLanguage(appState.language) ? '已完成' : 'Completed';
+              }
+            });
             updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
               ? `过程完成 · ${traceItems}条记录`
               : `Done · ${traceItems} trace items`);
@@ -22735,6 +22790,7 @@ async function sendMessage(message = null, options = {}) {
         drafts: draftSnapshot,
         metrics: agentRunState.metrics || null,
         trace: processTraceEvents,
+        timeline: timelineSequence.slice(-200),
         tools: toolSnapshot
       };
       if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
