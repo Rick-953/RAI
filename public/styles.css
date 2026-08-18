@@ -5384,7 +5384,56 @@ video.private-file-preview-media {
 
 
 
-/* ==================== 时间轴思考UI (Timeline Thinking UI) ==================== */
+.rai-reasoning-block.mode-live .rai-reasoning-content {
+  max-height: 150px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.rai-reasoning-block.mode-expanded .rai-reasoning-content {
+  max-height: 420px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.rai-reasoning-modes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.rai-reasoning-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.rai-reasoning-mode:hover,
+.rai-reasoning-mode.selected {
+  background: color-mix(in srgb, var(--color-saturn-yellow) 12%, transparent);
+  color: var(--color-saturn-yellow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-trace-item,
+  .tool-trace-detail,
+  .rai-reasoning-mode {
+    animation: none;
+    transition: none;
+  }
+}
+
+
 
 /* 时间轴容器 */
 .thinking-timeline {
@@ -5576,6 +5625,106 @@ video.private-file-preview-media {
 
 .thinking-step[data-status="failed"] .thinking-step-detail {
   color: #fca5a5;
+}
+
+/* 工具调用轨迹：保持在既有时间线内，不使用悬浮卡片。 */
+.tool-trace-panel {
+  margin: 2px 0 var(--spacing-md);
+  min-width: 0;
+}
+
+.tool-trace-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tool-trace-count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-trace-list {
+  position: relative;
+  margin-top: 7px;
+  border-left: 2px solid var(--border-color);
+  padding-left: 12px;
+  max-height: 232px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.tool-trace-item {
+  position: relative;
+  margin: 0 0 7px;
+  min-width: 0;
+  color: var(--text-secondary);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.tool-trace-item::before {
+  content: '';
+  position: absolute;
+  left: -17px;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  border: 2px solid var(--bg-primary);
+}
+
+.tool-trace-item.tool-trace-current::before {
+  background: var(--color-saturn-yellow);
+  animation: node-pulse 1.5s ease-in-out infinite;
+}
+
+.tool-trace-item[data-status="failed"]::before {
+  background: #ef4444;
+}
+
+.tool-trace-summary {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-trace-detail {
+  display: none;
+  margin-top: 5px;
+  max-height: 154px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 78%, transparent);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-trace-item.tool-trace-current .tool-trace-detail,
+.tool-trace-item.tool-trace-expanded .tool-trace-detail {
+  display: block;
+  animation: tool-trace-reveal 0.2s ease-out;
+}
+
+.tool-trace-item.tool-trace-collapsed .tool-trace-detail {
+  display: none;
+}
+
+@keyframes tool-trace-reveal {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* 过程轨迹折叠按钮 */

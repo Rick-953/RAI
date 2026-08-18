@@ -24032,15 +24032,26 @@ if (clientFileExecution && systemPrompt) {
                                         ? (localAgentSession ? '正在请求本地 Agent 执行脚本' : (clientFileExecution ? '正在请求本地执行 PowerShell 命令' : '正在隔离 Linux 沙箱中执行'))
                                         : (clientFileExecution ? '正在请求本地文件操作' : '正在生成受控文件产物'));
                                 res.write(`data: ${JSON.stringify({
-                                    type: 'tool_status',
-                                    tool: toolName,
-                                    status: 'running',
-                                    message: fileToolMessage
-                                })}\n\n`);
+                                        type: 'tool_status',
+                                        tool: toolName,
+                                        tool_call_id: toolCall.id,
+                                        status: 'running',
+                                        detail: toolName === 'read_skill' ? `读取技能: ${String(args?.name || '').slice(0, 80)}` : fileToolMessage,
+                                        message: fileToolMessage
+                                    })}\n\n`);
                             }
 
                             if (isReadSkillTool) {
                                 const requestedSkill = String(args?.name || '');
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: 'read_skill',
+                                    tool_call_id: toolCall.id,
+                                    status: 'running',
+                                    skill: requestedSkill,
+                                    detail: `读取技能: ${requestedSkill}`,
+                                    message: `正在读取 ${requestedSkill} 技能`
+                                })}\n\n`);
                                 if (loadedSkillNames.has(requestedSkill) || loadedSkillNames.size >= 3) {
                                     executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_load_limit' } });
                                     continue;
@@ -24071,6 +24082,7 @@ if (clientFileExecution && systemPrompt) {
                                     loadedSkillNames.add(localSkill.name);
                                     executedToolResults.push({ toolCall, result: { loaded: true, name: localSkill.name } });
                                     conversationMessages = appendTrustedSkillToCanonicalSystemMessage(conversationMessages, localSkill);
+                                    res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: localSkill.name, detail: `已加载技能: ${localSkill.name}`, message: `Loaded ${localSkill.name} skill` })}\n\n`);
                                     console.log(' 本地文件执行模式：已注入本地工作目录技能（替换 sandbox）');
                                     continue;
                                 }
@@ -24082,6 +24094,7 @@ if (clientFileExecution && systemPrompt) {
                                         conversationMessages,
                                         trustedSkill
                                     );
+                                    res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: trustedSkill.name, detail: `已加载技能: ${trustedSkill.name}`, message: `Loaded ${trustedSkill.name} skill` })}\n\n`);
                                 } catch (skillError) {
                                     // Layer 1 remains in the canonical prompt; never use model text as a fallback instruction.
                                     executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_unavailable' } });
@@ -24480,7 +24493,12 @@ if (clientFileExecution && systemPrompt) {
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: toolName,
+                                    tool_call_id: toolCall.id,
                                     status: 'complete',
+                                    detail: toolName === 'sandbox_exec'
+                                        ? `沙箱完成 · exit=${Number(result?.exit_code ?? 0)} · ${Number(result?.size || 0)} bytes`
+                                        : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
+                                    file_name: result?.file_name || result?.fileName || '',
                                     message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
                                 })}\n\n`);
                                 console.log(` 工具执行完成: ${toolName}, bytes=${Number(result?.size || result?.text?.length || 0)}`);
