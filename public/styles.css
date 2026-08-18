@@ -18801,8 +18801,8 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   background-position: center bottom;
   background-size: contain;
   opacity: 0;
-  transition: opacity 200ms ease;
-  will-change: opacity, background-image;
+  transition: opacity 200ms ease-in-out;
+  will-change: opacity;
 }
 
 .rai-tea-pet-layer[data-visible="1"] {

@@ -3057,14 +3057,14 @@ const TeaPetRuntime = {
     }, randBetween(this.IDLE_MIN_MS, this.IDLE_MAX_MS));
   },
 
-  // 状态切换时直接落定第 0 帧（不做无关帧的交叉溶解）
+  // 状态切换时直接落定第 0 帧（不做无关帧的交叉溶解）；同时预载 -1 变体到隐藏层
   snapFrame() {
     this.frame = 0;
-    const url = `url('images/pets/${this.fileForState()}.webp')`;
+    const base = this.fileForState();
     const a = this.layerEl(0);
     const b = this.layerEl(1);
-    if (a) { a.style.backgroundImage = url; a.dataset.visible = '1'; }
-    if (b) { b.style.backgroundImage = url; b.dataset.visible = '0'; }
+    if (a) { a.style.backgroundImage = `url('images/pets/${base}.webp')`; a.dataset.visible = '1'; }
+    if (b) { b.style.backgroundImage = `url('images/pets/${base}-1.webp')`; b.dataset.visible = '0'; }
     this.activeLayer = 0;
   },
 
@@ -3085,16 +3085,20 @@ const TeaPetRuntime = {
       return;
     }
     // 双帧 500ms 周期交叉溶解（同 UWP hold300+transition200）：base ↔ base-1 变体无限循环
+    // 平滑关键：图片只在层隐藏时替换（提前一个周期预载好），tick 只切 opacity ——
+    // 交叉溶解期间两帧都是已解码、同画布的图片 → 无解码闪帧、无尺寸跳变、无背景图硬切
     const base = this.fileForState();
     const nextFrame = this.frame === 0 ? 1 : 0;
-    const nextKey = nextFrame === 1 ? `${base}-1` : base;
     const incoming = this.layerEl(this.activeLayer ^ 1);
     const outgoing = this.layerEl(this.activeLayer);
     if (incoming && outgoing) {
-      incoming.style.backgroundImage = `url('images/pets/${nextKey}.webp')`;
-      incoming.dataset.visible = '1';
+      incoming.dataset.visible = '1';   // 淡入（图片早已预载）
       this.activeLayer ^= 1;
-      outgoing.dataset.visible = '0';
+      outgoing.dataset.visible = '0';   // 淡出
+      // 预载下一轮帧到刚隐藏的层：整个淡出+hold 周期都在解码，轮到它淡入时早已就绪
+      const afterFrame = nextFrame === 1 ? 0 : 1;
+      const afterKey = afterFrame === 1 ? `${base}-1` : base;
+      outgoing.style.backgroundImage = `url('images/pets/${afterKey}.webp')`;
     }
     this.frame = nextFrame;
   },
