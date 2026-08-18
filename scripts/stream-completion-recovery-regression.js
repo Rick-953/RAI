@@ -91,7 +91,7 @@ assert.doesNotMatch(server, /收到 tool_calls 但均无效，已跳过/,
   'invalid tool calls must never silently skip tool continuation');
 
 assert.match(app, /let receivedExplicitError = false/);
-assert.match(app, /parsed\.type === 'error'[\s\S]{0,260}receivedExplicitError = true[\s\S]{0,600}updateStepStatus\(stepGenerating, 'failed'/,
+assert.match(app, /parsed\.type === 'error'[\s\S]{0,260}receivedExplicitError = true[\s\S]{0,600}updateStepStatus\(getGeneratingStep\(\), 'failed'/,
   'explicit SSE errors must mark generation failed');
 assert.match(app, /!receivedDoneEvent && !receivedCancelled && !receivedExplicitError[\s\S]{0,160}自动续传/,
   'explicit tool/provider errors must not enter connection continuation');
