@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.1';
-const RAI_BUILD_ID = '20260814-local-agent-install-v01301-r2';
+const RAI_APP_VERSION = '0.13.6';
+const RAI_BUILD_ID = '20260818-version-contract-v0136-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -15255,7 +15255,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.13.1 初始化 (local-agent-install-ux)');
+  console.log(` RAI v${RAI_APP_VERSION} 初始化 (local-agent-install-ux)`);
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -20873,6 +20873,15 @@ async function sendMessage(message = null, options = {}) {
             </div>
             ${processTraceStepHtml}
 
+            <!-- 当前轮工具调用详情 -->
+            <div class="tool-trace-panel" id="toolTracePanel" hidden>
+              <div class="tool-trace-heading">
+                <span>${isChineseLanguage(appState.language) ? '工具调用' : 'Tool calls'}</span>
+                <span class="tool-trace-count" id="toolTraceCount">0</span>
+              </div>
+              <div class="tool-trace-list" id="toolTraceList" aria-live="polite"></div>
+            </div>
+
             <!-- 步骤2: 生成回答 -->
             <div class="thinking-step" id="stepGenerating" data-status="pending">
               <div class="thinking-step-node"></div>
@@ -20882,11 +20891,16 @@ async function sendMessage(message = null, options = {}) {
               </div>
             </div>
 
-          <div class="rai-reasoning-block" id="raiReasoningBlock" style="display: none;">
+          <div class="rai-reasoning-block" id="raiReasoningBlock" data-reasoning-mode="collapsed" style="display: none;">
             <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
               <span class="rai-reasoning-label">
                 <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
                 <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
+              </span>
+              <span class="rai-reasoning-modes" role="group">
+                <button type="button" class="rai-reasoning-mode selected" data-reasoning-mode="collapsed" aria-label="${isChineseLanguage(appState.language) ? '折叠思考' : 'Collapse thinking'}">${getSvgIcon('unfold_less', 'material-symbols-outlined', 15)}</button>
+                <button type="button" class="rai-reasoning-mode" data-reasoning-mode="live" aria-label="${isChineseLanguage(appState.language) ? '滚动思考' : 'Live thinking'}">${getSvgIcon('vertical_align_bottom', 'material-symbols-outlined', 15)}</button>
+                <button type="button" class="rai-reasoning-mode" data-reasoning-mode="expanded" aria-label="${isChineseLanguage(appState.language) ? '展开思考' : 'Expand thinking'}">${getSvgIcon('unfold_more', 'material-symbols-outlined', 15)}</button>
               </span>
               <span class="toggle-icon">▼</span>
             </button>
@@ -20909,11 +20923,15 @@ async function sendMessage(message = null, options = {}) {
   const raiReasoningContent = aiMsgDiv.querySelector('#raiReasoningContent');
   if (raiReasoningToggle && raiReasoningBlock) {
     raiReasoningToggle.addEventListener('click', function () {
-      const expanded = raiReasoningBlock.classList.toggle('expanded');
-      this.classList.toggle('expanded', expanded);
-      if (expanded && raiReasoningContent) {
-        raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
-      }
+      const next = appState.thinkingUIMode === 'collapsed' ? 'expanded' : 'collapsed';
+      setReasoningDisplayMode(next);
+      if (raiReasoningContent && next !== 'collapsed') raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
+    });
+    raiReasoningBlock.querySelectorAll('[data-reasoning-mode]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setReasoningDisplayMode(button.dataset.reasoningMode);
+      });
     });
   }
 
@@ -20939,6 +20957,93 @@ async function sendMessage(message = null, options = {}) {
   const deepThinkingContent = null;
   const toolStatusBar = aiMsgDiv.querySelector('#searchStatus');
   const toolStatusText = aiMsgDiv.querySelector('#searchStatusText');
+  const toolTracePanel = aiMsgDiv.querySelector('#toolTracePanel');
+  const toolTraceList = aiMsgDiv.querySelector('#toolTraceList');
+  const toolTraceCount = aiMsgDiv.querySelector('#toolTraceCount');
+  const toolTraceItems = new Map();
+  let activeToolTraceId = '';
+
+  function formatToolTraceLabel(tool = '') {
+    const labels = {
+      web_search: isChineseLanguage(appState.language) ? '联网搜索' : 'Web search',
+      read_skill: isChineseLanguage(appState.language) ? '加载技能' : 'Load skill',
+      sandbox_exec: isChineseLanguage(appState.language) ? '沙箱命令' : 'Sandbox command',
+      fetch_url: isChineseLanguage(appState.language) ? '下载文件' : 'Download file',
+      read_file: isChineseLanguage(appState.language) ? '读取文件' : 'Read file',
+      edit_file: isChineseLanguage(appState.language) ? '编辑文件' : 'Edit file',
+      create_artifact: isChineseLanguage(appState.language) ? '生成文件' : 'Create file',
+      transform_file: isChineseLanguage(appState.language) ? '转换文件' : 'Transform file',
+      generate_image: isChineseLanguage(appState.language) ? '生成图片' : 'Generate image',
+      save_memory: isChineseLanguage(appState.language) ? '保存记忆' : 'Save memory',
+      delete_memory: isChineseLanguage(appState.language) ? '删除记忆' : 'Delete memory'
+    };
+    return labels[tool] || tool || (isChineseLanguage(appState.language) ? '工具调用' : 'Tool call');
+  }
+
+  function summarizeToolTrace(event = {}) {
+    const tool = String(event.tool || event.name || '');
+    const args = event.args && typeof event.args === 'object' ? event.args : {};
+    if (tool === 'web_search') return `${formatToolTraceLabel(tool)}: ${event.query || args.query || event.message || ''}`.trim();
+    if (tool === 'read_skill') return `${formatToolTraceLabel(tool)}: ${event.skill || args.name || event.message || ''}`.trim();
+    if (tool === 'sandbox_exec') return `${formatToolTraceLabel(tool)}: ${event.command || event.detail || event.message || '执行脚本'}`.trim();
+    if (tool === 'fetch_url') return `${formatToolTraceLabel(tool)}: ${event.file_name || event.url || event.message || '下载外部文件'}`.trim();
+    if (event.message) return `${formatToolTraceLabel(tool)}: ${event.message}`;
+    return formatToolTraceLabel(tool);
+  }
+
+  function upsertToolTraceItem(event = {}) {
+    if (!toolTraceList) return;
+    const tool = String(event.tool || event.name || event.kind || 'tool');
+    const id = String(event.tool_call_id || event.call_id || `${tool}:${event.round || 0}:${event.query || event.skill || event.file_name || event.url || ''}`);
+    const status = String(event.status || 'running').toLowerCase();
+    const isCurrent = status === 'running' || status === 'pending';
+    if (toolTracePanel) toolTracePanel.hidden = false;
+    let item = toolTraceItems.get(id);
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'tool-trace-item';
+      item.dataset.traceId = id;
+      item.innerHTML = '<div class="tool-trace-summary"></div><div class="tool-trace-detail" tabindex="0"></div>';
+      toolTraceList.appendChild(item);
+      toolTraceItems.set(id, item);
+    }
+    const summary = item.querySelector('.tool-trace-summary');
+    const detail = item.querySelector('.tool-trace-detail');
+    const text = summarizeToolTrace(event);
+    if (summary) summary.textContent = text;
+    if (detail) {
+      const detailText = String(event.detail || event.output || event.message || '').slice(0, 12000);
+      detail.textContent = detailText;
+    }
+    item.dataset.status = status;
+    item.classList.toggle('tool-trace-current', isCurrent);
+    item.classList.toggle('tool-trace-expanded', isCurrent);
+    if (activeToolTraceId && activeToolTraceId !== id) {
+      const previous = toolTraceItems.get(activeToolTraceId);
+      if (previous) {
+        previous.classList.remove('tool-trace-current', 'tool-trace-expanded');
+        previous.classList.add('tool-trace-collapsed');
+      }
+    }
+    if (isCurrent) activeToolTraceId = id;
+    if (toolTraceCount) toolTraceCount.textContent = String(toolTraceItems.size);
+    if (isCurrent) toolTraceList.scrollTop = toolTraceList.scrollHeight;
+  }
+
+  function setReasoningDisplayMode(mode = 'collapsed') {
+    const allowed = new Set(['collapsed', 'live', 'expanded']);
+    const next = allowed.has(mode) ? mode : 'collapsed';
+    appState.thinkingUIMode = next;
+    if (!raiReasoningBlock) return;
+    raiReasoningBlock.dataset.reasoningMode = next;
+    raiReasoningBlock.classList.toggle('mode-live', next === 'live');
+    raiReasoningBlock.classList.toggle('mode-expanded', next === 'expanded');
+    raiReasoningBlock.classList.toggle('expanded', next !== 'collapsed');
+    if (raiReasoningContent && next === 'live') raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
+    aiMsgDiv.querySelectorAll('[data-reasoning-mode]').forEach((button) => {
+      button.classList.toggle('selected', button.dataset.reasoningMode === next);
+    });
+  }
 
   const agentRunState = {
     tasks: new Map(),
@@ -21867,6 +21972,7 @@ async function sendMessage(message = null, options = {}) {
 
     let receivedDoneEvent = false;
     let receivedCancelled = false;
+    let receivedExplicitError = false;
     let streamFailureMessage = '';
     let streamReadError = null;
 
@@ -21913,8 +22019,7 @@ async function sendMessage(message = null, options = {}) {
               // 显示并展开思考内容块（正文位置，比正文浅、字号小）
               if (raiReasoningBlock) {
                 raiReasoningBlock.style.display = '';
-                raiReasoningBlock.classList.add('expanded');
-                if (raiReasoningToggle) raiReasoningToggle.classList.add('expanded');
+                setReasoningDisplayMode('live');
               }
 
               // 更新加载状态文本
@@ -21992,8 +22097,7 @@ async function sendMessage(message = null, options = {}) {
                 }
               }
               if (raiReasoningBlock) {
-                raiReasoningBlock.classList.remove('expanded');
-                if (raiReasoningToggle) raiReasoningToggle.classList.remove('expanded');
+                setReasoningDisplayMode('collapsed');
               }
 
               // 更新步骤状态：生成回答进行中
@@ -22272,8 +22376,11 @@ async function sendMessage(message = null, options = {}) {
               ? `返工#${agentRetryCount}: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
-          else if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
-            updateImageGenerationStatus(parsed);
+          else if (parsed.type === 'tool_status') {
+            upsertToolTraceItem(parsed);
+            if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
+            addProcessTraceItem('tool', summarizeToolTrace(parsed));
+            scrollToBottom();
           }
           else if (parsed.type === 'memory_update') {
             applyMemoryUpdateEvent(parsed);
@@ -22281,6 +22388,12 @@ async function sendMessage(message = null, options = {}) {
           }
           //  处理搜索状态 - 更新到时间轴第一步
           else if (parsed.type === 'search_status') {
+            upsertToolTraceItem({
+              ...parsed,
+              tool: 'web_search',
+              status: parsed.status === 'complete' || parsed.status === 'no_results' ? 'complete' : 'running',
+              detail: parsed.message || parsed.query || ''
+            });
             if (parsed.status === 'analyzing') {
               // 正在分析是否需要搜索
               updateStepStatus(stepToolDecision, 'active', isChineseLanguage(appState.language) ? '正在分析问题...' : 'Analyzing...');
@@ -22348,10 +22461,12 @@ async function sendMessage(message = null, options = {}) {
             break;
           }
           else if (parsed.type === 'error') {
-            streamFailureMessage = String(parsed.error || '未知错误');
+            receivedExplicitError = true;
+            streamFailureMessage = String(parsed.message || parsed.error || '未知错误');
             stopCharRender();  // 停止字符渲染
-            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
-            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${parsed.error || ''}`);
+            updateStepStatus(stepGenerating, 'failed', isChineseLanguage(appState.language) ? '工具调用或生成失败' : 'Tool call or generation failed');
+            updateStepStatus(stepProcessTrace, 'failed', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
+            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${streamFailureMessage}`);
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
             break;
@@ -22367,7 +22482,7 @@ async function sendMessage(message = null, options = {}) {
       console.warn('聊天流读取中断，准备自动续传:', error?.message || error);
     }
 
-    if (!receivedDoneEvent && !receivedCancelled) {
+    if (!receivedDoneEvent && !receivedCancelled && !receivedExplicitError) {
       updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '未收到完成事件，开始自动续传' : 'Completion event missing; starting continuation');
       const recovered = await recoverIncompleteChatStream({
@@ -22406,6 +22521,11 @@ async function sendMessage(message = null, options = {}) {
       }
     }
 
+    if (receivedExplicitError) {
+      throw new Error(streamFailureMessage || (isChineseLanguage(appState.language)
+        ? '工具调用或生成失败'
+        : 'Tool call or generation failed'));
+    }
     if (!receivedDoneEvent && !receivedCancelled && !String(fullContent || '').trim()) {
       throw new Error(streamFailureMessage || streamReadError?.message || (isChineseLanguage(appState.language)
         ? '模型输出未完成'

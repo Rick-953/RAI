@@ -60,10 +60,16 @@ const {
 } = require('./lib/file-edit');
 const { createWindowsDownloadsResolver } = require('./lib/windows-downloads');
 const {
+    isHostnameAllowedBySet,
     normalizeHostname,
     requestPinnedHttp,
     resolveSafeHttpTarget
 } = require('./lib/network-address-policy');
+const {
+    checkFetchDenylist,
+    getFetchDenylistStats,
+    refreshFetchDenylist
+} = require('./lib/fetch-denylist');
 const { createTotpSecretCipher } = require('./lib/totp-secret-crypto');
 const {
     sniffRasterImageBuffer,
@@ -2609,7 +2615,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'sandbox_exec',
-        description: 'Run a bounded POSIX shell script inside a fresh no-network Linux sandbox. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive; each call still uses a fresh workspace.',
+        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has no direct network; use the server-side fetch_url gate for permitted public downloads. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -2634,6 +2640,57 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
         }
     }
 };
+
+// fetch_url — controlled download gate for the file workspace.
+// The sandbox process itself stays offline (--unshare-all); downloads flow
+// through this SSRF-protected server endpoint and land as session attachments.
+const FETCH_URL_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
+const FETCH_URL_TIMEOUT_MS = 15000;
+// Host allowlist: exact host or any subdomain. Extend via RAI_FETCH_EXTRA_HOSTS
+// (comma-separated) in the deployment env; the allowlist is the only opening,
+// everything else is refused before any connection attempt.
+const FETCH_URL_HOST_ALLOWLIST = new Set([
+    'github.com',
+    'githubusercontent.com',
+    'gitlab.com',
+    ...String(process.env.RAI_FETCH_EXTRA_HOSTS || '')
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase().replace(/^\./, ''))
+        .filter(Boolean)
+]);
+
+const FETCH_URL_TOOL_DEFINITION = {
+    type: 'function',
+    function: {
+        name: 'fetch_url',
+        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected allowlist and threat denylist, then attach it to the current session. Allowed hosts: GitHub and GitLab domains (including raw-content and codeload CDN hosts) plus any hosts configured in RAI_FETCH_EXTRA_HOSTS. High-risk malware, phishing, RAT, stealer, backdoor, and crypto-miner repositories and threat-feed domains are refused by exact identity/feed match. URLs with embedded credentials are rejected. Returns a file_id that read_file, edit_file, and sandbox_exec can consume. Do not fetch URLs inside sandbox scripts — the sandbox is offline.',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['url'],
+            properties: {
+                url: {
+                    type: 'string',
+                    description: 'Full https:// URL of the public file to download, e.g. https://raw.githubusercontent.com/owner/repo/main/data.csv'
+                },
+                output_name: {
+                    type: 'string',
+                    description: 'Optional friendly display name for the attachment (extension preserved). Defaults to the URL basename.'
+                }
+            }
+        }
+    }
+};
+
+function safeUrlBasename(pathname = '') {
+    const raw = String(pathname || '');
+    const segment = raw.split('/').filter(Boolean).pop() || '';
+    try {
+        return decodeURIComponent(segment).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
+    } catch (_) {
+        return segment.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
+    }
+}
 
 const READ_FILE_TOOL_DEFINITION_LOCAL = {
     type: 'function',
@@ -3123,7 +3180,7 @@ function hasToolDefinition(toolDefinitions = [], toolName = '') {
 }
 
 const FILE_WORKSPACE_TOOL_NAMES = new Set([
-    'read_file', 'transform_file', 'edit_file', 'create_artifact', 'sandbox_exec', 'insert_image',
+    'read_file', 'transform_file', 'edit_file', 'create_artifact', 'sandbox_exec', 'fetch_url', 'insert_image',
     'update_sheet', 'list_files', 'write_file', 'copy_file', 'move_file', 'delete_file', 'process_exec',
     ...LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS.map((tool) => tool.function.name)
 ]);
@@ -3226,7 +3283,8 @@ function buildChatToolDefinitions({
                 TRANSFORM_FILE_TOOL_DEFINITION,
                 EDIT_FILE_TOOL_DEFINITION,
                 CREATE_ARTIFACT_TOOL_DEFINITION,
-                SANDBOX_EXEC_TOOL_DEFINITION
+                SANDBOX_EXEC_TOOL_DEFINITION,
+                FETCH_URL_TOOL_DEFINITION
             );
         }
     }
@@ -3654,6 +3712,102 @@ const TOOL_EXECUTORS = {
             content: args?.content,
             fileName: args?.file_name
         });
+    },
+    fetch_url: async (args, context = {}) => {
+        const userId = Number(context?.userId || 0);
+        const sessionId = String(context?.sessionId || '');
+        if (!userId || !sessionId) throw new FileWorkspaceError('workspace_session_required', 'workspace_session_required', 400);
+        const urlText = String(args?.url || '').trim();
+        const parsedUrl = new URL(urlText);
+        const staticDeny = checkFetchDenylist(urlText);
+        if (staticDeny.blocked) {
+            console.warn(` fetch_url 黑名单拦截: type=${staticDeny.type}, value=${staticDeny.value}`);
+            throw new FileWorkspaceError('fetch_url_denylist_blocked', 'fetch_url_denylist_blocked', 403);
+        }
+        await refreshFetchDenylist().catch((error) => {
+            console.warn(` fetch_url 威胁源刷新失败: code=${String(error?.code || error?.message || 'unknown').slice(0, 80)}`);
+        });
+        const dynamicDeny = checkFetchDenylist(urlText);
+        if (dynamicDeny.blocked) {
+            console.warn(` fetch_url 威胁源拦截: type=${dynamicDeny.type}, value=${dynamicDeny.value}`);
+            throw new FileWorkspaceError('fetch_url_denylist_blocked', 'fetch_url_denylist_blocked', 403);
+        }
+        const hostname = normalizeHostname(parsedUrl.hostname);
+        if (!isHostnameAllowedBySet(hostname, FETCH_URL_HOST_ALLOWLIST)) {
+            throw new FileWorkspaceError('fetch_url_host_not_allowed', 'fetch_url_host_not_allowed', 403);
+        }
+        let target;
+        try {
+            target = await resolveSafeHttpTarget(urlText, { allowedHosts: FETCH_URL_HOST_ALLOWLIST });
+        } catch (error) {
+            const code = String(error?.code || 'fetch_url_rejected');
+            throw new FileWorkspaceError(code, code, 403);
+        }
+        let response;
+        try {
+            response = await requestPinnedHttp(target, { timeoutMs: FETCH_URL_TIMEOUT_MS, maxBytes: FETCH_URL_DOWNLOAD_MAX_BYTES });
+        } catch (error) {
+            const code = String(error?.code || 'fetch_url_failed');
+            throw new FileWorkspaceError(code, code, 502);
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            throw new FileWorkspaceError('fetch_url_http_status', `fetch_url_http_status_${Number(response.statusCode || 0)}`, 502);
+        }
+        if (response.buffer.length === 0 || response.buffer.length > FETCH_URL_DOWNLOAD_MAX_BYTES) {
+            throw new FileWorkspaceError('fetch_url_size_limit', 'fetch_url_size_limit', 413);
+        }
+        const displayName = (args?.output_name && String(args.output_name).trim())
+            ? normalizeUploadOriginalName(String(args.output_name).trim())
+            : safeUrlBasename(parsedUrl.pathname) || 'download.bin';
+        const ext = path.extname(displayName).toLowerCase().slice(1);
+        if (!ext || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext) || BLOCKED_DOCUMENT_ATTACHMENT_EXTENSIONS.has(ext)) {
+            throw new FileWorkspaceError('fetch_url_extension_blocked', 'fetch_url_extension_blocked', 422);
+        }
+        if (SANDBOXED_OFFICE_ATTACHMENT_EXTENSIONS.has(ext) && !DOCUMENT_SANDBOX_RUNTIME_ENABLED) {
+            throw new FileWorkspaceError('fetch_url_content_blocked', 'fetch_url_document_runtime_unavailable', 422);
+        }
+        if (SANDBOXED_ARCHIVE_ATTACHMENT_EXTENSIONS.has(ext) && !DOCUMENT_SANDBOX_RUNTIME_ENABLED) {
+            throw new FileWorkspaceError('fetch_url_content_blocked', 'fetch_url_archive_runtime_unavailable', 422);
+        }
+        const contentType = String(response.headers['content-type'] || 'application/octet-stream').split(';')[0].trim().slice(0, 120);
+        if (/x-msdownload|x-msdos-program|x-msi/i.test(contentType)) {
+            throw new FileWorkspaceError('fetch_url_content_blocked', 'fetch_url_executable_mime_rejected', 422);
+        }
+        if (looksLikeActiveWebContent(response.buffer) && !isTextualAttachmentExtension(ext)) {
+            throw new FileWorkspaceError('fetch_url_content_blocked', 'fetch_url_active_web_content_rejected', 422);
+        }
+        const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+        const uploadsRoot = path.resolve(__dirname, 'uploads');
+        const filePath = path.join(uploadsRoot, filename);
+        try {
+            await fs.promises.writeFile(filePath, response.buffer, { mode: 0o600, flag: 'wx' });
+            await recordUploadedFileWithinQuota(
+                { user: { userId } },
+                {
+                    filename,
+                    originalname: displayName,
+                    mimetype: contentType || 'application/octet-stream',
+                    size: response.buffer.length
+                },
+                'attachment'
+            );
+            await validateUploadedFileContent({ filename, originalname: displayName }, 'attachment');
+        } catch (error) {
+            await fs.promises.unlink(filePath).catch(() => null);
+            throw error;
+        }
+        const sha256 = crypto.createHash('sha256').update(response.buffer).digest('hex');
+        console.log(` 执行工具 fetch_url: user=${userId}, host=${hostname}, bytes=${response.buffer.length}, sha256=${sha256.slice(0, 12)}`);
+        return {
+            ok: true,
+            file_id: filename,
+            file_name: displayName.slice(0, 255),
+            mime_type: contentType || 'application/octet-stream',
+            size: response.buffer.length,
+            sha256,
+            download_available: true,
+            source: 'fetch_url'
+        };
     },
     sandbox_exec: async (args, context = {}) => {
         const sources = [];
@@ -5285,6 +5439,19 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             metadata: result?.metadata || {},
             text: typeof result?.text === 'string' ? result.text : '',
             reply_instruction: 'Use the returned file content only for the current answer. Do not expose server paths, internal IDs, or tool protocol.'
+        };
+    }
+
+    if (toolName === 'fetch_url') {
+        return {
+            success: result?.ok === true,
+            file_id: result?.file_id || '',
+            file_name: result?.file_name || '',
+            mime_type: result?.mime_type || '',
+            size: Number(result?.size || 0),
+            sha256: result?.sha256 || '',
+            download_available: result?.download_available === true,
+            reply_instruction: 'The downloaded file is now an attachment of this session. Reference it by its file_id with read_file, edit_file, or sandbox_exec (pass it in file_ids). Do not repeat the original URL or server paths.'
         };
     }
 
@@ -20690,21 +20857,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 临时对话 memoryMode=off，跳过用户身份/偏好/长期记忆注入: userId=${req.user.userId}, sessionKind=${activeSessionKind || 'none'}`);
         }
 
-        if (memoryModeOff) {
-            systemPrompt = '';
-        } else {
-            const customPrompt = await getWebControlledCustomSystemPrompt(req.user.userId);
-            systemPrompt = buildCanonicalRaiSystemPrompt({
-                promptLanguage: sessionPromptContext.promptLanguage,
-                modelIdentity: sessionPromptContext.modelIdentity,
-                includeMemory: longMemoryEnabled,
-                customPrompt,
-                skillCatalog: getSkillCatalog()
-            });
-            console.log(
-                ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, customPromptLength=${customPrompt.length}`
-            );
-        }
+        // Temporary conversations isolate user-specific state only. They still need the
+        // canonical Layer 0/1 prompt and core tools; otherwise a valid read_skill
+        // or file call can be emitted by a provider but is absent from the runtime
+        // tool registry, which terminates the tool loop without a final answer.
+        const customPrompt = memoryModeOff
+            ? ''
+            : await getWebControlledCustomSystemPrompt(req.user.userId);
+        systemPrompt = buildCanonicalRaiSystemPrompt({
+            promptLanguage: sessionPromptContext.promptLanguage,
+            modelIdentity: sessionPromptContext.modelIdentity,
+            includeMemory: !memoryModeOff && longMemoryEnabled,
+            customPrompt,
+            skillCatalog: getSkillCatalog()
+        });
+        console.log(
+            ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, temporary=${memoryModeOff}, customPromptLength=${customPrompt.length}`
+        );
         const userIdentityInstruction = memoryModeOff ? '' : buildUserIdentityPrompt(promptUserProfile);
         if (userIdentityInstruction) {
             console.log(` 已注入当前用户信息到Prompt: userId=${req.user.userId}, hasUsername=${!!promptUserProfile?.username}, hasEmail=${!!promptUserProfile?.email}`);
@@ -20804,7 +20973,10 @@ if (clientFileExecution && systemPrompt) {
             ));
         const lowLatencyRequest = lowLatencyMode === true || lowLatencyMode === 1 || lowLatencyMode === '1';
         const workspaceToolsEnabled = shouldEnableWorkspaceTools(userContent, workspaceAttachmentCatalog);
-        const skillToolsEnabled = !memoryModeOff && (!lowLatencyRequest || raiProductSkillRequired || workspaceToolsEnabled);
+        // read_skill is a core protocol tool, not a memory feature. It must remain
+        // registered in temporary and low-latency conversations so all providers
+        // can finish the standard tool-result continuation round.
+        const skillToolsEnabled = true;
         if (workspaceAttachmentCatalog.length > 0) {
             if (internetMode) console.log(' 附件任务已禁用联网搜索');
             if (normalizedResearchMode !== 'off') console.log(' 附件任务已禁用研究讨论');
@@ -20816,7 +20988,7 @@ if (clientFileExecution && systemPrompt) {
             imageGenerationRequested,
             memoryToolsEnabled,
             skillToolsEnabled,
-            fileToolsEnabled: Boolean(sessionId) && (clientFileExecution || workspaceToolsEnabled),
+            fileToolsEnabled: Boolean(sessionId),
             clientFileExecution,
             localAgentEnabled: !!localAgentSession
         });
@@ -21857,7 +22029,7 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('需要某项能力的详细规则时，调用 read_skill，name 只能为已列出的技能名。询问 RAI 或 CX RAI 的稳定产品知识时，先读取 rai-product 且不联网；文件操作、压缩包、命令或代码执行前，先读取 sandbox。');
             }
             if (sessionId) {
-                toolHints.push('当前会话可使用隔离且无网络的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。禁止网络、宿主机访问、提权和绕过资源限制。');
+                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱进程无网络，外部文件用 fetch_url 下载（仅 GitHub/GitLab 等白名单域名，16MB 上限，下载物成为会话附件 file_id）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝。');
                 if (workspaceAttachmentCatalog.length > 0) {
                     toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
                 }
@@ -23864,7 +24036,19 @@ if (clientFileExecution && systemPrompt) {
             if (useStreamingTools && accumulatedToolCalls.length > 0) {
                 let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls, clientFileExecution);
                 if (pendingToolCalls.length === 0) {
-                    console.warn(` 收到 tool_calls 但均无效，已跳过`);
+                    const invalidToolCallMessage = '模型请求的工具调用无法验证，未执行任何操作。请重新生成，或换一种方式描述任务。';
+                    console.warn(` 收到 tool_calls 但均无效，拒绝将其当作成功回答完成: rawCalls=${accumulatedToolCalls.length}`);
+                    if (!String(fullContent || '').trim()) {
+                        emitStructuredAssistantChunk(invalidToolCallMessage);
+                    }
+                    res.write(`data: ${JSON.stringify({
+                        type: 'error',
+                        error: 'invalid_tool_call',
+                        message: invalidToolCallMessage
+                    })}\n\n`);
+                    const invalidToolCallError = new Error('invalid_tool_call');
+                    invalidToolCallError.code = 'invalid_tool_call';
+                    throw invalidToolCallError;
                 } else {
                     let toolRound = 0;
                     const maxToolRounds = clientFileExecution ? 8 : 5;
@@ -23935,15 +24119,26 @@ if (clientFileExecution && systemPrompt) {
                                         ? (localAgentSession ? '正在请求本地 Agent 执行脚本' : (clientFileExecution ? '正在请求本地执行 PowerShell 命令' : '正在隔离 Linux 沙箱中执行'))
                                         : (clientFileExecution ? '正在请求本地文件操作' : '正在生成受控文件产物'));
                                 res.write(`data: ${JSON.stringify({
-                                    type: 'tool_status',
-                                    tool: toolName,
-                                    status: 'running',
-                                    message: fileToolMessage
-                                })}\n\n`);
+                                        type: 'tool_status',
+                                        tool: toolName,
+                                        tool_call_id: toolCall.id,
+                                        status: 'running',
+                                        detail: toolName === 'read_skill' ? `读取技能: ${String(args?.name || '').slice(0, 80)}` : fileToolMessage,
+                                        message: fileToolMessage
+                                    })}\n\n`);
                             }
 
                             if (isReadSkillTool) {
                                 const requestedSkill = String(args?.name || '');
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: 'read_skill',
+                                    tool_call_id: toolCall.id,
+                                    status: 'running',
+                                    skill: requestedSkill,
+                                    detail: `读取技能: ${requestedSkill}`,
+                                    message: `正在读取 ${requestedSkill} 技能`
+                                })}\n\n`);
                                 if (loadedSkillNames.has(requestedSkill) || loadedSkillNames.size >= 3) {
                                     executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_load_limit' } });
                                     continue;
@@ -23978,6 +24173,7 @@ if (clientFileExecution && systemPrompt) {
                                     loadedSkillNames.add(localSkill.name);
                                     executedToolResults.push({ toolCall, result: { loaded: true, name: localSkill.name } });
                                     conversationMessages = appendTrustedSkillToCanonicalSystemMessage(conversationMessages, localSkill);
+                                    res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: localSkill.name, detail: `已加载技能: ${localSkill.name}`, message: `Loaded ${localSkill.name} skill` })}\n\n`);
                                     console.log(' 本地文件执行模式：已注入本地工作目录技能（替换 sandbox）');
                                     continue;
                                 }
@@ -23989,6 +24185,7 @@ if (clientFileExecution && systemPrompt) {
                                         conversationMessages,
                                         trustedSkill
                                     );
+                                    res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: trustedSkill.name, detail: `已加载技能: ${trustedSkill.name}`, message: `Loaded ${trustedSkill.name} skill` })}\n\n`);
                                 } catch (skillError) {
                                     // Layer 1 remains in the canonical prompt; never use model text as a fallback instruction.
                                     executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_unavailable' } });
@@ -24387,7 +24584,12 @@ if (clientFileExecution && systemPrompt) {
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: toolName,
+                                    tool_call_id: toolCall.id,
                                     status: 'complete',
+                                    detail: toolName === 'sandbox_exec'
+                                        ? `沙箱完成 · exit=${Number(result?.exit_code ?? 0)} · ${Number(result?.size || 0)} bytes`
+                                        : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
+                                    file_name: result?.file_name || result?.fileName || '',
                                     message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
                                 })}\n\n`);
                                 console.log(` 工具执行完成: ${toolName}, bytes=${Number(result?.size || result?.text?.length || 0)}`);

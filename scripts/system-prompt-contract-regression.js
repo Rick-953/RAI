@@ -30,9 +30,11 @@ function testSharedPromptBuilder() {
   assert.match(chinese, /web_sources:/);
   assert.match(chinese, /rai-product:/);
   assert.match(chinese, /sandbox: Use the isolated Linux sandbox/);
-  assert.match(chinese, /read_skill\(\{"name":"rai-product"\}\)/);
-  assert.match(chinese, /read_skill\(\{"name":"sandbox"\}\)/);
-  assert.match(chinese, /隔离且无网络的 Linux 沙箱/);
+  assert.match(chinese, /office: Create new Word, Excel, or PowerPoint documents/);
+  assert.match(chinese, /read_skill[^\n]*rai-product/);
+  assert.match(chinese, /read_skill[^\n]*sandbox/);
+  assert.match(chinese, /隔离的 Linux 沙箱/);
+  assert.match(chinese, /fetch_url/);
   assert.match(chinese, /### 记忆能力/);
   assert.match(chinese, /以下是用户个人偏好，请参考：\n请称呼我为 Rick/);
 
@@ -46,9 +48,10 @@ function testSharedPromptBuilder() {
   assert.match(english, /RAI is an AI chat application made by Rick/);
   assert.match(english, /never the identity of an upstream model, provider, or coding agent/);
   assert.match(english, /## Layer 1: available skills/);
-  assert.match(english, /read_skill\(\{"name":"rai-product"\}\)/);
-  assert.match(english, /isolated, no-network Linux sandbox/);
-  assert.match(english, /shell commands, and code execution/);
+  assert.match(english, /office: Create new Word, Excel, or PowerPoint documents/);
+  assert.match(english, /read_skill[^\n]*rai-product/);
+  assert.match(english, /isolated Linux sandbox/);
+  assert.match(english, /fetch_url/);
   assert.match(english, /personal preferences[\s\S]*Prefer concise answers\./);
 }
 
@@ -72,7 +75,8 @@ function testServerManagedNativeFallback() {
   assert.match(server, /let systemPrompt = ''/);
   assert.match(server, /lockAndResolveSessionPromptContext\([\s\S]{0,2400}COALESCE\(NULLIF\(prompt_model_identity, ''\), \?\)[\s\S]{0,500}COALESCE\(NULLIF\(prompt_language, ''\), \?\)/);
   assert.match(server, /getWebControlledCustomSystemPrompt[\s\S]{0,500}FROM user_configs WHERE user_id = \?/);
-  assert.match(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';\s*\} else \{[\s\S]{0,700}buildCanonicalRaiSystemPrompt\([\s\S]{0,500}customPrompt/);
+  assert.match(server, /const customPrompt = memoryModeOff[\s\S]{0,300}\? ''[\s\S]{0,500}buildCanonicalRaiSystemPrompt\([\s\S]{0,500}includeMemory: !memoryModeOff && longMemoryEnabled[\s\S]{0,500}customPrompt/,
+    'temporary conversations must retain canonical Layer 0/1 while excluding user-specific prompt and memory');
   assert.match(server, /skillCatalog:\s*getSkillCatalog\(\)/);
   assert.match(server, /rai-product/);
   assert.match(server, /sandbox_exec/);
@@ -103,8 +107,8 @@ function testServerManagedNativeFallback() {
     'identity questions must receive the server-authoritative product guard');
   assert.match(server, /'你是谁，由谁开发？': '我是 RAI，由 Rick 开发的 AI 对话软件/,
     'exact product identity questions must not reach an upstream identity prompt');
-  assert.match(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
-    'temporary/no-memory conversations must keep their explicit prompt isolation');
+  assert.doesNotMatch(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
+    'temporary/no-memory conversations must retain canonical Layer 0/1 and isolate only user-specific state');
 }
 
 function testApiContract() {

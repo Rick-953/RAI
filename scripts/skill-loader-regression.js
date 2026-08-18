@@ -13,9 +13,9 @@ const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const catalog = registry.getSkillCatalog();
 
 assert.deepEqual(catalog.map((entry) => entry.name), [
-  'web_sources', 'image_generation', 'ask_user', 'mermaid', 'memory', 'rai-product', 'sandbox'
+  'web_sources', 'image_generation', 'ask_user', 'mermaid', 'memory', 'rai-product', 'sandbox', 'office'
 ]);
-assert.equal(registry.validateSkillRegistry().length, 7);
+assert.equal(registry.validateSkillRegistry().length, 8);
 for (const entry of catalog) {
   const loaded = registry.loadTrustedSkill(entry.name);
   assert.equal(loaded.name, entry.name);
@@ -26,11 +26,23 @@ assert.match(sandboxSkill, /read_file/);
 assert.match(sandboxSkill, /transform_file/);
 assert.match(sandboxSkill, /create_artifact/);
 assert.match(sandboxSkill, /sandbox_exec/);
+assert.match(sandboxSkill, /fetch_url/);
 assert.match(sandboxSkill, /python3/);
+assert.match(sandboxSkill, /command policy/i);
+assert.match(sandboxSkill, /sandbox_command_blocked/);
+assert.match(sandboxSkill, /no direct network/);
+assert.match(sandboxSkill, /persists for 3 hours/);
+assert.match(sandboxSkill, /git clone/);
+const officeSkill = registry.loadTrustedSkill('office').content;
+assert.match(officeSkill, /zipfile/);
+assert.match(officeSkill, /make_docx/);
+assert.match(officeSkill, /make_xlsx/);
+assert.match(officeSkill, /make_pptx/);
+assert.match(officeSkill, /Never attempt[\s\S]{0,60}pip install/);
 const productSkill = registry.loadTrustedSkill('rai-product').content;
 assert.match(productSkill, /CX RAI was created by Lao Cha/);
 assert.match(productSkill, /Do not use web search merely to identify RAI or CX RAI/);
-for (const unsafeName of ['../memory', 'memory/../web_sources', '*', 'memory.md', '/etc/passwd', 'memory\\x00']) {
+for (const unsafeName of ['../memory', 'memory/../web_sources', '*', 'memory.md', '/etc/passwd', 'memory\x00']) {
   assert.throws(() => registry.loadTrustedSkill(unsafeName), /unknown skill name/);
 }
 assert.match(server, /name: 'read_skill'/);

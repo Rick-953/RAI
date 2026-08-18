@@ -147,9 +147,23 @@ function createProviderMock() {
         return;
       }
 
-      if (scenario === 'memory-off' || scenario === 'authority') {
+      if (scenario === 'authority') {
         if (systemText) errors.push(`${scenario}: unexpected system instruction`);
         writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]${scenario}[/TITLE]`)]);
+        return;
+      }
+      if (scenario === 'memory-off') {
+        if (!systemText.includes('# RAI') || !systemText.includes('rai-product:')) {
+          errors.push('memory-off: temporary conversation omitted canonical core prompt and skills catalog');
+        }
+        if (!hasToolResult) {
+          writeSse(response, [openAiToolCalls(['rai-product'])]);
+          return;
+        }
+        if (count(systemText, '[Trusted RAI skill: rai-product]') !== 1) {
+          errors.push('memory-off: rai-product skill was not loaded into the continuation prompt');
+        }
+        writeSse(response, [openAiText(`${FINAL_TEXT} memory-off [TITLE]memory-off[/TITLE]`)]);
         return;
       }
 
