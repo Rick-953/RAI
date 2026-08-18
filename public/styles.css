@@ -18785,18 +18785,28 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   overflow: visible;
 }
 
+/* ===== 茶（MasterTea）桌宠：UWP DesktopPet 状态机移植（idle1-4/hello/chat/desktop）===== */
 .rai-tea-pet {
   display: none;
+  position: relative;
   width: 100%;
   height: 100%;
-  background-image: url('images/pets/tea-pet.webp');
-  background-repeat: no-repeat;
-  background-size: 700% 100%;
-  background-position: 0 0;
-  image-rendering: pixelated;
-  transform: scale(1);
-  transform-origin: center bottom;
   pointer-events: none;
+}
+
+.rai-tea-pet-layer {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: center bottom;
+  background-size: contain;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  will-change: opacity, background-image;
+}
+
+.rai-tea-pet-layer[data-visible="1"] {
+  opacity: 1;
 }
 
 .rai-guide-mascot[data-pet-type="tea"].is-dwell .rai-mascot-svg {
@@ -18811,12 +18821,14 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   display: block;
 }
 
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="walk"] .rai-tea-pet { background-position: 16.6667% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="wave"] .rai-tea-pet { background-position: 33.3333% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="camera"] .rai-tea-pet { background-position: 50% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="drink"] .rai-tea-pet { background-position: 66.6667% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="phone"] .rai-tea-pet { background-position: 83.3333% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="laptop"] .rai-tea-pet { background-position: 100% 0; }
+/* 降级：无 JS / reduced-motion 时至少显示第一帧 idle */
+.rai-tea-pet[data-tea-state] .rai-tea-pet-layer[data-tea-layer="0"] {
+  background-image: url('images/pets/MasterTea1.webp');
+}
+
+.rai-guide-mascot[data-pet-type="tea"][data-tea-state="hello"] .rai-tea-pet-layer[data-tea-layer="0"] {
+  background-image: url('images/pets/MasterTeaHello.webp');
+}
 
 .rai-pet-context-menu {
   position: fixed;
@@ -18904,8 +18916,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .settings-pet-preview-tea {
-  background: url('images/pets/tea-pet.webp') 0 0 / 700% 100% no-repeat;
-  image-rendering: pixelated;
+  background: url('images/pets/MasterTea1.webp') center bottom / contain no-repeat;
   transform: scale(1.28);
   transform-origin: center bottom;
 }

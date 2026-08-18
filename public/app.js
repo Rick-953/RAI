@@ -2670,8 +2670,7 @@ const raiMascotState = {
       return;
     }
     if (this.mode === 'dwell' && appState.guide.petType === 'tea') {
-      const poses = ['wave', 'camera', 'drink', 'phone', 'laptop'];
-      setTeaPetPose(poses[Math.floor(Math.random() * poses.length)], 1800);
+      TeaPetRuntime.onTap();
       return;
     }
     const expressions = guideRuntime.reducedMotion
@@ -2939,18 +2938,263 @@ function persistPetManualPosition() {
 }
 
 function setTeaPetPose(pose = 'idle', resetAfter = 0) {
-  const mascot = getGuideMascotElement();
-  if (!mascot) return;
-  if (guideRuntime.teaPoseTimer) window.clearTimeout(guideRuntime.teaPoseTimer);
-  guideRuntime.teaPoseTimer = null;
-  mascot.dataset.teaPose = pose;
-  if (resetAfter > 0 && !guideRuntime.reducedMotion) {
-    guideRuntime.teaPoseTimer = window.setTimeout(() => {
-      mascot.dataset.teaPose = 'idle';
-      guideRuntime.teaPoseTimer = null;
-    }, resetAfter);
-  }
+  TeaPetRuntime.setLegacyPose(pose, resetAfter);
 }
+
+// ==================== 茶（MasterTea）桌宠运行时 ====================
+// UWP CXRAIHelper/DesktopPet.cs 状态机移植：idle(1-4 随机 + 双帧交叉溶解) / hello / chat / desktop
+// 闲话调度移植 UWP PetChatterService：本地语录(3-6min 洗牌袋) + AI(GET /api/pet/chitchat, 15-31min)
+const TeaPetRuntime = {
+  IDLE_FILES: ['MasterTea1', 'MasterTea2', 'MasterTea3', 'MasterTea4'],
+  STATE_FILES: { hello: 'MasterTeaHello', chat: 'MasterTeaChat', desktop: 'MasterTeaDesktop' },
+  FRAME_PERIOD_MS: 500,       // 交叉溶解：hold 300ms + transition 200ms（同 UWP）
+  HELLO_MS: 8000,             // hello 停留（同 UWP 8s）
+  CHAT_MS: 10000,             // 气泡停留期间的 chat 状态
+  BUBBLE_MS: 9000,            // 气泡显示时长
+  IDLE_MIN_MS: 30000,         // 空闲换装最小间隔（UWP 30s-600s，网页版缩到 30-180s）
+  IDLE_MAX_MS: 180000,
+  TICK_MS: 20000,             // 闲话调度 tick（同 UWP 20s）
+  LOCAL_MIN_MS: 3 * 60 * 1000,
+  LOCAL_MAX_MS: 6 * 60 * 1000,
+  AI_MIN_MS: 15 * 60 * 1000,
+  AI_MAX_MS: 31 * 60 * 1000,
+  AI_TIMEOUT_MS: 18000,
+
+  state: 'idle',
+  idleKey: 'MasterTea1',
+  frame: 0,
+  activeLayer: 0,
+  animTimer: null,
+  idleTimer: null,
+  stateTimer: null,
+  bubbleTimer: null,
+  tickTimer: null,
+  nextLocalAt: 0,
+  nextAiAt: 0,
+  quotes: [],
+  quoteIndex: 0,
+  running: false,
+  startedOnce: false,
+
+  get mascot() { return document.getElementById('raiGuideMascot'); },
+
+  layerEl(i) {
+    const mascot = this.mascot;
+    return mascot ? mascot.querySelector(`.rai-tea-pet-layer[data-tea-layer="${i}"]`) : null;
+  },
+
+  fileForState() {
+    return this.state === 'idle' ? this.idleKey : (this.STATE_FILES[this.state] || this.idleKey);
+  },
+
+  initQuotes() {
+    if (this.quotes.length) return;
+    const all = (window.RAI_PET_LOCAL_QUOTES || []).slice();
+    for (let i = all.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [all[i], all[j]] = [all[j], all[i]];
+    }
+    this.quotes = all;
+    this.quoteIndex = 0;
+  },
+
+  start() {
+    if (this.running) return;
+    this.initQuotes();
+    this.running = true;
+    const now = Date.now();
+    if (!this.startedOnce) {
+      this.startedOnce = true;
+      this.nextLocalAt = now + randBetween(this.LOCAL_MIN_MS, this.LOCAL_MAX_MS);
+      this.nextAiAt = now + randBetween(this.AI_MIN_MS, this.AI_MAX_MS);
+    }
+    this.setIdle();
+    this.startAnim();
+    this.startTick();
+    // 问候：进入常驻时 AI 冒一句（服务端 15min 节流，节流/失败静默）
+    this.fetchAi();
+  },
+
+  stop() {
+    this.running = false;
+    clearTimeout(this.idleTimer); this.idleTimer = null;
+    clearTimeout(this.stateTimer); this.stateTimer = null;
+    clearTimeout(this.bubbleTimer); this.bubbleTimer = null;
+    clearInterval(this.animTimer); this.animTimer = null;
+    clearInterval(this.tickTimer); this.tickTimer = null;
+    setMascotSpeech('', '');
+  },
+
+  setIdle() {
+    if (!this.running) return;
+    this.state = 'idle';
+    this.idleKey = this.IDLE_FILES[Math.floor(Math.random() * this.IDLE_FILES.length)];
+    this.snapFrame();
+    const mascot = this.mascot;
+    if (mascot) mascot.dataset.teaState = 'idle';
+    this.scheduleIdleSwitch();
+  },
+
+  setState(state, autoReturnMs = 0) {
+    if (!this.running) return;
+    if (state === 'idle') { this.setIdle(); return; }
+    this.state = state;
+    if (this.stateTimer) clearTimeout(this.stateTimer);
+    this.stateTimer = null;
+    if (autoReturnMs > 0) {
+      this.stateTimer = setTimeout(() => { this.stateTimer = null; if (this.running) this.setIdle(); }, autoReturnMs);
+    }
+    this.snapFrame();
+    const mascot = this.mascot;
+    if (mascot) mascot.dataset.teaState = state;
+  },
+
+  scheduleIdleSwitch() {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.running && this.state === 'idle') this.setIdle();
+    }, randBetween(this.IDLE_MIN_MS, this.IDLE_MAX_MS));
+  },
+
+  // 状态切换时直接落定第 0 帧（不做无关帧的交叉溶解）
+  snapFrame() {
+    this.frame = 0;
+    const url = `url('images/pets/${this.fileForState()}.webp')`;
+    const a = this.layerEl(0);
+    const b = this.layerEl(1);
+    if (a) { a.style.backgroundImage = url; a.dataset.visible = '1'; }
+    if (b) { b.style.backgroundImage = url; b.dataset.visible = '0'; }
+    this.activeLayer = 0;
+  },
+
+  startAnim() {
+    if (this.animTimer || guideRuntime.reducedMotion) return;
+    this.animTimer = setInterval(() => this.onAnimTick(), this.FRAME_PERIOD_MS);
+  },
+
+  onAnimTick() {
+    if (!this.running) return;
+    // 对话生成中 → desktop 坐姿（UWP「工作目录模式」的网页版映射）；结束后回 idle
+    if (this.state === 'idle' && this.isStreaming()) {
+      this.setState('desktop');
+    } else if (this.state === 'desktop' && !this.isStreaming()) {
+      this.setState('idle');
+    }
+    if (this.frame !== 0) return; // snapFrame 重置过则本 tick 只落定
+    const base = this.fileForState();
+    const nextFrame = this.frame === 0 ? 1 : 0;
+    const nextKey = nextFrame === 1 ? `${base}-1` : base;
+    const incoming = this.layerEl(this.activeLayer ^ 1);
+    const outgoing = this.layerEl(this.activeLayer);
+    if (incoming && outgoing) {
+      incoming.style.backgroundImage = `url('images/pets/${nextKey}.webp')`;
+      incoming.dataset.visible = '1';
+      this.activeLayer ^= 1;
+      outgoing.dataset.visible = '0';
+    }
+    this.frame = nextFrame;
+  },
+
+  startTick() {
+    if (this.tickTimer) return;
+    this.tickTimer = setInterval(() => this.onTick(), this.TICK_MS);
+  },
+
+  onTick() {
+    if (!this.running || this.isUserBusy()) return;
+    const now = Date.now();
+    if (now >= this.nextLocalAt) {
+      this.nextLocalAt = now + randBetween(this.LOCAL_MIN_MS, this.LOCAL_MAX_MS);
+      this.speakLocal();
+    }
+    if (now >= this.nextAiAt) {
+      this.nextAiAt = now + randBetween(this.AI_MIN_MS, this.AI_MAX_MS);
+      this.fetchAi();
+    }
+  },
+
+  isStreaming() {
+    const stopBtn = document.getElementById('stopBtn');
+    return !!(stopBtn && stopBtn.style.display !== 'none');
+  },
+
+  isUserTyping() {
+    const active = document.activeElement;
+    return !!(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable));
+  },
+
+  isUserBusy() {
+    return this.isStreaming() || this.isUserTyping();
+  },
+
+  shuffleQuotes() {
+    for (let i = this.quotes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this.quotes[i], this.quotes[j]] = [this.quotes[j], this.quotes[i]];
+    }
+    this.quoteIndex = 0;
+  },
+
+  speakLocal() {
+    if (!this.quotes.length) return;
+    if (this.quoteIndex >= this.quotes.length) this.shuffleQuotes();
+    this.speak(this.quotes[this.quoteIndex]);
+    this.quoteIndex++;
+  },
+
+  speak(text) {
+    if (!text || !this.running) return;
+    this.setState('chat', this.CHAT_MS);
+    setMascotSpeech('茶', text);
+    syncMascotSpeechSide();
+    if (this.bubbleTimer) clearTimeout(this.bubbleTimer);
+    this.bubbleTimer = setTimeout(() => {
+      this.bubbleTimer = null;
+      if (this.running) setMascotSpeech('', '');
+    }, this.BUBBLE_MS);
+  },
+
+  async fetchAi() {
+    if (!this.running || !appState.token) return;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.AI_TIMEOUT_MS);
+      const resp = await fetch('/api/pet/chitchat', {
+        headers: { 'Authorization': `Bearer ${appState.token}` },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data && data.text) this.speak(data.text);
+    } catch (e) {
+      // 静默：节流/断网/超时都不打扰用户
+    }
+  },
+
+  // 旧调用点兼容（拖拽 walk/end idle 等）
+  setLegacyPose(pose = 'idle', resetAfter = 0) {
+    if (!this.running) return;
+    if (pose === 'walk') { this.setState('idle'); return; }
+    if (Object.prototype.hasOwnProperty.call(this.STATE_FILES, pose)) {
+      this.setState(pose, resetAfter || undefined);
+      return;
+    }
+    this.setState('hello', resetAfter || this.HELLO_MS);
+  },
+
+  onTap() {
+    if (!this.running) return;
+    this.speakLocal();
+  }
+};
+
+function randBetween(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+window.TeaPetRuntime = TeaPetRuntime;
 
 function syncPetAppearance() {
   const mascot = getGuideMascotElement();
@@ -3273,6 +3517,7 @@ function moveMascotToElement(target, { placement = 'above', bounce = true, speec
 }
 
 function hideMascot() {
+  TeaPetRuntime.stop();
   const mascot = getGuideMascotElement();
   if (!mascot) return;
   mascot.hidden = true;
@@ -3311,6 +3556,11 @@ function syncGuideMascotVisibility() {
     mascot.classList.remove('is-auth', 'is-guide');
     mascot.classList.add('is-dwell');
     raiMascotState.mode = 'dwell';
+    if (appState.guide.petType === 'tea') {
+      TeaPetRuntime.start();
+    } else {
+      TeaPetRuntime.stop();
+    }
   } else {
     hideMascot();
     return;
