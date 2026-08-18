@@ -172,7 +172,7 @@ function testVersionConstants() {
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.13\.6'\s*;/, 'RAI_APP_VERSION mismatch');
   assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260818-version-contract-v0136-r1'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.6-version-contract-v0136-r1'\s*;/, 'RAI_SW_VERSION mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.6-20260818-version-contract-v0136-r1'\s*;/, 'RAI_SW_VERSION mismatch');
   const markers = (index.match(/20260818-version-contract-v0136-r1/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
   assert.match(index, /v0\.13\.6/, 'index.html must show the matching app version');

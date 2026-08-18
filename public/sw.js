@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.6-version-contract-v0136-r1';
+const RAI_SW_VERSION = '0.13.6-20260818-version-contract-v0136-r1';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;

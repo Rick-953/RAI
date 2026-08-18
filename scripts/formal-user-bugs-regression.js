@@ -1043,7 +1043,7 @@ function testVersionContract() {
   assert.match(app, new RegExp(`const RAI_APP_VERSION = '${expectedVersion.replaceAll('.', '\\.')}'`));
   assert.match(app, /const RAI_BUILD_ID = '20260818-version-contract-v0136-r1'/);
   assert.match(index, new RegExp(`by Rick \\u00b7 v${expectedVersion.replaceAll('.', '\\.')}`));
-  assert.match(serviceWorker, /0.13.6-version-contract-v0136-r1/);
+  assert.match(serviceWorker, /0\.13\.6-20260818-version-contract-v0136-r1/);
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
