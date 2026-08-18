@@ -134,7 +134,8 @@ function copyRuntimeGraph(tempRoot) {
     'skills/mermaid/SKILL.md',
     'skills/memory/SKILL.md',
     'skills/rai-product/SKILL.md',
-    'skills/sandbox/SKILL.md'
+    'skills/sandbox/SKILL.md',
+    'skills/office/SKILL.md'
   ]) {
     const sourcePath = path.join(SOURCE_ROOT, relative);
     if (!fs.existsSync(sourcePath)) continue;
