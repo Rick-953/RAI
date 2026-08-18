@@ -675,25 +675,6 @@ function buildGeneratedImageMarkdown(result = {}) {
         .join('\n\n');
 }
 
-function buildArtifactDownloadMarkdown(result = {}) {
-    const rawUrl = String(result?.downloadPath || '').trim();
-    try {
-        const parsed = new URL(rawUrl, 'http://rai.local');
-        if (
-            parsed.origin !== 'http://rai.local'
-            || !/^\/api\/file-jobs\/[a-f0-9]{48}\/artifacts\/[a-f0-9]{32}$/i.test(parsed.pathname)
-            || !parsed.searchParams.get('sessionId')
-            || [...parsed.searchParams.keys()].some((key) => key !== 'sessionId')
-        ) return '';
-        const label = String(result?.fileName || 'RAI 文件产物')
-            .replace(/[\u0000-\u001f\u007f\[\]();\\]/g, '_')
-            .slice(0, 96) || 'RAI 文件产物';
-        return `[下载 ${label}](${parsed.pathname}${parsed.search})`;
-    } catch (_) {
-        return '';
-    }
-}
-
 function appendRaiRuntimeReport(entry = {}) {
     let block;
     try {
@@ -5463,7 +5444,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             size: Number(result?.size || 0),
             expires_at: result?.expiresAt || null,
             download_available: true,
-            reply_instruction: 'A trusted download link was already sent to the user interface. Briefly confirm the artifact is ready, but do not repeat a URL, task ID, filesystem path, or tool protocol.'
+            reply_instruction: 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Answer the user\'s substantive request naturally, and mention the file only when the user explicitly asks about it.'
         };
     }
 
@@ -5487,7 +5468,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
                 download_available: true
             } : {}),
             reply_instruction: downloadAvailable
-                ? 'A trusted download link was already sent to the user interface. Summarize the execution and confirm the artifact is ready without repeating a URL, task ID, filesystem path, or tool protocol.'
+                ? 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Summarize the bounded execution only when relevant to the user\'s request.'
                 : 'Summarize the bounded sandbox execution from stdout, stderr, and exit_code. Do not claim a download exists or expose tool protocol.'
         };
     }
@@ -16936,6 +16917,7 @@ function sanitizeAssistantVisibleContent(text = '') {
         .replace(/<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi, '')
         .replace(/<\|[^|]+\|>/g, '')
         .replace(/functions\.\w+:\d+/g, '')
+        .replace(/(?:\[\s*(?:简易文档已生成|文档已就绪|文件产物已生成|产物已就绪|下载[^\]]*)\s*\]\s*)+/g, '')
         .replace(/(?:^|\n)\s*用户(?:询问的是|想了解|问的是)[^\n]*(?:政治敏感|正常技术问题)[^\n]*(?=\n|$)/g, '\n')
         .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
@@ -20993,6 +20975,33 @@ if (clientFileExecution && systemPrompt) {
             localAgentEnabled: !!localAgentSession
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
+        const serverToolTrace = [];
+        const recordServerToolTrace = (event = {}) => {
+            if (!event || !event.type || !['tool_status', 'search_status'].includes(String(event.type))) return;
+            const tool = String(event.tool || event.name || event.kind || 'tool').slice(0, 120);
+            const row = {
+                id: String(event.tool_call_id || event.call_id || `${tool}:${serverToolTrace.length}`).slice(0, 200),
+                tool,
+                status: String(event.status || 'complete').toLowerCase().slice(0, 40),
+                summary: String(event.summary || event.message || event.detail || tool).slice(0, 240),
+                detail: String(event.detail || event.message || '').slice(0, 12000),
+                query: String(event.query || '').slice(0, 500),
+                skill: String(event.skill || '').slice(0, 200),
+                file_name: String(event.file_name || '').slice(0, 240),
+                url: String(event.url || '').slice(0, 500),
+                ts: Number(event.ts) || Date.now()
+            };
+            const existingIndex = serverToolTrace.findIndex((item) => item.id === row.id);
+            if (existingIndex >= 0) serverToolTrace[existingIndex] = row;
+            else serverToolTrace.push(row);
+            if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
+            return row;
+        };
+        const emitTrackedToolStatus = (event = {}) => {
+            const tracked = { type: event.type || 'tool_status', ...event };
+            recordServerToolTrace(tracked);
+            res.write(`data: ${JSON.stringify(tracked)}\n\n`);
+        };
 
         if (sessionId) {
             liveStreamState = getSessionStreamState(sessionId, requestId, req.user.userId);
@@ -21417,6 +21426,7 @@ if (clientFileExecution && systemPrompt) {
                         retry: agentTraceState.retry,
                         metrics: agentTraceState.metrics,
                         draftDeltas: agentTraceState.draftDeltas || [],
+                        tools: serverToolTrace,
                         savedAt: agentTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -22552,6 +22562,7 @@ if (clientFileExecution && systemPrompt) {
                         agentEvents: researchTraceState.agentEvents,
                         draftDeltas: researchTraceState.draftDeltas,
                         trace: researchTraceState.trace,
+                        tools: serverToolTrace,
                         savedAt: researchTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -24071,6 +24082,17 @@ if (clientFileExecution && systemPrompt) {
                             const isMemoryDeleteTool = toolName === 'delete_memory';
                             const isReadSkillTool = toolName === 'read_skill';
                             const isFileTool = isFileWorkspaceToolName(toolName);
+                            recordServerToolTrace({
+                                type: isSearchTool ? 'search_status' : 'tool_status',
+                                tool: toolName,
+                                tool_call_id: toolCall.id,
+                                status: 'running',
+                                message: isSearchTool ? `正在搜索: "${String(args.query || '').slice(0, 80)}"` : '工具调用进行中',
+                                query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                skill: args.name || '',
+                                file_name: args.file_name || '',
+                                url: args.url || ''
+                            });
                             if (isSearchTool && agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
@@ -24379,6 +24401,20 @@ if (clientFileExecution && systemPrompt) {
                                                 : args)
                                     }
                                 });
+                                recordServerToolTrace({
+                                    tool: toolName,
+                                    tool_call_id: toolCall.id,
+                                    status: 'failed',
+                                    message: isImageTool
+                                        ? '图片生成失败，已记录报错'
+                                        : ((isMemorySaveTool || isMemoryDeleteTool)
+                                            ? '记忆工具执行失败，已记录报错'
+                                            : (isFileTool ? '文件工作区操作失败' : '工具调用失败，已记录报错')),
+                                    query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                    skill: args.name || '',
+                                    file_name: args.file_name || '',
+                                    url: args.url || ''
+                                });
                                 res.write(`data: ${JSON.stringify({
                                     type: (isImageTool || isMemorySaveTool || isMemoryDeleteTool || isFileTool) ? 'tool_status' : 'search_status',
                                     tool: toolName,
@@ -24400,6 +24436,19 @@ if (clientFileExecution && systemPrompt) {
                                 });
                                 continue;
                             }
+
+                            recordServerToolTrace({
+                                type: isSearchTool ? 'search_status' : 'tool_status',
+                                tool: toolName,
+                                tool_call_id: toolCall.id,
+                                status: 'complete',
+                                message: isSearchTool ? `搜索完成: ${Array.isArray(result?.results || result) ? (result.results || result).length : 0} 条结果` : (isFileTool ? '文件工具执行完成' : '工具调用完成'),
+                                detail: isSearchTool ? `搜索完成: ${Array.isArray(result?.results || result) ? (result.results || result).length : 0} 条结果` : '',
+                                query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                skill: args.name || '',
+                                file_name: args.file_name || '',
+                                url: args.url || ''
+                            });
 
                             if (isSearchTool) {
                                 const searchResults = result.results || result;
@@ -24579,9 +24628,7 @@ if (clientFileExecution && systemPrompt) {
                                     args
                                 });
                                 executedToolResults.push({ toolCall, result: toolResult });
-                                const artifactMarkdown = buildArtifactDownloadMarkdown(result);
-                                if (artifactMarkdown) emitStructuredAssistantChunk(`\n\n${artifactMarkdown}\n\n`);
-                                res.write(`data: ${JSON.stringify({
+                                    res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: toolName,
                                     tool_call_id: toolCall.id,

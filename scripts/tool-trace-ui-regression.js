@@ -21,8 +21,21 @@ assert.match(app, /parsed\.type === 'tool_status'[\s\S]{0,400}upsertToolTraceIte
   'tool_status SSE events must update the trace');
 assert.match(app, /parsed\.type === 'search_status'[\s\S]{0,500}upsertToolTraceItem\(/,
   'search SSE events must update the trace');
+assert.match(app, /const toolTraceSnapshots = new Map\(\)/, 'tool trace snapshots must survive streaming');
+assert.match(app, /tools: toolSnapshot/, 'final message must persist tool traces');
+assert.match(app, /tool-trace-summary[\s\S]{0,500}aria-expanded/, 'tool trace summary must be clickable');
+assert.match(app, /tool-history-step/, 'historical tool trace step missing');
+assert.match(app, /processTraceToggle\.addEventListener\('click'/, 'streaming prompt trace toggle missing');
+assert.match(app, /const hasToolTrace = !!/, 'stored tool traces must recreate the timeline');
+assert.match(app, /rai-reasoning-header/, 'thinking controls must not use nested buttons');
+assert.doesNotMatch(server, /artifactMarkdown\s*=|emitStructuredAssistantChunk\([^\n]*artifactMarkdown/, 'artifact link must not be injected into assistant正文');
+assert.match(server, /const serverToolTrace = \[\]/, 'server tool trace collector missing');
+assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'complete'/, 'server completion trace missing');
+assert.match(server, /tools: serverToolTrace/, 'server must persist tool traces');
+assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'failed'/, 'server failure trace missing');
 
-// Thinking has explicit compact/live/expanded state, and live is bounded.
+assert.match(app, /简易文档已生成/, 'client must suppress legacy artifact status labels');
+
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');
 assert.match(app, /data-reasoning-mode="live"/, 'live thinking control missing');
 assert.match(app, /data-reasoning-mode="expanded"/, 'expanded thinking control missing');
