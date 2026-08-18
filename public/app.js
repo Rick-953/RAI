@@ -21867,6 +21867,7 @@ async function sendMessage(message = null, options = {}) {
 
     let receivedDoneEvent = false;
     let receivedCancelled = false;
+    let receivedExplicitError = false;
     let streamFailureMessage = '';
     let streamReadError = null;
 
@@ -22348,10 +22349,12 @@ async function sendMessage(message = null, options = {}) {
             break;
           }
           else if (parsed.type === 'error') {
-            streamFailureMessage = String(parsed.error || '未知错误');
+            receivedExplicitError = true;
+            streamFailureMessage = String(parsed.message || parsed.error || '未知错误');
             stopCharRender();  // 停止字符渲染
-            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
-            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${parsed.error || ''}`);
+            updateStepStatus(stepGenerating, 'failed', isChineseLanguage(appState.language) ? '工具调用或生成失败' : 'Tool call or generation failed');
+            updateStepStatus(stepProcessTrace, 'failed', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
+            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${streamFailureMessage}`);
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
             break;
@@ -22367,7 +22370,7 @@ async function sendMessage(message = null, options = {}) {
       console.warn('聊天流读取中断，准备自动续传:', error?.message || error);
     }
 
-    if (!receivedDoneEvent && !receivedCancelled) {
+    if (!receivedDoneEvent && !receivedCancelled && !receivedExplicitError) {
       updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '未收到完成事件，开始自动续传' : 'Completion event missing; starting continuation');
       const recovered = await recoverIncompleteChatStream({
@@ -22406,6 +22409,11 @@ async function sendMessage(message = null, options = {}) {
       }
     }
 
+    if (receivedExplicitError) {
+      throw new Error(streamFailureMessage || (isChineseLanguage(appState.language)
+        ? '工具调用或生成失败'
+        : 'Tool call or generation failed'));
+    }
     if (!receivedDoneEvent && !receivedCancelled && !String(fullContent || '').trim()) {
       throw new Error(streamFailureMessage || streamReadError?.message || (isChineseLanguage(appState.language)
         ? '模型输出未完成'

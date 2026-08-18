@@ -75,7 +75,8 @@ function testServerManagedNativeFallback() {
   assert.match(server, /let systemPrompt = ''/);
   assert.match(server, /lockAndResolveSessionPromptContext\([\s\S]{0,2400}COALESCE\(NULLIF\(prompt_model_identity, ''\), \?\)[\s\S]{0,500}COALESCE\(NULLIF\(prompt_language, ''\), \?\)/);
   assert.match(server, /getWebControlledCustomSystemPrompt[\s\S]{0,500}FROM user_configs WHERE user_id = \?/);
-  assert.match(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';\s*\} else \{[\s\S]{0,700}buildCanonicalRaiSystemPrompt\([\s\S]{0,500}customPrompt/);
+  assert.match(server, /const customPrompt = memoryModeOff[\s\S]{0,300}\? ''[\s\S]{0,500}buildCanonicalRaiSystemPrompt\([\s\S]{0,500}includeMemory: !memoryModeOff && longMemoryEnabled[\s\S]{0,500}customPrompt/,
+    'temporary conversations must retain canonical Layer 0/1 while excluding user-specific prompt and memory');
   assert.match(server, /skillCatalog:\s*getSkillCatalog\(\)/);
   assert.match(server, /rai-product/);
   assert.match(server, /sandbox_exec/);
@@ -106,8 +107,8 @@ function testServerManagedNativeFallback() {
     'identity questions must receive the server-authoritative product guard');
   assert.match(server, /'你是谁，由谁开发？': '我是 RAI，由 Rick 开发的 AI 对话软件/,
     'exact product identity questions must not reach an upstream identity prompt');
-  assert.match(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
-    'temporary/no-memory conversations must keep their explicit prompt isolation');
+  assert.doesNotMatch(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
+    'temporary/no-memory conversations must retain canonical Layer 0/1 and isolate only user-specific state');
 }
 
 function testApiContract() {

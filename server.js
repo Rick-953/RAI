@@ -20788,21 +20788,23 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             console.log(` 临时对话 memoryMode=off，跳过用户身份/偏好/长期记忆注入: userId=${req.user.userId}, sessionKind=${activeSessionKind || 'none'}`);
         }
 
-        if (memoryModeOff) {
-            systemPrompt = '';
-        } else {
-            const customPrompt = await getWebControlledCustomSystemPrompt(req.user.userId);
-            systemPrompt = buildCanonicalRaiSystemPrompt({
-                promptLanguage: sessionPromptContext.promptLanguage,
-                modelIdentity: sessionPromptContext.modelIdentity,
-                includeMemory: longMemoryEnabled,
-                customPrompt,
-                skillCatalog: getSkillCatalog()
-            });
-            console.log(
-                ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, customPromptLength=${customPrompt.length}`
-            );
-        }
+        // Temporary conversations isolate user-specific state only. They still need the
+        // canonical Layer 0/1 prompt and core tools; otherwise a valid read_skill
+        // or file call can be emitted by a provider but is absent from the runtime
+        // tool registry, which terminates the tool loop without a final answer.
+        const customPrompt = memoryModeOff
+            ? ''
+            : await getWebControlledCustomSystemPrompt(req.user.userId);
+        systemPrompt = buildCanonicalRaiSystemPrompt({
+            promptLanguage: sessionPromptContext.promptLanguage,
+            modelIdentity: sessionPromptContext.modelIdentity,
+            includeMemory: !memoryModeOff && longMemoryEnabled,
+            customPrompt,
+            skillCatalog: getSkillCatalog()
+        });
+        console.log(
+            ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, temporary=${memoryModeOff}, customPromptLength=${customPrompt.length}`
+        );
         const userIdentityInstruction = memoryModeOff ? '' : buildUserIdentityPrompt(promptUserProfile);
         if (userIdentityInstruction) {
             console.log(` 已注入当前用户信息到Prompt: userId=${req.user.userId}, hasUsername=${!!promptUserProfile?.username}, hasEmail=${!!promptUserProfile?.email}`);
@@ -20902,7 +20904,10 @@ if (clientFileExecution && systemPrompt) {
             ));
         const lowLatencyRequest = lowLatencyMode === true || lowLatencyMode === 1 || lowLatencyMode === '1';
         const workspaceToolsEnabled = shouldEnableWorkspaceTools(userContent, workspaceAttachmentCatalog);
-        const skillToolsEnabled = !memoryModeOff && (!lowLatencyRequest || raiProductSkillRequired || workspaceToolsEnabled);
+        // read_skill is a core protocol tool, not a memory feature. It must remain
+        // registered in temporary and low-latency conversations so all providers
+        // can finish the standard tool-result continuation round.
+        const skillToolsEnabled = true;
         if (workspaceAttachmentCatalog.length > 0) {
             if (internetMode) console.log(' 附件任务已禁用联网搜索');
             if (normalizedResearchMode !== 'off') console.log(' 附件任务已禁用研究讨论');
@@ -20914,7 +20919,7 @@ if (clientFileExecution && systemPrompt) {
             imageGenerationRequested,
             memoryToolsEnabled,
             skillToolsEnabled,
-            fileToolsEnabled: Boolean(sessionId) && (clientFileExecution || workspaceToolsEnabled),
+            fileToolsEnabled: Boolean(sessionId),
             clientFileExecution,
             localAgentEnabled: !!localAgentSession
         });
@@ -23944,7 +23949,19 @@ if (clientFileExecution && systemPrompt) {
             if (useStreamingTools && accumulatedToolCalls.length > 0) {
                 let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls, clientFileExecution);
                 if (pendingToolCalls.length === 0) {
-                    console.warn(` 收到 tool_calls 但均无效，已跳过`);
+                    const invalidToolCallMessage = '模型请求的工具调用无法验证，未执行任何操作。请重新生成，或换一种方式描述任务。';
+                    console.warn(` 收到 tool_calls 但均无效，拒绝将其当作成功回答完成: rawCalls=${accumulatedToolCalls.length}`);
+                    if (!String(fullContent || '').trim()) {
+                        emitStructuredAssistantChunk(invalidToolCallMessage);
+                    }
+                    res.write(`data: ${JSON.stringify({
+                        type: 'error',
+                        error: 'invalid_tool_call',
+                        message: invalidToolCallMessage
+                    })}\n\n`);
+                    const invalidToolCallError = new Error('invalid_tool_call');
+                    invalidToolCallError.code = 'invalid_tool_call';
+                    throw invalidToolCallError;
                 } else {
                     let toolRound = 0;
                     const maxToolRounds = clientFileExecution ? 8 : 5;
