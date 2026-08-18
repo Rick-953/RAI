@@ -3060,6 +3060,7 @@ const TeaPetRuntime = {
   // 状态切换时直接落定第 0 帧（不做无关帧的交叉溶解）；同时预载 -1 变体到隐藏层
   snapFrame() {
     this.frame = 0;
+    if (this._preloadTimer) { clearTimeout(this._preloadTimer); this._preloadTimer = null; }
     const base = this.fileForState();
     const a = this.layerEl(0);
     const b = this.layerEl(1);
@@ -3095,10 +3096,17 @@ const TeaPetRuntime = {
       incoming.dataset.visible = '1';   // 淡入（图片早已预载）
       this.activeLayer ^= 1;
       outgoing.dataset.visible = '0';   // 淡出
-      // 预载下一轮帧到刚隐藏的层：整个淡出+hold 周期都在解码，轮到它淡入时早已就绪
+      // 预载下一轮帧到刚隐藏的层：必须等淡出过渡（200ms）真正结束、opacity 归零后才换图，
+      // 否则 outgoing 仍部分可见时换背景图 = 用户眼前闪帧（闪烁根因）。
+      // 整个淡出+hold 周期都在解码，轮到它淡入时早已就绪。
       const afterFrame = nextFrame === 1 ? 0 : 1;
       const afterKey = afterFrame === 1 ? `${base}-1` : base;
-      outgoing.style.backgroundImage = `url('images/pets/${afterKey}.webp')`;
+      const outEl = outgoing;
+      if (this._preloadTimer) clearTimeout(this._preloadTimer);
+      this._preloadTimer = setTimeout(() => {
+        outEl.style.backgroundImage = `url('images/pets/${afterKey}.webp')`;
+        this._preloadTimer = null;
+      }, 220);
     }
     this.frame = nextFrame;
   },
@@ -3183,7 +3191,12 @@ const TeaPetRuntime = {
   // 旧调用点兼容（拖拽 walk/end idle 等）
   setLegacyPose(pose = 'idle', resetAfter = 0) {
     if (!this.running) return;
-    if (pose === 'walk') { this.setState('idle'); return; }
+    if (pose === 'walk') {
+      // 拖拽中 pointermove 每帧都会调 walk：已处于 idle 则保持当前图（不随机换装、
+      // 不 snapFrame 重置），否则拖动时图片会快速乱闪。首次从非 idle 进入时回 idle 一次。
+      if (this.state !== 'idle') this.setIdle();
+      return;
+    }
     if (Object.prototype.hasOwnProperty.call(this.STATE_FILES, pose)) {
       this.setState(pose, resetAfter || undefined);
       return;
