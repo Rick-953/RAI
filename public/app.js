@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.5';
-const RAI_BUILD_ID = '20260818-sandbox-denylist-v0135-r1';
+const RAI_APP_VERSION = '0.13.6';
+const RAI_BUILD_ID = '20260818-version-contract-v0136-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -15255,7 +15255,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.13.1 初始化 (local-agent-install-ux)');
+  console.log(` RAI v${RAI_APP_VERSION} 初始化 (local-agent-install-ux)`);
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
