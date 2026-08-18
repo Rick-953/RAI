@@ -2615,7 +2615,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'sandbox_exec',
-        description: 'Run a bounded POSIX shell script inside a fresh no-network Linux sandbox. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive; each call still uses a fresh workspace.',
+        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has no direct network; use the server-side fetch_url gate for permitted public downloads. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
         parameters: {
             type: 'object',
             additionalProperties: false,
