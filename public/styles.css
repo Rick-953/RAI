@@ -6049,7 +6049,7 @@ video.private-file-preview-media {
 
 .research-chat-timeline .thinking-step-node,
 .research-chat-timeline #stepToolDecision,
-.research-chat-timeline #stepGenerating,
+.research-chat-timeline [data-kind="generating"],
 .research-chat-timeline #stepDeepThinking,
 .research-chat-timeline .agent-task-list,
 .research-chat-timeline .agent-trace-toolbar,

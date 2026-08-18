@@ -63,7 +63,7 @@ assert.match(server, /if \(toolName === 'sandbox_exec'\)/);
 assert.match(server, /const sourcePath = path\.resolve\(uploadsRoot, row\.filename\)/);
 assert.match(server, /path: sourcePath/);
 assert.match(server, /download_available: true/);
-assert.match(server, /buildArtifactDownloadMarkdown\(result\)/);
+assert.doesNotMatch(server, /buildArtifactDownloadMarkdown\(result\)/, 'artifact markdown must not be injected into assistant正文');
 assert.match(server, /requiresRaiProductSkill/);
 assert.match(server, /forced_rai_product_skill_/);
 
