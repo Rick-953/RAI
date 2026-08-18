@@ -12,6 +12,7 @@ const {
     MAX_ACTIVE_TASKS,
     MAX_OWNER_ACTIVE_TASKS,
     MAX_WORKSPACE_BYTES,
+    SANDBOX_WORKSPACE_TTL_MS,
     READ_MODES,
     TRANSFORM_OPERATIONS
 } = require('../lib/file-workspace');
@@ -63,6 +64,7 @@ async function main() {
     assert.equal(MAX_ACTIVE_TASKS, 64);
     assert.equal(MAX_OWNER_ACTIVE_TASKS, 8);
     assert.equal(MAX_WORKSPACE_BYTES, 40 * 1024 * 1024);
+    assert.equal(SANDBOX_WORKSPACE_TTL_MS, 3 * 60 * 60 * 1000);
     assert.equal(READ_MODES.has('metadata'), true);
     assert.equal(TRANSFORM_OPERATIONS.has('json_pretty'), true);
 
@@ -206,6 +208,37 @@ async function main() {
         workspace.prepareDownload({ userId: 7, sessionId: 'session_alpha', taskId: '../etc', artifactId: 'a'.repeat(32) }),
         'workspace_task_invalid'
     );
+
+    const sandboxOne = await workspace.createSandboxTask({ userId: 7, sessionId: 'session_alpha' });
+    assert.equal(sandboxOne.manifest.expiresAt, clock + (3 * 60 * 60 * 1000));
+    await fs.promises.mkdir(path.join(sandboxOne.taskPath, 'workspace'), { mode: 0o700 });
+    await fs.promises.writeFile(path.join(sandboxOne.taskPath, 'workspace', 'persist.txt'), 'keep me', { mode: 0o600 });
+    clock += 60 * 1000;
+    const sandboxTwo = await workspace.createSandboxTask({ userId: 7, sessionId: 'session_alpha' });
+    assert.equal(sandboxTwo.taskId, sandboxOne.taskId, 'one user reuses one temporary sandbox');
+    assert.equal(await fs.promises.readFile(path.join(sandboxTwo.taskPath, 'workspace', 'persist.txt'), 'utf8'), 'keep me');
+    assert.equal(sandboxTwo.manifest.expiresAt, clock + (3 * 60 * 60 * 1000), 'sandbox TTL refreshes on use');
+    await fs.promises.writeFile(path.join(sandboxTwo.taskPath, 'workspace', 'generated.txt'), 'generated', { mode: 0o600 });
+    const sandboxArtifact = await workspace.writeSandboxArtifact({
+        task: sandboxTwo,
+        sourcePath: path.join(sandboxTwo.taskPath, 'workspace', 'generated.txt'),
+        fileName: 'generated.txt',
+        mimeType: 'text/plain'
+    });
+    const sandboxDownload = await workspace.prepareDownload({
+        userId: 7,
+        sessionId: 'session_alpha',
+        taskId: sandboxArtifact.taskId,
+        artifactId: sandboxArtifact.artifactId
+    });
+    await sandboxDownload.finalize();
+    assert.equal(fs.existsSync(sandboxTwo.taskPath), true, 'downloading a sandbox artifact keeps the workspace');
+    assert.equal(fs.existsSync(path.join(sandboxTwo.taskPath, 'workspace', 'persist.txt')), true);
+    const otherUserSandbox = await workspace.createSandboxTask({ userId: 8, sessionId: 'session_alpha' });
+    assert.notEqual(otherUserSandbox.taskId, sandboxOne.taskId, 'sandboxes are user-isolated');
+    clock += (3 * 60 * 60 * 1000) + 1;
+    assert.ok((await workspace.cleanupExpired()) >= 2);
+    assert.equal(fs.existsSync(sandboxOne.taskPath), false, 'expired sandbox is deleted');
 
     const limitedWorkspace = new FileWorkspace({
         rootDir: path.join(root, 'limited-jobs'),

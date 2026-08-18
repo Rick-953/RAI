@@ -60,10 +60,16 @@ const {
 } = require('./lib/file-edit');
 const { createWindowsDownloadsResolver } = require('./lib/windows-downloads');
 const {
+    isHostnameAllowedBySet,
     normalizeHostname,
     requestPinnedHttp,
     resolveSafeHttpTarget
 } = require('./lib/network-address-policy');
+const {
+    checkFetchDenylist,
+    getFetchDenylistStats,
+    refreshFetchDenylist
+} = require('./lib/fetch-denylist');
 const { createTotpSecretCipher } = require('./lib/totp-secret-crypto');
 const {
     sniffRasterImageBuffer,
@@ -2657,7 +2663,7 @@ const FETCH_URL_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'fetch_url',
-        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected gate and attach it to the current session. Allowed hosts: GitHub and GitLab domains (including raw-content and codeload CDN hosts) plus any hosts configured in RAI_FETCH_EXTRA_HOSTS. URLs with embedded credentials are rejected. Returns a file_id that read_file, edit_file, and sandbox_exec can consume. Do not fetch URLs inside sandbox scripts — the sandbox is offline.',
+        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected allowlist and threat denylist, then attach it to the current session. Allowed hosts: GitHub and GitLab domains (including raw-content and codeload CDN hosts) plus any hosts configured in RAI_FETCH_EXTRA_HOSTS. High-risk malware, phishing, RAT, stealer, backdoor, and crypto-miner repositories and threat-feed domains are refused by exact identity/feed match. URLs with embedded credentials are rejected. Returns a file_id that read_file, edit_file, and sandbox_exec can consume. Do not fetch URLs inside sandbox scripts — the sandbox is offline.',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -3703,6 +3709,19 @@ const TOOL_EXECUTORS = {
         if (!userId || !sessionId) throw new FileWorkspaceError('workspace_session_required', 'workspace_session_required', 400);
         const urlText = String(args?.url || '').trim();
         const parsedUrl = new URL(urlText);
+        const staticDeny = checkFetchDenylist(urlText);
+        if (staticDeny.blocked) {
+            console.warn(` fetch_url 黑名单拦截: type=${staticDeny.type}, value=${staticDeny.value}`);
+            throw new FileWorkspaceError('fetch_url_denylist_blocked', 'fetch_url_denylist_blocked', 403);
+        }
+        await refreshFetchDenylist().catch((error) => {
+            console.warn(` fetch_url 威胁源刷新失败: code=${String(error?.code || error?.message || 'unknown').slice(0, 80)}`);
+        });
+        const dynamicDeny = checkFetchDenylist(urlText);
+        if (dynamicDeny.blocked) {
+            console.warn(` fetch_url 威胁源拦截: type=${dynamicDeny.type}, value=${dynamicDeny.value}`);
+            throw new FileWorkspaceError('fetch_url_denylist_blocked', 'fetch_url_denylist_blocked', 403);
+        }
         const hostname = normalizeHostname(parsedUrl.hostname);
         if (!isHostnameAllowedBySet(hostname, FETCH_URL_HOST_ALLOWLIST)) {
             throw new FileWorkspaceError('fetch_url_host_not_allowed', 'fetch_url_host_not_allowed', 403);

@@ -41,12 +41,24 @@ The sandbox is a short-lived, low-overhead Linux workspace. It can run shell com
 
 ## Downloading files (fetch_url)
 
-The sandbox process cannot open network connections itself — `curl`/`wget`/`pip install` inside a script will fail. To bring an external public file in:
+The sandbox process cannot open network connections itself — `curl`/`wget`/`git clone`/`pip install` inside a script will fail. To bring an external GitHub file or release archive in:
 
 1. Call `fetch_url` with the full `https://` URL (optionally an `output_name` for a friendly display name). GitHub/GitLab/raw-content hosts are allowed; plain public HTTPS endpoints are allowed too.
 2. The server downloads it through the SSRF-protected gate (private/reserved addresses, link-local, cloud metadata endpoints, and credentials-in-URL are refused), enforces a 16 MB limit, and stores it as a session attachment.
-3. The tool result returns a `file_id` plus size and SHA-256. Use that `file_id` in `sandbox_exec` `file_ids` (the file appears under a safe `/workspace` name) or in `read_file`/`edit_file`.
-4. Do not try to download a URL inside a sandbox script — always use `fetch_url` at the conversation level.
+3. The tool result returns a `file_id` plus size and SHA-256. Use that `file_id` in `sandbox_exec` `file_ids`; it is copied into the user's temporary sandbox workspace.
+4. The same user's sandbox workspace persists for 3 hours and refreshes on every `sandbox_exec`. Files created there remain available to later sandbox commands in the same user workspace; all network, host, privilege, resource, and command-policy limits remain in force.
+5. Do not try to download or clone a URL inside a sandbox script — always use `fetch_url` at the conversation level.
+
+## Fetch denylist
+
+The server uses a defense-in-depth denylist before the GitHub/GitLab allowlist:
+
+- Exact high-risk repositories are refused by owner/repository identity (live malware samples, credential-phishing/MITM kits, RATs, stealers/keyloggers, backdoor/payload generators, and crypto-miner builders). Keyword matching is not used, so defensive repositories containing words such as `malware`, `phishing`, or `blocklist` are not accidentally refused.
+- Threat-host feeds are refreshed periodically from Destroylist and URLhaus. A feed match is refused before download; feed entries are treated as domains/hosts, not as instructions.
+- `Phishing-Database`, HaGeZi DNS blocklists, and other defensive threat-intelligence repositories are data sources and are intentionally not themselves blocked.
+- A denylist match is final. Do not work around it by changing the URL form, using a mirror, or executing a downloader inside the sandbox. Ask the user for a safe, authorized source or use an uploaded file instead.
+
+The denylist is not a replacement for the sandbox boundary: the process remains no-network, and the server-side downloader remains restricted to its configured public-host allowlist with SSRF and resource limits.
 
 ## Command policy (hard block)
 
