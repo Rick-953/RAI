@@ -44,6 +44,12 @@ assert.match(app, /timelineDynamicSteps\.appendChild\(el\)/, 'dynamic steps must
 assert.doesNotMatch(app, /id="stepGenerating"/, 'fixed generating step must be replaced by dynamic steps');
 
 assert.match(app, /简易文档已生成/, 'client must suppress legacy artifact status labels');
+assert.match(app, /timelineSequence/, 'streaming timeline sequence state missing');
+assert.match(app, /timeline:\s*timelineSequence\.slice\(-200\)/, 'timeline sequence must persist after streaming');
+assert.match(app, /Array\.isArray\(processTrace\?\.timeline\)/, 'history must prefer the persisted timeline');
+assert.match(app, /dataset\.userToggled/, 'tool trace click state must survive later SSE updates');
+assert.match(app, /event\.args && event\.args\.query/, 'tool trace args must be read without an undefined variable');
+assert.doesNotMatch(app, /timelineRows\.map\(\(row\) => `\s*<!-- 步骤1/, 'history must not rebuild a fixed analysis-first timeline');
 
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');
 assert.match(app, /data-reasoning-mode="live"/, 'live thinking control missing');
