@@ -356,6 +356,7 @@ function sanitizeAssistantDisplayText(text = '') {
     .replace(/<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi, '')
     .replace(/<\|[^|]+\|>/g, '')
     .replace(/functions\.\w+:\d+/g, '')
+    .replace(/(?:\[\s*(?:简易文档已生成|文档已就绪|文件产物已生成|产物已就绪|下载[^\]]*)\s*\]\s*)+/g, '')
     .replace(/(?:^|\n)\s*用户(?:询问的是|想了解|问的是)[^\n]*(?:政治敏感|正常技术问题)[^\n]*(?=\n|$)/g, '\n')
     .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
@@ -17783,6 +17784,11 @@ function createMessageElement(message) {
   if (isPreviousRegeneratedReply) {
     div.classList.add('regenerated-previous-message');
   }
+  const hasToolTrace = !!(
+    processTrace &&
+    Array.isArray(processTrace.tools) &&
+    processTrace.tools.length > 0
+  );
   const hasAgentProcessTrace = !!(
     processTrace &&
     typeof processTrace === 'object' &&
@@ -17819,8 +17825,10 @@ function createMessageElement(message) {
     content.appendChild(previousHeader);
   }
 
-  if (message.role === 'assistant' && (hasInternet || hasAgentProcessTrace || hasGeneratedImages)) {
+  let messageTimelineDiv = null;
+  if (message.role === 'assistant' && (hasReasoning || hasInternet || hasAgentProcessTrace || hasToolTrace || hasGeneratedImages)) {
     const timelineDiv = document.createElement('div');
+    messageTimelineDiv = timelineDiv;
     timelineDiv.className = isResearchTrace ? 'thinking-timeline research-chat-timeline' : 'thinking-timeline';
     const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -17862,6 +17870,33 @@ function createMessageElement(message) {
             </div>
           </div>
         `;
+
+    if (hasToolTrace) {
+      const storedToolRows = processTrace.tools
+        .filter((row) => row && typeof row === 'object')
+        .slice(-200);
+      const storedToolHtml = storedToolRows.map((row) => {
+        const traceId = escapeHtml(String(row.id || `${row.tool || 'tool'}:${row.ts || ''}`));
+        const status = escapeHtml(String(row.status || 'complete').toLowerCase());
+        const summary = escapeHtml(String(row.summary || row.label || row.tool || (isChineseLanguage(appState.language) ? '工具调用' : 'Tool call')));
+        const detail = escapeHtml(String(row.detail || row.message || ''));
+        return `
+          <div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}" data-status="${status}">
+            <button type="button" class="tool-trace-summary" aria-expanded="false">${summary}</button>
+            <div class="tool-trace-detail" tabindex="0">${detail}</div>
+          </div>
+        `;
+      }).join('');
+      timelineHtml += `
+        <div class="thinking-step tool-history-step" data-status="done">
+          <div class="thinking-step-node"></div>
+          <div class="thinking-step-content">
+            <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '工具调用' : 'Tool calls'}</div>
+            <div class="tool-trace-list tool-trace-history-list">${storedToolHtml}</div>
+          </div>
+        </div>
+      `;
+    }
 
     if (hasAgentProcessTrace) {
       const normalizeStatusClass = (status) => {
@@ -17992,7 +18027,7 @@ function createMessageElement(message) {
 
     timelineDiv.innerHTML = timelineHtml;
 
-    if (hasAgentProcessTrace) {
+    if (hasAgentProcessTrace || hasToolTrace) {
       setTimeout(() => {
         const traceToggleBtn = timelineDiv.querySelector(`#${thinkingId}-trace-toggle`);
         const traceListEl = timelineDiv.querySelector(`#${thinkingId}-trace-list`);
@@ -18025,6 +18060,16 @@ function createMessageElement(message) {
               btn.classList.add('expanded');
               if (icon) icon.textContent = '▼';
             }
+          });
+        });
+
+        timelineDiv.querySelectorAll('.tool-trace-summary').forEach((button) => {
+          button.addEventListener('click', () => {
+            const item = button.closest('.tool-trace-item');
+            if (!item) return;
+            const expanded = item.classList.toggle('tool-trace-expanded');
+            item.classList.toggle('tool-trace-collapsed', !expanded);
+            button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
           });
         });
 
@@ -18066,7 +18111,8 @@ function createMessageElement(message) {
         }
       });
     }
-    content.appendChild(reasoningBlock);
+    if (messageTimelineDiv) messageTimelineDiv.appendChild(reasoningBlock);
+    else content.appendChild(reasoningBlock);
   }
 
   // 为用户消息添加轻量附件元数据（名称、大小和私有下载引用）。
@@ -20892,19 +20938,22 @@ async function sendMessage(message = null, options = {}) {
             </div>
 
           <div class="rai-reasoning-block" id="raiReasoningBlock" data-reasoning-mode="collapsed" style="display: none;">
-            <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
-              <span class="rai-reasoning-label">
-                <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
-                <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
-              </span>
+            <div class="rai-reasoning-header">
+              <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
+                <span class="rai-reasoning-label">
+                  <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
+                  <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
+                </span>
+                <span class="toggle-icon">▼</span>
+              </button>
               <span class="rai-reasoning-modes" role="group">
                 <button type="button" class="rai-reasoning-mode selected" data-reasoning-mode="collapsed" aria-label="${isChineseLanguage(appState.language) ? '折叠思考' : 'Collapse thinking'}">${getSvgIcon('unfold_less', 'material-symbols-outlined', 15)}</button>
                 <button type="button" class="rai-reasoning-mode" data-reasoning-mode="live" aria-label="${isChineseLanguage(appState.language) ? '滚动思考' : 'Live thinking'}">${getSvgIcon('vertical_align_bottom', 'material-symbols-outlined', 15)}</button>
                 <button type="button" class="rai-reasoning-mode" data-reasoning-mode="expanded" aria-label="${isChineseLanguage(appState.language) ? '展开思考' : 'Expand thinking'}">${getSvgIcon('unfold_more', 'material-symbols-outlined', 15)}</button>
               </span>
-              <span class="toggle-icon">▼</span>
-            </button>
+            </div>
             <div class="rai-reasoning-content" id="raiReasoningContent"></div>
+          </div>
           </div>
 
           <div class="message-text" id="streamingContent"></div>
@@ -20961,6 +21010,7 @@ async function sendMessage(message = null, options = {}) {
   const toolTraceList = aiMsgDiv.querySelector('#toolTraceList');
   const toolTraceCount = aiMsgDiv.querySelector('#toolTraceCount');
   const toolTraceItems = new Map();
+  const toolTraceSnapshots = new Map();
   let activeToolTraceId = '';
 
   function formatToolTraceLabel(tool = '') {
@@ -21001,9 +21051,15 @@ async function sendMessage(message = null, options = {}) {
     let item = toolTraceItems.get(id);
     if (!item) {
       item = document.createElement('div');
-      item.className = 'tool-trace-item';
+      item.className = 'tool-trace-item tool-trace-collapsed';
       item.dataset.traceId = id;
-      item.innerHTML = '<div class="tool-trace-summary"></div><div class="tool-trace-detail" tabindex="0"></div>';
+      item.innerHTML = '<button type="button" class="tool-trace-summary" aria-expanded="false"></button><div class="tool-trace-detail" tabindex="0"></div>';
+      const summaryButton = item.querySelector('.tool-trace-summary');
+      summaryButton?.addEventListener('click', () => {
+        const expanded = item.classList.toggle('tool-trace-expanded');
+        item.classList.toggle('tool-trace-collapsed', !expanded);
+        summaryButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      });
       toolTraceList.appendChild(item);
       toolTraceItems.set(id, item);
     }
@@ -21014,10 +21070,26 @@ async function sendMessage(message = null, options = {}) {
     if (detail) {
       const detailText = String(event.detail || event.output || event.message || '').slice(0, 12000);
       detail.textContent = detailText;
+      toolTraceSnapshots.set(id, {
+        id,
+        tool,
+        label: formatToolTraceLabel(tool),
+        summary: text,
+        detail: detailText,
+        message: String(event.message || '').slice(0, 1000),
+        status,
+        query: String(event.query || args.query || '').slice(0, 500),
+        skill: String(event.skill || args.name || '').slice(0, 200),
+        file_name: String(event.file_name || '').slice(0, 240),
+        url: String(event.url || '').slice(0, 500),
+        ts: Date.now()
+      });
     }
     item.dataset.status = status;
     item.classList.toggle('tool-trace-current', isCurrent);
     item.classList.toggle('tool-trace-expanded', isCurrent);
+    item.classList.toggle('tool-trace-collapsed', !isCurrent);
+    if (summary) summary.setAttribute('aria-expanded', isCurrent ? 'true' : 'false');
     if (activeToolTraceId && activeToolTraceId !== id) {
       const previous = toolTraceItems.get(activeToolTraceId);
       if (previous) {
@@ -21426,14 +21498,18 @@ async function sendMessage(message = null, options = {}) {
   }
 
   if (processTraceToggle) {
+    processTraceToggle.type = 'button';
+    processTraceToggle.setAttribute('aria-expanded', 'false');
     processTraceToggle.addEventListener('click', function () {
       const expanded = processTraceList?.classList.contains('expanded');
       if (expanded) {
         processTraceList?.classList.remove('expanded');
         processTraceToggle.classList.remove('expanded');
+        processTraceToggle.setAttribute('aria-expanded', 'false');
       } else {
         processTraceList?.classList.add('expanded');
         processTraceToggle.classList.add('expanded');
+        processTraceToggle.setAttribute('aria-expanded', 'true');
       }
     });
   }
@@ -22577,10 +22653,11 @@ async function sendMessage(message = null, options = {}) {
       rawContent: d.rawContent || '',
       reasoningContent: d.reasoningContent || d.reasoning_content || ''
     }));
+    const toolSnapshot = Array.from(toolTraceSnapshots.values()).slice(-200);
     let serializedProcessTrace = null;
-    if (enableProcessTrace) {
+    if (enableProcessTrace || toolSnapshot.length > 0) {
       const processTraceSnapshot = {
-        version: 1,
+        version: 2,
         mode: (currentResearchMode === 'deep' || currentResearchMode === 'fast')
           ? 'research_debate'
           : (appState.agentMode ? 'agent' : 'single'),
@@ -22588,7 +22665,8 @@ async function sendMessage(message = null, options = {}) {
         tasks: taskSnapshot,
         drafts: draftSnapshot,
         metrics: agentRunState.metrics || null,
-        trace: processTraceEvents
+        trace: processTraceEvents,
+        tools: toolSnapshot
       };
       if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
         processTraceSnapshot.forceSubAgents = 4;

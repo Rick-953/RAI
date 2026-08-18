@@ -675,25 +675,6 @@ function buildGeneratedImageMarkdown(result = {}) {
         .join('\n\n');
 }
 
-function buildArtifactDownloadMarkdown(result = {}) {
-    const rawUrl = String(result?.downloadPath || '').trim();
-    try {
-        const parsed = new URL(rawUrl, 'http://rai.local');
-        if (
-            parsed.origin !== 'http://rai.local'
-            || !/^\/api\/file-jobs\/[a-f0-9]{48}\/artifacts\/[a-f0-9]{32}$/i.test(parsed.pathname)
-            || !parsed.searchParams.get('sessionId')
-            || [...parsed.searchParams.keys()].some((key) => key !== 'sessionId')
-        ) return '';
-        const label = String(result?.fileName || 'RAI 文件产物')
-            .replace(/[\u0000-\u001f\u007f\[\]();\\]/g, '_')
-            .slice(0, 96) || 'RAI 文件产物';
-        return `[下载 ${label}](${parsed.pathname}${parsed.search})`;
-    } catch (_) {
-        return '';
-    }
-}
-
 function appendRaiRuntimeReport(entry = {}) {
     let block;
     try {
@@ -3537,6 +3518,16 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
             if (!fileId) return null;
             return { file_id: fileId };
         }
+        if (toolName === 'cxrai_setting') {
+            const action = String(args.action || '');
+            if (!['list', 'get', 'set'].includes(action)) return null;
+            if (action === 'list') return { action };
+            const name = String(args.name || '').trim();
+            if (!name || !CXRAI_SETTINGS_REGISTRY[name]) return null;
+            if (action === 'get') return { action, name };
+            if (args.value === undefined) return null;
+            return { action, name, value: args.value };
+        }
         if (toolName === 'browser.read') return {};
         if (toolName === 'browser.navigate') {
             const url = String(args.url || '').trim();
@@ -5453,7 +5444,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             size: Number(result?.size || 0),
             expires_at: result?.expiresAt || null,
             download_available: true,
-            reply_instruction: 'A trusted download link was already sent to the user interface. Briefly confirm the artifact is ready, but do not repeat a URL, task ID, filesystem path, or tool protocol.'
+            reply_instruction: 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Answer the user\'s substantive request naturally, and mention the file only when the user explicitly asks about it.'
         };
     }
 
@@ -5477,7 +5468,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
                 download_available: true
             } : {}),
             reply_instruction: downloadAvailable
-                ? 'A trusted download link was already sent to the user interface. Summarize the execution and confirm the artifact is ready without repeating a URL, task ID, filesystem path, or tool protocol.'
+                ? 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Summarize the bounded execution only when relevant to the user\'s request.'
                 : 'Summarize the bounded sandbox execution from stdout, stderr, and exit_code. Do not claim a download exists or expose tool protocol.'
         };
     }
@@ -16222,6 +16213,7 @@ app.post('/api/sessions/:id/title/regenerate', authLimiter, authenticateToken, a
 
 app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
     try {
+        const deleteStartedAt = Date.now();
         await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
         const deleted = await withMainDbTransaction(async (tx) => {
             return Boolean(await deleteOwnedSessionWithRelatedData({
@@ -16231,8 +16223,10 @@ app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
             }));
         });
         if (!deleted) return res.status(404).json({ error: '会话不存在' });
-        await drainQueuedGeneratedImageDeletionsBestEffort();
-        console.log(' 删除会话成功:', req.params.id);
+        const deleteElapsedMs = Date.now() - deleteStartedAt;
+        // 图像文件清理不阻塞响应（尽力而为，后台执行）
+        setImmediate(() => { drainQueuedGeneratedImageDeletionsBestEffort().catch(() => null); });
+        console.log(` 删除会话成功: ${req.params.id}, elapsed=${deleteElapsedMs}ms`);
         return res.json({ success: true });
     } catch (error) {
         console.error(' 删除会话失败:', sanitizeReportContext(error));
@@ -16923,6 +16917,7 @@ function sanitizeAssistantVisibleContent(text = '') {
         .replace(/<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi, '')
         .replace(/<\|[^|]+\|>/g, '')
         .replace(/functions\.\w+:\d+/g, '')
+        .replace(/(?:\[\s*(?:简易文档已生成|文档已就绪|文件产物已生成|产物已就绪|下载[^\]]*)\s*\]\s*)+/g, '')
         .replace(/(?:^|\n)\s*用户(?:询问的是|想了解|问的是)[^\n]*(?:政治敏感|正常技术问题)[^\n]*(?=\n|$)/g, '\n')
         .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
@@ -18941,6 +18936,42 @@ const PET_CHITCHAT_SYSTEM_PROMPT = String.raw`你是 CX RAI 的桌面宠物。
 const PET_CHITCHAT_MIN_INTERVAL_MS = 15 * 60 * 1000;
 const petChitchatLastAt = new Map();
 
+
+// ===== CXRAI 设置项注册表：对话式设置管理（UWP 本地执行，服务端提供能力清单）=====
+const CXRAI_SETTINGS_VERSION = 1;
+const CXRAI_SETTINGS_REGISTRY = Object.freeze({
+    notifications: { desktop: true, mobile: true,  type: 'bool',   desc: '通知开关' },
+    auto_start:    { desktop: true, mobile: false, type: 'bool',   desc: '开机自启动' },
+    clear_cache:   { desktop: true, mobile: true,  type: 'action', desc: '清除本地缓存' },
+    custom_api:    { desktop: true, mobile: false, type: 'list',   desc: '自定义 API 列表' },
+    default_model: { desktop: true, mobile: true,  type: 'string', desc: '默认模型' },
+    theme:         { desktop: true, mobile: true,  type: 'string', desc: '主题（浅色/深色/跟随系统）' },
+    language:      { desktop: true, mobile: true,  type: 'string', desc: '语言' }
+});
+app.get('/api/cxrai/settings-registry', authenticateToken, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ version: CXRAI_SETTINGS_VERSION, items: CXRAI_SETTINGS_REGISTRY });
+});
+
+// ===== CXRAI_setting 工具定义（本地模式注入）=====
+const CXRAI_SETTING_TOOL_DEFINITION_LOCAL = Object.freeze({
+    type: 'function',
+    function: {
+        name: 'cxrai_setting',
+        description: '读取或修改 CX RAI 应用设置（本地执行）。先调 list 查看当前设备支持的设置项，再 get/set。设置项按设备平台（桌面版/移动版）有差异，不支持的项目客户端会返回 SETTING_NOT_SUPPORTED。',
+        parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['action'],
+            properties: {
+                action: { type: 'string', enum: ['list', 'get', 'set'], description: 'list=列出当前设备可用设置项；get=读取某设置项当前值（需 name）；set=设置某设置项的值（需 name+value）' },
+                name: { type: 'string', description: '设置项名（list 时省略；get/set 时必须）' },
+                value: { description: '设置值（set 时必填；bool=true/false, string=值, action=执行动作）' }
+            }
+        }
+    }
+});
+
 app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const userId = req.user && req.user.userId;
@@ -18969,6 +19000,7 @@ app.get('/api/pet/chitchat', authenticateToken, async (req, res) => {
             const recentRows = await dbAllAsync(
                 `SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
                  WHERE s.user_id = ? AND m.role = 'user' AND length(m.content) > 5
+                   AND (s.session_kind IS NULL OR s.session_kind = 'chat')
                  ORDER BY m.id DESC LIMIT 4`,
                 [userId]
             );
@@ -20943,6 +20975,33 @@ if (clientFileExecution && systemPrompt) {
             localAgentEnabled: !!localAgentSession
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
+        const serverToolTrace = [];
+        const recordServerToolTrace = (event = {}) => {
+            if (!event || !event.type || !['tool_status', 'search_status'].includes(String(event.type))) return;
+            const tool = String(event.tool || event.name || event.kind || 'tool').slice(0, 120);
+            const row = {
+                id: String(event.tool_call_id || event.call_id || `${tool}:${serverToolTrace.length}`).slice(0, 200),
+                tool,
+                status: String(event.status || 'complete').toLowerCase().slice(0, 40),
+                summary: String(event.summary || event.message || event.detail || tool).slice(0, 240),
+                detail: String(event.detail || event.message || '').slice(0, 12000),
+                query: String(event.query || '').slice(0, 500),
+                skill: String(event.skill || '').slice(0, 200),
+                file_name: String(event.file_name || '').slice(0, 240),
+                url: String(event.url || '').slice(0, 500),
+                ts: Number(event.ts) || Date.now()
+            };
+            const existingIndex = serverToolTrace.findIndex((item) => item.id === row.id);
+            if (existingIndex >= 0) serverToolTrace[existingIndex] = row;
+            else serverToolTrace.push(row);
+            if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
+            return row;
+        };
+        const emitTrackedToolStatus = (event = {}) => {
+            const tracked = { type: event.type || 'tool_status', ...event };
+            recordServerToolTrace(tracked);
+            res.write(`data: ${JSON.stringify(tracked)}\n\n`);
+        };
 
         if (sessionId) {
             liveStreamState = getSessionStreamState(sessionId, requestId, req.user.userId);
@@ -21367,6 +21426,7 @@ if (clientFileExecution && systemPrompt) {
                         retry: agentTraceState.retry,
                         metrics: agentTraceState.metrics,
                         draftDeltas: agentTraceState.draftDeltas || [],
+                        tools: serverToolTrace,
                         savedAt: agentTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -21813,6 +21873,7 @@ if (clientFileExecution && systemPrompt) {
         let useStreamingTools = false;  // 标记是否启用流式工具调用
         let forcedClientListFilesDone = false;
         let forcedMachineQueryDone = false;
+        let forcedCxraiSettingDone = false;
         let clientNonStreamRetryDone = false;
 
         if (enableResearchDebate && internetMode && !raiProductSkillRequired) {
@@ -22501,6 +22562,7 @@ if (clientFileExecution && systemPrompt) {
                         agentEvents: researchTraceState.agentEvents,
                         draftDeltas: researchTraceState.draftDeltas,
                         trace: researchTraceState.trace,
+                        tools: serverToolTrace,
                         savedAt: researchTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -23911,6 +23973,23 @@ if (clientFileExecution && systemPrompt) {
                 streamFinishReason = 'tool_calls';
             }
 
+            // 设置类问题兜底：模型在设置类消息未调设置工具时，强制发起 cxrai_setting list 引导
+            // （无论是否只调了 read_skill 占位；只要还没调 cxrai_setting 就强制）
+            const alreadyCalledSettingTool = accumulatedToolCalls.some((tc) => tc.function?.name === 'cxrai_setting');
+            if (useStreamingTools && clientFileExecution && !forcedCxraiSettingDone && !alreadyCalledSettingTool && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
+                forcedCxraiSettingDone = true;
+                console.warn(` 设置类问题但未调用 cxrai_setting，自动发起 list 引导: model=${actualModel}`);
+                accumulatedToolCalls.push({
+                    id: `forced_cxrai_setting_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                        name: 'cxrai_setting',
+                        arguments: JSON.stringify({ action: 'list' })
+                    }
+                });
+                streamFinishReason = 'tool_calls';
+            }
+
             // 本机状态类问题兜底：宽带/配置/硬件类提问必须查真实数据，禁止模型编造
             if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedMachineQueryDone && /(?:宽带|网速|网卡|测速|配置|cpu|内存|硬盘|磁盘|显卡|频率|系统信息|型号|速度|提速)/i.test(String(userContent || ''))) {
                 forcedMachineQueryDone = true;
@@ -24003,6 +24082,17 @@ if (clientFileExecution && systemPrompt) {
                             const isMemoryDeleteTool = toolName === 'delete_memory';
                             const isReadSkillTool = toolName === 'read_skill';
                             const isFileTool = isFileWorkspaceToolName(toolName);
+                            recordServerToolTrace({
+                                type: isSearchTool ? 'search_status' : 'tool_status',
+                                tool: toolName,
+                                tool_call_id: toolCall.id,
+                                status: 'running',
+                                message: isSearchTool ? `正在搜索: "${String(args.query || '').slice(0, 80)}"` : '工具调用进行中',
+                                query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                skill: args.name || '',
+                                file_name: args.file_name || '',
+                                url: args.url || ''
+                            });
                             if (isSearchTool && agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
@@ -24090,6 +24180,10 @@ if (clientFileExecution && systemPrompt) {
 - 更新 Excel：用 update_sheet（定向写单元格/公式/图表）；update_sheet 成功即完成，禁止再用 sandbox_exec 的 PowerShell COM 重复操作 Excel
 - 管理文件：list_files / write_file / copy_file / move_file / delete_file
 - 执行命令：${localAgentSession ? `优先用 process_exec 传递 program + args；当前 Agent 平台是 ${localAgentSession.platform}。只有用户明确要求 shell 脚本时才用 sandbox_exec` : '当前 UWP 客户端用 sandbox_exec 执行 Windows PowerShell'}。默认限 60 秒，最长 300 秒；需要管理员权限时把 elevated 设为 true。提权和破坏性操作必须等待客户端确认，未确认时不得声称完成
+- 设置类请求的目标层级（重要）：
+  【本地电脑模式已开启】时，设置请求默认指 Windows 系统设置（系统通知、系统开机启动项、系统服务等）→ 用 sandbox_exec + PowerShell 执行（改系统级配置需 elevated，弹 UAC）；用户明确提到「CX RAI/RAI/应用内」时才是应用内设置。
+  【本地电脑模式未开启】时，设置请求默认指 CX RAI 应用内设置 → 用 cxrai_setting 工具（先 action=list 看当前设备可用项，再 get/set；设置项按桌面/移动平台有差异，客户端会返回 SETTING_NOT_SUPPORTED，如实告知用户）。
+  歧义时（用户只说「关闭通知」未指明层级）：本地电脑模式开启→按系统设置处理并可在执行前简短确认；未开启→按应用内 cxrai_setting 处理。禁止只输出操作步骤教程而不实际执行。
 【数字纪律（必须遵守）】
 - 涉及具体数字严格自查：①单位核对：千兆=1000M/1G、百兆=100M（差10倍，禁止混用）；频率/速率/容量/价格同理（2133MHz 不是 213MHz）；②位数核对：型号/编号逐位检查（i5-7500 不是 i5-750）；③关键数字标注来源：「本机查询」「搜索结果」，无法确认时明确说「不确定」，禁止编造
 - 涉及本机状态（网络速率/硬件配置/系统信息）：${localAgentSession ? '必须先用 process_exec 调用当前平台的原生查询程序读取真实值' : '必须先用 sandbox_exec 通过 PowerShell 读取真实值'}，原样复制返回的数字，禁止凭记忆或推算
@@ -24307,6 +24401,20 @@ if (clientFileExecution && systemPrompt) {
                                                 : args)
                                     }
                                 });
+                                recordServerToolTrace({
+                                    tool: toolName,
+                                    tool_call_id: toolCall.id,
+                                    status: 'failed',
+                                    message: isImageTool
+                                        ? '图片生成失败，已记录报错'
+                                        : ((isMemorySaveTool || isMemoryDeleteTool)
+                                            ? '记忆工具执行失败，已记录报错'
+                                            : (isFileTool ? '文件工作区操作失败' : '工具调用失败，已记录报错')),
+                                    query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                    skill: args.name || '',
+                                    file_name: args.file_name || '',
+                                    url: args.url || ''
+                                });
                                 res.write(`data: ${JSON.stringify({
                                     type: (isImageTool || isMemorySaveTool || isMemoryDeleteTool || isFileTool) ? 'tool_status' : 'search_status',
                                     tool: toolName,
@@ -24328,6 +24436,19 @@ if (clientFileExecution && systemPrompt) {
                                 });
                                 continue;
                             }
+
+                            recordServerToolTrace({
+                                type: isSearchTool ? 'search_status' : 'tool_status',
+                                tool: toolName,
+                                tool_call_id: toolCall.id,
+                                status: 'complete',
+                                message: isSearchTool ? `搜索完成: ${Array.isArray(result?.results || result) ? (result.results || result).length : 0} 条结果` : (isFileTool ? '文件工具执行完成' : '工具调用完成'),
+                                detail: isSearchTool ? `搜索完成: ${Array.isArray(result?.results || result) ? (result.results || result).length : 0} 条结果` : '',
+                                query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                skill: args.name || '',
+                                file_name: args.file_name || '',
+                                url: args.url || ''
+                            });
 
                             if (isSearchTool) {
                                 const searchResults = result.results || result;
@@ -24507,9 +24628,7 @@ if (clientFileExecution && systemPrompt) {
                                     args
                                 });
                                 executedToolResults.push({ toolCall, result: toolResult });
-                                const artifactMarkdown = buildArtifactDownloadMarkdown(result);
-                                if (artifactMarkdown) emitStructuredAssistantChunk(`\n\n${artifactMarkdown}\n\n`);
-                                res.write(`data: ${JSON.stringify({
+                                    res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: toolName,
                                     tool_call_id: toolCall.id,

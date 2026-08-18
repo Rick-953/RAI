@@ -5650,8 +5650,7 @@ video.private-file-preview-media {
 .tool-trace-list {
   position: relative;
   margin-top: 7px;
-  border-left: 2px solid var(--border-color);
-  padding-left: 12px;
+  padding-left: 0;
   max-height: 232px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -5669,7 +5668,7 @@ video.private-file-preview-media {
 .tool-trace-item::before {
   content: '';
   position: absolute;
-  left: -17px;
+  left: -20px;
   top: 5px;
   width: 7px;
   height: 7px;
@@ -5688,12 +5687,20 @@ video.private-file-preview-media {
 }
 
 .tool-trace-summary {
+  display: block;
+  width: 100%;
   overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-secondary);
+  font: inherit;
   font-size: 12px;
   line-height: 1.45;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .tool-trace-detail {
@@ -5760,10 +5767,10 @@ video.private-file-preview-media {
 
 .process-trace-list {
   margin-top: var(--spacing-sm);
-  padding: var(--spacing-md) var(--spacing-sm) var(--spacing-md) var(--spacing-md);
-  border-left: 2px solid rgba(255, 193, 7, 0.25);
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  background: rgba(255, 193, 7, 0.04);
+  padding: var(--spacing-md) 0;
+  border-left: none;
+  border-radius: 0;
+  background: transparent;
   max-height: 0;
   opacity: 0;
   overflow: hidden;
@@ -5781,7 +5788,7 @@ video.private-file-preview-media {
 .process-dot-item {
   position: relative;
   margin-bottom: 8px;
-  padding-left: 12px;
+  padding-left: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -5799,7 +5806,7 @@ video.private-file-preview-media {
 .process-dot-item::before {
   content: '';
   position: absolute;
-  left: -7px;
+  left: -20px;
   top: 7px;
   width: 6px;
   height: 6px;
@@ -17736,8 +17743,27 @@ body.chatflow-iframe-mode .message-content::selection {
 
 /* ==================== RAI 思考内容（正文位置 / 圆角矩形折叠） ==================== */
 .rai-reasoning-block {
-  margin: 4px 0 10px 18px;
+  position: relative;
+  margin: 4px 0 10px 0;
   max-width: 100%;
+}
+.rai-reasoning-block::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 9px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  border: 2px solid var(--bg-primary);
+  z-index: 2;
+}
+.rai-reasoning-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .rai-reasoning-toggle {
   display: inline-flex;
@@ -17785,8 +17811,8 @@ body.chatflow-iframe-mode .message-content::selection {
 }
 .rai-reasoning-content {
   margin-top: 8px;
-  padding: 2px 0 2px 14px;
-  border-left: 2px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  padding: 2px 0;
+  border-left: none;
   background: transparent;
   color: var(--text-secondary);
   font-size: 12.5px;
@@ -17826,7 +17852,7 @@ body.chatflow-iframe-mode .message-content::selection {
   border-left-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
 }
 @media (max-width: 768px) {
-  .rai-reasoning-block { margin-left: 14px; }
+  .rai-reasoning-block { margin-left: 0; }
   .rai-reasoning-toggle { font-size: 11px; padding: 4px 12px; }
   .rai-reasoning-content { font-size: 12px; }
 }
