@@ -47,11 +47,13 @@ assert.match(server, /if \(toolName === 'fetch_url'\) \{/);
 // Tool result tells the model to reuse the file_id via workspace tools.
 assert.match(server, /Reference it by its file_id/);
 // The workspace catalog and sandbox hints advertise the gate.
-assert.match(server, /fetch_url 下载/);
-assert.match(server, /沙箱进程无网络，外部文件用 fetch_url 下载/);
+assert.match(server, /name: 'fetch_url'/);
+assert.match(server, /file_id/);
+assert.match(server, /sandbox process has public internet access|共享服务器网络空间|public internet access/);
 // README-style skill documents the gate for the model.
 assert.match(sandboxSkill, /Downloading files \(fetch_url\)/);
-assert.match(sandboxSkill, /no direct network/);
+assert.match(sandboxSkill, /public network access/);
+assert.match(sandboxSkill, /persists for 3 hours/);
 
 // Host allowlist semantics: exact host or subdomain, everything else refused.
 const allowlist = new Set(['github.com', 'githubusercontent.com', 'gitlab.com']);

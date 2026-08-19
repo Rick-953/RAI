@@ -22080,7 +22080,7 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('需要某项能力的详细规则时，调用 read_skill，name 只能为已列出的技能名。询问 RAI 或 CX RAI 的稳定产品知识时，先读取 rai-product 且不联网；文件操作、压缩包、命令或代码执行前，先读取 sandbox。');
             }
             if (sessionId) {
-                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱进程无网络，外部文件用 fetch_url 下载（仅 GitHub/GitLab 等白名单域名，16MB 上限，下载物成为会话附件 file_id）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝。');
+                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱脚本可通过共享服务器网络空间访问公网；需要服务端白名单、SSRF、威胁拦截和 file_id 附件时使用 fetch_url（GitHub/GitLab 等白名单域名，16MB 上限）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝；同一用户工作区复用并保存3小时，每次 sandbox_exec 刷新有效期。');
                 if (workspaceAttachmentCatalog.length > 0) {
                     toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
                 }
