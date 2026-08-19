@@ -5545,16 +5545,16 @@ video.private-file-preview-media {
   margin-bottom: 0;
 }
 
-/* 步骤节点圆点 */
+/* 步骤节点保持紧凑方形，避免深色圆点遮住工具状态卡片的边角。 */
 .thinking-step-node {
   position: absolute;
   left: -20px;
   top: 4px;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: 2px;
   background: var(--border-color);
-  border: 2px solid var(--bg-primary);
+  border: 0;
   z-index: 2;
   transition: all 0.3s ease;
 }

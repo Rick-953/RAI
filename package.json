@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.13.16",
+  "version": "0.13.17",
   "packageManager": "npm@11.13.0",
   "engines": {
     "node": "24.16.0",
@@ -69,6 +69,7 @@
     "test:system-prompt-contract": "node scripts/system-prompt-contract-regression.js",
     "test:skill-loader": "node scripts/skill-loader-regression.js && node scripts/skill-loader-runtime-regression.js",
     "test:beta-base-path": "node scripts/beta-base-path-regression.js",
+    "test:beta-tool-ui-artifacts": "node scripts/beta-tool-ui-artifact-regression.js",
     "test:formal-audit": "npm run check && npm run test:local-agent && npm run test:auth-token-purpose && npm run test:auth-sessions && npm run test:software-client-auth && npm run test:sensitive-account-session && npm run test:admin-sessions && npm run test:csp-static && npm run test:password-policy && npm run test:uwp-signup && npm run test:totp-secret-crypto && npm run test:document-parser-security && npm run test:parser-sandbox && npm run test:linux-sandbox && npm run test:sandbox-command-policy && npm run test:fetch-url && npm run test:fetch-denylist && npm run test:tool-trace-ui && npm run test:conversation-integrity && npm run test:office-picker-runtime && npm run test:file-workspace && npm run test:file-edit && npm run test:attachment-autoload && npm run test:file-library && npm run test:upload-progress && npm run test:audio-gemini && npm run test:stream-completion-recovery && npm run test:network-address-policy && npm run test:generated-image-cleanup && npm run test:gpt-gateway && npm run test:model-points-pricing && npm run test:windows-downloads && npm run test:sidebar-image-quota && npm run test:memory-tools && npm run test:chatflow-conversation-fusion && npm run test:chatflow-canvas-api-runtime && npm run test:system-prompt-contract && npm run test:skill-loader && npm run test:chat-fallback-latency && npm run test:security-config && npm run test:dependency-security && npm run test:agent-verifier-contract && npm run test:vendor-integrity && npm run test:vendor-provenance && npm run test:privacy-logging && npm run test:security-exception-expiry && npm run test:passkeys && npm run test:beta-auth-import && npm run test:formal-poe && npm run test:formal-user-bugs && npm run test:selection-explanations && npm run security:smoke:isolated && npm run desktop:check",
     "formal-audit": "npm run test:formal-audit"
   },

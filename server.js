@@ -16887,6 +16887,14 @@ const INTERNAL_ASSISTANT_SECTION_TITLES = new Set([
     '搜索策略'
 ]);
 
+// Models occasionally expose an internal prompt label as a final bracketed line.
+// Keep real user-facing bracketed text intact and remove only labels that identify prompt internals.
+const INTERNAL_ASSISTANT_FOOTER_LABEL_RE = /(?:\s*\n?\s*\[\s*(?=[^\]\n]{1,80}\s*\]\s*$)(?=[^\]\n]*(?:RAI|提示词|系统提示|prompt|system|identity|身份|角色))(?=[^\]\n]*(?:提示词|prompt|system|介绍|identity|身份|设定|说明))[^\]\n]+\]\s*)+$/gi;
+
+function stripInternalAssistantFooterLabels(text = '') {
+    return String(text || '').replace(INTERNAL_ASSISTANT_FOOTER_LABEL_RE, '').trimEnd();
+}
+
 const INTERNAL_ASSISTANT_START_PREFIXES = [
     '**分析用户意图**',
     '分析用户意图',
@@ -16968,6 +16976,7 @@ function sanitizeAssistantVisibleContent(text = '') {
         .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
     output = removeInternalAssistantSections(output);
+    output = stripInternalAssistantFooterLabels(output);
 
     if (/^\s*(?:\{[\s\S]*"(?:query|name|arguments)"[\s\S]*\}|\[[\s\S]*"(?:query|name|arguments)"[\s\S]*\])\s*$/.test(output)) {
         return '';
