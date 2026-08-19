@@ -69,15 +69,15 @@ assert.match(app, /data-reasoning-mode="live"/, 'live thinking control missing')
 assert.match(app, /data-reasoning-mode="expanded"/, 'expanded thinking control missing');
 assert.match(app, /function setReasoningDisplayMode\(/, 'thinking display mode state handler missing');
 
-assert.match(css, /\.tool-trace-list/, 'tool trace styles missing');
-assert.match(css, /\.tool-trace-detail[\s\S]{0,300}max-height/, 'current trace must have a bounded viewport');
+assert.match(css, /\.tool-trace-item[\s\S]{0,180}flex-wrap: wrap/);
+assert.match(css, /\.tool-trace-detail[\s\S]{0,120}flex: 0 0 100%/);
 assert.match(css, /\.rai-reasoning-block\.mode-live[\s\S]{0,300}max-height/, 'live thinking must have a bounded viewport');
 assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, 'trace animation must respect reduced motion');
 
 // Server supplies state and a bounded readable detail without exposing paths.
 assert.match(server, /type: 'tool_status'[\s\S]{0,400}detail:/, 'tool status needs detail payload');
-assert.match(server, /download_url: result\?\.download_url \|\| result\?\.downloadPath/, 'file tool status must carry its protected download URL');
-assert.match(server, /download_available: Boolean\(result\?\.download_url \|\| result\?\.downloadPath\)/, 'file status must expose availability');
+assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
+assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
 assert.match(app, /tool-trace-download/, 'tool trace must render a download action');
 assert.match(server, /read_skill/, 'trusted skill tool status missing');
 
