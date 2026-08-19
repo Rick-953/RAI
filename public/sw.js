@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.14.5-20260819-pet-animfix-v0142-r1';
+const RAI_SW_VERSION = '0.14.6-20260819-pet-hardcut-v0143-r1';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -15,12 +15,12 @@ const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
   '', 'index.html', 'runtime-brand.js?v=20260818-version-contract-v0136-r1',
   'rai-system-prompt.js?v=20260818-version-contract-v0136-r1', 'event-bindings.js?v=20260818-version-contract-v0136-r1',
-  'app.js?v=20260819-pet-animfix-v0142-r1', 'styles.css?v=20260819-pet-animfix-v0142-r1',
-  'local-agent.js?v=20260819-pet-animfix-v0142-r1', 'local-agent.css?v=20260818-version-contract-v0136-r1',
+  'app.js?v=20260819-pet-hardcut-v0143-r1', 'styles.css?v=20260819-pet-hardcut-v0143-r1',
+  'local-agent.js?v=20260819-pet-hardcut-v0143-r1', 'local-agent.css?v=20260818-version-contract-v0136-r1',
   'crf-ui.js?v=20260818-version-contract-v0136-r1',
   'selection-explainer.js?v=20260818-version-contract-v0136-r1', 'selection-explainer.css?v=20260818-version-contract-v0136-r1',
   'site.webmanifest?v=20260818-version-contract-v0136-r1', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20260819-pet-animfix-v0142-r1',
+  'pet-quotes.js?v=20260819-pet-hardcut-v0143-r1',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',

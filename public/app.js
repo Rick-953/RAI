@@ -3085,20 +3085,19 @@ const TeaPetRuntime = {
       this.setState('idle');
       return;
     }
-    // 双帧 500ms 周期交叉溶解（同 UWP hold300+transition200）：base ↔ base-1 变体无限循环
+    // 双帧 500ms 硬切交替（无交叉溶解，避免透明背景图中间态发白闪烁）
     // 平滑关键：图片只在层隐藏时替换（提前一个周期预载好），tick 只切 opacity ——
-    // 交叉溶解期间两帧都是已解码、同画布的图片 → 无解码闪帧、无尺寸跳变、无背景图硬切
+    // 两帧都是已解码、同 512×512 画布、锚点一致的图片 → 原地变脸，无位移无发白
     const base = this.fileForState();
     const nextFrame = this.frame === 0 ? 1 : 0;
     const incoming = this.layerEl(this.activeLayer ^ 1);
     const outgoing = this.layerEl(this.activeLayer);
     if (incoming && outgoing) {
-      incoming.dataset.visible = '1';   // 淡入（图片早已预载）
+      incoming.dataset.visible = '1';   // 立即显示（无过渡）
       this.activeLayer ^= 1;
-      outgoing.dataset.visible = '0';   // 淡出
-      // 预载下一轮帧到刚隐藏的层：必须等淡出过渡（200ms）真正结束、opacity 归零后才换图，
-      // 否则 outgoing 仍部分可见时换背景图 = 用户眼前闪帧（闪烁根因）。
-      // 整个淡出+hold 周期都在解码，轮到它淡入时早已就绪。
+      outgoing.dataset.visible = '0';   // 立即隐藏
+      // 预载下一轮帧到刚隐藏的层：无过渡，换图时机不再受淡出约束；
+      // 用极小延迟让浏览器先完成隐藏层重绘，避免同 tick 换图触发合成闪烁。
       const afterFrame = nextFrame === 1 ? 0 : 1;
       const afterKey = afterFrame === 1 ? `${base}-1` : base;
       const outEl = outgoing;
@@ -3106,7 +3105,7 @@ const TeaPetRuntime = {
       this._preloadTimer = setTimeout(() => {
         outEl.style.backgroundImage = `url('images/pets/${afterKey}.webp')`;
         this._preloadTimer = null;
-      }, 220);
+      }, 30);
     }
     this.frame = nextFrame;
   },

@@ -18801,7 +18801,8 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   background-position: center bottom;
   background-size: contain;
   opacity: 0;
-  transition: opacity 200ms ease-in-out;
+  /* 无过渡：交叉溶解中间态会让透明背景图整体发白闪烁（白底网页上尤其明显）。
+     改为硬切——两帧 512×512 锚点一致，原地变脸，无中间态、无发白。 */
   will-change: opacity;
 }
 
