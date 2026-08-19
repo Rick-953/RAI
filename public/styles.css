@@ -5444,6 +5444,53 @@ video.private-file-preview-media {
   margin-bottom: var(--spacing-md);
 }
 
+/* The assistant body and execution events share one ordered vertical rail. */
+.stream-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stream-flow-content {
+  min-width: 0;
+}
+
+.stream-flow-event {
+  margin: 0;
+  min-height: 24px;
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+
+.stream-flow-event-toggle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stream-flow-event-detail {
+  display: none;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stream-flow-event.expanded .stream-flow-event-detail {
+  display: block;
+}
+
 /* 左侧垂直时间轴线 */
 .thinking-timeline::before {
   content: '';

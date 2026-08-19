@@ -50,6 +50,13 @@ assert.match(app, /Array\.isArray\(processTrace\?\.timeline\)/, 'history must pr
 assert.match(app, /dataset\.userToggled/, 'tool trace click state must survive later SSE updates');
 assert.match(app, /event\.args && event\.args\.query/, 'tool trace args must be read without an undefined variable');
 assert.doesNotMatch(app, /timelineRows\.map\(\(row\) => `\s*<!-- 步骤1/, 'history must not rebuild a fixed analysis-first timeline');
+assert.match(app, /const streamFlowSegments = \[\]/, 'stream flow segments missing');
+assert.match(app, /appendInterleavedContent\(/, 'content must enter the interleaved flow');
+assert.match(app, /appendInterleavedEvent\('tool'/, 'tool events must enter the interleaved flow');
+assert.match(app, /flowSegments:\s*streamFlowSegments\.slice\(-200\)/, 'interleaved flow must persist after streaming');
+assert.match(app, /hasInterleavedFlow/, 'history must detect the persisted interleaved flow');
+assert.match(app, /!hasInterleavedFlow && \(hasReasoning/, 'legacy separate timeline must be suppressed for interleaved history');
+assert.match(css, /\.stream-flow-event/, 'interleaved flow event styles missing');
 
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');
 assert.match(app, /data-reasoning-mode="live"/, 'live thinking control missing');
