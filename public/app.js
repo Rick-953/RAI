@@ -2388,8 +2388,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.9';
-const RAI_BUILD_ID = '20260819-stream-trace-v0139-r1';
+const RAI_APP_VERSION = '0.13.10';
+const RAI_BUILD_ID = '20260819-interleaved-flow-v01310-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -17789,6 +17789,11 @@ function createMessageElement(message) {
     Array.isArray(processTrace.tools) &&
     processTrace.tools.length > 0
   );
+  const hasInterleavedFlow = !!(
+    processTrace &&
+    Array.isArray(processTrace.flowSegments) &&
+    processTrace.flowSegments.some((segment) => segment && segment.kind)
+  );
   const hasAgentProcessTrace = !!(
     processTrace &&
     typeof processTrace === 'object' &&
@@ -17826,7 +17831,7 @@ function createMessageElement(message) {
   }
 
   let messageTimelineDiv = null;
-  if (message.role === 'assistant' && (hasReasoning || hasInternet || hasAgentProcessTrace || hasToolTrace || hasGeneratedImages)) {
+  if (message.role === 'assistant' && !hasInterleavedFlow && (hasReasoning || hasInternet || hasAgentProcessTrace || hasToolTrace || hasGeneratedImages)) {
     const timelineDiv = document.createElement('div');
     messageTimelineDiv = timelineDiv;
     timelineDiv.className = isResearchTrace ? 'thinking-timeline research-chat-timeline' : 'thinking-timeline';
@@ -18105,7 +18110,7 @@ function createMessageElement(message) {
   }
 
   // RAI 思考内容：放到正文位置，比正文浅、字号小，折叠为圆角矩形按钮（无描边）
-  if (message.role === 'assistant' && hasReasoning && !isResearchTrace) {
+  if (message.role === 'assistant' && hasReasoning && !isResearchTrace && !hasInterleavedFlow) {
     const reasoningBlock = document.createElement('div');
     reasoningBlock.className = 'rai-reasoning-block';
     const reasoningId = `reasoning-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -18166,6 +18171,42 @@ function createMessageElement(message) {
     }
   }
 
+  if (hasInterleavedFlow) {
+    const flow = document.createElement('div');
+    flow.className = 'message-text stream-flow';
+    processTrace.flowSegments.forEach((segment) => {
+      if (!segment || !segment.kind) return;
+      if (segment.kind === 'content') {
+        const block = document.createElement('div');
+        block.className = 'stream-flow-content';
+        block.innerHTML = sanitizeRenderedHtml(renderMarkdownWithMath(String(segment.text || '')));
+        flow.appendChild(block);
+        return;
+      }
+      const item = document.createElement('div');
+      item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
+      item.dataset.status = String(segment.status || 'done');
+      item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
+      const stepContent = item.querySelector('.thinking-step-content');
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'stream-flow-event-toggle';
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.textContent = String(segment.title || '');
+      const detail = document.createElement('div');
+      detail.className = 'stream-flow-event-detail';
+      detail.textContent = String(segment.detail || '');
+      toggle.addEventListener('click', () => {
+        const expanded = item.classList.toggle('expanded');
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      });
+      stepContent.appendChild(toggle);
+      stepContent.appendChild(detail);
+      flow.appendChild(item);
+    });
+    content.appendChild(flow);
+  }
+
   const textDiv = document.createElement('div');
   textDiv.className = 'message-text';
   //  移除标题标记 <<<标题>>> 后再渲染（修复历史消息显示标题的bug）
@@ -18194,7 +18235,7 @@ function createMessageElement(message) {
 
   textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
   hydrateRenderedImages(textDiv);
-  if (textDiv.innerHTML.trim()) {
+  if (!hasInterleavedFlow && textDiv.innerHTML.trim()) {
     content.appendChild(textDiv);
   }
 
@@ -20974,7 +21015,7 @@ async function sendMessage(message = null, options = {}) {
           </div>
           </div>
 
-          <div class="message-text" id="streamingContent"></div>
+          <div class="message-text stream-flow" id="streamingContent"></div>
         </div>
       `;
 
@@ -21891,11 +21932,80 @@ async function sendMessage(message = null, options = {}) {
 
     const streamingEl = document.getElementById('streamingContent');
     const aiAvatar = aiMsgDiv.querySelector('.ai-avatar');
+    if (thinkingTimeline) thinkingTimeline.style.display = 'none';
 
     //  多图防抖动缓存（状态外置 + 缓存注入）
     const lastValidMermaids = {}; // 格式: { "0": "code...", "1": "code..." }
     const renderedSvgs = {};      // 格式: { "0": "<svg>...</svg>", "1": "<svg>...</svg>" }
     const renderingMermaids = new Set();
+    const streamFlowSegments = [];
+    let activeFlowContent = null;
+
+    function appendInterleavedContent(text) {
+      const chunk = String(text || '');
+      if (!chunk) return;
+      if (!activeFlowContent) {
+        activeFlowContent = { kind: 'content', text: '' };
+        streamFlowSegments.push(activeFlowContent);
+      }
+      activeFlowContent.text += chunk;
+      renderInterleavedFlow();
+    }
+
+    function appendInterleavedEvent(kind, title, detail = '', status = 'done', trace = null) {
+      activeFlowContent = null;
+      streamFlowSegments.push({ kind, title, detail, status, trace });
+      renderInterleavedFlow();
+    }
+
+    function appendInterleavedReasoning(detail = '') {
+      const last = streamFlowSegments[streamFlowSegments.length - 1];
+      if (last && last.kind === 'reasoning') {
+        last.detail = `${last.detail || ''}${detail}`;
+        renderInterleavedFlow();
+        return;
+      }
+      appendInterleavedEvent('reasoning', isChineseLanguage(appState.language) ? '思考过程' : 'Thinking', detail, 'done');
+    }
+
+    function renderInterleavedFlow() {
+      if (!streamingEl) return;
+      streamingEl.replaceChildren();
+      streamFlowSegments.forEach((segment) => {
+        if (segment.kind === 'content') {
+          const block = document.createElement('div');
+          block.className = 'stream-flow-content';
+          block.innerHTML = renderMarkdownWithMath(
+            sanitizeAssistantDisplayText(stripTrailingTitleMarker(segment.text)),
+            true
+          );
+          streamingEl.appendChild(block);
+          return;
+        }
+        const item = document.createElement('div');
+        item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
+        item.dataset.status = segment.status || 'done';
+        item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
+        const content = item.querySelector('.thinking-step-content');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'stream-flow-event-toggle';
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = segment.title || '';
+        const detail = document.createElement('div');
+        detail.className = 'stream-flow-event-detail';
+        detail.textContent = segment.detail || '';
+        button.addEventListener('click', () => {
+          const expanded = item.classList.toggle('expanded');
+          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        });
+        content.appendChild(button);
+        content.appendChild(detail);
+        streamingEl.appendChild(item);
+      });
+      hydrateRenderedImages(streamingEl);
+      scrollToBottom();
+    }
 
     // ==================== AI Smooth Fusion 渲染队列 ====================
     let charRenderQueue = [];  // 字符渲染队列
@@ -22211,6 +22321,7 @@ async function sendMessage(message = null, options = {}) {
             }
 
             reasoningContent += parsed.content;
+            appendInterleavedReasoning(parsed.content || '');
             recordTimelineStep('reasoning', isChineseLanguage(appState.language) ? '思考' : 'Thinking', parsed.content || '', 'done');
             traceReasoningChars += (parsed.content || '').length;
             addProcessTraceItem('reasoning', parsed.content || '');
@@ -22279,27 +22390,16 @@ async function sendMessage(message = null, options = {}) {
               if (aiAvatar) aiAvatar.classList.remove('thinking');
             }
 
-            // 现在开始显示正文 - 使用字符级渲染队列
+            // 正文按到达顺序写入交错流，工具/搜索事件会插入其后。
             const rawChunk = parsed.content || '';
             const cleanChunk = sanitizeAssistantDisplayText(sanitizeToolCallArtifacts(rawChunk));
             if (!cleanChunk) {
               continue;
             }
             fullContent += cleanChunk;
+            appendInterleavedContent(cleanChunk);
             if (!timelineSequence.some((row) => row.kind === 'generating' && row.status === 'running')) {
               recordTimelineStep('generating', isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response', '', 'running');
-            }
-
-            // 将新字符推入渲染队列（而非直接渲染整个内容）
-            const newChars = cleanChunk;
-            for (const char of newChars) {
-              charRenderQueue.push(char);
-            }
-
-            // 启动渲染消费者（如果尚未启动）
-            if (!isCharRendering) {
-              isCharRendering = true;
-              processCharQueue();
             }
           }
           else if (parsed.type === 'title') {
@@ -22555,6 +22655,7 @@ async function sendMessage(message = null, options = {}) {
             upsertToolTraceItem(parsed);
             if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
             recordTimelineStep('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done');
+            appendInterleavedEvent('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done', parsed);
             addProcessTraceItem('tool', summarizeToolTrace(parsed));
             scrollToBottom();
           }
@@ -22579,6 +22680,7 @@ async function sendMessage(message = null, options = {}) {
               // 动态追加"联网搜索"步骤（顺序时间轴：分析 → 搜索 → 生成 → 搜索 → 生成）
               const searchStep = ensureSearchStep(currentSearchQuery);
               recordTimelineStep('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', currentSearchQuery, 'running');
+              appendInterleavedEvent('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', currentSearchQuery, 'running', parsed);
               updateStepStatus(searchStep, 'running', isChineseLanguage(appState.language)
                 ? `"${currentSearchQuery}"`
                 : `"${currentSearchQuery}"`);
@@ -22602,6 +22704,7 @@ async function sendMessage(message = null, options = {}) {
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → ${resultCount}条结果`
                 : `Search done → ${resultCount} results`);
+              appendInterleavedEvent('search', isChineseLanguage(appState.language) ? '联网搜索完成' : 'Web search completed', `${resultCount} ${isChineseLanguage(appState.language) ? '条结果' : 'results'}`, 'done', parsed);
               // 开始生成回答（本轮正文输出）
               updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               addProcessTraceItem('search', isChineseLanguage(appState.language)
@@ -22707,7 +22810,8 @@ async function sendMessage(message = null, options = {}) {
       if (fullContent) {
         displayedContent = sanitizeAssistantDisplayText(stripTrailingTitleMarker(fullContent));
         charRenderQueue = [];
-        renderStreamingContent();
+        if (streamFlowSegments.length > 0) renderInterleavedFlow();
+        else renderStreamingContent();
       }
       if (receivedDoneEvent) {
         stopCharRender();
@@ -22751,7 +22855,8 @@ async function sendMessage(message = null, options = {}) {
     if (streamingEl && cleanContent) {
       displayedContent = cleanContent;
       charRenderQueue = [];
-      renderStreamingContent();
+      if (streamFlowSegments.length > 0) renderInterleavedFlow();
+      else renderStreamingContent();
     }
 
     const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
@@ -22791,6 +22896,7 @@ async function sendMessage(message = null, options = {}) {
         metrics: agentRunState.metrics || null,
         trace: processTraceEvents,
         timeline: timelineSequence.slice(-200),
+        flowSegments: streamFlowSegments.slice(-200),
         tools: toolSnapshot
       };
       if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
