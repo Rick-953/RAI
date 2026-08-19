@@ -141,6 +141,8 @@ assert.match(securityWorkflow, /^\s{2}NODE_VERSION:\s*24\.16\.0$/m, 'CI must exe
 assert.match(securityWorkflow, /^\s{2}NPM_VERSION:\s*11\.13\.0$/m, 'CI must exercise the production npm release');
 assert.match(securityWorkflow, /test "\$\(node --version\)" = "v\$\{NODE_VERSION\}"/, 'CI must verify the resolved Node version');
 assert.match(securityWorkflow, /test "\$\(npm --version\)" = "\$NPM_VERSION"/, 'CI must verify the resolved npm version');
+assert.match(securityWorkflow, /refs\/remotes\/origin\/(?:main|beta)/, 'release tags must be restricted to the reviewed main or beta branches');
+assert.match(securityWorkflow, /release tag must point to a commit already present on main or beta/, 'release branch rejection must name the complete allowed boundary');
 
 console.log(JSON.stringify({
   dependencySecurityRegression: 'passed',

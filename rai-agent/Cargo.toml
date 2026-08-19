@@ -1,6 +1,6 @@
 [package]
 name = "rai-agent"
-version = "0.13.1"
+version = "0.13.16"
 description = "RAI Local Agent native messaging host"
 authors = ["Rick"]
 license = "MIT"

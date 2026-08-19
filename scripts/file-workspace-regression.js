@@ -312,7 +312,9 @@ async function main() {
     assert.match(serverSource, /generatedArtifacts\.push\(artifactAttachment\)/);
     assert.match(serverSource, /attachments, reasoning_content/);
     assert.match(appSource, /function appendGeneratedArtifact\(attachment\)/);
-    assert.match(appSource, /attachments: aiMsg\.attachments \|\| null/);
+    assert.match(appSource, /const generatedArtifactAttachments = \[\]/);
+    assert.match(appSource, /attachments: generatedArtifactAttachments\.length > 0 \? generatedArtifactAttachments : null/);
+    assert.doesNotMatch(appSource, /attachments: aiMsg\.attachments/);
 
     workspace.stopCleanup();
     await fs.promises.rm(root, { recursive: true, force: true });

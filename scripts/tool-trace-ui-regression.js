@@ -54,6 +54,17 @@ assert.match(app, /dataset\.userToggled/, 'tool trace click state must survive l
 assert.match(app, /event\.args && event\.args\.query/, 'tool trace args must be read without an undefined variable');
 assert.doesNotMatch(app, /timelineRows\.map\(\(row\) => `\s*<!-- 步骤1/, 'history must not rebuild a fixed analysis-first timeline');
 assert.match(app, /const streamFlowSegments = \[\]/, 'stream flow segments missing');
+assert.match(app, /const generatedArtifactAttachments = \[\]/, 'streamed artifacts need independent state before final message initialization');
+assert.doesNotMatch(app, /attachments:\s*aiMsg\.attachments/, 'final assistant initialization must not read aiMsg in its own temporal dead zone');
+assert.match(app, /attachments:\s*generatedArtifactAttachments\.length > 0\s*\? generatedArtifactAttachments\s*:\s*null/,
+  'final assistant message must persist the independently collected artifacts');
+const prepareMessageElementStart = app.indexOf('function prepareMessageElement(');
+const prepareMessageElementEnd = app.indexOf('\nfunction openSidebar(', prepareMessageElementStart);
+const prepareMessageElementSource = app.slice(prepareMessageElementStart, prepareMessageElementEnd);
+assert.ok(
+  prepareMessageElementSource.indexOf("content.appendChild(textDiv)") < prepareMessageElementSource.indexOf("content.appendChild(attachmentsDiv)"),
+  'assistant artifact cards must render after the final answer text'
+);
 assert.match(app, /appendInterleavedContent\(/, 'content must enter the interleaved flow');
 assert.match(app, /appendInterleavedEvent\('tool'/, 'tool events must enter the interleaved flow');
 assert.match(app, /flowSegments:\s*streamFlowSegments\.slice\(-200\)/, 'interleaved flow must persist after streaming');

@@ -2410,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.15';
-const RAI_BUILD_ID = '20260819-citations-artifact-cards-v01315-r1';
+const RAI_APP_VERSION = '0.13.16';
+const RAI_BUILD_ID = '20260819-artifact-download-agent-v01316-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -18185,33 +18185,6 @@ function createMessageElement(message) {
     else content.appendChild(reasoningBlock);
   }
 
-  // 用户上传和 AI 生成的附件都使用同一张可下载卡片。
-  if ((message.role === 'user' || message.role === 'assistant') && (message.attachments || message.attachment_refs || message.has_attachments)) {
-    let attachments = message.attachments || message.attachment_refs;
-    // 如果是字符串，尝试解析JSON
-    if (typeof attachments === 'string') {
-      try {
-        attachments = JSON.parse(attachments);
-      } catch (e) {
-        attachments = [];
-      }
-    }
-
-    if (Array.isArray(attachments) && attachments.length > 0) {
-      const attachmentsDiv = document.createElement('div');
-      attachmentsDiv.className = 'message-attachments';
-
-      attachments.forEach(att => {
-        if (!att || !att.type) return;
-        attachmentsDiv.appendChild(createAttachmentListItem(att));
-      });
-
-      if (attachmentsDiv.children.length > 0) {
-        content.appendChild(attachmentsDiv);
-      }
-    }
-  }
-
   if (hasInterleavedFlow) {
     const flow = document.createElement('div');
     flow.className = 'message-text stream-flow';
@@ -18278,6 +18251,29 @@ function createMessageElement(message) {
   hydrateRenderedImages(textDiv);
   if (!hasInterleavedFlow && textDiv.innerHTML.trim()) {
     content.appendChild(textDiv);
+  }
+
+  // 用户上传和 AI 生成的附件都使用同一张可下载卡片。
+  // 卡片必须位于回答正文之后，避免工具完成事件抢到答案上方。
+  if ((message.role === 'user' || message.role === 'assistant') && (message.attachments || message.attachment_refs || message.has_attachments)) {
+    let attachments = message.attachments || message.attachment_refs;
+    if (typeof attachments === 'string') {
+      try {
+        attachments = JSON.parse(attachments);
+      } catch (e) {
+        attachments = [];
+      }
+    }
+
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      const attachmentsDiv = document.createElement('div');
+      attachmentsDiv.className = 'message-attachments';
+      attachments.forEach(att => {
+        if (!att || !att.type) return;
+        attachmentsDiv.appendChild(createAttachmentListItem(att));
+      });
+      if (attachmentsDiv.children.length > 0) content.appendChild(attachmentsDiv);
+    }
   }
 
   if (message.role === 'assistant' && askUserResult.prompts.length > 0) {
@@ -21128,7 +21124,15 @@ async function sendMessage(message = null, options = {}) {
   const toolTraceCount = aiMsgDiv.querySelector('#toolTraceCount');
   const toolTraceItems = new Map();
   const toolTraceSnapshots = new Map();
+  const generatedArtifactAttachments = [];
   let activeToolTraceId = '';
+
+  function appendGeneratedArtifact(attachment) {
+    if (!attachment || !attachment.type || !aiMsgDiv) return;
+    const identity = String(attachment.filePath || attachment.downloadPath || '');
+    if (generatedArtifactAttachments.some((item) => String(item.filePath || item.downloadPath || '') === identity)) return;
+    generatedArtifactAttachments.push(attachment);
+  }
 
   function formatToolTraceLabel(tool = '') {
     const labels = {
@@ -22993,7 +22997,7 @@ async function sendMessage(message = null, options = {}) {
       internet_mode: appState.internetMode,
       process_trace: serializedProcessTrace,
       sources: currentSources.length > 0 ? currentSources : null,
-      attachments: aiMsg.attachments || null,
+      attachments: generatedArtifactAttachments.length > 0 ? generatedArtifactAttachments : null,
       created_at: new Date().toISOString()
     };
     if (

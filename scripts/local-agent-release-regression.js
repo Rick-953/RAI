@@ -13,15 +13,15 @@ try {
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'manifest.json'), 'utf8'));
     const channel = buildChannel({
         directory,
-        version: '0.13.1',
-        tag: 'v0.13.1',
+        version: '0.13.16',
+        tag: 'v0.13.16',
         manifest
     });
     assert.equal(channel.schema, 'rai-local-agent-channel/v1');
     assert.equal(Object.keys(channel.artifacts).length, 4);
     for (const artifact of Object.values(channel.artifacts)) {
         assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
-        assert.match(artifact.url, /^https:\/\/github\.com\/Rick-953\/RAI\/releases\/download\/v0\.13\.1\//);
+        assert.match(artifact.url, /^https:\/\/github\.com\/Rick-953\/RAI\/releases\/download\/v0\.13\.16\//);
     }
     assert.equal(channel.extensions.distribution, 'github-unpacked');
     assert.equal(channel.extensions.id, 'clnmniaaodjmcgnemigghniekmahgcgi');
@@ -33,7 +33,7 @@ try {
     assert.throws(() => buildChannel({ directory, version: '0.13.0', tag: 'x', manifest }), /version must match/);
     assert.throws(() => extensionIdFromManifestKey('not-base64'), /manifest key/);
     assert.equal(manifest.manifest_version, 3);
-    assert.equal(manifest.version, '0.13.1');
+    assert.equal(manifest.version, '0.13.16');
     assert.ok(manifest.key);
     assert.ok(manifest.permissions.includes('nativeMessaging'));
     assert.ok(manifest.host_permissions.includes('https://*/*'));
