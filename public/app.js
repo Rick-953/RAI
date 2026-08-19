@@ -2388,8 +2388,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.12';
-const RAI_BUILD_ID = '20260819-finalized-flow-cleanup-v01312-r1';
+const RAI_APP_VERSION = '0.13.13';
+const RAI_BUILD_ID = '20260819-sandbox-artifact-ui-v01313-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -17884,15 +17884,20 @@ function createMessageElement(message) {
         && String(tool.detail || tool.message || '') === detail
       ) : null;
       const traceId = traceRow ? escapeHtml(String(traceRow.id || `tool:${index}`)) : '';
+      const downloadUrl = traceRow ? String(traceRow.download_url || '').trim() : '';
+      const downloadLink = downloadUrl
+        ? `<a class="tool-trace-download" href="${escapeHtml(downloadUrl)}" aria-label="${isChineseLanguage(appState.language) ? '下载文件' : 'Download file'}">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</a>`
+        : '';
       return `
-          <div class="thinking-step" data-kind="${escapeHtml(String(row.kind || 'info'))}" data-status="${escapeHtml(String(row.status || 'done'))}">
-            <div class="thinking-step-node"></div>
-            <div class="thinking-step-content">
-              ${isToolRow
-                ? `<div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}">
-                    <button type="button" class="tool-trace-summary" aria-expanded="false">${escapeHtml(String(row.title || '工具调用'))}</button>
-                    <div class="tool-trace-detail" tabindex="0">${escapeHtml(detail)}</div>
-                  </div>`
+        <div class="thinking-step" data-kind="${escapeHtml(String(row.kind || 'info'))}" data-status="${escapeHtml(String(row.status || 'done'))}">
+          <div class="thinking-step-node"></div>
+          <div class="thinking-step-content">
+            ${isToolRow
+              ? `<div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}">
+                  <button type="button" class="tool-trace-summary" aria-expanded="false">${escapeHtml(String(row.title || '工具调用'))}</button>
+                  ${downloadLink}
+                  <div class="tool-trace-detail" tabindex="0">${escapeHtml(detail)}</div>
+                </div>`
                 : `<div class="thinking-step-title">${escapeHtml(String(row.title || ''))}</div>
                    <div class="thinking-step-detail">${escapeHtml(detail)}</div>`}
             </div>
@@ -17909,9 +17914,14 @@ function createMessageElement(message) {
         const status = escapeHtml(String(row.status || 'complete').toLowerCase());
         const summary = escapeHtml(String(row.summary || row.label || row.tool || (isChineseLanguage(appState.language) ? '工具调用' : 'Tool call')));
         const detail = escapeHtml(String(row.detail || row.message || ''));
+        const downloadUrl = String(row.download_url || '').trim();
+        const downloadLink = downloadUrl
+          ? `<a class="tool-trace-download" href="${escapeHtml(downloadUrl)}" aria-label="${isChineseLanguage(appState.language) ? '下载文件' : 'Download file'}">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</a>`
+          : '';
         return `
           <div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}" data-status="${status}">
             <button type="button" class="tool-trace-summary" aria-expanded="false">${summary}</button>
+            ${downloadLink}
             <div class="tool-trace-detail" tabindex="0">${detail}</div>
           </div>
         `;
@@ -21139,6 +21149,16 @@ async function sendMessage(message = null, options = {}) {
     if (detail) {
       const detailText = String(event.detail || event.output || event.message || '').slice(0, 12000);
       detail.textContent = detailText;
+      const downloadUrl = String(event.download_url || event.downloadPath || '').trim();
+      if (downloadUrl && !item.querySelector('.tool-trace-download')) {
+        const download = document.createElement('a');
+        download.className = 'tool-trace-download';
+        download.href = downloadUrl;
+        download.textContent = isChineseLanguage(appState.language) ? '下载' : 'Download';
+        download.setAttribute('aria-label', isChineseLanguage(appState.language) ? '下载文件' : 'Download file');
+        download.addEventListener('click', (clickEvent) => clickEvent.stopPropagation());
+        item.appendChild(download);
+      }
       toolTraceSnapshots.set(id, {
         id,
         tool,
@@ -21151,6 +21171,7 @@ async function sendMessage(message = null, options = {}) {
         skill: String(event.skill || (event.args && event.args.name) || '').slice(0, 200),
         file_name: String(event.file_name || '').slice(0, 240),
         url: String(event.url || '').slice(0, 500),
+        download_url: String(event.download_url || event.downloadPath || '').slice(0, 1000),
         ts: Date.now()
       });
     }

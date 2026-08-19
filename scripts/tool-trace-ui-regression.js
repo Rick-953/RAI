@@ -76,6 +76,9 @@ assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, 'trace animation 
 
 // Server supplies state and a bounded readable detail without exposing paths.
 assert.match(server, /type: 'tool_status'[\s\S]{0,400}detail:/, 'tool status needs detail payload');
+assert.match(server, /download_url: result\?\.download_url \|\| result\?\.downloadPath/, 'file tool status must carry its protected download URL');
+assert.match(server, /download_available: Boolean\(result\?\.download_url \|\| result\?\.downloadPath\)/, 'file status must expose availability');
+assert.match(app, /tool-trace-download/, 'tool trace must render a download action');
 assert.match(server, /read_skill/, 'trusted skill tool status missing');
 
 console.log('tool trace UI regression passed');

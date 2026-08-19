@@ -282,8 +282,11 @@ async function main() {
     assert.match(serverSource, /functionDeclarations: runtimeToolDefinitions\.map/);
     assert.match(serverSource, /normalizeWorkspaceToolArgs/);
     assert.match(serverSource, /download_available: true/);
-    assert.doesNotMatch(serverSource, /download_url:\s*result\?\.downloadPath/);
+    assert.doesNotMatch(serverSource, /download_url: result\?\.downloadPath[\s\S]{0,400}reply_instruction/, 'model tool results must not expose internal download URLs');
+    assert.match(serverSource, /download_url: result\?\.download_url \|\| result\?\.downloadPath/, 'tool status must carry the protected download URL');
+    assert.match(serverSource, /executedToolResults\.push\(\{ toolCall, result: toolResult \}\)/);
     assert.match(appSource, /downloadFileJobArtifact/);
+    assert.match(appSource, /tool-trace-download/);
     assert.match(appSource, /'Authorization': `Bearer \$\{appState\.token\}`/);
 
     workspace.stopCleanup();

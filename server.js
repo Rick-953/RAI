@@ -2596,7 +2596,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'sandbox_exec',
-        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has no direct network; use the server-side fetch_url gate for permitted public downloads. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
+        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has public internet access through the shared server network namespace. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -2623,8 +2623,8 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
 };
 
 // fetch_url — controlled download gate for the file workspace.
-// The sandbox process itself stays offline (--unshare-all); downloads flow
-// through this SSRF-protected server endpoint and land as session attachments.
+// The sandbox can use public network access directly. This separate endpoint
+// provides a server-side SSRF-protected attachment download gate.
 const FETCH_URL_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
 const FETCH_URL_TIMEOUT_MS = 15000;
 // Host allowlist: exact host or any subdomain. Extend via RAI_FETCH_EXTRA_HOSTS
@@ -2644,7 +2644,7 @@ const FETCH_URL_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'fetch_url',
-        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected allowlist and threat denylist, then attach it to the current session. Allowed hosts: GitHub and GitLab domains (including raw-content and codeload CDN hosts) plus any hosts configured in RAI_FETCH_EXTRA_HOSTS. High-risk malware, phishing, RAT, stealer, backdoor, and crypto-miner repositories and threat-feed domains are refused by exact identity/feed match. URLs with embedded credentials are rejected. Returns a file_id that read_file, edit_file, and sandbox_exec can consume. Do not fetch URLs inside sandbox scripts — the sandbox is offline.',
+        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected allowlist and threat denylist, then attach it to the current session. Allowed hosts: GitHub and GitLab domains plus configured public hosts. The sandbox itself may use public network access directly; use fetch_url when you need this server-side attachment gate.',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -3103,7 +3103,7 @@ function getPendingClientToolCountBySession(sessionId) {
     return count;
 }
 
-const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files']);
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'download_url', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
@@ -5443,7 +5443,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             mime_type: result?.mimeType || '',
             size: Number(result?.size || 0),
             expires_at: result?.expiresAt || null,
-            download_available: true,
+            download_available: Boolean(result?.downloadPath),
             reply_instruction: 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Answer the user\'s substantive request naturally, and mention the file only when the user explicitly asks about it.'
         };
     }
@@ -21025,6 +21025,7 @@ if (clientFileExecution && systemPrompt) {
                 query: String(event.query || '').slice(0, 500),
                 skill: String(event.skill || '').slice(0, 200),
                 file_name: String(event.file_name || '').slice(0, 240),
+                download_url: String(event.download_url || event.downloadPath || '').slice(0, 1000),
                 url: String(event.url || '').slice(0, 500),
                 ts: Number(event.ts) || Date.now()
             };
@@ -24683,7 +24684,7 @@ if (clientFileExecution && systemPrompt) {
                                     args
                                 });
                                 executedToolResults.push({ toolCall, result: toolResult });
-                                    res.write(`data: ${JSON.stringify({
+                                    recordServerToolTrace({
                                     type: 'tool_status',
                                     tool: toolName,
                                     tool_call_id: toolCall.id,
@@ -24692,6 +24693,20 @@ if (clientFileExecution && systemPrompt) {
                                         ? `沙箱完成 · exit=${Number(result?.exit_code ?? 0)} · ${Number(result?.size || 0)} bytes`
                                         : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
                                     file_name: result?.file_name || result?.fileName || '',
+                                    download_url: result?.download_url || result?.downloadPath || '',
+                                    message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
+                                });
+                                res.write(`data: ${JSON.stringify({
+                                    type: 'tool_status',
+                                    tool: toolName,
+                                    tool_call_id: toolCall.id,
+                                    status: 'complete',
+                                    detail: toolName === 'sandbox_exec'
+                                        ? `沙箱完成 · exit=${Number(result?.exit_code ?? 0)} · ${Number(result?.size || 0)} bytes`
+                                        : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
+                                    file_name: result?.file_name || result?.fileName || '',
+                                    download_url: result?.download_url || result?.downloadPath || '',
+                                    download_available: Boolean(result?.download_url || result?.downloadPath),
                                     message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
                                 })}\n\n`);
                                 console.log(` 工具执行完成: ${toolName}, bytes=${Number(result?.size || result?.text?.length || 0)}`);

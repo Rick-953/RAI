@@ -5438,10 +5438,9 @@ video.private-file-preview-media {
 /* 时间轴容器 */
 .thinking-timeline {
   position: relative;
-  padding: var(--spacing-md) 0;
+  padding: 6px 0 2px;
   padding-left: 24px;
-  /* 为左侧时间轴线留出空间 */
-  margin-bottom: var(--spacing-md);
+  margin-bottom: 6px;
 }
 
 /* The assistant body and execution events share one ordered vertical rail. */
@@ -5508,9 +5507,9 @@ video.private-file-preview-media {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  margin-bottom: var(--spacing-md);
-  min-height: 28px;
+  gap: 10px;
+  margin-bottom: 6px;
+  min-height: 24px;
   /* 渐入动画 */
   opacity: 0;
   transform: translateY(8px);
@@ -5522,16 +5521,10 @@ video.private-file-preview-media {
   animation-delay: 0s;
 }
 
-.thinking-step:nth-child(2) {
-  animation-delay: 1.5s;
-}
-
-.thinking-step:nth-child(3) {
-  animation-delay: 3s;
-}
-
+.thinking-step:nth-child(2),
+.thinking-step:nth-child(3),
 .thinking-step:nth-child(4) {
-  animation-delay: 4.5s;
+  animation-delay: 0s;
 }
 
 @keyframes step-fade-in {
@@ -5706,8 +5699,12 @@ video.private-file-preview-media {
 
 .tool-trace-item {
   position: relative;
-  margin: 0 0 7px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
   min-width: 0;
+  min-height: 19px;
   color: var(--text-secondary);
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
@@ -5735,7 +5732,8 @@ video.private-file-preview-media {
 
 .tool-trace-summary {
   display: block;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   padding: 0;
   border: 0;
@@ -5748,6 +5746,18 @@ video.private-file-preview-media {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.tool-trace-download {
+  flex: 0 0 auto;
+  color: var(--color-saturn-yellow);
+  font-size: 11px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.tool-trace-download:hover {
+  text-decoration: underline;
 }
 
 .tool-trace-detail {
