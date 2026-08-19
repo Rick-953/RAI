@@ -307,8 +307,12 @@ async function main() {
     assert.match(serverSource, /download_url: result\?\.download_url \|\| result\?\.downloadPath/, 'tool status must carry the protected download URL');
     assert.match(serverSource, /executedToolResults\.push\(\{ toolCall, result: toolResult \}\)/);
     assert.match(appSource, /downloadFileJobArtifact/);
-    assert.match(workspaceSource, /\.download-\$\{artifact\.artifactId\}\.lock/);
-    assert.match(workspaceSource, /sessionId: task\.manifest\.sessionId/);
+    assert.match(serverSource, /function buildArtifactAttachment\(result = \{\}\)/);
+    assert.match(serverSource, /attachment: artifactAttachment/);
+    assert.match(serverSource, /generatedArtifacts\.push\(artifactAttachment\)/);
+    assert.match(serverSource, /attachments, reasoning_content/);
+    assert.match(appSource, /function appendGeneratedArtifact\(attachment\)/);
+    assert.match(appSource, /attachments: aiMsg\.attachments \|\| null/);
 
     workspace.stopCleanup();
     await fs.promises.rm(root, { recursive: true, force: true });
