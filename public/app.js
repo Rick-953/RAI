@@ -2388,8 +2388,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.10';
-const RAI_BUILD_ID = '20260819-interleaved-flow-v01310-r1';
+const RAI_APP_VERSION = '0.13.11';
+const RAI_BUILD_ID = '20260819-persisted-flow-dedupe-v01311-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -16718,12 +16718,18 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   const finalizedText = Array.from(finalizedContent.children).find((child) =>
     child.classList?.contains('message-text')
   ) || null;
+  const finalizedTrace = parseMessageProcessTrace(message);
+  const hasFinalizedInterleavedFlow = Array.isArray(finalizedTrace?.flowSegments)
+    && finalizedTrace.flowSegments.some((segment) => segment && segment.kind);
   const existingMeta = Array.from(existingContent.children).filter((child) =>
     child.classList?.contains('message-meta')
   );
   existingMeta.forEach((meta) => meta.remove());
 
-  if (!existingText && finalizedText) {
+  if (existingText && finalizedText && hasFinalizedInterleavedFlow) {
+    existingText.replaceWith(finalizedText);
+    existingText = finalizedText;
+  } else if (!existingText && finalizedText) {
     const insertBefore = Array.from(existingContent.children).find((child) =>
       child.classList?.contains('message-meta')
     ) || null;
@@ -21954,6 +21960,14 @@ async function sendMessage(message = null, options = {}) {
 
     function appendInterleavedEvent(kind, title, detail = '', status = 'done', trace = null) {
       activeFlowContent = null;
+      const last = streamFlowSegments[streamFlowSegments.length - 1];
+      if (last && last.kind === kind && last.title === title) {
+        last.detail = detail || last.detail;
+        last.status = status;
+        last.trace = trace || last.trace;
+        renderInterleavedFlow();
+        return;
+      }
       streamFlowSegments.push({ kind, title, detail, status, trace });
       renderInterleavedFlow();
     }
@@ -22704,7 +22718,7 @@ async function sendMessage(message = null, options = {}) {
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → ${resultCount}条结果`
                 : `Search done → ${resultCount} results`);
-              appendInterleavedEvent('search', isChineseLanguage(appState.language) ? '联网搜索完成' : 'Web search completed', `${resultCount} ${isChineseLanguage(appState.language) ? '条结果' : 'results'}`, 'done', parsed);
+              appendInterleavedEvent('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', `${resultCount} ${isChineseLanguage(appState.language) ? '条结果' : 'results'}`, 'done', parsed);
               // 开始生成回答（本轮正文输出）
               updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               addProcessTraceItem('search', isChineseLanguage(appState.language)

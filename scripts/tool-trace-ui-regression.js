@@ -32,6 +32,9 @@ assert.doesNotMatch(server, /artifactMarkdown\s*=|emitStructuredAssistantChunk\(
 assert.match(server, /const serverToolTrace = \[\]/, 'server tool trace collector missing');
 assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'complete'/, 'server completion trace missing');
 assert.match(server, /tools: serverToolTrace/, 'server must persist tool traces');
+assert.match(server, /const serverFlowSegments = \[\]/, 'server must collect an ordered stream flow');
+assert.match(server, /recordServerFlowContent\(visibleDelta\)/, 'server must persist streamed content in order');
+assert.match(server, /flowSegments: serverFlowSegments\.slice\(-200\)/, 'server must persist stream flow for completed messages');
 assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'failed'/, 'server failure trace missing');
 
 // Ordered timeline: search/generating steps append in real SSE event order
@@ -56,6 +59,8 @@ assert.match(app, /appendInterleavedEvent\('tool'/, 'tool events must enter the 
 assert.match(app, /flowSegments:\s*streamFlowSegments\.slice\(-200\)/, 'interleaved flow must persist after streaming');
 assert.match(app, /hasInterleavedFlow/, 'history must detect the persisted interleaved flow');
 assert.match(app, /!hasInterleavedFlow && \(hasReasoning/, 'legacy separate timeline must be suppressed for interleaved history');
+assert.match(app, /hasFinalizedInterleavedFlow/, 'completion must recognize the persisted interleaved flow');
+assert.match(app, /existingText\.replaceWith\(finalizedText\)/, 'completion must replace the streaming body in place instead of duplicating it');
 assert.match(css, /\.stream-flow-event/, 'interleaved flow event styles missing');
 
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');
