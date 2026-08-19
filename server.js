@@ -20976,6 +20976,43 @@ if (clientFileExecution && systemPrompt) {
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
         const serverToolTrace = [];
+        const serverFlowSegments = [];
+        let activeServerFlowContent = null;
+        const recordServerFlowContent = (content = '') => {
+            const text = String(content || '');
+            if (!text) return;
+            if (!activeServerFlowContent) {
+                activeServerFlowContent = { kind: 'content', text: '' };
+                serverFlowSegments.push(activeServerFlowContent);
+            }
+            activeServerFlowContent.text += text;
+            if (serverFlowSegments.length > 200) serverFlowSegments.splice(0, serverFlowSegments.length - 200);
+        };
+        const recordServerFlowEvent = (kind, title, detail = '', status = 'done') => {
+            activeServerFlowContent = null;
+            const normalizedKind = String(kind || 'tool').slice(0, 40);
+            const normalizedTitle = String(title || normalizedKind).slice(0, 240);
+            const normalizedDetail = String(detail || '').slice(0, 12000);
+            const last = serverFlowSegments[serverFlowSegments.length - 1];
+            if (last && last.kind === normalizedKind && last.title === normalizedTitle && last.status === 'running') {
+                last.detail = normalizedDetail || last.detail;
+                last.status = status;
+                return;
+            }
+            serverFlowSegments.push({ kind: normalizedKind, title: normalizedTitle, detail: normalizedDetail, status });
+            if (serverFlowSegments.length > 200) serverFlowSegments.splice(0, serverFlowSegments.length - 200);
+        };
+        const recordServerFlowReasoning = (content = '') => {
+            const text = String(content || '');
+            if (!text) return;
+            activeServerFlowContent = null;
+            const last = serverFlowSegments[serverFlowSegments.length - 1];
+            if (last && last.kind === 'reasoning') {
+                last.detail = `${last.detail || ''}${text}`.slice(0, 12000);
+            } else {
+                recordServerFlowEvent('reasoning', '思考过程', text, 'done');
+            }
+        };
         const recordServerToolTrace = (event = {}) => {
             if (!event || !event.type || !['tool_status', 'search_status'].includes(String(event.type))) return;
             const tool = String(event.tool || event.name || event.kind || 'tool').slice(0, 120);
@@ -20995,6 +21032,8 @@ if (clientFileExecution && systemPrompt) {
             if (existingIndex >= 0) serverToolTrace[existingIndex] = row;
             else serverToolTrace.push(row);
             if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
+            const kind = row.tool === 'web_search' || event.type === 'search_status' ? 'search' : 'tool';
+            recordServerFlowEvent(kind, row.summary || row.tool, row.detail || row.query || '', row.status === 'running' ? 'running' : (row.status === 'failed' ? 'failed' : 'done'));
             return row;
         };
         const emitTrackedToolStatus = (event = {}) => {
@@ -21427,6 +21466,7 @@ if (clientFileExecution && systemPrompt) {
                         metrics: agentTraceState.metrics,
                         draftDeltas: agentTraceState.draftDeltas || [],
                         tools: serverToolTrace,
+                        flowSegments: serverFlowSegments.slice(-200),
                         savedAt: agentTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -22328,6 +22368,7 @@ if (clientFileExecution && systemPrompt) {
 
             if (visibleDelta) {
                 assistantVisibleStarted = true;
+                recordServerFlowContent(visibleDelta);
                 if (liveStreamState) {
                     liveStreamState.assistantContent += visibleDelta;
                     liveStreamState.updatedAt = Date.now();
@@ -22338,6 +22379,13 @@ if (clientFileExecution && systemPrompt) {
             }
 
             return visibleDelta;
+        };
+        const emitStructuredReasoningChunk = (chunk = '') => {
+            const text = String(chunk || '');
+            if (!text) return;
+            reasoningContent += text;
+            recordServerFlowReasoning(text);
+            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: text })}\n\n`);
         };
 
         if (enableResearchDebate) {
@@ -22563,6 +22611,7 @@ if (clientFileExecution && systemPrompt) {
                         draftDeltas: researchTraceState.draftDeltas,
                         trace: researchTraceState.trace,
                         tools: serverToolTrace,
+                        flowSegments: serverFlowSegments.slice(-200),
                         savedAt: researchTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -23515,6 +23564,7 @@ if (clientFileExecution && systemPrompt) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, responseEventReasoning);
                                     if (reasoningDelta) {
                                         reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                         res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                     }
                                 }
@@ -23530,6 +23580,7 @@ if (clientFileExecution && systemPrompt) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
                                     if (reasoningDelta) {
                                         reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                         res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                     }
                                 }
@@ -23569,6 +23620,7 @@ if (clientFileExecution && systemPrompt) {
                                                 const reasoningDelta = extractIncrementalChunk(reasoningContent, part.text);
                                                 if (reasoningDelta) {
                                                     reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                     res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                                 }
                                             }
@@ -23599,6 +23651,7 @@ if (clientFileExecution && systemPrompt) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                             res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                         }
                                     }
@@ -23613,6 +23666,7 @@ if (clientFileExecution && systemPrompt) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                             res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                         }
                                     }
@@ -24402,6 +24456,7 @@ if (clientFileExecution && systemPrompt) {
                                     }
                                 });
                                 recordServerToolTrace({
+                                    type: isSearchTool ? 'search_status' : 'tool_status',
                                     tool: toolName,
                                     tool_call_id: toolCall.id,
                                     status: 'failed',
@@ -24846,6 +24901,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, continueEventReasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -24862,6 +24918,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -24916,6 +24973,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -24930,6 +24988,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -25312,7 +25371,12 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
             // 序列化 sources 为 JSON 字符串
             const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
-            const assistantProcessTraceJson = promptContextTrace ? JSON.stringify(promptContextTrace) : null;
+            const assistantProcessTraceJson = JSON.stringify({
+                ...(promptContextTrace || {}),
+                version: 3,
+                tools: serverToolTrace,
+                flowSegments: serverFlowSegments.slice(-200)
+            });
 
             // 自动续传更新原回复；若原请求尚未落库，则以本次请求保存完整合并文本。
             const previousAssistant = isContinuationRequest
