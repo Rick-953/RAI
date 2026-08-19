@@ -2388,8 +2388,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.11';
-const RAI_BUILD_ID = '20260819-persisted-flow-dedupe-v01311-r1';
+const RAI_APP_VERSION = '0.13.12';
+const RAI_BUILD_ID = '20260819-finalized-flow-cleanup-v01312-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -16721,6 +16721,9 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   const finalizedTrace = parseMessageProcessTrace(message);
   const hasFinalizedInterleavedFlow = Array.isArray(finalizedTrace?.flowSegments)
     && finalizedTrace.flowSegments.some((segment) => segment && segment.kind);
+  if (hasFinalizedInterleavedFlow) {
+    existingContent.querySelectorAll('.thinking-timeline, .rai-reasoning-block').forEach((node) => node.remove());
+  }
   const existingMeta = Array.from(existingContent.children).filter((child) =>
     child.classList?.contains('message-meta')
   );
