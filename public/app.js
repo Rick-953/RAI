@@ -296,6 +296,14 @@ const INTERNAL_ASSISTANT_DISPLAY_TITLES = new Set([
   '搜索策略'
 ]);
 
+// Models occasionally expose an internal prompt label as a final bracketed line.
+// Keep real user-facing bracketed text intact and remove only labels that identify prompt internals.
+const INTERNAL_ASSISTANT_FOOTER_LABEL_RE = /(?:\s*\n?\s*\[\s*(?=[^\]\n]{1,80}\s*\]\s*$)(?=[^\]\n]*(?:RAI|提示词|系统提示|prompt|system|identity|身份|角色))(?=[^\]\n]*(?:提示词|prompt|system|介绍|identity|身份|设定|说明))[^\]\n]+\]\s*)+$/gi;
+
+function stripInternalAssistantFooterLabels(text = '') {
+  return String(text || '').replace(INTERNAL_ASSISTANT_FOOTER_LABEL_RE, '').trimEnd();
+}
+
 function normalizeAssistantDisplayHeading(line = '') {
   return String(line || '')
     .trim()
@@ -361,6 +369,7 @@ function sanitizeAssistantDisplayText(text = '') {
     .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
   output = removeInternalAssistantDisplaySections(output);
+  output = stripInternalAssistantFooterLabels(output);
 
   if (/^\s*(?:\{[\s\S]*"(?:query|name|arguments)"[\s\S]*\}|\[[\s\S]*"(?:query|name|arguments)"[\s\S]*\])\s*$/.test(output)) {
     return '';
@@ -2410,8 +2419,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.16';
-const RAI_BUILD_ID = '20260819-artifact-download-agent-v01316-r1';
+const RAI_APP_VERSION = '0.13.17';
+const RAI_BUILD_ID = '20260819-beta-tool-ui-internal-footer-v01317-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
