@@ -80,7 +80,7 @@ try {
     for (const installer of [unixInstaller, windowsInstaller]) {
         assert.match(installer, /github-unpacked/);
         assert.match(installer, /rai-connect-extension\.zip/);
-        assert.match(installer, /open-store=false/);
+        assert.doesNotMatch(installer, /open-store=false/);
         assert.match(installer, /extensionTarget|EXTENSION_TARGET/);
     }
     const localAgentCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'local-agent.css'), 'utf8');
