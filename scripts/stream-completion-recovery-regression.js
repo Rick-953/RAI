@@ -35,8 +35,8 @@ for (const merge of [mergeClient, mergeServer]) {
 }
 
 assert.match(app, /const CHAT_STREAM_CONTINUATION_LIMIT = 2/);
-assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[\s\S]*download_available/,
-  'client tool results must preserve artifact availability metadata');
+assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
+assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
 assert.match(app, /for \(let attempt = 1; attempt <= CHAT_STREAM_CONTINUATION_LIMIT; attempt \+= 1\)/);
 assert.match(app, /event\.type === 'done'[\s\S]*receivedDone = true/);
 assert.match(app, /const rootRequestId = String\(continuationOfRequestId \|\| ''\)/);

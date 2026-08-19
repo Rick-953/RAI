@@ -234,6 +234,27 @@ async function main() {
     await sandboxDownload.finalize();
     assert.equal(fs.existsSync(sandboxTwo.taskPath), true, 'downloading a sandbox artifact keeps the workspace');
     assert.equal(fs.existsSync(path.join(sandboxTwo.taskPath, 'workspace', 'persist.txt')), true);
+    await fs.promises.writeFile(path.join(sandboxTwo.taskPath, 'workspace', 'cross-session.txt'), 'cross session', { mode: 0o600 });
+    const crossSessionArtifact = await workspace.writeSandboxArtifact({
+        task: sandboxTwo,
+        sourcePath: path.join(sandboxTwo.taskPath, 'workspace', 'cross-session.txt'),
+        fileName: 'cross-session.txt',
+        mimeType: 'text/plain'
+    });
+    const sandboxThree = await workspace.createSandboxTask({ userId: 7, sessionId: 'session_beta' });
+    assert.equal(sandboxThree.taskId, sandboxOne.taskId, 'workspace is reused across sessions for one user');
+    await expectCode(
+        workspace.prepareDownload({ userId: 7, sessionId: 'session_beta', taskId: crossSessionArtifact.taskId, artifactId: crossSessionArtifact.artifactId }),
+        'workspace_artifact_forbidden'
+    );
+    const oldSessionDownload = await workspace.prepareDownload({
+        userId: 7,
+        sessionId: 'session_alpha',
+        taskId: crossSessionArtifact.taskId,
+        artifactId: crossSessionArtifact.artifactId
+    });
+    await oldSessionDownload.finalize();
+    assert.equal(fs.existsSync(sandboxTwo.taskPath), true, 'old-session download keeps the shared workspace');
     const otherUserSandbox = await workspace.createSandboxTask({ userId: 8, sessionId: 'session_alpha' });
     assert.notEqual(otherUserSandbox.taskId, sandboxOne.taskId, 'sandboxes are user-isolated');
     clock += (3 * 60 * 60 * 1000) + 1;
@@ -286,8 +307,8 @@ async function main() {
     assert.match(serverSource, /download_url: result\?\.download_url \|\| result\?\.downloadPath/, 'tool status must carry the protected download URL');
     assert.match(serverSource, /executedToolResults\.push\(\{ toolCall, result: toolResult \}\)/);
     assert.match(appSource, /downloadFileJobArtifact/);
-    assert.match(appSource, /tool-trace-download/);
-    assert.match(appSource, /'Authorization': `Bearer \$\{appState\.token\}`/);
+    assert.match(workspaceSource, /\.download-\$\{artifact\.artifactId\}\.lock/);
+    assert.match(workspaceSource, /sessionId: task\.manifest\.sessionId/);
 
     workspace.stopCleanup();
     await fs.promises.rm(root, { recursive: true, force: true });

@@ -2596,7 +2596,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'sandbox_exec',
-        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has public internet access through the shared server network namespace. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
+        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has no direct network access. Public downloads use the server-side `fetch_url` gate with SSRF, host allowlist, threat denylist, and content validation. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -2623,8 +2623,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
 };
 
 // fetch_url — controlled download gate for the file workspace.
-// The sandbox can use public network access directly. This separate endpoint
-// provides a server-side SSRF-protected attachment download gate.
+// The sandbox process itself stays offline; downloads flow through this SSRF-protected server endpoint and land as session attachments.
 const FETCH_URL_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
 const FETCH_URL_TIMEOUT_MS = 15000;
 // Host allowlist: exact host or any subdomain. Extend via RAI_FETCH_EXTRA_HOSTS
@@ -3103,7 +3102,7 @@ function getPendingClientToolCountBySession(sessionId) {
     return count;
 }
 
-const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'download_url', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available']);
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
@@ -22080,7 +22079,7 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('需要某项能力的详细规则时，调用 read_skill，name 只能为已列出的技能名。询问 RAI 或 CX RAI 的稳定产品知识时，先读取 rai-product 且不联网；文件操作、压缩包、命令或代码执行前，先读取 sandbox。');
             }
             if (sessionId) {
-                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱脚本可通过共享服务器网络空间访问公网；需要服务端白名单、SSRF、威胁拦截和 file_id 附件时使用 fetch_url（GitHub/GitLab 等白名单域名，16MB 上限）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝；同一用户工作区复用并保存3小时，每次 sandbox_exec 刷新有效期。');
+                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱进程无直接网络，公网文件使用 fetch_url（服务端白名单、SSRF、威胁拦截和 file_id 附件，16MB 上限）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝；同一用户工作区复用并保存3小时，每次 sandbox_exec 刷新有效期。');
                 if (workspaceAttachmentCatalog.length > 0) {
                     toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
                 }
@@ -24352,9 +24351,19 @@ if (clientFileExecution && systemPrompt) {
                                         }
                                     }, Math.max(0, remaining));
                                 }
-                                executedToolResults.push({ toolCall, result: localResult });
+                                const modelResult = normalizeClientToolResult(localResult);
+                                executedToolResults.push({ toolCall, result: modelResult });
                                 const ok = localResult && localResult.success !== false;
-                                res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: toolName, status: ok ? 'complete' : 'failed', message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成') })}\n\n`);
+                                const uiResult = {
+            type: 'tool_status',
+            tool: toolName,
+            status: ok ? 'complete' : 'failed',
+            file_name: String(localResult?.file_name || '').slice(0, 240),
+            download_url: String(localResult?.download_url || '').slice(0, 1000),
+            download_available: Boolean(localResult?.download_available || localResult?.download_url),
+            message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成')
+        };
+        res.write(`data: ${JSON.stringify(uiResult)}\n\n`);
                                 continue;
                             }
 

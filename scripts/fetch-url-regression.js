@@ -49,10 +49,11 @@ assert.match(server, /Reference it by its file_id/);
 // The workspace catalog and sandbox hints advertise the gate.
 assert.match(server, /name: 'fetch_url'/);
 assert.match(server, /file_id/);
-assert.match(server, /sandbox process has public internet access|共享服务器网络空间|public internet access/);
+assert.match(server, /no direct network access/);
+assert.match(server, /fetch_url/);
 // README-style skill documents the gate for the model.
 assert.match(sandboxSkill, /Downloading files \(fetch_url\)/);
-assert.match(sandboxSkill, /public network access/);
+assert.match(sandboxSkill, /no direct network/);
 assert.match(sandboxSkill, /persists for 3 hours/);
 
 // Host allowlist semantics: exact host or subdomain, everything else refused.

@@ -5700,6 +5700,7 @@ video.private-file-preview-media {
 .tool-trace-item {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
   margin: 0;
@@ -5762,7 +5763,7 @@ video.private-file-preview-media {
 
 .tool-trace-detail {
   display: none;
-  margin-top: 5px;
+  flex: 0 0 100%;
   max-height: 154px;
   overflow: auto;
   padding: 8px 10px;
