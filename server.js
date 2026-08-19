@@ -5177,7 +5177,7 @@ async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 30
  * @param {string} query - 原始查询
  * @returns {string} 格式化的搜索结果文本
  */
-function formatSearchResults(searchData, query) {
+function formatSearchResults(searchData, query, sources = []) {
     // 兼容旧格式和新格式
     const results = searchData.results || searchData;
     const images = searchData.images || [];
@@ -5192,7 +5192,7 @@ function formatSearchResults(searchData, query) {
     const webResults = results.filter(r => r.url && r.url.trim() !== '');
 
     webResults.forEach((result, index) => {
-        const citationNum = index + 1;
+        const citationNum = String(sources[index]?.marker || index + 1);
         formatted += `[${citationNum}] ${result.title}\n`;
         formatted += `   ${result.snippet}\n`;
         formatted += `   来源: ${result.url}\n\n`;
@@ -5333,6 +5333,22 @@ function buildFinanceSourceForSSE(financeResult = {}) {
         interval: financeResult.interval || FINANCE_DEFAULT_INTERVAL,
         delayed: !!financeResult.delayed
     }];
+}
+
+function buildArtifactAttachment(result = {}) {
+    const downloadPath = String(result.downloadPath || result.download_url || '').trim();
+    const fileName = String(result.fileName || result.file_name || '').trim();
+    if (!downloadPath || !fileName) return null;
+    return {
+        type: 'document',
+        fileName,
+        originalName: fileName,
+        fileType: String(result.mimeType || result.mime_type || 'application/octet-stream').slice(0, 120),
+        mimeType: String(result.mimeType || result.mime_type || 'application/octet-stream').slice(0, 120),
+        size: Math.max(0, Number(result.size || 0)),
+        filePath: downloadPath,
+        downloadPath
+    };
 }
 
 function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
@@ -5617,6 +5633,37 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
 
         req.write(JSON.stringify(requestBody));
         req.end();
+    });
+}
+
+function assignStableSourceMarkers(sources = []) {
+    const usedWebMarkers = new Set();
+    const usedFinanceMarkers = new Set();
+    const nextWebMarker = () => {
+        let index = 1;
+        while (usedWebMarkers.has(String(index))) index += 1;
+        return String(index);
+    };
+    const nextFinanceMarker = () => {
+        let index = 1;
+        while (usedFinanceMarkers.has(alphaMarkerFromIndex(index))) index += 1;
+        return alphaMarkerFromIndex(index);
+    };
+    return dedupeSources(sources).map((source) => {
+        const sourceKind = getSourceKind(source);
+        const candidate = String(source.marker || '').toUpperCase();
+        const usedMarkers = sourceKind === 'finance' ? usedFinanceMarkers : usedWebMarkers;
+        const marker = candidate && !usedMarkers.has(candidate)
+            ? candidate
+            : (sourceKind === 'finance' ? nextFinanceMarker() : nextWebMarker());
+        usedMarkers.add(marker);
+        return {
+            ...source,
+            sourceKind,
+            markerType: source.markerType || (sourceKind === 'finance' ? 'alpha' : 'numeric'),
+            marker,
+            index: Number(source.index || (sourceKind === 'finance' ? 1 : marker))
+        };
     });
 }
 
@@ -6102,7 +6149,7 @@ async function callK2p5Stream({
             return {
                 content: fullContent,
                 reasoningContent,
-                sources: dedupeSources(aggregatedSources),
+                sources: assignStableSourceMarkers(aggregatedSources),
                 usage: totalUsage,
                 searchCount
             };
@@ -20975,6 +21022,7 @@ if (clientFileExecution && systemPrompt) {
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
         const serverToolTrace = [];
+        const generatedArtifacts = [];
         const serverFlowSegments = [];
         let activeServerFlowContent = null;
         const recordServerFlowContent = (content = '') => {
@@ -21025,6 +21073,7 @@ if (clientFileExecution && systemPrompt) {
                 skill: String(event.skill || '').slice(0, 200),
                 file_name: String(event.file_name || '').slice(0, 240),
                 download_url: String(event.download_url || event.downloadPath || '').slice(0, 1000),
+                attachment: event.attachment && typeof event.attachment === 'object' ? event.attachment : null,
                 url: String(event.url || '').slice(0, 500),
                 ts: Number(event.ts) || Date.now()
             };
@@ -21449,7 +21498,7 @@ if (clientFileExecution && systemPrompt) {
                         .replace(/functions\.\w+:\d+/g, '')
                         .trim();
                     const reasoningToSave = String(agentResult?.reasoningContent || '').trim();
-                    const searchSources = dedupeSources(Array.isArray(agentResult?.sources) ? agentResult.sources : []);
+                    const searchSources = assignStableSourceMarkers(Array.isArray(agentResult?.sources) ? agentResult.sources : []);
                     const finalModel = agentResult?.finalModel || 'kimi-k2.6';
                     agentTraceState.savedAt = new Date().toISOString();
                     const processTraceJson = JSON.stringify({
@@ -21497,14 +21546,16 @@ if (clientFileExecution && systemPrompt) {
                         }
 
                         const sourcesJson = searchSources.length > 0 ? JSON.stringify(searchSources) : null;
+                        const assistantAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
                         await new Promise((resolve, reject) => {
                             db.run(
-                                'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                                 [
                                     sessionId,
                                     'assistant',
                                     contentToSave || '(生成中断)',
                                     requestId,
+                                    assistantAttachmentsJson,
                                     reasoningToSave || null,
                                     finalModel,
                                     internetMode ? 1 : 0,
@@ -21927,10 +21978,10 @@ if (clientFileExecution && systemPrompt) {
                 const researchSearchData = await performWebSearch(userContent, 5, getTavilySearchDepth(actualModel, true));
                 const researchSearchResults = researchSearchData?.results || researchSearchData || [];
                 if (Array.isArray(researchSearchResults) && researchSearchResults.length > 0) {
-                    searchContext = formatSearchResults(researchSearchData, userContent);
                     const currentSources = extractSourcesForSSE(researchSearchResults);
                     const sourceAppendResult = appendAnnotatedSources(searchSources, currentSources);
                     searchSources = sourceAppendResult.merged;
+                    searchContext = formatSearchResults(researchSearchData, userContent, sourceAppendResult.newlyAdded);
                     emitSourcesEvent(res, sourceAppendResult.newlyAdded);
                     res.write(`data: ${JSON.stringify({
                         type: 'search_status',
@@ -21977,10 +22028,10 @@ if (clientFileExecution && systemPrompt) {
                 const serverSearchData = await performWebSearch(serverSearchQuery, 5, getTavilySearchDepth(actualModel, false));
                 const serverSearchResults = serverSearchData?.results || serverSearchData || [];
                 if (Array.isArray(serverSearchResults) && serverSearchResults.length > 0) {
-                    searchContext = formatSearchResults(serverSearchData, serverSearchQuery);
                     const currentSources = extractSourcesForSSE(serverSearchResults);
                     const sourceAppendResult = appendAnnotatedSources(searchSources, currentSources);
                     searchSources = sourceAppendResult.merged;
+                    searchContext = formatSearchResults(serverSearchData, serverSearchQuery, sourceAppendResult.newlyAdded);
                     emitSourcesEvent(res, sourceAppendResult.newlyAdded);
                     res.write(`data: ${JSON.stringify({
                         type: 'search_status',
@@ -22616,19 +22667,22 @@ if (clientFileExecution && systemPrompt) {
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
 
+                    const researchSourcesJson = searchSources.length > 0 ? JSON.stringify(assignStableSourceMarkers(searchSources)) : null;
+                    const researchAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
                     await dbRunAsync(
-                        'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                         [
                             sessionId,
                             'assistant',
                             contentToSave,
                             requestId,
+                            researchAttachmentsJson,
                             (reasoningContent || researchResult.reasoningContent || '').trim() || null,
                             finalModel,
                             internetMode ? 1 : 0,
                             normalizedResearchMode === 'deep' ? 1 : 0,
                             internetMode ? 1 : 0,
-                            searchSources && searchSources.length > 0 ? JSON.stringify(searchSources) : null,
+                            researchSourcesJson,
                             processTraceJson,
                             new Date().toISOString()
                         ]
@@ -24693,7 +24747,11 @@ if (clientFileExecution && systemPrompt) {
                                     args
                                 });
                                 executedToolResults.push({ toolCall, result: toolResult });
-                                    recordServerToolTrace({
+                                const artifactAttachment = buildArtifactAttachment(result);
+                                if (artifactAttachment && !generatedArtifacts.some((item) => item.filePath === artifactAttachment.filePath)) {
+                                    generatedArtifacts.push(artifactAttachment);
+                                }
+                                recordServerToolTrace({
                                     type: 'tool_status',
                                     tool: toolName,
                                     tool_call_id: toolCall.id,
@@ -24703,6 +24761,7 @@ if (clientFileExecution && systemPrompt) {
                                         : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
                                     file_name: result?.file_name || result?.fileName || '',
                                     download_url: result?.download_url || result?.downloadPath || '',
+                                    attachment: artifactAttachment,
                                     message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
                                 });
                                 res.write(`data: ${JSON.stringify({
@@ -24716,6 +24775,7 @@ if (clientFileExecution && systemPrompt) {
                                     file_name: result?.file_name || result?.fileName || '',
                                     download_url: result?.download_url || result?.downloadPath || '',
                                     download_available: Boolean(result?.download_url || result?.downloadPath),
+                                    attachment: artifactAttachment,
                                     message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
                                 })}\n\n`);
                                 console.log(` 工具执行完成: ${toolName}, bytes=${Number(result?.size || result?.text?.length || 0)}`);
@@ -25394,7 +25454,8 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
 
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
             // 序列化 sources 为 JSON 字符串
-            const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
+            const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(assignStableSourceMarkers(searchSources)) : null;
+            const assistantAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
             const assistantProcessTraceJson = JSON.stringify({
                 ...(promptContextTrace || {}),
                 version: 3,
@@ -25420,7 +25481,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                 await dbRunAsync(
                     `UPDATE messages
                      SET content = ?, reasoning_content = ?, model = ?, enable_search = ?, thinking_mode = ?,
-                         internet_mode = ?, sources = COALESCE(?, sources), process_trace = COALESCE(?, process_trace)
+                         internet_mode = ?, sources = COALESCE(?, sources), attachments = COALESCE(?, attachments), process_trace = COALESCE(?, process_trace)
                      WHERE id = ?`,
                     [
                         contentToSave,
@@ -25430,6 +25491,7 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                         thinkingMode ? 1 : 0,
                         internetMode ? 1 : 0,
                         sourcesJson,
+                        assistantAttachmentsJson,
                         assistantProcessTraceJson,
                         previousAssistant.id
                     ]
@@ -25440,8 +25502,8 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
             } else {
                 const aiMsgTimestamp = new Date().toISOString();
                 await dbRunAsync(
-                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
+                    'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
                 );
             }
             console.log(` AI回复已保存:`);

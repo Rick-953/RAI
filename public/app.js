@@ -1318,7 +1318,29 @@ function mergeAndReindexSources(existingSources = [], incomingSources = []) {
   (Array.isArray(existingSources) ? existingSources : []).forEach(append);
   (Array.isArray(incomingSources) ? incomingSources : []).forEach(append);
 
-  return annotateSourceMarkers(merged);
+  const usedMarkers = new Set();
+  const nextMarker = (kind) => {
+    if (kind === 'finance') {
+      let index = 1;
+      while (usedMarkers.has(alphaMarkerFromIndex(index))) index += 1;
+      return alphaMarkerFromIndex(index);
+    }
+    let index = 1;
+    while (usedMarkers.has(String(index))) index += 1;
+    return String(index);
+  };
+  return merged.map((source) => {
+    const kind = getSourceKind(source);
+    const marker = String(source.marker || '').toUpperCase();
+    const assignedMarker = marker && !usedMarkers.has(marker) ? marker : nextMarker(kind);
+    usedMarkers.add(assignedMarker);
+    return {
+      ...source,
+      sourceKind: kind,
+      markerType: source.markerType || (kind === 'finance' ? 'alpha' : 'numeric'),
+      marker: assignedMarker
+    };
+  });
 }
 
 function getSourceKind(source) {
@@ -2388,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.14';
-const RAI_BUILD_ID = '20260819-beta-review-hardening-v01314-r1';
+const RAI_APP_VERSION = '0.13.15';
+const RAI_BUILD_ID = '20260819-citations-artifact-cards-v01315-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -18163,8 +18185,8 @@ function createMessageElement(message) {
     else content.appendChild(reasoningBlock);
   }
 
-  // 为用户消息添加轻量附件元数据（名称、大小和私有下载引用）。
-  if (message.role === 'user' && (message.attachments || message.attachment_refs || message.has_attachments)) {
+  // 用户上传和 AI 生成的附件都使用同一张可下载卡片。
+  if ((message.role === 'user' || message.role === 'assistant') && (message.attachments || message.attachment_refs || message.has_attachments)) {
     let attachments = message.attachments || message.attachment_refs;
     // 如果是字符串，尝试解析JSON
     if (typeof attachments === 'string') {
@@ -19329,6 +19351,22 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
   const aiMsgElement = messageElements ? messageElements[msgIndex] : null;
   const textDiv = aiMsgElement?.querySelector('.message-text');
 
+  function appendGeneratedArtifact(attachment) {
+    if (!attachment || !attachment.type || !aiMsgElement) return;
+    const existing = Array.isArray(aiMsg.attachments) ? aiMsg.attachments : [];
+    const identity = String(attachment.filePath || attachment.downloadPath || '');
+    if (existing.some((item) => String(item.filePath || item.downloadPath || '') === identity)) return;
+    aiMsg.attachments = [...existing, attachment];
+    let attachmentsDiv = aiMsgElement.querySelector('.message-attachments');
+    if (!attachmentsDiv) {
+      attachmentsDiv = document.createElement('div');
+      attachmentsDiv.className = 'message-attachments';
+      const messageContent = aiMsgElement.querySelector('.message-content');
+      if (messageContent) messageContent.appendChild(attachmentsDiv);
+    }
+    attachmentsDiv?.appendChild(createAttachmentListItem(attachment));
+  }
+
   function updateInlineImageGenerationStatus(event = {}) {
     if (!aiMsgElement || !textDiv) return;
     let statusEl = aiMsgElement.querySelector('.image-generation-status');
@@ -19609,8 +19647,9 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
             continue;
           }
 
-          if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
-            updateInlineImageGenerationStatus(parsed);
+          if (parsed.type === 'tool_status') {
+            if (parsed.attachment) appendGeneratedArtifact(parsed.attachment);
+            if (parsed.tool === 'generate_image') updateInlineImageGenerationStatus(parsed);
             continue;
           }
 
@@ -22690,6 +22729,7 @@ async function sendMessage(message = null, options = {}) {
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
           else if (parsed.type === 'tool_status') {
+            if (parsed.attachment) appendGeneratedArtifact(parsed.attachment);
             upsertToolTraceItem(parsed);
             if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
             recordTimelineStep('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done');
@@ -22952,7 +22992,8 @@ async function sendMessage(message = null, options = {}) {
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
       process_trace: serializedProcessTrace,
-      sources: currentSources.length > 0 ? currentSources : null,  // 新增：存储来源
+      sources: currentSources.length > 0 ? currentSources : null,
+      attachments: aiMsg.attachments || null,
       created_at: new Date().toISOString()
     };
     if (

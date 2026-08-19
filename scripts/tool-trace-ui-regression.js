@@ -78,7 +78,10 @@ assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, 'trace animation 
 assert.match(server, /type: 'tool_status'[\s\S]{0,400}detail:/, 'tool status needs detail payload');
 assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
 assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
-assert.match(app, /tool-trace-download/, 'tool trace must render a download action');
+assert.match(app, /function renderCitations\(html, sources\)/);
+assert.match(app, /function mergeAndReindexSources\(existingSources = \[\], incomingSources = \[\]\)/);
+assert.match(app, /marker && !usedMarkers\.has\(marker\) \? marker : nextMarker\(kind\)/);
+assert.match(server, /formatSearchResults\(searchData, query, sources = \[\]\)/);
 assert.match(server, /read_skill/, 'trusted skill tool status missing');
 
 console.log('tool trace UI regression passed');
