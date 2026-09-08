@@ -157,6 +157,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  inset: 0;
   transition: background-color 0.3s, color 0.3s;
 }
 
@@ -177,6 +178,7 @@ html.mobile-viewport-managed,
 body.mobile-viewport-managed {
   height: var(--app-height);
   min-height: var(--app-height);
+  max-height: var(--app-height);
 }
 
 body.mobile-viewport-managed {
@@ -9420,9 +9422,8 @@ body.custom-api-mode .main-content {
     display: flex;
     flex-direction: column;
     position: relative;
-    height: 100vh;
-    height: 100dvh;
-    min-height: 0;
+    height: var(--app-height, 100dvh);
+    min-height: var(--app-height, 100dvh);
   }
 
   .sidebar {
@@ -9461,6 +9462,21 @@ body.custom-api-mode .main-content {
     padding-top: max(var(--spacing-md), env(safe-area-inset-top, 0px));
     padding-left: var(--spacing-lg);
     padding-right: var(--spacing-lg);
+  }
+
+  /* In an iOS home-screen app the status-bar inset is part of the header box.
+     Keep the controls in the 64px toolbar below it instead of centering the
+     model selector through the Dynamic Island. */
+  html.ios-standalone .mobile-header {
+    box-sizing: border-box;
+    height: calc(64px + env(safe-area-inset-top, 0px));
+    min-height: calc(64px + env(safe-area-inset-top, 0px));
+    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+    padding-bottom: 12px;
+  }
+
+  html.ios-standalone .mobile-center-controls {
+    top: calc(32px + env(safe-area-inset-top, 0px));
   }
 
   .mobile-left-controls {

@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.6';
-const RAI_BUILD_ID = '20260818-version-contract-v0136-r1';
+const RAI_APP_VERSION = '0.13.7';
+const RAI_BUILD_ID = '20260908-ios-standalone-safe-area-v0137-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -30227,6 +30227,10 @@ class MobileKeyboardHandler {
 
     this.isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     this.isAndroid = /Android/i.test(navigator.userAgent);
+    this.isStandalone = Boolean(
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.navigator?.standalone === true
+    );
     this.isMobile = this.isIOS || this.isAndroid;
 
     this.root = document.documentElement;
@@ -30264,6 +30268,8 @@ class MobileKeyboardHandler {
   init() {
     this.root.classList.add('mobile-viewport-managed');
     this.body.classList.add('mobile-viewport-managed');
+    this.root.classList.toggle('ios-standalone', this.isIOS && this.isStandalone);
+    this.body.classList.toggle('ios-standalone', this.isIOS && this.isStandalone);
 
     this.updateViewportVars();
     this.syncComposerMetrics();
@@ -30282,11 +30288,12 @@ class MobileKeyboardHandler {
   }
 
   setupViewportListeners() {
-    if (this.visualViewport && !this.isIOS) {
-      // iOS 使用原生键盘布局，避免在键盘动画期间反复改写高度变量
+    // iOS Safari 浏览器页继续交给原生 viewport；主屏幕模式没有浏览器
+    // chrome，必须跟踪 visualViewport 才能在键盘/旋转后保持安全区内布局。
+    if (this.visualViewport && (!this.isIOS || this.isStandalone)) {
       this.visualViewport.addEventListener('resize', this.handleViewportChange);
     }
-    if (!this.isIOS) {
+    if (!this.isIOS || this.isStandalone) {
       window.addEventListener('resize', this.handleViewportChange);
     }
     window.addEventListener('orientationchange', this.handleViewportChange);
@@ -30311,7 +30318,7 @@ class MobileKeyboardHandler {
   }
 
   updateViewportVars() {
-    if (this.isIOS) {
+    if (this.isIOS && !this.isStandalone) {
       this.keyboardOpen = Boolean(this.activeInput);
       this.root.style.setProperty('--app-height', '100dvh');
       this.root.style.setProperty('--viewport-offset-top', '0px');
@@ -30320,8 +30327,9 @@ class MobileKeyboardHandler {
       return;
     }
 
-    const viewportHeight = this.visualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
-    const viewportTop = this.visualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
+    const useVisualViewport = Boolean(this.visualViewport && (!this.isIOS || this.isStandalone));
+    const viewportHeight = useVisualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
+    const viewportTop = useVisualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
     const appHeight = Math.max(320, viewportHeight);
     const keyboardHeight = Math.max(0, window.innerHeight - viewportHeight - viewportTop);
     const keyboardThreshold = this.isIOS ? 120 : 150;
