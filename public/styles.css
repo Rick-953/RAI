@@ -14600,8 +14600,8 @@ body.chatflow-iframe-mode .message-content::selection {
 }
 
 .settings-windows-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -14609,21 +14609,19 @@ body.chatflow-iframe-mode .message-content::selection {
 .settings-windows-actions .settings-install-download,
 .settings-platform-download .settings-install-btn {
   min-width: 0;
+  flex: 1 1 auto;
   text-align: center;
 }
 
-.settings-certificate-link {
-  align-self: center;
+.settings-windows-actions .settings-install-download-secondary {
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
   font-weight: 680;
-  text-decoration: none;
-  white-space: nowrap;
 }
 
-.settings-certificate-link:hover {
+.settings-windows-actions .settings-install-download-secondary:hover {
   color: var(--text-primary);
-  text-decoration: underline;
+  background: var(--settings-card-hover);
 }
 
 .settings-windows-lumia {
@@ -14645,19 +14643,23 @@ body.chatflow-iframe-mode .message-content::selection {
   text-decoration: underline;
 }
 
-.settings-onedrive-hint {
+.settings-windows-note {
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-secondary, #888);
 }
 
-.settings-onedrive-hint a {
+.settings-windows-note a {
   color: var(--accent, #4a9eff);
   text-decoration: none;
 }
 
-.settings-onedrive-hint a:hover {
+.settings-windows-note a:hover {
   text-decoration: underline;
+}
+
+.settings-windows-release-link {
+  margin-top: 8px;
 }
 
 .settings-install-main {
