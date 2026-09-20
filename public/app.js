@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.7';
-const RAI_BUILD_ID = '20260908-ios-standalone-safe-area-v0137-r1';
+const RAI_APP_VERSION = '0.13.8';
+const RAI_BUILD_ID = '20260914-settings-app-download-panel-v0138-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2617,6 +2617,7 @@ let windowsDownloadsLoadPromise = null;
 let windowsDownloadsLoadedAt = 0;
 let windowsDownloadsRelease = null;
 const WINDOWS_DOWNLOADS_CLIENT_TTL_MS = 10 * 60 * 1000;
+const WINDOWS_ALL_RELEASES_URL = 'https://github.com/Master-Tea/CX-RAI/releases/latest';
 const RAI_PWA_INSTALLED_HINT_KEY = 'rai_pwa_installed_hint';
 const RAI_INVITE_REF_KEY = 'rai_invite_referrer_id';
 const PWA_INSTALL_REWARD_POINTS = 10;
@@ -4751,32 +4752,45 @@ function isTrustedWindowsReleaseAsset(asset, allowedSuffixes) {
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const status = document.getElementById('windowsDownloadStatus');
   const packageLink = document.getElementById('windowsPackageDownload');
-  const certificateLink = document.getElementById('windowsCertificateDownload');
-  if (!status || !packageLink || !certificateLink) return false;
+  const setupLink = document.getElementById('windowsSetupDownload');
+  if (!status || !packageLink) return false;
 
   const packageValid = isTrustedWindowsReleaseAsset(release?.package, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  const certificateValid = isTrustedWindowsReleaseAsset(release?.certificate, ['.cer']);
-  if (!packageValid || !certificateValid) return false;
+  if (!packageValid) return false;
 
   packageLink.href = release.package.url;
   packageLink.title = release.package.name;
-  certificateLink.href = release.certificate.url;
-  certificateLink.title = release.certificate.name;
-  // Lumia 设备下载（Arm 包；依赖请用户到 GitHub 下载页自取）
-  const lumiaSection = document.getElementById('windowsLumiaSection');
-  if (lumiaSection && release?.lumia?.package) {
-    const lumiaPackage = document.getElementById('windowsLumiaPackage');
-    if (lumiaPackage) {
-      lumiaPackage.href = release.lumia.package.url;
-      lumiaPackage.title = release.lumia.package.name;
-      lumiaPackage.textContent = 'Arm 包';
+
+  // 一键安装程序（Setup.exe，内置证书与依赖）。上游未提供时回退到发布页。
+  const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
+  if (setupLink) {
+    if (setupValid) {
+      setupLink.href = release.setup.url;
+      setupLink.title = release.setup.name;
+    } else {
+      setupLink.href = WINDOWS_ALL_RELEASES_URL;
+      setupLink.removeAttribute('title');
     }
-    lumiaSection.style.display = '';
   }
+
+  // ARM 包（侧载用；依赖请到 GitHub 下载页自取）
+  const armSection = document.getElementById('windowsLumiaSection');
+  if (armSection && release?.arm?.package) {
+    const armPackage = document.getElementById('windowsLumiaPackage');
+    if (armPackage) {
+      armPackage.href = release.arm.package.url;
+      armPackage.title = release.arm.package.name;
+      armPackage.textContent = isChineseLanguage(appState.language) ? 'Arm 包' : 'ARM package';
+    }
+    armSection.style.display = '';
+  } else if (armSection) {
+    armSection.style.display = 'none';
+  }
+
   const tag = String(release.tag || '').trim();
   const isFallback = release.source === 'fallback';
   status.textContent = isChineseLanguage(appState.language)
-    ? (isFallback ? `GitHub 暂不可用，当前显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
+    ? (isFallback ? `GitHub 暂不可用，显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
     : (isFallback ? `GitHub unavailable; showing fallback ${tag}` : `Latest GitHub release ${tag}`);
   return true;
 }
@@ -5732,6 +5746,7 @@ const i18n = {
     'settings-nav-desktop': '桌面端',
     'settings-nav-notifications': '通知',
     'settings-nav-about': '关于',
+    'settings-nav-app': '下载应用客户端',
     'settings-mobile-section-rai': '我的 RAI',
     'settings-mobile-section-account': '账户',
     'settings-mobile-section-system': '系统',
@@ -5825,6 +5840,13 @@ const i18n = {
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': '作者 Rick',
+    'settings-app-title': '下载应用客户端',
+    'settings-app-desc': '把 RAI 装到你的电脑或手机上，获得更完整的体验。',
+    'settings-pwa-title': '网页版应用',
+    'settings-windows-setup': '下载安装程序',
+    'settings-windows-package': '下载安装包',
+    'settings-windows-auto-note': '运行安装程序即可一键装完，证书与依赖会自动处理。',
+    'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
     'settings-update-timeline-source': '来源：本机历史版本目录、版本记录、历史 release manifest、GitHub README。',
@@ -5834,7 +5856,6 @@ const i18n = {
     'settings-macos-title': 'macOS',
     'settings-windows-title': 'Windows 10 / 11（Phone）',
     'settings-platform-download': '下载',
-    'settings-windows-certificate': '安装证书',
     'settings-install-tutorial': '使用教程',
     'settings-install-ready': '当前浏览器可直接安装。',
     'settings-install-installed': 'RAI 已在应用模式中打开。',
@@ -6375,6 +6396,7 @@ const i18n = {
     'settings-nav-desktop': 'Desktop',
     'settings-nav-notifications': 'Notifications',
     'settings-nav-about': 'About',
+    'settings-nav-app': 'Download Apps',
     'settings-mobile-section-rai': 'My RAI',
     'settings-mobile-section-account': 'Account',
     'settings-mobile-section-system': 'System',
@@ -6468,6 +6490,13 @@ const i18n = {
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': 'Author Rick',
+    'settings-app-title': 'Download Apps',
+    'settings-app-desc': 'Install RAI on your computer or phone for the full experience.',
+    'settings-pwa-title': 'Web App',
+    'settings-windows-setup': 'Download installer',
+    'settings-windows-package': 'Download package',
+    'settings-windows-auto-note': 'Run the installer for a one-step install; the certificate and dependencies are handled automatically.',
+    'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
     'settings-update-timeline-source': 'Sources: local historical version folders, version records, historical release manifest, and GitHub README.',
@@ -6477,7 +6506,6 @@ const i18n = {
     'settings-macos-title': 'macOS',
     'settings-windows-title': 'Windows 10 / 11 (Phone)',
     'settings-platform-download': 'Download',
-    'settings-windows-certificate': 'Install certificate',
     'settings-install-tutorial': 'Instructions',
     'settings-install-ready': 'This browser can install RAI directly.',
     'settings-install-installed': 'RAI is already open in app mode.',
@@ -6952,7 +6980,6 @@ Object.assign(i18n['zh-TW'], {
   'settings-macos-title': 'macOS',
   'settings-windows-title': 'Windows 10 / 11（Phone）',
   'settings-platform-download': '下載',
-  'settings-windows-certificate': '安裝憑證',
   'settings-install-tutorial': '使用教學',
   'security-device-browser': '瀏覽器',
   'security-device-system': '系統',
@@ -13408,7 +13435,8 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   advanced: 'settings-nav-advanced',
   desktop: 'settings-nav-desktop',
   notifications: 'settings-nav-notifications',
-  about: 'settings-nav-about'
+  about: 'settings-nav-about',
+  app: 'settings-nav-app'
 };
 
 function normalizeSettingsSection(section) {
@@ -20667,7 +20695,16 @@ function createSessionElement(session, { inFolder = false, pinned = false } = {}
   const canvasMarker = sessionHasCanvas(session)
     ? `<span class="session-canvas-marker" title="${escapeHtml(canvasMarkerLabel)}" aria-label="${escapeHtml(canvasMarkerLabel)}">${getSvgIcon('dashboard_customize', 'material-symbols-outlined', 15)}</span>`
     : '';
-  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
+  // 使用过本地电脑的对话：标识由服务端会话字段持久化，重开页面/换设备都不会消失。
+  const localComputerUsed = Number(session.local_computer_used || 0) > 0 || Boolean(session.working_directory);
+  const localComputerBaseLabel = isChineseLanguage(appState.language) ? '此对话使用过本地电脑' : 'Used local computer';
+  const localComputerMarkerLabel = session.working_directory
+    ? `${localComputerBaseLabel}\n${isChineseLanguage(appState.language) ? '最近工作目录' : 'Last working directory'}: ${session.working_directory}`
+    : localComputerBaseLabel;
+  const localComputerMarker = localComputerUsed
+    ? `<span class="session-local-computer-marker" title="${escapeHtml(localComputerMarkerLabel)}" aria-label="${escapeHtml(localComputerBaseLabel)}">${getSvgIcon('computer', 'material-symbols-outlined', 15)}</span>`
+    : '';
+  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}${localComputerMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
   let suppressPinnedClickUntil = 0;
   div.addEventListener('click', (event) => {
     if (Date.now() < suppressPinnedClickUntil) return;
