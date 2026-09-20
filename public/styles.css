@@ -2319,6 +2319,13 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   color: var(--text-tertiary);
 }
 
+.session-local-computer-marker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--text-tertiary);
+}
+
 .session-preview {
   font-size: 12px;
   color: var(--text-secondary);

@@ -20695,7 +20695,16 @@ function createSessionElement(session, { inFolder = false, pinned = false } = {}
   const canvasMarker = sessionHasCanvas(session)
     ? `<span class="session-canvas-marker" title="${escapeHtml(canvasMarkerLabel)}" aria-label="${escapeHtml(canvasMarkerLabel)}">${getSvgIcon('dashboard_customize', 'material-symbols-outlined', 15)}</span>`
     : '';
-  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
+  // 使用过本地电脑的对话：标识由服务端会话字段持久化，重开页面/换设备都不会消失。
+  const localComputerUsed = Number(session.local_computer_used || 0) > 0 || Boolean(session.working_directory);
+  const localComputerBaseLabel = isChineseLanguage(appState.language) ? '此对话使用过本地电脑' : 'Used local computer';
+  const localComputerMarkerLabel = session.working_directory
+    ? `${localComputerBaseLabel}\n${isChineseLanguage(appState.language) ? '最近工作目录' : 'Last working directory'}: ${session.working_directory}`
+    : localComputerBaseLabel;
+  const localComputerMarker = localComputerUsed
+    ? `<span class="session-local-computer-marker" title="${escapeHtml(localComputerMarkerLabel)}" aria-label="${escapeHtml(localComputerBaseLabel)}">${getSvgIcon('computer', 'material-symbols-outlined', 15)}</span>`
+    : '';
+  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}${localComputerMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
   let suppressPinnedClickUntil = 0;
   div.addEventListener('click', (event) => {
     if (Date.now() < suppressPinnedClickUntil) return;
