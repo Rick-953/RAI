@@ -2387,8 +2387,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.8';
-const RAI_BUILD_ID = '20260921-2fa-drift-ios-viewport-v0145-r1';
+const RAI_APP_VERSION = '0.13.9';
+const RAI_BUILD_ID = '20260921-viewport-standard2fa-v0146-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -24854,6 +24854,7 @@ function showApp() {
     initChatIndexListener(); // 初始化对话索引导航器监听
     updateToolbarUI();
     focusEntryTextInput('app-ready', { delay: 0 });
+    window.mobileKeyboardHandler?.healStandaloneViewport?.();
   }, 100);
 }
 
@@ -30331,6 +30332,9 @@ class MobileKeyboardHandler {
 
     if (this.isAndroid) this.applyAndroidFixes();
     if (this.isIOS) this.applyIOSFixes();
+    if (this.isIOS && this.isStandalone) {
+      window.setTimeout(() => this.healStandaloneViewport(), 350);
+    }
 
     this.log('MobileKeyboardHandler initialized', {
       isIOS: this.isIOS,
@@ -30524,7 +30528,10 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
-      if (this.isStandalone) this.scheduleStandaloneLayoutScrollReset();
+      if (this.isStandalone) {
+        this.scheduleStandaloneLayoutScrollReset();
+        window.setTimeout(() => this.healStandaloneViewport(), 400);
+      }
       return;
     }
 
@@ -30596,6 +30603,29 @@ class MobileKeyboardHandler {
         }
       });
     }
+  }
+
+  // iOS 主屏幕偶发“视口卡在短高度”的状态：屏幕比 WebView 高一个顶部安全区，
+  // 底部会留下无法用 CSS 填满的黑边。切换一次全屏元素的 display 强制 WebKit
+  // 重新测量视口，即可恢复完整高度。
+  healStandaloneViewport() {
+    if (!this.isIOS || !this.isStandalone || this.activeInput) return;
+    const screenHeight = Math.round(window.screen?.height || 0);
+    const currentHeight = Math.max(
+      Math.round(window.innerHeight || 0),
+      Math.round(this.visualViewport?.height || 0)
+    );
+    const delta = screenHeight - currentHeight;
+    if (!screenHeight || delta <= 4 || delta > 120) return;
+    const shell = [document.getElementById('appContainer'), document.getElementById('authContainer')]
+      .find((element) => element && element.offsetParent !== null);
+    if (!shell) return;
+    const previousDisplay = shell.style.display;
+    shell.style.display = 'none';
+    void shell.offsetHeight;
+    shell.style.display = previousDisplay;
+    this.updateViewportVars();
+    this.log('Viewport healed', { screenHeight, currentHeight, delta });
   }
 
   applyIOSFixes() {
@@ -31990,10 +32020,70 @@ function initMobileTouchNavigation() {
   }, { passive: true });
 }
 
+// ==================== 视口诊断浮层（?viewport-debug=1 或 #viewport-debug） ====================
+function isViewportDebugEnabled() {
+  try {
+    if (new URLSearchParams(window.location.search).get('viewport-debug') === '1') return true;
+    if (window.location.hash === '#viewport-debug') return true;
+    return window.localStorage?.getItem('raiViewportDebug') === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function installViewportDebugOverlay() {
+  if (!isViewportDebugEnabled() || !document.body) return;
+  const panel = document.createElement('div');
+  panel.id = 'viewportDebugPanel';
+  panel.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:rgba(0,0,0,.88);color:#4ade80;font:11px/1.45 ui-monospace,Menlo,monospace;padding:8px 10px;white-space:pre-wrap;pointer-events:none;';
+  const marker = document.createElement('div');
+  marker.id = 'viewportDebugMarker';
+  marker.style.cssText = 'position:fixed;left:0;right:0;height:0;border-top:2px solid #ff2d55;z-index:2147483647;pointer-events:none;';
+  document.body.appendChild(panel);
+  document.body.appendChild(marker);
+
+  const measureSafeArea = (property) => {
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:fixed;top:0;left:0;width:0;height:env(${property}, 0px);visibility:hidden;pointer-events:none;`;
+    document.body.appendChild(probe);
+    const value = probe.offsetHeight;
+    probe.remove();
+    return value;
+  };
+
+  const update = () => {
+    const viewport = window.visualViewport;
+    const root = document.documentElement;
+    const shell = document.getElementById('appContainer');
+    const rect = shell ? shell.getBoundingClientRect() : null;
+    const appHeight = getComputedStyle(root).getPropertyValue('--app-height').trim();
+    const shellBottom = Math.round(rect?.bottom || 0);
+    panel.textContent = [
+      `RAI ${RAI_APP_VERSION} · ${RAI_BUILD_ID}`,
+      `standalone=${navigator.standalone === true} ios=${/iPad|iPhone|iPod/.test(navigator.userAgent)}`,
+      `screen=${window.screen?.width}x${window.screen?.height} dpr=${window.devicePixelRatio}`,
+      `inner=${window.innerWidth}x${window.innerHeight} scrollY=${window.scrollY}`,
+      viewport
+        ? `vv=${Math.round(viewport.width)}x${Math.round(viewport.height)} offTop=${Math.round(viewport.offsetTop)} scale=${viewport.scale}`
+        : 'vv=none',
+      `safeTop=${measureSafeArea('safe-area-inset-top')} safeBottom=${measureSafeArea('safe-area-inset-bottom')}`,
+      `--app-height=${appHeight}`,
+      `shell top=${Math.round(rect?.top || 0)} h=${Math.round(rect?.height || 0)} bottom=${shellBottom}`,
+      `html=${root.offsetHeight} body=${document.body.offsetHeight}`,
+      `gapBelowShell=${Math.round((window.screen?.height || 0) - shellBottom)}`
+    ].join('\n');
+    marker.style.top = `${shellBottom}px`;
+  };
+
+  update();
+  window.setInterval(update, 500);
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
   initializeComposerMenuHitTargets();
   mountComposerFloatingMenus();
+  installViewportDebugOverlay();
   window.mobileKeyboardHandler = new MobileKeyboardHandler({
     debug: false
   });

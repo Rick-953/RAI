@@ -890,9 +890,9 @@ function normalizeTotpCodeInput(code) {
         .slice(0, 12);
 }
 
-// 兼容用户设备时钟漂移：默认允许前后各 3 个 30 秒窗口（±90s）。
-// 一次性验证码本身仍有 last_counter 重放保护，放宽窗口不会带来重复使用风险。
-const TOTP_VALIDATION_WINDOW = 3;
+// 标准 TOTP 校验窗口：前后各 1 个 30 秒窗口（±30s），与主流实现一致。
+// 失败时会用更大的诊断窗口区分“设备时钟漂移”与“秘钥不一致”。
+const TOTP_VALIDATION_WINDOW = 1;
 const TOTP_DIAGNOSTIC_WINDOW = 12;
 
 function findMatchingTotpCounter(secret, code, options = {}) {
