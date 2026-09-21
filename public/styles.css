@@ -85,11 +85,23 @@
   --z-sidebar: 100;
   --z-header: 90;
   --app-height: 100vh;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
   --composer-height: 200px;
   --composer-bottom-gap: 0px;
-  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md));
+  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--safe-bottom, 0px) + var(--spacing-md));
   --keyboard-offset: 0px;
   --viewport-offset-top: 0px;
+}
+
+/* 旧款 16:9 全屏 iPhone（无刘海）与 iPad 的安全区兜底：
+   env() 在部分 iOS 版本冷启动会返回 0，这里按机型比例补足。 */
+html.ios-legacy-16-9 {
+  --safe-top: max(20px, env(safe-area-inset-top, 0px));
+}
+
+html.ipad-device {
+  --safe-bottom: max(20px, env(safe-area-inset-bottom, 0px));
 }
 
 /* 浅色主题 */
@@ -213,7 +225,7 @@ body.mobile-viewport-managed .chat-container {
 
 body.mobile-viewport-managed .input-area {
   position: absolute;
-  bottom: var(--composer-bottom-gap, 0px);
+  bottom: calc(var(--composer-bottom-gap, 0px) + var(--safe-bottom, 0px));
   left: 0;
   right: 0;
   background: transparent;
@@ -235,7 +247,8 @@ body.mobile-viewport-managed .input-container {
   -webkit-backdrop-filter: blur(24px) saturate(120%);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
   border: none;
-  padding-bottom: calc(var(--spacing-md) + env(safe-area-inset-bottom, 0px));
+  /* 底部安全区由 .input-area 的整体位移处理，输入框本身保持紧凑高度。 */
+  padding-bottom: var(--spacing-md);
 }
 
 [data-theme="light"] body.mobile-viewport-managed .input-container {
@@ -9434,10 +9447,13 @@ body.custom-api-mode .main-content {
   }
 
   .sidebar {
-    position: fixed;
+    /* iOS 主屏幕模式里 position:fixed 会被“撒谎”的视口高度裁掉底部，
+       改用相对 app shell 的绝对定位，让侧边栏铺满完整屏幕。 */
+    position: absolute;
     top: 0;
     left: 0;
-    bottom: 0;
+    bottom: auto;
+    height: var(--app-height, 100dvh);
     width: var(--sidebar-width);
     max-width: 320px;
     transform: translateX(-100%);
@@ -9449,6 +9465,19 @@ body.custom-api-mode .main-content {
 
   .sidebar.active {
     transform: translateX(0);
+  }
+
+  .sidebar-header-fixed {
+    padding-top: calc(var(--spacing-lg) + var(--safe-top, 0px));
+  }
+
+  .sidebar-footer-fixed {
+    padding-bottom: calc(var(--spacing-lg) + var(--safe-bottom, 0px));
+  }
+
+  .mobile-overlay {
+    position: absolute;
+    height: var(--app-height, 100dvh);
   }
 
   .main-content {
@@ -9466,9 +9495,10 @@ body.custom-api-mode .main-content {
     flex-shrink: 0;
     z-index: var(--z-header);
     gap: 0;
-    padding-top: max(var(--spacing-md), env(safe-area-inset-top, 0px));
+    padding-top: max(var(--spacing-md), var(--safe-top, 0px));
     padding-left: var(--spacing-lg);
     padding-right: var(--spacing-lg);
+    touch-action: none;
   }
 
   /* In an iOS home-screen app the status-bar inset is part of the header box.
@@ -9476,14 +9506,14 @@ body.custom-api-mode .main-content {
      model selector through the Dynamic Island. */
   html.ios-standalone .mobile-header {
     box-sizing: border-box;
-    height: calc(64px + env(safe-area-inset-top, 0px));
-    min-height: calc(64px + env(safe-area-inset-top, 0px));
-    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+    height: calc(64px + var(--safe-top, 0px));
+    min-height: calc(64px + var(--safe-top, 0px));
+    padding-top: calc(12px + var(--safe-top, 0px));
     padding-bottom: 12px;
   }
 
   html.ios-standalone .mobile-center-controls {
-    top: calc(32px + env(safe-area-inset-top, 0px));
+    top: calc(32px + var(--safe-top, 0px));
   }
 
   .mobile-left-controls {
@@ -15391,7 +15421,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-sidebar {
     flex: 1 1 auto;
-    padding: max(68px, calc(env(safe-area-inset-top) + 52px)) 18px max(26px, env(safe-area-inset-bottom));
+    padding: max(68px, calc(var(--safe-top, 0px) + 52px)) 18px max(26px, var(--safe-bottom, 0px));
     gap: 22px;
   }
 
@@ -15402,7 +15432,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-close-btn {
     position: absolute;
-    top: max(16px, calc(env(safe-area-inset-top) + 10px));
+    top: max(16px, calc(var(--safe-top, 0px) + 10px));
     left: 16px;
     width: 52px;
     height: 52px;
@@ -15546,7 +15576,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-main {
     flex: 1;
-    padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 18px max(26px, env(safe-area-inset-bottom));
+    padding: max(18px, calc(var(--safe-top, 0px) + 12px)) 18px max(26px, var(--safe-bottom, 0px));
   }
 
   .settings-content.mobile-home .settings-sidebar {
@@ -16527,7 +16557,7 @@ body.chatflow-iframe-mode .message-content::selection {
   }
 
   .settings-sidebar {
-    padding: max(74px, calc(env(safe-area-inset-top) + 58px)) 32px max(28px, env(safe-area-inset-bottom));
+    padding: max(74px, calc(var(--safe-top, 0px) + 58px)) 32px max(28px, var(--safe-bottom, 0px));
     gap: 18px;
   }
 
@@ -16758,7 +16788,7 @@ body.chatflow-iframe-mode .message-content::selection {
   }
 
   .settings-main {
-    padding: max(20px, calc(env(safe-area-inset-top) + 14px)) 32px max(28px, env(safe-area-inset-bottom));
+    padding: max(20px, calc(var(--safe-top, 0px) + 14px)) 32px max(28px, var(--safe-bottom, 0px));
   }
 
   .settings-main-header {
@@ -18453,11 +18483,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   }
 
   .settings-sidebar {
-    padding-bottom: max(40px, calc(env(safe-area-inset-bottom) + 28px));
+    padding-bottom: max(40px, calc(var(--safe-bottom, 0px) + 28px));
   }
 
   .settings-main {
-    padding-bottom: max(40px, calc(env(safe-area-inset-bottom) + 28px));
+    padding-bottom: max(40px, calc(var(--safe-bottom, 0px) + 28px));
   }
 
   .settings-mobile-info-btn {
@@ -18538,6 +18568,12 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 @media (max-width: 860px) {
   .settings-modal.active,
   .settings-modal.closing {
+    /* iOS 主屏幕模式下 fixed 会被视口高度裁切，改为 app shell 内的绝对定位。 */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: auto;
     height: var(--app-height, 100dvh);
     min-height: 0;
     overflow: hidden;
@@ -18564,12 +18600,12 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
   .settings-content.mobile-home .settings-sidebar {
     display: block;
-    padding-top: max(92px, calc(env(safe-area-inset-top) + 76px));
-    padding-bottom: max(128px, calc(env(safe-area-inset-bottom) + 120px));
+    padding-top: max(92px, calc(var(--safe-top, 0px) + 76px));
+    padding-bottom: max(32px, calc(var(--safe-bottom, 0px) + 24px));
   }
 
   .settings-content.mobile-detail .settings-main {
-    padding-bottom: max(96px, calc(env(safe-area-inset-bottom) + 88px));
+    padding-bottom: max(32px, calc(var(--safe-bottom, 0px) + 24px));
   }
 
   .settings-content.mobile-home .settings-nav,
@@ -18650,7 +18686,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     z-index: 5;
     min-height: 80px;
     margin: 0 -32px 20px;
-    padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 32px 0;
+    padding: max(18px, calc(var(--safe-top, 0px) + 12px)) 32px 0;
     background: var(--settings-mobile-app-bg);
     border-bottom: 1px solid var(--settings-divider);
   }
@@ -18671,20 +18707,20 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     position: sticky;
     top: 0;
     z-index: 8;
-    height: max(86px, calc(env(safe-area-inset-top) + 74px));
+    height: max(86px, calc(var(--safe-top, 0px) + 74px));
     margin: 0 -32px 18px;
-    padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 32px 0;
+    padding: max(18px, calc(var(--safe-top, 0px) + 12px)) 32px 0;
     background: var(--settings-mobile-app-bg);
     border-bottom: 1px solid var(--settings-divider);
     border-radius: 28px 28px 0 0;
   }
 
   .settings-content.mobile-home .settings-close-btn {
-    top: max(18px, calc(env(safe-area-inset-top) + 12px));
+    top: max(18px, calc(var(--safe-top, 0px) + 12px));
   }
 
   .settings-content.mobile-home .settings-mobile-info-btn {
-    top: max(19px, calc(env(safe-area-inset-top) + 13px));
+    top: max(19px, calc(var(--safe-top, 0px) + 13px));
   }
 }
 

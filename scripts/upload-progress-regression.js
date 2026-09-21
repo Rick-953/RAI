@@ -40,6 +40,23 @@ assert.match(app, /role="progressbar"[\s\S]*aria-valuenow="0"/);
 assert.match(app, /function renderUploadProgress[\s\S]*uploadProgressGeneration/);
 assert.match(styles, /\.upload-progress[\s\S]*\.upload-progress-track[\s\S]*\.upload-progress-bar/);
 
+// Mobile uploads must survive stalled connections and oversized source images.
+assert.match(app, /const UPLOAD_STALL_TIMEOUT_MS = 45 \* 1000/);
+assert.match(app, /const UPLOAD_MAX_ATTEMPTS = 3/);
+assert.match(app, /xhr\.timeout = UPLOAD_REQUEST_TIMEOUT_MS/);
+assert.match(app, /function isRetryableUploadError[\s\S]*status >= 500/);
+assert.match(app, /const runUploadWithRetry = async \(\)[\s\S]*attempt <= UPLOAD_MAX_ATTEMPTS/);
+assert.match(app, /function prepareImageFileForUpload[\s\S]*canvasToBlobAsync\(canvas, 'image\/jpeg'/);
+assert.match(app, /const UI_HEIC_IMAGE_EXTENSIONS = new Set\(\['heic', 'heif'\]\)/);
+assert.match(app, /const UI_IMAGE_RECOMPRESS_MIN_BYTES = 3 \* 1024 \* 1024/);
+
+// Sending must wait for the pending attachment upload, otherwise the LLM
+// receives the message before the file finishes uploading.
+assert.match(app, /let pendingAttachmentUpload = null/);
+assert.match(app, /if \(attachToComposer\) pendingAttachmentUpload = uploadTask/);
+assert.match(app, /if \(pendingAttachmentUpload\) \{[\s\S]*?await pendingAttachmentUpload/);
+assert.match(app, /sendWaitingForAttachmentUpload/);
+
 assert.match(docs, /POST \/api\/uploads\/sessions/);
 assert.match(docs, /GET \/api\/uploads\/:uploadId\/status/);
 assert.match(docs, /pending.*uploading.*processing/s);
