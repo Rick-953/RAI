@@ -890,11 +890,16 @@ function normalizeTotpCodeInput(code) {
         .slice(0, 12);
 }
 
+// 兼容用户设备时钟漂移：默认允许前后各 3 个 30 秒窗口（±90s）。
+// 一次性验证码本身仍有 last_counter 重放保护，放宽窗口不会带来重复使用风险。
+const TOTP_VALIDATION_WINDOW = 3;
+const TOTP_DIAGNOSTIC_WINDOW = 12;
+
 function findMatchingTotpCounter(secret, code, options = {}) {
     const normalizedCode = normalizeTotpCodeInput(code);
     if (!/^\d{6}$/.test(normalizedCode)) return null;
 
-    const windowSize = Number.isInteger(options.window) ? Math.max(0, options.window) : 1;
+    const windowSize = Number.isInteger(options.window) ? Math.max(0, options.window) : TOTP_VALIDATION_WINDOW;
     const period = Number.isInteger(options.period) ? Math.max(15, options.period) : 30;
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
     const currentCounter = Math.floor(nowMs / 1000 / period);
@@ -907,16 +912,25 @@ function findMatchingTotpCounter(secret, code, options = {}) {
             if (counter < 0) continue;
             const candidate = generateHotpCode(normalizedSecret, counter);
             if (safeCompareText(candidate, normalizedCode)) {
-                if (offset !== 0) {
+                if (offset !== 0 && options.silent !== true) {
                     console.warn(` TOTP 验证通过但存在时间漂移: offset=${offset}, period=${period}s`);
                 }
                 return counter;
             }
         }
     } catch (error) {
-        console.warn(' TOTP 校验失败:', sanitizeReportContext(error));
+        if (options.silent !== true) console.warn(' TOTP 校验失败:', sanitizeReportContext(error));
     }
     return null;
+}
+
+function logTotpWindowMiss(secret, code) {
+    const probe = findMatchingTotpCounter(secret, code, { window: TOTP_DIAGNOSTIC_WINDOW, silent: true });
+    if (probe !== null) {
+        console.warn(` TOTP 校验失败: 验证码命中窗口外偏移（允许 ±${TOTP_VALIDATION_WINDOW} 个周期），请检查用户设备时钟`);
+    } else {
+        console.warn(' TOTP 校验失败: 验证码在 ±6 分钟内无匹配，可能认证器秘钥不一致');
+    }
 }
 
 function verifyTotpCode(secret, code, options = {}) {
@@ -971,7 +985,10 @@ async function consumeUserTotpCode(user, code, options = {}) {
     const secret = decryptUserTotpSecret(user.two_factor_secret, userId);
     if (!secret) return false;
     const counter = findMatchingTotpCounter(secret, code, options);
-    if (counter === null) return false;
+    if (counter === null) {
+        logTotpWindowMiss(secret, code);
+        return false;
+    }
     const encryptedSecret = totpSecretCipher.isEncrypted(user.two_factor_secret)
         ? user.two_factor_secret
         : totpSecretCipher.encrypt(secret, { purpose: 'user', recordId: String(userId) });

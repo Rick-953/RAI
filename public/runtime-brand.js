@@ -25,10 +25,23 @@
       }
     }
 
-    if (isStandalone) {
+    if (isStandalone && isIOS) {
       // iOS 主屏幕模式的冷启动里 100dvh / visualViewport.height 会少算顶部
-      // 安全区，只有 100vh 等于完整屏幕高度。键盘打开时 app.js 会改回
+      // 安全区，用 screen.height 修正完整屏幕高度；键盘打开时 app.js 会改回
       // visualViewport 高度。
+      const viewportHeight = Number(window.visualViewport?.height || 0);
+      const innerHeight = Number(window.innerHeight || 0);
+      const screenHeight = Number(window.screen?.height || 0);
+      const observedMax = Math.max(viewportHeight, innerHeight);
+      const fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
+        ? screenHeight
+        : observedMax;
+      if (fullHeight > 0) {
+        root.style.setProperty('--app-height', `${Math.round(fullHeight)}px`);
+      } else {
+        root.style.setProperty('--app-height', '100vh');
+      }
+    } else if (isStandalone) {
       root.style.setProperty('--app-height', '100vh');
     }
   } catch (error) {

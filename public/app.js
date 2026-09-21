@@ -2388,7 +2388,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.8';
-const RAI_BUILD_ID = '20260921-ios-upload-pwa-fixes-v0144-r1';
+const RAI_BUILD_ID = '20260921-2fa-drift-ios-viewport-v0145-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -30401,18 +30401,28 @@ class MobileKeyboardHandler {
       return;
     }
 
-    // iOS 主屏幕模式：键盘关闭时 100vh 才是完整屏幕高度（100dvh 在冷启动
-    // 会少算顶部安全区，底部出现黑边）；键盘打开时改用 visualViewport 高度。
+    // iOS 主屏幕模式：冷启动时 100dvh/visualViewport.height 可能少算顶部安全区，
+    // 用 screen.height 修正完整屏幕高度（只接受与实测值相差一个安全区的候选）；
+    // 键盘打开时改用 visualViewport 高度，让输入框贴在键盘上方。
     if (this.isIOS && this.isStandalone) {
       const viewport = this.visualViewport;
       const viewportHeight = viewport ? Math.max(0, Math.round(viewport.height)) : Math.round(window.innerHeight);
       const viewportTop = viewport ? Math.max(0, Math.round(viewport.offsetTop || 0)) : 0;
-      const layoutHeight = Math.max(viewportHeight, Math.round(window.innerHeight));
-      const keyboardHeight = Math.max(0, layoutHeight - viewportHeight - viewportTop);
-      const keyboardOpen = keyboardHeight > 120;
+      const innerHeight = Math.round(window.innerHeight || 0);
+      const screenHeight = Math.round(window.screen?.height || 0);
+      const observedMax = Math.max(innerHeight, viewportHeight);
+      const fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
+        ? screenHeight
+        : observedMax;
+      const keyboardHeight = Math.max(0, fullHeight - viewportHeight - viewportTop);
+      // activeInput 兜底：部分 iOS 版本键盘弹起时布局视口也会一起缩小，
+      // 单看高度差会误判为键盘未打开。
+      const keyboardOpen = Boolean(this.activeInput) || keyboardHeight > 120;
 
       this.keyboardOpen = keyboardOpen;
-      this.root.style.setProperty('--app-height', keyboardOpen ? `${Math.max(320, viewportHeight)}px` : '100vh');
+      this.root.style.setProperty('--app-height', keyboardOpen
+        ? `${Math.max(320, viewportHeight)}px`
+        : `${Math.max(320, fullHeight)}px`);
       this.root.style.setProperty('--viewport-offset-top', `${viewportTop}px`);
       this.root.style.setProperty('--keyboard-offset', `${keyboardHeight}px`);
       this.body.classList.toggle('keyboard-open', keyboardOpen);
@@ -30421,6 +30431,7 @@ class MobileKeyboardHandler {
       this.log('Viewport sync (standalone)', {
         viewportHeight,
         viewportTop,
+        fullHeight,
         keyboardHeight,
         keyboardOpen
       });

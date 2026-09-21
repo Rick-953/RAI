@@ -24,10 +24,12 @@ assert(/html\.ios-standalone \.mobile-header[\s\S]*?height: calc\(64px \+ var\(-
 assert(/html\.ios-standalone \.mobile-center-controls[\s\S]*?top: calc\(32px \+ var\(--safe-top, 0px\)\)/.test(styles), 'standalone model selector must be centered below the Dynamic Island');
 
 // Cold-start viewport lie: 100dvh/visualViewport.height under-report the top inset in
-// standalone mode; 100vh is the only unit that equals the full screen there.
+// standalone mode; screen.height is used to correct the full-screen height.
 assert(/navigator\.standalone === true[\s\S]*?classList\.add\('standalone-viewport'\)/.test(runtimeBrand), 'runtime bootstrap must detect the standalone viewport');
-assert(/isStandalone\) \{\s*\/\/[\s\S]*?setProperty\('--app-height', '100vh'\)/.test(runtimeBrand) || /setProperty\('--app-height', '100vh'\)/.test(runtimeBrand), 'standalone bootstrap must pin --app-height to 100vh before first paint');
-assert(/keyboardOpen \? `\$\{Math\.max\(320, viewportHeight\)\}px` : '100vh'/.test(app), 'standalone keyboard-open state must switch back to the visual viewport height');
+assert(/screenHeight > observedMax && screenHeight - observedMax <= 120/.test(runtimeBrand), 'standalone bootstrap must correct the full-screen height from screen.height');
+assert(/screenHeight > observedMax && screenHeight - observedMax <= 120/.test(app), 'standalone viewport sync must correct the full-screen height from screen.height');
+assert(/const keyboardOpen = Boolean\(this\.activeInput\) \|\| keyboardHeight > 120/.test(app), 'standalone keyboard detection must fall back to the focused input');
+assert(/keyboardOpen\s*\n?\s*\? `\$\{Math\.max\(320, viewportHeight\)\}px`/.test(app), 'standalone keyboard-open state must switch back to the visual viewport height');
 
 // iOS scrolls the layout viewport when focusing the composer; the app must reset it.
 assert(/this\.visualViewport\.addEventListener\('scroll', this\.handleViewportChange\)/.test(app), 'standalone iOS must observe visualViewport scroll events');
@@ -42,6 +44,7 @@ assert(/\.sidebar-footer-fixed \{[\s\S]*?padding-bottom: calc\(var\(--spacing-lg
 // Composer: the safe area moves the whole composer, not the input box padding.
 assert(/body\.mobile-viewport-managed \.input-area \{[\s\S]*?bottom: calc\(var\(--composer-bottom-gap, 0px\) \+ var\(--safe-bottom, 0px\)\)/.test(styles), 'composer must sit above the bottom safe area');
 assert(/body\.mobile-viewport-managed \.input-container \{[\s\S]*?padding-bottom: var\(--spacing-md\)/.test(styles), 'input box must keep a compact height without the safe-area padding');
+assert(/body\.mobile-viewport-managed\.keyboard-open \.input-area \{[\s\S]*?bottom: var\(--composer-bottom-gap, 0px\)/.test(styles), 'keyboard-open composer must drop the bottom safe-area offset');
 
 // Legacy 16:9 iPhones and iPads need a measured fallback when env() reports 0.
 assert(/ios-legacy-16-9/.test(runtimeBrand) && /ratio >= 1\.87/.test(runtimeBrand), 'runtime must classify legacy 16:9 iPhones');

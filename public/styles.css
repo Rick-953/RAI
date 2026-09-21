@@ -255,6 +255,16 @@ body.mobile-viewport-managed .input-container {
   background: var(--composer-surface-bg);
 }
 
+/* 键盘打开时视觉视口已经贴到键盘上方，不再额外叠加底部安全区，
+   否则输入框会被顶起、与键盘之间留出空白。 */
+body.mobile-viewport-managed.keyboard-open {
+  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md));
+}
+
+body.mobile-viewport-managed.keyboard-open .input-area {
+  bottom: var(--composer-bottom-gap, 0px);
+}
+
 body.mobile-viewport-managed .main-content::after,
 body.mobile-viewport-managed .chat-edge-blur-bottom {
   display: none;
