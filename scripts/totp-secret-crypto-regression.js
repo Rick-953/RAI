@@ -53,14 +53,14 @@ const {
   TOTP_VALIDATION_WINDOW
 } = factory(crypto, (error) => String(error?.message || error));
 
-assert.equal(TOTP_VALIDATION_WINDOW, 3, 'TOTP validation window must tolerate ±3 periods');
+assert.equal(TOTP_VALIDATION_WINDOW, 1, 'TOTP validation window must stay standard at ±1 period');
 assert.match(serverSource, /function logTotpWindowMiss/);
 assert.match(serverSource, /TOTP_DIAGNOSTIC_WINDOW = 12/);
 
 const testSecret = 'JBSWY3DPEHPK3PXP';
 const nowMs = 1_800_000_000_000;
 const counter = Math.floor(nowMs / 1000 / 30);
-for (const offset of [-3, -1, 0, 1, 3]) {
+for (const offset of [-1, 0, 1]) {
   const code = generateHotpCode(testSecret, counter + offset);
   assert.equal(
     findMatchingTotpCounter(testSecret, code, { nowMs, silent: true }),
@@ -68,7 +68,7 @@ for (const offset of [-3, -1, 0, 1, 3]) {
     `a code generated at offset ${offset} must match inside the window`
   );
 }
-const outsideCode = generateHotpCode(testSecret, counter + 4);
+const outsideCode = generateHotpCode(testSecret, counter + 2);
 assert.equal(
   findMatchingTotpCounter(testSecret, outsideCode, { nowMs, silent: true }),
   null,

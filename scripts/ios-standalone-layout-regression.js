@@ -35,6 +35,12 @@ assert(/keyboardOpen\s*\n?\s*\? `\$\{Math\.max\(320, viewportHeight\)\}px`/.test
 assert(/this\.visualViewport\.addEventListener\('scroll', this\.handleViewportChange\)/.test(app), 'standalone iOS must observe visualViewport scroll events');
 assert(/scheduleStandaloneLayoutScrollReset\(\)/.test(app) && /\[16, 50, 100, 200\]\.forEach/.test(app), 'focus transitions must schedule staggered layout-scroll resets');
 
+// Stuck-viewport healing: a display flip forces WebKit to re-measure the screen height.
+assert(/healStandaloneViewport\(\) \{[\s\S]*?screenHeight - currentHeight[\s\S]*?shell\.style\.display = 'none'/.test(app), 'standalone iOS must heal a stuck viewport');
+assert(/window\.setTimeout\(\(\) => this\.healStandaloneViewport\(\), 350\)/.test(app), 'viewport healing must run after startup');
+assert(/window\.mobileKeyboardHandler\?\.healStandaloneViewport\?\.\(\)/.test(app), 'viewport healing must run when the app becomes visible');
+assert(/installViewportDebugOverlay\(\)/.test(app) && /viewport-debug/.test(app), 'a viewport debug overlay must be available for on-device diagnosis');
+
 // Full-screen surfaces must not stay position:fixed inside the lying viewport.
 assert(/\.sidebar \{[\s\S]*?position: absolute;[\s\S]*?height: var\(--app-height, 100dvh\)/.test(styles), 'mobile sidebar must fill the managed app height');
 assert(/\.settings-modal\.active,[\s\S]*?position: absolute;[\s\S]*?height: var\(--app-height, 100dvh\)/.test(styles), 'mobile settings modal must fill the managed app height');
