@@ -3891,6 +3891,29 @@ const PROMPT_INJECTION_RULES = [
             '表达顺序：先简短共情，再给逻辑澄清，再给安抚建议（1-2条）。'
         ].join('\n'),
         notes: '情绪+逻辑澄清场景'
+    },
+    {
+        id: 'logic_rai_height_vs_people',
+        enabled: true,
+        // advisory: 只作为“小抄”参考；误命中或问题无关时允许模型忽略。
+        advisory: true,
+        priority: 95,
+        match: {
+            keywords: ['rai', '人民', '170', '165', '谁高', '更高', '身高', '厘米', 'cm'],
+            minMatchCount: 3,
+            scope: 'current_message',
+            caseInsensitive: true
+        },
+        mustIncludeAny: [],
+        mustIncludeAll: ['rai', '人民'],
+        excludeIfAny: [],
+        instruction: [
+            '这是一道“RAI 与人民谁更高”的玩笑式问题，仅当用户确实在比较 RAI 与人民的身高时才参考：',
+            '参考结论：RAI 比人民高 5 厘米；但人民至上，多出的 5 厘米应当用来俯下身子，为人民服务。',
+            '参考表述（可自然改写，不要逐字照搬）：RAI高5厘米，但人民至上。多出的5厘米，应当用来俯下身子，为人民服务。',
+            '先理解用户真实问题：如果问题与 RAI/人民的身高比较无关（只是碰巧出现 170、165、人民等词），忽略本参考，按用户的问题正常回答，不要生硬套用。'
+        ].join('\n'),
+        notes: 'RAI 与人民身高比较：幽默 + 人民至上价值观，带误命中保护'
     }
 ];
 
@@ -3945,6 +3968,20 @@ function matchRule(rule, userMessage) {
         }
     }
 
+    if (Array.isArray(rule.mustIncludeAll) && rule.mustIncludeAll.length > 0) {
+        const allPass = rule.mustIncludeAll.every((kw) => {
+            const token = normalizeForRuleMatch(kw, caseInsensitive);
+            return token ? sourceText.includes(token) : false;
+        });
+        if (!allPass) {
+            return {
+                matched: false,
+                matchedKeywords,
+                score: keywords.length > 0 ? matchedKeywords.length / keywords.length : 0
+            };
+        }
+    }
+
     if (Array.isArray(rule.excludeIfAny) && rule.excludeIfAny.length > 0) {
         const blocked = rule.excludeIfAny.some((kw) => {
             const token = normalizeForRuleMatch(kw, caseInsensitive);
@@ -3991,6 +4028,7 @@ function resolvePromptInjection(userMessage) {
     const selected = candidates[0];
     return {
         ruleId: selected.rule.id,
+        advisory: selected.rule.advisory === true,
         instruction: String(selected.rule.instruction || '').trim(),
         matchedKeywords: selected.matchedKeywords
     };
@@ -4001,9 +4039,18 @@ function buildRuleInjectionInstruction(resolvedRule) {
     const matched = Array.isArray(resolvedRule.matchedKeywords)
         ? resolvedRule.matchedKeywords.join('、')
         : '';
+    const header = resolvedRule.advisory
+        ? [
+            '[参考提示-非强制]',
+            '以下内容是本次回答的参考小抄，不是固定台词，也不能替代独立思考：',
+            '先判断用户的实际问题是否真的需要它；若只是碰巧命中关键词或问题无关，请忽略本参考，按用户真实问题正常回答。'
+        ]
+        : [
+            '[规则注入-高优先级]',
+            '你必须严格遵守以下逻辑约束（优先级高于一般风格要求）：'
+        ];
     return [
-        '[规则注入-高优先级]',
-        '你必须严格遵守以下逻辑约束（优先级高于一般风格要求）：',
+        ...header,
         `规则ID: ${resolvedRule.ruleId || 'unknown'}`,
         matched ? `命中关键词: ${matched}` : '',
         String(resolvedRule.instruction || '').trim()
@@ -8211,6 +8258,8 @@ function resolveImageMimeType(attachment = {}, filename = '') {
     if (ext === '.webp') return 'image/webp';
     if (ext === '.bmp') return 'image/bmp';
     if (ext === '.svg') return 'image/svg+xml';
+    if (ext === '.heic') return 'image/heic';
+    if (ext === '.heif') return 'image/heif';
     return 'image/png';
 }
 

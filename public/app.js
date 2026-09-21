@@ -2388,7 +2388,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.8';
-const RAI_BUILD_ID = '20260914-settings-app-download-panel-v0138-r1';
+const RAI_BUILD_ID = '20260921-ios-upload-pwa-fixes-v0144-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -20978,6 +20978,20 @@ async function sendMessage(message = null, options = {}) {
     || message;
   const immediateConversationTitle = deriveImmediateConversationTitleFromUserMessage(immediateTitleSource);
 
+  // 附件还在上传时先等待上传完成，否则聊天请求会先发出去、LLM 看不到刚选的文件。
+  if (pendingAttachmentUpload) {
+    if (sendWaitingForAttachmentUpload) return;
+    sendWaitingForAttachmentUpload = true;
+    showToast(isChineseLanguage(appState.language) ? '正在等待附件上传完成…' : 'Waiting for the attachment upload to finish…');
+    try {
+      await pendingAttachmentUpload;
+    } catch (uploadWaitError) {
+      console.warn('附件上传未完成，继续按当前状态发送:', uploadWaitError?.message || uploadWaitError);
+    } finally {
+      sendWaitingForAttachmentUpload = false;
+    }
+  }
+
   // 允许只发送附件（无文字内容）
   if (!messageText && !currentAttachment) return;
   if (appState.customApiMode) {
@@ -30333,6 +30347,11 @@ class MobileKeyboardHandler {
     if (!this.isIOS || this.isStandalone) {
       window.addEventListener('resize', this.handleViewportChange);
     }
+    if (this.isIOS && this.isStandalone && this.visualViewport) {
+      // iOS 在聚焦输入框时会滚动布局视口（即使页面不可滚动），必须监听
+      // scroll 并复位，否则输入框会被顶到状态栏下方、键盘上方留下大空白。
+      this.visualViewport.addEventListener('scroll', this.handleViewportChange);
+    }
     window.addEventListener('orientationchange', this.handleViewportChange);
   }
 
@@ -30354,6 +30373,24 @@ class MobileKeyboardHandler {
     this.composerObserver.observe(this.inputArea);
   }
 
+  resetStandaloneLayoutScroll() {
+    const reset = () => {
+      if (window.scrollY !== 0 || window.pageYOffset !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (this.root.scrollTop) this.root.scrollTop = 0;
+      if (this.body.scrollTop) this.body.scrollTop = 0;
+    };
+    reset();
+    return reset;
+  }
+
+  scheduleStandaloneLayoutScrollReset() {
+    const reset = this.resetStandaloneLayoutScroll();
+    // iOS 会在聚焦后的几帧里继续滚动布局视口，按稳定节奏再复位几次。
+    [16, 50, 100, 200].forEach((delay) => window.setTimeout(reset, delay));
+  }
+
   updateViewportVars() {
     if (this.isIOS && !this.isStandalone) {
       this.keyboardOpen = Boolean(this.activeInput);
@@ -30361,6 +30398,32 @@ class MobileKeyboardHandler {
       this.root.style.setProperty('--viewport-offset-top', '0px');
       this.root.style.setProperty('--keyboard-offset', '0px');
       this.body.classList.toggle('keyboard-open', this.keyboardOpen);
+      return;
+    }
+
+    // iOS 主屏幕模式：键盘关闭时 100vh 才是完整屏幕高度（100dvh 在冷启动
+    // 会少算顶部安全区，底部出现黑边）；键盘打开时改用 visualViewport 高度。
+    if (this.isIOS && this.isStandalone) {
+      const viewport = this.visualViewport;
+      const viewportHeight = viewport ? Math.max(0, Math.round(viewport.height)) : Math.round(window.innerHeight);
+      const viewportTop = viewport ? Math.max(0, Math.round(viewport.offsetTop || 0)) : 0;
+      const layoutHeight = Math.max(viewportHeight, Math.round(window.innerHeight));
+      const keyboardHeight = Math.max(0, layoutHeight - viewportHeight - viewportTop);
+      const keyboardOpen = keyboardHeight > 120;
+
+      this.keyboardOpen = keyboardOpen;
+      this.root.style.setProperty('--app-height', keyboardOpen ? `${Math.max(320, viewportHeight)}px` : '100vh');
+      this.root.style.setProperty('--viewport-offset-top', `${viewportTop}px`);
+      this.root.style.setProperty('--keyboard-offset', `${keyboardHeight}px`);
+      this.body.classList.toggle('keyboard-open', keyboardOpen);
+      this.resetStandaloneLayoutScroll();
+
+      this.log('Viewport sync (standalone)', {
+        viewportHeight,
+        viewportTop,
+        keyboardHeight,
+        keyboardOpen
+      });
       return;
     }
 
@@ -30401,6 +30464,11 @@ class MobileKeyboardHandler {
   }
 
   handleViewportChange() {
+    if (this.isIOS && this.isStandalone) {
+      // visualViewport 的 scroll 事件可能早于 rAF，先同步复位避免闪烁。
+      this.resetStandaloneLayoutScroll();
+    }
+
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
     }
@@ -30427,6 +30495,7 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
+      if (this.isStandalone) this.scheduleStandaloneLayoutScrollReset();
       return;
     }
 
@@ -30444,6 +30513,7 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
+      if (this.isStandalone) this.scheduleStandaloneLayoutScrollReset();
       return;
     }
 
@@ -30544,7 +30614,107 @@ class MobileKeyboardHandler {
 
 // ==================== 文件上传处理 (多模态支持) ====================
 let currentAttachment = null;
+// 正在上传中的附件任务：发送消息时必须等待它结束，否则 LLM 会漏掉刚选中的文件。
+let pendingAttachmentUpload = null;
+let sendWaitingForAttachmentUpload = false;
+let attachmentUploadSequence = 0;
 const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
+
+// HEIC/HEIF 在多数模型网关与浏览器里都无法直接识别：在浏览器能解码时先转成 JPEG。
+const UI_HEIC_IMAGE_EXTENSIONS = new Set(['heic', 'heif']);
+const UI_IMAGE_MAX_DIMENSION = 2048;
+const UI_IMAGE_JPEG_QUALITY = 0.9;
+const UI_IMAGE_RECOMPRESS_MIN_BYTES = 3 * 1024 * 1024;
+const UPLOAD_STALL_TIMEOUT_MS = 45 * 1000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const UPLOAD_MAX_ATTEMPTS = 3;
+
+function replaceUploadFileExtension(fileName, extension) {
+  const name = String(fileName || '').trim() || 'image';
+  const base = name.replace(/\.[^./\\]+$/, '') || 'image';
+  return `${base}.${extension}`;
+}
+
+function loadDecodableImage(blob) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    image.addEventListener('load', () => {
+      cleanup();
+      resolve(image);
+    }, { once: true });
+    image.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('image_decode_failed'));
+    }, { once: true });
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlobAsync(canvas, mimeType, quality) {
+  return new Promise((resolve) => {
+    if (typeof canvas.toBlob !== 'function') {
+      resolve(null);
+      return;
+    }
+    canvas.toBlob((blob) => resolve(blob || null), mimeType, quality);
+  });
+}
+
+/**
+ * 把 HEIC/HEIF（以及过大的图片）在本地转成 JPEG，避免：
+ * 1. 模型网关不支持 HEIC 导致回答报错；
+ * 2. 几十 MB 的原图在移动网络上传时卡在 99% 后被服务器/网关拒绝。
+ * 浏览器无法解码时保持原文件，交给服务端与用户自行处理。
+ */
+async function prepareImageFileForUpload(file) {
+  const extension = getUiUploadExtension(file);
+  const isHeic = UI_HEIC_IMAGE_EXTENSIONS.has(extension);
+  const oversized = Number(file.size || 0) > UI_IMAGE_RECOMPRESS_MIN_BYTES;
+  if (!isHeic && !oversized) return { file, converted: false, decodeFailed: false };
+
+  let image = null;
+  try {
+    image = await loadDecodableImage(file);
+  } catch (error) {
+    return { file, converted: false, decodeFailed: true };
+  }
+
+  const sourceWidth = Number(image.naturalWidth || image.width || 0);
+  const sourceHeight = Number(image.naturalHeight || image.height || 0);
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return { file, converted: false, decodeFailed: true };
+  }
+
+  const longestSide = Math.max(sourceWidth, sourceHeight);
+  const needsResize = longestSide > UI_IMAGE_MAX_DIMENSION;
+  if (!isHeic && !needsResize) return { file, converted: false, decodeFailed: false };
+
+  const scale = needsResize ? UI_IMAGE_MAX_DIMENSION / longestSide : 1;
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+  if (!context) return { file, converted: false, decodeFailed: false };
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const blob = await canvasToBlobAsync(canvas, 'image/jpeg', UI_IMAGE_JPEG_QUALITY);
+  if (!blob || !blob.size) return { file, converted: false, decodeFailed: false };
+  // 转码后反而更大时保留原图；HEIC/HEIF 例外，必须换成 JPEG 才能被模型识别。
+  if (!isHeic && blob.size >= Number(file.size || 0)) {
+    return { file, converted: false, decodeFailed: false };
+  }
+
+  const convertedFile = new File(
+    [blob],
+    replaceUploadFileExtension(file.name, 'jpg'),
+    { type: 'image/jpeg', lastModified: Date.now() }
+  );
+  return { file: convertedFile, converted: true, decodeFailed: false };
+}
 
 let appVersionMonitorTimer = null;
 let appUpdatePromptVisible = false;
@@ -30819,18 +30989,44 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
+    let settled = false;
+    let bodyCompleted = false;
+    let stalled = false;
+    let lastProgressAt = Date.now();
+    const stallTimer = window.setInterval(() => {
+      if (settled || bodyCompleted) return;
+      if (Date.now() - lastProgressAt <= UPLOAD_STALL_TIMEOUT_MS) return;
+      stalled = true;
+      try {
+        xhr.abort();
+      } catch (error) {
+        /* ignore */
+      }
+    }, 5000);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(stallTimer);
+      callback(value);
+    };
+
     formData.append('file', file);
     xhr.open('POST', `${API_BASE}/upload`);
+    xhr.timeout = UPLOAD_REQUEST_TIMEOUT_MS;
     xhr.setRequestHeader('Authorization', `Bearer ${context.token}`);
     xhr.setRequestHeader('X-RAI-Upload-ID', session.uploadId);
     xhr.upload.addEventListener('progress', (event) => {
       if (!event.lengthComputable) return;
+      lastProgressAt = Date.now();
       const uploadedFileBytes = file.size > 0
         ? Math.round(file.size * Math.min(1, event.loaded / event.total))
         : 0;
       onProgress(uploadedFileBytes, Number(file.size || 0));
     });
-    xhr.upload.addEventListener('load', () => onProcessing(Number(file.size || 0)));
+    xhr.upload.addEventListener('load', () => {
+      bodyCompleted = true;
+      onProcessing(Number(file.size || 0));
+    });
     xhr.addEventListener('load', () => {
       let data = null;
       try {
@@ -30841,19 +31037,43 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
       if (xhr.status < 200 || xhr.status >= 300 || !data?.success || data.status !== 'completed') {
         const uploadError = new Error(data?.error || data?.message || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
         uploadError.status = xhr.status;
-        reject(uploadError);
+        finish(reject, uploadError);
         return;
       }
-      resolve(data);
+      finish(resolve, data);
     });
-    xhr.addEventListener('error', () => reject(new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted')));
+    xhr.addEventListener('error', () => {
+      const networkError = new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted');
+      networkError.retryable = true;
+      finish(reject, networkError);
+    });
+    xhr.addEventListener('timeout', () => {
+      const timeoutError = new Error(isChineseLanguage(appState.language) ? '上传超时' : 'Upload timed out');
+      timeoutError.retryable = true;
+      finish(reject, timeoutError);
+    });
     xhr.addEventListener('abort', () => {
+      if (stalled) {
+        const stallError = new Error(isChineseLanguage(appState.language) ? '上传长时间无进度，已自动重试' : 'Upload stalled, retrying automatically');
+        stallError.name = 'UploadStallError';
+        stallError.retryable = true;
+        finish(reject, stallError);
+        return;
+      }
       const abortError = new Error('Upload aborted');
       abortError.name = 'AbortError';
-      reject(abortError);
+      finish(reject, abortError);
     });
     xhr.send(formData);
   });
+}
+
+function isRetryableUploadError(error) {
+  if (!error) return false;
+  if (error.name === 'AbortError') return false;
+  if (error.retryable === true) return true;
+  const status = Number(error.status || 0);
+  return !status || status >= 500;
 }
 
 // 独立的文件处理函数（供拖拽上传复用）
@@ -30873,10 +31093,6 @@ async function processUploadedFile(file, options = {}) {
   }
   if (UI_AUDIO_UPLOAD_EXTENSIONS.has(getUiUploadExtension(file)) && file.size > maxAudioUnderstandingSize) {
     showToast(isChineseLanguage(appState.language) ? '供 Gemini 理解的音频不能超过20MB' : 'Audio sent to Gemini cannot exceed 20MB');
-    return false;
-  }
-  if (file.size > maxSize) {
-    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
     return false;
   }
 
@@ -30899,11 +31115,37 @@ async function processUploadedFile(file, options = {}) {
     attachmentType = 'document';
   }
 
+  // HEIC/HEIF 与超大图片先本地转码，避免上传卡死与模型网关拒绝。
+  let uploadFile = file;
+  if (attachmentType === 'image') {
+    const needsImagePrep = UI_HEIC_IMAGE_EXTENSIONS.has(getUiUploadExtension(file))
+      || Number(file.size || 0) > UI_IMAGE_RECOMPRESS_MIN_BYTES;
+    if (needsImagePrep) {
+      showToast(isChineseLanguage(appState.language) ? '正在压缩图片…' : 'Compressing image…');
+    }
+    try {
+      const prepared = await prepareImageFileForUpload(file);
+      uploadFile = prepared.file;
+      if (prepared.decodeFailed && UI_HEIC_IMAGE_EXTENSIONS.has(getUiUploadExtension(file))) {
+        showToast(isChineseLanguage(appState.language)
+          ? '当前浏览器无法转换 HEIC，已按原格式上传，部分模型可能无法识别'
+          : 'This browser cannot convert HEIC; uploading the original file, some models may not read it');
+      }
+    } catch (prepareError) {
+      uploadFile = file;
+    }
+  }
+
+  if (uploadFile.size > maxSize) {
+    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
+    return false;
+  }
+
   // 图片/视频/音频：保留本地缩略图用于预览，但聊天请求不再塞大 Base64
   // 所有附件统一走 /api/upload，用元数据模式传给后端解析
   let localThumbnail = null;
   if (attachmentType === 'image' && attachToComposer) {
-    localThumbnail = URL.createObjectURL(file);
+    localThumbnail = URL.createObjectURL(uploadFile);
   }
 
   const context = captureUserAuthContext();
@@ -30919,23 +31161,52 @@ async function processUploadedFile(file, options = {}) {
   }
   renderUploadProgress({
     generation,
-    fileName: file.name,
+    fileName: uploadFile.name,
     state: 'preparing',
     loaded: 0,
-    total: file.size,
+    total: uploadFile.size,
     attachToComposer
   });
 
+  const runUploadWithRetry = async () => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+      if (!isUserAuthContextCurrent(context)) {
+        const contextError = new Error('Upload account context changed');
+        contextError.name = 'AbortError';
+        throw contextError;
+      }
+      try {
+        const session = await createUploadSession(uploadFile, context);
+        renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded: 0, total: uploadFile.size, attachToComposer });
+        return await uploadFileWithProgress(
+          uploadFile,
+          session,
+          context,
+          (loaded, total) => renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded, total, attachToComposer }),
+          (total) => renderUploadProgress({ generation, fileName: uploadFile.name, state: 'processing', loaded: total, total, attachToComposer })
+        );
+      } catch (error) {
+        lastError = error;
+        if (error?.name === 'AbortError') throw error;
+        if (attempt >= UPLOAD_MAX_ATTEMPTS || !isRetryableUploadError(error)) throw error;
+        console.warn(' 上传中断，自动重试:', {
+          attempt,
+          errorName: String(error?.name || 'Error').slice(0, 80)
+        });
+        renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded: 0, total: uploadFile.size, attachToComposer });
+        await new Promise((resolve) => window.setTimeout(resolve, 700 * attempt));
+      }
+    }
+    throw lastError || new Error('Upload failed');
+  };
+
+  const uploadSequence = ++attachmentUploadSequence;
+  const uploadTask = runUploadWithRetry();
+  if (attachToComposer) pendingAttachmentUpload = uploadTask;
+
   try {
-    const session = await createUploadSession(file, context);
-    renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded: 0, total: file.size, attachToComposer });
-    const data = await uploadFileWithProgress(
-      file,
-      session,
-      context,
-      (loaded, total) => renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded, total, attachToComposer }),
-      (total) => renderUploadProgress({ generation, fileName: file.name, state: 'processing', loaded: total, total, attachToComposer })
-    );
+    const data = await uploadTask;
     if (!isUserAuthContextCurrent(context)) {
       const contextError = new Error('Upload account context changed');
       contextError.name = 'AbortError';
@@ -30943,10 +31214,10 @@ async function processUploadedFile(file, options = {}) {
     }
     const uploadedAttachment = {
       type: attachmentType,
-      fileName: file.name,
-      originalName: file.name,
-      mimeType: file.type,
-      size: file.size,
+      fileName: uploadFile.name,
+      originalName: uploadFile.name,
+      mimeType: uploadFile.type,
+      size: uploadFile.size,
       fileId: data.file?.filename || null,
       filePath: data.file?.filePath || null,
       // 图片保留本地缩略图用于预览（不发送到服务器）
@@ -30954,21 +31225,26 @@ async function processUploadedFile(file, options = {}) {
     };
     console.log(' 文件已上传', {
       attachmentType,
-      filenameLength: String(file.name || '').length,
-      bytes: Number(file.size) || 0
+      filenameLength: String(uploadFile.name || '').length,
+      bytes: Number(uploadFile.size) || 0
     });
     if (attachToComposer) {
-      currentAttachment = uploadedAttachment;
-      updateAttachmentUI();
-      updateNewChatModeSettingsUI();
+      if (uploadSequence === attachmentUploadSequence) {
+        currentAttachment = uploadedAttachment;
+        updateAttachmentUI();
+        updateNewChatModeSettingsUI();
+      } else if (localThumbnail) {
+        // 更新的上传已经开始，旧任务不要覆盖最新的附件预览。
+        URL.revokeObjectURL(localThumbnail);
+      }
     } else if (localThumbnail) {
       URL.revokeObjectURL(localThumbnail);
     }
-    renderUploadProgress({ generation, fileName: file.name, state: 'completed', loaded: file.size, total: file.size, attachToComposer });
+    renderUploadProgress({ generation, fileName: uploadFile.name, state: 'completed', loaded: uploadFile.size, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation);
     return true;
   } catch (error) {
-    renderUploadProgress({ generation, fileName: file.name, state: 'failed', loaded: 0, total: file.size, attachToComposer });
+    renderUploadProgress({ generation, fileName: uploadFile.name, state: 'failed', loaded: 0, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation, 4800);
     if (error?.name === 'AbortError') return false;
     console.error(' 文件上传失败:', {
@@ -30980,6 +31256,10 @@ async function processUploadedFile(file, options = {}) {
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
     alert(error?.message || fallback);
     return false;
+  } finally {
+    if (attachToComposer && pendingAttachmentUpload === uploadTask) {
+      pendingAttachmentUpload = null;
+    }
   }
 }
 
