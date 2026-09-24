@@ -1064,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-handedness-right-header-v01317-r4';
+  const expectedBuild = '20260924-handedness-center-header-v01317-r5';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1365,6 +1365,8 @@ function testDownloadClientsAndTimeline() {
     'Right-hand mode must put the sidebar button at the far right');
   assert.match(styles, /\.mobile-center-controls\s*\{[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*transform:\s*translate\(-50%,\s*-50%\)/,
     'The mobile model selector must stay centered in both handedness modes');
+  assert.match(styles, /html\.hand-left \.mobile-center-controls,\s*html\.hand-right \.mobile-center-controls\s*\{[^}]*left:\s*50%/,
+    'Handedness modes must override the legacy model-selector offset and keep it centered');
   assert.match(app, /function positionChatIndexFloatingTooltip\(tooltip, rect\)[\s\S]*appState\.handedness === 'right'[\s\S]*rect\.right \+ 16/,
     'Chat index tooltips must flip to the open side of the navigator');
   assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,

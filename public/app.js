@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.17';
-const RAI_BUILD_ID = '20260924-handedness-right-header-v01317-r4';
+const RAI_BUILD_ID = '20260924-handedness-center-header-v01317-r5';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8240,7 +8240,7 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-09-24',
-    version: 'v0.13.17-r4 · Beta',
+    version: 'v0.13.17-r5 · Beta',
     zh: {
       summary: '思考过程在回答完成后保留为折叠状态，修复流式结束残留，并对齐 RAI logo 与正文。',
       details: [
@@ -8248,7 +8248,7 @@ const RAI_UPDATE_TIMELINE = [
         '流式完成瞬间只保留一份正文，旧时间轴和重复正文不再停留 1-2 秒。',
         '适人握持信息只注入每轮用户消息，不写入系统提示词，也不会保存到数据库正文。',
         '左右手检测覆盖整个屏幕左右半区；只有侧边栏展开时暂停检测，其他区域都能切换握持方向。',
-        '右手模式顶栏改为 RAI 在最左、临时对话在右数第二、侧边栏在右数第一，模型选择保持居中。',
+        '右手模式顶栏改为 RAI 在最左、临时对话在右数第二、侧边栏在右数第一；模型选择在所有握持模式下强制居中。',
         'RAI logo 右移与生成内容左边缘对齐，并提升 Beta 构建版本以刷新资源缓存。'
       ]
     },
@@ -8259,7 +8259,7 @@ const RAI_UPDATE_TIMELINE = [
         'Only one answer body remains at stream completion; the old timeline and duplicate text no longer linger for 1-2 seconds.',
         'Adaptive handedness is injected only into the final user turn, never the system prompt, and is stripped before persistence.',
         'Handedness detection covers the whole left/right screen and pauses only while the sidebar is expanded.',
-        'Right-hand mode places RAI at the far left, Temporary Chat second from the right, and Sidebar at the far right, with the model selector centered.',
+        'Right-hand mode places RAI at the far left, Temporary Chat second from the right, and Sidebar at the far right; the model selector stays centered in every handedness mode.',
         'The RAI logo moves right to align with the generated content, and the Beta build version is bumped to refresh cached assets.'
       ]
     }
