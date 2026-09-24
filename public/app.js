@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.17';
-const RAI_BUILD_ID = '20260924-handedness-whitelist-v01317-r2';
+const RAI_BUILD_ID = '20260924-handedness-global-v01317-r3';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8240,14 +8240,14 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-09-24',
-    version: 'v0.13.17-r2 · Beta',
+    version: 'v0.13.17-r3 · Beta',
     zh: {
       summary: '思考过程在回答完成后保留为折叠状态，修复流式结束残留，并对齐 RAI logo 与正文。',
       details: [
         '开启思考后，思考时间轴与“思考过程”在回答完成后继续保留，可随时展开查看。',
         '流式完成瞬间只保留一份正文，旧时间轴和重复正文不再停留 1-2 秒。',
         '适人握持信息只注入每轮用户消息，不写入系统提示词，也不会保存到数据库正文。',
-        '左右手检测覆盖聊天主区域，侧边栏、主页欢迎屏、设置/菜单遮罩和顶部控制区不再误触。',
+        '左右手检测覆盖整个屏幕左右半区；只有侧边栏展开时暂停检测，其他区域都能切换握持方向。',
         'RAI logo 右移与生成内容左边缘对齐，并提升 Beta 构建版本以刷新资源缓存。'
       ]
     },
@@ -8257,7 +8257,7 @@ const RAI_UPDATE_TIMELINE = [
         'The thinking timeline and Thinking pill remain available after the answer completes, and can be expanded at any time.',
         'Only one answer body remains at stream completion; the old timeline and duplicate text no longer linger for 1-2 seconds.',
         'Adaptive handedness is injected only into the final user turn, never the system prompt, and is stripped before persistence.',
-        'Handedness detection covers the chat main area while ignoring the sidebar, home screen, settings/menu overlays, and header controls.',
+        'Handedness detection covers the whole left/right screen and pauses only while the sidebar is expanded.',
         'The RAI logo moves right to align with the generated content, and the Beta build version is bumped to refresh cached assets.'
       ]
     }
@@ -14342,17 +14342,15 @@ function setHandedness(value, { persist = true } = {}) {
   applyHandednessLayout();
 }
 
-function isHandednessDetectionAllowed(target) {
+function isHandednessDetectionAllowed() {
   if (!appState.handednessEnabled || !isHandednessMobileLayout()) return false;
-  if (appState.sidebarOpen) return false;
-  if (document.body?.classList.contains('home-screen-active')) return false;
-  if (document.querySelector('.settings-modal.active, .model-dropdown-menu.active, .more-menu.active, .modal-overlay.active')) return false;
-  if (target?.closest('#sidebar, #mobileOverlay, #mobileHeader, .header-controls, .hamburger-btn, .control-btn')) return false;
-  return Boolean(target?.closest('.main-content, #inputContainer, .input-area, #messagesList, .message'));
+  // The expanded sidebar is the only protected area. Every other screen half
+  // may update the holding hand, including the home/welcome screen.
+  return !appState.sidebarOpen;
 }
 
-function detectHandednessFromTouch(clientX, target) {
-  if (!isHandednessDetectionAllowed(target)) return;
+function detectHandednessFromTouch(clientX) {
+  if (!isHandednessDetectionAllowed()) return;
   const next = Number(clientX) < window.innerWidth / 2 ? 'left' : 'right';
   if (next !== appState.handedness) setHandedness(next);
 }
@@ -14362,7 +14360,7 @@ function initHandednessTracking() {
   appState.handednessTrackingBound = true;
   document.addEventListener('touchstart', (event) => {
     const touch = event.touches?.[0];
-    if (touch) detectHandednessFromTouch(touch.clientX, event.target);
+    if (touch) detectHandednessFromTouch(touch.clientX);
   }, { passive: true, capture: true });
   window.addEventListener('resize', applyHandednessLayout, { passive: true });
   applyHandednessLayout();
@@ -32398,6 +32396,19 @@ function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelin
   chatIndexLastActiveIndex = activeIdx;
 }
 // 显示横线悬浮提示
+function positionChatIndexFloatingTooltip(tooltip, rect) {
+  const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+  tooltip.style.top = `${rect.top + rect.height / 2}px`;
+  if (opensFromRight) {
+    tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
+    tooltip.style.left = 'auto';
+  } else {
+    tooltip.style.left = `${rect.right + 16}px`;
+    tooltip.style.right = 'auto';
+  }
+  tooltip.style.transform = 'translateY(-50%)';
+}
+
 function showChatIndexTooltip(event, content) {
   const tooltip = document.getElementById('chatIndexTooltip');
   if (!tooltip) return;
@@ -32411,12 +32422,7 @@ function showChatIndexTooltip(event, content) {
 
   tooltip.textContent = displayContent;
 
-  // 定位 - 在元素左侧显示
-  const rect = event.target.getBoundingClientRect();
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-  tooltip.style.left = 'auto';
-  tooltip.style.transform = 'translateY(-50%)';
+  positionChatIndexFloatingTooltip(tooltip, event.target.getBoundingClientRect());
 
   tooltip.classList.add('visible');
 }
@@ -32440,12 +32446,7 @@ function showNavTooltip(event, direction) {
 
   tooltip.textContent = text;
 
-  // 定位 - 在按钮左侧显示
-  const rect = event.target.getBoundingClientRect();
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-  tooltip.style.left = 'auto';
-  tooltip.style.transform = 'translateY(-50%)';
+  positionChatIndexFloatingTooltip(tooltip, event.target.getBoundingClientRect());
 
   tooltip.classList.add('visible');
 }

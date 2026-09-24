@@ -9351,6 +9351,14 @@ body.custom-api-mode .main-content {
   min-height: 64px;
 }
 
+html.hand-left .mobile-header {
+  justify-content: flex-start;
+}
+
+html.hand-right .mobile-header {
+  justify-content: flex-end;
+}
+
 .mobile-left-controls {
   display: flex;
   align-items: center;
@@ -10271,6 +10279,15 @@ body.custom-api-mode .main-content {
   pointer-events: none;
 }
 
+html.hand-left .chat-index-navigator {
+  left: 8px;
+  right: auto;
+}
+
+html.hand-left .chat-index-timeline {
+  align-items: flex-start;
+}
+
 /* 上下导航按钮 - 默认隐藏且透明 */
 .chat-index-nav-btn {
   width: 32px;
@@ -10433,6 +10450,11 @@ body.custom-api-mode .main-content {
     right: 4px;
     padding: 4px 8px;
     gap: 2px;
+  }
+
+  html.hand-left .chat-index-navigator {
+    left: 4px;
+    right: auto;
   }
 
   .chat-index-nav-btn {
