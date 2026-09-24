@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.16';
-const RAI_BUILD_ID = '20260924-platform-handedness-v01316-r4';
+const RAI_BUILD_ID = '20260924-stream-finalize-layout-v01316-r6';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8231,7 +8231,7 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-09-24',
-    version: 'v0.13.16-r4 · Beta',
+    version: 'v0.13.16-r6 · Beta',
     zh: {
       summary: '下载客户端按设备类型聚焦，并新增自动识别左右手持机的“适人握持”。',
       details: [
@@ -17307,18 +17307,16 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   const finalizedText = Array.from(finalizedContent.children).find((child) =>
     child.classList?.contains('message-text')
   ) || null;
-  const finalizedTrace = parseMessageProcessTrace(message);
-  const hasFinalizedInterleavedFlow = Array.isArray(finalizedTrace?.flowSegments)
-    && finalizedTrace.flowSegments.some((segment) => segment && segment.kind);
-  if (hasFinalizedInterleavedFlow) {
-    existingContent.querySelectorAll('.thinking-timeline, .rai-reasoning-block').forEach((node) => node.remove());
-  }
+  // The live stream owns temporary timeline and reasoning containers. Always
+  // remove them before grafting the finalized template so ordinary chats do not
+  // keep an obsolete streaming body beside the saved answer.
+  existingContent.querySelectorAll('.thinking-timeline, .rai-reasoning-block').forEach((node) => node.remove());
   const existingMeta = Array.from(existingContent.children).filter((child) =>
     child.classList?.contains('message-meta')
   );
   existingMeta.forEach((meta) => meta.remove());
 
-  if (existingText && finalizedText && hasFinalizedInterleavedFlow) {
+  if (existingText && finalizedText) {
     existingText.replaceWith(finalizedText);
     existingText = finalizedText;
   } else if (!existingText && finalizedText) {
@@ -20335,7 +20333,10 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
       String(appState.currentSession?.id || '') === String(sessionId || '') &&
       generation === appState.sessionNavigationGeneration
     ) {
-      finishMessageNodeInPlace(aiMsgElement, aiMsg, { sessionId, generation });
+      const finalizedNode = finishMessageNodeInPlace(aiMsgElement, aiMsg, { sessionId, generation });
+      if (!finalizedNode && aiMsgElement.isConnected) {
+        updateMessageNodeInPlace(aiMsgElement, aiMsg);
+      }
     }
     // 获取数据库 ID 时仍只协调有变化的节点。
     if (sessionId && streamSucceeded) {
@@ -23597,10 +23598,13 @@ async function sendMessage(message = null, options = {}) {
       appState.messages.push(aiMsg);
       chatFlowState.messages = appState.messages;
       reconcileChatFlowNodeMessageRefs();
-      finishMessageNodeInPlace(aiMsgDiv, aiMsg, {
+      const finalizedNode = finishMessageNodeInPlace(aiMsgDiv, aiMsg, {
         sessionId: streamSessionId,
         generation: streamNavigationGeneration
       });
+      if (!finalizedNode && aiMsgDiv.isConnected) {
+        updateMessageNodeInPlace(aiMsgDiv, aiMsg);
+      }
     }
 
     await loadSessions();

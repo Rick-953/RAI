@@ -13,6 +13,7 @@ const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'u
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
+const localAgentStyles = read('public/local-agent.css');
 const eventBindings = read('public/event-bindings.js');
 const serviceWorker = read('public/sw.js');
 const conversationCache = read('public/conversation-cache.js');
@@ -689,6 +690,8 @@ async function testMessageRenderingStability() {
     'AI completion must retain the live text node while removing the stream-only identifier');
   assert.match(finishMessageNode, /const finalizedMeta = Array\.from\(finalizedContent\.children\)\.find/,
     'AI completion must append final metadata and action controls separately from the live text');
+  assert.match(finishMessageNode, /querySelectorAll\('\.thinking-timeline, \.rai-reasoning-block'\)\.forEach\(\(node\) => node\.remove\(\)\)/,
+    'AI completion must always remove the obsolete live timeline and reasoning containers');
   assert.match(finishMessageNode, /applyMessageNodeMetadata\(existingNode, message\)/,
     'AI completion must still update the saved message ID and request metadata in place');
   assert.match(finishMessageNode, /return existingNode;/,
@@ -779,6 +782,8 @@ async function testMessageRenderingStability() {
     'the completed primary reply must enter application state');
   assert.match(primaryCompletion, /finishMessageNodeInPlace\(\s*aiMsgDiv\s*,\s*aiMsg\b/,
     'the primary completion path must replace only its live assistant node');
+  assert.match(primaryCompletion, /if \(!finalizedNode && aiMsgDiv\.isConnected\)[\s\S]{0,120}updateMessageNodeInPlace\(aiMsgDiv, aiMsg\)/,
+    'the primary completion path must fall back to an in-place final render instead of leaving stale stream content');
   assert.doesNotMatch(primaryCompletion, /\brenderMessages\s*\(/,
     'the primary completion path must not rebuild the complete conversation');
   assert.match(sendMessage, /const isActiveStreamSession = \(\) => \([\s\S]{0,180}streamSessionId === String\(appState\.currentSession\?\.id \|\| ''\)/,
@@ -1037,7 +1042,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-platform-handedness-v01316-r4';
+  const expectedBuild = '20260924-stream-finalize-layout-v01316-r6';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1318,6 +1323,16 @@ function testDownloadClientsAndTimeline() {
     'Right-hand mode must position the mobile sidebar on the right');
   assert.match(styles, /html\.hand-left \.input-toolbar > \.send-btn[\s\S]*order: -1/,
     'Left-hand mode must move the send button to the left side of the composer');
+  assert.match(styles, /\.settings-platform-download \+ \.settings-platform-download\s*\{[^}]*padding-left:\s*0;[^}]*border-left:\s*0/,
+    'Download client columns must not use a vertical divider');
+  assert.match(styles, /\.settings-install-card\s*\{[^}]*border-radius:\s*12px/,
+    'Download client outer surface must use the shared 12px radius');
+  assert.match(localAgentStyles, /\.settings-connect-install\s*\{[^}]*border-radius:\s*12px/,
+    'RAI Connect collapsed bar must use the same 12px radius');
+  assert.match(styles, /\.settings-windows-actions\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'CX RAI download actions must align as equal-width rows');
+  assert.match(styles, /\.settings-windows-mobile-download\s*\{[^}]*width:\s*100%/,
+    'Windows Mobile UWP action must align with the primary installer button');
 }
 
 function testPromptModelIdentity() {

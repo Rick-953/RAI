@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.16-20260924-platform-handedness-v01316-r4';
+const RAI_SW_VERSION = '0.13.16-20260924-stream-finalize-layout-v01316-r6';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,14 +13,14 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  '', 'index.html', 'runtime-brand.js?v=20260924-platform-handedness-v01316-r4',
-  'rai-system-prompt.js?v=20260924-platform-handedness-v01316-r4', 'event-bindings.js?v=20260924-platform-handedness-v01316-r4',
-  'app.js?v=20260924-platform-handedness-v01316-r4', 'styles.css?v=20260924-platform-handedness-v01316-r4',
-  'local-agent.js?v=20260924-platform-handedness-v01316-r4', 'local-agent.css?v=20260924-platform-handedness-v01316-r4',
-  'crf-ui.js?v=20260924-platform-handedness-v01316-r4',
-  'selection-explainer.js?v=20260924-platform-handedness-v01316-r4', 'selection-explainer.css?v=20260924-platform-handedness-v01316-r4',
-  'site.webmanifest?v=20260924-platform-handedness-v01316-r4', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20260924-platform-handedness-v01316-r4',
+  '', 'index.html', 'runtime-brand.js?v=20260924-stream-finalize-layout-v01316-r6',
+  'rai-system-prompt.js?v=20260924-stream-finalize-layout-v01316-r6', 'event-bindings.js?v=20260924-stream-finalize-layout-v01316-r6',
+  'app.js?v=20260924-stream-finalize-layout-v01316-r6', 'styles.css?v=20260924-stream-finalize-layout-v01316-r6',
+  'local-agent.js?v=20260924-stream-finalize-layout-v01316-r6', 'local-agent.css?v=20260924-stream-finalize-layout-v01316-r6',
+  'crf-ui.js?v=20260924-stream-finalize-layout-v01316-r6',
+  'selection-explainer.js?v=20260924-stream-finalize-layout-v01316-r6', 'selection-explainer.css?v=20260924-stream-finalize-layout-v01316-r6',
+  'site.webmanifest?v=20260924-stream-finalize-layout-v01316-r6', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20260924-stream-finalize-layout-v01316-r6',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -30,11 +30,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20260924-platform-handedness-v01316-r4', 'lib/purify.min.js?v=20260924-platform-handedness-v01316-r4',
-  'lib/katex/katex.min.css?v=20260924-platform-handedness-v01316-r4', 'lib/katex/katex.min.js?v=20260924-platform-handedness-v01316-r4',
-  'lib/katex/contrib/auto-render.min.js?v=20260924-platform-handedness-v01316-r4',
-  'lib/highlight/styles/github-dark.min.css?v=20260924-platform-handedness-v01316-r4',
-  'lib/highlight/highlight.min.js?v=20260924-platform-handedness-v01316-r4'
+  'lib/marked.min.js?v=20260924-stream-finalize-layout-v01316-r6', 'lib/purify.min.js?v=20260924-stream-finalize-layout-v01316-r6',
+  'lib/katex/katex.min.css?v=20260924-stream-finalize-layout-v01316-r6', 'lib/katex/katex.min.js?v=20260924-stream-finalize-layout-v01316-r6',
+  'lib/katex/contrib/auto-render.min.js?v=20260924-stream-finalize-layout-v01316-r6',
+  'lib/highlight/styles/github-dark.min.css?v=20260924-stream-finalize-layout-v01316-r6',
+  'lib/highlight/highlight.min.js?v=20260924-stream-finalize-layout-v01316-r6'
 ].map(appPath);
 
 function isAvatarRequest(url) {

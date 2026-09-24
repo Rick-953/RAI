@@ -70,9 +70,9 @@ assert.match(app, /appendInterleavedEvent\('tool'/, 'tool events must enter the 
 assert.match(app, /flowSegments:\s*streamFlowSegments\.slice\(-200\)/, 'interleaved flow must persist after streaming');
 assert.match(app, /hasInterleavedFlow/, 'history must detect the persisted interleaved flow');
 assert.match(app, /!hasInterleavedFlow && \(hasReasoning/, 'legacy separate timeline must be suppressed for interleaved history');
-assert.match(app, /hasFinalizedInterleavedFlow/, 'completion must recognize the persisted interleaved flow');
+assert.match(app, /if \(existingText && finalizedText\)/, 'completion must replace the streaming body in place instead of duplicating it');
 assert.match(app, /existingText\.replaceWith\(finalizedText\)/, 'completion must replace the streaming body in place instead of duplicating it');
-assert.match(app, /querySelectorAll\('\.thinking-timeline, \.rai-reasoning-block'\)/, 'completion must remove obsolete streaming-only structures');
+assert.match(app, /querySelectorAll\('\.thinking-timeline, \.rai-reasoning-block'\)\.forEach\(\(node\) => node\.remove\(\)\)/, 'completion must remove obsolete streaming-only structures');
 assert.match(css, /\.stream-flow-event/, 'interleaved flow event styles missing');
 
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');

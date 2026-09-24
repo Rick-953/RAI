@@ -14700,7 +14700,7 @@ body.chatflow-iframe-mode .message-content::selection {
 .settings-install-card {
   margin-top: 12px;
   padding: 18px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--settings-card-bg);
 }
 
@@ -14723,8 +14723,8 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
 }
 
 .settings-platform-download + .settings-platform-download {
-  padding-left: 18px;
-  border-left: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  padding-left: 0;
+  border-left: 0;
 }
 
 .settings-platform-download h4 {
@@ -14793,8 +14793,8 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
 }
 
 .settings-windows-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
 }
@@ -14807,7 +14807,10 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
 }
 
 .settings-windows-actions .settings-install-download-secondary {
-  background: transparent;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 20%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   color: var(--text-secondary);
   font-weight: 680;
 }
@@ -14818,11 +14821,10 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
 }
 
 .settings-windows-actions .settings-windows-mobile-download {
-  flex: 0 1 auto;
+  width: 100%;
 }
 
 .settings-windows-actions .settings-windows-mobile-download.is-primary {
-  flex: 1 1 auto;
   background: var(--settings-card-hover);
   color: var(--text-primary);
   font-weight: 760;
@@ -15973,7 +15975,7 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
 	  .settings-membership-section,
 	  .ztx6d-binding-card,
 	  .settings-install-card {
-    border-radius: 21px;
+    border-radius: 12px;
     background: var(--settings-row-bg);
   }
 
@@ -17078,7 +17080,7 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
   .settings-install-card,
   .settings-about-timeline,
   .settings-notice-hero {
-    border-radius: 20px;
+    border-radius: 12px;
   }
 }
 
