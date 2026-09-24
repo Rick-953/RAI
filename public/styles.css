@@ -9372,6 +9372,11 @@ html.hand-right .hamburger-btn {
   order: 3;
 }
 
+html.hand-left .mobile-center-controls,
+html.hand-right .mobile-center-controls {
+  left: 50%;
+}
+
 .mobile-left-controls {
   display: flex;
   align-items: center;
