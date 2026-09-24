@@ -678,7 +678,7 @@ async function testMessageRenderingStability() {
     'an existing message must not be detached and recreated during reconciliation');
 
   const finishMessageNode = extractNamedFunction(app, 'finishMessageNodeInPlace');
-  assert.match(finishMessageNode, /let existingText = Array\.from\(existingContent\.children\)\.find/,
+  assert.match(finishMessageNode, /const existingTextNodes = Array\.from\(existingContent\.children\)\.filter/,
     'AI completion must identify its live text subtree before applying final metadata');
   assert.match(finishMessageNode, /syncMessageNodeShell\(existingNode, finalizedTemplate\)/,
     'AI completion must synchronize shell classes without restarting entrance motion');
@@ -686,7 +686,19 @@ async function testMessageRenderingStability() {
     'AI completion must not replay the message entrance animation');
   assert.match(finishMessageNode, /if \(!existingText && finalizedText\)/,
     'AI completion may create text only for an optimistic node that never had a live text subtree');
-  assert.match(finishMessageNode, /if \(existingText\) existingText\.removeAttribute\('id'\);/,
+  assert.match(finishMessageNode, /const existingTextNodes = Array\.from\(existingContent\.children\)\.filter/,
+    'AI completion must inspect every live text node before deduplicating');
+  assert.match(finishMessageNode, /existingTextNodes\.find\(\(child\) =>\s*child\.classList\?\.contains\('stream-flow'\)/,
+    'AI completion must prefer the live stream body over a finalized duplicate');
+  assert.match(finishMessageNode, /existingTextNodes\.forEach\(\(node\) => \{[\s\S]{0,140}if \(node !== existingText\) node\.remove\(\)/,
+    'AI completion must remove a duplicate finalized text node when a live stream body exists');
+  assert.match(finishMessageNode, /const preserveLiveFlow = !!\([\s\S]{0,520}finalizedHasLiveStructure[\s\S]{0,520}\)/,
+    'AI completion must retain a populated live stream body when the finalized template would reintroduce a timeline');
+  assert.match(finishMessageNode, /if \(existingText && finalizedText && !preserveLiveFlow\)/,
+    'AI completion may replace the live body only when no duplicate timeline would be introduced');
+  assert.match(finishMessageNode, /if \(preserveLiveFlow && \([\s\S]{0,220}child\.classList\?\.contains\('thinking-timeline'\)[\s\S]{0,220}child\.classList\?\.contains\('rai-reasoning-block'\)[\s\S]{0,100}\)\) return;/,
+    'AI completion must not reinsert the finalized timeline beside a preserved live stream body');
+  assert.match(finishMessageNode, /if \(existingText\) existingText\.removeAttribute\('id'\);/, 
     'AI completion must retain the live text node while removing the stream-only identifier');
   assert.match(finishMessageNode, /const finalizedMeta = Array\.from\(finalizedContent\.children\)\.find/,
     'AI completion must append final metadata and action controls separately from the live text');
@@ -1333,6 +1345,60 @@ function testDownloadClientsAndTimeline() {
     'CX RAI download actions must align as equal-width rows');
   assert.match(styles, /\.settings-windows-mobile-download\s*\{[^}]*width:\s*100%/,
     'Windows Mobile UWP action must align with the primary installer button');
+  assert.match(app, /function getHandednessPromptHint\(\)[\s\S]*?appState\.handednessEnabled[\s\S]*?isHandednessMobileLayout\(\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
+    'Handedness must be described as a per-turn mobile prompt hint');
+  assert.match(app, /function appendUserTurnContextHintForPrompt\(content\)[\s\S]*?getHandednessPromptHint\(\)[\s\S]*?handednessHint \? `\\n\\n\[\$\{handednessHint\}\]`/,
+    'Handedness must be appended to the final user turn after the time hint');
+  assert.match(app, /appendUserTurnContextHintForPrompt\(m\.content\)/,
+    'Only the final user turn may receive the dynamic prompt context hints');
+  assert.doesNotMatch(raiSystemPrompt, /handedness|持机手|握持方式/,
+    'Handedness context must stay out of the cacheable system prompt');
+  assert.match(server, /function stripInlinePromptTimeHint\(content = ''\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
+    'Server persistence must strip the handedness hint together with the time hint');
+}
+
+function testHandednessPromptContext() {
+  const appState = { language: 'zh-CN', handednessEnabled: true, handedness: 'right' };
+  const media = { matches: true };
+  const compose = new Function(
+    'appState',
+    'window',
+    'navigator',
+    'isChineseLanguage',
+    `${extractNamedFunction(app, 'normalizeHandedness')};
+     ${extractNamedFunction(app, 'isHandednessMobileLayout')};
+     ${extractNamedFunction(app, 'getUserTimeContext')};
+     ${extractNamedFunction(app, 'getShortUserTimeHint')};
+     ${extractNamedFunction(app, 'getHandednessPromptHint')};
+     ${extractNamedFunction(app, 'appendUserTurnContextHintForPrompt')};
+     return appendUserTurnContextHintForPrompt;`
+  )(
+    appState,
+    { matchMedia: () => media },
+    { language: 'zh-CN' },
+    () => true
+  );
+
+  const rightHand = compose('测试');
+  assert.match(rightHand, /^测试\n\n\[当前时间：/);
+  assert.match(rightHand, /当前持机手：右手/);
+  assert.match(rightHand, /不要把回答中心放在握持方式上/);
+
+  appState.handedness = 'left';
+  assert.match(compose('测试'), /当前持机手：左手/);
+
+  media.matches = false;
+  assert.doesNotMatch(compose('测试'), /当前持机手/);
+
+  media.matches = true;
+  appState.handednessEnabled = false;
+  assert.doesNotMatch(compose('测试'), /当前持机手/);
+
+  const stripHints = new Function(
+    `${extractNamedFunction(server, 'stripInlinePromptTimeHint')}; return stripInlinePromptTimeHint;`
+  )();
+  const stored = stripHints('测试\n\n[当前时间：2026-09-24 20:47。仅作背景，不要把回答中心放在时间上。]\n\n[当前持机手：右手。仅用于理解界面偏好，不要把回答中心放在握持方式上。]');
+  assert.equal(stored, '测试', 'server persistence must remove both per-turn context hints');
 }
 
 function testPromptModelIdentity() {
@@ -1566,7 +1632,8 @@ async function main() {
     testMainDatabaseTransactionIsolation,
     testMessageRenderingStability,
     testVersionContract,
-    testDownloadClientsAndTimeline
+    testDownloadClientsAndTimeline,
+    testHandednessPromptContext
   ];
   for (const test of tests) await test();
   console.log(`formal-user-bugs-regression ok (${tests.length}/${tests.length})`);
