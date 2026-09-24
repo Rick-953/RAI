@@ -75,7 +75,7 @@ const processUploadSource = app.slice(processUploadStart, processUploadStart + 6
 assert.ok(processUploadStart >= 0, 'missing processUploadedFile');
 assert.match(processUploadSource, /if \(!isUiAllowedUploadFile\(file\)\)/);
 assert.ok(
-    processUploadSource.indexOf('!isUiAllowedUploadFile(file)') < processUploadSource.indexOf('createUploadSession(file, context)'),
+    processUploadSource.indexOf('!isUiAllowedUploadFile(file)') < processUploadSource.indexOf('createUploadSession(uploadFile, context)'),
     'processUploadedFile must reject before upload'
 );
 assert.match(app, /function uploadFileWithProgress[\s\S]*xhr\.open\('POST', `\$\{API_BASE\}\/upload`\)/);
