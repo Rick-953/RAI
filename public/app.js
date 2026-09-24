@@ -2410,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.16';
-const RAI_BUILD_ID = '20260924-stream-finalize-layout-v01316-r6';
+const RAI_APP_VERSION = '0.13.17';
+const RAI_BUILD_ID = '20260924-thinking-consistency-logo-v01317-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8238,6 +8238,28 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-09-24',
+    version: 'v0.13.17-r1 · Beta',
+    zh: {
+      summary: '思考过程在回答完成后保留为折叠状态，修复流式结束残留，并对齐 RAI logo 与正文。',
+      details: [
+        '开启思考后，思考时间轴与“思考过程”在回答完成后继续保留，可随时展开查看。',
+        '流式完成瞬间只保留一份正文，旧时间轴和重复正文不再停留 1-2 秒。',
+        '适人握持信息只注入每轮用户消息，不写入系统提示词，也不会保存到数据库正文。',
+        'RAI logo 右移与生成内容左边缘对齐，并提升 Beta 构建版本以刷新资源缓存。'
+      ]
+    },
+    en: {
+      summary: 'Thinking stays available after completion, streaming finalization is clean, and the RAI logo now aligns with the answer body.',
+      details: [
+        'The thinking timeline and Thinking pill remain available after the answer completes, and can be expanded at any time.',
+        'Only one answer body remains at stream completion; the old timeline and duplicate text no longer linger for 1-2 seconds.',
+        'Adaptive handedness is injected only into the final user turn, never the system prompt, and is stripped before persistence.',
+        'The RAI logo moves right to align with the generated content, and the Beta build version is bumped to refresh cached assets.'
+      ]
+    }
+  },
   {
     date: '2026-09-24',
     version: 'v0.13.16-r6 · Beta',
@@ -14282,6 +14304,9 @@ function applyHandednessLayout() {
   const enabled = appState.handednessEnabled === true;
   const handedness = normalizeHandedness(appState.handedness);
   const root = document.documentElement;
+  const switchToken = Number(appState.handednessSwitchToken || 0) + 1;
+  appState.handednessSwitchToken = switchToken;
+  root.classList.add('handedness-switching');
   root.dataset.handedness = handedness;
   root.classList.toggle('handedness-enabled', enabled);
   root.classList.toggle('hand-left', enabled && handedness === 'left');
@@ -14297,6 +14322,11 @@ function applyHandednessLayout() {
       button.style.removeProperty('margin-right');
     }
   });
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (appState.handednessSwitchToken === switchToken) {
+      root.classList.remove('handedness-switching');
+    }
+  }));
   updateSettingsHandednessUI();
 }
 
@@ -14310,8 +14340,16 @@ function setHandedness(value, { persist = true } = {}) {
   applyHandednessLayout();
 }
 
-function detectHandednessFromTouch(clientX) {
-  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return;
+function isHandednessDetectionAllowed(target) {
+  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return false;
+  if (appState.sidebarOpen) return false;
+  if (document.body?.classList.contains('home-screen-active')) return false;
+  if (document.querySelector('.settings-modal.active, .model-dropdown-menu.active, .more-menu.active, .modal-overlay.active')) return false;
+  return Boolean(target?.closest('#inputContainer, .input-area, #messagesList, .message'));
+}
+
+function detectHandednessFromTouch(clientX, target) {
+  if (!isHandednessDetectionAllowed(target)) return;
   const next = Number(clientX) < window.innerWidth / 2 ? 'left' : 'right';
   if (next !== appState.handedness) setHandedness(next);
 }
@@ -14321,7 +14359,7 @@ function initHandednessTracking() {
   appState.handednessTrackingBound = true;
   document.addEventListener('touchstart', (event) => {
     const touch = event.touches?.[0];
-    if (touch) detectHandednessFromTouch(touch.clientX);
+    if (touch) detectHandednessFromTouch(touch.clientX, event.target);
   }, { passive: true, capture: true });
   window.addEventListener('resize', applyHandednessLayout, { passive: true });
   applyHandednessLayout();
@@ -17322,6 +17360,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   const finalizedHasLiveStructure = Array.from(finalizedContent.children).some((child) =>
     child.classList?.contains('thinking-timeline') || child.classList?.contains('rai-reasoning-block')
   );
+  const finalizedHasReasoningBlock = !!finalizedContent.querySelector('.rai-reasoning-block');
   const preserveLiveFlow = !!(
     existingText?.classList?.contains('stream-flow') &&
     !finalizedText?.classList?.contains('stream-flow') &&
@@ -17362,7 +17401,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   });
   Array.from(finalizedContent.children).forEach((child) => {
     if (child === finalizedText || child.classList?.contains('message-meta')) return;
-    if (preserveLiveFlow && (
+    if (preserveLiveFlow && !finalizedHasReasoningBlock && (
       child.classList?.contains('thinking-timeline') ||
       child.classList?.contains('rai-reasoning-block')
     )) return;
@@ -18460,7 +18499,14 @@ function createMessageElement(message) {
   }
 
   let messageTimelineDiv = null;
-  if (message.role === 'assistant' && !hasInterleavedFlow && (hasReasoning || hasInternet || hasAgentProcessTrace || hasToolTrace || hasGeneratedImages)) {
+  const shouldRenderReasoningTimeline = message.role === 'assistant' && hasReasoning && !isResearchTrace;
+  if (
+    message.role === 'assistant' &&
+    (
+      shouldRenderReasoningTimeline ||
+      (!hasInterleavedFlow && (hasInternet || hasAgentProcessTrace || hasToolTrace || hasGeneratedImages))
+    )
+  ) {
     const timelineDiv = document.createElement('div');
     messageTimelineDiv = timelineDiv;
     timelineDiv.className = isResearchTrace ? 'thinking-timeline research-chat-timeline' : 'thinking-timeline';
@@ -18749,7 +18795,7 @@ function createMessageElement(message) {
   }
 
   // RAI 思考内容：放到正文位置，比正文浅、字号小，折叠为圆角矩形按钮（无描边）
-  if (message.role === 'assistant' && hasReasoning && !isResearchTrace && !hasInterleavedFlow) {
+  if (shouldRenderReasoningTimeline) {
     const reasoningBlock = document.createElement('div');
     reasoningBlock.className = 'rai-reasoning-block';
     const reasoningId = `reasoning-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

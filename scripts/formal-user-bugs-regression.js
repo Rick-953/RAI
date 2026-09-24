@@ -696,8 +696,10 @@ async function testMessageRenderingStability() {
     'AI completion must retain a populated live stream body when the finalized template would reintroduce a timeline');
   assert.match(finishMessageNode, /if \(existingText && finalizedText && !preserveLiveFlow\)/,
     'AI completion may replace the live body only when no duplicate timeline would be introduced');
-  assert.match(finishMessageNode, /if \(preserveLiveFlow && \([\s\S]{0,220}child\.classList\?\.contains\('thinking-timeline'\)[\s\S]{0,220}child\.classList\?\.contains\('rai-reasoning-block'\)[\s\S]{0,100}\)\) return;/,
-    'AI completion must not reinsert the finalized timeline beside a preserved live stream body');
+  assert.match(finishMessageNode, /const finalizedHasReasoningBlock = !!finalizedContent\.querySelector\('\.rai-reasoning-block'\)/,
+    'AI completion must recognize a finalized thinking block even when it is nested in the timeline');
+  assert.match(finishMessageNode, /if \(preserveLiveFlow && !finalizedHasReasoningBlock && \([\s\S]{0,220}child\.classList\?\.contains\('thinking-timeline'\)[\s\S]{0,220}child\.classList\?\.contains\('rai-reasoning-block'\)[\s\S]{0,100}\)\) return;/,
+    'AI completion must keep a finalized thinking block while suppressing a bare timeline beside a preserved live stream body');
   assert.match(finishMessageNode, /if \(existingText\) existingText\.removeAttribute\('id'\);/, 
     'AI completion must retain the live text node while removing the stream-only identifier');
   assert.match(finishMessageNode, /const finalizedMeta = Array\.from\(finalizedContent\.children\)\.find/,
@@ -712,6 +714,14 @@ async function testMessageRenderingStability() {
     'AI completion must not replace or detach the streamed text and image subtree');
   assert.doesNotMatch(finishMessageNode, /(?:existingNode|finalizedTemplate)\.replaceWith\(|existingNode\.remove\(/,
     'AI completion must not recreate its message node and replay the entrance animation');
+  assert.match(app, /const shouldRenderReasoningTimeline = message\.role === 'assistant' && hasReasoning && !isResearchTrace/,
+    'Reasoning messages must keep their thinking timeline even when interleaved flow exists');
+  assert.match(app, /shouldRenderReasoningTimeline \|\|[\s\S]{0,220}!hasInterleavedFlow/,
+    'Only reasoning timelines may survive interleaved flow; legacy internet/tool timelines stay suppressed');
+  assert.match(app, /if \(shouldRenderReasoningTimeline\) \{/,
+    'The finalized reasoning block must render from the shared reasoning condition');
+  assert.match(styles, /\.message\.assistant \.message-avatar\s*\{[^}]*margin-left:\s*18px/,
+    'The RAI avatar must move right to align with the assistant text inset');
 
   const positionSessionMenu = extractNamedFunction(app, 'positionSessionMenu');
   assert.match(positionSessionMenu, /const fitsRight = rect\.right \+ anchorGap \+ menuRect\.width <= window\.innerWidth - viewportPadding/,
@@ -1054,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-stream-finalize-layout-v01316-r6';
+  const expectedBuild = '20260924-thinking-consistency-logo-v01317-r1';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1327,8 +1337,18 @@ function testDownloadClientsAndTimeline() {
     'Adaptive handedness must expose a settings switch');
   assert.match(eventBindings, /settingsToggleHandedness/,
     'Adaptive handedness action must be allowed by the CSP event binding contract');
-  assert.match(app, /function detectHandednessFromTouch\(clientX\)[\s\S]*window\.innerWidth \/ 2/,
+  assert.match(app, /function detectHandednessFromTouch\(clientX, target\)[\s\S]*window\.innerWidth \/ 2/,
     'Mobile touch position must select left- or right-hand mode');
+  assert.match(app, /function isHandednessDetectionAllowed\(target\)[\s\S]*appState\.sidebarOpen[\s\S]*home-screen-active[\s\S]*#inputContainer, \.input-area, #messagesList, \.message/,
+    'Handedness detection must stay inside the composer/message whitelist and skip the open sidebar or home screen');
+  assert.match(app, /function detectHandednessFromTouch\(clientX, target\)[\s\S]*isHandednessDetectionAllowed\(target\)/,
+    'Handedness detection must validate its touch target before changing sides');
+  assert.match(app, /document\.addEventListener\('touchstart', \(event\) => \{[\s\S]*detectHandednessFromTouch\(touch\.clientX, event\.target\)/,
+    'Handedness tracking must pass the real touch target into the whitelist');
+  assert.match(app, /root\.classList\.add\('handedness-switching'\)[\s\S]*root\.classList\.remove\('handedness-switching'\)/,
+    'Handedness changes must suppress the sidebar slide animation while switching sides');
+  assert.match(styles, /html\.handedness-switching \.sidebar\s*\{[^}]*transition:\s*none/,
+    'The sidebar must not visibly slide across the screen during handedness switching');
   assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
     'Right-hand mode must support opening the sidebar from the right edge');
   assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,

@@ -318,6 +318,10 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
   transition: none;
 }
 
+html.handedness-switching .sidebar {
+  transition: none;
+}
+
 /* 固定顶部区域 */
 .sidebar-header-fixed {
   padding: var(--spacing-lg);
@@ -3390,6 +3394,7 @@ body.keyboard-open .chat-edge-blur-bottom {
 .message.assistant .message-avatar {
   display: flex;
   position: relative;
+  margin-left: 18px;
 }
 
 /* AI消息垂直引导线 - 只在展开时显示，灰色，位置在头像正下方 */
