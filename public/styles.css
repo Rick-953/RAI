@@ -9355,8 +9355,21 @@ html.hand-left .mobile-header {
   justify-content: flex-start;
 }
 
-html.hand-right .mobile-header {
-  justify-content: flex-end;
+html.hand-right .mobile-left-controls {
+  width: 100%;
+}
+
+html.hand-right .mobile-logo {
+  order: -1;
+}
+
+html.hand-right .mobile-temp-chat-btn {
+  order: 2;
+  margin-left: auto;
+}
+
+html.hand-right .hamburger-btn {
+  order: 3;
 }
 
 .mobile-left-controls {
