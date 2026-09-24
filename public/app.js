@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.16';
-const RAI_BUILD_ID = '20260924-settings-app-cxrai-about-v01316-r3';
+const RAI_BUILD_ID = '20260924-platform-handedness-v01316-r4';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2519,6 +2519,9 @@ const appState = {
   selectionExplanationDeleteMode: 'promote_children',
   showModelBadge: false,
   showInternetBadge: false,
+  handednessEnabled: false,
+  handedness: 'left',
+  handednessTrackingBound: false,
   browserNotifyEnabled: (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'),
   currentSessionMemoryMode: 'normal',
   pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
@@ -4772,16 +4775,69 @@ function isTrustedWindowsReleaseAsset(asset, allowedSuffixes) {
   }
 }
 
+function getClientPlatform() {
+  const platform = String(globalThis.RAI_CLIENT_PLATFORM || document.documentElement.dataset.clientPlatform || 'other');
+  return platform || 'other';
+}
+
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const status = document.getElementById('windowsDownloadStatus');
   const setupLink = document.getElementById('windowsSetupDownload');
+  const mobileLink = document.getElementById('windowsMobilePackageDownload');
+  const note = document.getElementById('windowsDownloadNote');
   if (!status || !setupLink) return false;
 
-  // CX RAI 只提供一键 Setup.exe；上游暂时缺失时回退到发布页。
+  const clientPlatform = getClientPlatform();
+  const isWindowsMobile = clientPlatform === 'windows-mobile';
+  setupLink.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
+  if (note) {
+    note.textContent = isWindowsMobile
+      ? i18nText('settings-windows-mobile-note', isChineseLanguage(appState.language)
+        ? '下载 UWP 包并在 Windows 10 Mobile 设备上安装。'
+        : 'Download the UWP package and install it on a Windows 10 Mobile device.')
+      : i18nText('settings-windows-auto-note', isChineseLanguage(appState.language)
+        ? '运行安装程序即可一键装完，证书与依赖会自动处理。'
+        : 'Run the installer for a one-step install; certificates and dependencies are handled automatically.');
+  }
   const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
+  const mobilePackage = release?.arm?.package || release?.package;
+  const mobilePackageValid = isTrustedWindowsReleaseAsset(mobilePackage, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
+  const tag = String(release.tag || '').trim();
+  const isFallback = release.source === 'fallback';
+
+  if (isWindowsMobile) {
+    setupLink.hidden = true;
+    setupLink.removeAttribute('title');
+    if (mobileLink && mobilePackageValid) {
+      mobileLink.hidden = false;
+      mobileLink.classList.add('is-primary');
+      mobileLink.classList.remove('settings-install-download-secondary');
+      mobileLink.href = mobilePackage.url;
+      mobileLink.title = mobilePackage.name;
+      mobileLink.textContent = isChineseLanguage(appState.language)
+        ? '下载 Windows 10 Mobile 安装包'
+        : 'Download Windows 10 Mobile package';
+      status.textContent = isChineseLanguage(appState.language)
+        ? (isFallback ? `Windows 10 Mobile · 备用版 ${tag}` : `Windows 10 Mobile · GitHub 最新版 ${tag}`)
+        : (isFallback ? `Windows 10 Mobile · fallback ${tag}` : `Windows 10 Mobile · latest GitHub release ${tag}`);
+      return true;
+    }
+    if (mobileLink) mobileLink.hidden = true;
+    setupLink.hidden = false;
+    setupLink.href = WINDOWS_ALL_RELEASES_URL;
+    setupLink.removeAttribute('title');
+    setupLink.textContent = isChineseLanguage(appState.language) ? '前往 GitHub 发布页' : 'Open GitHub release page';
+    status.textContent = isChineseLanguage(appState.language)
+      ? '暂时没有可用的 Windows 10 Mobile 安装包，请前往 GitHub 发布页'
+      : 'No Windows 10 Mobile package is available yet; open the GitHub release page';
+    return false;
+  }
+
+  setupLink.hidden = false;
   if (!setupValid) {
     setupLink.href = WINDOWS_ALL_RELEASES_URL;
     setupLink.removeAttribute('title');
+    if (mobileLink) mobileLink.hidden = true;
     status.textContent = isChineseLanguage(appState.language)
       ? '暂时没有可用的 EXE 安装程序，请前往 GitHub 发布页'
       : 'No EXE installer is available yet; open the GitHub release page';
@@ -4791,8 +4847,20 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
   setupLink.href = release.setup.url;
   setupLink.title = release.setup.name;
 
-  const tag = String(release.tag || '').trim();
-  const isFallback = release.source === 'fallback';
+  if (mobileLink) {
+    const showMobilePackage = mobilePackageValid && (clientPlatform === 'windows' || clientPlatform === 'windows-mobile');
+    mobileLink.hidden = !showMobilePackage;
+    mobileLink.classList.remove('is-primary');
+    mobileLink.classList.add('settings-install-download-secondary');
+    if (showMobilePackage) {
+      mobileLink.href = mobilePackage.url;
+      mobileLink.title = mobilePackage.name;
+      mobileLink.textContent = isChineseLanguage(appState.language)
+        ? 'Windows 10 Mobile（UWP）'
+        : 'Windows 10 Mobile (UWP)';
+    }
+  }
+
   status.textContent = isChineseLanguage(appState.language)
     ? (isFallback ? `GitHub 暂不可用，显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
     : (isFallback ? `GitHub unavailable; showing fallback ${tag}` : `Latest GitHub release ${tag}`);
@@ -5647,6 +5715,8 @@ const i18n = {
     'pet-hidden-after-guide': '宠物已暂时隐藏，可在“设置 > 自定义”中重新开启。',
     'settings-guide-tap-target-label': '功能聚焦提示',
     'settings-guide-tap-target-desc': '在引导流程中高亮当前操作位置，帮助你找到功能入口。',
+    'settings-handedness-label': '适人握持',
+    'settings-handedness-desc': '将常用按钮菜单放置于持机的左右手侧，方便单手操作 RAI。',
     'settings-guide-save-error': '设置保存失败，请重试',
     'message-model-custom-edition': '定制版',
     'browser-notify-settings-title': '回复浏览器通知',
@@ -5847,7 +5917,7 @@ const i18n = {
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': '作者 Rick',
     'settings-app-title': '下载客户端',
-    'settings-app-desc': '优先安装网页版应用；Windows 用户也可以下载 CX RAI。',
+    'settings-app-desc': '根据设备推荐合适的安装方式：网页版应用或 CX RAI。',
     'settings-pwa-badge': '推荐',
     'settings-pwa-desc': '安装后从桌面或主屏幕独立打开。',
     'settings-cxrai-badge': 'Windows 10 / 11',
@@ -5855,6 +5925,8 @@ const i18n = {
     'settings-pwa-title': '网页版应用',
     'settings-windows-setup': '下载安装程序',
     'settings-windows-package': '下载安装包',
+    'settings-windows-mobile-package': 'Windows 10 Mobile（UWP）',
+    'settings-windows-mobile-note': '下载 UWP 包并在 Windows 10 Mobile 设备上安装。',
     'settings-windows-auto-note': '运行安装程序即可一键装完，证书与依赖会自动处理。',
     'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
@@ -6303,6 +6375,8 @@ const i18n = {
     'pet-hidden-after-guide': 'Your pet is hidden for now. Re-enable it under Settings > Personalization.',
     'settings-guide-tap-target-label': 'Feature focus hint',
     'settings-guide-tap-target-desc': 'Highlight the current control during the welcome tour so you can find it.',
+    'settings-handedness-label': 'Adaptive handedness',
+    'settings-handedness-desc': 'Place common controls on the side you are holding so RAI is easier to use one-handed.',
     'settings-guide-save-error': 'Could not save this setting. Please try again.',
     'message-model-custom-edition': 'Custom Edition',
     'browser-notify-settings-title': 'Reply Browser Notification',
@@ -6503,7 +6577,7 @@ const i18n = {
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': 'Author Rick',
     'settings-app-title': 'Download Clients',
-    'settings-app-desc': 'Install the Web App first; Windows users can also download CX RAI.',
+    'settings-app-desc': 'Choose the recommended install for this device: Web App or CX RAI.',
     'settings-pwa-badge': 'Recommended',
     'settings-pwa-desc': 'Install it to open from the desktop or Home Screen in its own window.',
     'settings-cxrai-badge': 'Windows 10 / 11',
@@ -6511,6 +6585,8 @@ const i18n = {
     'settings-pwa-title': 'Web App',
     'settings-windows-setup': 'Download installer',
     'settings-windows-package': 'Download package',
+    'settings-windows-mobile-package': 'Windows 10 Mobile (UWP)',
+    'settings-windows-mobile-note': 'Download the UWP package and install it on a Windows 10 Mobile device.',
     'settings-windows-auto-note': 'Run the installer for a one-step install; the certificate and dependencies are handled automatically.',
     'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
@@ -6996,7 +7072,7 @@ Object.assign(i18n['zh-TW'], {
   'settings-macos-title': 'macOS',
   'settings-windows-title': 'CX RAI',
   'settings-app-title': '下載客戶端',
-  'settings-app-desc': '優先安裝網頁版應用；Windows 使用者也可以下載 CX RAI。',
+  'settings-app-desc': '依裝置推薦合適的安裝方式：網頁版應用或 CX RAI。',
   'settings-pwa-badge': '推薦',
   'settings-pwa-desc': '安裝後可從桌面或主畫面以獨立視窗開啟。',
   'settings-cxrai-badge': 'Windows 10 / 11',
@@ -7129,6 +7205,13 @@ Object.assign(i18n['zh-TW'], {
   'selection-explain-restore-failed': '無法還原這張解釋卡',
   'selection-explain-incomplete-badge': '中斷',
   'selection-explain-unknown-model': '快速模型'
+});
+
+Object.assign(i18n['zh-TW'], {
+  'settings-handedness-label': '適人握持',
+  'settings-handedness-desc': '將常用按鈕選單放置於持機的左右手側，方便單手操作 RAI。',
+  'settings-windows-mobile-package': 'Windows 10 Mobile（UWP）',
+  'settings-windows-mobile-note': '下載 UWP 套件並在 Windows 10 Mobile 裝置上安裝。'
 });
 
 i18n['zh-TW'] = hydrateRuntimeI18nMap(i18n['zh-TW']);
@@ -8148,21 +8231,25 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-09-24',
-    version: 'v0.13.16-r3 · Beta',
+    version: 'v0.13.16-r4 · Beta',
     zh: {
-      summary: '正式线与 Beta 的近期修复完成整合，下载客户端页重新聚焦网页版应用与 CX RAI。',
+      summary: '下载客户端按设备类型聚焦，并新增自动识别左右手持机的“适人握持”。',
       details: [
         '同步 main 的 iOS 安全区、2FA、HEIC 大图上传、会话本地电脑上下文、应用下载与 CX RAI 接入。',
         '保留 Beta 的流式时间线、工具追踪、artifact 卡片、文件沙箱和安装器修复，并修复 /beta/ 下主宠闲话请求路径。',
-        '下载客户端页以网页版应用和 CX RAI 为主卡片；RAI Connect 与本地 Agent 改为默认收起的进阶横条。'
+        '下载客户端页以网页版应用和 CX RAI 为主卡片；RAI Connect 与本地 Agent 改为默认收起的进阶横条。',
+        'Windows 桌面直接下载 Setup.exe，Windows 10 Mobile 自动切换 UWP 包；macOS 与 Linux 优先展示网页版应用。',
+        '移动端触摸左半屏启用左手模式，发送按钮移到输入框左侧；触摸右半屏启用右手模式，侧边栏从右侧滑出。'
       ]
     },
     en: {
-      summary: 'Recent main and Beta fixes are integrated, and Download Clients now prioritizes the Web App and CX RAI.',
+      summary: 'Download Clients now adapts to the device, with automatic left- and right-hand mobile layouts.',
       details: [
         'Brings main iOS safe-area, 2FA, HEIC/large-image upload, local-computer conversation context, app download, and CX RAI work into Beta.',
         'Preserves Beta streaming timelines, tool traces, artifact cards, file sandboxing, and installer fixes, including the /beta/ pet-chitchat request path.',
-        'Download Clients now leads with Web App and CX RAI, while RAI Connect and Local Agent collapse into an advanced bar by default.'
+        'Download Clients now leads with Web App and CX RAI, while RAI Connect and Local Agent collapse into an advanced bar by default.',
+        'Windows desktop gets the Setup.exe directly, Windows 10 Mobile switches to the UWP package, and macOS/Linux prioritize the Web App.',
+        'Touching the left half of a mobile screen moves Send to the left; touching the right half makes the sidebar open from the right.'
       ]
     }
   },
@@ -13778,7 +13865,7 @@ function switchSettingsSection(section = 'general', options = {}) {
   if (section === 'memory') {
     renderMemorySettings();
   }
-  if (section === 'about') {
+  if (section === 'app') {
     loadLatestWindowsDownloads().catch(() => null);
   }
   if (isSettingsMobileLayout() && appState.settingsOpen && !options.keepMobileHome) {
@@ -14165,6 +14252,79 @@ function settingsToggleInternetBadgeVisibility() {
   appState.showInternetBadge = !appState.showInternetBadge;
   persistLocalSettingsPatch({ showInternetBadge: appState.showInternetBadge });
   updateMessageBadgeVisibilityUI();
+}
+
+function normalizeHandedness(value) {
+  return value === 'right' ? 'right' : 'left';
+}
+
+function isHandednessMobileLayout() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function updateSettingsHandednessUI() {
+  const switchButton = document.getElementById('settingsHandednessSwitch');
+  const toggle = document.getElementById('settingsHandednessToggle');
+  if (switchButton) switchButton.setAttribute('aria-pressed', appState.handednessEnabled ? 'true' : 'false');
+  if (toggle) toggle.classList.toggle('active', !!appState.handednessEnabled);
+}
+
+function applyHandednessLayout() {
+  const enabled = appState.handednessEnabled === true;
+  const handedness = normalizeHandedness(appState.handedness);
+  const root = document.documentElement;
+  root.dataset.handedness = handedness;
+  root.classList.toggle('handedness-enabled', enabled);
+  root.classList.toggle('hand-left', enabled && handedness === 'left');
+  root.classList.toggle('hand-right', enabled && handedness === 'right');
+  const moveSendLeft = enabled && handedness === 'left';
+  [document.getElementById('sendBtn'), document.getElementById('stopBtn')].forEach((button) => {
+    if (!button) return;
+    if (moveSendLeft) {
+      button.style.order = '-1';
+      button.style.marginRight = '4px';
+    } else {
+      button.style.removeProperty('order');
+      button.style.removeProperty('margin-right');
+    }
+  });
+  updateSettingsHandednessUI();
+}
+
+function setHandedness(value, { persist = true } = {}) {
+  const normalized = normalizeHandedness(value);
+  appState.handedness = normalized;
+  if (persist) {
+    localStorage.setItem('rai_handedness', normalized);
+    persistLocalSettingsPatch({ handedness: normalized });
+  }
+  applyHandednessLayout();
+}
+
+function detectHandednessFromTouch(clientX) {
+  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return;
+  const next = Number(clientX) < window.innerWidth / 2 ? 'left' : 'right';
+  if (next !== appState.handedness) setHandedness(next);
+}
+
+function initHandednessTracking() {
+  if (appState.handednessTrackingBound) return;
+  appState.handednessTrackingBound = true;
+  document.addEventListener('touchstart', (event) => {
+    const touch = event.touches?.[0];
+    if (touch) detectHandednessFromTouch(touch.clientX);
+  }, { passive: true, capture: true });
+  window.addEventListener('resize', applyHandednessLayout, { passive: true });
+  applyHandednessLayout();
+}
+
+function settingsToggleHandedness() {
+  appState.handednessEnabled = !appState.handednessEnabled;
+  persistLocalSettingsPatch({
+    handednessEnabled: appState.handednessEnabled,
+    handedness: normalizeHandedness(appState.handedness)
+  });
+  applyHandednessLayout();
 }
 
 function updateSettingsGuideUI() {
@@ -15715,6 +15875,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   loadSettings();
+  initHandednessTracking();
   initSettingsInteractions();
   initConversationCacheSettings();
   initBrowserNotifySettingControl();
@@ -16289,6 +16450,7 @@ function updateSettingsUI() {
   if (typeof updateBrowserNotifySettingsUI === 'function') updateBrowserNotifySettingsUI();
   updateMessageBadgeVisibilityUI();
   updateSettingsGuideUI();
+  updateSettingsHandednessUI();
   updateSettingsCapabilitiesUI();
   renderSettingsTimeline();
   updateSettingsDirtyState();
@@ -16832,7 +16994,9 @@ async function saveSettings(options = {}) {
     newChatDefaultMode: appState.newChatDefaultMode,
     fontPreference: appState.fontPreference || 'rai',
     showModelBadge: appState.showModelBadge,
-    showInternetBadge: appState.showInternetBadge
+    showInternetBadge: appState.showInternetBadge,
+    handednessEnabled: appState.handednessEnabled,
+    handedness: normalizeHandedness(appState.handedness)
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
@@ -30413,7 +30577,10 @@ function initSwipeGestures() {
   const setSidebarProgress = (progress, dragging = false) => {
     const width = getSidebarWidth();
     const normalized = Math.max(0, Math.min(progress, 1));
-    const translateX = (normalized - 1) * width;
+    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const translateX = opensFromRight
+      ? (1 - normalized) * width
+      : (normalized - 1) * width;
 
     sidebar.classList.toggle('dragging', dragging);
     sidebar.style.transform = `translateX(${Math.round(translateX)}px)`;
@@ -30461,6 +30628,7 @@ function initSwipeGestures() {
   const handleTouchMove = (e) => {
     if (!appState.sidebarGestureMode || !e.touches?.length) return;
 
+    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
     const touch = e.touches[0];
     const deltaX = touch.clientX - appState.touchStartX;
     const deltaY = Math.abs(touch.clientY - appState.touchStartY);
@@ -30476,7 +30644,9 @@ function initSwipeGestures() {
         return;
       }
 
-      const movingWrongWay = appState.sidebarGestureMode === 'opening' ? deltaX <= 0 : deltaX >= 0;
+      const movingWrongWay = appState.sidebarGestureMode === 'opening'
+        ? (opensFromRight ? deltaX >= 0 : deltaX <= 0)
+        : (opensFromRight ? deltaX <= 0 : deltaX >= 0);
       if (movingWrongWay) {
         if (Math.abs(deltaX) > gestureCommitDistance && Math.abs(deltaX) > deltaY * horizontalDominanceRatio) {
           resetSwipeState();
@@ -30495,8 +30665,10 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const rawProgress = appState.sidebarGestureMode === 'opening'
-      ? Math.max(0, deltaX) / width
-      : 1 + (Math.min(0, deltaX) / width);
+      ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
+      : (opensFromRight
+        ? 1 - (Math.max(0, deltaX) / width)
+        : 1 + (Math.min(0, deltaX) / width));
 
     setSidebarProgress(rawProgress, true);
     e.preventDefault();
@@ -30512,9 +30684,12 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const deltaX = appState.touchMoveX - appState.touchStartX;
+    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
     const finalProgress = appState.sidebarGestureMode === 'opening'
-      ? Math.max(0, deltaX) / width
-      : 1 + (Math.min(0, deltaX) / width);
+      ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
+      : (opensFromRight
+        ? 1 - (Math.max(0, deltaX) / width)
+        : 1 + (Math.min(0, deltaX) / width));
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;
@@ -30739,6 +30914,10 @@ function loadSettings() {
       if (settings.fontPreference !== undefined) applyFontPreference(settings.fontPreference);
       if (settings.showModelBadge !== undefined) appState.showModelBadge = settings.showModelBadge === true;
       if (settings.showInternetBadge !== undefined) appState.showInternetBadge = settings.showInternetBadge === true;
+      if (settings.handednessEnabled !== undefined) appState.handednessEnabled = settings.handednessEnabled === true;
+      if (settings.handedness !== undefined) appState.handedness = normalizeHandedness(settings.handedness);
+      const storedHandedness = localStorage.getItem('rai_handedness');
+      if (storedHandedness) appState.handedness = normalizeHandedness(storedHandedness);
       if (settings.browserNotifyEnabled !== undefined) appState.browserNotifyEnabled = settings.browserNotifyEnabled === true;
       if (settings.browserNotifyEnabled === undefined) syncBrowserNotifyStateFromPermission({ persist: true });
       console.log(' 从本地存储加载设置成功');

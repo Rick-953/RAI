@@ -54,7 +54,7 @@
     'setResearchMasterModel', 'setResearchMode', 'setResearchModeFromSlider',
     'setSelectionExplanationDeleteMode', 'setTabTitleCustomTextFromSettings',
     'setTabTitleModeFromSettings', 'setTheme', 'settingsSelectPet', 'settingsToggleGuideMascot',
-    'settingsToggleGuideTapTarget', 'settingsToggleInternetBadgeVisibility',
+    'settingsToggleGuideTapTarget', 'settingsToggleHandedness', 'settingsToggleInternetBadgeVisibility',
     'settingsToggleInternetMode', 'settingsToggleModelBadgeVisibility', 'settingsToggleThinkingBadgeVisibility',
     'settingsToggleResearchMode', 'settingsToggleThinkingMode', 'showAdminAnnouncementForm',
     'showForgotPasswordHelp', 'showNavTooltip', 'showRpassPending', 'showSettingsMobileHome',
