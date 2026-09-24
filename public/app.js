@@ -18834,6 +18834,7 @@ function createMessageElement(message) {
     flow.className = 'message-text stream-flow';
     processTrace.flowSegments.forEach((segment) => {
       if (!segment || !segment.kind) return;
+      if (segment.kind === 'reasoning' && shouldRenderReasoningTimeline) return;
       if (segment.kind === 'content') {
         const block = document.createElement('div');
         block.className = 'stream-flow-content';
@@ -22723,6 +22724,7 @@ async function sendMessage(message = null, options = {}) {
       if (!streamingEl) return;
       streamingEl.replaceChildren();
       streamFlowSegments.forEach((segment) => {
+        if (segment.kind === 'reasoning' && document.getElementById('raiReasoningBlock')) return;
         if (segment.kind === 'content') {
           const block = document.createElement('div');
           block.className = 'stream-flow-content';

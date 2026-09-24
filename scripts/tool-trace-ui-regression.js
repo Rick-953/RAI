@@ -70,6 +70,8 @@ assert.match(app, /appendInterleavedEvent\('tool'/, 'tool events must enter the 
 assert.match(app, /flowSegments:\s*streamFlowSegments\.slice\(-200\)/, 'interleaved flow must persist after streaming');
 assert.match(app, /hasInterleavedFlow/, 'history must detect the persisted interleaved flow');
 assert.match(app, /shouldRenderReasoningTimeline \|\|[\s\S]{0,220}!hasInterleavedFlow/, 'reasoning timelines must render even with interleaved history while legacy timelines stay suppressed');
+assert.match(app, /if \(segment\.kind === 'reasoning' && shouldRenderReasoningTimeline\) return;/, 'persisted reasoning must render only once in the finalized timeline');
+assert.match(app, /if \(segment\.kind === 'reasoning' && document\.getElementById\('raiReasoningBlock'\)\) return;/, 'live reasoning must render only once in the live timeline');
 assert.match(app, /if \(existingText && finalizedText && !preserveLiveFlow\)/, 'completion must replace the streaming body in place instead of duplicating it');
 assert.match(app, /const preserveLiveFlow = !!\(/, 'completion must preserve a populated live flow when the finalized template would duplicate the timeline');
 assert.match(app, /existingText\.replaceWith\(finalizedText\)/, 'completion must replace the streaming body in place instead of duplicating it');
