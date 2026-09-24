@@ -13,6 +13,7 @@ const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'u
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
+const eventBindings = read('public/event-bindings.js');
 const serviceWorker = read('public/sw.js');
 const conversationCache = read('public/conversation-cache.js');
 const raiSystemPrompt = read('public/rai-system-prompt.js');
@@ -1036,7 +1037,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-settings-app-cxrai-about-v01316-r3';
+  const expectedBuild = '20260924-platform-handedness-v01316-r4';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1305,6 +1306,18 @@ function testDownloadClientsAndTimeline() {
     'About timeline must include recent GitHub milestones in descending order');
   assert.match(app, /GitHub main \/ beta 提交记录[\s\S]*2026-09-24/,
     'About timeline source must state the GitHub sync horizon');
+  assert.match(index, /id="settingsHandednessSwitch"[\s\S]*settingsToggleHandedness\(\)/,
+    'Adaptive handedness must expose a settings switch');
+  assert.match(eventBindings, /settingsToggleHandedness/,
+    'Adaptive handedness action must be allowed by the CSP event binding contract');
+  assert.match(app, /function detectHandednessFromTouch\(clientX\)[\s\S]*window\.innerWidth \/ 2/,
+    'Mobile touch position must select left- or right-hand mode');
+  assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
+    'Right-hand mode must support opening the sidebar from the right edge');
+  assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,
+    'Right-hand mode must position the mobile sidebar on the right');
+  assert.match(styles, /html\.hand-left \.input-toolbar > \.send-btn[\s\S]*order: -1/,
+    'Left-hand mode must move the send button to the left side of the composer');
 }
 
 function testPromptModelIdentity() {

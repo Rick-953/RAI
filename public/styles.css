@@ -9542,6 +9542,24 @@ body.custom-api-mode .main-content {
     transform: translateX(0);
   }
 
+  html.hand-right .sidebar {
+    left: auto;
+    right: 0;
+    transform: translateX(100%);
+    border-radius: 24px 0 0 24px;
+    box-shadow: -18px 0 42px rgba(0, 0, 0, 0.28);
+  }
+
+  html.hand-right .sidebar.active {
+    transform: translateX(0);
+  }
+
+  html.hand-left .input-toolbar > .send-btn,
+  html.hand-left .input-toolbar > .stop-btn {
+    order: -1;
+    margin-right: 4px;
+  }
+
   .sidebar-header-fixed {
     padding-top: calc(var(--spacing-lg) + var(--safe-top, 0px));
   }
@@ -14692,6 +14710,11 @@ body.chatflow-iframe-mode .message-content::selection {
   gap: 18px;
 }
 
+html[data-client-platform="windows"] .settings-platform-download[data-client-platform="cxrai"],
+html[data-client-platform="windows-mobile"] .settings-platform-download[data-client-platform="cxrai"] {
+  order: -1;
+}
+
 .settings-platform-download {
   min-width: 0;
   display: grid;
@@ -14792,6 +14815,21 @@ body.chatflow-iframe-mode .message-content::selection {
 .settings-windows-actions .settings-install-download-secondary:hover {
   color: var(--text-primary);
   background: var(--settings-card-hover);
+}
+
+.settings-windows-actions .settings-windows-mobile-download {
+  flex: 0 1 auto;
+}
+
+.settings-windows-actions .settings-windows-mobile-download.is-primary {
+  flex: 1 1 auto;
+  background: var(--settings-card-hover);
+  color: var(--text-primary);
+  font-weight: 760;
+}
+
+.settings-windows-mobile-download[hidden] {
+  display: none;
 }
 
 .settings-windows-lumia {

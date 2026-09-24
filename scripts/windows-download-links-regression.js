@@ -13,6 +13,7 @@ const {
 const root = path.resolve(__dirname, '..');
 const indexHtml = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
+const runtimeBrandJs = fs.readFileSync(path.join(root, 'public/runtime-brand.js'), 'utf8');
 const serverJs = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const stylesCss = fs.readFileSync(path.join(root, 'public/styles.css'), 'utf8');
 const swJs = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8');
@@ -27,14 +28,18 @@ for (const id of ['windowsSetupDownload', 'windowsDownloadStatus']) {
   assert(indexHtml.includes(`id="${id}"`), `${id} is missing`);
 }
 assert(!indexHtml.includes('windowsPackageDownload'), 'separate package download option must stay removed');
-assert(!indexHtml.includes('windowsLumiaPackage'), 'separate ARM package option must stay removed');
+assert(indexHtml.includes('id="windowsMobilePackageDownload"'), 'Windows 10 Mobile UWP option is missing');
+assert(!indexHtml.includes('windowsLumiaPackage'), 'legacy Lumia package button must stay removed');
 assert(!indexHtml.includes('windowsCertificateDownload'), 'certificate link should be gone: Setup.exe installs the certificate');
 assert(!indexHtml.includes('onedrive'), 'stale OneDrive fallback link should be gone');
 assert(appJs.includes('loadLatestWindowsDownloads()'), 'About does not automatically load the latest Windows release');
+assert(appJs.includes("if (section === 'app')"), 'Download Clients must trigger the latest Windows release load');
 assert(appJs.includes('`${API_BASE}/windows-downloads`'), 'frontend does not call the same-origin Windows release API');
 assert(appJs.includes("parsed.pathname.startsWith('/Master-Tea/CX-RAI/releases/download/')"), 'frontend asset origin validation is missing');
 assert(appJs.includes("isTrustedWindowsReleaseAsset(release?.setup, ['.exe'])"), 'frontend must render the EXE installer directly');
 assert(!appJs.includes('windowsPackageDownload'), 'frontend must not resolve a separate package download');
+assert(appJs.includes("release?.arm?.package || release?.package"), 'Windows Mobile must resolve the UWP package');
+assert(runtimeBrandJs.includes("clientPlatform = 'windows-mobile'"), 'Windows Phone platform detection is missing');
 assert(serverJs.includes("app.get('/api/windows-downloads'"), 'Windows release API route is missing');
 assert(serverJs.includes("require('./lib/windows-downloads')"), 'server does not use the bounded release resolver');
 assert(FALLBACK_RELEASE.setup && FALLBACK_RELEASE.setup.url.endsWith('.exe'), 'fallback setup URL should be an .exe');
