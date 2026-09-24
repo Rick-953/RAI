@@ -85,11 +85,23 @@
   --z-sidebar: 100;
   --z-header: 90;
   --app-height: 100vh;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
   --composer-height: 200px;
   --composer-bottom-gap: 0px;
-  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md));
+  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--safe-bottom, 0px) + var(--spacing-md));
   --keyboard-offset: 0px;
   --viewport-offset-top: 0px;
+}
+
+/* 旧款 16:9 全屏 iPhone（无刘海）与 iPad 的安全区兜底：
+   env() 在部分 iOS 版本冷启动会返回 0，这里按机型比例补足。 */
+html.ios-legacy-16-9 {
+  --safe-top: max(20px, env(safe-area-inset-top, 0px));
+}
+
+html.ipad-device {
+  --safe-bottom: max(20px, env(safe-area-inset-bottom, 0px));
 }
 
 /* 浅色主题 */
@@ -157,6 +169,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  inset: 0;
   transition: background-color 0.3s, color 0.3s;
 }
 
@@ -177,6 +190,7 @@ html.mobile-viewport-managed,
 body.mobile-viewport-managed {
   height: var(--app-height);
   min-height: var(--app-height);
+  max-height: var(--app-height);
 }
 
 body.mobile-viewport-managed {
@@ -211,7 +225,7 @@ body.mobile-viewport-managed .chat-container {
 
 body.mobile-viewport-managed .input-area {
   position: absolute;
-  bottom: var(--composer-bottom-gap, 0px);
+  bottom: calc(var(--composer-bottom-gap, 0px) + var(--safe-bottom, 0px));
   left: 0;
   right: 0;
   background: transparent;
@@ -233,11 +247,22 @@ body.mobile-viewport-managed .input-container {
   -webkit-backdrop-filter: blur(24px) saturate(120%);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
   border: none;
-  padding-bottom: calc(var(--spacing-md) + env(safe-area-inset-bottom, 0px));
+  /* 底部安全区由 .input-area 的整体位移处理，输入框本身保持紧凑高度。 */
+  padding-bottom: var(--spacing-md);
 }
 
 [data-theme="light"] body.mobile-viewport-managed .input-container {
   background: var(--composer-surface-bg);
+}
+
+/* 键盘打开时视觉视口已经贴到键盘上方，不再额外叠加底部安全区，
+   否则输入框会被顶起、与键盘之间留出空白。 */
+body.mobile-viewport-managed.keyboard-open {
+  --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md));
+}
+
+body.mobile-viewport-managed.keyboard-open .input-area {
+  bottom: var(--composer-bottom-gap, 0px);
 }
 
 body.mobile-viewport-managed .main-content::after,
@@ -2311,6 +2336,13 @@ body.mobile-viewport-managed .chat-edge-blur-bottom {
 }
 
 .session-canvas-marker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--text-tertiary);
+}
+
+.session-local-computer-marker {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -9485,16 +9517,18 @@ body.custom-api-mode .main-content {
     display: flex;
     flex-direction: column;
     position: relative;
-    height: 100vh;
-    height: 100dvh;
-    min-height: 0;
+    height: var(--app-height, 100dvh);
+    min-height: var(--app-height, 100dvh);
   }
 
   .sidebar {
-    position: fixed;
+    /* iOS 主屏幕模式里 position:fixed 会被“撒谎”的视口高度裁掉底部，
+       改用相对 app shell 的绝对定位，让侧边栏铺满完整屏幕。 */
+    position: absolute;
     top: 0;
     left: 0;
-    bottom: 0;
+    bottom: auto;
+    height: var(--app-height, 100dvh);
     width: var(--sidebar-width);
     max-width: 320px;
     transform: translateX(-100%);
@@ -9506,6 +9540,19 @@ body.custom-api-mode .main-content {
 
   .sidebar.active {
     transform: translateX(0);
+  }
+
+  .sidebar-header-fixed {
+    padding-top: calc(var(--spacing-lg) + var(--safe-top, 0px));
+  }
+
+  .sidebar-footer-fixed {
+    padding-bottom: calc(var(--spacing-lg) + var(--safe-bottom, 0px));
+  }
+
+  .mobile-overlay {
+    position: absolute;
+    height: var(--app-height, 100dvh);
   }
 
   .main-content {
@@ -9523,9 +9570,25 @@ body.custom-api-mode .main-content {
     flex-shrink: 0;
     z-index: var(--z-header);
     gap: 0;
-    padding-top: max(var(--spacing-md), env(safe-area-inset-top, 0px));
+    padding-top: max(var(--spacing-md), var(--safe-top, 0px));
     padding-left: var(--spacing-lg);
     padding-right: var(--spacing-lg);
+    touch-action: none;
+  }
+
+  /* In an iOS home-screen app the status-bar inset is part of the header box.
+     Keep the controls in the 64px toolbar below it instead of centering the
+     model selector through the Dynamic Island. */
+  html.ios-standalone .mobile-header {
+    box-sizing: border-box;
+    height: calc(64px + var(--safe-top, 0px));
+    min-height: calc(64px + var(--safe-top, 0px));
+    padding-top: calc(12px + var(--safe-top, 0px));
+    padding-bottom: 12px;
+  }
+
+  html.ios-standalone .mobile-center-controls {
+    top: calc(32px + var(--safe-top, 0px));
   }
 
   .mobile-left-controls {
@@ -14649,8 +14712,8 @@ body.chatflow-iframe-mode .message-content::selection {
 }
 
 .settings-windows-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -14658,21 +14721,19 @@ body.chatflow-iframe-mode .message-content::selection {
 .settings-windows-actions .settings-install-download,
 .settings-platform-download .settings-install-btn {
   min-width: 0;
+  flex: 1 1 auto;
   text-align: center;
 }
 
-.settings-certificate-link {
-  align-self: center;
+.settings-windows-actions .settings-install-download-secondary {
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
   font-weight: 680;
-  text-decoration: none;
-  white-space: nowrap;
 }
 
-.settings-certificate-link:hover {
+.settings-windows-actions .settings-install-download-secondary:hover {
   color: var(--text-primary);
-  text-decoration: underline;
+  background: var(--settings-card-hover);
 }
 
 .settings-windows-lumia {
@@ -14694,19 +14755,23 @@ body.chatflow-iframe-mode .message-content::selection {
   text-decoration: underline;
 }
 
-.settings-onedrive-hint {
+.settings-windows-note {
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-secondary, #888);
 }
 
-.settings-onedrive-hint a {
+.settings-windows-note a {
   color: var(--accent, #4a9eff);
   text-decoration: none;
 }
 
-.settings-onedrive-hint a:hover {
+.settings-windows-note a:hover {
   text-decoration: underline;
+}
+
+.settings-windows-release-link {
+  margin-top: 8px;
 }
 
 .settings-install-main {
@@ -15431,7 +15496,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-sidebar {
     flex: 1 1 auto;
-    padding: max(68px, calc(env(safe-area-inset-top) + 52px)) 18px max(26px, env(safe-area-inset-bottom));
+    padding: max(68px, calc(var(--safe-top, 0px) + 52px)) 18px max(26px, var(--safe-bottom, 0px));
     gap: 22px;
   }
 
@@ -15442,7 +15507,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-close-btn {
     position: absolute;
-    top: max(16px, calc(env(safe-area-inset-top) + 10px));
+    top: max(16px, calc(var(--safe-top, 0px) + 10px));
     left: 16px;
     width: 52px;
     height: 52px;
@@ -15586,7 +15651,7 @@ body.chatflow-iframe-mode .message-content::selection {
 
   .settings-main {
     flex: 1;
-    padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 18px max(26px, env(safe-area-inset-bottom));
+    padding: max(18px, calc(var(--safe-top, 0px) + 12px)) 18px max(26px, var(--safe-bottom, 0px));
   }
 
   .settings-content.mobile-home .settings-sidebar {
@@ -16567,7 +16632,7 @@ body.chatflow-iframe-mode .message-content::selection {
   }
 
   .settings-sidebar {
-    padding: max(74px, calc(env(safe-area-inset-top) + 58px)) 32px max(28px, env(safe-area-inset-bottom));
+    padding: max(74px, calc(var(--safe-top, 0px) + 58px)) 32px max(28px, var(--safe-bottom, 0px));
     gap: 18px;
   }
 
@@ -16798,7 +16863,7 @@ body.chatflow-iframe-mode .message-content::selection {
   }
 
   .settings-main {
-    padding: max(20px, calc(env(safe-area-inset-top) + 14px)) 32px max(28px, env(safe-area-inset-bottom));
+    padding: max(20px, calc(var(--safe-top, 0px) + 14px)) 32px max(28px, var(--safe-bottom, 0px));
   }
 
   .settings-main-header {
@@ -18512,11 +18577,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   }
 
   .settings-sidebar {
-    padding-bottom: max(40px, calc(env(safe-area-inset-bottom) + 28px));
+    padding-bottom: max(40px, calc(var(--safe-bottom, 0px) + 28px));
   }
 
   .settings-main {
-    padding-bottom: max(40px, calc(env(safe-area-inset-bottom) + 28px));
+    padding-bottom: max(40px, calc(var(--safe-bottom, 0px) + 28px));
   }
 
   .settings-mobile-info-btn {
@@ -18597,6 +18662,12 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 @media (max-width: 860px) {
   .settings-modal.active,
   .settings-modal.closing {
+    /* iOS 主屏幕模式下 fixed 会被视口高度裁切，改为 app shell 内的绝对定位。 */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: auto;
     height: var(--app-height, 100dvh);
     min-height: 0;
     overflow: hidden;
@@ -18623,12 +18694,12 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 
   .settings-content.mobile-home .settings-sidebar {
     display: block;
-    padding-top: max(92px, calc(env(safe-area-inset-top) + 76px));
-    padding-bottom: max(128px, calc(env(safe-area-inset-bottom) + 120px));
+    padding-top: max(92px, calc(var(--safe-top, 0px) + 76px));
+    padding-bottom: max(32px, calc(var(--safe-bottom, 0px) + 24px));
   }
 
   .settings-content.mobile-detail .settings-main {
-    padding-bottom: max(96px, calc(env(safe-area-inset-bottom) + 88px));
+    padding-bottom: max(32px, calc(var(--safe-bottom, 0px) + 24px));
   }
 
   .settings-content.mobile-home .settings-nav,
@@ -18709,7 +18780,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     z-index: 5;
     min-height: 80px;
     margin: 0 -32px 20px;
-    padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 32px 0;
+    padding: max(18px, calc(var(--safe-top, 0px) + 12px)) 32px 0;
     background: var(--settings-mobile-app-bg);
     border-bottom: 1px solid var(--settings-divider);
   }
@@ -18730,20 +18801,20 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     position: sticky;
     top: 0;
     z-index: 8;
-    height: max(86px, calc(env(safe-area-inset-top) + 74px));
+    height: max(86px, calc(var(--safe-top, 0px) + 74px));
     margin: 0 -32px 18px;
-    padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 32px 0;
+    padding: max(18px, calc(var(--safe-top, 0px) + 12px)) 32px 0;
     background: var(--settings-mobile-app-bg);
     border-bottom: 1px solid var(--settings-divider);
     border-radius: 28px 28px 0 0;
   }
 
   .settings-content.mobile-home .settings-close-btn {
-    top: max(18px, calc(env(safe-area-inset-top) + 12px));
+    top: max(18px, calc(var(--safe-top, 0px) + 12px));
   }
 
   .settings-content.mobile-home .settings-mobile-info-btn {
-    top: max(19px, calc(env(safe-area-inset-top) + 13px));
+    top: max(19px, calc(var(--safe-top, 0px) + 13px));
   }
 }
 
@@ -18869,18 +18940,29 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   overflow: visible;
 }
 
+/* ===== 茶（MasterTea）桌宠：UWP DesktopPet 状态机移植（idle1-4/hello/chat/desktop）===== */
 .rai-tea-pet {
   display: none;
+  position: relative;
   width: 100%;
   height: 100%;
-  background-image: url('images/pets/tea-pet.webp');
-  background-repeat: no-repeat;
-  background-size: 700% 100%;
-  background-position: 0 0;
-  image-rendering: pixelated;
-  transform: scale(1);
-  transform-origin: center bottom;
   pointer-events: none;
+}
+
+.rai-tea-pet-layer {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: center bottom;
+  background-size: contain;
+  opacity: 0;
+  /* 无过渡：交叉溶解中间态会让透明背景图整体发白闪烁（白底网页上尤其明显）。
+     改为硬切——两帧 512×512 锚点一致，原地变脸，无中间态、无发白。 */
+  will-change: opacity;
+}
+
+.rai-tea-pet-layer[data-visible="1"] {
+  opacity: 1;
 }
 
 .rai-guide-mascot[data-pet-type="tea"].is-dwell .rai-mascot-svg {
@@ -18895,12 +18977,14 @@ body.home-screen-active .input-wrapper > .home-action-rail {
   display: block;
 }
 
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="walk"] .rai-tea-pet { background-position: 16.6667% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="wave"] .rai-tea-pet { background-position: 33.3333% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="camera"] .rai-tea-pet { background-position: 50% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="drink"] .rai-tea-pet { background-position: 66.6667% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="phone"] .rai-tea-pet { background-position: 83.3333% 0; }
-.rai-guide-mascot[data-pet-type="tea"][data-tea-pose="laptop"] .rai-tea-pet { background-position: 100% 0; }
+/* 降级：无 JS / reduced-motion 时至少显示第一帧 idle */
+.rai-tea-pet[data-tea-state] .rai-tea-pet-layer[data-tea-layer="0"] {
+  background-image: url('images/pets/MasterTea1.webp');
+}
+
+.rai-guide-mascot[data-pet-type="tea"][data-tea-state="hello"] .rai-tea-pet-layer[data-tea-layer="0"] {
+  background-image: url('images/pets/MasterTeaHello.webp');
+}
 
 .rai-pet-context-menu {
   position: fixed;
@@ -18988,8 +19072,7 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 }
 
 .settings-pet-preview-tea {
-  background: url('images/pets/tea-pet.webp') 0 0 / 700% 100% no-repeat;
-  image-rendering: pixelated;
+  background: url('images/pets/MasterTea1.webp') center bottom / contain no-repeat;
   transform: scale(1.28);
   transform-origin: center bottom;
 }

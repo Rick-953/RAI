@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
@@ -871,11 +871,16 @@ function normalizeTotpCodeInput(code) {
         .slice(0, 12);
 }
 
+// 标准 TOTP 校验窗口：前后各 1 个 30 秒窗口（±30s），与主流实现一致。
+// 失败时会用更大的诊断窗口区分“设备时钟漂移”与“秘钥不一致”。
+const TOTP_VALIDATION_WINDOW = 1;
+const TOTP_DIAGNOSTIC_WINDOW = 12;
+
 function findMatchingTotpCounter(secret, code, options = {}) {
     const normalizedCode = normalizeTotpCodeInput(code);
     if (!/^\d{6}$/.test(normalizedCode)) return null;
 
-    const windowSize = Number.isInteger(options.window) ? Math.max(0, options.window) : 1;
+    const windowSize = Number.isInteger(options.window) ? Math.max(0, options.window) : TOTP_VALIDATION_WINDOW;
     const period = Number.isInteger(options.period) ? Math.max(15, options.period) : 30;
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
     const currentCounter = Math.floor(nowMs / 1000 / period);
@@ -888,16 +893,25 @@ function findMatchingTotpCounter(secret, code, options = {}) {
             if (counter < 0) continue;
             const candidate = generateHotpCode(normalizedSecret, counter);
             if (safeCompareText(candidate, normalizedCode)) {
-                if (offset !== 0) {
+                if (offset !== 0 && options.silent !== true) {
                     console.warn(` TOTP 验证通过但存在时间漂移: offset=${offset}, period=${period}s`);
                 }
                 return counter;
             }
         }
     } catch (error) {
-        console.warn(' TOTP 校验失败:', sanitizeReportContext(error));
+        if (options.silent !== true) console.warn(' TOTP 校验失败:', sanitizeReportContext(error));
     }
     return null;
+}
+
+function logTotpWindowMiss(secret, code) {
+    const probe = findMatchingTotpCounter(secret, code, { window: TOTP_DIAGNOSTIC_WINDOW, silent: true });
+    if (probe !== null) {
+        console.warn(` TOTP 校验失败: 验证码命中窗口外偏移（允许 ±${TOTP_VALIDATION_WINDOW} 个周期），请检查用户设备时钟`);
+    } else {
+        console.warn(' TOTP 校验失败: 验证码在 ±6 分钟内无匹配，可能认证器秘钥不一致');
+    }
 }
 
 function verifyTotpCode(secret, code, options = {}) {
@@ -952,7 +966,10 @@ async function consumeUserTotpCode(user, code, options = {}) {
     const secret = decryptUserTotpSecret(user.two_factor_secret, userId);
     if (!secret) return false;
     const counter = findMatchingTotpCounter(secret, code, options);
-    if (counter === null) return false;
+    if (counter === null) {
+        logTotpWindowMiss(secret, code);
+        return false;
+    }
     const encryptedSecret = totpSecretCipher.isEncrypted(user.two_factor_secret)
         ? user.two_factor_secret
         : totpSecretCipher.encrypt(secret, { purpose: 'user', recordId: String(userId) });
@@ -3871,6 +3888,29 @@ const PROMPT_INJECTION_RULES = [
             '表达顺序：先简短共情，再给逻辑澄清，再给安抚建议（1-2条）。'
         ].join('\n'),
         notes: '情绪+逻辑澄清场景'
+    },
+    {
+        id: 'logic_rai_height_vs_people',
+        enabled: true,
+        // advisory: 只作为“小抄”参考；误命中或问题无关时允许模型忽略。
+        advisory: true,
+        priority: 95,
+        match: {
+            keywords: ['rai', '人民', '170', '165', '谁高', '更高', '身高', '厘米', 'cm'],
+            minMatchCount: 3,
+            scope: 'current_message',
+            caseInsensitive: true
+        },
+        mustIncludeAny: [],
+        mustIncludeAll: ['rai', '人民'],
+        excludeIfAny: [],
+        instruction: [
+            '这是一道“RAI 与人民谁更高”的玩笑式问题，仅当用户确实在比较 RAI 与人民的身高时才参考：',
+            '参考结论：RAI 比人民高 5 厘米；但人民至上，多出的 5 厘米应当用来俯下身子，为人民服务。',
+            '参考表述（可自然改写，不要逐字照搬）：RAI高5厘米，但人民至上。多出的5厘米，应当用来俯下身子，为人民服务。',
+            '先理解用户真实问题：如果问题与 RAI/人民的身高比较无关（只是碰巧出现 170、165、人民等词），忽略本参考，按用户的问题正常回答，不要生硬套用。'
+        ].join('\n'),
+        notes: 'RAI 与人民身高比较：幽默 + 人民至上价值观，带误命中保护'
     }
 ];
 
@@ -3925,6 +3965,20 @@ function matchRule(rule, userMessage) {
         }
     }
 
+    if (Array.isArray(rule.mustIncludeAll) && rule.mustIncludeAll.length > 0) {
+        const allPass = rule.mustIncludeAll.every((kw) => {
+            const token = normalizeForRuleMatch(kw, caseInsensitive);
+            return token ? sourceText.includes(token) : false;
+        });
+        if (!allPass) {
+            return {
+                matched: false,
+                matchedKeywords,
+                score: keywords.length > 0 ? matchedKeywords.length / keywords.length : 0
+            };
+        }
+    }
+
     if (Array.isArray(rule.excludeIfAny) && rule.excludeIfAny.length > 0) {
         const blocked = rule.excludeIfAny.some((kw) => {
             const token = normalizeForRuleMatch(kw, caseInsensitive);
@@ -3971,6 +4025,7 @@ function resolvePromptInjection(userMessage) {
     const selected = candidates[0];
     return {
         ruleId: selected.rule.id,
+        advisory: selected.rule.advisory === true,
         instruction: String(selected.rule.instruction || '').trim(),
         matchedKeywords: selected.matchedKeywords
     };
@@ -3981,9 +4036,18 @@ function buildRuleInjectionInstruction(resolvedRule) {
     const matched = Array.isArray(resolvedRule.matchedKeywords)
         ? resolvedRule.matchedKeywords.join('、')
         : '';
+    const header = resolvedRule.advisory
+        ? [
+            '[参考提示-非强制]',
+            '以下内容是本次回答的参考小抄，不是固定台词，也不能替代独立思考：',
+            '先判断用户的实际问题是否真的需要它；若只是碰巧命中关键词或问题无关，请忽略本参考，按用户真实问题正常回答。'
+        ]
+        : [
+            '[规则注入-高优先级]',
+            '你必须严格遵守以下逻辑约束（优先级高于一般风格要求）：'
+        ];
     return [
-        '[规则注入-高优先级]',
-        '你必须严格遵守以下逻辑约束（优先级高于一般风格要求）：',
+        ...header,
         `规则ID: ${resolvedRule.ruleId || 'unknown'}`,
         matched ? `命中关键词: ${matched}` : '',
         String(resolvedRule.instruction || '').trim()
@@ -8238,6 +8302,8 @@ function resolveImageMimeType(attachment = {}, filename = '') {
     if (ext === '.webp') return 'image/webp';
     if (ext === '.bmp') return 'image/bmp';
     if (ext === '.svg') return 'image/svg+xml';
+    if (ext === '.heic') return 'image/heic';
+    if (ext === '.heif') return 'image/heif';
     return 'image/png';
 }
 
@@ -9942,6 +10008,22 @@ db.serialize(() => {
                 console.warn(` 添加session_kind列失败(可能已存在):`, sanitizeReportContext(err));
             } else if (!err) {
                 console.log(' 已添加session_kind列到sessions表');
+            }
+        });
+
+        db.run(`ALTER TABLE sessions ADD COLUMN local_computer_used INTEGER NOT NULL DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加local_computer_used列失败(可能已存在):`, sanitizeReportContext(err));
+            } else if (!err) {
+                console.log(' 已添加local_computer_used列到sessions表');
+            }
+        });
+
+        db.run(`ALTER TABLE sessions ADD COLUMN working_directory TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.warn(` 添加working_directory列失败(可能已存在):`, sanitizeReportContext(err));
+            } else if (!err) {
+                console.log(' 已添加working_directory列到sessions表');
             }
         });
 
@@ -16083,6 +16165,7 @@ app.get('/api/sessions', authenticateToken, async (req, res) => {
         await Promise.all([ensureConversationOrganizationSchema(), ensureChatFlowSchemaColumns()]);
         const pinned = await dbAllAsync(
             `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 1 AS pinned, p.position AS pin_position,
+                    COALESCE(s.local_computer_used, 0) AS local_computer_used, s.working_directory,
                     CASE WHEN f.id IS NULL THEN 0 ELSE 1 END AS has_canvas,
                     f.id AS flow_id, COALESCE(f.canvas_revision, 0) AS canvas_revision,
                     f.updated_at AS canvas_updated_at
@@ -16093,6 +16176,7 @@ app.get('/api/sessions', authenticateToken, async (req, res) => {
         );
         const sessions = await dbAllAsync(
             `SELECT s.id, s.title, s.model, s.prompt_model_identity, s.prompt_language, s.session_kind, s.updated_at, s.created_at, COALESCE(s.messages_revision, 0) AS messages_revision, 0 AS pinned, NULL AS pin_position,
+                    COALESCE(s.local_computer_used, 0) AS local_computer_used, s.working_directory,
                     CASE WHEN f.id IS NULL THEN 0 ELSE 1 END AS has_canvas,
                     f.id AS flow_id, COALESCE(f.canvas_revision, 0) AS canvas_revision,
                     f.updated_at AS canvas_updated_at
@@ -16207,6 +16291,43 @@ app.put('/api/sessions/:id', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(' 更新会话失败:', sanitizeReportContext(error));
         return res.status(500).json({ error: '更新失败' });
+    }
+});
+
+// 会话「本地电脑」上下文：使用过本地电脑的标识与最近工作目录需要跨设备保留，
+// 客户端（UWP 本地电脑）在绑定/恢复工作目录时同步，Web 侧边栏据此常驻显示电脑图标。
+app.put('/api/sessions/:id/local-context', authenticateToken, async (req, res) => {
+    try {
+        const hasUsedFlag = req.body?.local_computer_used !== undefined;
+        const hasWorkingDirectory = req.body?.working_directory !== undefined;
+        if (!hasUsedFlag && !hasWorkingDirectory) {
+            return res.status(400).json({ error: '缺少本地电脑上下文参数' });
+        }
+        const usedFlag = hasUsedFlag ? (req.body.local_computer_used ? 1 : 0) : null;
+        const workingDirectory = hasWorkingDirectory
+            ? (String(req.body.working_directory || '').trim().slice(0, 1024) || null)
+            : null;
+        // local_computer_used 只增不减：对话只要用过本地电脑，标识就永久保留（除非删除对话）。
+        const updated = await dbRunAsync(
+            `UPDATE sessions
+             SET local_computer_used = CASE WHEN ? IS NULL THEN COALESCE(local_computer_used, 0) ELSE MAX(COALESCE(local_computer_used, 0), ?) END,
+                 working_directory = COALESCE(?, working_directory)
+             WHERE id = ? AND user_id = ?`,
+            [usedFlag, usedFlag, workingDirectory, req.params.id, req.user.userId]
+        );
+        if (Number(updated?.changes || 0) !== 1) return res.status(404).json({ error: '对话不存在' });
+        const session = await dbGetAsync(
+            'SELECT COALESCE(local_computer_used, 0) AS local_computer_used, working_directory FROM sessions WHERE id = ? AND user_id = ?',
+            [req.params.id, req.user.userId]
+        );
+        return res.json({
+            success: true,
+            local_computer_used: Number(session?.local_computer_used || 0),
+            working_directory: session?.working_directory || null
+        });
+    } catch (error) {
+        console.error(' 更新本地电脑上下文失败:', sanitizeReportContext(error));
+        return res.status(500).json({ error: '更新本地电脑上下文失败' });
     }
 });
 
@@ -22363,7 +22484,7 @@ if (clientFileExecution && systemPrompt) {
         // One bounded deadline covers the primary request, ordered fallback, and tool continuations.
         // 本地文件执行模式：任务链长（搜索+多次工具+续传），预算放宽到 300s
         chatRequestBudget = clientFileExecution
-            ? createChatRequestBudget({ env: { ...process.env, RAI_CHAT_TOTAL_TIMEOUT_MS: '300000' } })
+            ? createChatRequestBudget({ env: { ...process.env, RAI_CHAT_TOTAL_TIMEOUT_MS: '600000', RAI_CHAT_ATTEMPT_TIMEOUT_MS: '150000' } })
             : createChatRequestBudget();
         const controller = createChatAbortController();
         chatRequestDeadlineTimer = setTimeout(() => {
@@ -23789,6 +23910,17 @@ if (clientFileExecution && systemPrompt) {
                 }
             }
 
+            // 上游在正文/工具调用完整输出后未发终止信号的情况：已拿到可用载荷就按完成处理，
+            // 只对「什么都没收到」的流重试/回退，避免正常回答被误判为中断而整条失败。
+            const primaryHasUsableToolCall = accumulatedToolCalls.some((call) =>
+                call && String(call.function?.name || '').trim() && String(call.function?.arguments || '').trim());
+            const primaryHasUsablePayload = primaryHasUsableToolCall
+                || Boolean(String(fullContent || '').trim())
+                || Boolean(String(reasoningContent || '').trim());
+            if (!providerDoneSignalReceived && primaryHasUsablePayload) {
+                console.warn(` 上游未发送终止信号但已收到可用内容，按完成处理: requestId=${requestId}`);
+                providerDoneSignalReceived = true;
+            }
             if (!providerDoneSignalReceived) {
                 const incompleteStreamError = new Error('provider_stream_missing_terminal_signal');
                 incompleteStreamError.code = 'provider_stream_missing_terminal_signal';
@@ -24918,10 +25050,10 @@ if (clientFileExecution && systemPrompt) {
                             console.warn(` 工具续传跳过: request_deadline_exhausted=true, round=${toolRound}`);
                             break;
                         }
-                        const continueController = createChatAbortController();
-                        const continueTimeoutId = setTimeout(() => continueController.abort(), continueTimeoutMs);
+                        let continueController = createChatAbortController();
+                        let continueTimeoutId = setTimeout(() => continueController.abort(), continueTimeoutMs);
 
-for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
+for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                             // 每轮重置续传解析状态（fullContent 增量提取机制保证重试不重复输出）
                             continueAccumulatedToolCalls.length = 0;
                             continueRawToolContent = '';
@@ -24940,8 +25072,8 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                             if (!continueResponse.ok) {
                                 const continueErr = await readBoundedResponseText(continueResponse);
                                 console.error(` 续传请求失败: status=${continueResponse.status}, bodyLength=${continueErr.length}`);
-                                if (continueAttempt >= 2) break;
-                                console.warn(` 续传请求失败，重试(${continueAttempt}/2)`);
+                                if (continueAttempt >= 3) break;
+                                console.warn(` 续传请求失败，重试(${continueAttempt}/3)`);
                                 continue;
                             }
 
@@ -24956,6 +25088,11 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                                     continueBuffer = continueFlushed ? (continueFlushed + '\n') : '';
                                 } else {
                                     continueBuffer += continueDecoder.decode(continueValue, { stream: true });
+                                }
+                                // 活动性超时：上游持续有数据就不算卡死。否则长工具调用（大 JSON 参数）
+                                // 在一轮 25s 内输出不完，会被尝试超时误杀成「工具调用中断」。
+                                if (!continueDone && continueTimeoutId && typeof continueTimeoutId.refresh === 'function') {
+                                    continueTimeoutId.refresh();
                                 }
 
                             const continueLines = continueBuffer.split(/\r?\n/);
@@ -25121,6 +25258,14 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                                     break;
                                 }
                             }
+                            // 有些聚合上游在工具调用/正文完整输出后直接关闭连接，不发 [DONE]/finish_reason。
+                            // 只要已经拿到可用载荷就不再当失败重试，避免把成功的一轮工具调用判死。
+                            const continueHasUsableToolCall = continueAccumulatedToolCalls.some((call) =>
+                                call && String(call.function?.name || '').trim() && String(call.function?.arguments || '').trim());
+                            if (!continueProviderDoneSignalReceived
+                                && (continueHasUsableToolCall || String(continueRawToolContent || '').trim())) {
+                                continueProviderDoneSignalReceived = true;
+                            }
                             if (!continueProviderDoneSignalReceived) {
                                 const incompleteContinueStreamError = new Error('provider_stream_missing_terminal_signal');
                                 incompleteContinueStreamError.code = 'provider_stream_missing_terminal_signal';
@@ -25128,14 +25273,14 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                             }
                         } catch (continueRetryErr) {
                             clearTimeout(continueTimeoutId);
-                            if (continueAttempt >= 2) throw continueRetryErr;
+                            if (continueAttempt >= 3) throw continueRetryErr;
                             const retryBudgetMs = chatRequestBudget ? chatRequestBudget.nextAttemptTimeoutMs() : 0;
                             if (retryBudgetMs <= 0) {
                                 console.warn(' 续传预算已耗尽，放弃重试');
                                 throw continueRetryErr;
                             }
                             const retryable = String(continueRetryErr?.code || continueRetryErr?.name || '');
-                            console.warn(` 续传中断，重试(${continueAttempt}/2): code=${retryable || 'unknown'}`);
+                            console.warn(` 续传中断，重试(${continueAttempt}/3): code=${retryable || 'unknown'}`);
                             continueController = createChatAbortController(); // 重建（旧 controller 可能已被 abort）
                             continueTimeoutId = setTimeout(() => continueController.abort(), retryBudgetMs);
                             continue;
@@ -25277,6 +25422,32 @@ for (let continueAttempt = 1; continueAttempt <= 2; continueAttempt += 1) {
                 sendFinalApiFailure('model_api_connect_timeout', fetchError.message, {
                     causeCode: fetchError.cause?.code
                 });
+            } else if ((String(fullContent || '').trim() || String(reasoningContent || '').trim())
+                && !['invalid_tool_call', 'chat_request_cancelled'].includes(String(fetchError.code || ''))) {
+                // 通用传输/上游异常（含续传重试耗尽的错误）但已经生成过内容：保留已生成内容落库，
+                // 与超时中断同策略，避免整段工作因一次连接失败被丢弃。
+                streamDegraded = true;
+                const hasVisibleContent = Boolean(String(fullContent || '').trim());
+                console.warn(` 请求异常但已有${hasVisibleContent ? '正文' : '思考'}内容，保留已生成内容并完成落库: name=${fetchError.name || 'unknown'}, code=${fetchError.code || fetchError.cause?.code || 'unknown'}`);
+                appendRaiRuntimeReport({
+                    level: '警告',
+                    tag: 'model_api_partial_stream_saved',
+                    message: 'request failed after useful output; partial response was saved',
+                    context: {
+                        sessionId,
+                        requestId,
+                        errorName: fetchError.name,
+                        contentLength: String(fullContent || '').length,
+                        reasoningLength: String(reasoningContent || '').length
+                    }
+                });
+                res.write(`data: ${JSON.stringify({
+                    type: 'stream_warning',
+                    code: 'partial_stream_saved',
+                    message: hasVisibleContent
+                        ? '上游连接中断，已保存已生成的回答。'
+                        : '上游连接中断，已保存思考记录；请重新生成以获得完整回答。'
+                })}\n\n`);
             } else {
                 console.error(' Fetch错误:', sanitizeReportContext(fetchError));
                 sendFinalApiFailure('model_api_fetch_error', fetchError.message, {

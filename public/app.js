@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.16';
-const RAI_BUILD_ID = '20260819-artifact-download-agent-v01316-r1';
+const RAI_BUILD_ID = '20260924-main-beta-integration-v01316-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2640,6 +2640,7 @@ let windowsDownloadsLoadPromise = null;
 let windowsDownloadsLoadedAt = 0;
 let windowsDownloadsRelease = null;
 const WINDOWS_DOWNLOADS_CLIENT_TTL_MS = 10 * 60 * 1000;
+const WINDOWS_ALL_RELEASES_URL = 'https://github.com/Master-Tea/CX-RAI/releases/latest';
 const RAI_PWA_INSTALLED_HINT_KEY = 'rai_pwa_installed_hint';
 const RAI_INVITE_REF_KEY = 'rai_invite_referrer_id';
 const PWA_INSTALL_REWARD_POINTS = 10;
@@ -2693,8 +2694,7 @@ const raiMascotState = {
       return;
     }
     if (this.mode === 'dwell' && appState.guide.petType === 'tea') {
-      const poses = ['wave', 'camera', 'drink', 'phone', 'laptop'];
-      setTeaPetPose(poses[Math.floor(Math.random() * poses.length)], 1800);
+      TeaPetRuntime.onTap();
       return;
     }
     const expressions = guideRuntime.reducedMotion
@@ -2962,18 +2962,289 @@ function persistPetManualPosition() {
 }
 
 function setTeaPetPose(pose = 'idle', resetAfter = 0) {
-  const mascot = getGuideMascotElement();
-  if (!mascot) return;
-  if (guideRuntime.teaPoseTimer) window.clearTimeout(guideRuntime.teaPoseTimer);
-  guideRuntime.teaPoseTimer = null;
-  mascot.dataset.teaPose = pose;
-  if (resetAfter > 0 && !guideRuntime.reducedMotion) {
-    guideRuntime.teaPoseTimer = window.setTimeout(() => {
-      mascot.dataset.teaPose = 'idle';
-      guideRuntime.teaPoseTimer = null;
-    }, resetAfter);
-  }
+  TeaPetRuntime.setLegacyPose(pose, resetAfter);
 }
+
+// ==================== 茶（MasterTea）桌宠运行时 ====================
+// UWP CXRAIHelper/DesktopPet.cs 状态机移植：idle(1-4 随机 + 双帧交叉溶解) / hello / chat / desktop
+// 闲话调度移植 UWP PetChatterService：本地语录(3-6min 洗牌袋) + AI(GET /api/pet/chitchat, 15-31min)
+const TeaPetRuntime = {
+  IDLE_FILES: ['MasterTea1', 'MasterTea2', 'MasterTea3', 'MasterTea4'],
+  STATE_FILES: { hello: 'MasterTeaHello', chat: 'MasterTeaChat', desktop: 'MasterTeaDesktop' },
+  FRAME_PERIOD_MS: 500,       // 交叉溶解：hold 300ms + transition 200ms（同 UWP）
+  HELLO_MS: 8000,             // hello 停留（同 UWP 8s）
+  CHAT_MS: 10000,             // 气泡停留期间的 chat 状态
+  BUBBLE_MS: 9000,            // 气泡显示时长
+  IDLE_MIN_MS: 30000,         // 空闲换装最小间隔（UWP 30s-600s，网页版缩到 30-180s）
+  IDLE_MAX_MS: 180000,
+  TICK_MS: 20000,             // 闲话调度 tick（同 UWP 20s）
+  LOCAL_MIN_MS: 3 * 60 * 1000,
+  LOCAL_MAX_MS: 6 * 60 * 1000,
+  AI_MIN_MS: 15 * 60 * 1000,
+  AI_MAX_MS: 31 * 60 * 1000,
+  AI_TIMEOUT_MS: 18000,
+
+  state: 'idle',
+  idleKey: 'MasterTea1',
+  frame: 0,
+  activeLayer: 0,
+  animTimer: null,
+  idleTimer: null,
+  stateTimer: null,
+  bubbleTimer: null,
+  tickTimer: null,
+  nextLocalAt: 0,
+  nextAiAt: 0,
+  quotes: [],
+  quoteIndex: 0,
+  running: false,
+  startedOnce: false,
+
+  get mascot() { return document.getElementById('raiGuideMascot'); },
+
+  layerEl(i) {
+    const mascot = this.mascot;
+    return mascot ? mascot.querySelector(`.rai-tea-pet-layer[data-tea-layer="${i}"]`) : null;
+  },
+
+  fileForState() {
+    return this.state === 'idle' ? this.idleKey : (this.STATE_FILES[this.state] || this.idleKey);
+  },
+
+  initQuotes() {
+    if (this.quotes.length) return;
+    const all = (window.RAI_PET_LOCAL_QUOTES || []).slice();
+    for (let i = all.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [all[i], all[j]] = [all[j], all[i]];
+    }
+    this.quotes = all;
+    this.quoteIndex = 0;
+  },
+
+  start() {
+    if (this.running) return;
+    this.initQuotes();
+    this.running = true;
+    const now = Date.now();
+    if (!this.startedOnce) {
+      this.startedOnce = true;
+      this.nextLocalAt = now + randBetween(this.LOCAL_MIN_MS, this.LOCAL_MAX_MS);
+      this.nextAiAt = now + randBetween(this.AI_MIN_MS, this.AI_MAX_MS);
+    }
+    this.setIdle();
+    this.startAnim();
+    this.startTick();
+    // 问候：进入常驻时 AI 冒一句（服务端 15min 节流，节流/失败静默）
+    this.fetchAi();
+  },
+
+  stop() {
+    this.running = false;
+    clearTimeout(this.idleTimer); this.idleTimer = null;
+    clearTimeout(this.stateTimer); this.stateTimer = null;
+    clearTimeout(this.bubbleTimer); this.bubbleTimer = null;
+    clearInterval(this.animTimer); this.animTimer = null;
+    clearInterval(this.tickTimer); this.tickTimer = null;
+    setMascotSpeech('', '');
+  },
+
+  setIdle() {
+    if (!this.running) return;
+    this.state = 'idle';
+    this.idleKey = this.IDLE_FILES[Math.floor(Math.random() * this.IDLE_FILES.length)];
+    this.snapFrame();
+    const mascot = this.mascot;
+    if (mascot) mascot.dataset.teaState = 'idle';
+    this.scheduleIdleSwitch();
+  },
+
+  setState(state, autoReturnMs = 0) {
+    if (!this.running) return;
+    if (state === 'idle') { this.setIdle(); return; }
+    this.state = state;
+    if (this.stateTimer) clearTimeout(this.stateTimer);
+    this.stateTimer = null;
+    if (autoReturnMs > 0) {
+      this.stateTimer = setTimeout(() => { this.stateTimer = null; if (this.running) this.setIdle(); }, autoReturnMs);
+    }
+    this.snapFrame();
+    const mascot = this.mascot;
+    if (mascot) mascot.dataset.teaState = state;
+  },
+
+  scheduleIdleSwitch() {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.running && this.state === 'idle') this.setIdle();
+    }, randBetween(this.IDLE_MIN_MS, this.IDLE_MAX_MS));
+  },
+
+  // 状态切换时直接落定第 0 帧（不做无关帧的交叉溶解）；同时预载 -1 变体到隐藏层
+  snapFrame() {
+    this.frame = 0;
+    if (this._preloadTimer) { clearTimeout(this._preloadTimer); this._preloadTimer = null; }
+    const base = this.fileForState();
+    const a = this.layerEl(0);
+    const b = this.layerEl(1);
+    if (a) { a.style.backgroundImage = `url('images/pets/${base}.webp')`; a.dataset.visible = '1'; }
+    if (b) { b.style.backgroundImage = `url('images/pets/${base}-1.webp')`; b.dataset.visible = '0'; }
+    this.activeLayer = 0;
+  },
+
+  startAnim() {
+    if (this.animTimer || guideRuntime.reducedMotion) return;
+    this.animTimer = setInterval(() => this.onAnimTick(), this.FRAME_PERIOD_MS);
+  },
+
+  onAnimTick() {
+    if (!this.running) return;
+    // 对话生成中 → desktop 坐姿（UWP「工作目录模式」的网页版映射）；结束后回 idle
+    // 状态刚切换的 tick 只落定新状态底帧（snapFrame），下一 tick 再开始交叉溶解
+    if (this.state === 'idle' && this.isStreaming()) {
+      this.setState('desktop');
+      return;
+    } else if (this.state === 'desktop' && !this.isStreaming()) {
+      this.setState('idle');
+      return;
+    }
+    // 双帧 500ms 硬切交替（无交叉溶解，避免透明背景图中间态发白闪烁）
+    // 平滑关键：图片只在层隐藏时替换（提前一个周期预载好），tick 只切 opacity ——
+    // 两帧都是已解码、同 512×512 画布、锚点一致的图片 → 原地变脸，无位移无发白
+    const base = this.fileForState();
+    const nextFrame = this.frame === 0 ? 1 : 0;
+    const incoming = this.layerEl(this.activeLayer ^ 1);
+    const outgoing = this.layerEl(this.activeLayer);
+    if (incoming && outgoing) {
+      incoming.dataset.visible = '1';   // 立即显示（无过渡）
+      this.activeLayer ^= 1;
+      outgoing.dataset.visible = '0';   // 立即隐藏
+      // 预载下一轮帧到刚隐藏的层：无过渡，换图时机不再受淡出约束；
+      // 用极小延迟让浏览器先完成隐藏层重绘，避免同 tick 换图触发合成闪烁。
+      const afterFrame = nextFrame === 1 ? 0 : 1;
+      const afterKey = afterFrame === 1 ? `${base}-1` : base;
+      const outEl = outgoing;
+      if (this._preloadTimer) clearTimeout(this._preloadTimer);
+      this._preloadTimer = setTimeout(() => {
+        outEl.style.backgroundImage = `url('images/pets/${afterKey}.webp')`;
+        this._preloadTimer = null;
+      }, 30);
+    }
+    this.frame = nextFrame;
+  },
+
+  startTick() {
+    if (this.tickTimer) return;
+    this.tickTimer = setInterval(() => this.onTick(), this.TICK_MS);
+  },
+
+  onTick() {
+    if (!this.running || this.isUserBusy()) return;
+    const now = Date.now();
+    if (now >= this.nextLocalAt) {
+      this.nextLocalAt = now + randBetween(this.LOCAL_MIN_MS, this.LOCAL_MAX_MS);
+      this.speakLocal();
+    }
+    if (now >= this.nextAiAt) {
+      this.nextAiAt = now + randBetween(this.AI_MIN_MS, this.AI_MAX_MS);
+      this.fetchAi();
+    }
+  },
+
+  isStreaming() {
+    const stopBtn = document.getElementById('stopBtn');
+    return !!(stopBtn && stopBtn.style.display !== 'none');
+  },
+
+  isUserTyping() {
+    const active = document.activeElement;
+    return !!(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable));
+  },
+
+  isUserBusy() {
+    return this.isStreaming() || this.isUserTyping();
+  },
+
+  shuffleQuotes() {
+    for (let i = this.quotes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this.quotes[i], this.quotes[j]] = [this.quotes[j], this.quotes[i]];
+    }
+    this.quoteIndex = 0;
+  },
+
+  speakLocal() {
+    if (!this.quotes.length) return;
+    if (this.quoteIndex >= this.quotes.length) this.shuffleQuotes();
+    this.speak(this.quotes[this.quoteIndex]);
+    this.quoteIndex++;
+  },
+
+  speak(text) {
+    if (!text || !this.running) return;
+    this.setState('chat', this.CHAT_MS);
+    setMascotSpeech('茶', text);
+    syncMascotSpeechSide();
+    if (this.bubbleTimer) clearTimeout(this.bubbleTimer);
+    this.bubbleTimer = setTimeout(() => {
+      this.bubbleTimer = null;
+      if (this.running) setMascotSpeech('', '');
+    }, this.BUBBLE_MS);
+  },
+
+  async fetchAi() {
+    if (!this.running || !appState.token) return;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.AI_TIMEOUT_MS);
+      const resp = await fetch(`${API_BASE}/pet/chitchat`, {
+        headers: { 'Authorization': `Bearer ${appState.token}` },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data && data.text) this.speak(data.text);
+    } catch (e) {
+      // 静默：节流/断网/超时都不打扰用户
+    }
+  },
+
+  // 旧调用点兼容（拖拽 walk/end idle 等）
+  setLegacyPose(pose = 'idle', resetAfter = 0) {
+    if (!this.running) return;
+    if (pose === 'walk') {
+      // 拖拽中 pointermove 每帧都会调 walk：已处于 idle 则保持当前图（不随机换装、
+      // 不 snapFrame 重置），否则拖动时图片会快速乱闪。首次从非 idle 进入时回 idle 一次。
+      if (this.state !== 'idle') this.setIdle();
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(this.STATE_FILES, pose)) {
+      this.setState(pose, resetAfter || undefined);
+      return;
+    }
+    this.setState('hello', resetAfter || this.HELLO_MS);
+  },
+
+  onTap() {
+    if (!this.running) return;
+    // 点击快捷动作（映射 UWP DesktopPet 点击动作 "main"：把主对话带到面前）
+    // 网页版：聚焦对话输入框可直接开聊，茶宠同时回一句本地语录作反馈
+    const input = document.getElementById('messageInput');
+    if (input && typeof input.focus === 'function') {
+      input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      input.focus();
+    }
+    this.speakLocal();
+  }
+};
+
+function randBetween(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+window.TeaPetRuntime = TeaPetRuntime;
 
 function syncPetAppearance() {
   const mascot = getGuideMascotElement();
@@ -3296,6 +3567,7 @@ function moveMascotToElement(target, { placement = 'above', bounce = true, speec
 }
 
 function hideMascot() {
+  TeaPetRuntime.stop();
   const mascot = getGuideMascotElement();
   if (!mascot) return;
   mascot.hidden = true;
@@ -3334,6 +3606,11 @@ function syncGuideMascotVisibility() {
     mascot.classList.remove('is-auth', 'is-guide');
     mascot.classList.add('is-dwell');
     raiMascotState.mode = 'dwell';
+    if (appState.guide.petType === 'tea') {
+      TeaPetRuntime.start();
+    } else {
+      TeaPetRuntime.stop();
+    }
   } else {
     hideMascot();
     return;
@@ -4498,32 +4775,45 @@ function isTrustedWindowsReleaseAsset(asset, allowedSuffixes) {
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const status = document.getElementById('windowsDownloadStatus');
   const packageLink = document.getElementById('windowsPackageDownload');
-  const certificateLink = document.getElementById('windowsCertificateDownload');
-  if (!status || !packageLink || !certificateLink) return false;
+  const setupLink = document.getElementById('windowsSetupDownload');
+  if (!status || !packageLink) return false;
 
   const packageValid = isTrustedWindowsReleaseAsset(release?.package, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  const certificateValid = isTrustedWindowsReleaseAsset(release?.certificate, ['.cer']);
-  if (!packageValid || !certificateValid) return false;
+  if (!packageValid) return false;
 
   packageLink.href = release.package.url;
   packageLink.title = release.package.name;
-  certificateLink.href = release.certificate.url;
-  certificateLink.title = release.certificate.name;
-  // Lumia 设备下载（Arm 包；依赖请用户到 GitHub 下载页自取）
-  const lumiaSection = document.getElementById('windowsLumiaSection');
-  if (lumiaSection && release?.lumia?.package) {
-    const lumiaPackage = document.getElementById('windowsLumiaPackage');
-    if (lumiaPackage) {
-      lumiaPackage.href = release.lumia.package.url;
-      lumiaPackage.title = release.lumia.package.name;
-      lumiaPackage.textContent = 'Arm 包';
+
+  // 一键安装程序（Setup.exe，内置证书与依赖）。上游未提供时回退到发布页。
+  const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
+  if (setupLink) {
+    if (setupValid) {
+      setupLink.href = release.setup.url;
+      setupLink.title = release.setup.name;
+    } else {
+      setupLink.href = WINDOWS_ALL_RELEASES_URL;
+      setupLink.removeAttribute('title');
     }
-    lumiaSection.style.display = '';
   }
+
+  // ARM 包（侧载用；依赖请到 GitHub 下载页自取）
+  const armSection = document.getElementById('windowsLumiaSection');
+  if (armSection && release?.arm?.package) {
+    const armPackage = document.getElementById('windowsLumiaPackage');
+    if (armPackage) {
+      armPackage.href = release.arm.package.url;
+      armPackage.title = release.arm.package.name;
+      armPackage.textContent = isChineseLanguage(appState.language) ? 'Arm 包' : 'ARM package';
+    }
+    armSection.style.display = '';
+  } else if (armSection) {
+    armSection.style.display = 'none';
+  }
+
   const tag = String(release.tag || '').trim();
   const isFallback = release.source === 'fallback';
   status.textContent = isChineseLanguage(appState.language)
-    ? (isFallback ? `GitHub 暂不可用，当前显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
+    ? (isFallback ? `GitHub 暂不可用，显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
     : (isFallback ? `GitHub unavailable; showing fallback ${tag}` : `Latest GitHub release ${tag}`);
   return true;
 }
@@ -5479,6 +5769,7 @@ const i18n = {
     'settings-nav-desktop': '桌面端',
     'settings-nav-notifications': '通知',
     'settings-nav-about': '关于',
+    'settings-nav-app': '下载应用客户端',
     'settings-mobile-section-rai': '我的 RAI',
     'settings-mobile-section-account': '账户',
     'settings-mobile-section-system': '系统',
@@ -5572,6 +5863,13 @@ const i18n = {
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': '作者 Rick',
+    'settings-app-title': '下载应用客户端',
+    'settings-app-desc': '把 RAI 装到你的电脑或手机上，获得更完整的体验。',
+    'settings-pwa-title': '网页版应用',
+    'settings-windows-setup': '下载安装程序',
+    'settings-windows-package': '下载安装包',
+    'settings-windows-auto-note': '运行安装程序即可一键装完，证书与依赖会自动处理。',
+    'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
     'settings-update-timeline-source': '来源：本机历史版本目录、版本记录、历史 release manifest、GitHub README。',
@@ -5581,7 +5879,6 @@ const i18n = {
     'settings-macos-title': 'macOS',
     'settings-windows-title': 'Windows 10 / 11（Phone）',
     'settings-platform-download': '下载',
-    'settings-windows-certificate': '安装证书',
     'settings-install-tutorial': '使用教程',
     'settings-install-ready': '当前浏览器可直接安装。',
     'settings-install-installed': 'RAI 已在应用模式中打开。',
@@ -6122,6 +6419,7 @@ const i18n = {
     'settings-nav-desktop': 'Desktop',
     'settings-nav-notifications': 'Notifications',
     'settings-nav-about': 'About',
+    'settings-nav-app': 'Download Apps',
     'settings-mobile-section-rai': 'My RAI',
     'settings-mobile-section-account': 'Account',
     'settings-mobile-section-system': 'System',
@@ -6215,6 +6513,13 @@ const i18n = {
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': 'Author Rick',
+    'settings-app-title': 'Download Apps',
+    'settings-app-desc': 'Install RAI on your computer or phone for the full experience.',
+    'settings-pwa-title': 'Web App',
+    'settings-windows-setup': 'Download installer',
+    'settings-windows-package': 'Download package',
+    'settings-windows-auto-note': 'Run the installer for a one-step install; the certificate and dependencies are handled automatically.',
+    'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
     'settings-update-timeline-source': 'Sources: local historical version folders, version records, historical release manifest, and GitHub README.',
@@ -6224,7 +6529,6 @@ const i18n = {
     'settings-macos-title': 'macOS',
     'settings-windows-title': 'Windows 10 / 11 (Phone)',
     'settings-platform-download': 'Download',
-    'settings-windows-certificate': 'Install certificate',
     'settings-install-tutorial': 'Instructions',
     'settings-install-ready': 'This browser can install RAI directly.',
     'settings-install-installed': 'RAI is already open in app mode.',
@@ -6699,7 +7003,6 @@ Object.assign(i18n['zh-TW'], {
   'settings-macos-title': 'macOS',
   'settings-windows-title': 'Windows 10 / 11（Phone）',
   'settings-platform-download': '下載',
-  'settings-windows-certificate': '安裝憑證',
   'settings-install-tutorial': '使用教學',
   'security-device-browser': '瀏覽器',
   'security-device-system': '系統',
@@ -13155,7 +13458,8 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   advanced: 'settings-nav-advanced',
   desktop: 'settings-nav-desktop',
   notifications: 'settings-nav-notifications',
-  about: 'settings-nav-about'
+  about: 'settings-nav-about',
+  app: 'settings-nav-app'
 };
 
 function normalizeSettingsSection(section) {
@@ -20556,7 +20860,16 @@ function createSessionElement(session, { inFolder = false, pinned = false } = {}
   const canvasMarker = sessionHasCanvas(session)
     ? `<span class="session-canvas-marker" title="${escapeHtml(canvasMarkerLabel)}" aria-label="${escapeHtml(canvasMarkerLabel)}">${getSvgIcon('dashboard_customize', 'material-symbols-outlined', 15)}</span>`
     : '';
-  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
+  // 使用过本地电脑的对话：标识由服务端会话字段持久化，重开页面/换设备都不会消失。
+  const localComputerUsed = Number(session.local_computer_used || 0) > 0 || Boolean(session.working_directory);
+  const localComputerBaseLabel = isChineseLanguage(appState.language) ? '此对话使用过本地电脑' : 'Used local computer';
+  const localComputerMarkerLabel = session.working_directory
+    ? `${localComputerBaseLabel}\n${isChineseLanguage(appState.language) ? '最近工作目录' : 'Last working directory'}: ${session.working_directory}`
+    : localComputerBaseLabel;
+  const localComputerMarker = localComputerUsed
+    ? `<span class="session-local-computer-marker" title="${escapeHtml(localComputerMarkerLabel)}" aria-label="${escapeHtml(localComputerBaseLabel)}">${getSvgIcon('computer', 'material-symbols-outlined', 15)}</span>`
+    : '';
+  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}${localComputerMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
   let suppressPinnedClickUntil = 0;
   div.addEventListener('click', (event) => {
     if (Date.now() < suppressPinnedClickUntil) return;
@@ -20829,6 +21142,20 @@ async function sendMessage(message = null, options = {}) {
     || currentAttachment?.fileName
     || message;
   const immediateConversationTitle = deriveImmediateConversationTitleFromUserMessage(immediateTitleSource);
+
+  // 附件还在上传时先等待上传完成，否则聊天请求会先发出去、LLM 看不到刚选的文件。
+  if (pendingAttachmentUpload) {
+    if (sendWaitingForAttachmentUpload) return;
+    sendWaitingForAttachmentUpload = true;
+    showToast(isChineseLanguage(appState.language) ? '正在等待附件上传完成…' : 'Waiting for the attachment upload to finish…');
+    try {
+      await pendingAttachmentUpload;
+    } catch (uploadWaitError) {
+      console.warn('附件上传未完成，继续按当前状态发送:', uploadWaitError?.message || uploadWaitError);
+    } finally {
+      sendWaitingForAttachmentUpload = false;
+    }
+  }
 
   // 允许只发送附件（无文字内容）
   if (!messageText && !currentAttachment) return;
@@ -24919,6 +25246,7 @@ function showApp() {
     initChatIndexListener(); // 初始化对话索引导航器监听
     updateToolbarUI();
     focusEntryTextInput('app-ready', { delay: 0 });
+    window.mobileKeyboardHandler?.healStandaloneViewport?.();
   }, 100);
 }
 
@@ -30343,6 +30671,10 @@ class MobileKeyboardHandler {
 
     this.isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     this.isAndroid = /Android/i.test(navigator.userAgent);
+    this.isStandalone = Boolean(
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.navigator?.standalone === true
+    );
     this.isMobile = this.isIOS || this.isAndroid;
 
     this.root = document.documentElement;
@@ -30380,6 +30712,8 @@ class MobileKeyboardHandler {
   init() {
     this.root.classList.add('mobile-viewport-managed');
     this.body.classList.add('mobile-viewport-managed');
+    this.root.classList.toggle('ios-standalone', this.isIOS && this.isStandalone);
+    this.body.classList.toggle('ios-standalone', this.isIOS && this.isStandalone);
 
     this.updateViewportVars();
     this.syncComposerMetrics();
@@ -30390,6 +30724,9 @@ class MobileKeyboardHandler {
 
     if (this.isAndroid) this.applyAndroidFixes();
     if (this.isIOS) this.applyIOSFixes();
+    if (this.isIOS && this.isStandalone) {
+      window.setTimeout(() => this.healStandaloneViewport(), 350);
+    }
 
     this.log('MobileKeyboardHandler initialized', {
       isIOS: this.isIOS,
@@ -30398,12 +30735,18 @@ class MobileKeyboardHandler {
   }
 
   setupViewportListeners() {
-    if (this.visualViewport && !this.isIOS) {
-      // iOS 使用原生键盘布局，避免在键盘动画期间反复改写高度变量
+    // iOS Safari 浏览器页继续交给原生 viewport；主屏幕模式没有浏览器
+    // chrome，必须跟踪 visualViewport 才能在键盘/旋转后保持安全区内布局。
+    if (this.visualViewport && (!this.isIOS || this.isStandalone)) {
       this.visualViewport.addEventListener('resize', this.handleViewportChange);
     }
-    if (!this.isIOS) {
+    if (!this.isIOS || this.isStandalone) {
       window.addEventListener('resize', this.handleViewportChange);
+    }
+    if (this.isIOS && this.isStandalone && this.visualViewport) {
+      // iOS 在聚焦输入框时会滚动布局视口（即使页面不可滚动），必须监听
+      // scroll 并复位，否则输入框会被顶到状态栏下方、键盘上方留下大空白。
+      this.visualViewport.addEventListener('scroll', this.handleViewportChange);
     }
     window.addEventListener('orientationchange', this.handleViewportChange);
   }
@@ -30426,8 +30769,26 @@ class MobileKeyboardHandler {
     this.composerObserver.observe(this.inputArea);
   }
 
+  resetStandaloneLayoutScroll() {
+    const reset = () => {
+      if (window.scrollY !== 0 || window.pageYOffset !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (this.root.scrollTop) this.root.scrollTop = 0;
+      if (this.body.scrollTop) this.body.scrollTop = 0;
+    };
+    reset();
+    return reset;
+  }
+
+  scheduleStandaloneLayoutScrollReset() {
+    const reset = this.resetStandaloneLayoutScroll();
+    // iOS 会在聚焦后的几帧里继续滚动布局视口，按稳定节奏再复位几次。
+    [16, 50, 100, 200].forEach((delay) => window.setTimeout(reset, delay));
+  }
+
   updateViewportVars() {
-    if (this.isIOS) {
+    if (this.isIOS && !this.isStandalone) {
       this.keyboardOpen = Boolean(this.activeInput);
       this.root.style.setProperty('--app-height', '100dvh');
       this.root.style.setProperty('--viewport-offset-top', '0px');
@@ -30436,8 +30797,46 @@ class MobileKeyboardHandler {
       return;
     }
 
-    const viewportHeight = this.visualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
-    const viewportTop = this.visualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
+    // iOS 主屏幕模式：冷启动时 100dvh/visualViewport.height 可能少算顶部安全区，
+    // 用 screen.height 修正完整屏幕高度（只接受与实测值相差一个安全区的候选）；
+    // 键盘打开时改用 visualViewport 高度，让输入框贴在键盘上方。
+    if (this.isIOS && this.isStandalone) {
+      const viewport = this.visualViewport;
+      const viewportHeight = viewport ? Math.max(0, Math.round(viewport.height)) : Math.round(window.innerHeight);
+      const viewportTop = viewport ? Math.max(0, Math.round(viewport.offsetTop || 0)) : 0;
+      const innerHeight = Math.round(window.innerHeight || 0);
+      const screenHeight = Math.round(window.screen?.height || 0);
+      const observedMax = Math.max(innerHeight, viewportHeight);
+      const fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
+        ? screenHeight
+        : observedMax;
+      const keyboardHeight = Math.max(0, fullHeight - viewportHeight - viewportTop);
+      // activeInput 兜底：部分 iOS 版本键盘弹起时布局视口也会一起缩小，
+      // 单看高度差会误判为键盘未打开。
+      const keyboardOpen = Boolean(this.activeInput) || keyboardHeight > 120;
+
+      this.keyboardOpen = keyboardOpen;
+      this.root.style.setProperty('--app-height', keyboardOpen
+        ? `${Math.max(320, viewportHeight)}px`
+        : `${Math.max(320, fullHeight)}px`);
+      this.root.style.setProperty('--viewport-offset-top', `${viewportTop}px`);
+      this.root.style.setProperty('--keyboard-offset', `${keyboardHeight}px`);
+      this.body.classList.toggle('keyboard-open', keyboardOpen);
+      this.resetStandaloneLayoutScroll();
+
+      this.log('Viewport sync (standalone)', {
+        viewportHeight,
+        viewportTop,
+        fullHeight,
+        keyboardHeight,
+        keyboardOpen
+      });
+      return;
+    }
+
+    const useVisualViewport = Boolean(this.visualViewport && (!this.isIOS || this.isStandalone));
+    const viewportHeight = useVisualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
+    const viewportTop = useVisualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
     const appHeight = Math.max(320, viewportHeight);
     const keyboardHeight = Math.max(0, window.innerHeight - viewportHeight - viewportTop);
     const keyboardThreshold = this.isIOS ? 120 : 150;
@@ -30472,6 +30871,11 @@ class MobileKeyboardHandler {
   }
 
   handleViewportChange() {
+    if (this.isIOS && this.isStandalone) {
+      // visualViewport 的 scroll 事件可能早于 rAF，先同步复位避免闪烁。
+      this.resetStandaloneLayoutScroll();
+    }
+
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
     }
@@ -30498,6 +30902,7 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
+      if (this.isStandalone) this.scheduleStandaloneLayoutScrollReset();
       return;
     }
 
@@ -30515,6 +30920,10 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
+      if (this.isStandalone) {
+        this.scheduleStandaloneLayoutScrollReset();
+        window.setTimeout(() => this.healStandaloneViewport(), 400);
+      }
       return;
     }
 
@@ -30588,6 +30997,29 @@ class MobileKeyboardHandler {
     }
   }
 
+  // iOS 主屏幕偶发“视口卡在短高度”的状态：屏幕比 WebView 高一个顶部安全区，
+  // 底部会留下无法用 CSS 填满的黑边。切换一次全屏元素的 display 强制 WebKit
+  // 重新测量视口，即可恢复完整高度。
+  healStandaloneViewport() {
+    if (!this.isIOS || !this.isStandalone || this.activeInput) return;
+    const screenHeight = Math.round(window.screen?.height || 0);
+    const currentHeight = Math.max(
+      Math.round(window.innerHeight || 0),
+      Math.round(this.visualViewport?.height || 0)
+    );
+    const delta = screenHeight - currentHeight;
+    if (!screenHeight || delta <= 4 || delta > 120) return;
+    const shell = [document.getElementById('appContainer'), document.getElementById('authContainer')]
+      .find((element) => element && element.offsetParent !== null);
+    if (!shell) return;
+    const previousDisplay = shell.style.display;
+    shell.style.display = 'none';
+    void shell.offsetHeight;
+    shell.style.display = previousDisplay;
+    this.updateViewportVars();
+    this.log('Viewport healed', { screenHeight, currentHeight, delta });
+  }
+
   applyIOSFixes() {
     document.addEventListener('touchstart', (e) => {
       if (e.touches.length > 1) e.preventDefault();
@@ -30615,7 +31047,107 @@ class MobileKeyboardHandler {
 
 // ==================== 文件上传处理 (多模态支持) ====================
 let currentAttachment = null;
+// 正在上传中的附件任务：发送消息时必须等待它结束，否则 LLM 会漏掉刚选中的文件。
+let pendingAttachmentUpload = null;
+let sendWaitingForAttachmentUpload = false;
+let attachmentUploadSequence = 0;
 const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
+
+// HEIC/HEIF 在多数模型网关与浏览器里都无法直接识别：在浏览器能解码时先转成 JPEG。
+const UI_HEIC_IMAGE_EXTENSIONS = new Set(['heic', 'heif']);
+const UI_IMAGE_MAX_DIMENSION = 2048;
+const UI_IMAGE_JPEG_QUALITY = 0.9;
+const UI_IMAGE_RECOMPRESS_MIN_BYTES = 3 * 1024 * 1024;
+const UPLOAD_STALL_TIMEOUT_MS = 45 * 1000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const UPLOAD_MAX_ATTEMPTS = 3;
+
+function replaceUploadFileExtension(fileName, extension) {
+  const name = String(fileName || '').trim() || 'image';
+  const base = name.replace(/\.[^./\\]+$/, '') || 'image';
+  return `${base}.${extension}`;
+}
+
+function loadDecodableImage(blob) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    image.addEventListener('load', () => {
+      cleanup();
+      resolve(image);
+    }, { once: true });
+    image.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('image_decode_failed'));
+    }, { once: true });
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlobAsync(canvas, mimeType, quality) {
+  return new Promise((resolve) => {
+    if (typeof canvas.toBlob !== 'function') {
+      resolve(null);
+      return;
+    }
+    canvas.toBlob((blob) => resolve(blob || null), mimeType, quality);
+  });
+}
+
+/**
+ * 把 HEIC/HEIF（以及过大的图片）在本地转成 JPEG，避免：
+ * 1. 模型网关不支持 HEIC 导致回答报错；
+ * 2. 几十 MB 的原图在移动网络上传时卡在 99% 后被服务器/网关拒绝。
+ * 浏览器无法解码时保持原文件，交给服务端与用户自行处理。
+ */
+async function prepareImageFileForUpload(file) {
+  const extension = getUiUploadExtension(file);
+  const isHeic = UI_HEIC_IMAGE_EXTENSIONS.has(extension);
+  const oversized = Number(file.size || 0) > UI_IMAGE_RECOMPRESS_MIN_BYTES;
+  if (!isHeic && !oversized) return { file, converted: false, decodeFailed: false };
+
+  let image = null;
+  try {
+    image = await loadDecodableImage(file);
+  } catch (error) {
+    return { file, converted: false, decodeFailed: true };
+  }
+
+  const sourceWidth = Number(image.naturalWidth || image.width || 0);
+  const sourceHeight = Number(image.naturalHeight || image.height || 0);
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return { file, converted: false, decodeFailed: true };
+  }
+
+  const longestSide = Math.max(sourceWidth, sourceHeight);
+  const needsResize = longestSide > UI_IMAGE_MAX_DIMENSION;
+  if (!isHeic && !needsResize) return { file, converted: false, decodeFailed: false };
+
+  const scale = needsResize ? UI_IMAGE_MAX_DIMENSION / longestSide : 1;
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+  if (!context) return { file, converted: false, decodeFailed: false };
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const blob = await canvasToBlobAsync(canvas, 'image/jpeg', UI_IMAGE_JPEG_QUALITY);
+  if (!blob || !blob.size) return { file, converted: false, decodeFailed: false };
+  // 转码后反而更大时保留原图；HEIC/HEIF 例外，必须换成 JPEG 才能被模型识别。
+  if (!isHeic && blob.size >= Number(file.size || 0)) {
+    return { file, converted: false, decodeFailed: false };
+  }
+
+  const convertedFile = new File(
+    [blob],
+    replaceUploadFileExtension(file.name, 'jpg'),
+    { type: 'image/jpeg', lastModified: Date.now() }
+  );
+  return { file: convertedFile, converted: true, decodeFailed: false };
+}
 
 let appVersionMonitorTimer = null;
 let appUpdatePromptVisible = false;
@@ -30890,18 +31422,44 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
+    let settled = false;
+    let bodyCompleted = false;
+    let stalled = false;
+    let lastProgressAt = Date.now();
+    const stallTimer = window.setInterval(() => {
+      if (settled || bodyCompleted) return;
+      if (Date.now() - lastProgressAt <= UPLOAD_STALL_TIMEOUT_MS) return;
+      stalled = true;
+      try {
+        xhr.abort();
+      } catch (error) {
+        /* ignore */
+      }
+    }, 5000);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(stallTimer);
+      callback(value);
+    };
+
     formData.append('file', file);
     xhr.open('POST', `${API_BASE}/upload`);
+    xhr.timeout = UPLOAD_REQUEST_TIMEOUT_MS;
     xhr.setRequestHeader('Authorization', `Bearer ${context.token}`);
     xhr.setRequestHeader('X-RAI-Upload-ID', session.uploadId);
     xhr.upload.addEventListener('progress', (event) => {
       if (!event.lengthComputable) return;
+      lastProgressAt = Date.now();
       const uploadedFileBytes = file.size > 0
         ? Math.round(file.size * Math.min(1, event.loaded / event.total))
         : 0;
       onProgress(uploadedFileBytes, Number(file.size || 0));
     });
-    xhr.upload.addEventListener('load', () => onProcessing(Number(file.size || 0)));
+    xhr.upload.addEventListener('load', () => {
+      bodyCompleted = true;
+      onProcessing(Number(file.size || 0));
+    });
     xhr.addEventListener('load', () => {
       let data = null;
       try {
@@ -30912,19 +31470,43 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
       if (xhr.status < 200 || xhr.status >= 300 || !data?.success || data.status !== 'completed') {
         const uploadError = new Error(data?.error || data?.message || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
         uploadError.status = xhr.status;
-        reject(uploadError);
+        finish(reject, uploadError);
         return;
       }
-      resolve(data);
+      finish(resolve, data);
     });
-    xhr.addEventListener('error', () => reject(new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted')));
+    xhr.addEventListener('error', () => {
+      const networkError = new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted');
+      networkError.retryable = true;
+      finish(reject, networkError);
+    });
+    xhr.addEventListener('timeout', () => {
+      const timeoutError = new Error(isChineseLanguage(appState.language) ? '上传超时' : 'Upload timed out');
+      timeoutError.retryable = true;
+      finish(reject, timeoutError);
+    });
     xhr.addEventListener('abort', () => {
+      if (stalled) {
+        const stallError = new Error(isChineseLanguage(appState.language) ? '上传长时间无进度，已自动重试' : 'Upload stalled, retrying automatically');
+        stallError.name = 'UploadStallError';
+        stallError.retryable = true;
+        finish(reject, stallError);
+        return;
+      }
       const abortError = new Error('Upload aborted');
       abortError.name = 'AbortError';
-      reject(abortError);
+      finish(reject, abortError);
     });
     xhr.send(formData);
   });
+}
+
+function isRetryableUploadError(error) {
+  if (!error) return false;
+  if (error.name === 'AbortError') return false;
+  if (error.retryable === true) return true;
+  const status = Number(error.status || 0);
+  return !status || status >= 500;
 }
 
 // 独立的文件处理函数（供拖拽上传复用）
@@ -30944,10 +31526,6 @@ async function processUploadedFile(file, options = {}) {
   }
   if (UI_AUDIO_UPLOAD_EXTENSIONS.has(getUiUploadExtension(file)) && file.size > maxAudioUnderstandingSize) {
     showToast(isChineseLanguage(appState.language) ? '供 Gemini 理解的音频不能超过20MB' : 'Audio sent to Gemini cannot exceed 20MB');
-    return false;
-  }
-  if (file.size > maxSize) {
-    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
     return false;
   }
 
@@ -30970,11 +31548,37 @@ async function processUploadedFile(file, options = {}) {
     attachmentType = 'document';
   }
 
+  // HEIC/HEIF 与超大图片先本地转码，避免上传卡死与模型网关拒绝。
+  let uploadFile = file;
+  if (attachmentType === 'image') {
+    const needsImagePrep = UI_HEIC_IMAGE_EXTENSIONS.has(getUiUploadExtension(file))
+      || Number(file.size || 0) > UI_IMAGE_RECOMPRESS_MIN_BYTES;
+    if (needsImagePrep) {
+      showToast(isChineseLanguage(appState.language) ? '正在压缩图片…' : 'Compressing image…');
+    }
+    try {
+      const prepared = await prepareImageFileForUpload(file);
+      uploadFile = prepared.file;
+      if (prepared.decodeFailed && UI_HEIC_IMAGE_EXTENSIONS.has(getUiUploadExtension(file))) {
+        showToast(isChineseLanguage(appState.language)
+          ? '当前浏览器无法转换 HEIC，已按原格式上传，部分模型可能无法识别'
+          : 'This browser cannot convert HEIC; uploading the original file, some models may not read it');
+      }
+    } catch (prepareError) {
+      uploadFile = file;
+    }
+  }
+
+  if (uploadFile.size > maxSize) {
+    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
+    return false;
+  }
+
   // 图片/视频/音频：保留本地缩略图用于预览，但聊天请求不再塞大 Base64
   // 所有附件统一走 /api/upload，用元数据模式传给后端解析
   let localThumbnail = null;
   if (attachmentType === 'image' && attachToComposer) {
-    localThumbnail = URL.createObjectURL(file);
+    localThumbnail = URL.createObjectURL(uploadFile);
   }
 
   const context = captureUserAuthContext();
@@ -30990,23 +31594,52 @@ async function processUploadedFile(file, options = {}) {
   }
   renderUploadProgress({
     generation,
-    fileName: file.name,
+    fileName: uploadFile.name,
     state: 'preparing',
     loaded: 0,
-    total: file.size,
+    total: uploadFile.size,
     attachToComposer
   });
 
+  const runUploadWithRetry = async () => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+      if (!isUserAuthContextCurrent(context)) {
+        const contextError = new Error('Upload account context changed');
+        contextError.name = 'AbortError';
+        throw contextError;
+      }
+      try {
+        const session = await createUploadSession(uploadFile, context);
+        renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded: 0, total: uploadFile.size, attachToComposer });
+        return await uploadFileWithProgress(
+          uploadFile,
+          session,
+          context,
+          (loaded, total) => renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded, total, attachToComposer }),
+          (total) => renderUploadProgress({ generation, fileName: uploadFile.name, state: 'processing', loaded: total, total, attachToComposer })
+        );
+      } catch (error) {
+        lastError = error;
+        if (error?.name === 'AbortError') throw error;
+        if (attempt >= UPLOAD_MAX_ATTEMPTS || !isRetryableUploadError(error)) throw error;
+        console.warn(' 上传中断，自动重试:', {
+          attempt,
+          errorName: String(error?.name || 'Error').slice(0, 80)
+        });
+        renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded: 0, total: uploadFile.size, attachToComposer });
+        await new Promise((resolve) => window.setTimeout(resolve, 700 * attempt));
+      }
+    }
+    throw lastError || new Error('Upload failed');
+  };
+
+  const uploadSequence = ++attachmentUploadSequence;
+  const uploadTask = runUploadWithRetry();
+  if (attachToComposer) pendingAttachmentUpload = uploadTask;
+
   try {
-    const session = await createUploadSession(file, context);
-    renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded: 0, total: file.size, attachToComposer });
-    const data = await uploadFileWithProgress(
-      file,
-      session,
-      context,
-      (loaded, total) => renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded, total, attachToComposer }),
-      (total) => renderUploadProgress({ generation, fileName: file.name, state: 'processing', loaded: total, total, attachToComposer })
-    );
+    const data = await uploadTask;
     if (!isUserAuthContextCurrent(context)) {
       const contextError = new Error('Upload account context changed');
       contextError.name = 'AbortError';
@@ -31014,10 +31647,10 @@ async function processUploadedFile(file, options = {}) {
     }
     const uploadedAttachment = {
       type: attachmentType,
-      fileName: file.name,
-      originalName: file.name,
-      mimeType: file.type,
-      size: file.size,
+      fileName: uploadFile.name,
+      originalName: uploadFile.name,
+      mimeType: uploadFile.type,
+      size: uploadFile.size,
       fileId: data.file?.filename || null,
       filePath: data.file?.filePath || null,
       // 图片保留本地缩略图用于预览（不发送到服务器）
@@ -31025,21 +31658,26 @@ async function processUploadedFile(file, options = {}) {
     };
     console.log(' 文件已上传', {
       attachmentType,
-      filenameLength: String(file.name || '').length,
-      bytes: Number(file.size) || 0
+      filenameLength: String(uploadFile.name || '').length,
+      bytes: Number(uploadFile.size) || 0
     });
     if (attachToComposer) {
-      currentAttachment = uploadedAttachment;
-      updateAttachmentUI();
-      updateNewChatModeSettingsUI();
+      if (uploadSequence === attachmentUploadSequence) {
+        currentAttachment = uploadedAttachment;
+        updateAttachmentUI();
+        updateNewChatModeSettingsUI();
+      } else if (localThumbnail) {
+        // 更新的上传已经开始，旧任务不要覆盖最新的附件预览。
+        URL.revokeObjectURL(localThumbnail);
+      }
     } else if (localThumbnail) {
       URL.revokeObjectURL(localThumbnail);
     }
-    renderUploadProgress({ generation, fileName: file.name, state: 'completed', loaded: file.size, total: file.size, attachToComposer });
+    renderUploadProgress({ generation, fileName: uploadFile.name, state: 'completed', loaded: uploadFile.size, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation);
     return true;
   } catch (error) {
-    renderUploadProgress({ generation, fileName: file.name, state: 'failed', loaded: 0, total: file.size, attachToComposer });
+    renderUploadProgress({ generation, fileName: uploadFile.name, state: 'failed', loaded: 0, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation, 4800);
     if (error?.name === 'AbortError') return false;
     console.error(' 文件上传失败:', {
@@ -31051,6 +31689,10 @@ async function processUploadedFile(file, options = {}) {
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
     alert(error?.message || fallback);
     return false;
+  } finally {
+    if (attachToComposer && pendingAttachmentUpload === uploadTask) {
+      pendingAttachmentUpload = null;
+    }
   }
 }
 
@@ -31770,10 +32412,70 @@ function initMobileTouchNavigation() {
   }, { passive: true });
 }
 
+// ==================== 视口诊断浮层（?viewport-debug=1 或 #viewport-debug） ====================
+function isViewportDebugEnabled() {
+  try {
+    if (new URLSearchParams(window.location.search).get('viewport-debug') === '1') return true;
+    if (window.location.hash === '#viewport-debug') return true;
+    return window.localStorage?.getItem('raiViewportDebug') === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function installViewportDebugOverlay() {
+  if (!isViewportDebugEnabled() || !document.body) return;
+  const panel = document.createElement('div');
+  panel.id = 'viewportDebugPanel';
+  panel.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:rgba(0,0,0,.88);color:#4ade80;font:11px/1.45 ui-monospace,Menlo,monospace;padding:8px 10px;white-space:pre-wrap;pointer-events:none;';
+  const marker = document.createElement('div');
+  marker.id = 'viewportDebugMarker';
+  marker.style.cssText = 'position:fixed;left:0;right:0;height:0;border-top:2px solid #ff2d55;z-index:2147483647;pointer-events:none;';
+  document.body.appendChild(panel);
+  document.body.appendChild(marker);
+
+  const measureSafeArea = (property) => {
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:fixed;top:0;left:0;width:0;height:env(${property}, 0px);visibility:hidden;pointer-events:none;`;
+    document.body.appendChild(probe);
+    const value = probe.offsetHeight;
+    probe.remove();
+    return value;
+  };
+
+  const update = () => {
+    const viewport = window.visualViewport;
+    const root = document.documentElement;
+    const shell = document.getElementById('appContainer');
+    const rect = shell ? shell.getBoundingClientRect() : null;
+    const appHeight = getComputedStyle(root).getPropertyValue('--app-height').trim();
+    const shellBottom = Math.round(rect?.bottom || 0);
+    panel.textContent = [
+      `RAI ${RAI_APP_VERSION} · ${RAI_BUILD_ID}`,
+      `standalone=${navigator.standalone === true} ios=${/iPad|iPhone|iPod/.test(navigator.userAgent)}`,
+      `screen=${window.screen?.width}x${window.screen?.height} dpr=${window.devicePixelRatio}`,
+      `inner=${window.innerWidth}x${window.innerHeight} scrollY=${window.scrollY}`,
+      viewport
+        ? `vv=${Math.round(viewport.width)}x${Math.round(viewport.height)} offTop=${Math.round(viewport.offsetTop)} scale=${viewport.scale}`
+        : 'vv=none',
+      `safeTop=${measureSafeArea('safe-area-inset-top')} safeBottom=${measureSafeArea('safe-area-inset-bottom')}`,
+      `--app-height=${appHeight}`,
+      `shell top=${Math.round(rect?.top || 0)} h=${Math.round(rect?.height || 0)} bottom=${shellBottom}`,
+      `html=${root.offsetHeight} body=${document.body.offsetHeight}`,
+      `gapBelowShell=${Math.round((window.screen?.height || 0) - shellBottom)}`
+    ].join('\n');
+    marker.style.top = `${shellBottom}px`;
+  };
+
+  update();
+  window.setInterval(update, 500);
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
   initializeComposerMenuHitTargets();
   mountComposerFloatingMenus();
+  installViewportDebugOverlay();
   window.mobileKeyboardHandler = new MobileKeyboardHandler({
     debug: false
   });
