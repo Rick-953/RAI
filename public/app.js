@@ -2410,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.17';
-const RAI_BUILD_ID = '20260924-handedness-center-header-v01317-r5';
+const RAI_APP_VERSION = '0.13.18';
+const RAI_BUILD_ID = '20260924-formal-v01318-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8238,6 +8238,30 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-09-24',
+    version: 'v0.13.18 · 正式版',
+    zh: {
+      summary: '正式版汇总：客户端下载、CX RAI、适人握持、流式稳定性与移动端布局全面升级。',
+      details: [
+        '同步 main 的 iOS 安全区、2FA、HEIC/大图上传、会话本地电脑上下文、应用下载与 CX RAI 接入。',
+        '下载客户端页以 Web App 和 CX RAI 为主，RAI Connect 与本地 Agent 折叠为进阶横条；Windows 桌面直接下载 Setup.exe，Windows 10 Mobile 自动切换 UWP 包。',
+        '新增“适人握持”：左手/右手模式自动切换侧边栏、发送键、对话索引条和移动端顶栏布局；只有侧边栏展开时暂停检测。',
+        '修复流式结束重复输出与旧时间轴残留；思考模式回答完成后保留折叠的思考过程，推理内容只渲染一次。',
+        'RAI logo 与正文左对齐，移动端模型选择菜单保持居中；正式版版本号和缓存构建号已更新。'
+      ]
+    },
+    en: {
+      summary: 'Stable release: client downloads, CX RAI, adaptive handedness, streaming stability, and mobile layout upgrades.',
+      details: [
+        'Brings main iOS safe-area, 2FA, HEIC/large-image upload, local-computer conversation context, app download, and CX RAI work together.',
+        'Download Clients leads with Web App and CX RAI; RAI Connect and Local Agent collapse into an advanced bar. Windows desktop downloads Setup.exe directly, while Windows 10 Mobile switches to the UWP package.',
+        'Adds Adaptive Handedness: left/right hand modes switch the sidebar, send button, chat index navigator, and mobile header layout; detection pauses only while the sidebar is expanded.',
+        'Fixes duplicate streamed output and stale timelines; thinking mode keeps a collapsed thinking process after completion and renders reasoning only once.',
+        'Aligns the RAI logo with the answer body, keeps the mobile model selector centered, and updates the formal version and cache build id.'
+      ]
+    }
+  },
   {
     date: '2026-09-24',
     version: 'v0.13.17-r5 · Beta',
