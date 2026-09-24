@@ -218,9 +218,11 @@
   function openInstallGuide() {
     if (typeof window.openSettings === 'function') window.openSettings();
     window.requestAnimationFrame(() => {
-      if (typeof window.switchSettingsSection === 'function') window.switchSettingsSection('about');
+      if (typeof window.switchSettingsSection === 'function') window.switchSettingsSection('app');
       window.requestAnimationFrame(() => {
-        document.getElementById('settingsRaiConnectInstall')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const guide = document.getElementById('settingsRaiConnectInstall');
+        if (guide) guide.open = true;
+        guide?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     });
   }
@@ -345,7 +347,7 @@
     } else if (!state.extensionAvailable) {
       status = 'install';
       statusLabel = text('需要安装', 'Install required');
-      descriptionText = text('尚未检测到 RAI Connect。请先按“关于”页的步骤安装本地 Agent，再由浏览器加载扩展。', 'RAI Connect was not detected. Follow the About-page steps to install Local Agent, then load the extension in your browser.');
+      descriptionText = text('尚未检测到 RAI Connect。请先展开“设置 > 下载客户端”中的 RAI Connect 横条，安装本地 Agent 后由浏览器加载扩展。', 'RAI Connect was not detected. Expand the RAI Connect bar under Settings > Download Clients, install Local Agent, then load the extension in your browser.');
       primaryLabel = text('查看安装步骤', 'View installation steps');
       primaryAction = openInstallGuide;
     } else if (!state.activeDeviceId) {

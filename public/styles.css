@@ -14689,12 +14689,13 @@ body.chatflow-iframe-mode .message-content::selection {
 .settings-platform-downloads {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
 }
 
 .settings-platform-download {
   min-width: 0;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   align-content: start;
 }
 
@@ -14709,6 +14710,63 @@ body.chatflow-iframe-mode .message-content::selection {
   font-size: 17px;
   font-weight: 760;
   line-height: 1.25;
+}
+
+.settings-platform-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-platform-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--settings-card-hover);
+  color: var(--text-primary);
+}
+
+.settings-platform-icon img {
+  width: 24px;
+  height: 24px;
+  display: block;
+  object-fit: contain;
+}
+
+.settings-platform-copy {
+  min-width: 0;
+}
+
+.settings-platform-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-platform-copy p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.settings-platform-badge {
+  min-height: 22px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1;
 }
 
 .settings-windows-actions {
