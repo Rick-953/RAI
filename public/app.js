@@ -5558,15 +5558,24 @@ function getShortUserTimeHint() {
   return `${ctx.datetime.replace(/\s+[A-Za-z]+/, '')}`;
 }
 
-function appendUserTimeHintForPrompt(content) {
+function getHandednessPromptHint() {
+  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return '';
+  const handedness = normalizeHandedness(appState.handedness);
+  return isChineseLanguage(appState.language)
+    ? `当前持机手：${handedness === 'right' ? '右手' : '左手'}。仅用于理解界面偏好，不要把回答中心放在握持方式上。`
+    : `Current device hand: ${handedness}. UI preference only; do not center the answer on it.`;
+}
+
+function appendUserTurnContextHintForPrompt(content) {
   const text = String(content || '');
   const hint = isChineseLanguage(appState.language)
     ? `当前时间：${getShortUserTimeHint()}。仅作背景，不要把回答中心放在时间上。`
     : `Current time: ${getShortUserTimeHint()}. Background only; do not center the answer on time.`;
-  return `${text}\n\n[${hint}]`;
+  const handednessHint = getHandednessPromptHint();
+  return `${text}\n\n[${hint}]${handednessHint ? `\n\n[${handednessHint}]` : ''}`;
 }
 
-// 动态生成系统提示词（核心原则；每条用户问题末尾另附短时间）
+// 动态生成系统提示词（核心原则；时间与持机手只附在每轮用户消息末尾）
 function getRaiSystemPromptApi() {
   const api = globalThis.RaiSystemPrompt;
   if (!api?.buildSystemPrompt || !api?.buildEffectiveSystemPrompt) {
@@ -17301,12 +17310,32 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
     existingContent = finalizedContent;
   }
 
-  let existingText = Array.from(existingContent.children).find((child) =>
+  const existingTextNodes = Array.from(existingContent.children).filter((child) =>
     child.classList?.contains('message-text')
-  ) || null;
+  );
+  let existingText = existingTextNodes.find((child) =>
+    child.classList?.contains('stream-flow')
+  ) || existingTextNodes[0] || null;
   const finalizedText = Array.from(finalizedContent.children).find((child) =>
     child.classList?.contains('message-text')
   ) || null;
+  const finalizedHasLiveStructure = Array.from(finalizedContent.children).some((child) =>
+    child.classList?.contains('thinking-timeline') || child.classList?.contains('rai-reasoning-block')
+  );
+  const preserveLiveFlow = !!(
+    existingText?.classList?.contains('stream-flow') &&
+    !finalizedText?.classList?.contains('stream-flow') &&
+    finalizedHasLiveStructure &&
+    (
+      String(existingText.textContent || '').trim() ||
+      existingText.querySelector('img, .streaming-image-container, .stream-flow-event')
+    )
+  );
+  if (existingText?.classList?.contains('stream-flow')) {
+    existingTextNodes.forEach((node) => {
+      if (node !== existingText) node.remove();
+    });
+  }
   // The live stream owns temporary timeline and reasoning containers. Always
   // remove them before grafting the finalized template so ordinary chats do not
   // keep an obsolete streaming body beside the saved answer.
@@ -17316,7 +17345,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   );
   existingMeta.forEach((meta) => meta.remove());
 
-  if (existingText && finalizedText) {
+  if (existingText && finalizedText && !preserveLiveFlow) {
     existingText.replaceWith(finalizedText);
     existingText = finalizedText;
   } else if (!existingText && finalizedText) {
@@ -17333,6 +17362,10 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   });
   Array.from(finalizedContent.children).forEach((child) => {
     if (child === finalizedText || child.classList?.contains('message-meta')) return;
+    if (preserveLiveFlow && (
+      child.classList?.contains('thinking-timeline') ||
+      child.classList?.contains('rai-reasoning-block')
+    )) return;
     const isLiveStructure = child.classList?.contains('thinking-timeline')
       || child.classList?.contains('rai-reasoning-block')
       || child.classList?.contains('previous-reply-toggle');
@@ -18265,7 +18298,7 @@ function buildContextMessagesFromState(sourceMessages = appState.messages, optio
     const msgObj = {
       role: m.role,
       content: m.role === 'user' && includeLastUserTimeHint && index === lastIndex
-        ? appendUserTimeHintForPrompt(m.content)
+        ? appendUserTurnContextHintForPrompt(m.content)
         : m.content
     };
 

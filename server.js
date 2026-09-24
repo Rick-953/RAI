@@ -28026,6 +28026,7 @@ function normalizePromptTimeContext(raw) {
 function stripInlinePromptTimeHint(content = '') {
     return String(content || '')
         .replace(/\n{0,2}\[(?:当前时间|Current time)[^\]]*(?:不要把回答中心放在时间上|do not center the answer on time)[。.]?\]/i, '')
+        .replace(/\n{0,2}\[(?:当前持机手|Current device hand)[^\]]*(?:不要把回答中心放在握持方式上|do not center the answer on it)[。.]?\]/i, '')
         .trim();
 }
 
