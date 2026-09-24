@@ -104,6 +104,9 @@ try {
     assert.match(web, /data-local-agent-copy="unix"/);
     assert.match(web, /data-local-agent-copy="windows"/);
     const webAgent = fs.readFileSync(path.join(__dirname, '..', 'public', 'local-agent.js'), 'utf8');
+    assert.match(web, /<details class="settings-connect-install" id="settingsRaiConnectInstall"/);
+    assert.match(web, /settings-connect-summary[\s\S]*local-agent-install-compact-desc/);
+    assert.match(webAgent, /function openInstallGuide\(\)[\s\S]*switchSettingsSection\('app'\)[\s\S]*guide\.open = true/);
     assert.doesNotMatch(webAgent, /请先创建或打开一个对话/);
     assert.match(webAgent, /当前是尚未保存的新对话。请先发送第一条消息创建对话/);
     assert.match(webAgent, /等待创建对话/);

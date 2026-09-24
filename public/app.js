@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.16';
-const RAI_BUILD_ID = '20260924-main-beta-integration-v01316-r2';
+const RAI_BUILD_ID = '20260924-settings-app-cxrai-about-v01316-r3';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -4774,41 +4774,22 @@ function isTrustedWindowsReleaseAsset(asset, allowedSuffixes) {
 
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const status = document.getElementById('windowsDownloadStatus');
-  const packageLink = document.getElementById('windowsPackageDownload');
   const setupLink = document.getElementById('windowsSetupDownload');
-  if (!status || !packageLink) return false;
+  if (!status || !setupLink) return false;
 
-  const packageValid = isTrustedWindowsReleaseAsset(release?.package, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  if (!packageValid) return false;
-
-  packageLink.href = release.package.url;
-  packageLink.title = release.package.name;
-
-  // 一键安装程序（Setup.exe，内置证书与依赖）。上游未提供时回退到发布页。
+  // CX RAI 只提供一键 Setup.exe；上游暂时缺失时回退到发布页。
   const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
-  if (setupLink) {
-    if (setupValid) {
-      setupLink.href = release.setup.url;
-      setupLink.title = release.setup.name;
-    } else {
-      setupLink.href = WINDOWS_ALL_RELEASES_URL;
-      setupLink.removeAttribute('title');
-    }
+  if (!setupValid) {
+    setupLink.href = WINDOWS_ALL_RELEASES_URL;
+    setupLink.removeAttribute('title');
+    status.textContent = isChineseLanguage(appState.language)
+      ? '暂时没有可用的 EXE 安装程序，请前往 GitHub 发布页'
+      : 'No EXE installer is available yet; open the GitHub release page';
+    return false;
   }
 
-  // ARM 包（侧载用；依赖请到 GitHub 下载页自取）
-  const armSection = document.getElementById('windowsLumiaSection');
-  if (armSection && release?.arm?.package) {
-    const armPackage = document.getElementById('windowsLumiaPackage');
-    if (armPackage) {
-      armPackage.href = release.arm.package.url;
-      armPackage.title = release.arm.package.name;
-      armPackage.textContent = isChineseLanguage(appState.language) ? 'Arm 包' : 'ARM package';
-    }
-    armSection.style.display = '';
-  } else if (armSection) {
-    armSection.style.display = 'none';
-  }
+  setupLink.href = release.setup.url;
+  setupLink.title = release.setup.name;
 
   const tag = String(release.tag || '').trim();
   const isFallback = release.source === 'fallback';
@@ -5708,6 +5689,8 @@ const i18n = {
     'attach': '附件',
     'local-agent-menu': '本地 Agent',
     'local-agent-install-title': 'RAI Connect 与本地 Agent',
+    'local-agent-install-compact-desc': '可选：连接浏览器与本地电脑能力',
+    'local-agent-install-optional': '进阶',
     'local-agent-install-desc': '让 RAI 在你确认后操作本机文件、终端和单独选择的浏览器标签页。',
     'local-agent-release-link': '发布页',
     'local-agent-copy-command': '复制命令',
@@ -5769,7 +5752,7 @@ const i18n = {
     'settings-nav-desktop': '桌面端',
     'settings-nav-notifications': '通知',
     'settings-nav-about': '关于',
-    'settings-nav-app': '下载应用客户端',
+    'settings-nav-app': '下载客户端',
     'settings-mobile-section-rai': '我的 RAI',
     'settings-mobile-section-account': '账户',
     'settings-mobile-section-system': '系统',
@@ -5863,8 +5846,12 @@ const i18n = {
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': '作者 Rick',
-    'settings-app-title': '下载应用客户端',
-    'settings-app-desc': '把 RAI 装到你的电脑或手机上，获得更完整的体验。',
+    'settings-app-title': '下载客户端',
+    'settings-app-desc': '优先安装网页版应用；Windows 用户也可以下载 CX RAI。',
+    'settings-pwa-badge': '推荐',
+    'settings-pwa-desc': '安装后从桌面或主屏幕独立打开。',
+    'settings-cxrai-badge': 'Windows 10 / 11',
+    'settings-cxrai-desc': 'Master-Tea 发布的 Windows 桌面客户端。',
     'settings-pwa-title': '网页版应用',
     'settings-windows-setup': '下载安装程序',
     'settings-windows-package': '下载安装包',
@@ -5872,12 +5859,12 @@ const i18n = {
     'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
-    'settings-update-timeline-source': '来源：本机历史版本目录、版本记录、历史 release manifest、GitHub README。',
+    'settings-update-timeline-source': '来源：GitHub main / beta 提交记录、版本记录与 release manifest，已同步至 2026-09-24。',
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
     'settings-replay-onboarding': '重新观看欢迎引导',
     'settings-macos-title': 'macOS',
-    'settings-windows-title': 'Windows 10 / 11（Phone）',
+    'settings-windows-title': 'CX RAI',
     'settings-platform-download': '下载',
     'settings-install-tutorial': '使用教程',
     'settings-install-ready': '当前浏览器可直接安装。',
@@ -6358,6 +6345,8 @@ const i18n = {
     'attach': 'Attach',
     'local-agent-menu': 'Local Agent',
     'local-agent-install-title': 'RAI Connect and Local Agent',
+    'local-agent-install-compact-desc': 'Optional: connect browser and local computer capabilities',
+    'local-agent-install-optional': 'Advanced',
     'local-agent-install-desc': 'Let RAI work with local files, terminal tools, and one selected browser tab after you approve access.',
     'local-agent-release-link': 'Releases',
     'local-agent-copy-command': 'Copy command',
@@ -6419,7 +6408,7 @@ const i18n = {
     'settings-nav-desktop': 'Desktop',
     'settings-nav-notifications': 'Notifications',
     'settings-nav-about': 'About',
-    'settings-nav-app': 'Download Apps',
+    'settings-nav-app': 'Download Clients',
     'settings-mobile-section-rai': 'My RAI',
     'settings-mobile-section-account': 'Account',
     'settings-mobile-section-system': 'System',
@@ -6513,8 +6502,12 @@ const i18n = {
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': 'Author Rick',
-    'settings-app-title': 'Download Apps',
-    'settings-app-desc': 'Install RAI on your computer or phone for the full experience.',
+    'settings-app-title': 'Download Clients',
+    'settings-app-desc': 'Install the Web App first; Windows users can also download CX RAI.',
+    'settings-pwa-badge': 'Recommended',
+    'settings-pwa-desc': 'Install it to open from the desktop or Home Screen in its own window.',
+    'settings-cxrai-badge': 'Windows 10 / 11',
+    'settings-cxrai-desc': 'The Windows desktop client published by Master-Tea.',
     'settings-pwa-title': 'Web App',
     'settings-windows-setup': 'Download installer',
     'settings-windows-package': 'Download package',
@@ -6522,12 +6515,12 @@ const i18n = {
     'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
-    'settings-update-timeline-source': 'Sources: local historical version folders, version records, historical release manifest, and GitHub README.',
+    'settings-update-timeline-source': 'Sources: GitHub main / beta commits, version records, and release manifests, synced through 2026-09-24.',
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
     'settings-replay-onboarding': 'Replay welcome guide',
     'settings-macos-title': 'macOS',
-    'settings-windows-title': 'Windows 10 / 11 (Phone)',
+    'settings-windows-title': 'CX RAI',
     'settings-platform-download': 'Download',
     'settings-install-tutorial': 'Instructions',
     'settings-install-ready': 'This browser can install RAI directly.',
@@ -6967,7 +6960,7 @@ Object.assign(i18n['zh-TW'], {
   'system-theme': '跟隨系統',
   'settings-update-timeline-title': 'RAI 的成長故事',
   'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
-  'settings-update-timeline-source': '來源：本機歷史版本目錄、版本記錄、歷史 release manifest、GitHub README。',
+  'settings-update-timeline-source': '來源：GitHub main / beta 提交記錄、版本記錄與 release manifest，已同步至 2026-09-24。',
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
@@ -7001,7 +6994,15 @@ Object.assign(i18n['zh-TW'], {
   'onb-guide-sidebar-try-desc': '從螢幕邊緣向右滑動，開啟側邊欄。',
   'onb-guide-sidebar-try-live': '您來試一次：從螢幕邊緣向右滑動，開啟側邊欄。',
   'settings-macos-title': 'macOS',
-  'settings-windows-title': 'Windows 10 / 11（Phone）',
+  'settings-windows-title': 'CX RAI',
+  'settings-app-title': '下載客戶端',
+  'settings-app-desc': '優先安裝網頁版應用；Windows 使用者也可以下載 CX RAI。',
+  'settings-pwa-badge': '推薦',
+  'settings-pwa-desc': '安裝後可從桌面或主畫面以獨立視窗開啟。',
+  'settings-cxrai-badge': 'Windows 10 / 11',
+  'settings-cxrai-desc': '由 Master-Tea 發布的 Windows 桌面客戶端。',
+  'local-agent-install-compact-desc': '可選：連接瀏覽器與本機電腦能力',
+  'local-agent-install-optional': '進階',
   'settings-platform-download': '下載',
   'settings-install-tutorial': '使用教學',
   'security-device-browser': '瀏覽器',
@@ -8145,6 +8146,104 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-09-24',
+    version: 'v0.13.16-r3 · Beta',
+    zh: {
+      summary: '正式线与 Beta 的近期修复完成整合，下载客户端页重新聚焦网页版应用与 CX RAI。',
+      details: [
+        '同步 main 的 iOS 安全区、2FA、HEIC 大图上传、会话本地电脑上下文、应用下载与 CX RAI 接入。',
+        '保留 Beta 的流式时间线、工具追踪、artifact 卡片、文件沙箱和安装器修复，并修复 /beta/ 下主宠闲话请求路径。',
+        '下载客户端页以网页版应用和 CX RAI 为主卡片；RAI Connect 与本地 Agent 改为默认收起的进阶横条。'
+      ]
+    },
+    en: {
+      summary: 'Recent main and Beta fixes are integrated, and Download Clients now prioritizes the Web App and CX RAI.',
+      details: [
+        'Brings main iOS safe-area, 2FA, HEIC/large-image upload, local-computer conversation context, app download, and CX RAI work into Beta.',
+        'Preserves Beta streaming timelines, tool traces, artifact cards, file sandboxing, and installer fixes, including the /beta/ pet-chitchat request path.',
+        'Download Clients now leads with Web App and CX RAI, while RAI Connect and Local Agent collapse into an advanced bar by default.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-21',
+    version: 'v0.13.9 · main',
+    zh: {
+      summary: '2FA、iOS 独立窗口、HEIC/大图上传和工具续传稳定性集中修复。',
+      details: [
+        '2FA 回到标准 ±1 周期并补充漂移诊断；iOS 主屏幕底部黑边、键盘输入框和卡视口自愈。',
+        'HEIC 与大图会先在本地转码，附件上传完成后再发送，断线上传支持重试。',
+        '工具续传、长任务预算与会话本地电脑上下文完成持久化。'
+      ]
+    },
+    en: {
+      summary: 'Focused fixes for 2FA, iOS standalone layout, HEIC/large uploads, and tool-continuation resilience.',
+      details: [
+        '2FA returns to the standard ±1 period with drift diagnostics; iOS fixes the Home Screen bottom gap, keyboard viewport, and stuck viewports.',
+        'HEIC and large images are prepared locally before upload, sends wait for attachments, and interrupted uploads retry.',
+        'Tool continuation, long-task budgets, and local-computer conversation context are now persisted.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-14',
+    version: 'v0.13.8 · main',
+    zh: {
+      summary: '设置新增“下载应用客户端”，关于页瘦身并接入 CX RAI。',
+      details: [
+        '下载入口与浏览器安装状态集中到独立设置页，CX RAI 直接提供最新 EXE 安装程序。',
+        '关于页缩短并保留版本时间线、GitHub 与支持入口。',
+        '桌面客户端下载链接统一接入 Master-Tea/CX-RAI。'
+      ]
+    },
+    en: {
+      summary: 'Added Download Apps to Settings, simplified About, and connected CX RAI.',
+      details: [
+        'Download entry points and browser install state now live on a dedicated settings page, with the latest CX RAI EXE installer as the primary Windows download.',
+        'About keeps the version timeline, GitHub, and support entry points in a shorter layout.',
+        'Desktop download links now resolve through Master-Tea/CX-RAI.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-08',
+    version: 'v0.13.6 · main',
+    zh: {
+      summary: 'iOS 独立窗口安全区与 PWA 缓存版本契约完成同步。',
+      details: [
+        '修复 iOS 添加到主屏幕后的底部安全区和独立窗口布局。',
+        'Service Worker 缓存名称、页面构建标识与发布版本改为同一契约。'
+      ]
+    },
+    en: {
+      summary: 'Aligned iOS standalone safe areas and the PWA cache version contract.',
+      details: [
+        'Fixes Home Screen safe-area and standalone layout behavior on iOS.',
+        'Service Worker cache names, page build markers, and release versions now share one contract.'
+      ]
+    }
+  },
+  {
+    date: '2026-08-19',
+    version: 'v0.13.16 · Beta',
+    zh: {
+      summary: 'Beta 的流式输出、工具追踪、artifact 与 sandbox 下载链路完成修复。',
+      details: [
+        '流式事件、搜索/生成步骤与工具调用按真实顺序显示，并能从历史记录恢复。',
+        '修复引用链接、artifact 卡片、文件完成态与 sandbox 网络/下载隔离。',
+        'MasterTea 桌宠升级为双帧动画，并补齐快捷动作与闲话。'
+      ]
+    },
+    en: {
+      summary: 'Beta completed repairs for streaming output, tool traces, artifacts, and sandbox downloads.',
+      details: [
+        'Streaming events, search/generation steps, and tool calls now preserve their real order and survive history reloads.',
+        'Restores citation links, artifact cards, file completion states, and sandbox network/download isolation.',
+        'Upgrades the MasterTea pet to two-frame animation with quick actions and chitchat.'
+      ]
+    }
+  },
   {
     date: '2026-08-14',
     version: 'v0.13.1',

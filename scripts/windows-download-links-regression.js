@@ -23,14 +23,18 @@ assert(buildMatch, 'app.js build marker is missing');
 const buildId = buildMatch[1];
 
 assert(indexHtml.includes('settings-platform-download-card'), 'Combined platform download card is missing from About settings');
-for (const id of ['windowsPackageDownload', 'windowsSetupDownload', 'windowsDownloadStatus']) {
+for (const id of ['windowsSetupDownload', 'windowsDownloadStatus']) {
   assert(indexHtml.includes(`id="${id}"`), `${id} is missing`);
 }
+assert(!indexHtml.includes('windowsPackageDownload'), 'separate package download option must stay removed');
+assert(!indexHtml.includes('windowsLumiaPackage'), 'separate ARM package option must stay removed');
 assert(!indexHtml.includes('windowsCertificateDownload'), 'certificate link should be gone: Setup.exe installs the certificate');
 assert(!indexHtml.includes('onedrive'), 'stale OneDrive fallback link should be gone');
 assert(appJs.includes('loadLatestWindowsDownloads()'), 'About does not automatically load the latest Windows release');
 assert(appJs.includes('`${API_BASE}/windows-downloads`'), 'frontend does not call the same-origin Windows release API');
 assert(appJs.includes("parsed.pathname.startsWith('/Master-Tea/CX-RAI/releases/download/')"), 'frontend asset origin validation is missing');
+assert(appJs.includes("isTrustedWindowsReleaseAsset(release?.setup, ['.exe'])"), 'frontend must render the EXE installer directly');
+assert(!appJs.includes('windowsPackageDownload'), 'frontend must not resolve a separate package download');
 assert(serverJs.includes("app.get('/api/windows-downloads'"), 'Windows release API route is missing');
 assert(serverJs.includes("require('./lib/windows-downloads')"), 'server does not use the bounded release resolver');
 assert(FALLBACK_RELEASE.setup && FALLBACK_RELEASE.setup.url.endsWith('.exe'), 'fallback setup URL should be an .exe');
@@ -66,13 +70,13 @@ assert(swJs.includes(`const RAI_SW_VERSION = '${packageJson.version}-${buildId}'
     tag_name: 'v1.6.5.2',
     draft: false,
     assets: [
-      { name: 'CX.RAI_1.6.5.2_Setup.exe', browser_download_url: 'https://github.com/Master-Tea/CX-RAI/releases/download/v1.6.5.2/CX.RAI_1.6.5.2_Setup.exe' },
-      { name: 'CX.RAI_1.6.5.2_x86_x64.appxbundle', browser_download_url: 'https://github.com/Master-Tea/CX-RAI/releases/download/v1.6.5.2/CX.RAI_1.6.5.2_x86_x64.appxbundle' }
+      { name: 'CX.RAI_1.6.5.2_Setup.exe', browser_download_url: 'https://github.com/Master-Tea/CX-RAI/releases/download/v1.6.5.2/CX.RAI_1.6.5.2_Setup.exe' }
     ]
   };
   const modern = parseLatestRelease(modernPayload);
   assert.equal(modern.source, 'github', 'exe-only release must resolve as github, not fall back');
   assert.equal(modern.tag, 'v1.6.5.2');
+  assert.equal(modern.package, null, 'EXE-only release must not require a separate package');
   assert.equal(modern.certificate, null);
 
   // A truly empty release still fails loudly.

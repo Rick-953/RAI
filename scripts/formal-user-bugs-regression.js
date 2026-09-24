@@ -1036,7 +1036,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-main-beta-integration-v01316-r2';
+  const expectedBuild = '20260924-settings-app-cxrai-about-v01316-r3';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1288,6 +1288,25 @@ function testVersionContract() {
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
 }
 
+function testDownloadClientsAndTimeline() {
+  const appPanelStart = index.indexOf('id="settingsPanel-app"');
+  const webAppCard = index.indexOf('id="settingsPwaDownloadTitle"');
+  const cxRaiCard = index.indexOf('id="settingsWindowsDownloadTitle"');
+  const connectSection = index.indexOf('id="settingsRaiConnectInstall"');
+  assert.ok(appPanelStart >= 0 && webAppCard > appPanelStart && cxRaiCard > webAppCard && connectSection > cxRaiCard,
+    'download page must lead with Web App and CX RAI before the advanced connection bar');
+  assert.match(index, /<details class="settings-connect-install" id="settingsRaiConnectInstall"/,
+    'RAI Connect must be a details element');
+  assert.doesNotMatch(index, /<details[^>]+id="settingsRaiConnectInstall"[^>]*\sopen(?:\s|=|>)/,
+    'RAI Connect must be collapsed by default');
+  assert.match(index, /settings-connect-summary[\s\S]*local-agent-install-compact-desc/,
+    'RAI Connect summary must render as a compact horizontal bar');
+  assert.match(app, /date: '2026-09-24'[\s\S]*date: '2026-09-21'[\s\S]*date: '2026-09-14'[\s\S]*date: '2026-09-08'[\s\S]*date: '2026-08-19'/,
+    'About timeline must include recent GitHub milestones in descending order');
+  assert.match(app, /GitHub main \/ beta 提交记录[\s\S]*2026-09-24/,
+    'About timeline source must state the GitHub sync horizon');
+}
+
 function testPromptModelIdentity() {
   const getModelPromptIdentity = extractNamedFunction(app, 'getModelPromptIdentity');
   assert.match(getModelPromptIdentity, /appState\.currentSession\?\.prompt_model_identity/);
@@ -1518,7 +1537,8 @@ async function main() {
     testPromptModelIdentity,
     testMainDatabaseTransactionIsolation,
     testMessageRenderingStability,
-    testVersionContract
+    testVersionContract,
+    testDownloadClientsAndTimeline
   ];
   for (const test of tests) await test();
   console.log(`formal-user-bugs-regression ok (${tests.length}/${tests.length})`);
@@ -1549,5 +1569,6 @@ module.exports = {
   testPromptModelIdentity,
   testMainDatabaseTransactionIsolation,
   testMessageRenderingStability,
-  testVersionContract
+  testVersionContract,
+  testDownloadClientsAndTimeline
 };
