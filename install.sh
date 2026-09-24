@@ -121,7 +121,7 @@ find "$VERSIONS" -mindepth 1 -maxdepth 1 -type d -print | sort -r | tail -n +3 |
   case "$old" in "$VERSIONS"/*) rm -rf "$old" ;; *) exit 1 ;; esac
 done
 
-"$INSTALL_ROOT/current" install --chrome-id "$CHROME_ID" --edge-id "$EDGE_ID" --open-store=false
+"$INSTALL_ROOT/current" install --chrome-id "$CHROME_ID" --edge-id "$EDGE_ID"
 
 case "$(uname -s)" in
   Darwin)

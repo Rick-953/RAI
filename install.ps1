@@ -79,7 +79,7 @@ try {
         }
     }
 
-    & $binary install --chrome-id $chromeId --edge-id $edgeId --open-store=false
+    & $binary install --chrome-id $chromeId --edge-id $edgeId
     if ($LASTEXITCODE -ne 0) { throw 'Native Messaging registration failed' }
 
     function Open-ExtensionPage([string]$CommandName, [string[]]$Paths, [string]$Page) {

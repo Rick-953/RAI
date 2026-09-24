@@ -32,7 +32,6 @@ assert.match(sandboxSkill, /command policy/i);
 assert.match(sandboxSkill, /sandbox_command_blocked/);
 assert.match(sandboxSkill, /no direct network/);
 assert.match(sandboxSkill, /persists for 3 hours/);
-assert.match(sandboxSkill, /git clone/);
 const officeSkill = registry.loadTrustedSkill('office').content;
 assert.match(officeSkill, /zipfile/);
 assert.match(officeSkill, /make_docx/);

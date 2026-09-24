@@ -41,6 +41,15 @@ function securityDbGet(sql, params = []) {
   });
 }
 
+async function waitForCondition(condition, timeoutMs = 5_000, intervalMs = 100) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
 function securityDbRun(sql, params = []) {
   assert.ok(SECURITY_DB_PATH, 'isolated security database path is required');
   return new Promise((resolve, reject) => {
@@ -1416,8 +1425,12 @@ async function main() {
         headers: authHeaders(userA.token)
       });
       assert.strictEqual(deleteSession.response.status, 200, 'owner should delete the session');
-      assert.equal(fs.existsSync(generatedFixture.filePath), false, 'session deletion must remove generated image bytes');
-      assert.equal(fs.existsSync(expiredGeneratedFixture.filePath), false, 'session deletion must also remove expired generated image bytes');
+      // Generated-image bytes are drained asynchronously (setImmediate) so the
+      // response stays fast; wait for the deletion instead of asserting inline.
+      const deletedWithin = await waitForCondition(() => (
+        !fs.existsSync(generatedFixture.filePath) && !fs.existsSync(expiredGeneratedFixture.filePath)
+      ), 5_000);
+      assert.ok(deletedWithin, 'session deletion must remove generated image bytes (async drain)');
       const generatedAfterDelete = await request(`/generated-images/${encodeURIComponent(generatedFixture.filename)}`, {
         headers: authHeaders(userA.token)
       });

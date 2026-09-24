@@ -45,7 +45,15 @@ const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'u
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
-const teaPetAsset = path.join(ROOT, 'public/images/pets/tea-pet.webp');
+const teaPetAssets = [
+  'MasterTea1.webp', 'MasterTea1-1.webp',
+  'MasterTea2.webp', 'MasterTea2-1.webp',
+  'MasterTea3.webp', 'MasterTea3-1.webp',
+  'MasterTea4.webp', 'MasterTea4-1.webp',
+  'MasterTeaHello.webp', 'MasterTeaHello-1.webp',
+  'MasterTeaChat.webp', 'MasterTeaChat-1.webp',
+  'MasterTeaDesktop.webp', 'MasterTeaDesktop-1.webp'
+].map((fileName) => path.join(ROOT, 'public/images/pets', fileName));
 const serviceWorker = read('public/sw.js');
 const serverSource = read('server.js');
 const packageJson = JSON.parse(read('package.json'));
@@ -170,13 +178,13 @@ function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.13\.9'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260921-viewport-standard2fa-v0146-r1'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.9-20260921-viewport-standard2fa-v0146-r1'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260921-viewport-standard2fa-v0146-r1/g) || []).length;
+  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.13\.18'\s*;/, 'RAI_APP_VERSION mismatch');
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260924-formal-v01318-r1'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.18-20260924-formal-v01318-r1'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260924-formal-v01318-r1/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.13\.9/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.13.9', 'package.json version mismatch');
+  assert.match(index, /v0\.13\.18/, 'index.html must show the matching app version');
+  assert.equal(packageJson.version, '0.13.18', 'package.json version mismatch');
 }
 
 function testGuideWiring() {
@@ -584,14 +592,16 @@ function testMobileGuideCollisionAvoidance() {
 }
 
 function testPetSelectionAndInteraction() {
-  assert.ok(fs.existsSync(teaPetAsset), 'Tea pet WebP asset must exist');
-  assert.ok(fs.statSync(teaPetAsset).size > 1000 && fs.statSync(teaPetAsset).size < 200000,
-    'Tea pet WebP must be non-empty and lightweight');
+  for (const teaPetAsset of teaPetAssets) {
+    assert.ok(fs.existsSync(teaPetAsset), `Tea pet WebP asset must exist: ${path.basename(teaPetAsset)}`);
+    assert.ok(fs.statSync(teaPetAsset).size > 1000 && fs.statSync(teaPetAsset).size < 200000,
+      `Tea pet WebP must be non-empty and lightweight: ${path.basename(teaPetAsset)}`);
+  }
   assert.match(index, /id="settingsPetPicker"[\s\S]*?data-pet-type="saturn"[\s\S]*?data-pet-type="tea"/,
     'settings must expose Saturn and Tea pet choices');
   assert.match(index, /id="raiPetContextMenu"[\s\S]*?id="raiPetHideAction"/,
     'pet context menu must expose a hide action');
-  assert.match(styles, /images\/pets\/tea-pet\.webp/, 'Tea pet asset must be rendered by CSS');
+  assert.match(styles, /images\/pets\/MasterTea(?:1|Hello)\.webp/, 'Tea pet assets must be rendered by CSS');
   assert.match(app, /const\s+RAI_PET_TYPES\s*=\s*new Set\(\['saturn',\s*'tea'\]\)/,
     'client pet type allowlist must be strict');
   assert.match(app, /RAI_PET_POSITION_PREFIX\s*=\s*'rai_pet_position:'/, 'pet positions must use an account-scoped prefix');

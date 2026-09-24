@@ -39,6 +39,8 @@ const source = fs.readFileSync(path.join(root, 'lib', 'linux-sandbox.js'), 'utf8
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 assert.match(source, /spawn\('\/usr\/bin\/prlimit'/);
 assert.match(source, /'--unshare-all'/);
+assert.doesNotMatch(source, /'--share-net'/);
+assert.match(source, /fetch_url/);
 assert.match(source, /'--clearenv'/);
 assert.match(source, /'--cap-drop', 'ALL'/);
 assert.match(source, /'--as=2147483648'/);
@@ -56,14 +58,14 @@ assert.match(source, /findImplicitOutputCandidate\(workspaceDir/);
 assert.match(source, /auto_output:\s*implicitOutput/);
 assert.match(source, /child\.kill\('SIGKILL'\)/);
 assert.doesNotMatch(source, /shell\s*:\s*true/);
-assert.doesNotMatch(source, /--share-net|--bind\s*['"]\s*\/['"]/);
-assert.match(server, /name: 'sandbox_exec'/);
-assert.match(server, /additionalProperties: false/);
+assert.doesNotMatch(source, /--bind\s*['"]\s*\/['"]/);
+assert.match(server, /const SANDBOX_EXEC_TOOL_DEFINITION[\s\S]{0,500}no direct network access/);
+assert.match(server, /fetch_url/);
 assert.match(server, /if \(toolName === 'sandbox_exec'\)/);
 assert.match(server, /const sourcePath = path\.resolve\(uploadsRoot, row\.filename\)/);
 assert.match(server, /path: sourcePath/);
 assert.match(server, /download_available: true/);
-assert.match(server, /buildArtifactDownloadMarkdown\(result\)/);
+assert.doesNotMatch(server, /buildArtifactDownloadMarkdown\(result\)/, 'artifact markdown must not be injected into assistant正文');
 assert.match(server, /requiresRaiProductSkill/);
 assert.match(server, /forced_rai_product_skill_/);
 

@@ -35,6 +35,8 @@ for (const merge of [mergeClient, mergeServer]) {
 }
 
 assert.match(app, /const CHAT_STREAM_CONTINUATION_LIMIT = 2/);
+assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
+assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
 assert.match(app, /for \(let attempt = 1; attempt <= CHAT_STREAM_CONTINUATION_LIMIT; attempt \+= 1\)/);
 assert.match(app, /event\.type === 'done'[\s\S]*receivedDone = true/);
 assert.match(app, /const rootRequestId = String\(continuationOfRequestId \|\| ''\)/);
@@ -91,7 +93,7 @@ assert.doesNotMatch(server, /收到 tool_calls 但均无效，已跳过/,
   'invalid tool calls must never silently skip tool continuation');
 
 assert.match(app, /let receivedExplicitError = false/);
-assert.match(app, /parsed\.type === 'error'[\s\S]{0,260}receivedExplicitError = true[\s\S]{0,600}updateStepStatus\(stepGenerating, 'failed'/,
+assert.match(app, /parsed\.type === 'error'[\s\S]{0,260}receivedExplicitError = true[\s\S]{0,600}updateStepStatus\(getGeneratingStep\(\), 'failed'/,
   'explicit SSE errors must mark generation failed');
 assert.match(app, /!receivedDoneEvent && !receivedCancelled && !receivedExplicitError[\s\S]{0,160}自动续传/,
   'explicit tool/provider errors must not enter connection continuation');

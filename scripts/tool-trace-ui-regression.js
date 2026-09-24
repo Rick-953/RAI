@@ -21,20 +21,81 @@ assert.match(app, /parsed\.type === 'tool_status'[\s\S]{0,400}upsertToolTraceIte
   'tool_status SSE events must update the trace');
 assert.match(app, /parsed\.type === 'search_status'[\s\S]{0,500}upsertToolTraceItem\(/,
   'search SSE events must update the trace');
+assert.match(app, /const toolTraceSnapshots = new Map\(\)/, 'tool trace snapshots must survive streaming');
+assert.match(app, /tools: toolSnapshot/, 'final message must persist tool traces');
+assert.match(app, /tool-trace-summary[\s\S]{0,500}aria-expanded/, 'tool trace summary must be clickable');
+assert.match(app, /tool-history-step/, 'historical tool trace step missing');
+assert.match(app, /processTraceToggle\.addEventListener\('click'/, 'streaming prompt trace toggle missing');
+assert.match(app, /const hasToolTrace = !!/, 'stored tool traces must recreate the timeline');
+assert.match(app, /rai-reasoning-header/, 'thinking controls must not use nested buttons');
+assert.doesNotMatch(server, /artifactMarkdown\s*=|emitStructuredAssistantChunk\([^\n]*artifactMarkdown/, 'artifact link must not be injected into assistant正文');
+assert.match(server, /const serverToolTrace = \[\]/, 'server tool trace collector missing');
+assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'complete'/, 'server completion trace missing');
+assert.match(server, /tools: serverToolTrace/, 'server must persist tool traces');
+assert.match(server, /const serverFlowSegments = \[\]/, 'server must collect an ordered stream flow');
+assert.match(server, /recordServerFlowContent\(visibleDelta\)/, 'server must persist streamed content in order');
+assert.match(server, /flowSegments: serverFlowSegments\.slice\(-200\)/, 'server must persist stream flow for completed messages');
+assert.match(server, /recordServerToolTrace\(\{[\s\S]{0,500}status: 'failed'/, 'server failure trace missing');
 
-// Thinking has explicit compact/live/expanded state, and live is bounded.
+// Ordered timeline: search/generating steps append in real SSE event order
+assert.match(app, /id="timelineDynamicSteps"/, 'dynamic timeline step container missing');
+assert.match(app, /function ensureSearchStep\(/, 'search step appender missing');
+assert.match(app, /function getGeneratingStep\(/, 'generating step getter missing');
+assert.match(app, /function finalizeGeneratingStep\(/, 'generating step finalizer missing');
+assert.match(app, /data-kind="search"/, 'search steps must carry a kind marker');
+assert.match(app, /timelineDynamicSteps\.appendChild\(el\)/, 'dynamic steps must append in order');
+assert.doesNotMatch(app, /id="stepGenerating"/, 'fixed generating step must be replaced by dynamic steps');
+
+assert.match(app, /简易文档已生成/, 'client must suppress legacy artifact status labels');
+assert.match(app, /timelineSequence/, 'streaming timeline sequence state missing');
+assert.match(app, /timeline:\s*timelineSequence\.slice\(-200\)/, 'timeline sequence must persist after streaming');
+assert.match(app, /Array\.isArray\(processTrace\?\.timeline\)/, 'history must prefer the persisted timeline');
+assert.match(app, /dataset\.userToggled/, 'tool trace click state must survive later SSE updates');
+assert.match(app, /event\.args && event\.args\.query/, 'tool trace args must be read without an undefined variable');
+assert.doesNotMatch(app, /timelineRows\.map\(\(row\) => `\s*<!-- 步骤1/, 'history must not rebuild a fixed analysis-first timeline');
+assert.match(app, /const streamFlowSegments = \[\]/, 'stream flow segments missing');
+assert.match(app, /const generatedArtifactAttachments = \[\]/, 'streamed artifacts need independent state before final message initialization');
+assert.doesNotMatch(app, /attachments:\s*aiMsg\.attachments/, 'final assistant initialization must not read aiMsg in its own temporal dead zone');
+assert.match(app, /attachments:\s*generatedArtifactAttachments\.length > 0\s*\? generatedArtifactAttachments\s*:\s*null/,
+  'final assistant message must persist the independently collected artifacts');
+const prepareMessageElementStart = app.indexOf('function prepareMessageElement(');
+const prepareMessageElementEnd = app.indexOf('\nfunction openSidebar(', prepareMessageElementStart);
+const prepareMessageElementSource = app.slice(prepareMessageElementStart, prepareMessageElementEnd);
+assert.ok(
+  prepareMessageElementSource.indexOf("content.appendChild(textDiv)") < prepareMessageElementSource.indexOf("content.appendChild(attachmentsDiv)"),
+  'assistant artifact cards must render after the final answer text'
+);
+assert.match(app, /appendInterleavedContent\(/, 'content must enter the interleaved flow');
+assert.match(app, /appendInterleavedEvent\('tool'/, 'tool events must enter the interleaved flow');
+assert.match(app, /flowSegments:\s*streamFlowSegments\.slice\(-200\)/, 'interleaved flow must persist after streaming');
+assert.match(app, /hasInterleavedFlow/, 'history must detect the persisted interleaved flow');
+assert.match(app, /shouldRenderReasoningTimeline \|\|[\s\S]{0,220}!hasInterleavedFlow/, 'reasoning timelines must render even with interleaved history while legacy timelines stay suppressed');
+assert.match(app, /if \(segment\.kind === 'reasoning' && shouldRenderReasoningTimeline\) return;/, 'persisted reasoning must render only once in the finalized timeline');
+assert.match(app, /if \(segment\.kind === 'reasoning' && document\.getElementById\('raiReasoningBlock'\)\) return;/, 'live reasoning must render only once in the live timeline');
+assert.match(app, /if \(existingText && finalizedText && !preserveLiveFlow\)/, 'completion must replace the streaming body in place instead of duplicating it');
+assert.match(app, /const preserveLiveFlow = !!\(/, 'completion must preserve a populated live flow when the finalized template would duplicate the timeline');
+assert.match(app, /existingText\.replaceWith\(finalizedText\)/, 'completion must replace the streaming body in place instead of duplicating it');
+assert.match(app, /querySelectorAll\('\.thinking-timeline, \.rai-reasoning-block'\)\.forEach\(\(node\) => node\.remove\(\)\)/, 'completion must remove obsolete streaming-only structures');
+assert.match(css, /\.stream-flow-event/, 'interleaved flow event styles missing');
+
 assert.match(app, /data-reasoning-mode="collapsed"/, 'collapsed thinking control missing');
 assert.match(app, /data-reasoning-mode="live"/, 'live thinking control missing');
 assert.match(app, /data-reasoning-mode="expanded"/, 'expanded thinking control missing');
 assert.match(app, /function setReasoningDisplayMode\(/, 'thinking display mode state handler missing');
 
-assert.match(css, /\.tool-trace-list/, 'tool trace styles missing');
-assert.match(css, /\.tool-trace-detail[\s\S]{0,300}max-height/, 'current trace must have a bounded viewport');
+assert.match(css, /\.tool-trace-item[\s\S]{0,180}flex-wrap: wrap/);
+assert.match(css, /\.tool-trace-detail[\s\S]{0,120}flex: 0 0 100%/);
 assert.match(css, /\.rai-reasoning-block\.mode-live[\s\S]{0,300}max-height/, 'live thinking must have a bounded viewport');
 assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, 'trace animation must respect reduced motion');
 
 // Server supplies state and a bounded readable detail without exposing paths.
 assert.match(server, /type: 'tool_status'[\s\S]{0,400}detail:/, 'tool status needs detail payload');
+assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
+assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
+assert.match(app, /function renderCitations\(html, sources\)/);
+assert.match(app, /function mergeAndReindexSources\(existingSources = \[\], incomingSources = \[\]\)/);
+assert.match(app, /marker && !usedMarkers\.has\(marker\) \? marker : nextMarker\(kind\)/);
+assert.match(server, /formatSearchResults\(searchData, query, sources = \[\]\)/);
 assert.match(server, /read_skill/, 'trusted skill tool status missing');
 
 console.log('tool trace UI regression passed');

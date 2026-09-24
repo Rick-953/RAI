@@ -49,6 +49,31 @@
   }
 })();
 
+(function applyClientPlatformBootstrap() {
+  const userAgent = String(navigator.userAgent || '');
+  const platformHint = String(navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
+  const isIPad = /iPad/.test(userAgent)
+    || (platformHint === 'macintel' && Number(navigator.maxTouchPoints || 0) > 1);
+  let clientPlatform = 'other';
+
+  if (/windows phone|iemobile|windows mobile/i.test(userAgent)) {
+    clientPlatform = 'windows-mobile';
+  } else if (isIPad || /iphone|ipod/i.test(userAgent)) {
+    clientPlatform = 'ios';
+  } else if (/android/i.test(userAgent)) {
+    clientPlatform = 'android';
+  } else if (/windows|win32|win64|wow64/i.test(`${platformHint} ${userAgent}`)) {
+    clientPlatform = 'windows';
+  } else if (/mac|macintosh|mac os x/i.test(`${platformHint} ${userAgent}`)) {
+    clientPlatform = 'macos';
+  } else if (/linux|x11|cros/i.test(`${platformHint} ${userAgent}`)) {
+    clientPlatform = 'linux';
+  }
+
+  document.documentElement.dataset.clientPlatform = clientPlatform;
+  globalThis.RAI_CLIENT_PLATFORM = clientPlatform;
+})();
+
 (function applyRuntimeBrand() {
   const cfg = globalThis.__RAI_RUNTIME_CONFIG || {};
   const brandName = String(cfg.brandName || 'RAI').trim() || 'RAI';

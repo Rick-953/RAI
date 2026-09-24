@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.13.9",
+  "version": "0.13.18",
   "packageManager": "npm@11.13.0",
   "engines": {
     "node": "24.16.0",
@@ -82,7 +82,7 @@
     "express-rate-limit": "^7.1.5",
     "ipaddr.js": "2.4.0",
     "jsonwebtoken": "^9.0.3",
-    "multer": "2.2.0",
+    "multer": "2.4.0",
     "qrcode": "^1.5.4",
     "sqlite3": "^6.0.1",
     "yauzl": "3.4.0"

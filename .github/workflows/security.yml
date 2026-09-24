@@ -54,9 +54,12 @@ jobs:
           node -e "const p=require('./package.json'); const l=require('./package-lock.json'); if (l.version !== p.version || l.packages?.['']?.version !== p.version) { throw new Error('package-lock version must equal package version'); }"
 
           release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          if ! git merge-base --is-ancestor "$release_commit" refs/remotes/origin/main; then
-            echo "release tag must point to a commit already present on main" >&2
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/beta:refs/remotes/origin/beta'
+          if ! git merge-base --is-ancestor "$release_commit" refs/remotes/origin/main \
+            && ! git merge-base --is-ancestor "$release_commit" refs/remotes/origin/beta; then
+            echo "release tag must point to a commit already present on main or beta" >&2
             exit 1
           fi
       - name: Set up Node.js

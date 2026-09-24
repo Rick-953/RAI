@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
@@ -673,25 +673,6 @@ function buildGeneratedImageMarkdown(result = {}) {
         })
         .filter(Boolean)
         .join('\n\n');
-}
-
-function buildArtifactDownloadMarkdown(result = {}) {
-    const rawUrl = String(result?.downloadPath || '').trim();
-    try {
-        const parsed = new URL(rawUrl, 'http://rai.local');
-        if (
-            parsed.origin !== 'http://rai.local'
-            || !/^\/api\/file-jobs\/[a-f0-9]{48}\/artifacts\/[a-f0-9]{32}$/i.test(parsed.pathname)
-            || !parsed.searchParams.get('sessionId')
-            || [...parsed.searchParams.keys()].some((key) => key !== 'sessionId')
-        ) return '';
-        const label = String(result?.fileName || 'RAI 文件产物')
-            .replace(/[\u0000-\u001f\u007f\[\]();\\]/g, '_')
-            .slice(0, 96) || 'RAI 文件产物';
-        return `[下载 ${label}](${parsed.pathname}${parsed.search})`;
-    } catch (_) {
-        return '';
-    }
 }
 
 function appendRaiRuntimeReport(entry = {}) {
@@ -2632,7 +2613,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'sandbox_exec',
-        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has no direct network; use the server-side fetch_url gate for permitted public downloads. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
+        description: 'Run a bounded POSIX shell script inside the user\'s isolated Linux workspace. The sandbox process has no direct network access. Public downloads use the server-side `fetch_url` gate with SSRF, host allowlist, threat denylist, and content validation. The workspace is isolated per user and persists for 3 hours, refreshing on use. It can copy, move, rename, create, inspect, compress or extract files and run installed Python, Node.js, or shell code. Supply output_path for the file to download. If omitted, the server automatically returns the only newly generated supported document or archive. Security boundary: 禁止网络、宿主机访问、提权和绕过资源限制。',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -2659,8 +2640,7 @@ const SANDBOX_EXEC_TOOL_DEFINITION = {
 };
 
 // fetch_url — controlled download gate for the file workspace.
-// The sandbox process itself stays offline (--unshare-all); downloads flow
-// through this SSRF-protected server endpoint and land as session attachments.
+// The sandbox process itself stays offline; downloads flow through this SSRF-protected server endpoint and land as session attachments.
 const FETCH_URL_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
 const FETCH_URL_TIMEOUT_MS = 15000;
 // Host allowlist: exact host or any subdomain. Extend via RAI_FETCH_EXTRA_HOSTS
@@ -2680,7 +2660,7 @@ const FETCH_URL_TOOL_DEFINITION = {
     type: 'function',
     function: {
         name: 'fetch_url',
-        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected allowlist and threat denylist, then attach it to the current session. Allowed hosts: GitHub and GitLab domains (including raw-content and codeload CDN hosts) plus any hosts configured in RAI_FETCH_EXTRA_HOSTS. High-risk malware, phishing, RAT, stealer, backdoor, and crypto-miner repositories and threat-feed domains are refused by exact identity/feed match. URLs with embedded credentials are rejected. Returns a file_id that read_file, edit_file, and sandbox_exec can consume. Do not fetch URLs inside sandbox scripts — the sandbox is offline.',
+        description: 'Download one public file (up to 16MB) through the server-side SSRF-protected allowlist and threat denylist, then attach it to the current session. Allowed hosts: GitHub and GitLab domains plus configured public hosts. The sandbox itself may use public network access directly; use fetch_url when you need this server-side attachment gate.',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -3139,7 +3119,7 @@ function getPendingClientToolCountBySession(sessionId) {
     return count;
 }
 
-const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files']);
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
@@ -5261,7 +5241,7 @@ async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 30
  * @param {string} query - 原始查询
  * @returns {string} 格式化的搜索结果文本
  */
-function formatSearchResults(searchData, query) {
+function formatSearchResults(searchData, query, sources = []) {
     // 兼容旧格式和新格式
     const results = searchData.results || searchData;
     const images = searchData.images || [];
@@ -5276,7 +5256,7 @@ function formatSearchResults(searchData, query) {
     const webResults = results.filter(r => r.url && r.url.trim() !== '');
 
     webResults.forEach((result, index) => {
-        const citationNum = index + 1;
+        const citationNum = String(sources[index]?.marker || index + 1);
         formatted += `[${citationNum}] ${result.title}\n`;
         formatted += `   ${result.snippet}\n`;
         formatted += `   来源: ${result.url}\n\n`;
@@ -5419,6 +5399,22 @@ function buildFinanceSourceForSSE(financeResult = {}) {
     }];
 }
 
+function buildArtifactAttachment(result = {}) {
+    const downloadPath = String(result.downloadPath || result.download_url || '').trim();
+    const fileName = String(result.fileName || result.file_name || '').trim();
+    if (!downloadPath || !fileName) return null;
+    return {
+        type: 'document',
+        fileName,
+        originalName: fileName,
+        fileType: String(result.mimeType || result.mime_type || 'application/octet-stream').slice(0, 120),
+        mimeType: String(result.mimeType || result.mime_type || 'application/octet-stream').slice(0, 120),
+        size: Math.max(0, Number(result.size || 0)),
+        filePath: downloadPath,
+        downloadPath
+    };
+}
+
 function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
     if (toolName === 'web_search') {
         return {
@@ -5526,8 +5522,8 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             mime_type: result?.mimeType || '',
             size: Number(result?.size || 0),
             expires_at: result?.expiresAt || null,
-            download_available: true,
-            reply_instruction: 'A trusted download link was already sent to the user interface. Briefly confirm the artifact is ready, but do not repeat a URL, task ID, filesystem path, or tool protocol.'
+            download_available: Boolean(result?.downloadPath),
+            reply_instruction: 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Answer the user\'s substantive request naturally, and mention the file only when the user explicitly asks about it.'
         };
     }
 
@@ -5551,7 +5547,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
                 download_available: true
             } : {}),
             reply_instruction: downloadAvailable
-                ? 'A trusted download link was already sent to the user interface. Summarize the execution and confirm the artifact is ready without repeating a URL, task ID, filesystem path, or tool protocol.'
+                ? 'The interface already shows the file action. Do not emit bracketed status labels such as [简易文档已生成], [文档已就绪], [下载 ...], or internal tool protocol. Summarize the bounded execution only when relevant to the user\'s request.'
                 : 'Summarize the bounded sandbox execution from stdout, stderr, and exit_code. Do not claim a download exists or expose tool protocol.'
         };
     }
@@ -5701,6 +5697,37 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
 
         req.write(JSON.stringify(requestBody));
         req.end();
+    });
+}
+
+function assignStableSourceMarkers(sources = []) {
+    const usedWebMarkers = new Set();
+    const usedFinanceMarkers = new Set();
+    const nextWebMarker = () => {
+        let index = 1;
+        while (usedWebMarkers.has(String(index))) index += 1;
+        return String(index);
+    };
+    const nextFinanceMarker = () => {
+        let index = 1;
+        while (usedFinanceMarkers.has(alphaMarkerFromIndex(index))) index += 1;
+        return alphaMarkerFromIndex(index);
+    };
+    return dedupeSources(sources).map((source) => {
+        const sourceKind = getSourceKind(source);
+        const candidate = String(source.marker || '').toUpperCase();
+        const usedMarkers = sourceKind === 'finance' ? usedFinanceMarkers : usedWebMarkers;
+        const marker = candidate && !usedMarkers.has(candidate)
+            ? candidate
+            : (sourceKind === 'finance' ? nextFinanceMarker() : nextWebMarker());
+        usedMarkers.add(marker);
+        return {
+            ...source,
+            sourceKind,
+            markerType: source.markerType || (sourceKind === 'finance' ? 'alpha' : 'numeric'),
+            marker,
+            index: Number(source.index || (sourceKind === 'finance' ? 1 : marker))
+        };
     });
 }
 
@@ -6186,7 +6213,7 @@ async function callK2p5Stream({
             return {
                 content: fullContent,
                 reasoningContent,
-                sources: dedupeSources(aggregatedSources),
+                sources: assignStableSourceMarkers(aggregatedSources),
                 usage: totalUsage,
                 searchCount
             };
@@ -17057,6 +17084,7 @@ function sanitizeAssistantVisibleContent(text = '') {
         .replace(/<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi, '')
         .replace(/<\|[^|]+\|>/g, '')
         .replace(/functions\.\w+:\d+/g, '')
+        .replace(/(?:\[\s*(?:简易文档已生成|文档已就绪|文件产物已生成|产物已就绪|下载[^\]]*)\s*\]\s*)+/g, '')
         .replace(/(?:^|\n)\s*用户(?:询问的是|想了解|问的是)[^\n]*(?:政治敏感|正常技术问题)[^\n]*(?=\n|$)/g, '\n')
         .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
@@ -21114,6 +21142,75 @@ if (clientFileExecution && systemPrompt) {
             localAgentEnabled: !!localAgentSession
         });
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
+        const serverToolTrace = [];
+        const generatedArtifacts = [];
+        const serverFlowSegments = [];
+        let activeServerFlowContent = null;
+        const recordServerFlowContent = (content = '') => {
+            const text = String(content || '');
+            if (!text) return;
+            if (!activeServerFlowContent) {
+                activeServerFlowContent = { kind: 'content', text: '' };
+                serverFlowSegments.push(activeServerFlowContent);
+            }
+            activeServerFlowContent.text += text;
+            if (serverFlowSegments.length > 200) serverFlowSegments.splice(0, serverFlowSegments.length - 200);
+        };
+        const recordServerFlowEvent = (kind, title, detail = '', status = 'done') => {
+            activeServerFlowContent = null;
+            const normalizedKind = String(kind || 'tool').slice(0, 40);
+            const normalizedTitle = String(title || normalizedKind).slice(0, 240);
+            const normalizedDetail = String(detail || '').slice(0, 12000);
+            const last = serverFlowSegments[serverFlowSegments.length - 1];
+            if (last && last.kind === normalizedKind && last.title === normalizedTitle && last.status === 'running') {
+                last.detail = normalizedDetail || last.detail;
+                last.status = status;
+                return;
+            }
+            serverFlowSegments.push({ kind: normalizedKind, title: normalizedTitle, detail: normalizedDetail, status });
+            if (serverFlowSegments.length > 200) serverFlowSegments.splice(0, serverFlowSegments.length - 200);
+        };
+        const recordServerFlowReasoning = (content = '') => {
+            const text = String(content || '');
+            if (!text) return;
+            activeServerFlowContent = null;
+            const last = serverFlowSegments[serverFlowSegments.length - 1];
+            if (last && last.kind === 'reasoning') {
+                last.detail = `${last.detail || ''}${text}`.slice(0, 12000);
+            } else {
+                recordServerFlowEvent('reasoning', '思考过程', text, 'done');
+            }
+        };
+        const recordServerToolTrace = (event = {}) => {
+            if (!event || !event.type || !['tool_status', 'search_status'].includes(String(event.type))) return;
+            const tool = String(event.tool || event.name || event.kind || 'tool').slice(0, 120);
+            const row = {
+                id: String(event.tool_call_id || event.call_id || `${tool}:${serverToolTrace.length}`).slice(0, 200),
+                tool,
+                status: String(event.status || 'complete').toLowerCase().slice(0, 40),
+                summary: String(event.summary || event.message || event.detail || tool).slice(0, 240),
+                detail: String(event.detail || event.message || '').slice(0, 12000),
+                query: String(event.query || '').slice(0, 500),
+                skill: String(event.skill || '').slice(0, 200),
+                file_name: String(event.file_name || '').slice(0, 240),
+                download_url: String(event.download_url || event.downloadPath || '').slice(0, 1000),
+                attachment: event.attachment && typeof event.attachment === 'object' ? event.attachment : null,
+                url: String(event.url || '').slice(0, 500),
+                ts: Number(event.ts) || Date.now()
+            };
+            const existingIndex = serverToolTrace.findIndex((item) => item.id === row.id);
+            if (existingIndex >= 0) serverToolTrace[existingIndex] = row;
+            else serverToolTrace.push(row);
+            if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
+            const kind = row.tool === 'web_search' || event.type === 'search_status' ? 'search' : 'tool';
+            recordServerFlowEvent(kind, row.summary || row.tool, row.detail || row.query || '', row.status === 'running' ? 'running' : (row.status === 'failed' ? 'failed' : 'done'));
+            return row;
+        };
+        const emitTrackedToolStatus = (event = {}) => {
+            const tracked = { type: event.type || 'tool_status', ...event };
+            recordServerToolTrace(tracked);
+            res.write(`data: ${JSON.stringify(tracked)}\n\n`);
+        };
 
         if (sessionId) {
             liveStreamState = getSessionStreamState(sessionId, requestId, req.user.userId);
@@ -21522,7 +21619,7 @@ if (clientFileExecution && systemPrompt) {
                         .replace(/functions\.\w+:\d+/g, '')
                         .trim();
                     const reasoningToSave = String(agentResult?.reasoningContent || '').trim();
-                    const searchSources = dedupeSources(Array.isArray(agentResult?.sources) ? agentResult.sources : []);
+                    const searchSources = assignStableSourceMarkers(Array.isArray(agentResult?.sources) ? agentResult.sources : []);
                     const finalModel = agentResult?.finalModel || 'kimi-k2.6';
                     agentTraceState.savedAt = new Date().toISOString();
                     const processTraceJson = JSON.stringify({
@@ -21538,6 +21635,8 @@ if (clientFileExecution && systemPrompt) {
                         retry: agentTraceState.retry,
                         metrics: agentTraceState.metrics,
                         draftDeltas: agentTraceState.draftDeltas || [],
+                        tools: serverToolTrace,
+                        flowSegments: serverFlowSegments.slice(-200),
                         savedAt: agentTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -21568,14 +21667,16 @@ if (clientFileExecution && systemPrompt) {
                         }
 
                         const sourcesJson = searchSources.length > 0 ? JSON.stringify(searchSources) : null;
+                        const assistantAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
                         await new Promise((resolve, reject) => {
                             db.run(
-                                'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                                 [
                                     sessionId,
                                     'assistant',
                                     contentToSave || '(生成中断)',
                                     requestId,
+                                    assistantAttachmentsJson,
                                     reasoningToSave || null,
                                     finalModel,
                                     internetMode ? 1 : 0,
@@ -21998,10 +22099,10 @@ if (clientFileExecution && systemPrompt) {
                 const researchSearchData = await performWebSearch(userContent, 5, getTavilySearchDepth(actualModel, true));
                 const researchSearchResults = researchSearchData?.results || researchSearchData || [];
                 if (Array.isArray(researchSearchResults) && researchSearchResults.length > 0) {
-                    searchContext = formatSearchResults(researchSearchData, userContent);
                     const currentSources = extractSourcesForSSE(researchSearchResults);
                     const sourceAppendResult = appendAnnotatedSources(searchSources, currentSources);
                     searchSources = sourceAppendResult.merged;
+                    searchContext = formatSearchResults(researchSearchData, userContent, sourceAppendResult.newlyAdded);
                     emitSourcesEvent(res, sourceAppendResult.newlyAdded);
                     res.write(`data: ${JSON.stringify({
                         type: 'search_status',
@@ -22048,10 +22149,10 @@ if (clientFileExecution && systemPrompt) {
                 const serverSearchData = await performWebSearch(serverSearchQuery, 5, getTavilySearchDepth(actualModel, false));
                 const serverSearchResults = serverSearchData?.results || serverSearchData || [];
                 if (Array.isArray(serverSearchResults) && serverSearchResults.length > 0) {
-                    searchContext = formatSearchResults(serverSearchData, serverSearchQuery);
                     const currentSources = extractSourcesForSSE(serverSearchResults);
                     const sourceAppendResult = appendAnnotatedSources(searchSources, currentSources);
                     searchSources = sourceAppendResult.merged;
+                    searchContext = formatSearchResults(serverSearchData, serverSearchQuery, sourceAppendResult.newlyAdded);
                     emitSourcesEvent(res, sourceAppendResult.newlyAdded);
                     res.write(`data: ${JSON.stringify({
                         type: 'search_status',
@@ -22150,7 +22251,7 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('需要某项能力的详细规则时，调用 read_skill，name 只能为已列出的技能名。询问 RAI 或 CX RAI 的稳定产品知识时，先读取 rai-product 且不联网；文件操作、压缩包、命令或代码执行前，先读取 sandbox。');
             }
             if (sessionId) {
-                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱进程无网络，外部文件用 fetch_url 下载（仅 GitHub/GitLab 等白名单域名，16MB 上限，下载物成为会话附件 file_id）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝。');
+                toolHints.push('当前会话可使用隔离的 Linux 沙箱：read_file、transform_file、edit_file、create_artifact、sandbox_exec。需要修改文本、代码、CSV、DOCX、XLSX 或 PPTX 时使用 edit_file；创建新 Office 文档前先读取 office 技能；处理压缩包、移动/复制/重命名/创建文件或运行代码时使用 sandbox_exec。沙箱进程无直接网络，公网文件使用 fetch_url（服务端白名单、SSRF、威胁拦截和 file_id 附件，16MB 上限）。沙箱脚本会被服务端审计，系统破坏/提权/攻击类命令直接拒绝；同一用户工作区复用并保存3小时，每次 sandbox_exec 刷新有效期。');
                 if (workspaceAttachmentCatalog.length > 0) {
                     toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
                 }
@@ -22439,6 +22540,7 @@ if (clientFileExecution && systemPrompt) {
 
             if (visibleDelta) {
                 assistantVisibleStarted = true;
+                recordServerFlowContent(visibleDelta);
                 if (liveStreamState) {
                     liveStreamState.assistantContent += visibleDelta;
                     liveStreamState.updatedAt = Date.now();
@@ -22449,6 +22551,13 @@ if (clientFileExecution && systemPrompt) {
             }
 
             return visibleDelta;
+        };
+        const emitStructuredReasoningChunk = (chunk = '') => {
+            const text = String(chunk || '');
+            if (!text) return;
+            reasoningContent += text;
+            recordServerFlowReasoning(text);
+            res.write(`data: ${JSON.stringify({ type: 'reasoning', content: text })}\n\n`);
         };
 
         if (enableResearchDebate) {
@@ -22673,23 +22782,28 @@ if (clientFileExecution && systemPrompt) {
                         agentEvents: researchTraceState.agentEvents,
                         draftDeltas: researchTraceState.draftDeltas,
                         trace: researchTraceState.trace,
+                        tools: serverToolTrace,
+                        flowSegments: serverFlowSegments.slice(-200),
                         savedAt: researchTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
 
+                    const researchSourcesJson = searchSources.length > 0 ? JSON.stringify(assignStableSourceMarkers(searchSources)) : null;
+                    const researchAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
                     await dbRunAsync(
-                        'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                         [
                             sessionId,
                             'assistant',
                             contentToSave,
                             requestId,
+                            researchAttachmentsJson,
                             (reasoningContent || researchResult.reasoningContent || '').trim() || null,
                             finalModel,
                             internetMode ? 1 : 0,
                             normalizedResearchMode === 'deep' ? 1 : 0,
                             internetMode ? 1 : 0,
-                            searchSources && searchSources.length > 0 ? JSON.stringify(searchSources) : null,
+                            researchSourcesJson,
                             processTraceJson,
                             new Date().toISOString()
                         ]
@@ -23625,6 +23739,7 @@ if (clientFileExecution && systemPrompt) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, responseEventReasoning);
                                     if (reasoningDelta) {
                                         reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                         res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                     }
                                 }
@@ -23640,6 +23755,7 @@ if (clientFileExecution && systemPrompt) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
                                     if (reasoningDelta) {
                                         reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                         res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                     }
                                 }
@@ -23679,6 +23795,7 @@ if (clientFileExecution && systemPrompt) {
                                                 const reasoningDelta = extractIncrementalChunk(reasoningContent, part.text);
                                                 if (reasoningDelta) {
                                                     reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                     res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                                 }
                                             }
@@ -23709,6 +23826,7 @@ if (clientFileExecution && systemPrompt) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                             res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                         }
                                     }
@@ -23723,6 +23841,7 @@ if (clientFileExecution && systemPrompt) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                             res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                         }
                                     }
@@ -24203,6 +24322,17 @@ if (clientFileExecution && systemPrompt) {
                             const isMemoryDeleteTool = toolName === 'delete_memory';
                             const isReadSkillTool = toolName === 'read_skill';
                             const isFileTool = isFileWorkspaceToolName(toolName);
+                            recordServerToolTrace({
+                                type: isSearchTool ? 'search_status' : 'tool_status',
+                                tool: toolName,
+                                tool_call_id: toolCall.id,
+                                status: 'running',
+                                message: isSearchTool ? `正在搜索: "${String(args.query || '').slice(0, 80)}"` : '工具调用进行中',
+                                query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                skill: args.name || '',
+                                file_name: args.file_name || '',
+                                url: args.url || ''
+                            });
                             if (isSearchTool && agentRuntime.enabled && agentRuntime.selectedAgents.includes('researcher')) {
                                 emitAgentEvent(res, {
                                     type: 'agent_status',
@@ -24407,9 +24537,19 @@ if (clientFileExecution && systemPrompt) {
                                         }
                                     }, Math.max(0, remaining));
                                 }
-                                executedToolResults.push({ toolCall, result: localResult });
+                                const modelResult = normalizeClientToolResult(localResult);
+                                executedToolResults.push({ toolCall, result: modelResult });
                                 const ok = localResult && localResult.success !== false;
-                                res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: toolName, status: ok ? 'complete' : 'failed', message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成') })}\n\n`);
+                                const uiResult = {
+            type: 'tool_status',
+            tool: toolName,
+            status: ok ? 'complete' : 'failed',
+            file_name: String(localResult?.file_name || '').slice(0, 240),
+            download_url: String(localResult?.download_url || '').slice(0, 1000),
+            download_available: Boolean(localResult?.download_available || localResult?.download_url),
+            message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成')
+        };
+        res.write(`data: ${JSON.stringify(uiResult)}\n\n`);
                                 continue;
                             }
 
@@ -24511,6 +24651,21 @@ if (clientFileExecution && systemPrompt) {
                                                 : args)
                                     }
                                 });
+                                recordServerToolTrace({
+                                    type: isSearchTool ? 'search_status' : 'tool_status',
+                                    tool: toolName,
+                                    tool_call_id: toolCall.id,
+                                    status: 'failed',
+                                    message: isImageTool
+                                        ? '图片生成失败，已记录报错'
+                                        : ((isMemorySaveTool || isMemoryDeleteTool)
+                                            ? '记忆工具执行失败，已记录报错'
+                                            : (isFileTool ? '文件工作区操作失败' : '工具调用失败，已记录报错')),
+                                    query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                    skill: args.name || '',
+                                    file_name: args.file_name || '',
+                                    url: args.url || ''
+                                });
                                 res.write(`data: ${JSON.stringify({
                                     type: (isImageTool || isMemorySaveTool || isMemoryDeleteTool || isFileTool) ? 'tool_status' : 'search_status',
                                     tool: toolName,
@@ -24532,6 +24687,19 @@ if (clientFileExecution && systemPrompt) {
                                 });
                                 continue;
                             }
+
+                            recordServerToolTrace({
+                                type: isSearchTool ? 'search_status' : 'tool_status',
+                                tool: toolName,
+                                tool_call_id: toolCall.id,
+                                status: 'complete',
+                                message: isSearchTool ? `搜索完成: ${Array.isArray(result?.results || result) ? (result.results || result).length : 0} 条结果` : (isFileTool ? '文件工具执行完成' : '工具调用完成'),
+                                detail: isSearchTool ? `搜索完成: ${Array.isArray(result?.results || result) ? (result.results || result).length : 0} 条结果` : '',
+                                query: args.query || args.prompt || args.symbol || args.target || args.memory_id || '',
+                                skill: args.name || '',
+                                file_name: args.file_name || '',
+                                url: args.url || ''
+                            });
 
                             if (isSearchTool) {
                                 const searchResults = result.results || result;
@@ -24711,8 +24879,23 @@ if (clientFileExecution && systemPrompt) {
                                     args
                                 });
                                 executedToolResults.push({ toolCall, result: toolResult });
-                                const artifactMarkdown = buildArtifactDownloadMarkdown(result);
-                                if (artifactMarkdown) emitStructuredAssistantChunk(`\n\n${artifactMarkdown}\n\n`);
+                                const artifactAttachment = buildArtifactAttachment(result);
+                                if (artifactAttachment && !generatedArtifacts.some((item) => item.filePath === artifactAttachment.filePath)) {
+                                    generatedArtifacts.push(artifactAttachment);
+                                }
+                                recordServerToolTrace({
+                                    type: 'tool_status',
+                                    tool: toolName,
+                                    tool_call_id: toolCall.id,
+                                    status: 'complete',
+                                    detail: toolName === 'sandbox_exec'
+                                        ? `沙箱完成 · exit=${Number(result?.exit_code ?? 0)} · ${Number(result?.size || 0)} bytes`
+                                        : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
+                                    file_name: result?.file_name || result?.fileName || '',
+                                    download_url: result?.download_url || result?.downloadPath || '',
+                                    attachment: artifactAttachment,
+                                    message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
+                                });
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: toolName,
@@ -24722,6 +24905,9 @@ if (clientFileExecution && systemPrompt) {
                                         ? `沙箱完成 · exit=${Number(result?.exit_code ?? 0)} · ${Number(result?.size || 0)} bytes`
                                         : (toolName === 'read_file' ? `读取完成 · ${Number(result?.text?.length || 0)} 字符` : `产物已就绪 · ${result?.file_name || result?.fileName || ''}`),
                                     file_name: result?.file_name || result?.fileName || '',
+                                    download_url: result?.download_url || result?.downloadPath || '',
+                                    download_available: Boolean(result?.download_url || result?.downloadPath),
+                                    attachment: artifactAttachment,
                                     message: toolName === 'read_file' ? '附件读取完成' : '文件产物已生成'
                                 })}\n\n`);
                                 console.log(` 工具执行完成: ${toolName}, bytes=${Number(result?.size || result?.text?.length || 0)}`);
@@ -24936,6 +25122,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, continueEventReasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -24952,6 +25139,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -25006,6 +25194,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -25020,6 +25209,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
+                                            recordServerFlowReasoning(reasoningDelta);
                                                 res.write(`data: ${JSON.stringify({ type: 'reasoning', content: reasoningDelta })}\n\n`);
                                             }
                                         }
@@ -25435,8 +25625,14 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
 
             // 3. 保存AI回复 (已移除标题标记, 包含联网来源信息)
             // 序列化 sources 为 JSON 字符串
-            const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(searchSources) : null;
-            const assistantProcessTraceJson = promptContextTrace ? JSON.stringify(promptContextTrace) : null;
+            const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(assignStableSourceMarkers(searchSources)) : null;
+            const assistantAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
+            const assistantProcessTraceJson = JSON.stringify({
+                ...(promptContextTrace || {}),
+                version: 3,
+                tools: serverToolTrace,
+                flowSegments: serverFlowSegments.slice(-200)
+            });
 
             // 自动续传更新原回复；若原请求尚未落库，则以本次请求保存完整合并文本。
             const previousAssistant = isContinuationRequest
@@ -25456,7 +25652,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                 await dbRunAsync(
                     `UPDATE messages
                      SET content = ?, reasoning_content = ?, model = ?, enable_search = ?, thinking_mode = ?,
-                         internet_mode = ?, sources = COALESCE(?, sources), process_trace = COALESCE(?, process_trace)
+                         internet_mode = ?, sources = COALESCE(?, sources), attachments = COALESCE(?, attachments), process_trace = COALESCE(?, process_trace)
                      WHERE id = ?`,
                     [
                         contentToSave,
@@ -25466,6 +25662,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                         thinkingMode ? 1 : 0,
                         internetMode ? 1 : 0,
                         sourcesJson,
+                        assistantAttachmentsJson,
                         assistantProcessTraceJson,
                         previousAssistant.id
                     ]
@@ -25476,8 +25673,8 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
             } else {
                 const aiMsgTimestamp = new Date().toISOString();
                 await dbRunAsync(
-                    'INSERT INTO messages (session_id, role, content, request_id, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, requestId, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
+                    'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
                 );
             }
             console.log(` AI回复已保存:`);
@@ -27829,6 +28026,7 @@ function normalizePromptTimeContext(raw) {
 function stripInlinePromptTimeHint(content = '') {
     return String(content || '')
         .replace(/\n{0,2}\[(?:当前时间|Current time)[^\]]*(?:不要把回答中心放在时间上|do not center the answer on time)[。.]?\]/i, '')
+        .replace(/\n{0,2}\[(?:当前持机手|Current device hand)[^\]]*(?:不要把回答中心放在握持方式上|do not center the answer on it)[。.]?\]/i, '')
         .trim();
 }
 
