@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.17';
-const RAI_BUILD_ID = '20260924-thinking-consistency-logo-v01317-r1';
+const RAI_BUILD_ID = '20260924-handedness-whitelist-v01317-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8240,13 +8240,14 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-09-24',
-    version: 'v0.13.17-r1 · Beta',
+    version: 'v0.13.17-r2 · Beta',
     zh: {
       summary: '思考过程在回答完成后保留为折叠状态，修复流式结束残留，并对齐 RAI logo 与正文。',
       details: [
         '开启思考后，思考时间轴与“思考过程”在回答完成后继续保留，可随时展开查看。',
         '流式完成瞬间只保留一份正文，旧时间轴和重复正文不再停留 1-2 秒。',
         '适人握持信息只注入每轮用户消息，不写入系统提示词，也不会保存到数据库正文。',
+        '左右手检测覆盖聊天主区域，侧边栏、主页欢迎屏、设置/菜单遮罩和顶部控制区不再误触。',
         'RAI logo 右移与生成内容左边缘对齐，并提升 Beta 构建版本以刷新资源缓存。'
       ]
     },
@@ -8256,6 +8257,7 @@ const RAI_UPDATE_TIMELINE = [
         'The thinking timeline and Thinking pill remain available after the answer completes, and can be expanded at any time.',
         'Only one answer body remains at stream completion; the old timeline and duplicate text no longer linger for 1-2 seconds.',
         'Adaptive handedness is injected only into the final user turn, never the system prompt, and is stripped before persistence.',
+        'Handedness detection covers the chat main area while ignoring the sidebar, home screen, settings/menu overlays, and header controls.',
         'The RAI logo moves right to align with the generated content, and the Beta build version is bumped to refresh cached assets.'
       ]
     }
@@ -14345,7 +14347,8 @@ function isHandednessDetectionAllowed(target) {
   if (appState.sidebarOpen) return false;
   if (document.body?.classList.contains('home-screen-active')) return false;
   if (document.querySelector('.settings-modal.active, .model-dropdown-menu.active, .more-menu.active, .modal-overlay.active')) return false;
-  return Boolean(target?.closest('#inputContainer, .input-area, #messagesList, .message'));
+  if (target?.closest('#sidebar, #mobileOverlay, #mobileHeader, .header-controls, .hamburger-btn, .control-btn')) return false;
+  return Boolean(target?.closest('.main-content, #inputContainer, .input-area, #messagesList, .message'));
 }
 
 function detectHandednessFromTouch(clientX, target) {
@@ -18834,6 +18837,7 @@ function createMessageElement(message) {
     flow.className = 'message-text stream-flow';
     processTrace.flowSegments.forEach((segment) => {
       if (!segment || !segment.kind) return;
+      if (segment.kind === 'reasoning' && shouldRenderReasoningTimeline) return;
       if (segment.kind === 'content') {
         const block = document.createElement('div');
         block.className = 'stream-flow-content';
@@ -22723,6 +22727,7 @@ async function sendMessage(message = null, options = {}) {
       if (!streamingEl) return;
       streamingEl.replaceChildren();
       streamFlowSegments.forEach((segment) => {
+        if (segment.kind === 'reasoning' && document.getElementById('raiReasoningBlock')) return;
         if (segment.kind === 'content') {
           const block = document.createElement('div');
           block.className = 'stream-flow-content';
