@@ -1064,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-handedness-whitelist-v01317-r2';
+  const expectedBuild = '20260924-handedness-global-v01317-r3';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1337,18 +1337,28 @@ function testDownloadClientsAndTimeline() {
     'Adaptive handedness must expose a settings switch');
   assert.match(eventBindings, /settingsToggleHandedness/,
     'Adaptive handedness action must be allowed by the CSP event binding contract');
-  assert.match(app, /function detectHandednessFromTouch\(clientX, target\)[\s\S]*window\.innerWidth \/ 2/,
+  assert.match(app, /function detectHandednessFromTouch\(clientX\)[\s\S]*window\.innerWidth \/ 2/,
     'Mobile touch position must select left- or right-hand mode');
-  assert.match(app, /function isHandednessDetectionAllowed\(target\)[\s\S]*appState\.sidebarOpen[\s\S]*home-screen-active[\s\S]*#sidebar, #mobileOverlay, #mobileHeader[\s\S]*\.main-content, #inputContainer, \.input-area, #messagesList, \.message/,
-    'Handedness detection must cover the chat main area while skipping the open sidebar, overlay, header, and home screen');
-  assert.match(app, /function detectHandednessFromTouch\(clientX, target\)[\s\S]*isHandednessDetectionAllowed\(target\)/,
-    'Handedness detection must validate its touch target before changing sides');
-  assert.match(app, /document\.addEventListener\('touchstart', \(event\) => \{[\s\S]*detectHandednessFromTouch\(touch\.clientX, event\.target\)/,
-    'Handedness tracking must pass the real touch target into the whitelist');
+  assert.match(app, /function isHandednessDetectionAllowed\(\)[\s\S]*appState\.handednessEnabled[\s\S]*isHandednessMobileLayout\(\)[\s\S]*return !appState\.sidebarOpen/,
+    'Only an expanded sidebar may block handedness detection');
+  assert.match(app, /function detectHandednessFromTouch\(clientX\)[\s\S]*isHandednessDetectionAllowed\(\)/,
+    'Handedness detection must use the global screen-half rule');
+  assert.match(app, /document\.addEventListener\('touchstart', \(event\) => \{[\s\S]*detectHandednessFromTouch\(touch\.clientX\)/,
+    'Handedness tracking must run on every touch while the sidebar is closed');
   assert.match(app, /root\.classList\.add\('handedness-switching'\)[\s\S]*root\.classList\.remove\('handedness-switching'\)/,
     'Handedness changes must suppress the sidebar slide animation while switching sides');
   assert.match(styles, /html\.handedness-switching \.sidebar\s*\{[^}]*transition:\s*none/,
     'The sidebar must not visibly slide across the screen during handedness switching');
+  assert.match(styles, /html\.hand-left \.chat-index-navigator\s*\{[^}]*left:\s*8px[^}]*right:\s*auto/,
+    'Left-hand mode must move the chat index navigator to the left edge');
+  assert.match(styles, /html\.hand-left \.chat-index-timeline\s*\{[^}]*align-items:\s*flex-start/,
+    'Left-hand mode must left-align the chat index marker lines');
+  assert.match(styles, /html\.hand-left \.mobile-header\s*\{[^}]*justify-content:\s*flex-start/,
+    'Left-hand mode must keep the mobile header controls on the left');
+  assert.match(styles, /html\.hand-right \.mobile-header\s*\{[^}]*justify-content:\s*flex-end/,
+    'Right-hand mode must move the mobile header controls to the right');
+  assert.match(app, /function positionChatIndexFloatingTooltip\(tooltip, rect\)[\s\S]*appState\.handedness === 'right'[\s\S]*rect\.right \+ 16/,
+    'Chat index tooltips must flip to the open side of the navigator');
   assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
     'Right-hand mode must support opening the sidebar from the right edge');
   assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,
