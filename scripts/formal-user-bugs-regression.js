@@ -1064,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-thinking-consistency-logo-v01317-r1';
+  const expectedBuild = '20260924-handedness-whitelist-v01317-r2';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1339,8 +1339,8 @@ function testDownloadClientsAndTimeline() {
     'Adaptive handedness action must be allowed by the CSP event binding contract');
   assert.match(app, /function detectHandednessFromTouch\(clientX, target\)[\s\S]*window\.innerWidth \/ 2/,
     'Mobile touch position must select left- or right-hand mode');
-  assert.match(app, /function isHandednessDetectionAllowed\(target\)[\s\S]*appState\.sidebarOpen[\s\S]*home-screen-active[\s\S]*#inputContainer, \.input-area, #messagesList, \.message/,
-    'Handedness detection must stay inside the composer/message whitelist and skip the open sidebar or home screen');
+  assert.match(app, /function isHandednessDetectionAllowed\(target\)[\s\S]*appState\.sidebarOpen[\s\S]*home-screen-active[\s\S]*#sidebar, #mobileOverlay, #mobileHeader[\s\S]*\.main-content, #inputContainer, \.input-area, #messagesList, \.message/,
+    'Handedness detection must cover the chat main area while skipping the open sidebar, overlay, header, and home screen');
   assert.match(app, /function detectHandednessFromTouch\(clientX, target\)[\s\S]*isHandednessDetectionAllowed\(target\)/,
     'Handedness detection must validate its touch target before changing sides');
   assert.match(app, /document\.addEventListener\('touchstart', \(event\) => \{[\s\S]*detectHandednessFromTouch\(touch\.clientX, event\.target\)/,
