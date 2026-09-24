@@ -179,9 +179,9 @@ function testVersionConstants() {
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.13\.17'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260924-handedness-global-v01317-r3'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.17-20260924-handedness-global-v01317-r3'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260924-handedness-global-v01317-r3/g) || []).length;
+  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260924-handedness-right-header-v01317-r4'\s*;/, 'RAI_BUILD_ID mismatch');
+  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.17-20260924-handedness-right-header-v01317-r4'\s*;/, 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(/20260924-handedness-right-header-v01317-r4/g) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
   assert.match(index, /v0\.13\.17/, 'index.html must show the matching app version');
   assert.equal(packageJson.version, '0.13.17', 'package.json version mismatch');

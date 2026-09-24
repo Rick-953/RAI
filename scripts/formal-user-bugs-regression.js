@@ -1064,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-handedness-global-v01317-r3';
+  const expectedBuild = '20260924-handedness-right-header-v01317-r4';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1355,8 +1355,16 @@ function testDownloadClientsAndTimeline() {
     'Left-hand mode must left-align the chat index marker lines');
   assert.match(styles, /html\.hand-left \.mobile-header\s*\{[^}]*justify-content:\s*flex-start/,
     'Left-hand mode must keep the mobile header controls on the left');
-  assert.match(styles, /html\.hand-right \.mobile-header\s*\{[^}]*justify-content:\s*flex-end/,
-    'Right-hand mode must move the mobile header controls to the right');
+  assert.match(styles, /html\.hand-right \.mobile-left-controls\s*\{[^}]*width:\s*100%/,
+    'Right-hand mode must let the mobile header control row span the full width');
+  assert.match(styles, /html\.hand-right \.mobile-logo\s*\{[^}]*order:\s*-1/,
+    'Right-hand mode must move the RAI logo to the far left');
+  assert.match(styles, /html\.hand-right \.mobile-temp-chat-btn\s*\{[^}]*order:\s*2[^}]*margin-left:\s*auto/,
+    'Right-hand mode must put the temporary chat button second from the right');
+  assert.match(styles, /html\.hand-right \.hamburger-btn\s*\{[^}]*order:\s*3/,
+    'Right-hand mode must put the sidebar button at the far right');
+  assert.match(styles, /\.mobile-center-controls\s*\{[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*transform:\s*translate\(-50%,\s*-50%\)/,
+    'The mobile model selector must stay centered in both handedness modes');
   assert.match(app, /function positionChatIndexFloatingTooltip\(tooltip, rect\)[\s\S]*appState\.handedness === 'right'[\s\S]*rect\.right \+ 16/,
     'Chat index tooltips must flip to the open side of the navigator');
   assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
