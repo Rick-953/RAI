@@ -45,7 +45,7 @@ for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6']
   }
 }
 
-for (const [name, exactVersion] of [['multer', '2.2.0'], ['busboy', '1.6.0']]) {
+for (const [name, exactVersion] of [['multer', '2.4.0'], ['busboy', '1.6.0']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
