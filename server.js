@@ -2333,7 +2333,7 @@ const TOOL_DEFINITIONS = [{
     type: "function",
     function: {
         name: "web_search",
-        description: "搜索互联网获取实时信息。当问题涉及新闻、天气、股价、最新事件、实时数据、需要验证的事实时调用此工具。",
+        description: "搜索互联网获取实时信息和真实网络图片。用户要求找图片、看图片或展示照片时也必须调用；结果中的 images 为可用于回复的图片 URL。",
         parameters: {
             type: "object",
             required: ["query"],
@@ -4767,18 +4767,25 @@ function shouldUseServerSideSearchContext({
     isMultimodalRequest = false
 } = {}) {
     if (!internetMode || enableResearchDebate || isMultimodalRequest) return false;
-    if (!routing || routing.provider !== 'deepseek') return false;
-
     const text = String(userMessage || '').trim();
     if (!text) return false;
+    if (!detectImageGenerationNeed(text) &&
+        /(?:图片|照片|图像|\b(?:images?|photos?|pictures?)\b)/i.test(text) &&
+        /(?:找|看|展示|给我|发来|搜|推荐|网上|网络|\b(?:find|show|search|look\s+for|see)\b)/i.test(text)) return true;
+    if (!routing || routing.provider !== 'deepseek') return false;
     if (detectFreshnessNeed(text, internetMode)) return true;
 
     return /(?:了解|查(?:一下|下)?|搜索|搜一下|联网|资料|来源|数据|报告|论文|文献|官网|价格|成本|便宜|发布|下线|关闭|开启|如何|怎么|为什么|对比|现状|最新|实时|今天|现在|202[0-9]|latest|current|today|news|source|sources|data|docs?|paper|pricing|cost|cheap|compare|search|look\s*up|find|research|how|why)/i.test(text);
 }
 
-function buildServerSideSearchQuery(userMessage = '') {
+function buildServerSideSearchQuery(userMessage = '', previousUserMessage = '') {
     const text = String(userMessage || '').replace(/\s+/g, ' ').trim();
     if (!text) return '';
+    if (previousUserMessage && /(?:图片|照片|图像)/.test(text) && /(?:找|看|展示|搜|网上|网络)/.test(text)) {
+        const subject = text.replace(/(?:你|我|给我|从网上|在网上|网上|网络|帮我|找|搜|搜索|看|看看|展示|一下|点|些|几张|图片|照片|图像|的|来|发)/g, '').trim();
+        if (subject.length === 0)
+            return `${String(previousUserMessage).slice(0, 100)} ${text}`;
+    }
 
     if (/(?:\bd\s*s\s*v\s*4\s*p\b|\bds\s*v4\s*pro\b|deep\s*sek|deepsek|deepseek\s*v4\s*pro)/i.test(text)) {
         const expanded = text
@@ -5311,14 +5318,14 @@ function formatSearchResults(searchData, query, sources = []) {
     const results = searchData.results || searchData;
     const images = searchData.images || [];
 
-    if (!results || results.length === 0) {
+    if ((!results || results.length === 0) && images.length === 0) {
         return '';
     }
 
     let formatted = `\n\n[网页搜索结果] 关于"${query}"：\n\n`;
 
     // 跳过AI摘要，只使用实际网页来源
-    const webResults = results.filter(r => r.url && r.url.trim() !== '');
+    const webResults = (results || []).filter(r => r.url && r.url.trim() !== '');
 
     webResults.forEach((result, index) => {
         const citationNum = String(sources[index]?.marker || index + 1);
@@ -5443,6 +5450,11 @@ function emitSourcesEvent(res, sources = []) {
     res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
 }
 
+function emitSearchImagesEvent(res, images = [], query = '') {
+    if (!res || !Array.isArray(images) || images.length === 0) return;
+    res.write(`data: ${JSON.stringify({ type: 'search_images', images, query })}\n\n`);
+}
+
 function buildFinanceSourceForSSE(financeResult = {}) {
     const resolvedSymbol = financeResult.resolvedSymbol || financeResult.symbol || '';
     if (!resolvedSymbol) return [];
@@ -5490,6 +5502,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
                 snippet: item.snippet || ''
             })),
             images: result?.images || [],
+            image_instruction: 'If the user asks to see web images, choose relevant URLs from images and place them inline as ![short description](exact URL). The client renders these images. Never claim that web images cannot be shown. Do not invent URLs. If images is empty, say so.',
             citations: sources.map((source) => ({
                 marker: source.marker,
                 title: source.title,
@@ -6080,8 +6093,10 @@ async function executeNormalizedToolCall({
             actualModel,
             thinkingMode
         });
+        const validatedImages = await filterValidImages(searchResult.result?.images || [], 5, 3000);
+        emitSearchImagesEvent(res, validatedImages, args.query);
         return {
-            result: searchResult.result,
+            result: { ...searchResult.result, images: validatedImages },
             sources: extractSourcesForSSE(searchResult.result?.results || []),
             searchCountInc: searchResult.searchCountInc
         };
@@ -22184,6 +22199,8 @@ if (clientFileExecution && systemPrompt) {
                     message: `正在搜索: "${userContent.slice(0, 80)}"`
                 })}\n\n`);
                 const researchSearchData = await performWebSearch(userContent, 5, getTavilySearchDepth(actualModel, true));
+                researchSearchData.images = await filterValidImages(researchSearchData.images || [], 5, 3000);
+                emitSearchImagesEvent(res, researchSearchData.images, userContent);
                 const researchSearchResults = researchSearchData?.results || researchSearchData || [];
                 if (Array.isArray(researchSearchResults) && researchSearchResults.length > 0) {
                     const currentSources = extractSourcesForSSE(researchSearchResults);
@@ -22224,7 +22241,8 @@ if (clientFileExecution && systemPrompt) {
             isMultimodalRequest
         })) {
             try {
-                const serverSearchQuery = buildServerSideSearchQuery(userContent) || userContent;
+                const previousUserMessage = messages.slice(0, -1).reverse().find((message) => message?.role === 'user' && typeof message.content === 'string')?.content || '';
+                const serverSearchQuery = buildServerSideSearchQuery(userContent, previousUserMessage) || userContent;
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
                     status: 'searching',
@@ -22234,6 +22252,8 @@ if (clientFileExecution && systemPrompt) {
                 })}\n\n`);
 
                 const serverSearchData = await performWebSearch(serverSearchQuery, 5, getTavilySearchDepth(actualModel, false));
+                serverSearchData.images = await filterValidImages(serverSearchData.images || [], 5, 3000);
+                emitSearchImagesEvent(res, serverSearchData.images, serverSearchQuery);
                 const serverSearchResults = serverSearchData?.results || serverSearchData || [];
                 if (Array.isArray(serverSearchResults) && serverSearchResults.length > 0) {
                     const currentSources = extractSourcesForSSE(serverSearchResults);
@@ -22326,7 +22346,7 @@ if (clientFileExecution && systemPrompt) {
         if (useStreamingTools) {
             const toolHints = [];
             if (internetMode) {
-                toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”，请至少调用一次 web_search 再回答；涉及天气、新闻、股价、时效数据时也应按需调用，并可在必要时再次调用。');
+                toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”或找、看、展示真实网络图片，请至少调用一次 web_search 再回答。要看图片时，把搜索结果 images 中的真实 URL 用 ![简短描述](图片URL) 放在回复合适位置；客户端能显示，不能声称无法展示。涉及天气、新闻、股价、时效数据时也应按需调用。');
             }
             if (imageGenerationRequested) {
                 toolHints.push(`用户正在请求生成图片。请调用 generate_image 工具；只传 prompt/image_size/batch_size 等文生图参数，禁止传 image、image_url、示例图片 URL 或上游临时 URL。服务端会选择已配置的图片提供商、优先生成并展示本站短链接图片，后续回复只需简短说明。`);
@@ -24794,6 +24814,7 @@ if (clientFileExecution && systemPrompt) {
                                 if (searchImages.length > 0) {
                                     searchImages = await filterValidImages(searchImages, 5, 3000);
                                 }
+                                emitSearchImagesEvent(res, searchImages, args.query);
 
                                 if (searchResults && searchResults.length > 0) {
                                     const currentSources = extractSourcesForSSE(searchResults);
