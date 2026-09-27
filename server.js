@@ -3122,7 +3122,7 @@ function getPendingClientToolCountBySession(sessionId) {
     return count;
 }
 
-const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available']);
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'scope']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
@@ -5259,63 +5259,36 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
  * @param {number} timeout - 超时时间(ms)
  * @returns {Promise<boolean>} 是否可访问
  */
-async function validateImageUrl(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
-    if (!imageUrl || typeof imageUrl !== 'string') return false;
+async function validateImageUrl(imageUrl) {
+    // Search references are rendered by the client. CDN HEAD refusals and
+    // server timeouts must not erase images that a client can download.
+    if (typeof imageUrl !== 'string' || imageUrl.length > 8192) return false;
     try {
-        return await fetchSafeImageHead(imageUrl, timeout);
-    } catch (error) {
-        console.warn(' 图片URL验证已拒绝:', sanitizeReportContext(error));
+        const url = new URL(imageUrl);
+        const host = normalizeHostname(url.hostname);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
+        if (!host || host === 'localhost' || (!host.includes('.') && !net.isIP(host)) ||
+            /\.(?:localhost|local|internal|lan|home|test|invalid)$/.test(host)) return false;
+        if (net.isIP(host) && isPrivateOrReservedIp(host)) return false;
+        return true;
+    } catch (_) {
         return false;
     }
 }
 
-/**
- * 并行验证多个图片URL，过滤出有效的
- * @param {Array<string>} imageUrls - 图片URL数组
- * @param {number} maxConcurrent - 最大并发数
- * @param {number} totalTimeout - 总超时时间(ms)
- * @returns {Promise<Array<string>>} 有效的图片URL数组
- */
 async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 3000) {
-    if (!imageUrls || imageUrls.length === 0) return [];
-
-    console.log(` 验证 ${imageUrls.length} 张图片URL...`);
-
-    // 只验证前N张，避免太慢
-    const urlsToCheck = imageUrls.slice(0, maxConcurrent);
-
-    // 使用Promise.allSettled并行验证，带总超时
-    const timeoutPromise = new Promise((resolve) => {
-        setTimeout(() => resolve([]), totalTimeout);
-    });
-
-    const validationPromise = Promise.all(
-        urlsToCheck.map(async (url) => {
-            const isValid = await validateImageUrl(url);
-            return { url, isValid };
-        })
-    );
-
-    const results = await Promise.race([validationPromise, timeoutPromise]);
-
-    // 如果超时返回空数组
-    if (!Array.isArray(results) || results.length === 0) {
-        console.log(` 图片验证超时，跳过图片`);
-        return [];
+    if (!Array.isArray(imageUrls)) return [];
+    const urls = [];
+    for (const image of imageUrls) {
+        const value = typeof image === 'string' ? image : image?.url;
+        if (!await validateImageUrl(value)) continue;
+        const url = new URL(value).href;
+        if (!urls.includes(url)) urls.push(url);
+        if (urls.length >= maxConcurrent) break;
     }
-
-    const validUrls = results.filter(r => r.isValid).map(r => r.url);
-    console.log(` 图片验证完成: ${validUrls.length}/${urlsToCheck.length} 有效`);
-
-    return validUrls;
+    return urls;
 }
 
-/**
- * 格式化搜索结果为提示词（带角标引用指引）
- * @param {Array} results - 搜索结果
- * @param {string} query - 原始查询
- * @returns {string} 格式化的搜索结果文本
- */
 function formatSearchResults(searchData, query, sources = []) {
     // 兼容旧格式和新格式
     const results = searchData.results || searchData;
@@ -5352,7 +5325,7 @@ function formatSearchResults(searchData, query, sources = []) {
 2. 在回答中使用角标标记信息来源，格式为 [1]、[2] 等
 3. 例如："根据最新数据，该产品售价为999元[1]。"
 4. 每个角标对应上方的搜索结果编号
-5. 如果有相关图片且对回答有帮助，可以使用 ![描述](图片URL) 格式插入图片\n`;
+5. 用户要求看网络图片时，必须从以上真实图片 URL 中挑选相关图片，用 ![描述](图片URL) 插入对应段落。CX RAI 和网页端都能显示这些图片；不要只给图库页面，不要声称无法展示，也不要擅自改成生成图片。没有图片时如实说明。\n`;
 
     return formatted;
 }
@@ -5505,7 +5478,7 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
                 snippet: item.snippet || ''
             })),
             images: result?.images || [],
-            image_instruction: 'If the user asks to see web images, choose relevant URLs from images and place them inline as ![short description](exact URL). The client renders these images. Never claim that web images cannot be shown. Do not invent URLs. If images is empty, say so.',
+            image_instruction: 'If the user asks to see web images, choose relevant URLs from images and place them inline as ![short description](exact URL). The client renders these images. Never claim that web images cannot be shown. A request for existing web images is not a request to generate images. Do not invent URLs. If images is empty, say so.',
             citations: sources.map((source) => ({
                 marker: source.marker,
                 title: source.title,

@@ -40,7 +40,7 @@
     "test:file-library": "node scripts/file-library-regression.js",
     "test:upload-progress": "node scripts/upload-progress-regression.js",
     "test:audio-gemini": "node scripts/audio-gemini-routing-regression.js",
-    "test:network-address-policy": "node scripts/network-address-policy-regression.js",
+    "test:network-address-policy": "node scripts/network-address-policy-regression.js && node scripts/search-images-regression.js",
     "test:generated-image-cleanup": "node scripts/generated-image-cleanup-regression.js",
     "test:gpt-gateway": "node scripts/gpt-gateway-regression.js",
     "test:model-points-pricing": "node scripts/model-points-pricing-regression.js",
