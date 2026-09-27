@@ -4713,9 +4713,14 @@ function shouldUseServerSideSearchContext({
     return /(?:了解|查(?:一下|下)?|搜索|搜一下|联网|资料|来源|数据|报告|论文|文献|官网|价格|成本|便宜|发布|下线|关闭|开启|如何|怎么|为什么|对比|现状|最新|实时|今天|现在|202[0-9]|latest|current|today|news|source|sources|data|docs?|paper|pricing|cost|cheap|compare|search|look\s*up|find|research|how|why)/i.test(text);
 }
 
-function buildServerSideSearchQuery(userMessage = '') {
+function buildServerSideSearchQuery(userMessage = '', previousUserMessage = '') {
     const text = String(userMessage || '').replace(/\s+/g, ' ').trim();
     if (!text) return '';
+    if (previousUserMessage && /(?:图片|照片|图像)/.test(text) && /(?:找|看|展示|搜|网上|网络)/.test(text)) {
+        const subject = text.replace(/(?:你|我|给我|从网上|在网上|网上|网络|帮我|找|搜|搜索|看|看看|展示|一下|点|些|几张|图片|照片|图像|的|来|发)/g, '').trim();
+        if (subject.length === 0)
+            return `${String(previousUserMessage).slice(0, 100)} ${text}`;
+    }
 
     if (/(?:\bd\s*s\s*v\s*4\s*p\b|\bds\s*v4\s*pro\b|deep\s*sek|deepsek|deepseek\s*v4\s*pro)/i.test(text)) {
         const expanded = text
@@ -22149,7 +22154,8 @@ if (clientFileExecution && systemPrompt) {
             isMultimodalRequest
         })) {
             try {
-                const serverSearchQuery = buildServerSideSearchQuery(userContent) || userContent;
+                const previousUserMessage = messages.slice(0, -1).reverse().find((message) => message?.role === 'user' && typeof message.content === 'string')?.content || '';
+                const serverSearchQuery = buildServerSideSearchQuery(userContent, previousUserMessage) || userContent;
                 res.write(`data: ${JSON.stringify({
                     type: 'search_status',
                     status: 'searching',
