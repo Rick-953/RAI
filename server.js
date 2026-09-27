@@ -25028,7 +25028,7 @@ if (clientFileExecution && systemPrompt) {
                                 }
                             }))
                         };
-                        if (isCurrentKimiK25Model() || thinkingMode) {
+                        if (isCurrentKimiK25Model()) {
                             assistantToolCallMessage.reasoning_content = currentToolCallReasoningContent || 'Tool call continuation reasoning.';
                         }
                         const toolResultMessages = executedToolResults.map(({ toolCall, result }) => ({
