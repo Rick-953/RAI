@@ -3374,6 +3374,55 @@ function normalizeWorkspaceFileId(value, localMode = false) {
     return raw;
 }
 
+const TOOL_ARG_ALIASES_BY_TOOL = Object.freeze({
+    read_file: { filename: 'file_id', file: 'file_id', file_path: 'file_id', read_mode: 'mode' },
+    transform_file: { filename: 'file_id', file: 'file_id', file_path: 'file_id', op: 'operation' },
+    edit_file: { filename: 'file_id', file: 'file_id', file_path: 'file_id' },
+    create_artifact: { filename: 'file_name', file_format: 'format', type: 'format', text: 'content', data: 'content' },
+    write_file: { filename: 'file_id', file: 'file_id', file_path: 'file_id', text: 'content', data: 'content' },
+    delete_file: { filename: 'file_id', file: 'file_id', file_path: 'file_id' },
+    list_files: { directory: 'path', dir: 'path', folder: 'path' },
+    sandbox_exec: { command: 'script', powershell: 'script', code: 'script', files: 'file_ids', output: 'output_path' },
+    process_exec: { executable: 'program', arguments: 'args', argv: 'args', directory: 'cwd' },
+    insert_image: { document: 'file_id', document_file: 'file_id', image: 'image_file', image_path: 'image_file' },
+    update_sheet: { file: 'file_id', filename: 'file_id', values: 'cells', chart: 'charts' },
+    fetch_url: { filename: 'output_name' },
+    'browser.navigate': { href: 'url' }
+});
+
+function parseToolCallArguments(rawArguments) {
+    if (rawArguments === undefined || rawArguments === null || rawArguments === '') return {};
+    if (typeof rawArguments === 'object' && !Array.isArray(rawArguments)) return rawArguments;
+    if (typeof rawArguments !== 'string') return null;
+
+    const text = rawArguments.trim();
+    if (!text) return {};
+    const withoutFence = text
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+    const parseObject = (candidate) => {
+        try {
+            const parsed = JSON.parse(candidate);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    };
+
+    const direct = parseObject(withoutFence);
+    if (direct) return direct;
+
+    const start = withoutFence.indexOf('{');
+    const end = withoutFence.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+        const embedded = parseObject(withoutFence.slice(start, end + 1));
+        if (embedded) return embedded;
+    }
+    return null;
+}
+
 function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
     if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
     const allowedKeysByTool = {
@@ -3399,7 +3448,23 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         'browser.submit': new Set(['selector'])
     };
     const allowedKeys = allowedKeysByTool[toolName];
-    if (!allowedKeys || Object.keys(args).some((key) => !allowedKeys.has(key))) return null;
+    if (!allowedKeys) return null;
+    const aliases = TOOL_ARG_ALIASES_BY_TOOL[toolName] || {};
+    const aliasedArgs = { ...args };
+    for (const [alias, canonical] of Object.entries(aliases)) {
+        if (aliasedArgs[canonical] === undefined && aliasedArgs[alias] !== undefined) {
+            aliasedArgs[canonical] = aliasedArgs[alias];
+        }
+    }
+    args = {};
+    for (const key of allowedKeys) {
+        if (aliasedArgs[key] !== undefined) args[key] = aliasedArgs[key];
+    }
+    const droppedKeys = Object.keys(aliasedArgs)
+        .filter((key) => !allowedKeys.has(key) && !Object.prototype.hasOwnProperty.call(aliases, key));
+    if (droppedKeys.length > 0) {
+        console.warn(` tool_args_unknown_keys tool=${toolName} keys=${droppedKeys.sort().join(',')}`);
+    }
     try {
         if (toolName === 'read_file') {
             const mode = String(args.mode || '').trim().toLowerCase();
@@ -5781,14 +5846,19 @@ function createSearchBudget(totalLimit = 8, perTaskLimit = 2) {
 function normalizeToolCalls(toolCalls = [], localMode = false) {
     const normalized = [];
     for (const toolCall of toolCalls) {
-        if (!toolCall || toolCall.type !== 'function' || !toolCall.function?.name) continue;
-        let args = {};
-        try {
-            args = JSON.parse(toolCall.function.arguments || '{}');
-        } catch (e) {
-            args = {};
+        if (!toolCall || (toolCall.type && toolCall.type !== 'function')) continue;
+        const functionPayload = toolCall.function || {};
+        const toolName = String(functionPayload.name || toolCall.name || '').trim();
+        if (!toolName) continue;
+        let args = parseToolCallArguments(functionPayload.arguments);
+        if (args === null) {
+            if (toolName === 'list_files' || toolName === 'browser.read') {
+                args = {};
+            } else {
+                console.warn(` tool_call_arguments_invalid tool=${toolName} argLength=${String(functionPayload.arguments || '').length}`);
+                continue;
+            }
         }
-        const toolName = String(toolCall.function.name || '').trim();
         if (toolName === 'web_search') {
             const query = String(args.query || '').trim();
             if (!query) continue;
@@ -5897,6 +5967,21 @@ function normalizeToolCalls(toolCalls = [], localMode = false) {
         }
     }
     return normalized;
+}
+
+const CLIENT_FILE_INTENT_PATTERN = /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i;
+
+function isClientFileIntent(message = '') {
+    return CLIENT_FILE_INTENT_PATTERN.test(String(message || ''));
+}
+
+function buildForcedClientListFilesCall() {
+    return {
+        id: `forced_list_files_${Date.now()}`,
+        type: 'function',
+        function: { name: 'list_files', arguments: '{}' },
+        _args: {}
+    };
 }
 
 async function executeSearchWithBudget({
@@ -20790,13 +20875,15 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let flowRecord = null;
         let activeSessionKind = '';
         let ownedSession = null;
+        let model = normalizeIncomingModelId(requestedModel);
         let thinkingMode = !!thinkingModeInput;
-        // 本地文件执行模式：强制关闭思考（推理模式会吞掉工具调用，导致"思考不行动"）
-        if (clientFileExecution) {
+        // DeepSeek V4.1 Flash/Pro support tool calls in thinking mode. Keep the
+        // existing fast-mode behavior for other local tool providers.
+        const supportsClientToolThinking = model === 'deepseek-flash' || model === 'deepseek-pro';
+        if (clientFileExecution && !supportsClientToolThinking) {
             thinkingMode = false;
         }
         let internetMode = !!requestedInternetMode;
-        let model = normalizeIncomingModelId(requestedModel);
         let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;
         if (gptImageModelSelected) thinkingMode = false;
         const normalizedContinuationRequestId = /^req_\d+_[a-f0-9]{16}$/i.test(String(continuationOfRequestId || '').trim())
@@ -24277,17 +24364,10 @@ if (clientFileExecution && systemPrompt) {
                 streamFinishReason = 'tool_calls';
             }
 
-            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && isClientFileIntent(userContent)) {
                 forcedClientListFilesDone = true;
                 console.warn(` 本地文件任务但模型未触发工具调用，自动发起 list_files 引导工具链: model=${actualModel}`);
-                accumulatedToolCalls.push({
-                    id: `forced_list_files_${Date.now()}`,
-                    type: 'function',
-                    function: {
-                        name: 'list_files',
-                        arguments: '{}'
-                    }
-                });
+                accumulatedToolCalls.push(buildForcedClientListFilesCall());
                 streamFinishReason = 'tool_calls';
             }
 
@@ -24307,20 +24387,27 @@ if (clientFileExecution && systemPrompt) {
             if (useStreamingTools && accumulatedToolCalls.length > 0) {
                 let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls, clientFileExecution);
                 if (pendingToolCalls.length === 0) {
-                    const invalidToolCallMessage = '模型请求的工具调用无法验证，未执行任何操作。请重新生成，或换一种方式描述任务。';
-                    console.warn(` 收到 tool_calls 但均无效，拒绝将其当作成功回答完成: rawCalls=${accumulatedToolCalls.length}`);
-                    if (!String(fullContent || '').trim()) {
-                        emitStructuredAssistantChunk(invalidToolCallMessage);
+                    console.warn(` 收到 tool_calls 但均无效，尝试安全恢复: rawCalls=${accumulatedToolCalls.length}`);
+                    if (clientFileExecution && !forcedClientListFilesDone && isClientFileIntent(userContent)) {
+                        forcedClientListFilesDone = true;
+                        pendingToolCalls = [buildForcedClientListFilesCall()];
+                        console.warn(` 无效工具调用已降级为 list_files 引导: model=${actualModel}`);
+                    } else {
+                        const invalidToolCallMessage = '模型请求的工具调用无法验证，未执行任何操作。请重新生成，或换一种方式描述任务。';
+                        if (!String(fullContent || '').trim()) {
+                            emitStructuredAssistantChunk(invalidToolCallMessage);
+                        }
+                        res.write(`data: ${JSON.stringify({
+                            type: 'error',
+                            error: 'invalid_tool_call',
+                            message: invalidToolCallMessage
+                        })}\n\n`);
+                        const invalidToolCallError = new Error('invalid_tool_call');
+                        invalidToolCallError.code = 'invalid_tool_call';
+                        throw invalidToolCallError;
                     }
-                    res.write(`data: ${JSON.stringify({
-                        type: 'error',
-                        error: 'invalid_tool_call',
-                        message: invalidToolCallMessage
-                    })}\n\n`);
-                    const invalidToolCallError = new Error('invalid_tool_call');
-                    invalidToolCallError.code = 'invalid_tool_call';
-                    throw invalidToolCallError;
-                } else {
+                }
+                if (pendingToolCalls.length > 0) {
                     let toolRound = 0;
                     const maxToolRounds = clientFileExecution ? 8 : 5;
                     const loadedSkillNames = new Set();
@@ -25385,15 +25472,10 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                         // 续传路径兜底：模型声明调用工具但未输出参数（Kimi 流式 bug），强制 list_files 引导
                         if (pendingToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone
                             && String(continueStreamFinishReason) === 'tool_calls'
-                            && /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i.test(String(userContent || ''))) {
+                            && isClientFileIntent(userContent)) {
                             forcedClientListFilesDone = true;
                             console.warn(` 续传声明工具调用但未输出参数，自动发起 list_files 引导: model=${actualModel}`);
-                            pendingToolCalls = [{
-                                id: `forced_list_files_${Date.now()}`,
-                                type: 'function',
-                                function: { name: 'list_files', arguments: '{}' },
-                                _args: {}
-                            }];
+                            pendingToolCalls = [buildForcedClientListFilesCall()];
                         }
                     }
 
