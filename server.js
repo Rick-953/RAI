@@ -20980,13 +20980,10 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
                     }
                 } catch (attCtxErr) {
                     console.warn(' 构建附件上下文失败:', sanitizeReportContext(attCtxErr));
-                    const attachmentNames = activeAttachments
-                        .map((item) => String(item?.fileName || item?.originalName || 'unknown'))
-                        .join('、');
-                    attachmentOriginalContentByMessage.set(lastMsg, lastMsg.content);
-                    lastMsg.content = (typeof lastMsg.content === 'string' ? lastMsg.content : '')
-                        + `\n\n[附件解析暂时不可用，请使用可用的文件读取工具继续处理：${attachmentNames}]`;
-                    console.warn(` 附件解析失败，已降级为文件工具处理: count=${activeAttachments.length}`);
+                    return res.status(503).json({
+                        error: '附件内容暂时无法解析，请重新发送。',
+                        code: 'attachment_parse_temporarily_unavailable'
+                    });
                 }
             }
         }
