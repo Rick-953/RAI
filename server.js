@@ -1875,7 +1875,10 @@ async function fetchSafeImageHead(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS)
 
         if (response.statusCode < 200 || response.statusCode >= 300) return false;
         const contentType = String(response.headers['content-type'] || '').toLowerCase();
-        return !contentType || contentType.startsWith('image/');
+        // CX RAI decodes web images with BitmapImage, which cannot display SVG.
+        // Only pass through raster formats supported on its desktop and mobile clients.
+        const mediaType = contentType.split(';', 1)[0].trim();
+        return ['image/jpeg', 'image/png', 'image/gif', 'image/bmp'].includes(mediaType);
     }
     return false;
 }
