@@ -1,6 +1,6 @@
 ---
 name: image_generation
-description: Generate an image through the configured server-side image tool.
+description: Image generation.
 ---
 
 # Image generation

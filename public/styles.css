@@ -19618,3 +19618,27 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     outline-offset: 3px !important;
   }
 }
+
+/* 2026-09: shared modern reasoning/tool surface; retain semantic buttons and reduced motion. */
+.rai-reasoning-block { margin: 14px 0; border: 1px solid var(--border-color); border-radius: 18px; background: color-mix(in srgb, var(--bg-secondary) 75%, transparent); overflow: hidden; }
+.rai-reasoning-block::before { display: none; }
+.rai-reasoning-header { margin: 0; }
+.rai-reasoning-toggle { width: 100%; min-height: 46px; padding: 12px 16px; justify-content: flex-start; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 13px; gap: 10px; }
+.rai-reasoning-toggle .toggle-icon { margin-left: auto; }
+.rai-reasoning-toggle:focus-visible, .tool-trace-summary:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -3px; }
+.rai-reasoning-content, [data-theme="light"] .rai-reasoning-content { background: transparent; border: 0; border-radius: 0; margin: 0; color: var(--text-secondary); line-height: 1.8; }
+.rai-reasoning-block.expanded .rai-reasoning-content { padding: 0 18px 18px; max-height: min(420px, 50dvh); overflow: auto; }
+.tool-trace-item { border: 1px solid var(--border-color); border-radius: 14px; margin: 8px 0; background: color-mix(in srgb, var(--bg-secondary) 65%, transparent); overflow: hidden; }
+.tool-trace-summary { width: 100%; text-align: left; min-height: 44px; padding: 12px 14px; color: var(--text-primary); background: transparent; border: 0; font: inherit; cursor: pointer; }
+.tool-trace-detail { color: var(--text-secondary); padding: 0 14px 14px; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
+.tool-trace-item[data-status="running"] { border-color: var(--focus-border-color); }
+.rai-stream-warning { margin: 12px 0; padding: 12px 16px; border: 1px solid var(--border-color); border-radius: 14px; color: var(--text-secondary); font-size: 13px; }
+/* Paint under the home indicator, but keep interactive controls inside the safe area.
+   Do not fake away env(safe-area-inset-bottom) or put an overlay over the last messages. */
+html.ios-standalone, html.ios-standalone body { background: var(--bg-primary); }
+html.ios-standalone body.mobile-viewport-managed .app-container,
+html.ios-standalone body.mobile-viewport-managed .main-content { background: var(--bg-primary); padding-bottom: 0; }
+html.ios-standalone body.mobile-viewport-managed:not(.keyboard-open) .input-area { bottom: 0; padding-bottom: calc(var(--safe-bottom, 0px) + var(--composer-bottom-gap, 0px)); background: linear-gradient(transparent, var(--bg-primary) 40%); }
+html.ios-standalone body.mobile-viewport-managed .main-content::after,
+html.ios-standalone body.mobile-viewport-managed .chat-edge-blur-bottom { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .rai-reasoning-content, .rai-reasoning-toggle, .tool-trace-item { transition: none !important; animation: none !important; } }

@@ -24,17 +24,19 @@ function testSharedPromptBuilder() {
   });
   assert.match(chinese, /^# RAI 主系统提示词/);
   assert.match(chinese, /你是 RAI（智能模型）/);
-  assert.match(chinese, /RAI 是由 Rick 开发的 AI 对话软件/);
+  assert.match(chinese, /RAI Web 由 Rick 全权构建/);
   assert.match(chinese, /不得冒用上游模型、服务商或编程代理的身份/);
   assert.match(chinese, /## Layer 1：可用技能/);
   assert.match(chinese, /web_sources:/);
   assert.match(chinese, /rai-product:/);
-  assert.match(chinese, /sandbox: Use the isolated Linux sandbox/);
-  assert.match(chinese, /office: Create new Word, Excel, or PowerPoint documents/);
+  assert.match(chinese, /sandbox: Sandbox files and execution/);
+  assert.match(chinese, /documents: Word DOCX/);
   assert.match(chinese, /read_skill[^\n]*rai-product/);
   assert.match(chinese, /read_skill[^\n]*sandbox/);
-  assert.match(chinese, /隔离的 Linux 沙箱/);
-  assert.match(chinese, /fetch_url/);
+  assert.match(chinese, /沙箱隔离且离线/);
+  assert.match(chinese, /presentations: PowerPoint/);
+  assert.match(chinese, /rai-web-ui:/);
+  assert.match(chinese, /cx-rai-ui:/);
   assert.match(chinese, /### 记忆能力/);
   assert.match(chinese, /以下是用户个人偏好，请参考：\n请称呼我为 Rick/);
 
@@ -45,13 +47,13 @@ function testSharedPromptBuilder() {
   });
   assert.match(english, /^# RAI System Prompt/);
   assert.match(english, /You are RAI \(Smart model\)/);
-  assert.match(english, /RAI is an AI chat application made by Rick/);
-  assert.match(english, /never the identity of an upstream model, provider, or coding agent/);
+  assert.match(english, /RAI Web was built entirely by Rick/);
+  assert.match(english, /Distinguish the products and credit the original developer accurately/);
   assert.match(english, /## Layer 1: available skills/);
-  assert.match(english, /office: Create new Word, Excel, or PowerPoint documents/);
+  assert.match(english, /documents: Word DOCX/);
   assert.match(english, /read_skill[^\n]*rai-product/);
-  assert.match(english, /isolated Linux sandbox/);
-  assert.match(english, /fetch_url/);
+  assert.match(english, /sandbox is isolated.offline/);
+  assert.match(english, /spreadsheets: Excel/);
   assert.match(english, /personal preferences[\s\S]*Prefer concise answers\./);
 }
 
@@ -118,6 +120,9 @@ function testApiContract() {
 }
 
 function main() {
+  const product = fs.readFileSync(path.join(__dirname, '../skills/rai-product/SKILL.md'), 'utf8');
+  assert.match(product, /originally developed by Lao Cha/);
+  assert.match(product, /Rick maintains it in the middle and later stages/);
   testSharedPromptBuilder();
   testWebUsesSharedPromptSource();
   testServerManagedNativeFallback();
