@@ -95,7 +95,7 @@ function testServerManagedNativeFallback() {
     'Kimi agent tool continuation must retain provider reasoning_content');
   assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
     'Claude fallback must prefer verified providers before legacy OpenRouter routes');
-  assert.match(server, /'deepseek-flash': \{\s*provider: 'deepseek',\s*model: 'deepseek-v4-flash'/,
+  assert.match(server, /'deepseek-flash': \{\s*provider: 'deepseek',\s*model: 'deepseek-flash'/,
     'DeepSeek Flash must use the verified official provider route');
   assert.match(server, /const UNIVERSAL_RUNTIME_FALLBACK_MODELS = \[\s*'deepseek-pro',\s*'deepseek-flash',\s*'kimi-k2\.6'/,
     'universal fallback must prefer verified migrated providers');

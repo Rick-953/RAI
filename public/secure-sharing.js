@@ -51,7 +51,7 @@
           if (state.status === 'pending' && !document.hidden) {
             state = await api('/auth/qr/image', current);
             if (owner !== current) return;
-            image.src = state.image; image.hidden = false;
+            if (state.image) { image.src = state.image; image.hidden = false; }
           }
           timer = setTimeout(tick, Math.max(100, Math.min(3000, state.rotateAfterMs || 3000)));
         } catch (e) {

@@ -126,6 +126,8 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname === appPath('runtime-config.js')) return;
+  // Standalone login/share pages must never replace the cached application shell.
+  if (url.pathname === appPath('share.html') || url.pathname === appPath('qr-login.html')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(
