@@ -25,3 +25,6 @@ vm.runInContext(server.slice(stripStart,stripEnd),context);assert.equal(context.
 assert.match(server,/let systemContent = systemPrompt \|\| ''/);
 assert.doesNotMatch(server, /let systemContent = searchContext/);
 console.log(JSON.stringify({result:'PASS',systemChars:a.length,userContextChars:suffix.length-5,skills:getSkillCatalog().length}));
+
+assert.doesNotMatch(server, /appendTrustedSkillToCanonicalSystemMessage/);
+assert.match(server, /result: buildTrustedSkillResult\(trustedSkill\)/);

@@ -82,7 +82,7 @@ function testServerManagedNativeFallback() {
   assert.match(server, /skillCatalog:\s*getSkillCatalog\(\)/);
   assert.match(server, /rai-product/);
   assert.match(server, /sandbox_exec/);
-  assert.match(server, /function appendTrustedSkillToCanonicalSystemMessage[\s\S]{0,900}\[Trusted RAI skill:/);
+  assert.match(server, /function buildTrustedSkillResult[\s\S]{0,900}\[Trusted RAI skill:/);
   assert.match(server, /buildFetchPayloadForAttempt[\s\S]{0,5000}systemInstruction/,
     'Gemini runtime fallback must receive the canonical system instruction');
   assert.match(server, /buildGeminiContinuationContents\(conversationMessages\)/,
@@ -107,7 +107,7 @@ function testServerManagedNativeFallback() {
     'identity questions must be detected server-side');
   assert.match(server, /appendRaiProductIdentityGuard\(finalMessages, sessionPromptContext\.promptLanguage\)/,
     'identity questions must receive the server-authoritative product guard');
-  assert.match(server, /'你是谁，由谁开发？': '我是 RAI，由 Rick 开发的 AI 对话软件/,
+  assert.match(server, /'你是谁，由谁开发？': '我是 RAI。RAI Web 由 Rick 全权构建/,
     'exact product identity questions must not reach an upstream identity prompt');
   assert.doesNotMatch(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
     'temporary/no-memory conversations must retain canonical Layer 0/1 and isolate only user-specific state');

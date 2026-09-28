@@ -744,8 +744,8 @@ function shouldEnableWorkspaceTools(content = '', attachments = []) {
 
 function buildRaiProductIdentityGuard(promptLanguage = 'zh-CN') {
     return String(promptLanguage || '').trim().toLowerCase().startsWith('en')
-        ? '[RAI product identity] Answer this identity question as the RAI application: RAI is an AI chat application made by Rick. Do not identify as an upstream model, provider, company, or coding agent.'
-        : '[RAI 产品身份] 这是产品身份问题：只回答 RAI 是由 Rick 开发的 AI 对话软件。不得自称上游模型、服务商、公司或编程代理。';
+        ? '[RAI product identity] Answer this identity question as the RAI application: RAI Web was built entirely by Rick; CX RAI was originally developed by Lao Cha and later maintained by Rick. Do not identify as an upstream model or coding agent.'
+        : '[RAI 产品身份] 这是产品身份问题：区分产品：RAI Web 由 Rick 全权构建；CX RAI 最初由老茶开发制作，中后期由 Rick 维护。不得自称上游模型、服务商、公司或编程代理。';
 }
 
 function appendRaiProductIdentityGuard(messages = [], promptLanguage = 'zh-CN') {
@@ -3203,17 +3203,11 @@ function getCanonicalSystemInstruction(messages = []) {
         .join('\n\n');
 }
 
-function appendTrustedSkillToCanonicalSystemMessage(messages = [], trustedSkill) {
-    const skillInstruction = `[Trusted RAI skill: ${trustedSkill.name}]\n${trustedSkill.content}`;
-    const nextMessages = messages.map((message) => ({ ...message }));
-    const systemIndex = nextMessages.findIndex((message) => message.role === 'system');
-    if (systemIndex === -1) {
-        nextMessages.unshift({ role: 'system', content: skillInstruction });
-        return nextMessages;
-    }
-    const current = messageContentAsText(nextMessages[systemIndex].content);
-    nextMessages[systemIndex].content = current ? `${current}\n\n${skillInstruction}` : skillInstruction;
-    return nextMessages;
+function buildTrustedSkillResult(trustedSkill) {
+    // Keep the full pre-tool prefix byte-identical. Verified skill text travels only
+    // in its tool response, not in a rewritten initial system message.
+    return { loaded: true, name: trustedSkill.name, sha256: trustedSkill.sha256 || null,
+        content: '[Trusted RAI skill: ' + trustedSkill.name + ']\n' + trustedSkill.content };
 }
 
 function buildGeminiContinuationContents(messages = []) {
@@ -21329,13 +21323,13 @@ if (clientFileExecution && systemPrompt) {
             'thank you': 'You\'re welcome!',
             'thanks': 'You\'re welcome!',
             'bye': 'Goodbye! See you next time!',
-            '你是谁': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
-            '你是谁？': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
-            '你是谁，由谁开发': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
-            '你是谁，由谁开发？': '我是 RAI，由 Rick 开发的 AI 对话软件。\n\n[TITLE]RAI 身份[/TITLE]',
-            'who are you': 'I am RAI, an AI chat application made by Rick.\n\n[TITLE]RAI identity[/TITLE]',
-            'who are you?': 'I am RAI, an AI chat application made by Rick.\n\n[TITLE]RAI identity[/TITLE]',
-            'who are you and who made you?': 'I am RAI, an AI chat application made by Rick.\n\n[TITLE]RAI identity[/TITLE]'
+            '你是谁': '我是 RAI。RAI Web 由 Rick 全权构建；CX RAI 最初由老茶开发制作，中后期由 Rick 进行维护。\n\n[TITLE]RAI 身份[/TITLE]',
+            '你是谁？': '我是 RAI。RAI Web 由 Rick 全权构建；CX RAI 最初由老茶开发制作，中后期由 Rick 进行维护。\n\n[TITLE]RAI 身份[/TITLE]',
+            '你是谁，由谁开发': '我是 RAI。RAI Web 由 Rick 全权构建；CX RAI 最初由老茶开发制作，中后期由 Rick 进行维护。\n\n[TITLE]RAI 身份[/TITLE]',
+            '你是谁，由谁开发？': '我是 RAI。RAI Web 由 Rick 全权构建；CX RAI 最初由老茶开发制作，中后期由 Rick 进行维护。\n\n[TITLE]RAI 身份[/TITLE]',
+            'who are you': 'I am RAI. Rick built RAI Web; Lao Cha originally developed CX RAI, maintained by Rick in the middle and later stages.\n\n[TITLE]RAI identity[/TITLE]',
+            'who are you?': 'I am RAI. Rick built RAI Web; Lao Cha originally developed CX RAI, maintained by Rick in the middle and later stages.\n\n[TITLE]RAI identity[/TITLE]',
+            'who are you and who made you?': 'I am RAI. Rick built RAI Web; Lao Cha originally developed CX RAI, maintained by Rick in the middle and later stages.\n\n[TITLE]RAI identity[/TITLE]'
         };
 
         const trimmedContent = userContent.trim().toLowerCase();
@@ -24526,8 +24520,7 @@ if (clientFileExecution && systemPrompt) {
 不要请求沙箱、不要声称需要服务器沙箱。用户请求涉及文件/文档/命令操作时，你必须实际调用工具完成，禁止只输出计划、假装完成或跳过工具。**工具执行结果未确认成功（未收到 success:true 回传）时，禁止声称已生成/已完成/已写入，必须如实告知用户实际状态**。`
                                     };
                                     loadedSkillNames.add(localSkill.name);
-                                    executedToolResults.push({ toolCall, result: { loaded: true, name: localSkill.name } });
-                                    conversationMessages = appendTrustedSkillToCanonicalSystemMessage(conversationMessages, localSkill);
+                                    executedToolResults.push({ toolCall, result: buildTrustedSkillResult(localSkill) });
                                     res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: localSkill.name, detail: `已加载技能: ${localSkill.name}`, message: `Loaded ${localSkill.name} skill` })}\n\n`);
                                     console.log(' 本地文件执行模式：已注入本地工作目录技能（替换 sandbox）');
                                     continue;
@@ -24535,11 +24528,7 @@ if (clientFileExecution && systemPrompt) {
                                 try {
                                     const trustedSkill = loadTrustedSkill(requestedSkill);
                                     loadedSkillNames.add(trustedSkill.name);
-                                    executedToolResults.push({ toolCall, result: { loaded: true, name: trustedSkill.name } });
-                                    conversationMessages = appendTrustedSkillToCanonicalSystemMessage(
-                                        conversationMessages,
-                                        trustedSkill
-                                    );
+                                    executedToolResults.push({ toolCall, result: buildTrustedSkillResult(trustedSkill) });
                                     res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: trustedSkill.name, detail: `已加载技能: ${trustedSkill.name}`, message: `Loaded ${trustedSkill.name} skill` })}\n\n`);
                                 } catch (skillError) {
                                     // Layer 1 remains in the canonical prompt; never use model text as a fallback instruction.

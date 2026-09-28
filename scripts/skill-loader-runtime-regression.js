@@ -160,7 +160,7 @@ function createProviderMock() {
           writeSse(response, [openAiToolCalls(['rai-product'])]);
           return;
         }
-        if (count(systemText, '[Trusted RAI skill: rai-product]') !== 1) {
+        if (count(text, '[Trusted RAI skill: rai-product]') !== 1) {
           errors.push('memory-off: rai-product skill was not loaded into the continuation prompt');
         }
         writeSse(response, [openAiText(`${FINAL_TEXT} memory-off [TITLE]memory-off[/TITLE]`)]);
@@ -168,14 +168,16 @@ function createProviderMock() {
       }
 
       if (hasToolResult) {
+        const initial = observations.find(o => o.scenario === scenario && !o.hasToolResult);
+        if (initial && initial.systemText !== systemText) errors.push(scenario + ': skill load rewrote stable system prefix');
         if (scenario === 'invalid') {
-          if (systemText.includes('[Trusted RAI skill:')) errors.push('invalid: untrusted skill reached system instruction');
+          if (text.includes('[Trusted RAI skill:')) errors.push('invalid: untrusted skill reached system instruction');
         } else if (scenario === 'limits') {
           for (const name of ['memory', 'mermaid', 'ask_user']) {
-            if (count(systemText, `[Trusted RAI skill: ${name}]`) !== 1) errors.push(`limits: ${name} was not loaded exactly once`);
+            if (count(text, `[Trusted RAI skill: ${name}]`) !== 1) errors.push(`limits: ${name} was not loaded exactly once`);
           }
-          if (systemText.includes('[Trusted RAI skill: web_sources]')) errors.push('limits: fourth unique skill bypassed the three-skill cap');
-        } else if (count(systemText, '[Trusted RAI skill: mermaid]') !== 1) {
+          if (text.includes('[Trusted RAI skill: web_sources]')) errors.push('limits: fourth unique skill bypassed the three-skill cap');
+        } else if (count(text, '[Trusted RAI skill: mermaid]') !== 1) {
           errors.push(`${scenario}: canonical system instruction omitted the loaded skill`);
         }
         if (isGemini && !hasObjectKey(body, 'functionResponse')) errors.push('gemini: continuation omitted functionResponse');

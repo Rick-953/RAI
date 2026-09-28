@@ -26,8 +26,14 @@ async function main() {
   server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   const base='http://127.0.0.1:'+server.address().port;
   async function call(url,body={},authorized=false,method='POST',host='rai.test') {
-    const r=await fetch(base+url,{method,headers:{Host:host,'Content-Type':'application/json',...(authorized?{Authorization:'Bearer phone-test'}:{})},body:JSON.stringify(body)});
-    assert.equal(r.headers.get('cache-control'),'no-store');return {status:r.status,data:await r.json()};
+    return new Promise((resolve,reject)=>{
+      const data=JSON.stringify(body);
+      const req=require('node:http').request(base+url,{method,headers:{Host:host,'Content-Type':'application/json','Content-Length':Buffer.byteLength(data),...(authorized?{Authorization:'Bearer phone-test'}:{})}},res=>{
+        let output='';res.setEncoding('utf8');res.on('data',chunk=>output+=chunk);res.on('end',()=>{
+          try { assert.equal(res.headers['cache-control'],'no-store');resolve({status:res.statusCode,data:JSON.parse(output)}); } catch(e){reject(e);}
+        });
+      });req.on('error',reject);req.end(data);
+    });
   }
   let created=(await call('/api/auth/qr/create')).data;
   const owner={id:created.id,ownerSecret:created.ownerSecret};
