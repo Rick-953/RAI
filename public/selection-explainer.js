@@ -983,7 +983,7 @@
   }
 
   async function consumeSseResponse(response, card) {
-    const reader = response.body?.getReader();
+    const reader = response.body ? (window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader()) : null;
     if (!reader) throw new Error('Streaming response unavailable');
     const decoder = new TextDecoder();
     let buffer = '';
