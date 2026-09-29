@@ -10,6 +10,23 @@ QRCode.toDataURL = async (data, options) => { qrPayload = data; return originalR
 async function main() {
  const filename = path.join(os.tmpdir(), 'rai-share-test-' + require('node:crypto').randomUUID() + '.db');
  const db = new sqlite3.Database(filename);
+ const transactionDb = new sqlite3.Database(filename);
+ db.configure('busyTimeout', 5000); transactionDb.configure('busyTimeout', 5000);
+ let transactionTail = Promise.resolve(), failNextShareInsert = false;
+ const txRun = (sql,args=[]) => new Promise((resolve,reject)=>{
+   if (failNextShareInsert && sql.startsWith('INSERT INTO conversation_shares')) { failNextShareInsert=false; return reject(new Error('injected_share_insert_failure')); }
+   transactionDb.run(sql,args,function(e){e?reject(e):resolve(this);});
+ });
+ const txGet = (sql,args=[]) => new Promise((resolve,reject)=>transactionDb.get(sql,args,(e,r)=>e?reject(e):resolve(r)));
+ const txAll = (sql,args=[]) => new Promise((resolve,reject)=>transactionDb.all(sql,args,(e,r)=>e?reject(e):resolve(r)));
+ const withMainDbTransaction = operation => {
+   const current = transactionTail.then(async () => {
+     await txRun('BEGIN IMMEDIATE');
+     try { const result=await operation({run:txRun,get:txGet,all:txAll}); await txRun('COMMIT'); return result; }
+     catch(error) { await txRun('ROLLBACK'); throw error; }
+   });
+   transactionTail=current.catch(()=>undefined); return current;
+ };
  const run = (sql,args=[]) => new Promise((resolve,reject)=>db.run(sql,args,function(e){e?reject(e):resolve(this);}));
  const get = (sql,args=[]) => new Promise((resolve,reject)=>db.get(sql,args,(e,r)=>e?reject(e):resolve(r)));
  const all = (sql,args=[]) => new Promise((resolve,reject)=>db.all(sql,args,(e,r)=>e?reject(e):resolve(r)));
@@ -27,7 +44,7 @@ async function main() {
   const app=express();app.use(express.json());
   const pass=(_q,_s,next)=>next();
   const auth=async(req,res,next)=>{try { req.user=await store.verifyAccessToken(String(req.headers.authorization||'').replace(/^Bearer /,'')); next(); } catch (_) { res.status(401).json({error:'unauthorized'}); }};
-  installSecureSharingRoutes({app,authenticateToken:auth,authLimiter:pass,apiLimiter:pass,dbRunAsync:run,dbGetAsync:get,dbAllAsync:all,authSessionStartupReady:Promise.resolve(),allowedCorsOrigins:new Set(['https://rai.test']),publicBaseUrl:'https://rai.test/beta',buildAuthSessionDeviceMetadata:()=>({osName:'Windows',browserName:'CX RAI'}),buildAuthenticatedUserPayload:async(user,req,fingerprint,claims,options)=>{const session=await store.createSession({userId:user.id,authMethod:claims.auth_method,...options}); issued++;return {success:true,token:session.accessToken,user:{id:user.id}};},audit:(event,meta)=>events.push({event,meta})});
+  installSecureSharingRoutes({app,withMainDbTransaction,authenticateToken:auth,authLimiter:pass,apiLimiter:pass,dbRunAsync:run,dbGetAsync:get,dbAllAsync:all,authSessionStartupReady:Promise.resolve(),allowedCorsOrigins:new Set(['https://rai.test']),publicBaseUrl:'https://rai.test/beta',buildAuthSessionDeviceMetadata:()=>({osName:'Windows',browserName:'CX RAI'}),buildAuthenticatedUserPayload:async(user,req,fingerprint,claims,options)=>{const session=await store.createSession({userId:user.id,authMethod:claims.auth_method,...options}); issued++;return {success:true,token:session.accessToken,user:{id:user.id}};},audit:(event,meta)=>events.push({event,meta})});
   server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   const base='http://127.0.0.1:'+server.address().port;
   async function call(url,body={},authorized=false,method='POST',host='rai.test') {
@@ -82,13 +99,23 @@ async function main() {
   assert.equal(share.sharePath, '/beta/share.html#'+share.key);
   const snapshot=(await call('/api/shares/read',{key:share.key})).data;
   assert.equal(snapshot.messages.length,2);assert.equal(snapshot.messages[1].content,'<script>private code</script>');
+  failNextShareInsert = true;
+  assert.equal((await call('/api/sessions/owned/share',{},true)).status,500);
+  assert.equal((await call('/api/shares/read',{key:share.key})).status,200,'failed rotation must keep the previous link valid');
+  const rotations = await Promise.all(Array.from({length:6},()=>call('/api/sessions/owned/share',{},true)));
+  assert.ok(rotations.every(result=>result.status===200));
+  const reads = await Promise.all(rotations.map(result=>call('/api/shares/read',{key:result.data.key})));
+  assert.equal(reads.filter(result=>result.status===200).length,1,'only the last committed rotation may remain active');
+  assert.equal((await get("SELECT COUNT(*) AS count FROM conversation_shares WHERE owner_id=1 AND session_id='owned'")).count,1);
+  assert.equal((await call('/api/shares/read',{key:share.key})).status,404,'successful rotation must invalidate its predecessor');
   await call('/api/sessions/owned/share',{},true,'DELETE');
+  for (const result of rotations) assert.equal((await call('/api/shares/read',{key:result.data.key})).status,404);
   assert.equal((await call('/api/shares/read',{key:share.key})).status,404);
   const next=(await call('/api/sessions/owned/share',{},true)).data;
   await run("DELETE FROM sessions WHERE id='owned'");
   assert.equal((await call('/api/shares/read',{key:next.key})).status,404);
   const logged=JSON.stringify(events);for(const secret of [owner.ownerSecret,scanToken,claim.approvalSecret,share.key,consumed.data.token,'test@example.invalid'])assert.ok(!logged.includes(secret));
-  console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths');
- } finally { QRCode.toDataURL=originalRender; if(server)await new Promise(r=>server.close(r));await new Promise(r=>db.close(r));fs.unlinkSync(filename); }
+  console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths, atomic concurrent rotation and rollback');
+ } finally { QRCode.toDataURL=originalRender; if(server)await new Promise(r=>server.close(r));await transactionTail;await new Promise(r=>transactionDb.close(r));await new Promise(r=>db.close(r));fs.unlinkSync(filename); }
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

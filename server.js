@@ -12958,7 +12958,7 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
     }
 });
 
-installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync,
+installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync, withMainDbTransaction,
     buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, publicBaseUrl: PUBLIC_BASE_URL, audit });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
