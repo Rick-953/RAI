@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260929-auth-scanner-r5';
+const RAI_BUILD_ID = '20260929-diagnostics-r6';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -15227,7 +15227,9 @@ function initEntryAutofocus() {
 // ==================== ZTX6D SSO 配置 ====================
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
-const RAI_SESSION_FETCH = window.fetch.bind(window);
+const RAI_SESSION_FETCH = window.RaiDiagnostics
+  ? window.RaiDiagnostics.wrapFetch(window.fetch.bind(window), () => API_BASE)
+  : window.fetch.bind(window);
 const RAI_ACCESS_REFRESH_LEEWAY_MS = 60 * 1000;
 let userTokenRefreshEntry = null;
 let userTokenRefreshTimer = null;
@@ -19948,7 +19950,7 @@ async function recoverIncompleteChatStream({
       continue;
     }
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let attemptContent = '';
@@ -20259,7 +20261,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     });
     if (responseRequestId) requestId = responseRequestId;
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let fullContent = '';
     let reasoningContent = '';
@@ -22688,7 +22690,7 @@ async function sendMessage(message = null, options = {}) {
       throw new Error('响应体为空');
     }
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -24637,7 +24639,7 @@ async function sendCustomApiMessage(messages) {
       renderMessages();
       return;
     }
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     while (true) {
@@ -30485,7 +30487,7 @@ function startSessionStreamSubscription(sessionId = appState.currentSession?.id)
         throw new Error(`stream_events_http_${response.status}`);
       }
 
-      const reader = response.body.getReader();
+      const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       while (appState.sessionStreamSource === source) {

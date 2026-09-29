@@ -10779,7 +10779,8 @@ app.use(cors({
         if (!origin || allowedCorsOrigins.has(origin)) return callback(null, true);
         return callback(new Error('CORS origin not allowed'));
     },
-    credentials: true
+    credentials: true,
+    exposedHeaders: ['X-RAI-Diagnostic-Id', 'X-Request-ID', 'X-Model-Used', 'X-Model-Reason']
 }));
 app.use((req, res, next) => {
     if (req.path === '/api/chat/stream') {
@@ -21030,6 +21031,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         const concurrency = await resolveUserConcurrentRequestLimit(req.user.userId, runtimeSettings);
         const concurrentLimit = concurrency.limit;
         requestId = `req_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+        req.diagnosticChatRequestId = requestId;
         const activeRegistration = await registerActiveRequestForUser({
             requestId,
             userId: req.user.userId,
@@ -22589,7 +22591,7 @@ if (clientFileExecution && systemPrompt) {
                 if (!activeController.signal.aborted) activeController.abort();
             }
         }, chatRequestBudget.remainingMs());
-        audit('chat_route', { requestId, model: finalModel, provider: routing.provider, mode: thinkingMode ? 'thinking' : 'chat', timeoutMs: chatRequestBudget.totalMs });
+        audit('chat_route', { requestId, model: finalModel, provider: routing.provider, mode: thinkingMode ? 'thinking' : 'chat', timeoutMs: chatRequestBudget.totalMs }, req);
         const primaryAttemptTimeoutMs = chatRequestBudget.nextAttemptTimeoutMs();
         const boundedPrimaryAttemptTimeoutMs = routing.provider === 'openrouter'
             ? Math.min(primaryAttemptTimeoutMs, 6000)
@@ -25543,10 +25545,10 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
             streamDegraded = true;
             res.write(`data: ${JSON.stringify({ type: 'stream_warning', code: 'reasoning_without_answer',
                 message: '思考已保存，但上游未生成正文。请重新生成；不会自动重放已执行的工具。' })}\n\n`);
-            audit('stream_reasoning_without_answer', { requestId, model: finalModel, length: reasoningContent.length });
+            audit('stream_reasoning_without_answer', { requestId, model: finalModel, length: reasoningContent.length }, req);
         }
         audit('chat_completed', { requestId, model: finalModel, success: !streamDegraded,
-            visibleChars: fullContent.length, contextLength: reasoningContent.length });
+            visibleChars: fullContent.length, contextLength: reasoningContent.length }, req);
 
         if (agentRuntime.enabled) {
             if (agentRuntime.selectedAgents.includes('synthesizer')) {
