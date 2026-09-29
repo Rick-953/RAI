@@ -1,5 +1,6 @@
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
+const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
@@ -25655,6 +25656,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
         }
 
         //  完整的消息保存逻辑
+        let persistedIncompleteAnswer = '';
         if (sessionId) {
             console.log('\n 开始保存消息到数据库');
 
@@ -25821,14 +25823,8 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                 );
             });
 
-            // When the provider stopped during reasoning, surface the saved
-            // user-facing placeholder before the terminal done event so the
-            // client does not finish with an empty assistant bubble.
             if (streamDegraded && !String(fullContent || '').trim()) {
-                res.write(`data: ${JSON.stringify({
-                    type: 'content',
-                    content: contentToSave
-                })}\n\n`);
+                persistedIncompleteAnswer = contentToSave;
             }
 
             if (liveStreamState) {
@@ -25844,6 +25840,14 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
             scheduleConversationIntegritySeal(sessionId, req.user.userId);
         }
 
+        // This is deliberately outside the persisted-session branch. A temporary
+        // chat has no database row, but must not end after reasoning with no body.
+        writeIncompleteAnswer(res, {
+            degraded: streamDegraded,
+            visibleContent: fullContent,
+            persistedContent: persistedIncompleteAnswer
+        });
+
         if (agentRuntime.enabled) {
             emitAgentEvent(res, {
                 type: 'agent_status',
@@ -25854,7 +25858,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
         }
 
         chatRequestSucceeded = true;
-        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', degraded: streamDegraded })}\n\n`);
         res.end();
 
         if (requestId) rejectClientToolPending(requestId, 'request_finished');
