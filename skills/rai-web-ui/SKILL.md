@@ -15,3 +15,5 @@ Determine desktop browser, mobile browser or installed Home Screen PWA from the 
 - Login: password/email code, passkey, supported SSO, QR login. Compact language buttons share the registration footer. QR rotates every 3 seconds. On a logged-in device open the sidebar, choose 扫码授权登录 beside 临时对话, then scan with the camera or a fresh QR image. Check the waiting device, IP and approximate location; 确认登录 authorizes it directly. The matching code is visual only, not an input. IP location is approximate (VPN/proxy), not identity proof.
 - Sharing: session ellipsis > Share conversation / Manage link. Read-only text snapshot, 7-day expiry, revoke in the same dialog. Shared page attempts CX RAI activation; browser may require clicking the open button.
 - Desktop-only local agent entries require a paired agent; mobile browsers cannot silently execute PC commands. Do not promise CX RAI parity for Web-only features.
+
+- Diagnostics: Settings > About > 导出脱敏诊断日志. Downloads tab-local bounded request/stream metadata; no messages, keys, IPs or file names. Share only after reviewing. Cache token counts appear only when actually supplied by the provider.
