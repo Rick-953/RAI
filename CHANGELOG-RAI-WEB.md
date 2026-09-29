@@ -117,3 +117,8 @@
 - done 事件标明 degraded；Web 的生成时间线将这种终止标为未完成，而不是“生成完成”。有正文的正常回复不重复插入兜底文本。
 - 新增可执行 helper 回归，同时断言兜底位置位于有会话专属存储逻辑之外。Windows 本地 `npm run check`、stream-completion-recovery、tool-trace-ui、diagnostics 已通过；Linux 全部门禁、真实临时对话供应商流与线上验收仍待 PR/部署。
 - 前端 app/index 与 Service Worker 缓存标识统一升至 20260929-stream-r7；版本契约同步，确保已安装 PWA 更新流式脚本。
+
+### 临时对话兜底正式上线补记（2026-09-29）
+- PR #79 全部 Formal、独立 CodeQL、依赖、RustSec、Gitleaks、OSV 与安全汇总门禁通过，合并提交 d70e89201c0456ceadcc7f7435e259ed83013c88。
+- 16:50（Asia/Singapore）在私密在线 SQLite 备份 `quick_check=ok` 后，使用 `/opt/rai/deploy.sh formal` 部署；服务与 Nginx active，工作树 clean，公网健康检查 200。
+- 公网 index.html、app.js、sw.js 内容与 origin/main Git blob 哈希逐个一致，浏览器确实载入 20260929-stream-r7。隔离浏览器的未登录扫码弹窗正常；尚未用真实账号重演供应商断流、物理 iOS PWA 或 CX 原生双设备授权。
