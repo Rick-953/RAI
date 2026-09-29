@@ -35,3 +35,9 @@
 - QR 状态机、真实会话 SQLite HTTP 集成、提示词缓存、iOS 布局契约及模型路由专项均单独通过。布局契约不是 iPhone 真机验收；路由测试不是供应商在线可用性或真实缓存命中率证明。
 - 浏览器实测文件入口 position:static，所属容器 overflow-y:auto；短窗口滚动 175px，按钮 y 从 214 变为 39，确认不固定在新建对话区。
 - 测试运行时代码树：3f13e31c4294ee0968bb7adc4afe10dbc9908898（后续仅补充日志）。正式服务仍为 c043345，未部署本功能分支。
+
+## 2026-09-29 — 发布门禁依赖修补（未部署）
+- GitHub 新运行发现 undici 6.28.0 命中 GHSA-3wwx-pv8p-q78v；依维护方公告升级最小补丁 6.28.1，未跨主版本。
+- 使用项目固定 Node 24.16.0 / npm 11.13.0 生成锁文件；只有 undici 的版本、来源和完整性哈希变化。
+- npm audit --audit-level=moderate 返回 0 漏洞；dependency-security 回归通过，新增 undici 锁定防回退断言。
+- 提交 111fd0e 的 GitHub Formal regression suite 与 Isolated runtime security smoke 均通过，证明包含 Cargo 的完整 formal-audit 已通过；该运行的依赖/OSV 门禁失败由此补丁修复，需新运行再次确认。
