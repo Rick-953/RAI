@@ -13021,10 +13021,8 @@ app.post('/api/auth/refresh', authLimiter, requireTrustedRefreshRequest, async (
     try {
         await authSessionStartupReady;
         const refreshToken = selectedRefreshToken(authSessionStore, req.headers.cookie || '', qrScope);
-        if (!refreshToken) {
-            clearSelectedCookie();
-            return res.status(401).json({ success: false, error: '刷新会话不存在' });
-        }
+        // The persistent store is the single authority for refresh validation,
+        // including missing credentials; the caller's scope never grants access.
         const fingerprint = readAuthDeviceFingerprint(req);
         const refreshed = await authSessionStore.refresh(refreshToken, {
             fingerprint,
