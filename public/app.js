@@ -31463,8 +31463,6 @@ class MobileKeyboardHandler {
     }
   }
 
-  // iOS 主屏幕偶发“视口卡在短高度”的状态：屏幕比 WebView 高一个顶部安全区，
-  // 底部会留下无法用 CSS 填满的黑边。切换一次全屏元素的 display 强制 WebKit
   // Reconcile after WebKit's delayed viewport update without toggling display.
   healStandaloneViewport() {
     if (!this.isIOS || !this.isStandalone || this.activeInput) return;
