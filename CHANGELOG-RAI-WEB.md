@@ -17,3 +17,21 @@
 未完成：Linux 权限日志测试、接口端到端/真实模型缓存测试、设备渲染验收、完整功能差异补齐、正式部署。Windows 上 privacy-logging 的 0600 权限断言未通过，必须在 Linux 验证，不能删除断言掩盖问题。
 
 作者：RAI Web 由 Rick 全权构建。
+
+## 2026-09-29 — 文件入口与扫码会话边界（开发中，未部署）
+- 文件入口移入侧栏可滚动容器；统一文件页按钮、间距、移动安全区和 reduced-motion。
+- QR 授权在真实会话存储事务内复查有效期、撤销状态和账号会话版本，继承原始 auth_time，不提升敏感操作认证新鲜度。
+- 修复二维码关闭/创建竞态及 beta 子路径；更新缓存资源版本。
+- 新增扫码 HTTP 集成、QR 状态机、提示词缓存和 iOS 布局测试到 formal-audit 门禁。
+- 本机文件库回归通过；Windows 缺少 sqlite3 native binding，HTTP 集成测试必须在 Linux 测试副本执行。
+- 全量审计上次停于 fetch-url 的 LF 文本断言（测试副本 CRLF），将使用 Git 导出源码重跑；未降低断言。
+
+本批验证补充（2026-09-29）：
+- 修复 app.js / index / Service Worker 的构建标识不一致，统一为 20260928-secure-chat-r2。
+- 安全冒烟测试按固定技能注册表复制技能，修复拆分 Office 后启动时缺少 documents/SKILL.md。
+- 将旧版长持机手提示测试迁移到短 ctx；保留移动端开关、最后用户轮、旧格式持久化清理测试，并增加实际系统前缀不变性检查。
+- 新增 smart-model-routing 行为测试，直接执行真实路由函数，覆盖 Flash 首选/思考、旧 Pro 管理设置、不可用回退、去重和多模态限制。
+- Linux Node 24.16.0：check、formal-user-bugs 20/20、全部排在 desktop:check 之前的 formal-audit 回归和隔离安全冒烟通过；命令停在测试主机缺少 cargo，未删除此门禁，等待 GitHub CI 完整验证。
+- QR 状态机、真实会话 SQLite HTTP 集成、提示词缓存、iOS 布局契约及模型路由专项均单独通过。布局契约不是 iPhone 真机验收；路由测试不是供应商在线可用性或真实缓存命中率证明。
+- 浏览器实测文件入口 position:static，所属容器 overflow-y:auto；短窗口滚动 175px，按钮 y 从 214 变为 39，确认不固定在新建对话区。
+- 测试运行时代码树：3f13e31c4294ee0968bb7adc4afe10dbc9908898（后续仅补充日志）。正式服务仍为 c043345，未部署本功能分支。

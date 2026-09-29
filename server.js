@@ -12959,7 +12959,7 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
 });
 
 installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync,
-    buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, audit });
+    buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, publicBaseUrl: PUBLIC_BASE_URL, audit });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
     const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
@@ -13180,7 +13180,7 @@ function buildAuthSessionDeviceMetadata(req) {
 }
 
 // ==================== 认证路由 ====================
-async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authClaims = {}) {
+async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authClaims = {}, sessionOptions = {}) {
     await dbRunAsync('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
     await authSessionStartupReady;
@@ -13191,6 +13191,7 @@ async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authCl
         authMethod,
         fingerprint: sessionFingerprint,
         ...buildAuthSessionDeviceMetadata(req),
+        authorizedBySession: sessionOptions.authorizedBySession || null,
         additionalClaims: authClaims
     });
     req.res?.setHeader('Set-Cookie', session.refreshCookie.header);

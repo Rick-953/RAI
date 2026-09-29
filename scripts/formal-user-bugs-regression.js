@@ -600,7 +600,7 @@ function testFocusedModelUiReasoningAndSwipe() {
     'the Smart Model preference must resolve to the SiliconFlow Kimi K2.6 route');
   assert.match(server, /'nemotron-3-ultra':\s*\{[\s\S]{0,180}provider:\s*'openrouter'[\s\S]{0,180}model:\s*'nvidia\/nemotron-3-ultra-550b-a55b:free'/,
     'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
-  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-flash'/,
+  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-flash'/,
     'DeepSeek V4 Flash must use the official DeepSeek route');
   assert.match(server, /'deepseek-pro':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-pro'/,
     'DeepSeek Pro must use the official DeepSeek route');
@@ -1064,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-formal-v01318-r1';
+  const expectedBuild = '20260928-secure-chat-r2';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1109,8 +1109,10 @@ function testVersionContract() {
     'image-only models must be rejected as preferred model settings');
   assert.match(server, /async function resolveVisibleFastModel\(\)[\s\S]{0,500}fast_default_model/,
     'fast route must consult admin settings');
-  assert.match(server, /async function resolveVisibleThinkingModel\(\)[\s\S]{0,500}thinking_default_model/,
-    'thinking route must consult admin settings');
+  assert.match(server, /async function resolveVisibleThinkingModel\(\)\s*\{\s*return resolveVisibleAutoModel\(\);\s*\}/,
+    'thinking must inherit the Smart Flash route rather than stale Pro admin preferences');
+  assert.match(server, /async function resolveVisibleAutoModel\(\)[\s\S]{0,160}const preferred = 'deepseek-flash'/,
+    'Smart mode must prefer DeepSeek Flash');
   assert.match(server, /async function resolveVisionFallbackModel\(\)[\s\S]{0,400}vision_fallback_model/,
     'vision fallback must consult admin settings');
   assert.match(server, /else if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/,
@@ -1385,14 +1387,20 @@ function testDownloadClientsAndTimeline() {
     'CX RAI download actions must align as equal-width rows');
   assert.match(styles, /\.settings-windows-mobile-download\s*\{[^}]*width:\s*100%/,
     'Windows Mobile UWP action must align with the primary installer button');
-  assert.match(app, /function getHandednessPromptHint\(\)[\s\S]*?appState\.handednessEnabled[\s\S]*?isHandednessMobileLayout\(\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
-    'Handedness must be described as a per-turn mobile prompt hint');
-  assert.match(app, /function appendUserTurnContextHintForPrompt\(content\)[\s\S]*?getHandednessPromptHint\(\)[\s\S]*?handednessHint \? `\\n\\n\[\$\{handednessHint\}\]`/,
-    'Handedness must be appended to the final user turn after the time hint');
+  assert.match(extractNamedFunction(app, 'getHandednessPromptHint'), /appState\.handednessEnabled[\s\S]*isHandednessMobileLayout\(\)[\s\S]*' hand='/,
+    'Handedness must remain an opt-in per-turn mobile hint');
+  const appendHint = extractNamedFunction(app, 'appendUserTurnContextHintForPrompt');
+  assert.ok(appendHint.includes("'\\n[ctx '"));
+  assert.ok(appendHint.includes('getHandednessPromptHint()'), 'compact user context must include handedness');
   assert.match(app, /appendUserTurnContextHintForPrompt\(m\.content\)/,
     'Only the final user turn may receive the dynamic prompt context hints');
-  assert.doesNotMatch(raiSystemPrompt, /handedness|持机手|握持方式/,
-    'Handedness context must stay out of the cacheable system prompt');
+  const promptApi = require('../public/rai-system-prompt');
+  const stableOptions = { promptLanguage: 'zh-CN', modelIdentity: '智能模型' };
+  const systemLeft = promptApi.buildEffectiveSystemPrompt({ ...stableOptions, time: '2026-09-28', handedness: 'left' });
+  const systemRight = promptApi.buildEffectiveSystemPrompt({ ...stableOptions, time: '2026-09-29', handedness: 'right' });
+  assert.equal(systemLeft, systemRight, 'time/hand changes must not invalidate the cacheable system prefix');
+  assert.doesNotMatch(systemLeft, /hand=[LR]|当前持机手：|Current device hand:/,
+    'the static ctx schema is allowed; per-turn handedness values are not');
   assert.match(server, /function stripInlinePromptTimeHint\(content = ''\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
     'Server persistence must strip the handedness hint together with the time hint');
 }
@@ -1420,23 +1428,24 @@ function testHandednessPromptContext() {
   );
 
   const rightHand = compose('测试');
-  assert.match(rightHand, /^测试\n\n\[当前时间：/);
-  assert.match(rightHand, /当前持机手：右手/);
-  assert.match(rightHand, /不要把回答中心放在握持方式上/);
+  assert.match(rightHand, /^测试\n\[ctx /);
+  assert.match(rightHand, / ui=web-mobile hand=R\]$/);
+  assert.ok(rightHand.length - 2 < 90, 'per-turn metadata must remain compact');
 
   appState.handedness = 'left';
-  assert.match(compose('测试'), /当前持机手：左手/);
+  assert.match(compose('测试'), / hand=L\]$/);
 
   media.matches = false;
-  assert.doesNotMatch(compose('测试'), /当前持机手/);
+  assert.doesNotMatch(compose('测试'), / hand=/);
 
   media.matches = true;
   appState.handednessEnabled = false;
-  assert.doesNotMatch(compose('测试'), /当前持机手/);
+  assert.doesNotMatch(compose('测试'), / hand=/);
 
   const stripHints = new Function(
     `${extractNamedFunction(server, 'stripInlinePromptTimeHint')}; return stripInlinePromptTimeHint;`
   )();
+  assert.equal(stripHints(rightHand), '测试', 'server must strip the compact context before persistence');
   const stored = stripHints('测试\n\n[当前时间：2026-09-24 20:47。仅作背景，不要把回答中心放在时间上。]\n\n[当前持机手：右手。仅用于理解界面偏好，不要把回答中心放在握持方式上。]');
   assert.equal(stored, '测试', 'server persistence must remove both per-turn context hints');
 }

@@ -482,24 +482,32 @@ html.handedness-switching .sidebar {
 
 .file-library-entry {
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-md);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font: inherit;
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
-.file-library-entry:hover,
+.file-library-entry svg { width: 20px; height: 20px; flex-shrink: 0; }
+.file-library-entry:hover { background: var(--bg-hover); }
 .file-library-entry.active {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-color);
+}
+.file-library-entry:focus-visible,
+.file-library-page button:focus-visible {
+  outline: 2px solid var(--focus-border-color);
+  outline-offset: 3px;
 }
 
 /* 搜索框 */
@@ -2708,7 +2716,7 @@ html.handedness-switching .sidebar {
   align-items: center;
   gap: 7px;
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--text-primary);
   color: var(--bg-primary);
   font-size: 14px;
@@ -2721,7 +2729,7 @@ html.handedness-switching .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
 }
@@ -2784,7 +2792,7 @@ html.handedness-switching .sidebar {
   gap: 8px;
   padding: 0 12px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--input-bg);
   color: var(--text-tertiary);
 }
@@ -2827,7 +2835,7 @@ html.handedness-switching .sidebar {
   grid-template-rows: auto auto;
   gap: 8px 12px;
   padding: 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
 }
 
@@ -2839,7 +2847,7 @@ html.handedness-switching .sidebar {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
@@ -2893,7 +2901,9 @@ html.handedness-switching .sidebar {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
+  grid-column: 2;
+  flex-wrap: wrap;
 }
 
 .file-library-action {
@@ -2902,7 +2912,7 @@ html.handedness-switching .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-tertiary);
 }
@@ -2933,7 +2943,7 @@ html.handedness-switching .sidebar {
   display: block;
   margin: 24px auto 0;
   padding: 0 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-primary);
 }
@@ -2944,7 +2954,7 @@ html.handedness-switching .sidebar {
 
 @media (max-width: 768px) {
   .file-library-shell {
-    padding: calc(var(--header-height) + 22px) 14px 36px;
+    padding: calc(var(--header-height) + 22px) 16px calc(24px + env(safe-area-inset-bottom, 0px));
   }
 
   .file-library-header h1 {
@@ -2958,6 +2968,13 @@ html.handedness-switching .sidebar {
   .file-library-upload {
     padding: 0 11px;
   }
+}
+
+.file-library-item:hover { border-color: var(--text-tertiary); }
+.file-library-upload:hover, .file-library-load-more:hover { background: var(--bg-hover); }
+.file-library-entry, .file-library-item, .file-library-search { box-sizing: border-box; }
+@media (prefers-reduced-motion: reduce) {
+  .file-library-entry, .file-library-item, .file-library-storage-track span { transition: none; }
 }
 
 .chat-container {

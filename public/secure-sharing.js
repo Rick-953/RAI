@@ -1,7 +1,7 @@
 /* QR login and revocable conversation snapshots. No credentials in QR or share URLs. */
 (() => {
   'use strict';
-  let owner = null, timer = null, busy = false, modal = null, approving = false;
+  let modal = null, approving = false;
   const endpoint = path => `${API_BASE}${path}`;
   async function api(path, body, authenticated = false, method = 'POST') {
     const response = await fetch(endpoint(path), { method, cache: 'no-store', credentials: 'include',
@@ -20,47 +20,54 @@
   }
   function button(d, label, fn) { const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
     b.addEventListener('click', fn); d.append(b); return b; }
-  function stop() {
-    clearTimeout(timer); const previous = owner; owner = null; busy = false;
-    if (previous) api('/auth/qr/cancel', previous).catch(() => {});
+  function stop(run) {
+    if (!run || run.stopped) return;
+    run.stopped = true; clearTimeout(run.timer); clearTimeout(run.hideTimer);
+    if (run.owner) api('/auth/qr/cancel', run.owner).catch(() => {});
+    run.owner = null;
   }
   window.startQrLogin = async () => {
     if (modal?.open) return;
-    stop(); modal = dialog('扫码登录', '用已登录 RAI 的手机扫码，核对设备和安全码后确认。仅扫描不会登录。二维码每 3 秒轮换，2 分钟后失效。');
-    const image = document.createElement('img'); image.className = 'rai-login-qr'; image.alt = '动态登录二维码';
-    const status = document.createElement('p'); status.setAttribute('role', 'status');
-    modal.append(image, status); button(modal, '??', () => modal.close());
-    modal.append(image, status); button(modal, '取消', () => modal.close());
+    const d = dialog('扫码登录', '用已登录 RAI 的手机扫码，核对设备和安全码后确认。仅扫描不会登录。二维码每 3 秒轮换，2 分钟后失效。');
+    modal = d;
+    const run = { owner: null, stopped: false, timer: null, hideTimer: null };
+    const image = document.createElement('img'); image.className = 'rai-login-qr'; image.alt = '动态登录二维码'; image.hidden = true;
+    const status = document.createElement('p'); status.setAttribute('role', 'status'); status.textContent = '正在创建二维码…';
+    d.append(image, status); button(d, '取消', () => d.close());
+    d.addEventListener('close', () => stop(run), { once: true });
     try {
       const created = await api('/auth/qr/create', {});
-      if (!modal.open) return;
-      owner = { id: created.id, ownerSecret: created.ownerSecret };
+      const credentials = { id: created.id, ownerSecret: created.ownerSecret };
+      if (run.stopped || !d.open) { api('/auth/qr/cancel', credentials).catch(() => {}); return; }
+      run.owner = credentials;
       async function tick() {
-        if (!owner || !modal.open || busy) return;
-        busy = true; image.hidden = true;
+        if (run.stopped || !d.open) return;
+        image.hidden = true; clearTimeout(run.hideTimer);
+        const started = performance.now();
         try {
-          const current = owner;
-          let state = await api('/auth/qr/poll', current);
-          if (owner !== current) return;
-          status.textContent = `安全码 ${state.code} · ${state.status === 'scanned' ? '已扫描，请在手机确认' : '等待扫描'}`;
+          // One request supplies both state and image, avoiding an unnecessary polling race.
+          const state = await api(document.hidden ? '/auth/qr/poll' : '/auth/qr/image', run.owner);
+          if (run.stopped || !d.open) return;
+          status.textContent = '安全码 ' + state.code + ' · ' + (state.status === 'scanned' ? '已扫描，请在手机确认' : '等待扫描');
           if (state.status === 'approved') {
-            const data = await api('/auth/qr/consume', current);
-            owner = null; modal.close(); await enterAuthenticatedApp(data); return;
+            const data = await api('/auth/qr/consume', run.owner);
+            if (run.stopped || !d.open) return;
+            run.owner = null; d.close(); await enterAuthenticatedApp(data); return;
           }
           if (state.status === 'denied') throw new Error('手机已拒绝此次登录');
-          if (state.status === 'pending' && !document.hidden) {
-            state = await api('/auth/qr/image', current);
-            if (owner !== current) return;
-            if (state.image) { image.src = state.image; image.hidden = false; }
+          const remaining = Math.max(0, Math.min(3000, Number(state.rotateAfterMs) || 0) - (performance.now() - started));
+          if (state.image && remaining > 100 && !document.hidden) {
+            image.src = state.image; image.hidden = false;
+            run.hideTimer = setTimeout(() => { image.hidden = true; }, remaining);
           }
-          timer = setTimeout(tick, Math.max(100, Math.min(3000, state.rotateAfterMs || 3000)));
+          run.timer = setTimeout(tick, state.status === 'pending' ? Math.max(100, remaining) : 1000);
         } catch (e) {
-          status.textContent = e.message === 'qr_expired' ? '二维码已过期，请关闭后重新打开' : `登录未完成：${e.message}`;
-          stop();
-        } finally { busy = false; }
+          if (!run.stopped) status.textContent = e.message === 'qr_expired' ? '二维码已过期，请关闭后重新打开' : '登录未完成，请关闭后重试';
+          image.hidden = true; stop(run);
+        }
       }
       await tick();
-    } catch (e) { status.textContent = `无法创建二维码：${e.message}`; stop(); }
+    } catch (_) { status.textContent = '无法创建二维码，请稍后重试'; stop(run); }
   };
   async function checkIncomingScan() {
     if (approving || !appState.token) return;
