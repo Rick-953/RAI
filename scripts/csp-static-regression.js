@@ -124,8 +124,8 @@ function verifyDeclarativeBindings(relativePath, source, minimumExpected) {
 
 // ChatFlow now reuses the normal conversation composer, removing its duplicated
 // declarative controls while keeping the unified canvas actions in the shared UI.
-const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 182);
-check(staticIndexBindingCount === 182, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 182)`);
+const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 183);
+check(staticIndexBindingCount === 183, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 183)`);
 verifyDeclarativeBindings('public/app.js', appJs, 70);
 
 // Exercise the production parser itself in a DOM-free VM. App template expressions are

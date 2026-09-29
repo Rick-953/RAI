@@ -1,5 +1,11 @@
 # RAI Web 更新记录
 
+## 2026-09-29 - Installed iOS viewport and password-manager preference (feature/pwa-viewport-remember-20260929; not deployed)
+- The installed iOS app now paints its full layout viewport instead of fixing the root to WebKit's transient short visual viewport. The composer and settings surfaces extend to the physical bottom while controls retain home-indicator padding. Only a focused input uses the keyboard-sized visual viewport; blur, pageshow, and foreground transitions reconcile stale values without toggling the shell display. Ordinary Safari/Android/desktop sizing remains separate.
+- Sign-in and registration remember-password checkbox defaults on if no preference exists; explicit opt-out persists as a boolean shared with /UWP-SignUP. Browser/OS password managers handle credentials through autocomplete and, where supported, a guarded post-authentication PasswordCredential offer; never plaintext Web storage.
+- Bumped app, diagnostics, index resources and service-worker cache to `20260929-pwa-r8`; UWP signup CSS/JS cache URLs are `20260929-remember-r1`. Added real Chromium fixture coverage for standalone/Safari geometry, keyboard-close/background stale viewport, safe controls, and unset/false/true preference across Web and UWP registration. Physical iPhone Safari/PWA validation remains required.
+
+
 ## 2026-09-28 — 开发中，未部署
 基线：正式服务器与 GitHub main 均为 c0433456e6675a62617d3e9db1047f66eeb1a8b3。
 - 扫码登录：3 秒旧码失效、独立领取凭据、设备/安全码确认、撤销与单次消费；新增轻量手机确认页。
@@ -122,3 +128,9 @@
 - PR #79 全部 Formal、独立 CodeQL、依赖、RustSec、Gitleaks、OSV 与安全汇总门禁通过，合并提交 d70e89201c0456ceadcc7f7435e259ed83013c88。
 - 16:50（Asia/Singapore）在私密在线 SQLite 备份 `quick_check=ok` 后，使用 `/opt/rai/deploy.sh formal` 部署；服务与 Nginx active，工作树 clean，公网健康检查 200。
 - 公网 index.html、app.js、sw.js 内容与 origin/main Git blob 哈希逐个一致，浏览器确实载入 20260929-stream-r7。隔离浏览器的未登录扫码弹窗正常；尚未用真实账号重演供应商断流、物理 iOS PWA 或 CX 原生双设备授权。
+
+### 2026-09-29 ? PWA ??????
+- ????????????????????????? focus ??????????????????????????????
+- ???? Playwright 1.62.1 ? Chromium/WebKit CI ??????????????????
+- ???????? 393?852 ?????shell/composer/settings/content ? bottom ?? 852????? bottom=808?? 34px ????????? 10px ????????? 59px ?????????????????????????????Safari ??????? unset/false/true?
+- ?? iPhone PWA ??????????????????????Windows ? sqlite3 ??????????????????? Linux PR ?????

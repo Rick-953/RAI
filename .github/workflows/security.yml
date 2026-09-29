@@ -81,6 +81,12 @@ jobs:
         run: node --check scripts/security-smoke-harness.js
       - name: Run formal audit suite
         run: npm run test:formal-audit
+      - name: Install pinned browser test engines
+        run: npx --no-install playwright install --with-deps chromium webkit
+      - name: Verify PWA viewport and remember preference in Chromium and WebKit
+        run: |
+          npm run test:ios-standalone-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:ios-standalone-runtime
 
   isolated-security-smoke:
     name: Isolated runtime security smoke
