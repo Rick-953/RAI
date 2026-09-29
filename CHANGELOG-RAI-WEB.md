@@ -41,3 +41,8 @@
 - 使用项目固定 Node 24.16.0 / npm 11.13.0 生成锁文件；只有 undici 的版本、来源和完整性哈希变化。
 - npm audit --audit-level=moderate 返回 0 漏洞；dependency-security 回归通过，新增 undici 锁定防回退断言。
 - 提交 111fd0e 的 GitHub Formal regression suite 与 Isolated runtime security smoke 均通过，证明包含 Cargo 的完整 formal-audit 已通过；该运行的依赖/OSV 门禁失败由此补丁修复，需新运行再次确认。
+
+## 2026-09-29 — 按需 UI 技能同步
+- Web/CX 界面技能同步文件入口的滚动位置、搜索/上传/文件操作路径，防止 RAI 指引用户寻找旧的固定入口。
+- 产品技能明确 CX RAI 才是 UWP 客户端，RAI Web 是浏览器/PWA，消除英文指代歧义；作者关系保持不变。
+- 技能保持 LF，更新固定 SHA-256；技能加载静态/运行时回归通过。主提示词字符数仍 1119，测试 ctx 仍 47 字符，不把详细界面指南塞回每轮 system。
