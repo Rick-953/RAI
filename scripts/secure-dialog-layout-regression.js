@@ -12,5 +12,5 @@ assert.match(script, /slot\.append\(image\)/); assert.match(script, /d\.append\(
 assert.match(script, /d\.setAttribute\('aria-labelledby', h\.id\)/);
 const html = read('public/index.html'), sw = read('public/sw.js');
 const version = /secure-sharing\.js\?v=([a-z0-9-]+)/.exec(html)?.[1];
-assert.ok(version); assert.ok(sw.includes('secure-sharing.js?v=' + version)); assert.ok(sw.includes('secure-sharing.css?v=' + version));
+assert.ok(version); assert.ok(read('public/app.js').includes("const RAI_BUILD_ID = '" + version + "'"), 'application and cache build markers must match'); assert.ok(sw.includes('secure-sharing.js?v=' + version)); assert.ok(sw.includes('secure-sharing.css?v=' + version));
 console.log('secure-dialog layout contracts PASS: reset override, stable QR slot, viewport overflow, accessible title, versioned offline assets (browser geometry is separately measured)');

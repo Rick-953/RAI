@@ -1064,7 +1064,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260928-secure-chat-r2';
+  const expectedBuild = '20260929-secure-chat-r3';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
