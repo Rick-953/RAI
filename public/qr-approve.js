@@ -16,7 +16,9 @@ async function post(path, body, refresh = false) {
     claim = await post('/auth/qr/claim', { id: match[1], scanToken: match[2] });
     status.textContent = '请核对设备与安全码，再决定是否授权';
     document.getElementById('qrDevice').textContent = '设备：' + claim.device;
-    document.getElementById('qrCode').textContent = '安全码：' + claim.code;
+    document.getElementById('qrIp').textContent = 'IP 地址：' + (claim.ip || '无法确定');
+    document.getElementById('qrLocation').textContent = '大致位置：' + (claim.location || '无法确定');
+    document.getElementById('qrCode').textContent = '核对码：' + claim.code + '（无需输入）';
     for (const id of ['deny', 'approve']) {
       const button = document.getElementById(id); button.hidden = false;
       button.onclick = async () => {

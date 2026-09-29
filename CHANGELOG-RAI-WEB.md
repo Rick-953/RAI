@@ -80,3 +80,22 @@
 本批验证：
 - Linux暂存树c095e26599aaebc5d9b914e93b5e09449da8b61a：npm run check、qr-browser-lifecycle（含真实HTTP处理器+SQLite）、secure-sharing、auth-sessions、qr-login、secure-dialog-layout、formal-user-bugs全部通过。
 - Chromium本地隔离页面布局：桌面按钮44px高、10px间距、0px边框；390/320px纵向三项均无文本溢出。悬浮仅背景变化，按下matrix(0.97)，松开matrix(1)。本地刷新接口模拟401，仅作为UI证据，不冒充正式账号业务验收。
+
+## 2026-09-29 — 紧凑登录页、已登录设备扫码入口与待登录设备位置（验证中）
+- 语言切换缩为 简体 / 繁體 / EN，与注册/登录提示共用一横排；保持完整的无障碍名称与选中状态。三种语言 320 / 390 / 1280 px 实测均单行、垂直中心差 0、无水平溢出。
+- 已登录侧栏的 临时对话 旁加入 扫码授权登录，支持后置相机和本地图片解码。jsQR 1.4.0 精确固定、完整 Apache-2.0 许可、上游字节来源及 SHA-256 纳入供应链门禁；不依赖 iOS 尚不普遍支持的 BarcodeDetector。
+- 只接受当前服务器 origin 和正式/beta 对应路径的 RAI 登录二维码；不导航扫描出的任意网址、不上传相机画面或图片。
+- 每次识别仍需用户明确确认。确认页显示待登录设备、IP、大致位置；点击 确认登录 后原设备直接登录。核对码是两台设备间的辅助核对，无需输入，不代替明确确认。
+- IP 取创建二维码请求的 Express 已验证代理链地址，拒用客户端提交 IP/城市与未验证的 CDN 地理请求头；服务端固定版本 ip2region 2.3.0 离线解析，不外传 IP。数据库可能滞后、VPN/代理会影响位置；未知和局域网有明确回退。位置不是认证因素。
+- IP/位置只在短期内存授权记录中保存，仅返回给已登录扫码人；不写日志、不放入二维码、owner 轮询、分享或提示词。
+- 相机只在用户点击扫码入口后请求；页面隐藏、退出、关闭、身份变化、识别完成均停止。延迟授予的媒体流立即释放；确认请求绑定原账号，不经全局 401 重试改用别的账号。
+- Permissions-Policy 仅为同源相机开放，麦克风/定位仍禁止。补齐同版本离线资源；缓存构建号 20260929-auth-scanner-r5。
+- 更新按需 rai-web-ui 技能与哈希，不改主提示词前缀。
+- 本地验证：真实二维码编码→实际 jsQR 解码；扫码/授权竞态、来源限制、IP可信来源、离线数据库、相机权限拒绝、真实图片选择→显示设备/IP/位置→明确确认。浏览器在无真实账号/无真实授权的本地 mock 环境验证；iPhone 真机相机/PWA 仍需单独验收，不能用模拟宽度替代。
+- 完整 Linux 回归、GitHub 安全门禁、正式部署结果在后续记录补齐；本节不宣称已上线。
+
+本批发布前验证补充：
+- Linux Node 24.16.0：check、qr-scanner、qr-login、secure-sharing（真实 SQLite/HTTP）、qr-browser-lifecycle、secure-dialog-layout、vendor-integrity、vendor-provenance、skill-loader、csp-static、privacy-logging、dependency-security 全通过。
+- 真实 Chromium 本地隔离浏览器：拒绝相机权限、二维码图片、本地 canvas MediaStream 实际相机解码管线、识别后先停止流且不自动授权、点击确认/拒绝、关闭后延迟相机授权释放全通过，无页面异常。测试发现并修正了浏览器定时器未绑定导致的 Illegal invocation；纯 Node mock 无法代替此项。
+- 可复跑 `npm run test:qr-scanner-browser`（测试环境提供 Playwright；可用 NODE_PATH 指定测试工具，RAI_QR_BROWSER_EXECUTABLE 指定已安装浏览器，RAI_QR_BROWSER_ARTIFACTS 可选输出截图）。脚本自行启停回环地址测试站、仅使用假账号与测试二维码，不触碰正式登录或相机。
+- 相机 Permissions-Policy 进一步只对应用主页 / 与 /index.html 开放，其他文档仍禁用。

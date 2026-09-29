@@ -12,38 +12,38 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20260929-secure-chat-r4"></script>
+  <script src="runtime-brand.js?v=20260929-auth-scanner-r5"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260929-secure-chat-r4">
+  <link rel="manifest" href="site.webmanifest?v=20260929-auth-scanner-r5">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="lib/purify.min.js?v=20260929-secure-chat-r4"></script>
+  <script defer src="lib/marked.min.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="lib/purify.min.js?v=20260929-auth-scanner-r5"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260929-secure-chat-r4">
-  <script defer src="lib/katex/katex.min.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260929-secure-chat-r4"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260929-auth-scanner-r5">
+  <script defer src="lib/katex/katex.min.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260929-auth-scanner-r5"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="event-bindings.js?v=20260929-secure-chat-r4"></script>
+  <script defer src="rai-system-prompt.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="event-bindings.js?v=20260929-auth-scanner-r5"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260929-secure-chat-r4">
-  <script defer src="lib/highlight/highlight.min.js?v=20260929-secure-chat-r4"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260929-auth-scanner-r5">
+  <script defer src="lib/highlight/highlight.min.js?v=20260929-auth-scanner-r5"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260929-secure-chat-r4">
-  <link rel="stylesheet" href="selection-explainer.css?v=20260929-secure-chat-r4">
-  <link rel="stylesheet" href="local-agent.css?v=20260929-secure-chat-r4">
-  <link rel="stylesheet" href="secure-sharing.css?v=20260929-secure-chat-r4">
+  <link rel="stylesheet" href="styles.css?v=20260929-auth-scanner-r5">
+  <link rel="stylesheet" href="selection-explainer.css?v=20260929-auth-scanner-r5">
+  <link rel="stylesheet" href="local-agent.css?v=20260929-auth-scanner-r5">
+  <link rel="stylesheet" href="secure-sharing.css?v=20260929-auth-scanner-r5">
 </head>
 
 <body>
@@ -175,12 +175,13 @@
             <span data-i18n="no-account">还没有账号?</span>
             <a class="auth-link" data-rai-click="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
           </div>
+          <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
+            <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')" title="简体中文" aria-label="简体中文">简体</button>
+            <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')" title="繁體中文" aria-label="繁體中文">繁體</button>
+            <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')" title="English" aria-label="English">EN</button>
+          </div>
         </div>
-        <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
-          <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')">简体中文</button>
-          <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')">繁體中文</button>
-          <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')">English</button>
-        </div>
+
       </div>
     </div>
   </div>
@@ -389,6 +390,13 @@
                 width="22" height="22" fill="currentColor">
                 <path
                   d="M15.1 19.37l1 1.74c-.96.44-2.01.73-3.1.84v-2.02c.74-.09 1.44-.28 2.1-.56ZM4.07 13H2.05c.11 1.1.4 2.14.84 3.1l1.74-1c-.28-.66-.47-1.36-.56-2.1ZM15.1 4.63l1-1.74c-.96-.44-2-.73-3.1-.84v2.02c.74.09 1.44.28 2.1.56ZM19.93 11h2.02c-.11-1.1-.4-2.14-.84-3.1l-1.74 1c.28.66.47 1.36.56 2.1ZM8.9 19.37l-1 1.74c.96.44 2.01.73 3.1.84v-2.02c-.74-.09-1.44-.28-2.1-.56ZM11 4.07V2.05c-1.1.11-2.14.4-3.1.84l1 1.74c.66-.28 1.36-.47 2.1-.56ZM18.36 7.17l1.74-1.01c-.63-.87-1.4-1.64-2.27-2.27l-1.01 1.74c.59.45 1.1.96 1.54 1.54ZM4.63 8.9l-1.74-1c-.44.96-.73 2-.84 3.1h2.02c.09-.74.28-1.44.56-2.1ZM19.93 13c-.09.74-.28 1.44-.56 2.1l1.74 1c.44-.96.73-2.01.84-3.1h-2.02ZM16.83 18.36l1.01 1.74c.87-.63 1.64-1.4 2.27-2.27l-1.74-1.01c-.45.59-.96 1.1-1.54 1.54ZM7.17 5.64l-1-1.75c-.88.64-1.64 1.4-2.27 2.28l1.74 1.01c.44-.59.95-1.1 1.53-1.54ZM5.64 16.83l-1.74 1c.63.87 1.4 1.64 2.27 2.27l1.01-1.74c-.59-.44-1.1-.95-1.54-1.53ZM13 7h-2v5.41l4.29 4.29 1.41-1.41-3.7-3.7V7Z" />
+              </svg>
+            </button>
+            <button type="button" class="sidebar-control-btn qr-scan-top-btn" id="qrScanButton"
+              data-i18n-title="scan-login-qr" data-i18n-aria-label="scan-login-qr" title="扫码授权登录" aria-label="扫码授权登录">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4"/>
+                <path d="M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z"/>
               </svg>
             </button>
             <!--
@@ -1171,7 +1179,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260929-secure-chat-r4" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260929-auth-scanner-r5" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1237,7 +1245,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260929-secure-chat-r4" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260929-auth-scanner-r5" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1252,7 +1260,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260929-secure-chat-r4" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260929-auth-scanner-r5" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -2256,13 +2264,15 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="pet-quotes.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="app.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="local-agent.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="crf-ui.js?v=20260929-secure-chat-r4"></script>
-  <script defer src="selection-explainer.js?v=20260929-secure-chat-r4"></script>
-  <script src="secure-sharing.js?v=20260929-secure-chat-r4" defer></script>
+  <script defer src="conversation-cache.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="pet-quotes.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="app.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="local-agent.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="crf-ui.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="selection-explainer.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="lib/jsQR.js?v=20260929-auth-scanner-r5"></script>
+  <script defer src="qr-scanner.js?v=20260929-auth-scanner-r5"></script>
+  <script src="secure-sharing.js?v=20260929-auth-scanner-r5" defer></script>
 </body>
 
 </html>

@@ -9298,83 +9298,55 @@ body.custom-api-mode .main-content {
   display: flex;
 }
 
-/* 登录界面底部区域 */
+/* 登录界面底部：注册提示与精简语言选项共用一行 */
 .auth-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-top: var(--spacing-xl);
   padding-top: var(--spacing-lg);
   border-top: 1px solid var(--border-color);
 }
-
 .auth-footer .auth-switch {
   margin: 0;
+  min-width: 0;
   text-align: left;
-}
-
-/* 行内语言切换按钮 */
-.auth-lang-btn-inline {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border-color);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-primary);
   font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  line-height: 1.5;
 }
-
-.auth-lang-btn-inline:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--border-dark);
-}
-
-/* 登录卡片底部语言文字按钮行 */
+.auth-footer .auth-switch a { white-space: nowrap; }
 .auth-lang-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
-  width: fit-content;
-  max-width: 100%;
-  margin: 14px auto 0;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
+  flex: 0 0 auto;
+  gap: 1px;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 8px;
   background: var(--bg-secondary);
-  box-shadow: none;
 }
-
 .auth-lang-text-btn {
-  min-width: 82px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
-  border: none;
   color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 650;
-  cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, opacity 0.16s ease;
-  padding: 7px 12px;
-  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
-
-.auth-lang-text-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
-.auth-lang-text-btn.active-lang {
-  color: #000;
-  background: var(--color-saturn-yellow);
-  box-shadow: none;
-}
+.auth-lang-text-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.auth-lang-text-btn:active { transform: scale(0.97); }
+.auth-lang-text-btn.active-lang { color: var(--text-primary); background: var(--bg-tertiary); }
+.auth-lang-text-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .auth-lang-text-btn { transition: none; } }
 
 /* 邮箱输入时的焦点提示 */
 #authEmail:focus+.email-hint,
@@ -17803,15 +17775,6 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
     margin-left: 0;
   }
 
-  .auth-lang-row {
-    width: 100%;
-  }
-
-  .auth-lang-text-btn {
-    flex: 1;
-    min-width: 0;
-    padding-inline: 8px;
-  }
 
   .app-update-prompt {
     right: 12px;

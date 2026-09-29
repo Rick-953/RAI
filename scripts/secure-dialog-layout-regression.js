@@ -26,3 +26,11 @@ assert.match(styles, /\.auth-alt-button:active:not\(:disabled\)\s*\{\s*transform
 assert.match(styles, /@media \(max-width: 420px\)\s*\{\s*\.auth-alternative-row \{ grid-template-columns: minmax\(0, 1fr\);/);
 assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.auth-alt-button \{ transition: none;/);
 console.log('plain login choice contracts PASS: shared borderless buttons, explicit spacing, responsive grid, press scale and reduced motion');
+
+assert.match(html, /id="authFooter"[\s\S]*?id="authSwitch"[\s\S]*?id="authLangRow"/);
+assert.match(styles, /\.auth-lang-row\s*\{[^}]*flex:\s*0 0 auto;/);
+assert.match(html, /class="sidebar-header-controls"[\s\S]*?temp-chat-top-btn[\s\S]*?id="qrScanButton"/);
+for (const asset of ['lib/jsQR.js', 'qr-scanner.js']) {
+  assert.ok(html.includes(asset + '?v=' + version)); assert.ok(sw.includes(asset + '?v=' + version));
+}
+console.log('scanner/footer contracts PASS: compact footer, sidebar adjacency, same-version local decoder and scanner cache');
