@@ -1,0 +1,16 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const read = name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
+const css = read('public/secure-sharing.css'), script = read('public/secure-sharing.js');
+assert.match(css, /\.rai-secure-dialog\s*\{[^}]*margin:\s*auto;/, 'dialog must override the global margin:0 reset');
+assert.match(css, /\.rai-secure-dialog\s*\{[^}]*overflow-y:\s*auto;/, 'short viewports need scrollable dialogs');
+assert.match(css, /\.rai-qr-slot\s*\{[^}]*aspect-ratio:\s*1;/, 'expired image hiding must not collapse the QR slot');
+assert.match(css, /100dvh/); assert.match(css, /safe-area-inset-bottom/);
+assert.match(script, /slot\.append\(image\)/); assert.match(script, /d\.append\(slot, status\)/);
+assert.match(script, /d\.setAttribute\('aria-labelledby', h\.id\)/);
+const html = read('public/index.html'), sw = read('public/sw.js');
+const version = /secure-sharing\.js\?v=([a-z0-9-]+)/.exec(html)?.[1];
+assert.ok(version); assert.ok(sw.includes('secure-sharing.js?v=' + version)); assert.ok(sw.includes('secure-sharing.css?v=' + version));
+console.log('secure-dialog layout contracts PASS: reset override, stable QR slot, viewport overflow, accessible title, versioned offline assets (browser geometry is separately measured)');

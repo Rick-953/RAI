@@ -1,7 +1,7 @@
 /* QR login and revocable conversation snapshots. No credentials in QR or share URLs. */
 (() => {
   'use strict';
-  let modal = null, approving = false;
+  let modal = null, approving = false, dialogSequence = 0;
   const endpoint = path => `${API_BASE}${path}`;
   async function api(path, body, authenticated = false, method = 'POST') {
     const response = await fetch(endpoint(path), { method, cache: 'no-store', credentials: 'include',
@@ -13,7 +13,8 @@
   }
   function dialog(title, description) {
     const d = document.createElement('dialog'); d.className = 'rai-secure-dialog';
-    const h = document.createElement('h2'); h.textContent = title;
+    const h = document.createElement('h2'); h.textContent = title; h.id = `rai-secure-title-${++dialogSequence}`;
+    d.setAttribute('aria-labelledby', h.id);
     const p = document.createElement('p'); p.textContent = description;
     d.append(h, p); document.body.append(d); d.showModal();
     d.addEventListener('close', () => d.remove(), { once: true }); return d;
@@ -32,8 +33,9 @@
     modal = d;
     const run = { owner: null, stopped: false, timer: null, hideTimer: null };
     const image = document.createElement('img'); image.className = 'rai-login-qr'; image.alt = '动态登录二维码'; image.hidden = true;
+    const slot = document.createElement('div'); slot.className = 'rai-qr-slot'; slot.append(image);
     const status = document.createElement('p'); status.setAttribute('role', 'status'); status.textContent = '正在创建二维码…';
-    d.append(image, status); button(d, '取消', () => d.close());
+    d.append(slot, status); button(d, '取消', () => d.close());
     d.addEventListener('close', () => stop(run), { once: true });
     try {
       const created = await api('/auth/qr/create', {});
