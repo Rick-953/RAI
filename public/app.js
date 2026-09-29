@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260929-diagnostics-r6';
+const RAI_BUILD_ID = '20260929-stream-r7';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -23532,25 +23532,27 @@ async function sendMessage(message = null, options = {}) {
           }
           else if (parsed.type === 'done') {
             receivedDoneEvent = true;
-            console.log(' 流式响应完成');
-
-            // 停止字符渲染队列
+            const incomplete = parsed.degraded === true;
+            // An upstream stop is terminal, not a successful answer. Do not
+            // automatically repeat tools or obscure the interruption in the timeline.
             stopCharRender();
-
-            // 更新步骤状态：生成回答完成
-            updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
+            updateStepStatus(getGeneratingStep(), incomplete ? 'failed' : 'done',
+              incomplete ? (isChineseLanguage(appState.language) ? '回答未完成' : 'Answer incomplete')
+                : (isChineseLanguage(appState.language) ? '生成完成' : 'Completed'));
             timelineSequence.forEach((row) => {
               if (row.kind === 'generating' && row.status === 'running') {
-                row.status = 'done';
-                row.detail = isChineseLanguage(appState.language) ? '已完成' : 'Completed';
+                row.status = incomplete ? 'failed' : 'done';
+                row.detail = incomplete
+                  ? (isChineseLanguage(appState.language) ? '未完成' : 'Incomplete')
+                  : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
               }
             });
-            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
-              ? `过程完成 · ${traceItems}条记录`
-              : `Done · ${traceItems} trace items`);
-            addProcessTraceItem('info', isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed');
-
-            // 停止AI头像闪烁
+            updateStepStatus(stepProcessTrace, incomplete ? 'failed' : 'done', incomplete
+              ? (isChineseLanguage(appState.language) ? '过程中断' : 'Trace interrupted')
+              : (isChineseLanguage(appState.language) ? `过程完成 · ${traceItems}条记录` : `Done · ${traceItems} trace items`));
+            addProcessTraceItem('info', incomplete
+              ? (isChineseLanguage(appState.language) ? '流式回答中断' : 'Stream ended before the answer completed')
+              : (isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed'));
             if (aiAvatar) aiAvatar.classList.remove('thinking');
           }
           else if (parsed.type === 'cancelled') {

@@ -100,4 +100,27 @@ assert.match(app, /!receivedDoneEvent && !receivedCancelled && !receivedExplicit
 assert.match(app, /if \(receivedExplicitError\) \{[\s\S]{0,240}throw new Error\(streamFailureMessage/,
   'explicit SSE errors must abort normal successful-message finalization');
 
+// A temporary chat has no database session. The same terminal fallback must
+// produce a visible content event after half a reasoning stream, without
+// retrying any tool or pretending that the answer was complete.
+const { DEFAULT_INCOMPLETE_ANSWER, writeIncompleteAnswer } = require('../lib/chat-stream-fallback');
+const events = [];
+const response = { write(chunk) { events.push(JSON.parse(chunk.trim().slice(6))); } };
+assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: '', persistedContent: '' }), true);
+assert.deepEqual(events, [{ type: 'content', content: DEFAULT_INCOMPLETE_ANSWER }]);
+assert.ok(DEFAULT_INCOMPLETE_ANSWER.length > 10, 'empty-answer outcome must be user-visible');
+events.length = 0;
+assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: '', persistedContent: 'saved outcome' }), true);
+assert.deepEqual(events, [{ type: 'content', content: 'saved outcome' }]);
+events.length = 0;
+assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: 'already answered' }), false);
+assert.equal(writeIncompleteAnswer(response, { degraded: false, visibleContent: '' }), false);
+assert.equal(events.length, 0, 'no duplicate or synthetic answer on a healthy stream');
+const terminalSite = server.indexOf('writeIncompleteAnswer(res, {');
+assert.ok(terminalSite > server.indexOf('scheduleConversationIntegritySeal(sessionId, req.user.userId);', server.indexOf('let persistedIncompleteAnswer =')), 'terminal fallback must be outside the session-only persistence branch');
+assert.match(app, /const incomplete = parsed.degraded === true;/, 'the client must not mark a degraded reply complete');
+assert.match(app, /updateStepStatus\(getGeneratingStep\(\), incomplete \? 'failed' : 'done'/);
+assert.match(server, /res\.write\(`data: \${JSON\.stringify\(\{ type: 'done', degraded: streamDegraded \}\)}/,
+    'done must distinguish a degraded stream from a complete answer');
+
 console.log('stream-completion-recovery-regression ok');

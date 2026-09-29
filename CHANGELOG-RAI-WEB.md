@@ -111,3 +111,9 @@
 - PR #77 合并 commit c87dc45626f350f066b663c44a6aae615bede541；13:59（Asia/Singapore）经 `/opt/rai/deploy.sh formal` 正式部署。部署前已在线备份 SQLite、`quick_check=ok`、私密备份 .env；服务 active、部署树 clean。
 - 公网 index/app/sw/diagnostics/selection-explainer 的 SHA256 均与对应 Git blob 和服务器文件相同。新隔离 Chromium 正式站 HTTP 200、加载 rai.diagnostics.v1 / r6，无页面异常；本地实际“关于→导出”下载及隐私、流式关联测试通过。
 - 尚未在正式站真实登录账号中导出并核验生产会话、双设备扫码、物理 iOS PWA 或实际模型供应商 usage；不拿离线/模拟验证替代这些剩余验收。
+
+## 2026-09-29 — 临时对话思考中断兜底（待 PR/部署）
+- 修复临时对话没有数据库 sessionId 时，上游仅输出半段思考就中断、客户端收到 done 却没有正文的路径；现在与持久对话共用终止兜底，在 done 前显示明确的未完成提示，不自动重放可能有副作用的工具调用。
+- done 事件标明 degraded；Web 的生成时间线将这种终止标为未完成，而不是“生成完成”。有正文的正常回复不重复插入兜底文本。
+- 新增可执行 helper 回归，同时断言兜底位置位于有会话专属存储逻辑之外。Windows 本地 `npm run check`、stream-completion-recovery、tool-trace-ui、diagnostics 已通过；Linux 全部门禁、真实临时对话供应商流与线上验收仍待 PR/部署。
+- 前端 app/index 与 Service Worker 缓存标识统一升至 20260929-stream-r7；版本契约同步，确保已安装 PWA 更新流式脚本。
