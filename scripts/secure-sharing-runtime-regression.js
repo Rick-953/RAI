@@ -114,8 +114,24 @@ async function main() {
   const next=(await call('/api/sessions/owned/share',{},true)).data;
   await run("DELETE FROM sessions WHERE id='owned'");
   assert.equal((await call('/api/shares/read',{key:next.key})).status,404);
+  // Exercise the real module-local limiters over HTTP (outer host limiters are
+  // intentionally pass-through in this fixture). No test-only skip/reset path.
+  async function reachesLimit(route, body, authorized, maximum) {
+    let limited = false;
+    for (let index=0;index<=maximum;index++) {
+      const response = await call(route, body, authorized);
+      if (response.status===429) { limited=true; break; }
+    }
+    assert.ok(limited, route + ' must return 429 under repeated requests');
+  }
+  await reachesLimit('/api/auth/qr/create', {}, false, 12);
+  // Creation exhaustion must not prevent the already displayed QR from polling.
+  assert.notEqual((await call('/api/auth/qr/poll', owner)).status,429);
+  await reachesLimit('/api/auth/qr/poll', owner, false, 120);
+  await reachesLimit('/api/sessions/owned/share', {}, true, 60);
+  await reachesLimit('/api/shares/read', {key:share.key}, false, 120);
   const logged=JSON.stringify(events);for(const secret of [owner.ownerSecret,scanToken,claim.approvalSecret,share.key,consumed.data.token,'test@example.invalid'])assert.ok(!logged.includes(secret));
-  console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths, atomic concurrent rotation and rollback');
+  console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths, atomic concurrent rotation and rollback, real HTTP rate limits and separated poll budget');
  } finally { QRCode.toDataURL=originalRender; if(server)await new Promise(r=>server.close(r));await transactionTail;await new Promise(r=>transactionDb.close(r));await new Promise(r=>db.close(r));fs.unlinkSync(filename); }
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
