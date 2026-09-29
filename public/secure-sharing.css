@@ -3,7 +3,9 @@
 .rai-secure-dialog::backdrop { background: #0006; backdrop-filter: blur(8px); }
 .rai-secure-dialog h2 { font-size: 21px; margin: 0 0 12px; } .rai-secure-dialog p { line-height: 1.7; color: var(--text-secondary, #bfbfb5); }
 .rai-secure-dialog button, .rai-secure-dialog input { border: 1px solid var(--border-color, #55564e); color: inherit; background: transparent; padding: 12px 16px; border-radius: 12px; margin: 6px 8px 0 0; font: inherit; max-width: 100%; box-sizing: border-box; }
-.rai-secure-dialog button { cursor: pointer; } .rai-secure-dialog button:hover { background: #8882; } .rai-secure-dialog input { width: 100%; }
+.rai-secure-dialog button { cursor: pointer; border: 0; background: var(--bg-tertiary, #33342c); transition: background .16s ease, transform .16s ease; }
+.rai-secure-dialog button:active:not(:disabled) { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) { .rai-secure-dialog button { transition: none; } } .rai-secure-dialog button:hover { background: #8882; } .rai-secure-dialog input { width: 100%; }
 .rai-qr-slot { width: min(240px, 100%); aspect-ratio: 1; margin: 16px auto; }
 .rai-login-qr { display: block; width: 100%; height: 100%; margin: 0; border-radius: 16px; background: white; } .rai-login-qr[hidden] { display: none; }
 .rai-share-page { margin: 0; background: #f6f5ef; color: #24251f; font-family: system-ui, sans-serif; padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); }
@@ -19,3 +21,17 @@
 
 @supports (height: 100dvh) { .rai-secure-dialog { max-height: calc(100dvh - max(20px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))); } }
 @media (max-width: 480px) { .rai-secure-dialog { padding: 20px; border-radius: 20px; } }
+
+/* Compact, plain controls; camera and file decoding stay local. */
+.rai-scanner-preview { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; margin: 18px 0 10px; border-radius: 14px; background: var(--bg-tertiary, #181914); }
+.rai-scanner-status { min-height: 3.4em; font-size: 13px; }
+.rai-scanner-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.rai-scanner-actions button { margin: 0; border: 0; background: var(--bg-tertiary, #33342c); font-size: 13px; transition: background .16s ease, transform .16s ease; }
+.rai-scanner-actions button:hover { background: var(--bg-hover, #44453c); }
+.rai-scanner-actions button:active { transform: scale(.97); }
+.rai-secure-dialog input[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .rai-scanner-actions button { transition: none; } }
+.rai-login-device-details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin: 18px 0; padding: 16px; border-radius: 12px; background: var(--bg-tertiary, #33342c); font-size: 14px; }
+.rai-login-device-details dt { color: var(--text-secondary, #bfbfb5); }
+.rai-login-device-details dd { margin: 0; overflow-wrap: anywhere; }
+.rai-login-verification-note { font-size: 12px; }

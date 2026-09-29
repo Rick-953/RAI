@@ -10740,7 +10740,8 @@ function setSecurityHeaders(req, res) {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader(
         'Permissions-Policy',
-        'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), publickey-credentials-create=(self), publickey-credentials-get=(self)'
+        (req.path === '/' || req.path === '/index.html' ? 'camera=(self)' : 'camera=()')
+        + ', microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), publickey-credentials-create=(self), publickey-credentials-get=(self)'
     );
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     res.setHeader('Content-Security-Policy', [

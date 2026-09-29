@@ -69,6 +69,7 @@ async function main() {
   assert.equal((await call('/api/auth/qr/claim',{id:created.id,scanToken})).status,401);
   const claim=(await call('/api/auth/qr/claim',{id:created.id,scanToken},true)).data;
   assert.equal(claim.code,created.code);assert.equal(claim.ownerSecret,undefined);
+  assert.equal(claim.ip,'127.0.0.1'); assert.equal(claim.location,'局域网或保留地址'); assert.equal(claim.locationApproximate,true);
   assert.equal((await call('/api/auth/qr/consume',owner)).status,409);
   assert.equal((await call('/api/auth/qr/confirm',{id:created.id,approvalSecret:claim.approvalSecret,approve:true},true)).status,200);
   const consumed = await call('/api/auth/qr/consume',owner);
@@ -147,7 +148,7 @@ async function main() {
   assert.equal((await call('/api/auth/qr/cancel', owner)).status,429);
   assert.equal(issued,2, 'rate-limited requests cannot issue credentials');
   await reachesLimit('/api/shares/read', {key:share.key}, false, 120);
-  const logged=JSON.stringify(events);for(const secret of [owner.ownerSecret,scanToken,claim.approvalSecret,share.key,consumed.data.token,'test@example.invalid'])assert.ok(!logged.includes(secret));
+  const logged=JSON.stringify(events);for(const secret of [owner.ownerSecret,scanToken,claim.approvalSecret,share.key,consumed.data.token,'test@example.invalid',claim.ip])assert.ok(!logged.includes(secret));
   console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths, atomic concurrent rotation and rollback, real HTTP rate limits and separated poll budget');
  } finally { QRCode.toDataURL=originalRender; if(server)await new Promise(r=>server.close(r));await transactionTail;await new Promise(r=>transactionDb.close(r));await new Promise(r=>db.close(r));fs.unlinkSync(filename); }
 }

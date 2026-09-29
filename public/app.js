@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260929-secure-chat-r4';
+const RAI_BUILD_ID = '20260929-auth-scanner-r5';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5685,6 +5685,7 @@ const i18n = {
     'search-placeholder': '搜索对话',
     'new-chat': '新对话',
     'temporary-chat': '临时对话',
+    'scan-login-qr': '扫码授权登录',
     'temp-chat-modal-title': '选择临时对话模式',
     'temp-chat-modal-desc': '首次点击临时对话按钮会询问；之后可以到设置 > 个性化 > 临时对话模式里修改。',
     'temp-chat-mode-normal': '普通对话',
@@ -6329,10 +6330,10 @@ const i18n = {
     'passkey-auth-failed': 'Passkey verification failed. Please try again.',
     'routing-notice-points-exhausted': "You don't have enough points. This request may be routed to another model, which may reduce answer quality.",
     'routing-notice-upstream-timeout': 'Due to an upstream provider issue, this request will be routed to another model and quality may be reduced. A report was automatically sent to RAI Support. Thank you for understanding.',
-    'no-account': "Don't have an account?",
-    'has-account': 'Already have an account?',
-    'register-link': 'Sign up now',
-    'login-link': 'Log in now',
+    'no-account': 'New here?',
+    'has-account': 'Have an account?',
+    'register-link': 'Sign up',
+    'login-link': 'Log in',
     'custom-api-entry': 'I have an API key',
     'custom-api-title': 'Use a custom API',
     'custom-api-desc': 'Your key stays in this browser session and is never sent to the RAI server.',
@@ -6346,6 +6347,7 @@ const i18n = {
     'search-placeholder': 'Search conversations',
     'new-chat': 'New Chat',
     'temporary-chat': 'Temporary Chat',
+    'scan-login-qr': 'Scan login QR',
     'temp-chat-modal-title': 'Choose temporary chat mode',
     'temp-chat-modal-desc': 'The first tap on Temporary Chat asks you to choose. You can change it later in Settings > Personalization > Temporary chat mode.',
     'temp-chat-mode-normal': 'Normal chat',

@@ -88,25 +88,154 @@
       await tick();
     } catch (_) { status.textContent = '无法创建二维码，请稍后重试'; stop(run); }
   };
+  function scanContext() {
+    return { base: API_BASE, auth: captureUserAuthContext(), persisted: getPersistedUserAccessToken() };
+  }
+  function scanContextCurrent(context) {
+    return Boolean(context.auth.token) && context.base === API_BASE
+      && isUserAuthContextCurrent(context.auth) && context.persisted === getPersistedUserAccessToken();
+  }
+  async function scanPost(path, body, context) {
+    if (!scanContextCurrent(context)) throw new Error('auth_changed');
+    // Never retry an approval with a different account after the global 401 refresh wrapper.
+    const response = await RAI_SESSION_FETCH(endpoint(path, context.base), {
+      method: 'POST', cache: 'no-store', credentials: 'omit', redirect: 'error',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${context.auth.token}` },
+      body: JSON.stringify(body)
+    });
+    const data = await response.json();
+    if (!scanContextCurrent(context) || !response.ok) throw new Error('scan_failed');
+    return data;
+  }
+  async function approveScan(payload, context = scanContext()) {
+    if (approving || !scanContextCurrent(context)) return;
+    approving = true;
+    let d = null, watch = null, cancelled = false;
+    const invalidate = () => { cancelled = true; if (d?.open) d.close(); };
+    const hidden = () => { if (document.hidden) invalidate(); };
+    document.addEventListener('visibilitychange', hidden);
+    addEventListener('pagehide', invalidate);
+    watch = setInterval(() => { if (!scanContextCurrent(context)) invalidate(); }, 250);
+    try {
+      const claim = await scanPost('/auth/qr/claim', payload, context);
+      if (cancelled || document.hidden || !scanContextCurrent(context)) return;
+      d = dialog('确认登录另一台设备？', '确认后，这台设备将直接登录你的账号。只批准你正在操作的设备，不要批准别人通过消息发来的二维码。');
+      const details = document.createElement('dl'); details.className = 'rai-login-device-details';
+      for (const [label, value] of [['设备', claim.device], ['IP 地址', claim.ip], ['大致位置', claim.location]]) {
+        const key = document.createElement('dt'), text = document.createElement('dd');
+        key.textContent = label; text.textContent = value || '无法确定'; details.append(key, text);
+      }
+      const note = document.createElement('p'); note.className = 'rai-login-verification-note';
+      note.textContent = `核对码 ${claim.code} · 与待登录设备显示一致即可，无需输入。IP 位置仅供参考，VPN 或代理可能改变位置。`;
+      d.append(details, note);
+      // Keep the single-approval lock until the user decides or closes this dialog.
+      await new Promise(resolve => {
+        let decided = false;
+        const decide = async approve => {
+          if (decided) return;
+          decided = true;
+          for (const b of d.querySelectorAll('button')) b.disabled = true;
+          try {
+            if (cancelled || document.hidden || !scanContextCurrent(context)) return;
+            await scanPost('/auth/qr/confirm', { id: claim.id, approvalSecret: claim.approvalSecret, approve }, context);
+            if (!cancelled && d.open) showToast(approve ? '已授权登录' : '已拒绝登录');
+          } catch (_) { if (!cancelled && d.open) showToast('授权已过期或登录状态已变化，请重新扫码'); }
+          finally { d.close(); resolve(); }
+        };
+        button(d, '拒绝', () => decide(false));
+        button(d, '确认登录', () => decide(true));
+        d.addEventListener('cancel', event => { event.preventDefault(); decide(false); }, { once: true });
+        d.addEventListener('close', resolve, { once: true });
+      });
+    } catch (_) { if (!cancelled) showToast('二维码已过期或无法确认，请重新扫描当前二维码'); }
+    finally {
+      clearInterval(watch); document.removeEventListener('visibilitychange', hidden);
+      removeEventListener('pagehide', invalidate); approving = false;
+    }
+  }
+  let scannerDialog = null;
+  window.openQrScanner = () => {
+    if (scannerDialog?.open || approving) return;
+    if (!appState.token) { showToast('请先登录 RAI，再为另一台设备扫码授权'); return; }
+    const context = scanContext();
+    const d = dialog('扫码授权登录', '将另一台设备上的 RAI 登录二维码放入取景框。识别后仍需核对安全码并确认；画面仅在本机处理。');
+    scannerDialog = d;
+    const video = document.createElement('video'); video.className = 'rai-scanner-preview';
+    video.muted = true; video.playsInline = true; video.setAttribute('playsinline', '');
+    video.setAttribute('aria-label', '登录二维码取景框');
+    const canvas = document.createElement('canvas');
+    const status = document.createElement('p'); status.className = 'rai-scanner-status'; status.setAttribute('role', 'status');
+    status.textContent = '正在请求相机权限…';
+    const actions = document.createElement('div'); actions.className = 'rai-scanner-actions';
+    const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/png,image/jpeg,image/webp'; input.hidden = true;
+    d.append(video, status, actions, input);
+    let closed = false, selected = false, imageUrl = null, imageGeneration = 0, watch = null;
+    const active = () => !closed && !selected && d.open && scanContextCurrent(context);
+    const accept = text => {
+      if (!active()) return false;
+      const payload = window.RaiQrScanner.parseLoginQr(text, context.base, location.href);
+      if (!payload) { status.textContent = '这不是当前 RAI 服务的登录二维码，请对准另一台设备上的当前二维码。'; return false; }
+      selected = true; cleanup(); d.close(); approveScan(payload, context); return true;
+    };
+    const camera = new window.RaiQrScanner.CameraScanner({ video, canvas,
+      getUserMedia: constraints => navigator.mediaDevices.getUserMedia(constraints),
+      decode: (...args) => window.jsQR(...args), onResult: accept,
+      onError: () => { if (active()) status.textContent = '无法使用相机。请允许相机权限后重试，或选择刚拍摄的二维码图片。'; }
+    });
+    const revokeImage = () => { if (imageUrl) URL.revokeObjectURL(imageUrl); imageUrl = null; };
+    const hidden = () => {
+      if (!document.hidden || !active()) return;
+      camera.stop(); imageGeneration++; revokeImage();
+      status.textContent = '相机已暂停。返回后点击“开启相机”继续。';
+    };
+    const leave = () => { cleanup(); if (d.open) d.close(); };
+    function cleanup() {
+      if (closed) return; closed = true;
+      camera.stop(); imageGeneration++; revokeImage(); clearInterval(watch);
+      document.removeEventListener('visibilitychange', hidden);
+      removeEventListener('pagehide', leave); removeEventListener('hashchange', leave);
+    }
+    const start = () => {
+      if (!active() || document.hidden) return;
+      imageGeneration++; revokeImage(); status.textContent = '对准另一台设备上正在显示的登录二维码…';
+      camera.start();
+    };
+    button(actions, '开启相机', start);
+    button(actions, '选择二维码图片', () => { camera.stop(); input.click(); });
+    button(actions, '取消', leave);
+    input.addEventListener('change', () => {
+      const file = input.files?.[0]; input.value = '';
+      if (!file || !active()) return;
+      camera.stop(); imageGeneration++; revokeImage();
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+        status.textContent = '请选择小于 10 MB 的 PNG、JPEG 或 WebP 二维码图片。'; return;
+      }
+      const generation = imageGeneration, image = new Image();
+      imageUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        if (generation !== imageGeneration || !active()) return;
+        try {
+          const result = camera.read(image, image.naturalWidth, image.naturalHeight);
+          if (!result) status.textContent = '没有识别到二维码，请选择清晰的当前二维码或开启相机。';
+          else accept(result.data);
+        } catch (_) { status.textContent = '无法读取此图片，请选择较小的清晰二维码图片。'; }
+        finally { revokeImage(); }
+      };
+      image.onerror = () => { if (generation === imageGeneration && active()) { revokeImage(); status.textContent = '无法读取此图片，请重新选择。'; } };
+      image.src = imageUrl;
+    });
+    d.addEventListener('cancel', cleanup, { once: true }); d.addEventListener('close', cleanup, { once: true });
+    document.addEventListener('visibilitychange', hidden);
+    addEventListener('pagehide', leave); addEventListener('hashchange', leave);
+    watch = setInterval(() => { if (!scanContextCurrent(context)) leave(); }, 250);
+    start();
+  };
   async function checkIncomingScan() {
-    if (approving || !appState.token) return;
+    if (approving || scannerDialog?.open || !appState.token) return;
     const match = /^#qr-login=([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})$/.exec(location.hash);
     if (!match) return;
-    approving = true;
     history.replaceState(null, '', location.pathname + location.search);
-    try {
-      const claim = await api('/auth/qr/claim', { id: match[1], scanToken: match[2] }, true);
-      const d = dialog('确认登录另一台设备？', `设备：${claim.device}。安全码：${claim.code}。请与面前设备核对；不要确认别人发来的二维码。`);
-      let decided = false;
-      const decide = async approve => {
-        if (decided) return; decided = true;
-        try { await api('/auth/qr/confirm', { id: claim.id, approvalSecret: claim.approvalSecret, approve }, true); d.close(); showToast(approve ? '已授权登录' : '已拒绝登录'); }
-        catch (e) { showToast(`确认失败：${e.message}`); d.close(); }
-      };
-      button(d, '拒绝', () => decide(false)); button(d, '号码一致，确认登录', () => decide(true));
-      d.addEventListener('cancel', () => decide(false), { once: true });
-    } catch (e) { showToast('二维码已过期或无法确认，请重新扫描当前二维码'); }
-    finally { approving = false; }
+    await approveScan({ id: match[1], scanToken: match[2] });
   }
   window.shareRaiConversation = session => {
     const d = dialog('分享对话快照', '任何持有链接的人都能阅读这次快照，7 天后失效。不会分享后续消息、思考、工具日志或附件文件。请先检查正文隐私；创建新链接会使旧链接失效。');
@@ -126,6 +255,7 @@
       catch (e) { showToast(e.message); }
     });
   };
+  document.getElementById('qrScanButton')?.addEventListener('click', window.openQrScanner);
   document.getElementById('qrLoginButton')?.addEventListener('click', window.startQrLogin);
   addEventListener('hashchange', checkIncomingScan);
   // Login may complete after landing on a scanned link. Only inspect while a scan is pending.
