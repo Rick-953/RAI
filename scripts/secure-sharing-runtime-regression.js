@@ -129,6 +129,9 @@ async function main() {
   assert.notEqual((await call('/api/auth/qr/poll', owner)).status,429);
   await reachesLimit('/api/auth/qr/poll', owner, false, 120);
   await reachesLimit('/api/sessions/owned/share', {}, true, 60);
+  assert.equal((await call('/api/auth/qr/consume', owner)).status,429, 'issuance must share the explicit authorization budget');
+  assert.equal((await call('/api/auth/qr/cancel', owner)).status,429);
+  assert.equal(issued,1, 'rate-limited requests cannot issue credentials');
   await reachesLimit('/api/shares/read', {key:share.key}, false, 120);
   const logged=JSON.stringify(events);for(const secret of [owner.ownerSecret,scanToken,claim.approvalSecret,share.key,consumed.data.token,'test@example.invalid'])assert.ok(!logged.includes(secret));
   console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths, atomic concurrent rotation and rollback, real HTTP rate limits and separated poll budget');
