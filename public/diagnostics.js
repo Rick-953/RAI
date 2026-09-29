@@ -4,7 +4,7 @@
   else root.RaiDiagnostics = factory(root);
 })(typeof window === 'object' ? window : globalThis, function createDiagnostics(env) {
   'use strict';
-  const schema = 'rai.diagnostics.v1', version = '20260929-diagnostics-r6', storageSlot = 'rai_diagnostics_v1';
+  const schema = 'rai.diagnostics.v1', version = '20260929-stream-r7', storageSlot = 'rai_diagnostics_v1';
   const cap = 500, responses = new WeakMap();
   const models = new Set(['auto','fast','thinking','research','custom','deepseek-flash','deepseek-pro','gpt-5.6-sol','gpt-5.6-luna','gpt-6-sol','claude-sonnet-5','gemini-3.6-flash-low','gemini-3-flash','gemma','qwen3.6-35b-a3b','kimi-k2.6','chatgpt-gpt-oss-120b','nemotron-3-ultra','kolors-free','gpt-image-2']);
   const labels = new Set(['http','stream','app','started','headers','completed','cancelled','error','incomplete','other','GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','chat','auth','files','sessions','user','shares','qr-login']);
