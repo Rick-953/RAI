@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260924-formal-v01318-r1';
+const RAI_BUILD_ID = '20260928-secure-chat-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5559,20 +5559,17 @@ function getShortUserTimeHint() {
 }
 
 function getHandednessPromptHint() {
-  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return '';
-  const handedness = normalizeHandedness(appState.handedness);
-  return isChineseLanguage(appState.language)
-    ? `当前持机手：${handedness === 'right' ? '右手' : '左手'}。仅用于理解界面偏好，不要把回答中心放在握持方式上。`
-    : `Current device hand: ${handedness}. UI preference only; do not center the answer on it.`;
+  return appState.handednessEnabled && isHandednessMobileLayout()
+    ? ' hand=' + (normalizeHandedness(appState.handedness) === 'right' ? 'R' : 'L') : '';
 }
 
 function appendUserTurnContextHintForPrompt(content) {
-  const text = String(content || '');
-  const hint = isChineseLanguage(appState.language)
-    ? `当前时间：${getShortUserTimeHint()}。仅作背景，不要把回答中心放在时间上。`
-    : `Current time: ${getShortUserTimeHint()}. Background only; do not center the answer on time.`;
-  const handednessHint = getHandednessPromptHint();
-  return `${text}\n\n[${hint}]${handednessHint ? `\n\n[${handednessHint}]` : ''}`;
+  const now = new Date();
+  const offset = -now.getTimezoneOffset();
+  const zone = (offset >= 0 ? '+' : '-') + String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0') + ':' + String(Math.abs(offset) % 60).padStart(2, '0');
+  const time = getShortUserTimeHint().replace(' ', 'T');
+  const ui = navigator.standalone === true ? 'ios-pwa' : (isHandednessMobileLayout() ? 'web-mobile' : 'web-desktop');
+  return String(content || '') + '\n[ctx ' + time + zone + ' ui=' + ui + getHandednessPromptHint() + ']';
 }
 
 // 动态生成系统提示词（核心原则；时间与持机手只附在每轮用户消息末尾）
@@ -18829,7 +18826,7 @@ function createMessageElement(message) {
     const reasoningLabel = isChineseLanguage(appState.language) ? '思考过程' : 'Thinking';
     const reasoningIcon = getSvgIcon('psychology', 'material-symbols-outlined', 14);
     reasoningBlock.innerHTML = `
-      <button class="rai-reasoning-toggle" id="${reasoningId}-toggle" type="button">
+      <button class="rai-reasoning-toggle" aria-expanded="false" id="${reasoningId}-toggle" type="button">
         <span class="rai-reasoning-label">
           <span class="rai-reasoning-icon">${reasoningIcon}</span>
           <span>${reasoningLabel}</span>
@@ -18846,6 +18843,7 @@ function createMessageElement(message) {
     if (reasoningToggleBtn) {
       reasoningToggleBtn.addEventListener('click', function () {
         const expanded = reasoningBlock.classList.toggle('expanded');
+        this.setAttribute('aria-expanded', String(expanded));
         this.classList.toggle('expanded', expanded);
         if (expanded && reasoningContentEl) {
           reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
@@ -20822,6 +20820,7 @@ function openSessionMenu(event, session) {
     <button type="button" data-action="ai-title-continue">${isZh ? '继续总结标题' : 'Continue summarizing title'}</button>
     <button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
     <button type="button" data-action="pin">${session.pinned ? (isZh ? '取消置顶' : 'Unpin') : (isZh ? '置顶' : 'Pin')}</button>
+    <button type="button" data-action="share">${isZh ? '分享对话 / 管理链接' : 'Share conversation / Manage link'}</button>
     <button type="button" data-action="export">${isZh ? '导出可验证对话' : 'Export verifiable conversation'}</button>
     <button type="button" data-action="explain">${isZh ? '查看本对话解释' : 'View conversation explanations'}</button>
     <button type="button" class="danger" data-action="delete">${isZh ? '删除对话' : 'Delete conversation'}</button>`;
@@ -20839,6 +20838,7 @@ function openSessionMenu(event, session) {
     if (action === 'ai-title-continue') return requestAiTitleUpdate(session, 'continue_summary');
     if (action === 'folder') return showSessionFolderManager(session);
     if (action === 'export') return exportVerifiableConversation(session);
+    if (action === 'share') return window.shareRaiConversation?.(session);
     if (action === 'explain') {
       if (window.RAISelectionExplainer?.openHistory) window.RAISelectionExplainer.openHistory({ sessionId: session.id });
       else showToast(isZh ? '解释历史正在加载' : 'Explanation history is loading');
@@ -21750,7 +21750,7 @@ async function sendMessage(message = null, options = {}) {
 
           <div class="rai-reasoning-block" id="raiReasoningBlock" data-reasoning-mode="collapsed" style="display: none;">
             <div class="rai-reasoning-header">
-              <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
+              <button class="rai-reasoning-toggle" aria-expanded="false" id="raiReasoningToggle" type="button">
                 <span class="rai-reasoning-label">
                   <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
                   <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
@@ -23510,6 +23510,9 @@ async function sendMessage(message = null, options = {}) {
               addProcessTraceItem('search', isChineseLanguage(appState.language) ? '搜索无结果' : 'No search results');
             }
             scrollToBottom();
+          }
+          else if (parsed.type === 'stream_warning') {
+            showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
           }
           else if (parsed.type === 'done') {
             receivedDoneEvent = true;

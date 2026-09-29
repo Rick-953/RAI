@@ -13,9 +13,9 @@ const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const catalog = registry.getSkillCatalog();
 
 assert.deepEqual(catalog.map((entry) => entry.name), [
-  'web_sources', 'image_generation', 'ask_user', 'mermaid', 'memory', 'rai-product', 'sandbox', 'office'
+  'web_sources', 'image_generation', 'ask_user', 'mermaid', 'memory', 'rai-product', 'sandbox', 'documents', 'spreadsheets', 'presentations', 'rai-web-ui', 'cx-rai-ui'
 ]);
-assert.equal(registry.validateSkillRegistry().length, 8);
+assert.equal(registry.validateSkillRegistry().length, 12);
 for (const entry of catalog) {
   const loaded = registry.loadTrustedSkill(entry.name);
   assert.equal(loaded.name, entry.name);
@@ -32,14 +32,18 @@ assert.match(sandboxSkill, /command policy/i);
 assert.match(sandboxSkill, /sandbox_command_blocked/);
 assert.match(sandboxSkill, /no direct network/);
 assert.match(sandboxSkill, /persists for 3 hours/);
-const officeSkill = registry.loadTrustedSkill('office').content;
-assert.match(officeSkill, /zipfile/);
-assert.match(officeSkill, /make_docx/);
-assert.match(officeSkill, /make_xlsx/);
-assert.match(officeSkill, /make_pptx/);
-assert.match(officeSkill, /Never attempt[\s\S]{0,60}pip install/);
+for (const [name, maker] of [['documents','make_docx'], ['spreadsheets','make_xlsx'], ['presentations','make_pptx']]) {
+  const skill = registry.loadTrustedSkill(name).content;
+  assert.match(skill, /zipfile/);
+  assert.ok(skill.includes(maker));
+  for (const other of ['make_docx','make_xlsx','make_pptx'].filter(x => x !== maker)) assert.ok(!skill.includes(other), name + ' must not bundle unrelated formats');
+  assert.ok(Buffer.byteLength(skill) < 6500);
+}
+assert.throws(() => registry.loadTrustedSkill('office'), /unknown skill name/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Adaptive handedness/);
+assert.match(registry.loadTrustedSkill('cx-rai-ui').content, /Windows Phone/);
 const productSkill = registry.loadTrustedSkill('rai-product').content;
-assert.match(productSkill, /CX RAI was created by Lao Cha/);
+assert.match(productSkill, /CX RAI was originally developed by Lao Cha/);
 assert.match(productSkill, /Do not use web search merely to identify RAI or CX RAI/);
 for (const unsafeName of ['../memory', 'memory/../web_sources', '*', 'memory.md', '/etc/passwd', 'memory\x00']) {
   assert.throws(() => registry.loadTrustedSkill(unsafeName), /unknown skill name/);

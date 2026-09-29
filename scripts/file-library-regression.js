@@ -6,13 +6,13 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
-const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
 const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 const index = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'public', 'styles.css'), 'utf8');
 
 const quotaStart = server.indexOf('const FILE_LIBRARY_QUOTA_BYTES');
-const quotaEnd = server.indexOf('\n\nasync function resolveUserFileStorageQuota', quotaStart);
+const quotaEnd = server.indexOf('\n});', quotaStart) + '\n});'.length;
 assert.ok(quotaStart >= 0 && quotaEnd > quotaStart, 'missing file library quota contract');
 const quotaDeclaration = server.slice(quotaStart, quotaEnd)
     .replace('const FILE_LIBRARY_QUOTA_BYTES =', '')
@@ -46,6 +46,9 @@ assert.match(app, /async function deleteFileLibraryItem[\s\S]*method: 'DELETE'/)
 assert.match(app, /async function processUploadedFile\(file, options = \{\}\)[\s\S]*attachToComposer/);
 assert.match(app, /media-icon">\$\{getSvgIcon\(fileLibraryIconName\(att\)/);
 assert.match(styles, /\.file-library-page[\s\S]*\.file-library-grid[\s\S]*\.file-library-item/);
+assert.match(styles, /\.file-library-entry:focus-visible/);
+assert.match(styles, /prefers-reduced-motion: reduce/);
+assert.match(styles, /padding: calc\(var\(--header-height\) \+ 22px\) 16px calc\(24px \+ env\(safe-area-inset-bottom/);
 assert.match(styles, /@media \(max-width: 768px\)[\s\S]*\.file-library-shell/);
 
 console.log('file-library-regression ok');

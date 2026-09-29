@@ -34,10 +34,11 @@ function workflowJob(name) {
   return securityWorkflow.match(new RegExp(`^  ${escaped}:[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|(?![\\s\\S]))`, 'm'))?.[0] || '';
 }
 
+assert.equal(packageJson.overrides?.undici, '6.28.1', 'undici must include the GHSA-3wwx-pv8p-q78v fix');
 assert.equal(packageJson.overrides?.tar, '7.5.22', 'node-tar must stay on the audited patched release');
 assert.equal(packageJson.overrides?.['body-parser'], '1.20.6', 'body-parser must stay on the audited patched release');
 
-for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6']]) {
+for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6'], ['undici', '6.28.1']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
