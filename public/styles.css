@@ -186,6 +186,22 @@ html[lang="en-US"] body {
   font-family: var(--font-sans-en);
 }
 
+/* A fixed <html> is clipped to WebKit's transient visual viewport. In an
+   installed app the root document (and its background) owns the layout
+   viewport; only inner controls get safe-area padding. */
+html.ios-device.standalone-viewport,
+html.ios-device.standalone-viewport body {
+  position: relative;
+  inset: auto;
+}
+
+html.ios-device.standalone-viewport .auth-container {
+  position: absolute;
+  top: 0;
+  bottom: auto;
+  height: var(--app-height);
+}
+
 html.mobile-viewport-managed,
 body.mobile-viewport-managed {
   height: var(--app-height);
@@ -9273,6 +9289,19 @@ body.custom-api-mode .main-content {
 
 /* ==================== Apple风格渐进式登录 ==================== */
 /* 隐藏状态 - 初始隐藏的元素 */
+/* A native, accessible preference: no custom switch or password persistence. */
+.auth-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.auth-remember-row input { margin: 0; accent-color: var(--accent-color); }
+.auth-remember-row input:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+
 .auth-step-hidden {
   display: none !important;
   opacity: 0;
@@ -19651,6 +19680,11 @@ body.home-screen-active .input-wrapper > .home-action-rail {
 html.ios-standalone, html.ios-standalone body { background: var(--bg-primary); }
 html.ios-standalone body.mobile-viewport-managed .app-container,
 html.ios-standalone body.mobile-viewport-managed .main-content { background: var(--bg-primary); padding-bottom: 0; }
+/* Here the composer itself paints through the home-indicator area. Its
+   measured height already includes that inset; do not reserve it twice in
+   the scrollable chat content. */
+html.ios-standalone body.mobile-viewport-managed { --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--spacing-md)); }
+html.ios-standalone body.mobile-viewport-managed.keyboard-open { --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md)); }
 html.ios-standalone body.mobile-viewport-managed:not(.keyboard-open) .input-area { bottom: 0; padding-bottom: calc(var(--safe-bottom, 0px) + var(--composer-bottom-gap, 0px)); background: linear-gradient(transparent, var(--bg-primary) 40%); }
 html.ios-standalone body.mobile-viewport-managed .main-content::after,
 html.ios-standalone body.mobile-viewport-managed .chat-edge-blur-bottom { display: none !important; }
