@@ -105,3 +105,9 @@
 - 设置 > 关于新增本标签页最多500条白名单 JSON 导出。统一读取器仅旁观实际已读 SSE，记录完成/中断/取消、首字延迟、正文与思考字符数、工具事件和供应商真实 usage；不复制响应体或工具参数，不改变原重试/授权/流传输。
 - 恢复诊断 WIP stash 时对 index/app/sw 冲突逐项手工合并：以已上线 PR75 的语言栏、侧栏扫描器与本地扫码解码为基础，仅加入诊断脚本与导出；缓存整体升为 20260929-diagnostics-r6。原 stash 暂保留供审计。
 - 已通过本地诊断与扫码浏览器/布局回归；服务器/CI 全门禁、合并、标准正式部署与生产导出仍需另行验证。不得将 PR75 已上线或本段源码视作诊断已部署。
+
+### 脱敏诊断正式部署补记（2026-09-29）
+- PR #76 中本地 storage 槽名触发 Gitleaks 误报；未添加扫描例外、未强推，改由干净单提交 PR #77 取代。#77 全门禁含 Formal、Gitleaks、CodeQL、RustSec、独立 CodeQL 聚合和安全总结均通过。
+- PR #77 合并 commit c87dc45626f350f066b663c44a6aae615bede541；13:59（Asia/Singapore）经 `/opt/rai/deploy.sh formal` 正式部署。部署前已在线备份 SQLite、`quick_check=ok`、私密备份 .env；服务 active、部署树 clean。
+- 公网 index/app/sw/diagnostics/selection-explainer 的 SHA256 均与对应 Git blob 和服务器文件相同。新隔离 Chromium 正式站 HTTP 200、加载 rai.diagnostics.v1 / r6，无页面异常；本地实际“关于→导出”下载及隐私、流式关联测试通过。
+- 尚未在正式站真实登录账号中导出并核验生产会话、双设备扫码、物理 iOS PWA 或实际模型供应商 usage；不拿离线/模拟验证替代这些剩余验收。
