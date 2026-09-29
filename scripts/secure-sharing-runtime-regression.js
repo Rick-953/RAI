@@ -4,6 +4,7 @@ const fs = require('node:fs'); const os = require('node:os'); const path = requi
 const express = require('express'); const sqlite3 = require('sqlite3');
 const { installSecureSharingRoutes } = require('../lib/secure-sharing-routes');
 const { createAuthSessionStore } = require('../lib/auth-session-store');
+const { sessionRefreshCookie } = require('../lib/qr-refresh-cookie');
 const QRCode = require('qrcode');
 const originalRender = QRCode.toDataURL; let qrPayload;
 QRCode.toDataURL = async (data, options) => { qrPayload = data; return originalRender(data, options); };
@@ -44,7 +45,7 @@ async function main() {
   const app=express();app.use(express.json());
   const pass=(_q,_s,next)=>next();
   const auth=async(req,res,next)=>{try { req.user=await store.verifyAccessToken(String(req.headers.authorization||'').replace(/^Bearer /,'')); next(); } catch (_) { res.status(401).json({error:'unauthorized'}); }};
-  installSecureSharingRoutes({app,withMainDbTransaction,authenticateToken:auth,authLimiter:pass,apiLimiter:pass,dbRunAsync:run,dbGetAsync:get,dbAllAsync:all,authSessionStartupReady:Promise.resolve(),allowedCorsOrigins:new Set(['https://rai.test']),publicBaseUrl:'https://rai.test/beta',buildAuthSessionDeviceMetadata:()=>({osName:'Windows',browserName:'CX RAI'}),buildAuthenticatedUserPayload:async(user,req,fingerprint,claims,options)=>{const session=await store.createSession({userId:user.id,authMethod:claims.auth_method,...options}); issued++;return {success:true,token:session.accessToken,user:{id:user.id}};},audit:(event,meta)=>events.push({event,meta})});
+  installSecureSharingRoutes({app,withMainDbTransaction,authenticateToken:auth,authLimiter:pass,apiLimiter:pass,dbRunAsync:run,dbGetAsync:get,dbAllAsync:all,authSessionStartupReady:Promise.resolve(),allowedCorsOrigins:new Set(['https://rai.test']),publicBaseUrl:'https://rai.test/beta',buildAuthSessionDeviceMetadata:()=>({osName:'Windows',browserName:'CX RAI'}),buildAuthenticatedUserPayload:async(user,req,fingerprint,claims,options)=>{const session=await store.createSession({userId:user.id,authMethod:claims.auth_method,additionalClaims:claims,...options}); req.res.setHeader('Set-Cookie', sessionRefreshCookie(session, claims.auth_method === 'qr_browser' ? session.sessionId : undefined).header); issued++;return {success:true,token:session.accessToken,user:{id:user.id}};},audit:(event,meta)=>events.push({event,meta})});
   server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   const base='http://127.0.0.1:'+server.address().port;
   async function call(url,body={},authorized=false,method='POST',host='rai.test') {
@@ -52,7 +53,7 @@ async function main() {
       const data=JSON.stringify(body);
       const req=require('node:http').request(base+url,{method,headers:{Host:host,'Content-Type':'application/json','Content-Length':Buffer.byteLength(data),...(authorized?{Authorization:'Bearer '+phone.accessToken}:{})}},res=>{
         let output='';res.setEncoding('utf8');res.on('data',chunk=>output+=chunk);res.on('end',()=>{
-          try { assert.equal(res.headers['cache-control'],'no-store');resolve({status:res.statusCode,data:JSON.parse(output)}); } catch(e){reject(e);}
+          try { assert.equal(res.headers['cache-control'],'no-store');resolve({status:res.statusCode,headers:res.headers,data:JSON.parse(output)}); } catch(e){reject(e);}
         });
       });req.on('error',reject);req.end(data);
     });
@@ -72,6 +73,7 @@ async function main() {
   assert.equal((await call('/api/auth/qr/confirm',{id:created.id,approvalSecret:claim.approvalSecret,approve:true},true)).status,200);
   const consumed = await call('/api/auth/qr/consume',owner);
   assert.equal(consumed.status,200);
+  assert.match(consumed.headers['set-cookie'][0], /^rai_refresh=/, 'native CX keeps its existing refresh cookie contract');
   const decoded = await store.verifyAccessToken(consumed.data.token);
   assert.equal(decoded.auth_time,phone.authTime,'QR must not renew the password/MFA authentication age');
   assert.equal(issued,1);
@@ -93,6 +95,18 @@ async function main() {
     assert.equal(issued,1);
   }
   phone = await store.createSession({ userId: 1 });
+  const browserPending = (await call('/api/auth/qr/create')).data;
+  const browserOwner = { id: browserPending.id, ownerSecret: browserPending.ownerSecret };
+  const browserClaim = (await call('/api/auth/qr/claim', { id: browserPending.id, scanToken: browserPending.scanPath.split('.').pop() }, true)).data;
+  await call('/api/auth/qr/confirm', { id: browserPending.id, approvalSecret: browserClaim.approvalSecret, approve: true }, true);
+  const browserConsumed = await call('/api/auth/qr/consume', { ...browserOwner, browserSession: true });
+  assert.equal(browserConsumed.status, 200);
+  const browserClaims = await store.verifyAccessToken(browserConsumed.data.token);
+  assert.equal(browserClaims.auth_method, 'qr_browser');
+  assert.ok(browserConsumed.headers['set-cookie'][0].startsWith('rai_qr_refresh_' + browserClaims.sid + '='));
+  assert.match(browserConsumed.headers['set-cookie'][0], /; Secure/);
+  assert.match(browserConsumed.headers['set-cookie'][0], /; HttpOnly/);
+  assert.equal(issued, 2);
   assert.equal((await call('/api/sessions/other/share',{},true)).status,404);
   const share=(await call('/api/sessions/owned/share',{},true)).data;
   assert.match(share.key,/^[A-Za-z0-9_-]{43}$/);
@@ -131,7 +145,7 @@ async function main() {
   await reachesLimit('/api/sessions/owned/share', {}, true, 60);
   assert.equal((await call('/api/auth/qr/consume', owner)).status,429, 'issuance must share the explicit authorization budget');
   assert.equal((await call('/api/auth/qr/cancel', owner)).status,429);
-  assert.equal(issued,1, 'rate-limited requests cannot issue credentials');
+  assert.equal(issued,2, 'rate-limited requests cannot issue credentials');
   await reachesLimit('/api/shares/read', {key:share.key}, false, 120);
   const logged=JSON.stringify(events);for(const secret of [owner.ownerSecret,scanToken,claim.approvalSecret,share.key,consumed.data.token,'test@example.invalid'])assert.ok(!logged.includes(secret));
   console.log('secure-sharing runtime PASS: HTTP ownership, QR image, host validation, auth, explicit approval, one-time consumption, session revocation, snapshot isolation/revocation, private logging, real auth-session schema, expiry seconds, account version, inherited auth_time, beta paths, atomic concurrent rotation and rollback, real HTTP rate limits and separated poll budget');

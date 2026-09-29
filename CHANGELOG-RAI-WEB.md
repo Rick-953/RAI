@@ -68,3 +68,15 @@
 - 浏览器截图暴露全局margin:0使原生dialog靠左上角，修正为margin:auto；添加小视口滚动/安全区限制。二维码隐藏时保留方形位置，不因轮换反复改变弹窗高度。
 - 弹窗增加可访问标题关联；更新静态资源/Service Worker版本并纳入扫码脚本与样式预缓存。
 - 新增布局契约回归；真实浏览器居中、换码稳定性和移动尺寸另行验收，不拿正则检查代替渲染证据。
+
+
+## 2026-09-29 — 登录按钮排布与扫码Cookie隔离（待发布验证）
+- 按用户截图重排登录选择：桌面扫码/通行密钥并列、API Key独立一行；420px及以下纵向排列。三项共享无描边10px圆角按钮、10px间距，悬浮仅轻微变色、按下scale(0.97)、抬起恢复；无渐变/发光/装饰图案，保留仅键盘显示的焦点提示与减少动态效果偏好。
+- 扫码请求绑定原始API地址、账号epoch/token和持久化token；取消立即停止接收，迟到授权只撤销新签发会话，撤销绕过全局自动重试且credentials=omit，防止误撤销当前账号。
+- 浏览器扫码使用按会话命名的HttpOnly刷新Cookie，只有客户端接纳并保存的访问令牌才能选择对应Cookie进行刷新。迟到Cookie不覆盖普通登录Cookie、不被自动选中；缺失或错误作用域不回退到其他账号。CX继续原有rai_refresh契约。
+- 新增浏览器生命周期、Cookie选择及实际服务端签发/刷新/退出HTTP处理器+临时SQLite回归；最初回归复现了切换token后旧扫码覆盖新账号的错误。缓存版本更新为20260929-secure-chat-r4。
+- 当前尚未合并/部署；完整双设备、物理iOS和CX原生UI验收仍未完成。
+
+本批验证：
+- Linux暂存树c095e26599aaebc5d9b914e93b5e09449da8b61a：npm run check、qr-browser-lifecycle（含真实HTTP处理器+SQLite）、secure-sharing、auth-sessions、qr-login、secure-dialog-layout、formal-user-bugs全部通过。
+- Chromium本地隔离页面布局：桌面按钮44px高、10px间距、0px边框；390/320px纵向三项均无文本溢出。悬浮仅背景变化，按下matrix(0.97)，松开matrix(1)。本地刷新接口模拟401，仅作为UI证据，不冒充正式账号业务验收。

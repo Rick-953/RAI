@@ -2,9 +2,9 @@
 (() => {
   'use strict';
   let modal = null, approving = false, dialogSequence = 0;
-  const endpoint = path => `${API_BASE}${path}`;
-  async function api(path, body, authenticated = false, method = 'POST') {
-    const response = await fetch(endpoint(path), { method, cache: 'no-store', credentials: 'include',
+  const endpoint = (path, base = API_BASE) => `${base}${path}`;
+  async function api(path, body, authenticated = false, method = 'POST', base = API_BASE) {
+    const response = await fetch(endpoint(path, base), { method, cache: 'no-store', credentials: 'include', redirect: 'error',
       headers: { 'Content-Type': 'application/json', ...(authenticated ? { Authorization: `Bearer ${appState.token}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body) });
     const data = await response.json();
@@ -24,37 +24,54 @@
   function stop(run) {
     if (!run || run.stopped) return;
     run.stopped = true; clearTimeout(run.timer); clearTimeout(run.hideTimer);
-    if (run.owner) api('/auth/qr/cancel', run.owner).catch(() => {});
+    if (run.owner) api('/auth/qr/cancel', run.owner, false, 'POST', run.base).catch(() => {});
     run.owner = null;
   }
+  function isCurrent(run, d) {
+    return !run.stopped && d.open && run.base === API_BASE
+      && isUserAuthContextCurrent(run.authContext)
+      && getPersistedUserAccessToken() === run.persistedToken;
+  }
+  async function revokeIgnoredGrant(run, data) {
+    if (!data?.token) return;
+    // Bypass the global retry wrapper: it could retry a stale bearer under the
+    // current account. Omit cookies on both request AND response.
+    try { await RAI_SESSION_FETCH(endpoint('/auth/logout', run.base), {
+      method: 'POST', cache: 'no-store', credentials: 'omit', redirect: 'error',
+      headers: { Authorization: `Bearer ${data.token}` }
+    }); } catch (_) { /* no state adoption; server expiry remains authoritative */ }
+  }
   window.startQrLogin = async () => {
-    if (modal?.open) return;
+    if (modal?.open || appState.token) return;
     const d = dialog('扫码登录', '用已登录 RAI 的手机扫码，核对设备和安全码后确认。仅扫描不会登录。二维码每 3 秒轮换，2 分钟后失效。');
     modal = d;
-    const run = { owner: null, stopped: false, timer: null, hideTimer: null };
+    const run = { owner: null, stopped: false, timer: null, hideTimer: null, base: API_BASE,
+      authContext: captureUserAuthContext(), persistedToken: getPersistedUserAccessToken() };
     const image = document.createElement('img'); image.className = 'rai-login-qr'; image.alt = '动态登录二维码'; image.hidden = true;
     const slot = document.createElement('div'); slot.className = 'rai-qr-slot'; slot.append(image);
     const status = document.createElement('p'); status.setAttribute('role', 'status'); status.textContent = '正在创建二维码…';
-    d.append(slot, status); button(d, '取消', () => d.close());
+    d.append(slot, status); button(d, '取消', () => { stop(run); d.close(); });
+    d.addEventListener('cancel', () => stop(run), { once: true });
     d.addEventListener('close', () => stop(run), { once: true });
     try {
-      const created = await api('/auth/qr/create', {});
+      const created = await api('/auth/qr/create', {}, false, 'POST', run.base);
       const credentials = { id: created.id, ownerSecret: created.ownerSecret };
-      if (run.stopped || !d.open) { api('/auth/qr/cancel', credentials).catch(() => {}); return; }
+      if (!isCurrent(run, d)) { api('/auth/qr/cancel', credentials, false, 'POST', run.base).catch(() => {}); stop(run); return; }
       run.owner = credentials;
       async function tick() {
-        if (run.stopped || !d.open) return;
+        if (!isCurrent(run, d)) { stop(run); return; }
         image.hidden = true; clearTimeout(run.hideTimer);
         const started = performance.now();
         try {
           // One request supplies both state and image, avoiding an unnecessary polling race.
-          const state = await api(document.hidden ? '/auth/qr/poll' : '/auth/qr/image', run.owner);
-          if (run.stopped || !d.open) return;
+          const state = await api(document.hidden ? '/auth/qr/poll' : '/auth/qr/image', run.owner, false, 'POST', run.base);
+          if (!isCurrent(run, d)) { stop(run); return; }
           status.textContent = '安全码 ' + state.code + ' · ' + (state.status === 'scanned' ? '已扫描，请在手机确认' : '等待扫描');
           if (state.status === 'approved') {
-            const data = await api('/auth/qr/consume', run.owner);
-            if (run.stopped || !d.open) return;
-            run.owner = null; d.close(); await enterAuthenticatedApp(data); return;
+            const data = await api('/auth/qr/consume', { ...run.owner, browserSession: true }, false, 'POST', run.base);
+            if (!isCurrent(run, d)) { stop(run); await revokeIgnoredGrant(run, data); return; }
+            if (!data?.success || !data?.token) throw new Error('qr_invalid_response');
+            run.owner = null; stop(run); d.close(); await enterAuthenticatedApp(data); return;
           }
           if (state.status === 'denied') throw new Error('手机已拒绝此次登录');
           const remaining = Math.max(0, Math.min(3000, Number(state.rotateAfterMs) || 0) - (performance.now() - started));

@@ -35,6 +35,7 @@ const https = require('https');  // 用于网页搜索
 const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
 const { createAuthSessionStore } = require('./lib/auth-session-store');
+const { selectedRefreshToken, sessionRefreshCookie, clearSelectedRefreshCookie } = require('./lib/qr-refresh-cookie');
 const {
     SOFTWARE_CLIENT_SCOPE,
     createSoftwareClientAuth
@@ -13011,26 +13012,30 @@ function requireTrustedRefreshRequest(req, res, next) {
 
 app.post('/api/auth/refresh', authLimiter, requireTrustedRefreshRequest, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
+    const qrScope = req.headers['x-rai-qr-session'];
+    // Invalid selectors must not clear the ordinary login cookie.
+    const clearSelectedCookie = () => {
+        try { res.setHeader('Set-Cookie', clearSelectedRefreshCookie(authSessionStore, qrScope).header); }
+        catch (_) { /* malformed scope: no cookie mutation */ }
+    };
     try {
         await authSessionStartupReady;
-        const refreshToken = authSessionStore.readRefreshTokenCookie(req.headers.cookie || '');
-        if (!refreshToken) {
-            res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
-            return res.status(401).json({ success: false, error: '刷新会话不存在' });
-        }
+        const refreshToken = selectedRefreshToken(authSessionStore, req.headers.cookie || '', qrScope);
+        // The persistent store is the single authority for refresh validation,
+        // including missing credentials; the caller's scope never grants access.
         const fingerprint = readAuthDeviceFingerprint(req);
         const refreshed = await authSessionStore.refresh(refreshToken, {
             fingerprint,
             ...buildAuthSessionDeviceMetadata(req)
         });
-        res.setHeader('Set-Cookie', refreshed.refreshCookie.header);
+        res.setHeader('Set-Cookie', sessionRefreshCookie(refreshed, qrScope).header);
         return res.json({
             success: true,
             token: refreshed.accessToken,
             tokenExpiresAt: refreshed.accessTokenExpiresAt
         });
     } catch (error) {
-        res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+        clearSelectedCookie();
         return res.status(401).json({ success: false, error: '刷新会话已失效' });
     }
 });
@@ -13062,7 +13067,7 @@ app.post('/api/auth/logout', authenticateToken, async (req, res) => {
         sessionId: req.user.sid,
         userId: req.user.userId
     }).catch(() => false);
-    res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
+    res.setHeader('Set-Cookie', clearSelectedRefreshCookie(authSessionStore, req.user.auth_method === 'qr_browser' ? req.user.sid : undefined).header);
     return res.json({ success: true });
 });
 
@@ -13194,7 +13199,7 @@ async function buildAuthenticatedUserPayload(user, req, fingerprint = '', authCl
         authorizedBySession: sessionOptions.authorizedBySession || null,
         additionalClaims: authClaims
     });
-    req.res?.setHeader('Set-Cookie', session.refreshCookie.header);
+    req.res?.setHeader('Set-Cookie', sessionRefreshCookie(session, authMethod === 'qr_browser' ? session.sessionId : undefined).header);
     const sessionRow = await dbGetAsync('SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ?', [user.id])
         .catch(() => ({ cnt: 0 }));
     const isNewUser = !sessionRow || Number(sessionRow.cnt || 0) === 0;

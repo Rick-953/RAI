@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260929-secure-chat-r3';
+const RAI_BUILD_ID = '20260929-secure-chat-r4';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5657,7 +5657,8 @@ const i18n = {
     'auth-rpass-login': 'rPass 登录',
     'auth-coming-soon': '待上线',
     'auth-passkey-or': '或',
-    'auth-passkey-login': '使用通行密钥登录',
+    'auth-qr-login': '扫码登录',
+    'auth-passkey-login': '通行密钥登录',
     'auth-passkey-login-pending': '正在验证通行密钥...',
     'auth-network-unavailable': '由于网络波动，暂时无法连接到 RAI 服务器，请您稍后再试。',
     'passkey-web-only': '通行密钥请在 RAI 网页端使用。',
@@ -6317,7 +6318,8 @@ const i18n = {
     'auth-rpass-login': 'Log in with rPass',
     'auth-coming-soon': 'Coming soon',
     'auth-passkey-or': 'or',
-    'auth-passkey-login': 'Log in with a passkey',
+    'auth-qr-login': 'Scan QR code',
+    'auth-passkey-login': 'Passkey login',
     'auth-passkey-login-pending': 'Verifying passkey...',
     'auth-network-unavailable': "Due to network instability, we can't connect to the RAI server right now. Please try again later.",
     'passkey-web-only': 'Please use passkeys in the RAI web app.',
@@ -7091,7 +7093,8 @@ Object.assign(i18n['zh-TW'], {
   'security-device-system': '系統',
   'sidebar-flows-beta': '測試',
   'auth-passkey-or': '或',
-  'auth-passkey-login': '使用通行密鑰登入',
+  'auth-qr-login': '掃碼登入',
+  'auth-passkey-login': '通行密鑰登入',
   'auth-passkey-login-pending': '正在驗證通行密鑰...',
   'auth-network-unavailable': '由於網路波動，暫時無法連線至 RAI 伺服器，請您稍後再試。',
   'passkey-web-only': '通行密鑰請在 RAI 網頁版使用。',
@@ -12735,7 +12738,7 @@ function updatePasskeyLoginEntry() {
   else button.setAttribute('aria-describedby', 'authPasskeyHint');
   button.textContent = appState.passkeyLoginPending
     ? i18nText('auth-passkey-login-pending', isChineseLanguage(appState.language) ? '正在验证通行密钥...' : 'Verifying passkey...')
-    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '使用通行密钥登录' : 'Log in with a passkey');
+    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '通行密钥登录' : 'Passkey login');
 
   if (hint) {
     hint.hidden = capability.available;
@@ -15370,6 +15373,14 @@ function adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh) {
   return true;
 }
 
+function getUserRefreshScopeHeaders(token) {
+  const payload = decodeUserAccessTokenPayload(token);
+  // The cookie remains HttpOnly. The accepted/persisted access token selects it;
+  // an ignored late QR cookie can never replace or select another account.
+  if (payload?.auth_method !== 'qr_browser') return {};
+  return { 'X-RAI-QR-Session': /^[A-Za-z0-9_-]{32}$/.test(payload.sid || '') ? payload.sid : 'invalid' };
+}
+
 async function performUserAccessTokenRefresh(context, controller) {
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
@@ -15379,7 +15390,8 @@ async function performUserAccessTokenRefresh(context, controller) {
       cache: 'no-store',
       headers: {
         Accept: 'application/json',
-        'X-RAI-Refresh': '1'
+        'X-RAI-Refresh': '1',
+        ...getUserRefreshScopeHeaders(context.token)
       },
       signal: controller.signal
     });
@@ -24497,7 +24509,7 @@ function clearCustomApiSession() {
 function setCustomApiFormVisibility(visible) {
   const standardIds = [
     'authEmail', 'authLoginMethodStep', 'passwordStep', 'twoFactorStep', 'emailCodeStep',
-    'usernameStep', 'submitStep', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
+    'usernameStep', 'submitStep', 'authAlternativeOptions', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
   ];
   standardIds.forEach((id) => {
     const element = document.getElementById(id);
