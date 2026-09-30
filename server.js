@@ -316,7 +316,7 @@ const SELECTION_EXPLANATION_MODEL_IDS = Object.freeze([
     'deepseek-flash-siliconflow',
     'deepseek-flash',
     'gemini-3.6-flash-low',
-    'gpt-5.6-luna',
+    'gpt-6-luna',
     'kimi-k2.6',
     'qwen3.6-35b-a3b',
     'nemotron-3-ultra'
@@ -1155,7 +1155,7 @@ function buildUserLoginTwoFactorToken(user, options = {}) {
 const ADMIN_MODEL_CATALOG = [
     { id: 'deepseek-flash', name: 'DeepSeek v4 / 快速模型', group: '快捷与全部模型' },
     { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol / 多模态', group: '全部模型' },
-    { id: 'gpt-5.6-luna', name: 'GPT 5.6 / 多模态', group: '全部模型' },
+    { id: 'gpt-6-luna', name: 'GPT 6 Luna / 多模态', group: '全部模型' },
     { id: 'claude-sonnet-5', name: 'Claude Sonnet 5 / 多模态', group: '全部模型' },
     { id: 'gemini-3.6-flash-low', name: 'Gemini 3.6 / 多模态', group: '全部模型' },
     { id: 'kolors-free', name: 'Kolors Free / 图像生成', group: '图像生成' },
@@ -6357,8 +6357,8 @@ async function callK2p5Stream({
 function researchModelLabel(modelId = '') {
     const labels = {
         'gpt-6.1-sol': 'GPT-6.1 Sol',
-        'gpt-5.6-terra': 'GPT 5.6',
-        'gpt-5.6-luna': 'GPT 5.6',
+        'gpt-5.6-terra': 'GPT 6',
+        'gpt-6-luna': 'GPT 6 Luna',
         'gemma': 'Gemma',
         'qwen3.6-35b-a3b': 'Qwen 3.6 35B',
         'kimi-k2.6': 'Kimi K2.6',
@@ -6377,7 +6377,7 @@ function researchModelLabel(modelId = '') {
 function researchRoleFromModel(modelId = '') {
     if (modelId === 'gpt-6.1-sol') return 'gpt_sol';
     if (modelId === 'gpt-5.6-terra') return 'gpt_terra';
-    if (modelId === 'gpt-5.6-luna') return 'gpt_luna';
+    if (modelId === 'gpt-6-luna') return 'gpt_luna';
     if (modelId === 'gemma') return 'gemma';
     if (modelId === 'qwen3.6-35b-a3b') return 'qwen';
     if (modelId === 'kimi-k2.6') return 'kimi';
@@ -8844,7 +8844,7 @@ const LEGACY_MODEL_ALIASES = {
     'gpt-5.6': 'gpt-6.1-sol',
     'gpt-5.6-sol': 'gpt-6.1-sol',
     'gpt-6-sol': 'gpt-6.1-sol',
-    'gpt-5.6-terra': 'gpt-5.6-luna',
+    'gpt-5.6-terra': 'gpt-6-luna',
     'claude-opus-5': 'claude-sonnet-5',
     'qwen3-vl': 'qwen3.6-35b-a3b',
     'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -8924,9 +8924,9 @@ const MODEL_ROUTING = {
         supportsWebSearch: true,
         multimodal: true
     },
-    'gpt-5.6-luna': {
+    'gpt-6-luna': {
         provider: 'rai_gpt_gateway',
-        model: 'gpt-5.6-luna',
+        model: 'gpt-6-luna',
         supportsThinking: true,
         supportsWebSearch: true,
         multimodal: true
@@ -9058,7 +9058,7 @@ const MODEL_ROUTING = {
 };
 
 const MODE_RUNTIME_FALLBACK_MODELS = Object.freeze({
-    'gpt-5.6-luna': ['deepseek-flash', 'kimi-k2.6'],
+    'gpt-6-luna': ['deepseek-flash', 'kimi-k2.6'],
     'kimi-k2.6': ['deepseek-flash', 'gemini-3.6-flash-low'],
     'nemotron-3-ultra': ['deepseek-flash', 'kimi-k2.6'],
     'claude-sonnet-5': ['deepseek-flash', 'kimi-k2.6'],
@@ -9069,7 +9069,7 @@ const UNIVERSAL_RUNTIME_FALLBACK_MODELS = [
     'deepseek-flash',
     'kimi-k2.6',
     'gemini-3.6-flash-low',
-    'gpt-5.6-luna',
+    'gpt-6-luna',
     'qwen3.6-35b-a3b',
     'claude-sonnet-5',
     'chatgpt-gpt-oss-120b',
@@ -21972,7 +21972,7 @@ if (clientFileExecution && systemPrompt) {
             'deepseek-flash',
             'gpt-6.1-sol',
             'gpt-5.6-terra',
-            'gpt-5.6-luna',
+            'gpt-6-luna',
             'claude-sonnet-5',
             'gemini-3.6-flash-low',
             'gpt-image-2',
@@ -22044,8 +22044,8 @@ if (clientFileExecution && systemPrompt) {
 
         // 本地文件执行模式（UWP 本地电脑）：GPT 请求强制切换到 gpt-5.6-terra
         // （fast 上游上 luna 续传不稳定，terra 通道更稳——Rick 2026-08-10 要求）
-        if (clientFileExecution && finalModel === 'gpt-5.6-luna') {
-            console.warn(` 本地文件执行模式: gpt-5.6-luna → gpt-5.6-terra (客户端本地执行专用路由)`);
+        if (clientFileExecution && finalModel === 'gpt-6-luna') {
+            console.warn(` 本地文件执行模式: gpt-6-luna → gpt-6-terra (客户端本地执行专用路由)`);
             finalModel = 'gpt-5.6-terra';
         }
 
@@ -28875,7 +28875,7 @@ const MODEL_POINT_COSTS = Object.freeze({
     'deepseek-flash': 1,
     'gpt-6.1-sol': 5,
     'gpt-5.6-terra': 5,
-    'gpt-5.6-luna': 5,
+    'gpt-6-luna': 5,
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
     'gpt-image-2': 20

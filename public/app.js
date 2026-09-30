@@ -4999,7 +4999,7 @@ const MODELS = {
     multimodal: true
   },
   'gpt-5.6-terra': {
-    name: 'GPT 5.6',
+    name: 'GPT 6',
     provider: 'rai_openai_gateway',
     supportsThinking: true,
     supportsReasoningProfile: true,
@@ -5007,8 +5007,8 @@ const MODELS = {
     supportsTools: true,
     multimodal: true
   },
-  'gpt-5.6-luna': {
-    name: 'GPT 5.6',
+  'gpt-6-luna': {
+    name: 'GPT 6',
     provider: 'rai_openai_gateway',
     supportsThinking: true,
     supportsReasoningProfile: true,
@@ -5137,11 +5137,11 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
-  // Keep the stable public GPT 5.6 selection while its upstream route uses Terra.
+  // Keep the stable public GPT 6 selection while its upstream route uses Terra.
   'gpt-5.6': 'gpt-6.1-sol',
   'gpt-5.6-sol': 'gpt-6.1-sol',
   'gpt-6-sol': 'gpt-6.1-sol',
-  'gpt-5.6-terra': 'gpt-5.6-luna',
+  'gpt-5.6-terra': 'gpt-6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
   'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -8891,16 +8891,16 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-07-31',
     version: 'v0.11.64',
     zh: {
-      summary: '智能模型首选切换为 GPT 5.6 Luna，并启用有序备用路由。',
+      summary: '智能模型首选切换为 GPT 6 Luna，并启用有序备用路由。',
       details: [
-        '智能文本请求优先使用 GPT 5.6 Luna；连接或上游失败时依次尝试 Kimi K2.6、Nemotron 3 Ultra 与 DeepSeek V4 Flash。',
+        '智能文本请求优先使用 GPT 6 Luna；连接或上游失败时依次尝试 Kimi K2.6、Nemotron 3 Ultra 与 DeepSeek V4 Flash。',
         'Gemini 3.6 使用 Fast 独立路由，Claude Sonnet 5 使用 UMAPIS 独立路由，避免共享凭据与单点故障。'
       ]
     },
     en: {
-      summary: 'Smart Model now prefers GPT 5.6 Luna with an ordered fallback route.',
+      summary: 'Smart Model now prefers GPT 6 Luna with an ordered fallback route.',
       details: [
-        'Smart text requests prefer GPT 5.6 Luna, then fall back through Kimi K2.6, Nemotron 3 Ultra, and DeepSeek V4 Flash after connectivity or upstream failures.',
+        'Smart text requests prefer GPT 6 Luna, then fall back through Kimi K2.6, Nemotron 3 Ultra, and DeepSeek V4 Flash after connectivity or upstream failures.',
         'Gemini 3.6 uses its dedicated Fast route, while Claude Sonnet 5 uses a separate UMAPIS route to isolate credentials and failures.'
       ]
     }
@@ -9201,8 +9201,8 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '精简模型界面，修复 GPT Image 2 专用网关并改善移动交互。',
       details: [
-        '模型选择器只保留 GPT 5.6、DeepSeek v4 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
-        '智能模式使用 DeepSeek Pro / GPT 5.6 Terra，快速模式使用 DeepSeek Flash / GPT 5.6 Luna，思考模式在智能链上开启多档 Thinking。',
+        '模型选择器只保留 GPT 6、DeepSeek v4 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
+        '智能模式使用 DeepSeek Pro / GPT 6 Terra，快速模式使用 DeepSeek Flash / GPT 6 Luna，思考模式在智能链上开启多档 Thinking。',
         'GPT Image 2 改用独立 0600 密钥文件和 chat/completions 图像协议，仍保留 SiliconFlow 故障回退。',
         '移动端从主界面任意横向起点右滑即可打开侧边栏；推理档位改为低、中、高、自动四个等距锚点。'
       ]
@@ -9210,8 +9210,8 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: 'Focuses the model UI, repairs the dedicated GPT Image 2 gateway, and improves mobile controls.',
       details: [
-        'The visible picker now contains only GPT 5.6, DeepSeek v4, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
-        'Smart uses DeepSeek Pro with GPT 5.6 Terra fallback, Fast uses DeepSeek Flash with GPT 5.6 Luna fallback, and Think enables multi-level reasoning on the Smart chain.',
+        'The visible picker now contains only GPT 6, DeepSeek v4, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
+        'Smart uses DeepSeek Pro with GPT 6 Terra fallback, Fast uses DeepSeek Flash with GPT 6 Luna fallback, and Think enables multi-level reasoning on the Smart chain.',
         'GPT Image 2 now uses a separate 0600 key file and its chat-completions image protocol while retaining the SiliconFlow outage fallback.',
         'A right swipe from any non-interactive point in the mobile main view opens the sidebar, and the Low, Medium, High, and Auto reasoning labels align directly below four equal stops.'
       ]
@@ -13303,7 +13303,7 @@ function normalizeResearchMode(value) {
 
 const RESEARCH_MODEL_OPTIONS = [
   { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
-  { id: 'gpt-5.6-luna', label: 'GPT 5.6' },
+  { id: 'gpt-6-luna', label: 'GPT 6 Luna' },
   { id: 'gemma', label: 'Gemma' },
   { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
   { id: 'kimi-k2.6', label: 'Kimi K2.6' },
@@ -33491,7 +33491,7 @@ function openGitHubStarTask() {
 function renderMembershipModelPricing() {
   const isZh = isChineseLanguage(appState.language);
   const rows = [
-    ['GPT 5.6', 5],
+    ['GPT 6', 5],
     ['Claude Sonnet 5', 10],
     ['Gemini 3.6', 3],
     ['DeepSeek', 1],
@@ -34778,7 +34778,7 @@ async function loadAdminLimits() {
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
       'deepseek-flash-siliconflow', 'deepseek-flash',
-      'gemini-3.6-flash-low', 'gpt-5.6-luna', 'kimi-k2.6',
+      'gemini-3.6-flash-low', 'gpt-6-luna', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);
     const selectionExplanationCandidates = [
