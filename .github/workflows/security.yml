@@ -87,6 +87,9 @@ jobs:
         run: |
           npm run test:ios-standalone-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:ios-standalone-runtime
+          npm run test:qr-scan-ux-browser
+          RAI_QR_BROWSER_ENGINE=webkit npm run test:qr-scan-ux-browser
+          npm run test:qr-scanner-browser
 
   isolated-security-smoke:
     name: Isolated runtime security smoke

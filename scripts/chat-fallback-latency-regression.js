@@ -44,13 +44,13 @@ function testTimingBoundsAndSharedDeadline() {
 function testCircuitBreaker() {
     let clock = 0;
     const breaker = createProviderCircuitBreaker({ openMs: 60_000, now: () => clock });
-    breaker.recordFailure('gpt-5.6-luna');
-    assert.strictEqual(breaker.isOpen('gpt-5.6-luna'), true);
-    breaker.recordSuccess('gpt-5.6-luna');
-    assert.strictEqual(breaker.isOpen('gpt-5.6-luna'), false, 'a successful provider must recover immediately');
-    breaker.recordFailure('gpt-5.6-luna');
+    breaker.recordFailure('gpt-6-luna');
+    assert.strictEqual(breaker.isOpen('gpt-6-luna'), true);
+    breaker.recordSuccess('gpt-6-luna');
+    assert.strictEqual(breaker.isOpen('gpt-6-luna'), false, 'a successful provider must recover immediately');
+    breaker.recordFailure('gpt-6-luna');
     clock = 60_000;
-    assert.strictEqual(breaker.isOpen('gpt-5.6-luna'), false, 'expired failures must not suppress future requests');
+    assert.strictEqual(breaker.isOpen('gpt-6-luna'), false, 'expired failures must not suppress future requests');
     assert.strictEqual(isTransientProviderFailure({ status: 503 }), true);
     assert.strictEqual(isTransientProviderFailure({ status: 429 }), false);
     assert.strictEqual(isTransientProviderFailure({ error: Object.assign(new Error('timeout'), { name: 'AbortError' }) }), true);

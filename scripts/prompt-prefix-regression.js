@@ -1,0 +1,14 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { buildCacheStableMessages } = require('../lib/prompt-prefix');
+const history = [{role:'user',content:'prior'}, {role:'assistant',content:'answer',tool_calls:[{id:'t'}]}, {role:'tool',tool_call_id:'t',content:'result'}, {role:'user',content:'now'}];
+const baseline = 'immutable canonical prompt';
+const a=buildCacheStableMessages(history,baseline,baseline+'\nUser A, memory 1, files A');
+const b=buildCacheStableMessages(history,baseline,baseline+'\nUser B, memory 2, files B');
+assert.deepEqual(a.slice(0,4),b.slice(0,4));
+assert.equal(a[4].role,'system');assert.equal(a[5].content,'now');
+assert.deepEqual(a.slice(1,4),history.slice(0,3));
+assert.deepEqual(history.map(m=>m.role),['user','assistant','tool','user']);
+assert.throws(()=>buildCacheStableMessages(history,baseline,'mutated prefix'));
+assert.deepEqual(buildCacheStableMessages(history,baseline,baseline),[{role:'system',content:baseline},...history]);
+console.log('PASS: stable canonical/history prefix, trusted runtime tail, preserved tools, no frozen edits');
