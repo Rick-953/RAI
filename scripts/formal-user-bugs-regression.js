@@ -9,7 +9,7 @@ const path = require('path');
 const sqlite3 = require('sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8').replace(/\r\n/g, '\n');
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
@@ -793,7 +793,7 @@ async function testMessageRenderingStability() {
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 7,
+  assert.equal(modelSelectionBindings.length, 8,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
