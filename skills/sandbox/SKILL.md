@@ -1,6 +1,6 @@
 ---
 name: sandbox
-description: Use the isolated Linux sandbox for uploaded files, archives, filesystem operations, code execution, and bounded downloadable artifacts. Load it before reading or modifying files, unpacking or creating archives, running code, or inspecting the sandbox runtime.
+description: Sandbox files and execution.
 ---
 
 # Linux sandbox

@@ -49,7 +49,7 @@
     'saveAdminAnnouncement', 'saveAdminLimits', 'saveAdminUserPassword', 'saveSettings', 'searchFileLibrary',
     'selectModelFromMenu',
     'selectRaiModeFromMenu', 'selectSpace', 'sendAdminBroadcastAll', 'sendAdminBroadcastTest',
-    'setAuthLoginMethod', 'setCanvasTool', 'setFontPreference',
+    'setAuthLoginMethod', 'setRememberPasswordPreference', 'setCanvasTool', 'setFontPreference',
     'setLanguage', 'setNewChatDefaultModeFromSettings', 'setReasoningProfileFromSlider',
     'setResearchMasterModel', 'setResearchMode', 'setResearchModeFromSlider',
     'setSelectionExplanationDeleteMode', 'setTabTitleCustomTextFromSettings',

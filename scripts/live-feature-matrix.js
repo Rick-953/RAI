@@ -22,7 +22,6 @@ const RESEARCH_AGENT_MODELS = Object.freeze([
     'qwen3.6-35b-a3b',
     'kimi-k2.6',
     'chatgpt-gpt-oss-120b',
-    'deepseek-pro',
     'deepseek-flash',
     'north-mini-code',
     'nemotron-3-ultra',
@@ -30,8 +29,8 @@ const RESEARCH_AGENT_MODELS = Object.freeze([
 ]);
 const RESEARCH_BATCHES = Object.freeze({
     fast1: Object.freeze(['gemma', 'qwen3.6-35b-a3b', 'kimi-k2.6', 'chatgpt-gpt-oss-120b']),
-    fast2: Object.freeze(['deepseek-pro', 'deepseek-flash', 'north-mini-code', 'nemotron-3-ultra']),
-    deep: Object.freeze(['gemini-3-flash', 'gemma', 'qwen3.6-35b-a3b', 'deepseek-pro'])
+    fast2: Object.freeze(['deepseek-flash', 'north-mini-code', 'nemotron-3-ultra']),
+    deep: Object.freeze(['gemini-3-flash', 'gemma', 'qwen3.6-35b-a3b', 'deepseek-flash'])
 });
 
 const FEATURE_CASES = Object.freeze([
@@ -49,15 +48,15 @@ const FEATURE_CASES = Object.freeze([
     },
     {
         feature: 'expert',
-        requested: 'deepseek-pro',
+        requested: 'deepseek-flash',
         prompt: 'Reply with exactly OK.',
-        patch: { model: 'deepseek-pro', thinkingMode: false, reasoningProfile: 'high' }
+        patch: { model: 'deepseek-flash', thinkingMode: false, reasoningProfile: 'high' }
     },
     {
         feature: 'thinking',
-        requested: 'deepseek-pro',
+        requested: 'deepseek-flash',
         prompt: 'Solve 17 + 25 and give only the number.',
-        patch: { model: 'deepseek-pro', thinkingMode: true, reasoningProfile: 'high', thinkingBudget: 1024 }
+        patch: { model: 'deepseek-flash', thinkingMode: true, reasoningProfile: 'high', thinkingBudget: 1024 }
     },
     {
         feature: 'search',
@@ -73,7 +72,7 @@ const FEATURE_CASES = Object.freeze([
             model: 'auto',
             researchMode: 'fast',
             researchAgentModels: RESEARCH_BATCHES.fast1,
-            researchMasterModel: 'deepseek-pro',
+            researchMasterModel: 'deepseek-flash',
             researchMaxRounds: 1
         }
     },
@@ -85,7 +84,7 @@ const FEATURE_CASES = Object.freeze([
             model: 'auto',
             researchMode: 'fast',
             researchAgentModels: RESEARCH_BATCHES.fast2,
-            researchMasterModel: 'deepseek-pro',
+            researchMasterModel: 'deepseek-flash',
             researchMaxRounds: 1
         }
     },
@@ -97,7 +96,7 @@ const FEATURE_CASES = Object.freeze([
             model: 'auto',
             researchMode: 'deep',
             researchAgentModels: RESEARCH_BATCHES.deep,
-            researchMasterModel: 'deepseek-pro',
+            researchMasterModel: 'deepseek-flash',
             researchMaxRounds: 2
         }
     },
@@ -170,7 +169,7 @@ function buildChatBody(sessionId, prompt, patch = {}, attachments = []) {
         agentMode: 'off',
         researchMode: 'off',
         researchAgentModels: [],
-        researchMasterModel: 'deepseek-pro',
+        researchMasterModel: 'deepseek-flash',
         researchMaxRounds: 1,
         memoryMode: 'off',
         skipUserSave: true,
@@ -346,7 +345,7 @@ async function runControlCases(baseUrl, sessionId) {
                     model: 'auto',
                     researchMode: 'deep',
                     researchAgentModels: RESEARCH_BATCHES.deep,
-                    researchMasterModel: 'deepseek-pro',
+                    researchMasterModel: 'deepseek-flash',
                     researchMaxRounds: 2
                 }
             )),

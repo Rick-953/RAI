@@ -1,6 +1,6 @@
 ---
 name: web_sources
-description: Search current web sources and cite supplied results.
+description: Search and citations.
 ---
 
 # Web sources

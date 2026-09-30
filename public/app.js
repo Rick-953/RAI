@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260924-formal-v01318-r1';
+const RAI_BUILD_ID = '20260930-gpt61sol-r8';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2495,8 +2495,8 @@ const appState = {
   qualityProfile: 'high',
   researchModeEnabled: false,
   researchMode: 'fast',
-  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'],
-  researchMasterModel: 'deepseek-pro',
+  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'],
+  researchMasterModel: 'deepseek-flash',
   researchMaxRounds: 50,
   sendHoldSuppressClick: false,
   sendHoldPicker: null,
@@ -4983,19 +4983,14 @@ const MODELS = {
     supportsThinking: true
   },
   'deepseek-flash': {
-    name: 'DeepSeek v4',
+    name: 'DeepSeek v4 Flash',
     provider: 'deepseek',
     supportsThinking: true,
-    contextWindow: 1000000
-  },
-  'deepseek-pro': {
-    name: 'DeepSeek Pro',
-    provider: 'deepseek',
-    supportsThinking: true,
+    contextWindow: 1000000,
     maxTokens: 128000
   },
-  'gpt-5.6-sol': {
-    name: 'GPT-5.6 Sol',
+  'gpt-6.1-sol': {
+    name: 'GPT-6.1 Sol',
     provider: 'rai_openai_gateway',
     supportsThinking: true,
     supportsReasoningProfile: true,
@@ -5143,6 +5138,9 @@ const MODELS = {
 
 const LEGACY_MODEL_ALIASES = {
   // Keep the stable public GPT 5.6 selection while its upstream route uses Terra.
+  'gpt-5.6': 'gpt-6.1-sol',
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-6-sol': 'gpt-6.1-sol',
   'gpt-5.6-terra': 'gpt-5.6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
@@ -5156,11 +5154,12 @@ const LEGACY_MODEL_ALIASES = {
   'qwen2.5-7b': 'auto',
   'grok-4.2': 'auto',
   'gpt-5.5': 'auto',
-  'deepseek-chat': 'deepseek-pro',
-  'deepseek-reasoner': 'deepseek-pro',
-  'deepseek-v3': 'deepseek-pro',
-  'deepseek-v3.2-speciale': 'deepseek-pro',
-  'deepseek-v4-pro': 'deepseek-pro',
+  'deepseek-chat': 'deepseek-flash',
+  'deepseek-reasoner': 'deepseek-flash',
+  'deepseek-v3': 'deepseek-flash',
+  'deepseek-v3.2-speciale': 'deepseek-flash',
+  'deepseek-v4-pro': 'deepseek-flash',
+  'deepseek-pro': 'deepseek-flash',
   'deepseek-v4-flash': 'deepseek-flash',
   'kimi-k2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
@@ -5205,7 +5204,7 @@ function getModelPromptIdentity(promptLanguage = getSessionPromptLanguage()) {
   const modelId = identity.startsWith('model:')
     ? normalizeSelectedModelId(identity.slice('model:'.length))
     : (identity === 'research'
-    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')
+    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')
     : normalizeSelectedModelId(appState.selectedModel || 'auto'));
   return MODELS[modelId]?.name || (english ? 'Smart model' : '智能模型');
 }
@@ -5214,7 +5213,7 @@ function getPromptModelIdentityForSession() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (['smart', 'fast', 'think'].includes(identity)) return identity;
   if (identity === 'research') {
-    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')}`;
+    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')}`;
   }
   return `model:${normalizeSelectedModelId(appState.selectedModel || 'auto')}`;
 }
@@ -5559,20 +5558,17 @@ function getShortUserTimeHint() {
 }
 
 function getHandednessPromptHint() {
-  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return '';
-  const handedness = normalizeHandedness(appState.handedness);
-  return isChineseLanguage(appState.language)
-    ? `当前持机手：${handedness === 'right' ? '右手' : '左手'}。仅用于理解界面偏好，不要把回答中心放在握持方式上。`
-    : `Current device hand: ${handedness}. UI preference only; do not center the answer on it.`;
+  return appState.handednessEnabled && isHandednessMobileLayout()
+    ? ' hand=' + (normalizeHandedness(appState.handedness) === 'right' ? 'R' : 'L') : '';
 }
 
 function appendUserTurnContextHintForPrompt(content) {
-  const text = String(content || '');
-  const hint = isChineseLanguage(appState.language)
-    ? `当前时间：${getShortUserTimeHint()}。仅作背景，不要把回答中心放在时间上。`
-    : `Current time: ${getShortUserTimeHint()}. Background only; do not center the answer on time.`;
-  const handednessHint = getHandednessPromptHint();
-  return `${text}\n\n[${hint}]${handednessHint ? `\n\n[${handednessHint}]` : ''}`;
+  const now = new Date();
+  const offset = -now.getTimezoneOffset();
+  const zone = (offset >= 0 ? '+' : '-') + String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0') + ':' + String(Math.abs(offset) % 60).padStart(2, '0');
+  const time = getShortUserTimeHint().replace(' ', 'T');
+  const ui = navigator.standalone === true ? 'ios-pwa' : (isHandednessMobileLayout() ? 'web-mobile' : 'web-desktop');
+  return String(content || '') + '\n[ctx ' + time + zone + ' ui=' + ui + getHandednessPromptHint() + ']';
 }
 
 // 动态生成系统提示词（核心原则；时间与持机手只附在每轮用户消息末尾）
@@ -5624,6 +5620,7 @@ const i18n = {
     'register-subtitle': '加入 RAI 开始对话',
     'email-label': '邮箱',
     'password-label': '密码',
+    'auth-remember-password': '\u8bb0\u4f4f\u5bc6\u7801',
     'username-label': '用户名 (可选)',
     'password-placeholder': '输入密码',
     'username-placeholder': '您的昵称',
@@ -5660,7 +5657,8 @@ const i18n = {
     'auth-rpass-login': 'rPass 登录',
     'auth-coming-soon': '待上线',
     'auth-passkey-or': '或',
-    'auth-passkey-login': '使用通行密钥登录',
+    'auth-qr-login': '扫码登录',
+    'auth-passkey-login': '通行密钥登录',
     'auth-passkey-login-pending': '正在验证通行密钥...',
     'auth-network-unavailable': '由于网络波动，暂时无法连接到 RAI 服务器，请您稍后再试。',
     'passkey-web-only': '通行密钥请在 RAI 网页端使用。',
@@ -5687,6 +5685,7 @@ const i18n = {
     'search-placeholder': '搜索对话',
     'new-chat': '新对话',
     'temporary-chat': '临时对话',
+    'scan-login-qr': '扫码授权登录',
     'temp-chat-modal-title': '选择临时对话模式',
     'temp-chat-modal-desc': '首次点击临时对话按钮会询问；之后可以到设置 > 个性化 > 临时对话模式里修改。',
     'temp-chat-mode-normal': '普通对话',
@@ -6284,6 +6283,7 @@ const i18n = {
     'register-subtitle': 'Join RAI to start chatting',
     'email-label': 'Email',
     'password-label': 'Password',
+    'auth-remember-password': 'Remember password on this device',
     'username-label': 'Username (optional)',
     'password-placeholder': 'Enter password',
     'username-placeholder': 'Your nickname',
@@ -6320,7 +6320,8 @@ const i18n = {
     'auth-rpass-login': 'Log in with rPass',
     'auth-coming-soon': 'Coming soon',
     'auth-passkey-or': 'or',
-    'auth-passkey-login': 'Log in with a passkey',
+    'auth-qr-login': 'Scan QR code',
+    'auth-passkey-login': 'Passkey login',
     'auth-passkey-login-pending': 'Verifying passkey...',
     'auth-network-unavailable': "Due to network instability, we can't connect to the RAI server right now. Please try again later.",
     'passkey-web-only': 'Please use passkeys in the RAI web app.',
@@ -6330,10 +6331,10 @@ const i18n = {
     'passkey-auth-failed': 'Passkey verification failed. Please try again.',
     'routing-notice-points-exhausted': "You don't have enough points. This request may be routed to another model, which may reduce answer quality.",
     'routing-notice-upstream-timeout': 'Due to an upstream provider issue, this request will be routed to another model and quality may be reduced. A report was automatically sent to RAI Support. Thank you for understanding.',
-    'no-account': "Don't have an account?",
-    'has-account': 'Already have an account?',
-    'register-link': 'Sign up now',
-    'login-link': 'Log in now',
+    'no-account': 'New here?',
+    'has-account': 'Have an account?',
+    'register-link': 'Sign up',
+    'login-link': 'Log in',
     'custom-api-entry': 'I have an API key',
     'custom-api-title': 'Use a custom API',
     'custom-api-desc': 'Your key stays in this browser session and is never sent to the RAI server.',
@@ -6347,6 +6348,7 @@ const i18n = {
     'search-placeholder': 'Search conversations',
     'new-chat': 'New Chat',
     'temporary-chat': 'Temporary Chat',
+    'scan-login-qr': 'Scan login QR',
     'temp-chat-modal-title': 'Choose temporary chat mode',
     'temp-chat-modal-desc': 'The first tap on Temporary Chat asks you to choose. You can change it later in Settings > Personalization > Temporary chat mode.',
     'temp-chat-mode-normal': 'Normal chat',
@@ -7094,7 +7096,8 @@ Object.assign(i18n['zh-TW'], {
   'security-device-system': '系統',
   'sidebar-flows-beta': '測試',
   'auth-passkey-or': '或',
-  'auth-passkey-login': '使用通行密鑰登入',
+  'auth-qr-login': '掃碼登入',
+  'auth-passkey-login': '通行密鑰登入',
   'auth-passkey-login-pending': '正在驗證通行密鑰...',
   'auth-network-unavailable': '由於網路波動，暫時無法連線至 RAI 伺服器，請您稍後再試。',
   'passkey-web-only': '通行密鑰請在 RAI 網頁版使用。',
@@ -12738,7 +12741,7 @@ function updatePasskeyLoginEntry() {
   else button.setAttribute('aria-describedby', 'authPasskeyHint');
   button.textContent = appState.passkeyLoginPending
     ? i18nText('auth-passkey-login-pending', isChineseLanguage(appState.language) ? '正在验证通行密钥...' : 'Verifying passkey...')
-    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '使用通行密钥登录' : 'Log in with a passkey');
+    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '通行密钥登录' : 'Passkey login');
 
   if (hint) {
     hint.hidden = capability.available;
@@ -13299,13 +13302,12 @@ function normalizeResearchMode(value) {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
   { id: 'gpt-5.6-luna', label: 'GPT 5.6' },
   { id: 'gemma', label: 'Gemma' },
   { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
   { id: 'kimi-k2.6', label: 'Kimi K2.6' },
   { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
-  { id: 'deepseek-pro', label: 'DeepSeek Pro' },
   { id: 'deepseek-flash', label: 'DeepSeek v4' },
   { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
   { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
@@ -13313,7 +13315,7 @@ const RESEARCH_MODEL_OPTIONS = [
 
 function normalizeResearchModelId(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
-  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
+  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-flash';
   if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
   return normalized;
 }
@@ -13329,12 +13331,12 @@ function normalizeResearchAgentModels(input) {
     if (!allowed.has(modelId) || selected.includes(modelId)) return;
     selected.push(modelId);
   });
-  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'];
+  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'];
 }
 
 function normalizeResearchMasterModel(input) {
   const modelId = normalizeResearchModelId(input);
-  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-pro';
+  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-flash';
 }
 
 
@@ -13490,7 +13492,7 @@ function renderResearchModelControls() {
     masterSelect.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => `
       <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
     `).join('');
-    masterSelect.value = appState.researchMasterModel || currentValue || 'deepseek-pro';
+    masterSelect.value = normalizeResearchMasterModel(appState.researchMasterModel || currentValue || 'deepseek-flash');
   }
 }
 
@@ -13567,7 +13569,7 @@ function getModeRequestConfig(mode = '') {
   if (normalized === 'research') {
     return {
       mode: 'research',
-      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro'),
+      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash'),
       thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
       reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
       researchMode: normalizeResearchMode(appState.researchMode || 'fast')
@@ -15225,7 +15227,9 @@ function initEntryAutofocus() {
 // ==================== ZTX6D SSO 配置 ====================
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
-const RAI_SESSION_FETCH = window.fetch.bind(window);
+const RAI_SESSION_FETCH = window.RaiDiagnostics
+  ? window.RaiDiagnostics.wrapFetch(window.fetch.bind(window), () => API_BASE)
+  : window.fetch.bind(window);
 const RAI_ACCESS_REFRESH_LEEWAY_MS = 60 * 1000;
 let userTokenRefreshEntry = null;
 let userTokenRefreshTimer = null;
@@ -15373,6 +15377,14 @@ function adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh) {
   return true;
 }
 
+function getUserRefreshScopeHeaders(token) {
+  const payload = decodeUserAccessTokenPayload(token);
+  // The cookie remains HttpOnly. The accepted/persisted access token selects it;
+  // an ignored late QR cookie can never replace or select another account.
+  if (payload?.auth_method !== 'qr_browser') return {};
+  return { 'X-RAI-QR-Session': /^[A-Za-z0-9_-]{32}$/.test(payload.sid || '') ? payload.sid : 'invalid' };
+}
+
 async function performUserAccessTokenRefresh(context, controller) {
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
@@ -15382,7 +15394,8 @@ async function performUserAccessTokenRefresh(context, controller) {
       cache: 'no-store',
       headers: {
         Accept: 'application/json',
-        'X-RAI-Refresh': '1'
+        'X-RAI-Refresh': '1',
+        ...getUserRefreshScopeHeaders(context.token)
       },
       signal: controller.signal
     });
@@ -15585,6 +15598,7 @@ function showAuthScreen() {
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
   initMascotAuthBindings();
+  syncRememberPasswordPreference();
   syncGuideMascotVisibility();
   requestMascotPosition();
   updateMascotPasswordExpression();
@@ -16755,11 +16769,6 @@ function getModelDisplayMeta(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
-  }
-  if (normalized === 'deepseek-pro') {
-    return appState.thinkingMode
-      ? { i18nKey: 'model-expert', fallback: 'Think' }
-      : { i18nKey: null, fallback: MODELS[normalized]?.name || 'DeepSeek Pro' };
   }
   if (normalized === 'deepseek-flash') {
     return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
@@ -18829,7 +18838,7 @@ function createMessageElement(message) {
     const reasoningLabel = isChineseLanguage(appState.language) ? '思考过程' : 'Thinking';
     const reasoningIcon = getSvgIcon('psychology', 'material-symbols-outlined', 14);
     reasoningBlock.innerHTML = `
-      <button class="rai-reasoning-toggle" id="${reasoningId}-toggle" type="button">
+      <button class="rai-reasoning-toggle" aria-expanded="false" id="${reasoningId}-toggle" type="button">
         <span class="rai-reasoning-label">
           <span class="rai-reasoning-icon">${reasoningIcon}</span>
           <span>${reasoningLabel}</span>
@@ -18846,6 +18855,7 @@ function createMessageElement(message) {
     if (reasoningToggleBtn) {
       reasoningToggleBtn.addEventListener('click', function () {
         const expanded = reasoningBlock.classList.toggle('expanded');
+        this.setAttribute('aria-expanded', String(expanded));
         this.classList.toggle('expanded', expanded);
         if (expanded && reasoningContentEl) {
           reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
@@ -19936,7 +19946,7 @@ async function recoverIncompleteChatStream({
       continue;
     }
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let attemptContent = '';
@@ -20247,7 +20257,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     });
     if (responseRequestId) requestId = responseRequestId;
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let fullContent = '';
     let reasoningContent = '';
@@ -20822,6 +20832,7 @@ function openSessionMenu(event, session) {
     <button type="button" data-action="ai-title-continue">${isZh ? '继续总结标题' : 'Continue summarizing title'}</button>
     <button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
     <button type="button" data-action="pin">${session.pinned ? (isZh ? '取消置顶' : 'Unpin') : (isZh ? '置顶' : 'Pin')}</button>
+    <button type="button" data-action="share">${isZh ? '分享对话 / 管理链接' : 'Share conversation / Manage link'}</button>
     <button type="button" data-action="export">${isZh ? '导出可验证对话' : 'Export verifiable conversation'}</button>
     <button type="button" data-action="explain">${isZh ? '查看本对话解释' : 'View conversation explanations'}</button>
     <button type="button" class="danger" data-action="delete">${isZh ? '删除对话' : 'Delete conversation'}</button>`;
@@ -20839,6 +20850,7 @@ function openSessionMenu(event, session) {
     if (action === 'ai-title-continue') return requestAiTitleUpdate(session, 'continue_summary');
     if (action === 'folder') return showSessionFolderManager(session);
     if (action === 'export') return exportVerifiableConversation(session);
+    if (action === 'share') return window.shareRaiConversation?.(session);
     if (action === 'explain') {
       if (window.RAISelectionExplainer?.openHistory) window.RAISelectionExplainer.openHistory({ sessionId: session.id });
       else showToast(isZh ? '解释历史正在加载' : 'Explanation history is loading');
@@ -21750,7 +21762,7 @@ async function sendMessage(message = null, options = {}) {
 
           <div class="rai-reasoning-block" id="raiReasoningBlock" data-reasoning-mode="collapsed" style="display: none;">
             <div class="rai-reasoning-header">
-              <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
+              <button class="rai-reasoning-toggle" aria-expanded="false" id="raiReasoningToggle" type="button">
                 <span class="rai-reasoning-label">
                   <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
                   <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
@@ -22674,7 +22686,7 @@ async function sendMessage(message = null, options = {}) {
       throw new Error('响应体为空');
     }
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -23511,27 +23523,32 @@ async function sendMessage(message = null, options = {}) {
             }
             scrollToBottom();
           }
+          else if (parsed.type === 'stream_warning') {
+            showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
+          }
           else if (parsed.type === 'done') {
             receivedDoneEvent = true;
-            console.log(' 流式响应完成');
-
-            // 停止字符渲染队列
+            const incomplete = parsed.degraded === true;
+            // An upstream stop is terminal, not a successful answer. Do not
+            // automatically repeat tools or obscure the interruption in the timeline.
             stopCharRender();
-
-            // 更新步骤状态：生成回答完成
-            updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
+            updateStepStatus(getGeneratingStep(), incomplete ? 'failed' : 'done',
+              incomplete ? (isChineseLanguage(appState.language) ? '回答未完成' : 'Answer incomplete')
+                : (isChineseLanguage(appState.language) ? '生成完成' : 'Completed'));
             timelineSequence.forEach((row) => {
               if (row.kind === 'generating' && row.status === 'running') {
-                row.status = 'done';
-                row.detail = isChineseLanguage(appState.language) ? '已完成' : 'Completed';
+                row.status = incomplete ? 'failed' : 'done';
+                row.detail = incomplete
+                  ? (isChineseLanguage(appState.language) ? '未完成' : 'Incomplete')
+                  : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
               }
             });
-            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
-              ? `过程完成 · ${traceItems}条记录`
-              : `Done · ${traceItems} trace items`);
-            addProcessTraceItem('info', isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed');
-
-            // 停止AI头像闪烁
+            updateStepStatus(stepProcessTrace, incomplete ? 'failed' : 'done', incomplete
+              ? (isChineseLanguage(appState.language) ? '过程中断' : 'Trace interrupted')
+              : (isChineseLanguage(appState.language) ? `过程完成 · ${traceItems}条记录` : `Done · ${traceItems} trace items`));
+            addProcessTraceItem('info', incomplete
+              ? (isChineseLanguage(appState.language) ? '流式回答中断' : 'Stream ended before the answer completed')
+              : (isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed'));
             if (aiAvatar) aiAvatar.classList.remove('thinking');
           }
           else if (parsed.type === 'cancelled') {
@@ -23771,7 +23788,6 @@ function getSendHoldModes() {
 
 function getSendHoldModeFromCurrentState() {
   if (isResearchModeEnabled()) return 'research';
-  if (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode) return 'think';
   if (appState.selectedModel === 'deepseek-flash') return 'fast';
   return 'smart';
 }
@@ -24440,6 +24456,44 @@ appState.authTwoFactorRequired = false;
 let authTwoFactorPrecheckToken = 0;
 let lastPrecheckedAuthEmail = '';
 
+// Only this preference is local. Passwords belong to the OS/browser manager.
+const RAI_REMEMBER_PASSWORD_KEY = 'rai_remember_password';
+let rememberPasswordSessionPreference = null;
+function getRememberPasswordPreference() {
+  if (rememberPasswordSessionPreference !== null) return rememberPasswordSessionPreference;
+  try { return localStorage.getItem(RAI_REMEMBER_PASSWORD_KEY) !== 'false'; }
+  catch (error) { return true; }
+}
+function syncRememberPasswordPreference() {
+  const enabled = getRememberPasswordPreference();
+  const checkbox = document.getElementById('authRememberPassword');
+  if (checkbox) checkbox.checked = enabled;
+  setRememberPasswordAutocomplete(enabled);
+}
+function setRememberPasswordAutocomplete(enabled) {
+  const password = document.getElementById('authPassword');
+  if (password) password.autocomplete = enabled
+    ? (appState.authMode === 'register' ? 'new-password' : 'current-password')
+    : 'off';
+}
+function setRememberPasswordPreference(enabled) {
+  rememberPasswordSessionPreference = Boolean(enabled);
+  try { localStorage.setItem(RAI_REMEMBER_PASSWORD_KEY, enabled ? 'true' : 'false'); }
+  catch (error) { /* Private browsing can deny storage; honor this page's choice. */ }
+  setRememberPasswordAutocomplete(enabled);
+}
+
+// Delegate storage to the platform password manager; never persist raw bytes
+// in localStorage or sessionStorage. Unsupported browsers use autocomplete.
+function offerBrowserPasswordSave(email, password) {
+  if (!getRememberPasswordPreference() || !email || !password
+    || typeof PasswordCredential !== 'function' || !navigator.credentials?.store) return;
+  try {
+    const credential = new PasswordCredential({ id: email, password, name: 'RAI' });
+    Promise.resolve(navigator.credentials.store(credential)).catch(() => {});
+  } catch (error) { /* Browser may deny password storage. */ }
+}
+
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
 
 function normalizeCustomApiUrl(value) {
@@ -24494,7 +24548,7 @@ function clearCustomApiSession() {
 function setCustomApiFormVisibility(visible) {
   const standardIds = [
     'authEmail', 'authLoginMethodStep', 'passwordStep', 'twoFactorStep', 'emailCodeStep',
-    'usernameStep', 'submitStep', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
+    'usernameStep', 'submitStep', 'authAlternativeOptions', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
   ];
   standardIds.forEach((id) => {
     const element = document.getElementById(id);
@@ -24620,7 +24674,7 @@ async function sendCustomApiMessage(messages) {
       renderMessages();
       return;
     }
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     while (true) {
@@ -24767,6 +24821,7 @@ function setAuthLoginMethod(method) {
 
 function updateAuthMethodUI() {
   configureAuthSecondFactorInput();
+  syncRememberPasswordPreference();
   const isLogin = appState.authMode === 'login';
   const passwordInput = document.getElementById('authPassword');
   if (passwordInput) {
@@ -25425,7 +25480,13 @@ async function verifyPendingEmailAuth(email, code) {
 	    body: JSON.stringify({ email, code })
   });
 	  const data = await parseApiJsonResponse(response);
-  if (await handleAuthServerResponse(data)) return;
+  const newPassword = purpose === 'register' ? getCurrentAuthPassword() : '';
+  if (await handleAuthServerResponse(data)) {
+    if (purpose === 'register' && data?.success && data.token) {
+      offerBrowserPasswordSave(email, newPassword);
+    }
+    return;
+  }
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码无效或已过期');
   }
@@ -25560,6 +25621,7 @@ async function handleAuthSubmit() {
       if (!(await handleAuthServerResponse(data))) {
         showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code'));
       }
+      if (data?.success && data.token) offerBrowserPasswordSave(email, password);
       return;
     }
 
@@ -25591,6 +25653,7 @@ async function handleAuthSubmit() {
     if (!(await handleAuthServerResponse(data))) {
       showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
+    if (data?.success && data.token) offerBrowserPasswordSave(email, password);
   } catch (error) {
     const fallbackError = getAuthNetworkUnavailableMessage();
     const rawMessage = String(error?.message || '').trim();
@@ -28528,7 +28591,7 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-	        model: 'deepseek-pro',
+	        model: 'deepseek-flash',
 	        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
 	        promptTimeContext: getUserTimeContext(),
 	        memoryMode: 'off',
@@ -30468,7 +30531,7 @@ function startSessionStreamSubscription(sessionId = appState.currentSession?.id)
         throw new Error(`stream_events_http_${response.status}`);
       }
 
-      const reader = response.body.getReader();
+      const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       while (appState.sessionStreamSource === source) {
@@ -31139,6 +31202,12 @@ class MobileKeyboardHandler {
       this.visualViewport.addEventListener('scroll', this.handleViewportChange);
     }
     window.addEventListener('orientationchange', this.handleViewportChange);
+    if (this.isIOS && this.isStandalone) {
+      window.addEventListener('pageshow', this.handleViewportChange);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) this.handleViewportChange();
+      });
+    }
   }
 
   setupFocusListeners() {
@@ -31187,40 +31256,39 @@ class MobileKeyboardHandler {
       return;
     }
 
-    // iOS 主屏幕模式：冷启动时 100dvh/visualViewport.height 可能少算顶部安全区，
-    // 用 screen.height 修正完整屏幕高度（只接受与实测值相差一个安全区的候选）；
-    // 键盘打开时改用 visualViewport 高度，让输入框贴在键盘上方。
+    // In a standalone WebView the visual viewport may lag behind focusout and
+    // pageshow. It never owns the unfocused document/composer height.
     if (this.isIOS && this.isStandalone) {
       const viewport = this.visualViewport;
-      const viewportHeight = viewport ? Math.max(0, Math.round(viewport.height)) : Math.round(window.innerHeight);
-      const viewportTop = viewport ? Math.max(0, Math.round(viewport.offsetTop || 0)) : 0;
+      const viewportHeight = Math.round(viewport?.height || window.innerHeight || 0);
+      const viewportTop = Math.max(0, Math.round(viewport?.offsetTop || 0));
       const innerHeight = Math.round(window.innerHeight || 0);
       const screenHeight = Math.round(window.screen?.height || 0);
       const observedMax = Math.max(innerHeight, viewportHeight);
-      const fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
+      // Accept screen.height only in an installed iOS app and only when its
+      // difference is inset-sized; never apply it to ordinary Safari.
+      let fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
         ? screenHeight
         : observedMax;
-      const keyboardHeight = Math.max(0, fullHeight - viewportHeight - viewportTop);
-      // activeInput 兜底：部分 iOS 版本键盘弹起时布局视口也会一起缩小，
-      // 单看高度差会误判为键盘未打开。
-      const keyboardOpen = Boolean(this.activeInput) || keyboardHeight > 120;
+      const layoutWidth = Math.round(window.innerWidth || 0);
+      if (this.activeInput && this.standaloneLayoutWidth === layoutWidth) {
+        fullHeight = Math.max(fullHeight, this.standaloneLayoutHeight || 0);
+      } else {
+        this.standaloneLayoutWidth = layoutWidth;
+        this.standaloneLayoutHeight = fullHeight;
+      }
+      // Focus can survive keyboard dismissal or come from a hardware keyboard.
+      // A small inset-sized viewport difference is not a keyboard.
+      const keyboardOpen = Boolean(this.activeInput) && fullHeight - viewportHeight - viewportTop > 120;
+      const appHeight = keyboardOpen ? Math.max(320, viewportHeight) : Math.max(320, fullHeight);
 
       this.keyboardOpen = keyboardOpen;
-      this.root.style.setProperty('--app-height', keyboardOpen
-        ? `${Math.max(320, viewportHeight)}px`
-        : `${Math.max(320, fullHeight)}px`);
-      this.root.style.setProperty('--viewport-offset-top', `${viewportTop}px`);
-      this.root.style.setProperty('--keyboard-offset', `${keyboardHeight}px`);
+      this.root.style.setProperty('--app-height', `${appHeight}px`);
+      this.root.style.setProperty('--viewport-offset-top', keyboardOpen ? `${viewportTop}px` : '0px');
+      this.root.style.setProperty('--keyboard-offset', keyboardOpen ? `${Math.max(0, fullHeight - viewportHeight - viewportTop)}px` : '0px');
       this.body.classList.toggle('keyboard-open', keyboardOpen);
       this.resetStandaloneLayoutScroll();
-
-      this.log('Viewport sync (standalone)', {
-        viewportHeight,
-        viewportTop,
-        fullHeight,
-        keyboardHeight,
-        keyboardOpen
-      });
+      this.log('Viewport sync (standalone)', { viewportHeight, fullHeight, appHeight, keyboardOpen });
       return;
     }
 
@@ -31387,27 +31455,11 @@ class MobileKeyboardHandler {
     }
   }
 
-  // iOS 主屏幕偶发“视口卡在短高度”的状态：屏幕比 WebView 高一个顶部安全区，
-  // 底部会留下无法用 CSS 填满的黑边。切换一次全屏元素的 display 强制 WebKit
-  // 重新测量视口，即可恢复完整高度。
+  // Reconcile after WebKit's delayed viewport update without toggling display.
   healStandaloneViewport() {
     if (!this.isIOS || !this.isStandalone || this.activeInput) return;
-    const screenHeight = Math.round(window.screen?.height || 0);
-    const currentHeight = Math.max(
-      Math.round(window.innerHeight || 0),
-      Math.round(this.visualViewport?.height || 0)
-    );
-    const delta = screenHeight - currentHeight;
-    if (!screenHeight || delta <= 4 || delta > 120) return;
-    const shell = [document.getElementById('appContainer'), document.getElementById('authContainer')]
-      .find((element) => element && element.offsetParent !== null);
-    if (!shell) return;
-    const previousDisplay = shell.style.display;
-    shell.style.display = 'none';
-    void shell.offsetHeight;
-    shell.style.display = previousDisplay;
     this.updateViewportVars();
-    this.log('Viewport healed', { screenHeight, currentHeight, delta });
+    this.syncComposerMetrics();
   }
 
   applyIOSFixes() {
@@ -34725,7 +34777,7 @@ async function loadAdminLimits() {
       .map(([id, m]) => ({ id, name: escapeHtml((m.displayName && m.displayName[appState.language]) || m.name || id) }));
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
-      'deepseek-flash-siliconflow', 'deepseek-flash', 'deepseek-pro',
+      'deepseek-flash-siliconflow', 'deepseek-flash',
       'gemini-3.6-flash-low', 'gpt-5.6-luna', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);
