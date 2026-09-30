@@ -90,7 +90,7 @@ function main() {
     assert.match(server, /required:\s*\["category", "content", "evidence", "reason"\]/);
     assert.match(server, /const memoryToolsEnabled = !memoryModeOff && longMemoryEnabled/);
     assert.match(server, /buildMemoryToolPolicyInstruction\(memoryPolicyLanguage\)/);
-    assert.match(server, /`\$\{memoryToolPolicyInstruction\}\\n\\n\$\{systemContent\}`/);
+    assert.match(server, /systemContent\\s*=\\s*systemContent\\s*\\?\\s*`\$\{systemContent\}\\n\\n\$\{memoryToolPolicyInstruction\}`/);
     assert.doesNotMatch(server, /scheduleConversationMemoryProcessing|callMemoryExtractionModel|extractHeuristicMemoryActions/);
     checks.push('chat_tool_only_architecture');
 
