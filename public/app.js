@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260930-gpt61sol-r8';
+const RAI_BUILD_ID = '20260930-gpt61luna-qr-cache-r9';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5008,7 +5008,7 @@ const MODELS = {
     multimodal: true
   },
   'gpt-6-luna': {
-    name: 'GPT 6',
+    name: 'GPT 6 Luna',
     provider: 'rai_openai_gateway',
     supportsThinking: true,
     supportsReasoningProfile: true,
@@ -5142,6 +5142,7 @@ const LEGACY_MODEL_ALIASES = {
   'gpt-5.6-sol': 'gpt-6.1-sol',
   'gpt-6-sol': 'gpt-6.1-sol',
   'gpt-5.6-terra': 'gpt-6-luna',
+    'gpt-5.6-luna': 'gpt-6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
   'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',

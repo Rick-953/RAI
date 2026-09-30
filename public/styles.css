@@ -9414,7 +9414,9 @@ html.hand-right .mobile-logo {
   order: -1;
 }
 
-html.hand-right .mobile-qr-scan-btn { display: none; }
+html.hand-right .mobile-temp-chat-btn { order: 2; margin-left: auto; }
+html.hand-right .hamburger-btn { order: 3; }
+.mobile-qr-scan-btn { display: none; }
 @media (max-width: 720px) {
   .mobile-qr-scan-btn { display: inline-flex; align-items: center; justify-content: center; }
   html.hand-right .mobile-qr-scan-btn { order: 1; margin-left: auto; }

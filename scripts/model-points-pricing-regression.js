@@ -10,7 +10,7 @@ const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 const index = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 
 for (const [model, cost] of Object.entries({
-    'gpt-5.6-luna': 5,
+    'gpt-6-luna': 5,
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
     'deepseek-flash': 1,
