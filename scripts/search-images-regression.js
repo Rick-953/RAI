@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -39,12 +39,15 @@ const { filterValidImages, cacheSearchImage, buildSearchImageCacheUrl } = new Fu
   try {
     const src = 'https://cdn.example.com/plant.jpg?size=large';
     const expected = buildSearchImageCacheUrl(src);
-    const first = await filterValidImages([src, { url: src }, 'file:///secret', 'http://127.0.0.1/x', 'https://user:pass@cdn.example.com/x']);
+    const first = await filterValidImages([src, { url: src }, 'file:///secret', 'http://127.0.0.1/x', 'https://name:secret@example.com/x']);
     assert.deepEqual(first, [expected], 'only validated results should rewrite to a same-origin cache URL');
     assert.equal(fetchCount, 1);
     assert.deepEqual(await fs.promises.readFile(path.join(tempDir, path.basename(expected))), png);
     assert.deepEqual(await filterValidImages([src]), [expected]);
     assert.equal(fetchCount, 1, 'cache hit must not redownload');
+    const cachedPath = path.join(tempDir, path.basename(expected));
+    const old = new Date(now - 2000);
+    await fs.promises.utimes(cachedPath, old, old);
     now += 1001;
     assert.deepEqual(await filterValidImages([src]), [expected]);
     assert.equal(fetchCount, 2, 'expired file must be refreshed from its source');
@@ -56,3 +59,5 @@ const { filterValidImages, cacheSearchImage, buildSearchImageCacheUrl } = new Fu
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   }
 })().catch((error) => { console.error(error); process.exit(1); });
+
+
