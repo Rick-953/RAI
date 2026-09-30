@@ -35,3 +35,12 @@
 .rai-login-device-details dt { color: var(--text-secondary, #bfbfb5); }
 .rai-login-device-details dd { margin: 0; overflow-wrap: anywhere; }
 .rai-login-verification-note { font-size: 12px; }
+
+/* QR auth follows the RAI tonal-card language: no bright outline and a compact confirmation surface. */
+.rai-secure-dialog { border: 0; }
+.rai-scanner-dialog { width: min(430px, calc(100vw - 32px)); }
+.rai-approval-dialog { width: min(360px, calc(100vw - 32px)); }
+.rai-approval-dialog .rai-login-device-details { margin-top: 14px; }
+@media (max-width: 480px) {
+  .rai-scanner-dialog, .rai-approval-dialog { width: min(100% - 24px, 430px); }
+}

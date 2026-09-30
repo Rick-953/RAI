@@ -11,8 +11,8 @@
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   }
-  function dialog(title, description) {
-    const d = document.createElement('dialog'); d.className = 'rai-secure-dialog';
+  function dialog(title, description, className = '') {
+    const d = document.createElement('dialog'); d.className = `rai-secure-dialog ${className}`.trim();
     const h = document.createElement('h2'); h.textContent = title; h.id = `rai-secure-title-${++dialogSequence}`;
     d.setAttribute('aria-labelledby', h.id);
     const p = document.createElement('p'); p.textContent = description;
@@ -43,7 +43,7 @@
   }
   window.startQrLogin = async () => {
     if (modal?.open || appState.token) return;
-    const d = dialog('扫码登录', '用已登录 RAI 的手机扫码，核对设备和安全码后确认。仅扫描不会登录。二维码每 3 秒轮换，2 分钟后失效。');
+    const d = dialog('扫码登录', '用已登录 RAI 的手机扫码，核对设备和安全码后确认。仅扫描不会登录。二维码每 3 秒轮换，2 分钟后失效。')
     modal = d;
     const run = { owner: null, stopped: false, timer: null, hideTimer: null, base: API_BASE,
       authContext: captureUserAuthContext(), persistedToken: getPersistedUserAccessToken() };
@@ -119,7 +119,7 @@
     try {
       const claim = await scanPost('/auth/qr/claim', payload, context);
       if (cancelled || document.hidden || !scanContextCurrent(context)) return;
-      d = dialog('确认登录另一台设备？', '确认后，这台设备将直接登录你的账号。只批准你正在操作的设备，不要批准别人通过消息发来的二维码。');
+      d = dialog('确认登录另一台设备？', '确认后，这台设备将直接登录你的账号。只批准你正在操作的设备，不要批准别人通过消息发来的二维码。', 'rai-approval-dialog');
       const details = document.createElement('dl'); details.className = 'rai-login-device-details';
       for (const [label, value] of [['设备', claim.device], ['IP 地址', claim.ip], ['大致位置', claim.location]]) {
         const key = document.createElement('dt'), text = document.createElement('dd');
@@ -158,7 +158,7 @@
     if (scannerDialog?.open || approving) return;
     if (!appState.token) { showToast('请先登录 RAI，再为另一台设备扫码授权'); return; }
     const context = scanContext();
-    const d = dialog('扫码授权登录', '将另一台设备上的 RAI 登录二维码放入取景框。识别后仍需核对安全码并确认；画面仅在本机处理。');
+    const d = dialog('扫码授权登录', '将另一台设备上的 RAI 登录二维码放入取景框。识别后仍需核对安全码并确认；画面仅在本机处理。', 'rai-scanner-dialog');
     scannerDialog = d;
     const video = document.createElement('video'); video.className = 'rai-scanner-preview';
     video.muted = true; video.playsInline = true; video.setAttribute('playsinline', '');
@@ -224,7 +224,7 @@
       image.onerror = () => { if (generation === imageGeneration && active()) { revokeImage(); status.textContent = '无法读取此图片，请重新选择。'; } };
       image.src = imageUrl;
     });
-    d.addEventListener('cancel', cleanup, { once: true }); d.addEventListener('close', cleanup, { once: true });
+    d.addEventListener('cancel', event => { event.preventDefault(); leave(); }, { once: true }); d.addEventListener('close', cleanup, { once: true });
     document.addEventListener('visibilitychange', hidden);
     addEventListener('pagehide', leave); addEventListener('hashchange', leave);
     watch = setInterval(() => { if (!scanContextCurrent(context)) leave(); }, 250);
@@ -238,7 +238,7 @@
     await approveScan({ id: match[1], scanToken: match[2] });
   }
   window.shareRaiConversation = session => {
-    const d = dialog('分享对话快照', '任何持有链接的人都能阅读这次快照，7 天后失效。不会分享后续消息、思考、工具日志或附件文件。请先检查正文隐私；创建新链接会使旧链接失效。');
+    const d = dialog('分享对话快照', '任何持有链接的人都能阅读这次快照，7 天后失效。不会分享后续消息、思考、工具日志或附件文件。请先检查正文隐私；创建新链接会使旧链接失效。', 'rai-scanner-dialog')
     button(d, '取消', () => d.close());
     const create = button(d, '创建分享链接', async () => {
       create.disabled = true;
@@ -256,6 +256,7 @@
     });
   };
   document.getElementById('qrScanButton')?.addEventListener('click', window.openQrScanner);
+  document.getElementById('mobileQrScanButton')?.addEventListener('click', window.openQrScanner);
   document.getElementById('qrLoginButton')?.addEventListener('click', window.startQrLogin);
   addEventListener('hashchange', checkIncomingScan);
   // Login may complete after landing on a scanned link. Only inspect while a scan is pending.
