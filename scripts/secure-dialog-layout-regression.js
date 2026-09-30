@@ -34,3 +34,10 @@ for (const asset of ['lib/jsQR.js', 'qr-scanner.js']) {
   assert.ok(html.includes(asset + '?v=' + version)); assert.ok(sw.includes(asset + '?v=' + version));
 }
 console.log('scanner/footer contracts PASS: compact footer, sidebar adjacency, same-version local decoder and scanner cache');
+
+assert.match(css, /\.rai-secure-dialog:focus\s*\{\s*outline:\s*none;/, 'suppress the whole-card browser focus ring');
+assert.match(css, /button:focus-visible[\s\S]*?outline:\s*2px/, 'keep keyboard focus rings on actual controls');
+assert.match(css, /\.rai-qr-toast\s*\{[^}]*width:\s*max-content;[^}]*max-width:\s*min\(320px/, 'QR success notice fits its text instead of using a full-width popup');
+assert.match(script, /cleanup\(\); approveScan\(payload, context, d\)/, 'reuse the original open dialog');
+assert.doesNotMatch(script, /cleanup\(\); d\.close\(\); approveScan/, 'scan must never close then open a new approval card');
+console.log('QR card contracts PASS: same-dialog handoff, container-only outline removal, keyboard focus and compact notice');
