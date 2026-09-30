@@ -12,37 +12,38 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20260924-formal-v01318-r1"></script>
+  <script src="runtime-brand.js?v=20260930-gpt61sol-r8"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260924-formal-v01318-r1">
+  <link rel="manifest" href="site.webmanifest?v=20260930-gpt61sol-r8">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="lib/purify.min.js?v=20260924-formal-v01318-r1"></script>
+  <script defer src="lib/marked.min.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="lib/purify.min.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260924-formal-v01318-r1">
-  <script defer src="lib/katex/katex.min.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260924-formal-v01318-r1"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260930-gpt61sol-r8">
+  <script defer src="lib/katex/katex.min.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="event-bindings.js?v=20260924-formal-v01318-r1"></script>
+  <script defer src="rai-system-prompt.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="event-bindings.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260924-formal-v01318-r1">
-  <script defer src="lib/highlight/highlight.min.js?v=20260924-formal-v01318-r1"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260930-gpt61sol-r8">
+  <script defer src="lib/highlight/highlight.min.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260924-formal-v01318-r1">
-  <link rel="stylesheet" href="selection-explainer.css?v=20260924-formal-v01318-r1">
-  <link rel="stylesheet" href="local-agent.css?v=20260924-formal-v01318-r1">
+  <link rel="stylesheet" href="styles.css?v=20260930-gpt61sol-r8">
+  <link rel="stylesheet" href="selection-explainer.css?v=20260930-gpt61sol-r8">
+  <link rel="stylesheet" href="local-agent.css?v=20260930-gpt61sol-r8">
+  <link rel="stylesheet" href="secure-sharing.css?v=20260930-gpt61sol-r8">
 </head>
 
 <body>
@@ -82,6 +83,10 @@
             <label class="form-label" data-i18n="password-label">密码</label>
             <input type="password" class="form-input" id="authPassword" data-i18n-placeholder="password-placeholder"
               placeholder="输入密码" data-rai-keydown="handlePasswordKeydown(event)" autocomplete="current-password">
+            <label class="auth-remember-row" for="authRememberPassword">
+              <input type="checkbox" id="authRememberPassword" checked data-rai-change="setRememberPasswordPreference(this.checked)">
+              <span data-i18n="auth-remember-password">记住密码</span>
+            </label>
             <div class="auth-forgot-row" id="forgotPasswordRow">
               <button type="button" class="auth-forgot-btn" data-rai-click="showForgotPasswordHelp()"
                 data-i18n="forgot-password">忘记密码？</button>
@@ -121,24 +126,28 @@
               data-i18n="login-btn">登录</button>
           </div>
 
-          <div class="auth-passkey-entry" id="authPasskeyEntry">
-            <div class="auth-passkey-divider" aria-hidden="true">
-              <span data-i18n="auth-passkey-or">或</span>
+          <div class="auth-alternative-options" id="authAlternativeOptions">
+            <div class="auth-passkey-entry" id="authPasskeyEntry">
+              <div class="auth-passkey-divider" aria-hidden="true">
+                <span data-i18n="auth-passkey-or">或</span>
+              </div>
+              <div class="auth-alternative-row">
+                <button type="button" class="auth-alt-button" id="qrLoginButton" data-i18n="auth-qr-login">扫码登录</button>
+                <button type="button" class="auth-alt-button" id="authPasskeyBtn" data-rai-click="loginWithPasskey()"
+                  data-i18n="auth-passkey-login">通行密钥登录</button>
+              </div>
+              <p class="auth-passkey-hint" id="authPasskeyHint" hidden></p>
             </div>
-            <button type="button" class="auth-passkey-btn" id="authPasskeyBtn" data-rai-click="loginWithPasskey()"
-              data-i18n="auth-passkey-login">使用通行密钥登录</button>
-            <p class="auth-passkey-hint" id="authPasskeyHint" hidden></p>
+            <div class="auth-custom-api-entry" id="customApiEntry">
+              <button type="button" class="auth-alt-button" id="customApiToggleBtn"
+                data-rai-click="toggleCustomApiMode()" data-i18n="custom-api-entry">我有一个 API Key</button>
+            </div>
           </div>
 
           <div class="auth-sso-container" id="ztx6dSsoContainer" style="display: none;">
             <button type="button" class="auth-sso-btn" data-rai-click="startZtx6dLogin()" data-i18n="auth-ztx6d-login">ZTX6D 登录</button>
             <button type="button" class="auth-sso-btn auth-sso-btn-pending" data-rai-click="showRpassPending()"
               data-i18n="auth-rpass-login" data-i18n-title="auth-coming-soon" title="待上线">rPass 登录</button>
-          </div>
-
-          <div class="auth-custom-api-entry" id="customApiEntry">
-            <button type="button" class="auth-custom-api-link" id="customApiToggleBtn"
-              data-rai-click="toggleCustomApiMode()" data-i18n="custom-api-entry">我有一个 API Key</button>
           </div>
 
           <div class="custom-api-panel auth-step-hidden" id="customApiPanel">
@@ -170,12 +179,13 @@
             <span data-i18n="no-account">还没有账号?</span>
             <a class="auth-link" data-rai-click="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
           </div>
+          <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
+            <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')" title="简体中文" aria-label="简体中文">简体</button>
+            <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')" title="繁體中文" aria-label="繁體中文">繁體</button>
+            <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')" title="English" aria-label="English">EN</button>
+          </div>
         </div>
-        <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
-          <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')">简体中文</button>
-          <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')">繁體中文</button>
-          <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')">English</button>
-        </div>
+
       </div>
     </div>
   </div>
@@ -386,6 +396,13 @@
                   d="M15.1 19.37l1 1.74c-.96.44-2.01.73-3.1.84v-2.02c.74-.09 1.44-.28 2.1-.56ZM4.07 13H2.05c.11 1.1.4 2.14.84 3.1l1.74-1c-.28-.66-.47-1.36-.56-2.1ZM15.1 4.63l1-1.74c-.96-.44-2-.73-3.1-.84v2.02c.74.09 1.44.28 2.1.56ZM19.93 11h2.02c-.11-1.1-.4-2.14-.84-3.1l-1.74 1c.28.66.47 1.36.56 2.1ZM8.9 19.37l-1 1.74c.96.44 2.01.73 3.1.84v-2.02c-.74-.09-1.44-.28-2.1-.56ZM11 4.07V2.05c-1.1.11-2.14.4-3.1.84l1 1.74c.66-.28 1.36-.47 2.1-.56ZM18.36 7.17l1.74-1.01c-.63-.87-1.4-1.64-2.27-2.27l-1.01 1.74c.59.45 1.1.96 1.54 1.54ZM4.63 8.9l-1.74-1c-.44.96-.73 2-.84 3.1h2.02c.09-.74.28-1.44.56-2.1ZM19.93 13c-.09.74-.28 1.44-.56 2.1l1.74 1c.44-.96.73-2.01.84-3.1h-2.02ZM16.83 18.36l1.01 1.74c.87-.63 1.64-1.4 2.27-2.27l-1.74-1.01c-.45.59-.96 1.1-1.54 1.54ZM7.17 5.64l-1-1.75c-.88.64-1.64 1.4-2.27 2.28l1.74 1.01c.44-.59.95-1.1 1.53-1.54ZM5.64 16.83l-1.74 1c.63.87 1.4 1.64 2.27 2.27l1.01-1.74c-.59-.44-1.1-.95-1.54-1.53ZM13 7h-2v5.41l4.29 4.29 1.41-1.41-3.7-3.7V7Z" />
               </svg>
             </button>
+            <button type="button" class="sidebar-control-btn qr-scan-top-btn" id="qrScanButton"
+              data-i18n-title="scan-login-qr" data-i18n-aria-label="scan-login-qr" title="扫码授权登录" aria-label="扫码授权登录">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4"/>
+                <path d="M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z"/>
+              </svg>
+            </button>
             <!--
               <svg class="material-symbols-outlined" id="removedSidebarThemeIcon" xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -418,18 +435,19 @@
           </svg>
           <span data-i18n="new-chat">新对话</span>
         </button>
-        <button class="file-library-entry" id="fileLibraryEntry" type="button" data-rai-click="openFileLibrary()">
-          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
-            <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z" />
-          </svg>
-          <span>文件</span>
-        </button>
       </div>
 
       <!-- 可滚动中间区域 - 带边缘羽化效果 -->
       <div class="sidebar-scrollable-wrapper">
         <div class="sidebar-edge-blur-top"></div>
         <div class="sidebar-scrollable">
+        <button class="file-library-entry" id="fileLibraryEntry" type="button" data-rai-click="openFileLibrary()">
+          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z" />
+          </svg>
+          <span>文件</span>
+        </button>
+
           <!-- 文件夹分组 -->
           <div class="sidebar-group" id="conversationFoldersSection">
             <div class="sidebar-group-header" id="conversationFoldersToggle" role="button" tabindex="0">
@@ -836,7 +854,7 @@
                     </div>
                   </div>
 
-                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-pro"
+                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-flash"
                     data-rai-click="selectRaiModeFromMenu('think', event)">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
@@ -882,6 +900,12 @@
 
                     <div class="model-menu-section-label">对话模型</div>
 
+                    <div class="model-menu-item" data-model="gpt-6.1-sol"
+                      data-rai-click="selectModelFromMenu('gpt-6.1-sol', 'GPT-6.1 Sol', null, event)">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">GPT-6.1 Sol</span><span class="model-badge">多模态</span></div>
+                      </div>
+                    </div>
                     <div class="model-menu-item" data-model="gpt-5.6-luna"
                       data-rai-click="selectModelFromMenu('gpt-5.6-luna', 'GPT 5.6', null, event)">
                       <div class="model-menu-content">
@@ -1165,7 +1189,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260924-formal-v01318-r1" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260930-gpt61sol-r8" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1231,7 +1255,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260924-formal-v01318-r1" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260930-gpt61sol-r8" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1246,7 +1270,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260924-formal-v01318-r1" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260930-gpt61sol-r8" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1922,6 +1946,10 @@
                 <span>RAI welcome guide</span>
               </button>
             </div>
+            <div class="settings-about-links">
+              <button type="button" class="settings-about-link settings-about-action" id="exportDiagnosticsButton">导出脱敏诊断日志</button>
+            </div>
+            <p class="settings-description">仅当前标签页最近500条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
             <div class="settings-about-timeline" aria-label="RAI update timeline">
               <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">RAI 的成长故事</div>
               <p class="settings-about-timeline-intro" data-i18n="settings-update-timeline-intro">从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。</p>
@@ -2052,6 +2080,7 @@
         <label data-i18n="selectModel">选择模型</label>
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
+          <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
           <option value="gpt-5.6-luna">GPT 5.6</option>
           <option value="claude-sonnet-5">Claude Sonnet 5</option>
           <option value="gemini-3.6-flash-low">Gemini 3.6</option>
@@ -2250,12 +2279,16 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="pet-quotes.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="app.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="local-agent.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="crf-ui.js?v=20260924-formal-v01318-r1"></script>
-  <script defer src="selection-explainer.js?v=20260924-formal-v01318-r1"></script>
+  <script defer src="conversation-cache.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="pet-quotes.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="diagnostics.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="app.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="local-agent.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="crf-ui.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="selection-explainer.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="lib/jsQR.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="qr-scanner.js?v=20260930-gpt61sol-r8"></script>
+  <script src="secure-sharing.js?v=20260930-gpt61sol-r8" defer></script>
 </body>
 
 </html>

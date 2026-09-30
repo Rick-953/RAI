@@ -1330,7 +1330,7 @@ async function runTests(context) {
 
     await test('capability config persists across login and normalizes invalid boundaries', async () => {
         const user = await createVerifiedUser(context, 'capability-config');
-        const expectedModels = ['gemma', 'qwen3.6-35b-a3b', 'kimi-k2.6', 'deepseek-pro'];
+        const expectedModels = ['gemma', 'qwen3.6-35b-a3b', 'kimi-k2.6', 'deepseek-flash'];
         const validPayload = {
             theme: 'dark',
             default_model: 'auto',
@@ -1411,7 +1411,7 @@ async function runTests(context) {
             normalizeStoredModelList(normalizedProfile.body?.research_agent_models),
             ['gemma', 'kimi-k2.6', 'deepseek-flash', 'north-mini-code']
         );
-        assert.equal(normalizedProfile.body?.research_master_model, 'deepseek-pro');
+        assert.equal(normalizedProfile.body?.research_master_model, 'deepseek-flash');
         assert.equal(Number(normalizedProfile.body?.research_max_rounds), 50);
 
         const lowerSave = await apiRequest(context.baseUrl, '/api/user/config', {

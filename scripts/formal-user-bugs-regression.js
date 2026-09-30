@@ -9,7 +9,7 @@ const path = require('path');
 const sqlite3 = require('sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8').replace(/\r\n/g, '\n');
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
@@ -558,7 +558,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
+  assert.deepEqual(visibleModelIds, ['gpt-6.1-sol', 'gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
+  assert.match(allModels, />GPT-6.1 Sol</);
   assert.match(allModels, />GPT 5\.6</);
   assert.match(allModels, />Claude Sonnet 5</);
   assert.match(allModels, />Gemini 3\.6</);
@@ -584,14 +585,14 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-5\.6-luna', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
+  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-6.1-sol', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
     'Smart Model text requests must prefer DeepSeek V4 Flash (admin-configurable) with the requested ordered fallback chain');
-  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-5\.6-luna', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
-    'Smart Model multimodal requests must keep Luna first and avoid text-only fallbacks');
+  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-6.1-sol', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
+    'Smart Model multimodal requests must keep GPT-6.1 Sol first and avoid text-only fallbacks');
   assert.match(server, /'gpt-5\.6-luna':\s*\{[\s\S]{0,180}provider:\s*'rai_gpt_gateway'[\s\S]{0,180}model:\s*'gpt-5\.6-luna'/,
     'the public GPT 5.6 selection must call the Luna upstream model');
-  assert.match(server, /'gpt-5\.6-luna': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Luna failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.match(server, /'gpt-5\.6-luna': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Luna failures must follow DeepSeek Flash → Kimi');
   assert.match(server, /'claude-sonnet-5':\s*\{[\s\S]{0,180}provider:\s*'rai_claude_gateway'[\s\S]{0,180}model:\s*'claude-sonnet-5'/,
     'the Claude product route must use UMAPIS Claude Sonnet 5');
   assert.match(server, /'gemini-3\.6-flash-low':\s*\{[\s\S]{0,180}provider:\s*'rai_fast_gateway'[\s\S]{0,180}model:\s*'gemini-3\.6-flash-low'/,
@@ -600,14 +601,14 @@ function testFocusedModelUiReasoningAndSwipe() {
     'the Smart Model preference must resolve to the SiliconFlow Kimi K2.6 route');
   assert.match(server, /'nemotron-3-ultra':\s*\{[\s\S]{0,180}provider:\s*'openrouter'[\s\S]{0,180}model:\s*'nvidia\/nemotron-3-ultra-550b-a55b:free'/,
     'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
-  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-flash'/,
+  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-flash'/,
     'DeepSeek V4 Flash must use the official DeepSeek route');
-  assert.match(server, /'deepseek-pro':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-pro'/,
-    'DeepSeek Pro must use the official DeepSeek route');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Claude failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
-  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Gemini failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/,
+    'DeepSeek Pro must not be an active route');
+  assert.match(server, /'claude-sonnet-5': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Claude failures must follow DeepSeek Flash → Kimi');
+  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Gemini failures must follow DeepSeek Flash → Kimi');
   assert.match(server, /智能模型默认使用 \$\{researchModelLabel\(finalModel\)\}/,
     'Smart Model routing notices must use a user-facing model label');
   assert.match(server, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
@@ -792,7 +793,7 @@ async function testMessageRenderingStability() {
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 7,
+  assert.equal(modelSelectionBindings.length, 8,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
@@ -1064,7 +1065,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260924-formal-v01318-r1';
+  const expectedBuild = '20260930-gpt61sol-r8';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1109,8 +1110,10 @@ function testVersionContract() {
     'image-only models must be rejected as preferred model settings');
   assert.match(server, /async function resolveVisibleFastModel\(\)[\s\S]{0,500}fast_default_model/,
     'fast route must consult admin settings');
-  assert.match(server, /async function resolveVisibleThinkingModel\(\)[\s\S]{0,500}thinking_default_model/,
-    'thinking route must consult admin settings');
+  assert.match(server, /async function resolveVisibleThinkingModel\(\)\s*\{\s*return resolveVisibleAutoModel\(\);\s*\}/,
+    'thinking must inherit the Smart Flash route rather than stale Pro admin preferences');
+  assert.match(server, /async function resolveVisibleAutoModel\(\)[\s\S]{0,160}const preferred = 'deepseek-flash'/,
+    'Smart mode must prefer DeepSeek Flash');
   assert.match(server, /async function resolveVisionFallbackModel\(\)[\s\S]{0,400}vision_fallback_model/,
     'vision fallback must consult admin settings');
   assert.match(server, /else if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/,
@@ -1385,14 +1388,20 @@ function testDownloadClientsAndTimeline() {
     'CX RAI download actions must align as equal-width rows');
   assert.match(styles, /\.settings-windows-mobile-download\s*\{[^}]*width:\s*100%/,
     'Windows Mobile UWP action must align with the primary installer button');
-  assert.match(app, /function getHandednessPromptHint\(\)[\s\S]*?appState\.handednessEnabled[\s\S]*?isHandednessMobileLayout\(\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
-    'Handedness must be described as a per-turn mobile prompt hint');
-  assert.match(app, /function appendUserTurnContextHintForPrompt\(content\)[\s\S]*?getHandednessPromptHint\(\)[\s\S]*?handednessHint \? `\\n\\n\[\$\{handednessHint\}\]`/,
-    'Handedness must be appended to the final user turn after the time hint');
+  assert.match(extractNamedFunction(app, 'getHandednessPromptHint'), /appState\.handednessEnabled[\s\S]*isHandednessMobileLayout\(\)[\s\S]*' hand='/,
+    'Handedness must remain an opt-in per-turn mobile hint');
+  const appendHint = extractNamedFunction(app, 'appendUserTurnContextHintForPrompt');
+  assert.ok(appendHint.includes("'\\n[ctx '"));
+  assert.ok(appendHint.includes('getHandednessPromptHint()'), 'compact user context must include handedness');
   assert.match(app, /appendUserTurnContextHintForPrompt\(m\.content\)/,
     'Only the final user turn may receive the dynamic prompt context hints');
-  assert.doesNotMatch(raiSystemPrompt, /handedness|持机手|握持方式/,
-    'Handedness context must stay out of the cacheable system prompt');
+  const promptApi = require('../public/rai-system-prompt');
+  const stableOptions = { promptLanguage: 'zh-CN', modelIdentity: '智能模型' };
+  const systemLeft = promptApi.buildEffectiveSystemPrompt({ ...stableOptions, time: '2026-09-28', handedness: 'left' });
+  const systemRight = promptApi.buildEffectiveSystemPrompt({ ...stableOptions, time: '2026-09-29', handedness: 'right' });
+  assert.equal(systemLeft, systemRight, 'time/hand changes must not invalidate the cacheable system prefix');
+  assert.doesNotMatch(systemLeft, /hand=[LR]|当前持机手：|Current device hand:/,
+    'the static ctx schema is allowed; per-turn handedness values are not');
   assert.match(server, /function stripInlinePromptTimeHint\(content = ''\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
     'Server persistence must strip the handedness hint together with the time hint');
 }
@@ -1420,23 +1429,24 @@ function testHandednessPromptContext() {
   );
 
   const rightHand = compose('测试');
-  assert.match(rightHand, /^测试\n\n\[当前时间：/);
-  assert.match(rightHand, /当前持机手：右手/);
-  assert.match(rightHand, /不要把回答中心放在握持方式上/);
+  assert.match(rightHand, /^测试\n\[ctx /);
+  assert.match(rightHand, / ui=web-mobile hand=R\]$/);
+  assert.ok(rightHand.length - 2 < 90, 'per-turn metadata must remain compact');
 
   appState.handedness = 'left';
-  assert.match(compose('测试'), /当前持机手：左手/);
+  assert.match(compose('测试'), / hand=L\]$/);
 
   media.matches = false;
-  assert.doesNotMatch(compose('测试'), /当前持机手/);
+  assert.doesNotMatch(compose('测试'), / hand=/);
 
   media.matches = true;
   appState.handednessEnabled = false;
-  assert.doesNotMatch(compose('测试'), /当前持机手/);
+  assert.doesNotMatch(compose('测试'), / hand=/);
 
   const stripHints = new Function(
     `${extractNamedFunction(server, 'stripInlinePromptTimeHint')}; return stripInlinePromptTimeHint;`
   )();
+  assert.equal(stripHints(rightHand), '测试', 'server must strip the compact context before persistence');
   const stored = stripHints('测试\n\n[当前时间：2026-09-24 20:47。仅作背景，不要把回答中心放在时间上。]\n\n[当前持机手：右手。仅用于理解界面偏好，不要把回答中心放在握持方式上。]');
   assert.equal(stored, '测试', 'server persistence must remove both per-turn context hints');
 }

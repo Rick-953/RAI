@@ -300,3 +300,6 @@ button:disabled {
     color: #8fd4ff;
   }
 }
+
+.remember-password-row { display: flex; align-items: center; gap: 8px; margin: 0 0 20px; font-size: 14px; cursor: pointer; }
+.remember-password-row input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: #0078d7; }

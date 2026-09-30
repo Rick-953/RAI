@@ -14,7 +14,7 @@ for (const [model, cost] of Object.entries({
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
     'deepseek-flash': 1,
-    'deepseek-pro': 1,
+    'gpt-6.1-sol': 5,
     'gpt-image-2': 20
 })) {
     assert.match(server, new RegExp(`'${model}': ${cost}`), `${model} must have the requested point cost`);
@@ -26,7 +26,7 @@ assert.match(server, /CLAUDE_GATEWAY_BASE_URL[\s\S]{0,260}https:\/\/www\.umapis\
 assert.match(server, /RAI_CLAUDE_GATEWAY_API_KEY_FILE/);
 assert.match(server, /'claude-sonnet-5': \{[\s\S]{0,260}provider: 'rai_claude_gateway'[\s\S]{0,160}model: 'claude-sonnet-5'[\s\S]{0,260}multimodal: true/);
 assert.match(server, /'gemini-3\.6-flash-low': \{[\s\S]{0,260}provider: 'rai_fast_gateway'[\s\S]{0,260}multimodal: true/);
-assert.match(server, /'deepseek-flash': \{[\s\S]{0,260}provider: 'deepseek'[\s\S]{0,160}model: 'deepseek-v4-flash'/);
+assert.match(server, /'deepseek-flash': \{[\s\S]{0,260}provider: 'deepseek'[\s\S]{0,160}model: 'deepseek-flash'/);
 assert.match(server, /applyFastGatewayThinkingPolicy\(requestBody/);
 assert.match(server, /finalModel !== GPT_GATEWAY_IMAGE_MODEL/, 'Image 2 charges must wait until Image 2 is actually selected for delivery');
 assert.match(server, /routingReason: 'user_points_exhausted'/, 'Image point exhaustion must route to Kolors Free');

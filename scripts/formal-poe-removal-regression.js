@@ -94,7 +94,7 @@ function buildModelHarness(serverSource) {
     const context = vm.createContext({
         PUBLIC_MODEL_IDS: [
             'deepseek-flash',
-            'deepseek-pro',
+            'gpt-6.1-sol',
             'qwen3.6-35b-a3b',
             'kimi-k2.6',
             'chatgpt-gpt-oss-120b',
@@ -139,7 +139,9 @@ function testRetiredRequestsFallBackSafely(serverSource) {
     for (const unknownId of ['', 'unknown-provider-model', 'https://attacker.invalid/model']) {
         assert.equal(harness.normalize(unknownId), 'auto', `${unknownId || '(empty)'} must normalize to auto`);
     }
-    assert.equal(harness.normalize('deepseek-pro'), 'deepseek-pro');
+    assert.equal(harness.normalize('deepseek-pro'), 'deepseek-flash');
+    assert.equal(harness.normalize('gpt-5.6-sol'), 'gpt-6.1-sol');
+    assert.equal(harness.normalize('gpt-6-sol'), 'gpt-6.1-sol');
     assert.equal(harness.normalize('Qwen/Qwen3.6-35B-A3B'), 'qwen3.6-35b-a3b');
 
     assert.equal(harness.routing.auto?.isAutoMode, true, 'auto route must remain intact');

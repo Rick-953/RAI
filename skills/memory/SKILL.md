@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Use long-term memory tools only for durable user-provided facts.
+description: Long-term memory.
 ---
 
 # Memory

@@ -228,7 +228,25 @@
     });
   }
 
+  function syncRememberPreference(enabled, persist) {
+    byId('rememberPassword').checked = enabled;
+    byId('password').setAttribute('autocomplete', enabled ? 'new-password' : 'off');
+    byId('passwordConfirm').setAttribute('autocomplete', enabled ? 'new-password' : 'off');
+    if (persist) {
+      try { localStorage.setItem('rai_remember_password', enabled ? 'true' : 'false'); }
+      catch (error) { /* storage disabled */ }
+    }
+  }
+
   function initialize() {
+    var enabled = true;
+    try { enabled = localStorage.getItem('rai_remember_password') !== 'false'; }
+    catch (error) { /* default on */ }
+    syncRememberPreference(enabled, false);
+    byId('rememberPassword').addEventListener('change', function (event) {
+      syncRememberPreference(event.target.checked, true);
+    }, false);
+
     byId('registrationForm').addEventListener('submit', submitRegistration, false);
     byId('verificationForm').addEventListener('submit', submitVerification, false);
     byId('resendButton').addEventListener('click', resendCode, false);

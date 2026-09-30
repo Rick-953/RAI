@@ -186,6 +186,22 @@ html[lang="en-US"] body {
   font-family: var(--font-sans-en);
 }
 
+/* A fixed <html> is clipped to WebKit's transient visual viewport. In an
+   installed app the root document (and its background) owns the layout
+   viewport; only inner controls get safe-area padding. */
+html.ios-device.standalone-viewport,
+html.ios-device.standalone-viewport body {
+  position: relative;
+  inset: auto;
+}
+
+html.ios-device.standalone-viewport .auth-container {
+  position: absolute;
+  top: 0;
+  bottom: auto;
+  height: var(--app-height);
+}
+
 html.mobile-viewport-managed,
 body.mobile-viewport-managed {
   height: var(--app-height);
@@ -482,24 +498,32 @@ html.handedness-switching .sidebar {
 
 .file-library-entry {
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-md);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font: inherit;
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
-.file-library-entry:hover,
+.file-library-entry svg { width: 20px; height: 20px; flex-shrink: 0; }
+.file-library-entry:hover { background: var(--bg-hover); }
 .file-library-entry.active {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-color);
+}
+.file-library-entry:focus-visible,
+.file-library-page button:focus-visible {
+  outline: 2px solid var(--focus-border-color);
+  outline-offset: 3px;
 }
 
 /* 搜索框 */
@@ -2708,7 +2732,7 @@ html.handedness-switching .sidebar {
   align-items: center;
   gap: 7px;
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--text-primary);
   color: var(--bg-primary);
   font-size: 14px;
@@ -2721,7 +2745,7 @@ html.handedness-switching .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
 }
@@ -2784,7 +2808,7 @@ html.handedness-switching .sidebar {
   gap: 8px;
   padding: 0 12px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--input-bg);
   color: var(--text-tertiary);
 }
@@ -2827,7 +2851,7 @@ html.handedness-switching .sidebar {
   grid-template-rows: auto auto;
   gap: 8px 12px;
   padding: 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
 }
 
@@ -2839,7 +2863,7 @@ html.handedness-switching .sidebar {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
@@ -2893,7 +2917,9 @@ html.handedness-switching .sidebar {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
+  grid-column: 2;
+  flex-wrap: wrap;
 }
 
 .file-library-action {
@@ -2902,7 +2928,7 @@ html.handedness-switching .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-tertiary);
 }
@@ -2933,7 +2959,7 @@ html.handedness-switching .sidebar {
   display: block;
   margin: 24px auto 0;
   padding: 0 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-primary);
 }
@@ -2944,7 +2970,7 @@ html.handedness-switching .sidebar {
 
 @media (max-width: 768px) {
   .file-library-shell {
-    padding: calc(var(--header-height) + 22px) 14px 36px;
+    padding: calc(var(--header-height) + 22px) 16px calc(24px + env(safe-area-inset-bottom, 0px));
   }
 
   .file-library-header h1 {
@@ -2958,6 +2984,13 @@ html.handedness-switching .sidebar {
   .file-library-upload {
     padding: 0 11px;
   }
+}
+
+.file-library-item:hover { border-color: var(--text-tertiary); }
+.file-library-upload:hover, .file-library-load-more:hover { background: var(--bg-hover); }
+.file-library-entry, .file-library-item, .file-library-search { box-sizing: border-box; }
+@media (prefers-reduced-motion: reduce) {
+  .file-library-entry, .file-library-item, .file-library-storage-track span { transition: none; }
 }
 
 .chat-container {
@@ -9002,7 +9035,7 @@ html[data-rai-auth-state="checking"] .app-container {
 }
 
 .auth-custom-api-entry {
-  margin-top: var(--spacing-md);
+  margin-top: 0;
   text-align: center;
 }
 
@@ -9115,7 +9148,7 @@ body.custom-api-mode .main-content {
 }
 
 .auth-passkey-entry {
-  margin-top: var(--spacing-md);
+  margin-top: 0;
 }
 
 .auth-passkey-entry[hidden] {
@@ -9139,39 +9172,72 @@ body.custom-api-mode .main-content {
   background: var(--border-color);
 }
 
-.auth-passkey-btn {
+.auth-alternative-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-alternative-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.auth-alt-button {
+  appearance: none;
   width: 100%;
-  min-height: 42px;
-  padding: 0 14px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
   background: var(--bg-tertiary);
   color: var(--text-primary);
   cursor: pointer;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   font: inherit;
   font-size: 14px;
-  font-weight: 700;
-  transition: transform 0.2s ease, opacity 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  text-decoration: none;
+  transform: scale(1);
+  transition: background-color 140ms ease, transform 120ms ease-out;
 }
 
-.auth-passkey-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: var(--border-dark);
-  background: var(--input-bg);
+@media (hover: hover) {
+  .auth-alt-button:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
 }
 
-.auth-passkey-btn:disabled {
+.auth-alt-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.auth-alt-button:disabled {
   cursor: wait;
   opacity: 0.58;
 }
 
-.auth-passkey-btn:focus-visible,
+/* A keyboard-only focus indicator, not a decorative button border. */
+.auth-alt-button:focus-visible,
 .settings-passkey-card button:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
+}
+
+@media (max-width: 420px) {
+  .auth-alternative-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-alt-button { transition: none; }
+  .auth-alt-button:active:not(:disabled) { transform: none; }
 }
 
 .auth-passkey-hint {
@@ -9223,6 +9289,19 @@ body.custom-api-mode .main-content {
 
 /* ==================== Apple风格渐进式登录 ==================== */
 /* 隐藏状态 - 初始隐藏的元素 */
+/* A native, accessible preference: no custom switch or password persistence. */
+.auth-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.auth-remember-row input { margin: 0; accent-color: var(--accent-color); }
+.auth-remember-row input:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+
 .auth-step-hidden {
   display: none !important;
   opacity: 0;
@@ -9248,83 +9327,55 @@ body.custom-api-mode .main-content {
   display: flex;
 }
 
-/* 登录界面底部区域 */
+/* 登录界面底部：注册提示与精简语言选项共用一行 */
 .auth-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-top: var(--spacing-xl);
   padding-top: var(--spacing-lg);
   border-top: 1px solid var(--border-color);
 }
-
 .auth-footer .auth-switch {
   margin: 0;
+  min-width: 0;
   text-align: left;
-}
-
-/* 行内语言切换按钮 */
-.auth-lang-btn-inline {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border-color);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-primary);
   font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  line-height: 1.5;
 }
-
-.auth-lang-btn-inline:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--border-dark);
-}
-
-/* 登录卡片底部语言文字按钮行 */
+.auth-footer .auth-switch a { white-space: nowrap; }
 .auth-lang-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
-  width: fit-content;
-  max-width: 100%;
-  margin: 14px auto 0;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
+  flex: 0 0 auto;
+  gap: 1px;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 8px;
   background: var(--bg-secondary);
-  box-shadow: none;
 }
-
 .auth-lang-text-btn {
-  min-width: 82px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
-  border: none;
   color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 650;
-  cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, opacity 0.16s ease;
-  padding: 7px 12px;
-  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
-
-.auth-lang-text-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
-.auth-lang-text-btn.active-lang {
-  color: #000;
-  background: var(--color-saturn-yellow);
-  box-shadow: none;
-}
+.auth-lang-text-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.auth-lang-text-btn:active { transform: scale(0.97); }
+.auth-lang-text-btn.active-lang { color: var(--text-primary); background: var(--bg-tertiary); }
+.auth-lang-text-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .auth-lang-text-btn { transition: none; } }
 
 /* 邮箱输入时的焦点提示 */
 #authEmail:focus+.email-hint,
@@ -17753,15 +17804,6 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
     margin-left: 0;
   }
 
-  .auth-lang-row {
-    width: 100%;
-  }
-
-  .auth-lang-text-btn {
-    flex: 1;
-    min-width: 0;
-    padding-inline: 8px;
-  }
 
   .app-update-prompt {
     right: 12px;
@@ -19618,3 +19660,32 @@ body.home-screen-active .input-wrapper > .home-action-rail {
     outline-offset: 3px !important;
   }
 }
+
+/* 2026-09: shared modern reasoning/tool surface; retain semantic buttons and reduced motion. */
+.rai-reasoning-block { margin: 14px 0; border: 1px solid var(--border-color); border-radius: 18px; background: color-mix(in srgb, var(--bg-secondary) 75%, transparent); overflow: hidden; }
+.rai-reasoning-block::before { display: none; }
+.rai-reasoning-header { margin: 0; }
+.rai-reasoning-toggle { width: 100%; min-height: 46px; padding: 12px 16px; justify-content: flex-start; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 13px; gap: 10px; }
+.rai-reasoning-toggle .toggle-icon { margin-left: auto; }
+.rai-reasoning-toggle:focus-visible, .tool-trace-summary:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -3px; }
+.rai-reasoning-content, [data-theme="light"] .rai-reasoning-content { background: transparent; border: 0; border-radius: 0; margin: 0; color: var(--text-secondary); line-height: 1.8; }
+.rai-reasoning-block.expanded .rai-reasoning-content { padding: 0 18px 18px; max-height: min(420px, 50dvh); overflow: auto; }
+.tool-trace-item { border: 1px solid var(--border-color); border-radius: 14px; margin: 8px 0; background: color-mix(in srgb, var(--bg-secondary) 65%, transparent); overflow: hidden; }
+.tool-trace-summary { width: 100%; text-align: left; min-height: 44px; padding: 12px 14px; color: var(--text-primary); background: transparent; border: 0; font: inherit; cursor: pointer; }
+.tool-trace-detail { color: var(--text-secondary); padding: 0 14px 14px; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
+.tool-trace-item[data-status="running"] { border-color: var(--focus-border-color); }
+.rai-stream-warning { margin: 12px 0; padding: 12px 16px; border: 1px solid var(--border-color); border-radius: 14px; color: var(--text-secondary); font-size: 13px; }
+/* Paint under the home indicator, but keep interactive controls inside the safe area.
+   Do not fake away env(safe-area-inset-bottom) or put an overlay over the last messages. */
+html.ios-standalone, html.ios-standalone body { background: var(--bg-primary); }
+html.ios-standalone body.mobile-viewport-managed .app-container,
+html.ios-standalone body.mobile-viewport-managed .main-content { background: var(--bg-primary); padding-bottom: 0; }
+/* Here the composer itself paints through the home-indicator area. Its
+   measured height already includes that inset; do not reserve it twice in
+   the scrollable chat content. */
+html.ios-standalone body.mobile-viewport-managed { --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--spacing-md)); }
+html.ios-standalone body.mobile-viewport-managed.keyboard-open { --chat-content-bottom-clearance: calc(var(--composer-height, 200px) + var(--composer-bottom-gap, 0px) + var(--spacing-md)); }
+html.ios-standalone body.mobile-viewport-managed:not(.keyboard-open) .input-area { bottom: 0; padding-bottom: calc(var(--safe-bottom, 0px) + var(--composer-bottom-gap, 0px)); background: linear-gradient(transparent, var(--bg-primary) 40%); }
+html.ios-standalone body.mobile-viewport-managed .main-content::after,
+html.ios-standalone body.mobile-viewport-managed .chat-edge-blur-bottom { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .rai-reasoning-content, .rai-reasoning-toggle, .tool-trace-item { transition: none !important; animation: none !important; } }
