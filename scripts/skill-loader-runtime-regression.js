@@ -141,7 +141,7 @@ function createProviderMock() {
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
 
-      if (scenario === 'fallback' && body.model === 'gpt-5.6-luna') {
+      if (scenario === 'fallback' && body.model === 'gpt-6.1-sol') {
         response.writeHead(503, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: 'forced primary failure' }));
         return;
@@ -196,7 +196,7 @@ function createProviderMock() {
       if (systemText.includes('CLIENT_OVERRIDE_MUST_NOT_BE_TRUSTED')) {
         errors.push(`${scenario}: client systemPrompt overrode the canonical prompt`);
       }
-      if (scenario === 'luna' || scenario === 'fallback') {
+      if (scenario === 'sol' || scenario === 'fallback') {
         writeSse(response, [openAiToolCalls(['mermaid'])]);
       } else if (scenario === 'kimi') {
         writeSse(response, [openAiText('<|tool_calls_section_begin|><|tool_call_begin|>functions.read_skill:0<|tool_call_argument_begin|>{"name":"mermaid"}<|tool_call_end|><|tool_calls_section_end|>')]);
@@ -359,22 +359,22 @@ async function main() {
     const token = await loginSeededUser(databasePath, baseUrl);
 
     for (const entry of [
-      ['luna', 'gpt-5.6-luna'], ['kimi', 'kimi-k2.6'], ['deepseek', 'deepseek-pro'],
-      ['claude', 'claude-sonnet-5'], ['gemini', 'gemini-3-flash'], ['fallback', 'gpt-5.6-luna'],
-      ['limits', 'gpt-5.6-luna'], ['invalid', 'gpt-5.6-luna']
+      ['sol', 'gpt-6.1-sol'], ['kimi', 'kimi-k2.6'], ['deepseek', 'deepseek-flash'],
+      ['claude', 'claude-sonnet-5'], ['gemini', 'gemini-3-flash'], ['fallback', 'gpt-6.1-sol'],
+      ['limits', 'gpt-6.1-sol'], ['invalid', 'gpt-6.1-sol']
     ]) {
       await runChat(baseUrl, token, { scenario: entry[0], model: entry[1] });
     }
-    await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-5.6-luna', memoryMode: 'off' });
+    await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
 
     assert.deepEqual(provider.errors, [], `provider assertions failed:\n${provider.errors.join('\n')}`);
     assert.ok(provider.observations.some((item) => item.scenario === 'fallback' && item.url.includes('/deepseek/')),
       'runtime fallback did not reach the configured secondary provider');
     assert.ok(!provider.observations.some((item) => (
       ['limits', 'invalid', 'memory-off'].includes(item.scenario)
-        && item.body?.model === 'gpt-5.6-luna'
+        && item.body?.model === 'gpt-6.1-sol'
     )), 'recent Luna 503 must open the ordinary-chat circuit and skip repeated primary attempts');
-    console.log('skill loader runtime regression passed (Luna/Kimi/DeepSeek/Claude/Gemini/fallback)');
+    console.log('skill loader runtime regression passed (GPT-6.1 Sol/Kimi/DeepSeek Flash/Claude/Gemini/fallback)');
   } catch (error) {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {

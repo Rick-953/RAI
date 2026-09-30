@@ -315,7 +315,6 @@ const SELECTION_EXPLANATION_MODEL_ID = 'deepseek-flash-siliconflow';
 const SELECTION_EXPLANATION_MODEL_IDS = Object.freeze([
     'deepseek-flash-siliconflow',
     'deepseek-flash',
-    'deepseek-pro',
     'gemini-3.6-flash-low',
     'gpt-5.6-luna',
     'kimi-k2.6',
@@ -1155,8 +1154,7 @@ function buildUserLoginTwoFactorToken(user, options = {}) {
 
 const ADMIN_MODEL_CATALOG = [
     { id: 'deepseek-flash', name: 'DeepSeek v4 / 快速模型', group: '快捷与全部模型' },
-    { id: 'deepseek-pro', name: 'DeepSeek Pro / 专家模型', group: '快捷与全部模型' },
-    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol / 多模态', group: '全部模型' },
+    { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol / 多模态', group: '全部模型' },
     { id: 'gpt-5.6-luna', name: 'GPT 5.6 / 多模态', group: '全部模型' },
     { id: 'claude-sonnet-5', name: 'Claude Sonnet 5 / 多模态', group: '全部模型' },
     { id: 'gemini-3.6-flash-low', name: 'Gemini 3.6 / 多模态', group: '全部模型' },
@@ -1173,8 +1171,8 @@ const ADMIN_MODEL_CATALOG = [
 
 const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
-const AUTO_MODEL_PREFERENCE = ['deepseek-flash', 'gpt-5.6-luna', 'kimi-k2.6', 'nemotron-3-ultra'];
-const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-5.6-luna', 'kimi-k2.6', 'qwen3.6-35b-a3b'];
+const AUTO_MODEL_PREFERENCE = ['deepseek-flash', 'gpt-6.1-sol', 'kimi-k2.6', 'nemotron-3-ultra'];
+const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-6.1-sol', 'kimi-k2.6', 'qwen3.6-35b-a3b'];
 const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gemini-3-flash', 'gemini-3.6-flash-low'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
@@ -6358,7 +6356,7 @@ async function callK2p5Stream({
 
 function researchModelLabel(modelId = '') {
     const labels = {
-        'gpt-5.6-sol': 'GPT-5.6 Sol',
+        'gpt-6.1-sol': 'GPT-6.1 Sol',
         'gpt-5.6-terra': 'GPT 5.6',
         'gpt-5.6-luna': 'GPT 5.6',
         'gemma': 'Gemma',
@@ -6368,7 +6366,6 @@ function researchModelLabel(modelId = '') {
         'nemotron-3-ultra': 'Nemotron 3 Ultra',
         'deepseek-flash-siliconflow': 'DeepSeek v4 Flash（硅基流动）',
         'deepseek-flash': 'DeepSeek v4',
-        'deepseek-pro': 'DeepSeek Pro',
         'claude-sonnet-5': 'Claude Sonnet 5',
         'gemini-3.6-flash-low': 'Gemini 3.6',
         'gemini-3-flash': 'Gemini 3 Flash',
@@ -6378,7 +6375,7 @@ function researchModelLabel(modelId = '') {
 }
 
 function researchRoleFromModel(modelId = '') {
-    if (modelId === 'gpt-5.6-sol') return 'gpt_sol';
+    if (modelId === 'gpt-6.1-sol') return 'gpt_sol';
     if (modelId === 'gpt-5.6-terra') return 'gpt_terra';
     if (modelId === 'gpt-5.6-luna') return 'gpt_luna';
     if (modelId === 'gemma') return 'gemma';
@@ -6387,7 +6384,6 @@ function researchRoleFromModel(modelId = '') {
     if (modelId === 'chatgpt-gpt-oss-120b') return 'chatgpt';
     if (modelId === 'nemotron-3-ultra') return 'nemotron';
     if (modelId === 'deepseek-flash-siliconflow' || modelId === 'deepseek-flash') return 'deepseek_flash';
-    if (modelId === 'deepseek-pro') return 'deepseek';
     if (modelId === 'gemini-3-flash') return 'gemini';
     if (modelId === 'openrouter-free') return 'openrouter';
     return 'researcher';
@@ -6399,18 +6395,17 @@ const RESEARCH_MODEL_OPTIONS = [
     'qwen3.6-35b-a3b',
     'kimi-k2.6',
     'chatgpt-gpt-oss-120b',
-    'deepseek-pro',
     'deepseek-flash',
     'nemotron-3-ultra',
     'gemini-3-flash'
 ];
-const DEFAULT_RESEARCH_AGENT_MODEL_IDS = ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'];
-const DEFAULT_RESEARCH_MASTER_MODEL_ID = 'deepseek-pro';
+const DEFAULT_RESEARCH_AGENT_MODEL_IDS = ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'];
+const DEFAULT_RESEARCH_MASTER_MODEL_ID = 'deepseek-flash';
 
 function normalizeResearchModelId(modelId = '') {
     if (String(modelId || '').trim() === 'deepseek-flash-siliconflow') return 'deepseek-flash-siliconflow';
     const normalized = normalizeIncomingModelId(modelId);
-    if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
+    if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-flash';
     if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
     return normalized;
 }
@@ -8789,7 +8784,7 @@ const API_PROVIDERS = {
         apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
         envKey: 'DEEPSEEK_API_KEY',
         baseURL: DEEPSEEK_CHAT_COMPLETIONS_URL,
-        models: ['deepseek-flash', 'deepseek-v4-pro']
+        models: ['deepseek-flash']
     },
 
     // 硅基流动 SiliconFlow - Qwen、Kimi K2.6 与 DeepSeek V4 Flash
@@ -8845,7 +8840,10 @@ function logApiKeyReadiness() {
 logApiKeyReadiness();
 
 const LEGACY_MODEL_ALIASES = {
-    // Normalize the short-lived Terra preference back to the stable Luna product route.
+    // Normalize retired model IDs while keeping stored sessions and old clients readable.
+    'gpt-5.6': 'gpt-6.1-sol',
+    'gpt-5.6-sol': 'gpt-6.1-sol',
+    'gpt-6-sol': 'gpt-6.1-sol',
     'gpt-5.6-terra': 'gpt-5.6-luna',
     'claude-opus-5': 'claude-sonnet-5',
     'qwen3-vl': 'qwen3.6-35b-a3b',
@@ -8858,13 +8856,14 @@ const LEGACY_MODEL_ALIASES = {
     'qwen-max': 'auto',
     'qwen2.5-7b': 'auto',
     'grok-4.2': 'auto',
-    'deepseek-chat': 'deepseek-pro',
-    'deepseek-reasoner': 'deepseek-pro',
+    'deepseek-chat': 'deepseek-flash',
+    'deepseek-reasoner': 'deepseek-flash',
     'gpt-5.5': 'auto',
-    'deepseek-v3': 'deepseek-pro',
-    'deepseek-v3.2-speciale': 'deepseek-pro',
-    'deepseek-v4-pro': 'deepseek-pro',
+    'deepseek-v3': 'deepseek-flash',
+    'deepseek-v3.2-speciale': 'deepseek-flash',
+    'deepseek-v4-pro': 'deepseek-flash',
     'deepseek-v4-flash': 'deepseek-flash',
+    'deepseek-pro': 'deepseek-flash',
     'kimi-k2.5': 'kimi-k2.6',
     'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
     'Pro/moonshotai/Kimi-K2.6': 'kimi-k2.6',
@@ -8911,17 +8910,9 @@ const MODEL_ROUTING = {
         supportsWebSearch: false,
         multimodal: false
     },
-    'deepseek-pro': {
-        provider: 'deepseek',
-        model: 'deepseek-v4-pro',
-        thinkingModel: 'deepseek-v4-pro',
-        supportsThinking: true,
-        supportsWebSearch: false,
-        multimodal: false
-    },
-    'gpt-5.6-sol': {
+    'gpt-6.1-sol': {
         provider: 'rai_gpt_gateway',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         supportsThinking: true,
         supportsWebSearch: true,
         multimodal: true
@@ -8956,7 +8947,7 @@ const MODEL_ROUTING = {
     },
     'gpt-image-2': {
         provider: 'rai_gpt_gateway',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         supportsThinking: false,
         supportsWebSearch: false,
         multimodal: true,
@@ -9067,15 +9058,14 @@ const MODEL_ROUTING = {
 };
 
 const MODE_RUNTIME_FALLBACK_MODELS = Object.freeze({
-    'gpt-5.6-luna': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6'],
-    'kimi-k2.6': ['deepseek-pro', 'deepseek-flash', 'gemini-3.6-flash-low'],
-    'nemotron-3-ultra': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6'],
-    'claude-sonnet-5': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6'],
-    'gemini-3.6-flash-low': ['deepseek-pro', 'deepseek-flash', 'kimi-k2.6']
+    'gpt-5.6-luna': ['deepseek-flash', 'kimi-k2.6'],
+    'kimi-k2.6': ['deepseek-flash', 'gemini-3.6-flash-low'],
+    'nemotron-3-ultra': ['deepseek-flash', 'kimi-k2.6'],
+    'claude-sonnet-5': ['deepseek-flash', 'kimi-k2.6'],
+    'gemini-3.6-flash-low': ['deepseek-flash', 'kimi-k2.6']
 });
 
 const UNIVERSAL_RUNTIME_FALLBACK_MODELS = [
-    'deepseek-pro',
     'deepseek-flash',
     'kimi-k2.6',
     'gemini-3.6-flash-low',
@@ -9099,7 +9089,6 @@ function getRuntimeFallbackModelIds(currentModel = '', options = {}) {
     return candidates.filter((modelId, index, list) => {
         if (list.indexOf(modelId) !== index) return false;
         if (modelId === current) return false;
-        if (modelId === 'deepseek-pro' && current !== 'deepseek-pro') return false; // Never silently upgrade cost/model tier.
         if (!requiresMultimodal) return true;
         return MODEL_ROUTING[modelId]?.multimodal === true;
     });
@@ -15825,13 +15814,13 @@ function normalizeSessionPromptLanguage(value) {
 function inferSessionPromptModelIdentity({ model, thinkingMode, researchMode, researchMasterModel } = {}) {
     const normalizedResearchMode = normalizeResearchMode(researchMode);
     if (normalizedResearchMode !== 'off') {
-        const masterModel = normalizeResearchMasterModel(researchMasterModel || model || 'deepseek-pro');
+        const masterModel = normalizeResearchMasterModel(researchMasterModel || model || 'deepseek-flash');
         return normalizeSessionPromptModelIdentity(`model:${masterModel}`) || 'research';
     }
     const normalizedModel = normalizeIncomingModelId(model || 'auto');
     if (normalizedModel === 'auto') return thinkingMode ? 'think' : 'smart';
+    if (normalizedModel === 'deepseek-flash' && thinkingMode) return 'think';
     if (normalizedModel === 'deepseek-flash') return 'fast';
-    if (normalizedModel === 'deepseek-pro' && thinkingMode) return 'think';
     return normalizeSessionPromptModelIdentity(`model:${normalizedModel}`) || 'smart';
 }
 
@@ -20863,9 +20852,9 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let ownedSession = null;
         let model = normalizeIncomingModelId(requestedModel);
         let thinkingMode = !!thinkingModeInput;
-        // DeepSeek V4.1 Flash/Pro support tool calls in thinking mode. Keep the
+        // DeepSeek Flash supports tool calls in thinking mode. Keep the
         // existing fast-mode behavior for other local tool providers.
-        const supportsClientToolThinking = model === 'deepseek-flash' || model === 'deepseek-pro';
+        const supportsClientToolThinking = model === 'deepseek-flash';
         if (clientFileExecution && !supportsClientToolThinking) {
             thinkingMode = false;
         }
@@ -21981,8 +21970,7 @@ if (clientFileExecution && systemPrompt) {
         //  关键修复：添加白名单验证（防御性编程）
         const VALID_MODELS = [
             'deepseek-flash',
-            'deepseek-pro',
-            'gpt-5.6-sol',
+            'gpt-6.1-sol',
             'gpt-5.6-terra',
             'gpt-5.6-luna',
             'claude-sonnet-5',
@@ -22075,7 +22063,7 @@ if (clientFileExecution && systemPrompt) {
 
         let actualModel = routing.model;
 
-        // DeepSeek Pro 使用 thinking 参数控制深度推理；Flash 保持快速路径。
+        // DeepSeek Flash 使用 thinking 参数控制深度推理；Flash 保持快速路径。
         if (routing.provider === 'deepseek' && thinkingMode && routing.thinkingModel) {
             actualModel = routing.thinkingModel;
             console.log(` DeepSeek Pro 思考模式: 使用 ${actualModel}`);
@@ -22288,10 +22276,10 @@ if (clientFileExecution && systemPrompt) {
             console.log(` 工具模式: 启用流式工具调用 (Streaming Function Calling), tools=${runtimeToolDefinitions.length}, internet=${internetMode}, image=${imageGenerationRequested}, memory=${memoryToolsEnabled}`);
             useStreamingTools = true;
             // 不再阻塞等待，直接在后面的流式调用中添加 tools 参数
-        } else if (!enableResearchDebate && internetMode && finalModel === 'deepseek-pro') {
+        } else if (!enableResearchDebate && internetMode && finalModel === 'deepseek-flash') {
             console.log(searchContext
-                ? ` DeepSeek Pro 使用服务端预检索上下文`
-                : ` DeepSeek Pro 未启用流式工具调用`);
+                ? ` DeepSeek Flash 使用服务端预检索上下文`
+                : ` DeepSeek Flash 未启用流式工具调用`);
         }
 
         // 构建消息数组
@@ -28885,8 +28873,7 @@ function isFreeModelIdentifier(modelUsed = '') {
 
 const MODEL_POINT_COSTS = Object.freeze({
     'deepseek-flash': 1,
-    'deepseek-pro': 1,
-    'gpt-5.6-sol': 5,
+    'gpt-6.1-sol': 5,
     'gpt-5.6-terra': 5,
     'gpt-5.6-luna': 5,
     'claude-sonnet-5': 10,
