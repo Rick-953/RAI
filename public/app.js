@@ -2411,7 +2411,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260929-stream-r7';
+const RAI_BUILD_ID = '20260930-gpt61sol-r8';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2495,8 +2495,8 @@ const appState = {
   qualityProfile: 'high',
   researchModeEnabled: false,
   researchMode: 'fast',
-  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'],
-  researchMasterModel: 'deepseek-pro',
+  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'],
+  researchMasterModel: 'deepseek-flash',
   researchMaxRounds: 50,
   sendHoldSuppressClick: false,
   sendHoldPicker: null,
@@ -4983,19 +4983,14 @@ const MODELS = {
     supportsThinking: true
   },
   'deepseek-flash': {
-    name: 'DeepSeek v4',
+    name: 'DeepSeek v4 Flash',
     provider: 'deepseek',
     supportsThinking: true,
-    contextWindow: 1000000
-  },
-  'deepseek-pro': {
-    name: 'DeepSeek Pro',
-    provider: 'deepseek',
-    supportsThinking: true,
+    contextWindow: 1000000,
     maxTokens: 128000
   },
-  'gpt-5.6-sol': {
-    name: 'GPT-5.6 Sol',
+  'gpt-6.1-sol': {
+    name: 'GPT-6.1 Sol',
     provider: 'rai_openai_gateway',
     supportsThinking: true,
     supportsReasoningProfile: true,
@@ -5143,6 +5138,9 @@ const MODELS = {
 
 const LEGACY_MODEL_ALIASES = {
   // Keep the stable public GPT 5.6 selection while its upstream route uses Terra.
+  'gpt-5.6': 'gpt-6.1-sol',
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-6-sol': 'gpt-6.1-sol',
   'gpt-5.6-terra': 'gpt-5.6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
@@ -5156,11 +5154,12 @@ const LEGACY_MODEL_ALIASES = {
   'qwen2.5-7b': 'auto',
   'grok-4.2': 'auto',
   'gpt-5.5': 'auto',
-  'deepseek-chat': 'deepseek-pro',
-  'deepseek-reasoner': 'deepseek-pro',
-  'deepseek-v3': 'deepseek-pro',
-  'deepseek-v3.2-speciale': 'deepseek-pro',
-  'deepseek-v4-pro': 'deepseek-pro',
+  'deepseek-chat': 'deepseek-flash',
+  'deepseek-reasoner': 'deepseek-flash',
+  'deepseek-v3': 'deepseek-flash',
+  'deepseek-v3.2-speciale': 'deepseek-flash',
+  'deepseek-v4-pro': 'deepseek-flash',
+  'deepseek-pro': 'deepseek-flash',
   'deepseek-v4-flash': 'deepseek-flash',
   'kimi-k2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
@@ -5205,7 +5204,7 @@ function getModelPromptIdentity(promptLanguage = getSessionPromptLanguage()) {
   const modelId = identity.startsWith('model:')
     ? normalizeSelectedModelId(identity.slice('model:'.length))
     : (identity === 'research'
-    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')
+    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')
     : normalizeSelectedModelId(appState.selectedModel || 'auto'));
   return MODELS[modelId]?.name || (english ? 'Smart model' : '智能模型');
 }
@@ -5214,7 +5213,7 @@ function getPromptModelIdentityForSession() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (['smart', 'fast', 'think'].includes(identity)) return identity;
   if (identity === 'research') {
-    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')}`;
+    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')}`;
   }
   return `model:${normalizeSelectedModelId(appState.selectedModel || 'auto')}`;
 }
@@ -13301,13 +13300,12 @@ function normalizeResearchMode(value) {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
   { id: 'gpt-5.6-luna', label: 'GPT 5.6' },
   { id: 'gemma', label: 'Gemma' },
   { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
   { id: 'kimi-k2.6', label: 'Kimi K2.6' },
   { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
-  { id: 'deepseek-pro', label: 'DeepSeek Pro' },
   { id: 'deepseek-flash', label: 'DeepSeek v4' },
   { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
   { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
@@ -13315,7 +13313,7 @@ const RESEARCH_MODEL_OPTIONS = [
 
 function normalizeResearchModelId(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
-  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
+  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-flash';
   if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
   return normalized;
 }
@@ -13331,12 +13329,12 @@ function normalizeResearchAgentModels(input) {
     if (!allowed.has(modelId) || selected.includes(modelId)) return;
     selected.push(modelId);
   });
-  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'];
+  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'];
 }
 
 function normalizeResearchMasterModel(input) {
   const modelId = normalizeResearchModelId(input);
-  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-pro';
+  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-flash';
 }
 
 
@@ -13492,7 +13490,7 @@ function renderResearchModelControls() {
     masterSelect.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => `
       <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
     `).join('');
-    masterSelect.value = appState.researchMasterModel || currentValue || 'deepseek-pro';
+    masterSelect.value = normalizeResearchMasterModel(appState.researchMasterModel || currentValue || 'deepseek-flash');
   }
 }
 
@@ -13569,7 +13567,7 @@ function getModeRequestConfig(mode = '') {
   if (normalized === 'research') {
     return {
       mode: 'research',
-      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro'),
+      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash'),
       thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
       reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
       researchMode: normalizeResearchMode(appState.researchMode || 'fast')
@@ -16768,11 +16766,6 @@ function getModelDisplayMeta(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
-  }
-  if (normalized === 'deepseek-pro') {
-    return appState.thinkingMode
-      ? { i18nKey: 'model-expert', fallback: 'Think' }
-      : { i18nKey: null, fallback: MODELS[normalized]?.name || 'DeepSeek Pro' };
   }
   if (normalized === 'deepseek-flash') {
     return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
@@ -23792,7 +23785,6 @@ function getSendHoldModes() {
 
 function getSendHoldModeFromCurrentState() {
   if (isResearchModeEnabled()) return 'research';
-  if (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode) return 'think';
   if (appState.selectedModel === 'deepseek-flash') return 'fast';
   return 'smart';
 }
@@ -28549,7 +28541,7 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-	        model: 'deepseek-pro',
+	        model: 'deepseek-flash',
 	        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
 	        promptTimeContext: getUserTimeContext(),
 	        memoryMode: 'off',
@@ -34746,7 +34738,7 @@ async function loadAdminLimits() {
       .map(([id, m]) => ({ id, name: escapeHtml((m.displayName && m.displayName[appState.language]) || m.name || id) }));
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
-      'deepseek-flash-siliconflow', 'deepseek-flash', 'deepseek-pro',
+      'deepseek-flash-siliconflow', 'deepseek-flash',
       'gemini-3.6-flash-low', 'gpt-5.6-luna', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);

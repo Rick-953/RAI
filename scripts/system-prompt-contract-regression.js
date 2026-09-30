@@ -93,11 +93,11 @@ function testServerManagedNativeFallback() {
     'Kimi tool continuation must retain provider reasoning_content');
   assert.match(server, /if \(isKimiK25ActualModel\(actualModel\) \|\| thinkingMode\) \{\s*assistantToolCallMessage\.reasoning_content = roundReasoningContent/,
     'Kimi agent tool continuation must retain provider reasoning_content');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
+  assert.match(server, /'claude-sonnet-5': \['deepseek-flash', 'kimi-k2\.6'\]/,
     'Claude fallback must prefer verified providers before legacy OpenRouter routes');
   assert.match(server, /'deepseek-flash': \{\s*provider: 'deepseek',\s*model: 'deepseek-flash'/,
     'DeepSeek Flash must use the verified official provider route');
-  assert.match(server, /const UNIVERSAL_RUNTIME_FALLBACK_MODELS = \[\s*'deepseek-pro',\s*'deepseek-flash',\s*'kimi-k2\.6'/,
+  assert.match(server, /const UNIVERSAL_RUNTIME_FALLBACK_MODELS = \[\s*'deepseek-flash',\s*'kimi-k2\.6'/,
     'universal fallback must prefer verified migrated providers');
   assert.match(server, /routing\.provider === 'openrouter'[\s\S]{0,120}Math\.min\(primaryAttemptTimeoutMs, 6000\)/,
     'legacy OpenRouter connection failures must not consume the full provider attempt budget');

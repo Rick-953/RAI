@@ -8,7 +8,7 @@ const { trace } = require('../lib/diagnostic-trace');
 const canary = 'PRIVATE-CANARY-email@example.invalid-token-secret-file-name-message';
 const uuid = crypto.randomUUID();
 const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'diagnostics.js'), 'utf8');
-assert.match(source, /version\s*=\s*'20260929-stream-r7'/, 'diagnostics resource must use the active build marker');
+assert.match(source, /version\s*=\s*'20260930-gpt61sol-r8'/, 'diagnostics resource must use the active build marker');
 function create(options = {}) {
   let stored = options.saved || null, clock = 0;
   const env = { location: { href: options.href || 'https://rai.test/beta/' }, Request, Headers, TextDecoder,

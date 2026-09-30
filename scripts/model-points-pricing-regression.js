@@ -14,7 +14,7 @@ for (const [model, cost] of Object.entries({
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
     'deepseek-flash': 1,
-    'deepseek-pro': 1,
+    'gpt-6.1-sol': 5,
     'gpt-image-2': 20
 })) {
     assert.match(server, new RegExp(`'${model}': ${cost}`), `${model} must have the requested point cost`);

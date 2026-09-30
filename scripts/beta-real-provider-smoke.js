@@ -20,7 +20,7 @@ const SMOKE_SKILL = ['mermaid', 'sandbox', 'rai-product'].includes(process.env.R
 const DEFAULT_MODELS = [
   ['luna', 'gpt-5.6-luna'],
   ['kimi', 'kimi-k2.6'],
-  ['deepseek', 'deepseek-pro'],
+  ['deepseek', 'deepseek-flash'],
   ['claude', 'claude-sonnet-5'],
   ['gemini', 'gemini-3.6-flash-low']
 ];

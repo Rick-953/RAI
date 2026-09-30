@@ -558,7 +558,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
+  assert.deepEqual(visibleModelIds, ['gpt-6.1-sol', 'gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
+  assert.match(allModels, />GPT-6.1 Sol</);
   assert.match(allModels, />GPT 5\.6</);
   assert.match(allModels, />Claude Sonnet 5</);
   assert.match(allModels, />Gemini 3\.6</);
@@ -584,14 +585,14 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-5\.6-luna', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
+  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-6.1-sol', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
     'Smart Model text requests must prefer DeepSeek V4 Flash (admin-configurable) with the requested ordered fallback chain');
-  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-5\.6-luna', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
-    'Smart Model multimodal requests must keep Luna first and avoid text-only fallbacks');
+  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-6.1-sol', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
+    'Smart Model multimodal requests must keep GPT-6.1 Sol first and avoid text-only fallbacks');
   assert.match(server, /'gpt-5\.6-luna':\s*\{[\s\S]{0,180}provider:\s*'rai_gpt_gateway'[\s\S]{0,180}model:\s*'gpt-5\.6-luna'/,
     'the public GPT 5.6 selection must call the Luna upstream model');
-  assert.match(server, /'gpt-5\.6-luna': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Luna failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.match(server, /'gpt-5\.6-luna': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Luna failures must follow DeepSeek Flash → Kimi');
   assert.match(server, /'claude-sonnet-5':\s*\{[\s\S]{0,180}provider:\s*'rai_claude_gateway'[\s\S]{0,180}model:\s*'claude-sonnet-5'/,
     'the Claude product route must use UMAPIS Claude Sonnet 5');
   assert.match(server, /'gemini-3\.6-flash-low':\s*\{[\s\S]{0,180}provider:\s*'rai_fast_gateway'[\s\S]{0,180}model:\s*'gemini-3\.6-flash-low'/,
@@ -602,12 +603,12 @@ function testFocusedModelUiReasoningAndSwipe() {
     'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
   assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-flash'/,
     'DeepSeek V4 Flash must use the official DeepSeek route');
-  assert.match(server, /'deepseek-pro':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-pro'/,
-    'DeepSeek Pro must use the official DeepSeek route');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Claude failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
-  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Gemini failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/,
+    'DeepSeek Pro must not be an active route');
+  assert.match(server, /'claude-sonnet-5': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Claude failures must follow DeepSeek Flash → Kimi');
+  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Gemini failures must follow DeepSeek Flash → Kimi');
   assert.match(server, /智能模型默认使用 \$\{researchModelLabel\(finalModel\)\}/,
     'Smart Model routing notices must use a user-facing model label');
   assert.match(server, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
@@ -1064,7 +1065,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260929-stream-r7';
+  const expectedBuild = '20260930-gpt61sol-r8';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
