@@ -196,7 +196,7 @@ function createProviderMock() {
       if (systemText.includes('CLIENT_OVERRIDE_MUST_NOT_BE_TRUSTED')) {
         errors.push(`${scenario}: client systemPrompt overrode the canonical prompt`);
       }
-      if (scenario === 'luna' || scenario === 'fallback') {
+      if (scenario === 'sol' || scenario === 'fallback') {
         writeSse(response, [openAiToolCalls(['mermaid'])]);
       } else if (scenario === 'kimi') {
         writeSse(response, [openAiText('<|tool_calls_section_begin|><|tool_call_begin|>functions.read_skill:0<|tool_call_argument_begin|>{"name":"mermaid"}<|tool_call_end|><|tool_calls_section_end|>')]);
@@ -359,7 +359,7 @@ async function main() {
     const token = await loginSeededUser(databasePath, baseUrl);
 
     for (const entry of [
-      ['gpt61sol', 'gpt-6.1-sol'], ['kimi', 'kimi-k2.6'], ['deepseek', 'deepseek-flash'],
+      ['sol', 'gpt-6.1-sol'], ['kimi', 'kimi-k2.6'], ['deepseek', 'deepseek-flash'],
       ['claude', 'claude-sonnet-5'], ['gemini', 'gemini-3-flash'], ['fallback', 'gpt-6.1-sol'],
       ['limits', 'gpt-6.1-sol'], ['invalid', 'gpt-6.1-sol']
     ]) {
