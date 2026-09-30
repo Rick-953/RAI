@@ -17,8 +17,8 @@ assert.match(packageJson.version, /^\d+\.\d+\.\d+$/, 'package version must remai
 assert.match(html, /^<!DOCTYPE html>/i);
 assert.match(html, /http-equiv="X-UA-Compatible" content="IE=edge"/i);
 assert.match(html, /lang="zh-CN"/);
-assert.match(html, /href="\/uwp-signup\.css\?v=20260807-dark-mode"/);
-assert.match(html, /src="\/uwp-signup\.js\?v=20260801-uwp-signup-v01174"/);
+assert.match(html, /href="\/uwp-signup\.css\?v=20260929-remember-r1"/);
+assert.match(html, /src="\/uwp-signup\.js\?v=20260929-remember-r1"/);
 assert.doesNotMatch(html, /<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i);
 assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
 
@@ -37,6 +37,8 @@ assert.match(css, /font-family:\s*"Segoe UI"/);
 assert.match(css, /@media\s+\(-ms-high-contrast:\s*active\)/);
 assert.doesNotMatch(css, /border-radius|box-shadow|text-shadow|animation|transition|transform|linear-gradient|radial-gradient|var\s*\(|display:\s*grid/i);
 
+assert.match(client, /localStorage\.(?:getItem|setItem)\('rai_remember_password'/);
+assert.doesNotMatch(client, /localStorage\.(?:getItem|setItem)\([^']|localStorage\.(?:getItem|setItem)\('(?!rai_remember_password')/);
 assert.match(client, /new XMLHttpRequest\(\)/);
 assert.match(client, /postJson\('\/api\/auth\/register'/);
 assert.match(client, /postJson\('\/api\/auth\/register\/verify'/);
@@ -44,7 +46,7 @@ assert.match(client, /postJson\('\/api\/auth\/register\/resend'/);
 assert.equal((client.match(/registrationOnly:\s*true/g) || []).length, 3);
 assert.match(client, /password\.length < 8 \|\| password\.length > 128/);
 assert.match(client, /\/\^\\d\{6\}\$\/\.test\(code\)/);
-assert.doesNotMatch(client, /\b(?:let|const|class|async|await|fetch|Promise)\b|=>|`|\?\.|\?\?|\.finally\s*\(|\b(?:localStorage|sessionStorage)\b|document\.cookie/);
+assert.doesNotMatch(client, /\b(?:let|const|class|async|await|fetch|Promise)\b|=>|`|\?\.|\?\?|\.finally\s*\(|\bsessionStorage\b|document\.cookie/);
 
 assert.match(server, /app\.get\(\['\/UWP-SignUP', '\/UWP-SignUP\/'\]/);
 assert.match(server, /sendFile\(path\.join\(__dirname, 'public', 'uwp-signup\.html'\)\)/);

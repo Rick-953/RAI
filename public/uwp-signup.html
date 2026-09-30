@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="format-detection" content="telephone=no">
   <title>RAI UWP 用户注册</title>
-  <link rel="stylesheet" href="/uwp-signup.css?v=20260807-dark-mode">
+  <link rel="stylesheet" href="/uwp-signup.css?v=20260929-remember-r1">
 </head>
 <body>
   <header class="top-bar">
@@ -45,6 +45,11 @@
           <input id="passwordConfirm" name="passwordConfirm" type="password" maxlength="128" autocomplete="new-password" required>
         </div>
 
+        <label class="remember-password-row" for="rememberPassword">
+          <input id="rememberPassword" name="rememberPassword" type="checkbox" checked>
+          <span>记住密码（由设备密码管理器保存）</span>
+        </label>
+
         <button id="registerButton" class="primary-button" type="submit">注册</button>
       </form>
 
@@ -68,6 +73,6 @@
     </section>
   </main>
 
-  <script src="/uwp-signup.js?v=20260801-uwp-signup-v01174"></script>
+  <script src="/uwp-signup.js?v=20260929-remember-r1"></script>
 </body>
 </html>

@@ -5620,6 +5620,7 @@ const i18n = {
     'register-subtitle': '加入 RAI 开始对话',
     'email-label': '邮箱',
     'password-label': '密码',
+    'auth-remember-password': '\u8bb0\u4f4f\u5bc6\u7801',
     'username-label': '用户名 (可选)',
     'password-placeholder': '输入密码',
     'username-placeholder': '您的昵称',
@@ -6282,6 +6283,7 @@ const i18n = {
     'register-subtitle': 'Join RAI to start chatting',
     'email-label': 'Email',
     'password-label': 'Password',
+    'auth-remember-password': 'Remember password on this device',
     'username-label': 'Username (optional)',
     'password-placeholder': 'Enter password',
     'username-placeholder': 'Your nickname',
@@ -15596,6 +15598,7 @@ function showAuthScreen() {
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
   initMascotAuthBindings();
+  syncRememberPasswordPreference();
   syncGuideMascotVisibility();
   requestMascotPosition();
   updateMascotPasswordExpression();
@@ -24453,6 +24456,44 @@ appState.authTwoFactorRequired = false;
 let authTwoFactorPrecheckToken = 0;
 let lastPrecheckedAuthEmail = '';
 
+// Only this preference is local. Passwords belong to the OS/browser manager.
+const RAI_REMEMBER_PASSWORD_KEY = 'rai_remember_password';
+let rememberPasswordSessionPreference = null;
+function getRememberPasswordPreference() {
+  if (rememberPasswordSessionPreference !== null) return rememberPasswordSessionPreference;
+  try { return localStorage.getItem(RAI_REMEMBER_PASSWORD_KEY) !== 'false'; }
+  catch (error) { return true; }
+}
+function syncRememberPasswordPreference() {
+  const enabled = getRememberPasswordPreference();
+  const checkbox = document.getElementById('authRememberPassword');
+  if (checkbox) checkbox.checked = enabled;
+  setRememberPasswordAutocomplete(enabled);
+}
+function setRememberPasswordAutocomplete(enabled) {
+  const password = document.getElementById('authPassword');
+  if (password) password.autocomplete = enabled
+    ? (appState.authMode === 'register' ? 'new-password' : 'current-password')
+    : 'off';
+}
+function setRememberPasswordPreference(enabled) {
+  rememberPasswordSessionPreference = Boolean(enabled);
+  try { localStorage.setItem(RAI_REMEMBER_PASSWORD_KEY, enabled ? 'true' : 'false'); }
+  catch (error) { /* Private browsing can deny storage; honor this page's choice. */ }
+  setRememberPasswordAutocomplete(enabled);
+}
+
+// Delegate storage to the platform password manager; never persist raw bytes
+// in localStorage or sessionStorage. Unsupported browsers use autocomplete.
+function offerBrowserPasswordSave(email, password) {
+  if (!getRememberPasswordPreference() || !email || !password
+    || typeof PasswordCredential !== 'function' || !navigator.credentials?.store) return;
+  try {
+    const credential = new PasswordCredential({ id: email, password, name: 'RAI' });
+    Promise.resolve(navigator.credentials.store(credential)).catch(() => {});
+  } catch (error) { /* Browser may deny password storage. */ }
+}
+
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
 
 function normalizeCustomApiUrl(value) {
@@ -24780,6 +24821,7 @@ function setAuthLoginMethod(method) {
 
 function updateAuthMethodUI() {
   configureAuthSecondFactorInput();
+  syncRememberPasswordPreference();
   const isLogin = appState.authMode === 'login';
   const passwordInput = document.getElementById('authPassword');
   if (passwordInput) {
@@ -25438,7 +25480,13 @@ async function verifyPendingEmailAuth(email, code) {
 	    body: JSON.stringify({ email, code })
   });
 	  const data = await parseApiJsonResponse(response);
-  if (await handleAuthServerResponse(data)) return;
+  const newPassword = purpose === 'register' ? getCurrentAuthPassword() : '';
+  if (await handleAuthServerResponse(data)) {
+    if (purpose === 'register' && data?.success && data.token) {
+      offerBrowserPasswordSave(email, newPassword);
+    }
+    return;
+  }
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码无效或已过期');
   }
@@ -25573,6 +25621,7 @@ async function handleAuthSubmit() {
       if (!(await handleAuthServerResponse(data))) {
         showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code'));
       }
+      if (data?.success && data.token) offerBrowserPasswordSave(email, password);
       return;
     }
 
@@ -25604,6 +25653,7 @@ async function handleAuthSubmit() {
     if (!(await handleAuthServerResponse(data))) {
       showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
+    if (data?.success && data.token) offerBrowserPasswordSave(email, password);
   } catch (error) {
     const fallbackError = getAuthNetworkUnavailableMessage();
     const rawMessage = String(error?.message || '').trim();
@@ -31152,6 +31202,12 @@ class MobileKeyboardHandler {
       this.visualViewport.addEventListener('scroll', this.handleViewportChange);
     }
     window.addEventListener('orientationchange', this.handleViewportChange);
+    if (this.isIOS && this.isStandalone) {
+      window.addEventListener('pageshow', this.handleViewportChange);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) this.handleViewportChange();
+      });
+    }
   }
 
   setupFocusListeners() {
@@ -31200,40 +31256,39 @@ class MobileKeyboardHandler {
       return;
     }
 
-    // iOS 主屏幕模式：冷启动时 100dvh/visualViewport.height 可能少算顶部安全区，
-    // 用 screen.height 修正完整屏幕高度（只接受与实测值相差一个安全区的候选）；
-    // 键盘打开时改用 visualViewport 高度，让输入框贴在键盘上方。
+    // In a standalone WebView the visual viewport may lag behind focusout and
+    // pageshow. It never owns the unfocused document/composer height.
     if (this.isIOS && this.isStandalone) {
       const viewport = this.visualViewport;
-      const viewportHeight = viewport ? Math.max(0, Math.round(viewport.height)) : Math.round(window.innerHeight);
-      const viewportTop = viewport ? Math.max(0, Math.round(viewport.offsetTop || 0)) : 0;
+      const viewportHeight = Math.round(viewport?.height || window.innerHeight || 0);
+      const viewportTop = Math.max(0, Math.round(viewport?.offsetTop || 0));
       const innerHeight = Math.round(window.innerHeight || 0);
       const screenHeight = Math.round(window.screen?.height || 0);
       const observedMax = Math.max(innerHeight, viewportHeight);
-      const fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
+      // Accept screen.height only in an installed iOS app and only when its
+      // difference is inset-sized; never apply it to ordinary Safari.
+      let fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
         ? screenHeight
         : observedMax;
-      const keyboardHeight = Math.max(0, fullHeight - viewportHeight - viewportTop);
-      // activeInput 兜底：部分 iOS 版本键盘弹起时布局视口也会一起缩小，
-      // 单看高度差会误判为键盘未打开。
-      const keyboardOpen = Boolean(this.activeInput) || keyboardHeight > 120;
+      const layoutWidth = Math.round(window.innerWidth || 0);
+      if (this.activeInput && this.standaloneLayoutWidth === layoutWidth) {
+        fullHeight = Math.max(fullHeight, this.standaloneLayoutHeight || 0);
+      } else {
+        this.standaloneLayoutWidth = layoutWidth;
+        this.standaloneLayoutHeight = fullHeight;
+      }
+      // Focus can survive keyboard dismissal or come from a hardware keyboard.
+      // A small inset-sized viewport difference is not a keyboard.
+      const keyboardOpen = Boolean(this.activeInput) && fullHeight - viewportHeight - viewportTop > 120;
+      const appHeight = keyboardOpen ? Math.max(320, viewportHeight) : Math.max(320, fullHeight);
 
       this.keyboardOpen = keyboardOpen;
-      this.root.style.setProperty('--app-height', keyboardOpen
-        ? `${Math.max(320, viewportHeight)}px`
-        : `${Math.max(320, fullHeight)}px`);
-      this.root.style.setProperty('--viewport-offset-top', `${viewportTop}px`);
-      this.root.style.setProperty('--keyboard-offset', `${keyboardHeight}px`);
+      this.root.style.setProperty('--app-height', `${appHeight}px`);
+      this.root.style.setProperty('--viewport-offset-top', keyboardOpen ? `${viewportTop}px` : '0px');
+      this.root.style.setProperty('--keyboard-offset', keyboardOpen ? `${Math.max(0, fullHeight - viewportHeight - viewportTop)}px` : '0px');
       this.body.classList.toggle('keyboard-open', keyboardOpen);
       this.resetStandaloneLayoutScroll();
-
-      this.log('Viewport sync (standalone)', {
-        viewportHeight,
-        viewportTop,
-        fullHeight,
-        keyboardHeight,
-        keyboardOpen
-      });
+      this.log('Viewport sync (standalone)', { viewportHeight, fullHeight, appHeight, keyboardOpen });
       return;
     }
 
@@ -31400,27 +31455,11 @@ class MobileKeyboardHandler {
     }
   }
 
-  // iOS 主屏幕偶发“视口卡在短高度”的状态：屏幕比 WebView 高一个顶部安全区，
-  // 底部会留下无法用 CSS 填满的黑边。切换一次全屏元素的 display 强制 WebKit
-  // 重新测量视口，即可恢复完整高度。
+  // Reconcile after WebKit's delayed viewport update without toggling display.
   healStandaloneViewport() {
     if (!this.isIOS || !this.isStandalone || this.activeInput) return;
-    const screenHeight = Math.round(window.screen?.height || 0);
-    const currentHeight = Math.max(
-      Math.round(window.innerHeight || 0),
-      Math.round(this.visualViewport?.height || 0)
-    );
-    const delta = screenHeight - currentHeight;
-    if (!screenHeight || delta <= 4 || delta > 120) return;
-    const shell = [document.getElementById('appContainer'), document.getElementById('authContainer')]
-      .find((element) => element && element.offsetParent !== null);
-    if (!shell) return;
-    const previousDisplay = shell.style.display;
-    shell.style.display = 'none';
-    void shell.offsetHeight;
-    shell.style.display = previousDisplay;
     this.updateViewportVars();
-    this.log('Viewport healed', { screenHeight, currentHeight, delta });
+    this.syncComposerMetrics();
   }
 
   applyIOSFixes() {

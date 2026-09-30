@@ -83,6 +83,10 @@
             <label class="form-label" data-i18n="password-label">密码</label>
             <input type="password" class="form-input" id="authPassword" data-i18n-placeholder="password-placeholder"
               placeholder="输入密码" data-rai-keydown="handlePasswordKeydown(event)" autocomplete="current-password">
+            <label class="auth-remember-row" for="authRememberPassword">
+              <input type="checkbox" id="authRememberPassword" checked data-rai-change="setRememberPasswordPreference(this.checked)">
+              <span data-i18n="auth-remember-password">记住密码</span>
+            </label>
             <div class="auth-forgot-row" id="forgotPasswordRow">
               <button type="button" class="auth-forgot-btn" data-rai-click="showForgotPasswordHelp()"
                 data-i18n="forgot-password">忘记密码？</button>
