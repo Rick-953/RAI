@@ -41,7 +41,7 @@ async function close(server) {
 }
 
 async function main() {
-    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
     assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2');
     assert.strictEqual(normalizeGatewayBaseUrl('https://gateway.example/v1/'), 'https://gateway.example/v1');
     assert.strictEqual(joinGatewayEndpoint('https://gateway.example/v1', '/chat/completions'), 'https://gateway.example/v1/chat/completions');
@@ -58,12 +58,12 @@ async function main() {
     }
     assert.throws(() => buildGatewayHeaders(''), /api_key_missing/);
     assert.deepStrictEqual(
-        applyGatewayChatRequestPolicy({ model: 'gpt-5.6-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: false, reasoningEffort: 'none' }),
-        { model: 'gpt-5.6-sol' }
+        applyGatewayChatRequestPolicy({ model: 'gpt-6.1-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: false, reasoningEffort: 'none' }),
+        { model: 'gpt-6.1-sol' }
     );
     assert.deepStrictEqual(
-        applyGatewayChatRequestPolicy({ model: 'gpt-5.6-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: true, reasoningEffort: 'xhigh' }),
-        { model: 'gpt-5.6-sol', reasoning_effort: 'xhigh' }
+        applyGatewayChatRequestPolicy({ model: 'gpt-6.1-sol', temperature: 0.7, top_p: 0.9 }, { thinkingMode: true, reasoningEffort: 'xhigh' }),
+        { model: 'gpt-6.1-sol', reasoning_effort: 'xhigh' }
     );
     const continuationPolicyBody = applyGatewayChatRequestPolicy({
         model: 'gpt-5.6-terra',
@@ -279,7 +279,7 @@ async function main() {
         const port = await listen(server);
         const baseUrl = `http://127.0.0.1:${port}/v1`;
         const multimodalBody = applyGatewayChatRequestPolicy({
-            model: 'gpt-5.6-sol',
+            model: 'gpt-6.1-sol',
             messages: [{
                 role: 'user',
                 content: [
@@ -405,14 +405,14 @@ async function main() {
         assert.ok(serverSource.includes(`'${modelId}': {`), `routing missing ${modelId}`);
         assert.ok(appSource.includes(`'${modelId}': {`), `client catalog missing ${modelId}`);
     }
-    assert.ok(indexSource.includes('data-model="gpt-5.6-luna"'), 'focused model UI must expose GPT 5.6 through Luna');
-    for (const hiddenModelId of ['gpt-5.6-sol', 'gpt-5.6-terra']) {
+    assert.ok(indexSource.includes('data-model="gpt-6.1-sol"'), 'focused model UI must expose GPT-6.1 Sol');
+    for (const hiddenModelId of ['gpt-5.6-sol', 'gpt-6-sol', 'gpt-5.6-terra']) {
         assert.ok(!indexSource.includes(`data-model="${hiddenModelId}"`), `internal model must stay out of the focused picker: ${hiddenModelId}`);
     }
     assert.match(serverSource, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
-        'legacy Terra requests must route through the stable public GPT 5.6 ID');
-    assert.match(serverSource, /'gpt-5\.6-luna': \{[\s\S]{0,180}model: 'gpt-5\.6-luna'/,
-        'the stable public GPT 5.6 route must call the Luna upstream model');
+        'legacy Terra requests must route through the stable public GPT 5.6 Luna ID');
+    assert.match(serverSource, /'gpt-6.1-sol': \{[\s\S]{0,180}model: 'gpt-6.1-sol'/,
+        'GPT-6.1 Sol must call the GPT-6.1 Sol upstream model');
     const chatModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">对话模型'), indexSource.indexOf('model-menu-section-label">图像生成'));
     const imageModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">图像生成'), indexSource.indexOf('</div>\n                </div>\n              </div>\n\n              <button type="button" class="send-btn"'));
     assert.ok(!chatModelSection.includes('data-model="gpt-image-2"'), 'Image 2 must not appear in the chat-model picker');
@@ -421,7 +421,7 @@ async function main() {
     assert.match(serverSource, /if \(model !== 'auto' && await isPublicModelDisabled\(model\)\) \{[\s\S]{0,220}model = 'auto';[\s\S]{0,120}gptImageModelSelected = false;/);
     assert.match(serverSource, /const imageGenerationRequested = gptImageModelSelected \|\| detectImageGenerationNeed/);
     assert.match(serverSource, /requireGptGateway: gptImageModelSelected/);
-    assert.match(serverSource, /'gpt-image-2': \{[\s\S]{0,260}model: 'gpt-5\.6-sol'[\s\S]{0,260}imageOnly: true/);
+    assert.match(serverSource, /'gpt-image-2': \{[\s\S]{0,260}model: 'gpt-6.1-sol'[\s\S]{0,260}imageOnly: true/);
     assert.doesNotMatch(serverSource.match(/const RESEARCH_MODEL_OPTIONS = \[[\s\S]*?\];/)?.[0] || '', /gpt-image-2/);
     const imageProviderBlock = serverSource.slice(
         serverSource.indexOf('async function requestAndPersistGeneratedImages'),
@@ -466,7 +466,7 @@ async function main() {
         continuationBlock.indexOf('applyGatewayChatRequestPolicy(continueRequestBody') < continuationBlock.indexOf('await fetch(continueApiUrl'),
         'continuation policy must run before the upstream request'
     );
-    assert.match(continuationBlock, /const continueController = createChatAbortController\(\)/);
+    assert.match(continuationBlock, /let continueController = createChatAbortController\(\)/);
     assert.match(continuationBlock, /const continueTimeoutMs = chatRequestBudget\?\.nextAttemptTimeoutMs\(\) \|\| 0/);
     assert.match(continuationBlock, /setTimeout\(\(\) => continueController\.abort\(\), continueTimeoutMs\)/);
     assert.match(continuationBlock, /signal: continueController\.signal/);

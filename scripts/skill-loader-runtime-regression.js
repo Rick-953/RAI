@@ -141,27 +141,43 @@ function createProviderMock() {
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
 
-      if (scenario === 'fallback' && body.model === 'gpt-5.6-luna') {
+      if (scenario === 'fallback' && body.model === 'gpt-6.1-sol') {
         response.writeHead(503, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: 'forced primary failure' }));
         return;
       }
 
-      if (scenario === 'memory-off' || scenario === 'authority') {
+      if (scenario === 'authority') {
         if (systemText) errors.push(`${scenario}: unexpected system instruction`);
         writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]${scenario}[/TITLE]`)]);
         return;
       }
+      if (scenario === 'memory-off') {
+        if (!systemText.includes('# RAI') || !systemText.includes('rai-product:')) {
+          errors.push('memory-off: temporary conversation omitted canonical core prompt and skills catalog');
+        }
+        if (!hasToolResult) {
+          writeSse(response, [openAiToolCalls(['rai-product'])]);
+          return;
+        }
+        if (count(text, '[Trusted RAI skill: rai-product]') !== 1) {
+          errors.push('memory-off: rai-product skill was not loaded into the continuation prompt');
+        }
+        writeSse(response, [openAiText(`${FINAL_TEXT} memory-off [TITLE]memory-off[/TITLE]`)]);
+        return;
+      }
 
       if (hasToolResult) {
+        const initial = observations.find(o => o.scenario === scenario && !o.hasToolResult);
+        if (initial && initial.systemText !== systemText) errors.push(scenario + ': skill load rewrote stable system prefix');
         if (scenario === 'invalid') {
-          if (systemText.includes('[Trusted RAI skill:')) errors.push('invalid: untrusted skill reached system instruction');
+          if (text.includes('[Trusted RAI skill:')) errors.push('invalid: untrusted skill reached system instruction');
         } else if (scenario === 'limits') {
           for (const name of ['memory', 'mermaid', 'ask_user']) {
-            if (count(systemText, `[Trusted RAI skill: ${name}]`) !== 1) errors.push(`limits: ${name} was not loaded exactly once`);
+            if (count(text, `[Trusted RAI skill: ${name}]`) !== 1) errors.push(`limits: ${name} was not loaded exactly once`);
           }
-          if (systemText.includes('[Trusted RAI skill: web_sources]')) errors.push('limits: fourth unique skill bypassed the three-skill cap');
-        } else if (count(systemText, '[Trusted RAI skill: mermaid]') !== 1) {
+          if (text.includes('[Trusted RAI skill: web_sources]')) errors.push('limits: fourth unique skill bypassed the three-skill cap');
+        } else if (count(text, '[Trusted RAI skill: mermaid]') !== 1) {
           errors.push(`${scenario}: canonical system instruction omitted the loaded skill`);
         }
         if (isGemini && !hasObjectKey(body, 'functionResponse')) errors.push('gemini: continuation omitted functionResponse');
@@ -180,7 +196,7 @@ function createProviderMock() {
       if (systemText.includes('CLIENT_OVERRIDE_MUST_NOT_BE_TRUSTED')) {
         errors.push(`${scenario}: client systemPrompt overrode the canonical prompt`);
       }
-      if (scenario === 'luna' || scenario === 'fallback') {
+      if (scenario === 'sol' || scenario === 'fallback') {
         writeSse(response, [openAiToolCalls(['mermaid'])]);
       } else if (scenario === 'kimi') {
         writeSse(response, [openAiText('<|tool_calls_section_begin|><|tool_call_begin|>functions.read_skill:0<|tool_call_argument_begin|>{"name":"mermaid"}<|tool_call_end|><|tool_calls_section_end|>')]);
@@ -343,22 +359,22 @@ async function main() {
     const token = await loginSeededUser(databasePath, baseUrl);
 
     for (const entry of [
-      ['luna', 'gpt-5.6-luna'], ['kimi', 'kimi-k2.6'], ['deepseek', 'deepseek-pro'],
-      ['claude', 'claude-sonnet-5'], ['gemini', 'gemini-3-flash'], ['fallback', 'gpt-5.6-luna'],
-      ['limits', 'gpt-5.6-luna'], ['invalid', 'gpt-5.6-luna']
+      ['sol', 'gpt-6.1-sol'], ['kimi', 'kimi-k2.6'], ['deepseek', 'deepseek-flash'],
+      ['claude', 'claude-sonnet-5'], ['gemini', 'gemini-3-flash'], ['fallback', 'gpt-6.1-sol'],
+      ['limits', 'gpt-6.1-sol'], ['invalid', 'gpt-6.1-sol']
     ]) {
       await runChat(baseUrl, token, { scenario: entry[0], model: entry[1] });
     }
-    await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-5.6-luna', memoryMode: 'off' });
+    await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
 
     assert.deepEqual(provider.errors, [], `provider assertions failed:\n${provider.errors.join('\n')}`);
     assert.ok(provider.observations.some((item) => item.scenario === 'fallback' && item.url.includes('/deepseek/')),
       'runtime fallback did not reach the configured secondary provider');
     assert.ok(!provider.observations.some((item) => (
       ['limits', 'invalid', 'memory-off'].includes(item.scenario)
-        && item.body?.model === 'gpt-5.6-luna'
+        && item.body?.model === 'gpt-6.1-sol'
     )), 'recent Luna 503 must open the ordinary-chat circuit and skip repeated primary attempts');
-    console.log('skill loader runtime regression passed (Luna/Kimi/DeepSeek/Claude/Gemini/fallback)');
+    console.log('skill loader runtime regression passed (GPT-6.1 Sol/Kimi/DeepSeek Flash/Claude/Gemini/fallback)');
   } catch (error) {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {

@@ -15,7 +15,10 @@
         "licenses/marked/LICENSE.md": "package/LICENSE.md"
       },
       "upstreamDirectories": {},
-      "roots": ["marked.min.js", "licenses/marked/LICENSE.md"],
+      "roots": [
+        "marked.min.js",
+        "licenses/marked/LICENSE.md"
+      ],
       "entrypoint": "marked.min.js",
       "entrypointSha256": "3e7e7d7feb3e5d58cb6c804f68ab5c24cc7e5eb6270fd6e5cbb9124739217d0c",
       "fileCount": 2,
@@ -36,7 +39,11 @@
         "licenses/dompurify/LICENSE-MPL": "package/LICENSE-MPL"
       },
       "upstreamDirectories": {},
-      "roots": ["purify.min.js", "licenses/dompurify/LICENSE", "licenses/dompurify/LICENSE-MPL"],
+      "roots": [
+        "purify.min.js",
+        "licenses/dompurify/LICENSE",
+        "licenses/dompurify/LICENSE-MPL"
+      ],
       "entrypoint": "purify.min.js",
       "entrypointSha256": "9ab3d44d73c3e3947f9ab72e0f0bc15c7f1931d60b365ba261fc85fe59013c56",
       "fileCount": 3,
@@ -57,7 +64,10 @@
         "licenses/highlight.js/LICENSE": "package/LICENSE"
       },
       "upstreamDirectories": {},
-      "roots": ["highlight", "licenses/highlight.js/LICENSE"],
+      "roots": [
+        "highlight",
+        "licenses/highlight.js/LICENSE"
+      ],
       "entrypoint": "highlight/highlight.min.js",
       "entrypointSha256": "837a6fa5b0c736b52bbde2b2b6190f305da3fc9ed41681db5321507057b5c846",
       "fileCount": 3,
@@ -81,12 +91,38 @@
       "upstreamDirectories": {
         "katex/fonts": "package/dist/fonts"
       },
-      "roots": ["katex", "licenses/katex/LICENSE"],
+      "roots": [
+        "katex",
+        "licenses/katex/LICENSE"
+      ],
       "entrypoint": "katex/katex.min.js",
       "entrypointSha256": "a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48",
       "fileCount": 64,
       "bytes": 1377529,
       "treeSha256": "af0a19ab8e476848eec5382bda14b9377026df82e034ede12ac0e79f2f3e5568"
+    },
+    {
+      "name": "jsqr",
+      "version": "1.4.0",
+      "purl": "pkg:npm/jsqr@1.4.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/cozmo/jsQR",
+      "npmTarball": "https://registry.npmjs.org/jsqr/-/jsqr-1.4.0.tgz",
+      "npmIntegrity": "sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==",
+      "upstreamFiles": {
+        "jsQR.js": "package/dist/jsQR.js",
+        "licenses/jsqr/LICENSE": "package/LICENSE"
+      },
+      "upstreamDirectories": {},
+      "roots": [
+        "jsQR.js",
+        "licenses/jsqr/LICENSE"
+      ],
+      "entrypoint": "jsQR.js",
+      "entrypointSha256": "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
+      "fileCount": 2,
+      "bytes": 268243,
+      "treeSha256": "1a25db3d9f2fcabfaeaffa1fa37c74bb56bfba6a2c9c826e4a22820027a30a5b"
     }
   ]
 }

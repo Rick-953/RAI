@@ -10,6 +10,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { getSkillCatalog } = require('../lib/skill-registry');
 
 const SOURCE_ROOT = path.resolve(__dirname, '..');
 const TEMP_PREFIX = 'rai-security-smoke-';
@@ -128,13 +129,7 @@ function copyRuntimeGraph(tempRoot) {
     'public/uwp-signup.html',
     'public/uwp-signup.css',
     'public/uwp-signup.js',
-    'skills/web_sources/SKILL.md',
-    'skills/image_generation/SKILL.md',
-    'skills/ask_user/SKILL.md',
-    'skills/mermaid/SKILL.md',
-    'skills/memory/SKILL.md',
-    'skills/rai-product/SKILL.md',
-    'skills/sandbox/SKILL.md'
+    ...getSkillCatalog().map(({ name }) => `skills/${name}/SKILL.md`)
   ]) {
     const sourcePath = path.join(SOURCE_ROOT, relative);
     if (!fs.existsSync(sourcePath)) continue;

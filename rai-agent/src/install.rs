@@ -246,7 +246,7 @@ pub fn rollback() -> Result<serde_json::Value> {
         })
         .collect::<Vec<_>>();
     let mut command = Command::new(&binary);
-    command.arg("install").arg("--open-store=false");
+    command.arg("install");
     if let Some(id) = ids.first() {
         command.arg("--chrome-id").arg(id);
     }

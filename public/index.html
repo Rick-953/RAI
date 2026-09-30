@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -12,37 +12,38 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20260814-local-agent-v01300-r1"></script>
+  <script src="runtime-brand.js?v=20260930-gpt61sol-r8"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260814-local-agent-v01300-r1">
+  <link rel="manifest" href="site.webmanifest?v=20260930-gpt61sol-r8">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="lib/purify.min.js?v=20260814-local-agent-v01300-r1"></script>
+  <script defer src="lib/marked.min.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="lib/purify.min.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260814-local-agent-v01300-r1">
-  <script defer src="lib/katex/katex.min.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260814-local-agent-v01300-r1"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260930-gpt61sol-r8">
+  <script defer src="lib/katex/katex.min.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="event-bindings.js?v=20260814-local-agent-v01300-r1"></script>
+  <script defer src="rai-system-prompt.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="event-bindings.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260814-local-agent-v01300-r1">
-  <script defer src="lib/highlight/highlight.min.js?v=20260814-local-agent-v01300-r1"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260930-gpt61sol-r8">
+  <script defer src="lib/highlight/highlight.min.js?v=20260930-gpt61sol-r8"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260814-local-agent-v01300-r1">
-  <link rel="stylesheet" href="selection-explainer.css?v=20260814-local-agent-v01300-r1">
-  <link rel="stylesheet" href="local-agent.css?v=20260814-local-agent-v01300-r1">
+  <link rel="stylesheet" href="styles.css?v=20260930-gpt61sol-r8">
+  <link rel="stylesheet" href="selection-explainer.css?v=20260930-gpt61sol-r8">
+  <link rel="stylesheet" href="local-agent.css?v=20260930-gpt61sol-r8">
+  <link rel="stylesheet" href="secure-sharing.css?v=20260930-gpt61sol-r8">
 </head>
 
 <body>
@@ -82,6 +83,10 @@
             <label class="form-label" data-i18n="password-label">密码</label>
             <input type="password" class="form-input" id="authPassword" data-i18n-placeholder="password-placeholder"
               placeholder="输入密码" data-rai-keydown="handlePasswordKeydown(event)" autocomplete="current-password">
+            <label class="auth-remember-row" for="authRememberPassword">
+              <input type="checkbox" id="authRememberPassword" checked data-rai-change="setRememberPasswordPreference(this.checked)">
+              <span data-i18n="auth-remember-password">记住密码</span>
+            </label>
             <div class="auth-forgot-row" id="forgotPasswordRow">
               <button type="button" class="auth-forgot-btn" data-rai-click="showForgotPasswordHelp()"
                 data-i18n="forgot-password">忘记密码？</button>
@@ -121,24 +126,28 @@
               data-i18n="login-btn">登录</button>
           </div>
 
-          <div class="auth-passkey-entry" id="authPasskeyEntry">
-            <div class="auth-passkey-divider" aria-hidden="true">
-              <span data-i18n="auth-passkey-or">或</span>
+          <div class="auth-alternative-options" id="authAlternativeOptions">
+            <div class="auth-passkey-entry" id="authPasskeyEntry">
+              <div class="auth-passkey-divider" aria-hidden="true">
+                <span data-i18n="auth-passkey-or">或</span>
+              </div>
+              <div class="auth-alternative-row">
+                <button type="button" class="auth-alt-button" id="qrLoginButton" data-i18n="auth-qr-login">扫码登录</button>
+                <button type="button" class="auth-alt-button" id="authPasskeyBtn" data-rai-click="loginWithPasskey()"
+                  data-i18n="auth-passkey-login">通行密钥登录</button>
+              </div>
+              <p class="auth-passkey-hint" id="authPasskeyHint" hidden></p>
             </div>
-            <button type="button" class="auth-passkey-btn" id="authPasskeyBtn" data-rai-click="loginWithPasskey()"
-              data-i18n="auth-passkey-login">使用通行密钥登录</button>
-            <p class="auth-passkey-hint" id="authPasskeyHint" hidden></p>
+            <div class="auth-custom-api-entry" id="customApiEntry">
+              <button type="button" class="auth-alt-button" id="customApiToggleBtn"
+                data-rai-click="toggleCustomApiMode()" data-i18n="custom-api-entry">我有一个 API Key</button>
+            </div>
           </div>
 
           <div class="auth-sso-container" id="ztx6dSsoContainer" style="display: none;">
             <button type="button" class="auth-sso-btn" data-rai-click="startZtx6dLogin()" data-i18n="auth-ztx6d-login">ZTX6D 登录</button>
             <button type="button" class="auth-sso-btn auth-sso-btn-pending" data-rai-click="showRpassPending()"
               data-i18n="auth-rpass-login" data-i18n-title="auth-coming-soon" title="待上线">rPass 登录</button>
-          </div>
-
-          <div class="auth-custom-api-entry" id="customApiEntry">
-            <button type="button" class="auth-custom-api-link" id="customApiToggleBtn"
-              data-rai-click="toggleCustomApiMode()" data-i18n="custom-api-entry">我有一个 API Key</button>
           </div>
 
           <div class="custom-api-panel auth-step-hidden" id="customApiPanel">
@@ -170,12 +179,13 @@
             <span data-i18n="no-account">还没有账号?</span>
             <a class="auth-link" data-rai-click="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
           </div>
+          <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
+            <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')" title="简体中文" aria-label="简体中文">简体</button>
+            <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')" title="繁體中文" aria-label="繁體中文">繁體</button>
+            <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')" title="English" aria-label="English">EN</button>
+          </div>
         </div>
-        <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
-          <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')">简体中文</button>
-          <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')">繁體中文</button>
-          <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')">English</button>
-        </div>
+
       </div>
     </div>
   </div>
@@ -374,7 +384,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.13.0</div>
+                <div class="logo-subtitle">by Rick · v0.13.18</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -384,6 +394,13 @@
                 width="22" height="22" fill="currentColor">
                 <path
                   d="M15.1 19.37l1 1.74c-.96.44-2.01.73-3.1.84v-2.02c.74-.09 1.44-.28 2.1-.56ZM4.07 13H2.05c.11 1.1.4 2.14.84 3.1l1.74-1c-.28-.66-.47-1.36-.56-2.1ZM15.1 4.63l1-1.74c-.96-.44-2-.73-3.1-.84v2.02c.74.09 1.44.28 2.1.56ZM19.93 11h2.02c-.11-1.1-.4-2.14-.84-3.1l-1.74 1c.28.66.47 1.36.56 2.1ZM8.9 19.37l-1 1.74c.96.44 2.01.73 3.1.84v-2.02c-.74-.09-1.44-.28-2.1-.56ZM11 4.07V2.05c-1.1.11-2.14.4-3.1.84l1 1.74c.66-.28 1.36-.47 2.1-.56ZM18.36 7.17l1.74-1.01c-.63-.87-1.4-1.64-2.27-2.27l-1.01 1.74c.59.45 1.1.96 1.54 1.54ZM4.63 8.9l-1.74-1c-.44.96-.73 2-.84 3.1h2.02c.09-.74.28-1.44.56-2.1ZM19.93 13c-.09.74-.28 1.44-.56 2.1l1.74 1c.44-.96.73-2.01.84-3.1h-2.02ZM16.83 18.36l1.01 1.74c.87-.63 1.64-1.4 2.27-2.27l-1.74-1.01c-.45.59-.96 1.1-1.54 1.54ZM7.17 5.64l-1-1.75c-.88.64-1.64 1.4-2.27 2.28l1.74 1.01c.44-.59.95-1.1 1.53-1.54ZM5.64 16.83l-1.74 1c.63.87 1.4 1.64 2.27 2.27l1.01-1.74c-.59-.44-1.1-.95-1.54-1.53ZM13 7h-2v5.41l4.29 4.29 1.41-1.41-3.7-3.7V7Z" />
+              </svg>
+            </button>
+            <button type="button" class="sidebar-control-btn qr-scan-top-btn" id="qrScanButton"
+              data-i18n-title="scan-login-qr" data-i18n-aria-label="scan-login-qr" title="扫码授权登录" aria-label="扫码授权登录">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4"/>
+                <path d="M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z"/>
               </svg>
             </button>
             <!--
@@ -418,18 +435,19 @@
           </svg>
           <span data-i18n="new-chat">新对话</span>
         </button>
-        <button class="file-library-entry" id="fileLibraryEntry" type="button" data-rai-click="openFileLibrary()">
-          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
-            <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z" />
-          </svg>
-          <span>文件</span>
-        </button>
       </div>
 
       <!-- 可滚动中间区域 - 带边缘羽化效果 -->
       <div class="sidebar-scrollable-wrapper">
         <div class="sidebar-edge-blur-top"></div>
         <div class="sidebar-scrollable">
+        <button class="file-library-entry" id="fileLibraryEntry" type="button" data-rai-click="openFileLibrary()">
+          <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z" />
+          </svg>
+          <span>文件</span>
+        </button>
+
           <!-- 文件夹分组 -->
           <div class="sidebar-group" id="conversationFoldersSection">
             <div class="sidebar-group-header" id="conversationFoldersToggle" role="button" tabindex="0">
@@ -836,7 +854,7 @@
                     </div>
                   </div>
 
-                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-pro"
+                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-flash"
                     data-rai-click="selectRaiModeFromMenu('think', event)">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
                       viewBox="0 -960 960 960" width="24px" fill="currentColor">
@@ -882,6 +900,12 @@
 
                     <div class="model-menu-section-label">对话模型</div>
 
+                    <div class="model-menu-item" data-model="gpt-6.1-sol"
+                      data-rai-click="selectModelFromMenu('gpt-6.1-sol', 'GPT-6.1 Sol', null, event)">
+                      <div class="model-menu-content">
+                        <div class="model-menu-title"><span class="model-menu-name">GPT-6.1 Sol</span><span class="model-badge">多模态</span></div>
+                      </div>
+                    </div>
                     <div class="model-menu-item" data-model="gpt-5.6-luna"
                       data-rai-click="selectModelFromMenu('gpt-5.6-luna', 'GPT 5.6', null, event)">
                       <div class="model-menu-content">
@@ -1165,7 +1189,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260814-local-agent-v01300-r1" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260930-gpt61sol-r8" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1231,7 +1255,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260814-local-agent-v01300-r1" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260930-gpt61sol-r8" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1239,9 +1263,14 @@
               <img class="settings-nav-icon" src="icons/settings/capabilities.svg" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-capabilities">能力</span>
             </button>
+            <button type="button" class="settings-nav-item" data-settings-section="app"
+              data-rai-click="switchSettingsSection('app')">
+              <img class="settings-nav-icon" src="icons/settings/desktop.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-app">下载应用客户端</span>
+            </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260814-local-agent-v01300-r1" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260930-gpt61sol-r8" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1428,6 +1457,16 @@
               </div>
               <div class="settings-setting-row">
                 <div class="settings-setting-copy">
+                  <div class="setting-label" data-i18n="settings-handedness-label">适人握持</div>
+                  <p class="setting-description" data-i18n="settings-handedness-desc">将常用按钮菜单放置于持机的左右手侧，方便单手操作 RAI。</p>
+                </div>
+                <button type="button" class="more-menu-switch settings-row-switch" id="settingsHandednessSwitch"
+                  data-rai-click="settingsToggleHandedness()" aria-pressed="false">
+                  <span class="more-menu-item-toggle" id="settingsHandednessToggle"></span>
+                </button>
+              </div>
+              <div class="settings-setting-row">
+                <div class="settings-setting-copy">
                   <div class="setting-label" data-i18n="settings-guide-tap-target-label">功能聚焦提示</div>
                   <p class="setting-description" data-i18n="settings-guide-tap-target-desc">在引导流程中高亮当前操作位置，帮助你找到功能入口。</p>
                 </div>
@@ -1444,6 +1483,7 @@
               <h3 data-i18n="settings-capabilities-title">能力</h3>
               <p data-i18n="settings-capabilities-desc">控制 RAI 在默认对话中可使用的增强能力。</p>
             </div>
+            <div class="local-agent-settings-card" id="settingsLocalAgentCard"></div>
             <div class="settings-row-list">
               <div class="settings-setting-row">
                 <div class="settings-setting-copy">
@@ -1671,7 +1711,6 @@
               <p data-i18n="settings-security-desc">使用二步验证和通行密钥保护当前账号</p>
             </div>
             <div class="settings-device-card" id="settingsDeviceCard"></div>
-            <div class="local-agent-settings-card" id="settingsLocalAgentCard"></div>
             <div class="settings-two-factor-card" id="settingsTwoFactorCard"></div>
             <div class="settings-passkey-card" id="settingsPasskeyCard"></div>
           </section>
@@ -1907,30 +1946,64 @@
                 <span>RAI welcome guide</span>
               </button>
             </div>
+            <div class="settings-about-links">
+              <button type="button" class="settings-about-link settings-about-action" id="exportDiagnosticsButton">导出脱敏诊断日志</button>
+            </div>
+            <p class="settings-description">仅当前标签页最近500条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
+            <div class="settings-about-timeline" aria-label="RAI update timeline">
+              <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">RAI 的成长故事</div>
+              <p class="settings-about-timeline-intro" data-i18n="settings-update-timeline-intro">从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。</p>
+              <div class="settings-timeline-list" id="settingsTimelineList"></div>
+              <p class="settings-about-timeline-source" data-i18n="settings-update-timeline-source">来源：本机历史版本目录、运维记录、历史 release manifest、GitHub README。</p>
+            </div>
+          </section>
+          <section class="settings-panel" id="settingsPanel-app" data-settings-panel="app">
+            <div class="settings-section-intro">
+              <h3 data-i18n="settings-app-title">下载客户端</h3>
+              <p data-i18n="settings-app-desc">根据设备推荐合适的安装方式：网页版应用或 CX RAI。</p>
+            </div>
             <div class="settings-install-card settings-platform-download-card" id="settingsInstallCard">
               <div class="settings-platform-downloads">
-                <section class="settings-platform-download" aria-labelledby="settingsMacosDownloadTitle">
-                  <h4 id="settingsMacosDownloadTitle" data-i18n="settings-macos-title">macOS</h4>
+                <section class="settings-platform-download" data-client-platform="web" aria-labelledby="settingsPwaDownloadTitle">
+                  <div class="settings-platform-heading">
+                    <span class="settings-platform-icon" aria-hidden="true">
+                      <img src="icons/rai-app-icon.svg" alt="">
+                    </span>
+                    <div class="settings-platform-copy">
+                      <div class="settings-platform-title-row">
+                        <h4 id="settingsPwaDownloadTitle" data-i18n="settings-pwa-title">网页版应用</h4>
+                        <span class="settings-platform-badge" data-i18n="settings-pwa-badge">推荐</span>
+                      </div>
+                      <p data-i18n="settings-pwa-desc">安装后从桌面或主屏幕独立打开。</p>
+                    </div>
+                  </div>
                   <div class="settings-install-status" id="pwaInstallStatus" data-i18n="settings-install-detecting">检测安装方式...</div>
                   <button type="button" class="settings-install-btn" id="pwaInstallBtn" data-rai-click="handlePwaInstallClick()"
                     data-i18n="settings-platform-download">下载</button>
                 </section>
-                <section class="settings-platform-download" aria-labelledby="settingsWindowsDownloadTitle">
-                  <h4 id="settingsWindowsDownloadTitle" data-i18n="settings-windows-title">Windows 10 / 11（Phone）</h4>
-                  <div class="settings-install-status" id="windowsDownloadStatus">正在获取 GitHub 最新版...</div>
+                <section class="settings-platform-download" data-client-platform="cxrai" aria-labelledby="settingsWindowsDownloadTitle">
+                  <div class="settings-platform-heading">
+                    <span class="settings-platform-icon" aria-hidden="true">
+                      <img src="icons/settings/desktop.svg" alt="">
+                    </span>
+                    <div class="settings-platform-copy">
+                      <div class="settings-platform-title-row">
+                        <h4 id="settingsWindowsDownloadTitle" data-i18n="settings-windows-title">CX RAI</h4>
+                        <span class="settings-platform-badge" data-i18n="settings-cxrai-badge">Windows 10 / 11</span>
+                      </div>
+                      <p data-i18n="settings-cxrai-desc">Master-Tea 发布的 Windows 桌面客户端。</p>
+                    </div>
+                  </div>
+                  <div class="settings-install-status" id="windowsDownloadStatus" data-i18n="settings-install-detecting">检测安装方式...</div>
                   <div class="settings-windows-actions">
-                    <a class="settings-install-download" id="windowsPackageDownload" href="https://github.com/Master-Tea/CX-RAI/releases/download/v1.1.1/CX.RAI_1.1.1.0_x86_x64_arm.appxbundle" target="_blank" rel="noopener noreferrer" data-i18n="settings-platform-download">下载</a>
-                    <a class="settings-certificate-link" id="windowsCertificateDownload" href="https://github.com/Master-Tea/CX-RAI/releases/download/v1.1.1/CX.RAI_1.1.1.0_x86_x64_arm.cer" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-certificate">安装证书</a>
+                    <a class="settings-install-download" id="windowsSetupDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-setup">下载安装程序</a>
+                    <a class="settings-install-download settings-install-download-secondary settings-windows-mobile-download"
+                      id="windowsMobilePackageDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank"
+                      rel="noopener noreferrer" data-i18n="settings-windows-mobile-package" hidden>Windows 10 Mobile（UWP）</a>
                   </div>
-                  <div class="settings-windows-lumia" id="windowsLumiaSection" style="display:none">
-                    <span class="settings-lumia-hint" data-i18n="settings-windows-lumia-hint">为 Lumia 设备下载：</span>
-                    <a class="settings-lumia-link" id="windowsLumiaPackage" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-lumia-package">Arm 包</a>
-                    <span data-i18n="settings-windows-lumia-deps-note">（依赖请到 <a class="settings-lumia-link" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer">GitHub 下载页</a>获取）</span>
-                  </div>
-                  <p class="settings-onedrive-hint">
-                    <span data-i18n="settings-onedrive-hint">无法访问 GitHub？尝试使用</span>
-                    <a href="https://0p6g5-my.sharepoint.com/:f:/g/personal/mastertea_0p6g5_onmicrosoft_com/IgDAdirFYun2TYDn_97o7xnFARHtKfA93ZtAjxMYqRVscq4?e=aHHGzd" target="_blank" rel="noopener noreferrer">OneDrive E5</a>
-                    <span data-i18n="settings-onedrive-suffix">下载</span>
+                  <p class="settings-windows-note" id="windowsDownloadNote" data-i18n="settings-windows-auto-note">运行安装程序即可一键装完，证书与依赖会自动处理。</p>
+                  <p class="settings-windows-note settings-windows-release-link">
+                    <a id="windowsAllReleases" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-all-releases">查看所有版本</a>
                   </p>
                 </section>
               </div>
@@ -1939,13 +2012,60 @@
                 <ol class="settings-install-steps" id="pwaInstallSteps"></ol>
               </details>
             </div>
-            <div class="settings-about-timeline" aria-label="RAI update timeline">
-              <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">RAI 的成长故事</div>
-              <p class="settings-about-timeline-intro" data-i18n="settings-update-timeline-intro">从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。</p>
-              <div class="settings-timeline-list" id="settingsTimelineList"></div>
-              <p class="settings-about-timeline-source" data-i18n="settings-update-timeline-source">来源：本机历史版本目录、运维记录、历史 release manifest、GitHub README。</p>
-            </div>
+            <details class="settings-connect-install" id="settingsRaiConnectInstall"
+              aria-labelledby="settingsRaiConnectInstallTitle">
+              <summary class="settings-connect-summary">
+                <span class="settings-connect-summary-icon" aria-hidden="true">
+                  <img src="icons/settings/capabilities.svg" alt="">
+                </span>
+                <span class="settings-connect-summary-copy">
+                  <strong id="settingsRaiConnectInstallTitle" data-i18n="local-agent-install-title">RAI Connect 与本地 Agent</strong>
+                  <span data-i18n="local-agent-install-compact-desc">可选：连接浏览器与本地电脑能力</span>
+                </span>
+                <span class="settings-connect-summary-badge" data-i18n="local-agent-install-optional">进阶</span>
+                <span class="settings-connect-summary-chevron" aria-hidden="true"></span>
+              </summary>
+              <div class="settings-connect-install-body">
+                <div class="settings-connect-install-header">
+                  <div>
+                    <p data-i18n="local-agent-install-desc">让 RAI 在你确认后操作本机文件、终端和单独选择的浏览器标签页。</p>
+                  </div>
+                  <a href="https://github.com/Rick-953/RAI/releases/latest" target="_blank" rel="noopener noreferrer"
+                    data-i18n="local-agent-release-link">发布页</a>
+                </div>
+                <div class="settings-connect-command-list">
+                  <div class="settings-connect-command">
+                    <h5>macOS / Linux</h5>
+                    <div class="settings-connect-command-row">
+                      <code>curl --fail --location --proto '=https' --tlsv1.2 https://github.com/Rick-953/RAI/releases/latest/download/install.sh | sh</code>
+                      <button type="button" data-local-agent-copy="unix" data-i18n="local-agent-copy-command">复制命令</button>
+                    </div>
+                  </div>
+                  <div class="settings-connect-command">
+                    <h5>Windows PowerShell</h5>
+                    <div class="settings-connect-command-row">
+                      <code>irm https://github.com/Rick-953/RAI/releases/latest/download/install.ps1 | iex</code>
+                      <button type="button" data-local-agent-copy="windows" data-i18n="local-agent-copy-command">复制命令</button>
+                    </div>
+                  </div>
+                </div>
+                <ol class="settings-connect-steps">
+                  <li data-i18n="local-agent-install-step-command">在终端运行与你系统对应的命令；安装器会校验文件、安装本地 Agent，并打印扩展目录。</li>
+                  <li data-i18n="local-agent-install-step-browser">打开 chrome://extensions 或 edge://extensions，开启“开发者模式”，点击“加载已解压的扩展”。</li>
+                  <li data-i18n="local-agent-install-step-directory">选择安装器最后打印的 extension 目录。浏览器不允许安装器跳过这次人工确认。</li>
+                  <li data-i18n="local-agent-install-step-pair">返回 RAI 的“设置 > 能力 > RAI Local Agent”，点击“绑定此设备”。</li>
+                  <li data-i18n="local-agent-install-step-chat">打开已有对话，或在新对话发送第一条消息，然后点击“连接当前对话”。每个对话单独授权。</li>
+                  <li data-i18n="local-agent-install-step-use">向 RAI 描述要完成的本地任务；命令、高风险操作和提权会在 RAI Connect 侧边栏或系统窗口中等待你确认。</li>
+                </ol>
+                <div class="settings-connect-install-links">
+                  <a href="https://github.com/Rick-953/RAI/releases/latest/download/rai-connect-extension.zip"
+                    target="_blank" rel="noopener noreferrer" data-i18n="local-agent-extension-download">单独下载扩展压缩包</a>
+                  <span data-i18n="local-agent-extension-store-note">当前为 GitHub 侧载版，尚未上架 Chrome 或 Edge 扩展商店。</span>
+                </div>
+              </div>
+            </details>
           </section>
+
         </div>
       </main>
     </div>
@@ -1960,6 +2080,7 @@
         <label data-i18n="selectModel">选择模型</label>
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
+          <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
           <option value="gpt-5.6-luna">GPT 5.6</option>
           <option value="claude-sonnet-5">Claude Sonnet 5</option>
           <option value="gemini-3.6-flash-low">Gemini 3.6</option>
@@ -2144,7 +2265,10 @@
       <ellipse class="rai-mascot-highlight" cx="57" cy="49" rx="14" ry="9" fill="#fff" opacity=".2"
         transform="rotate(-28 57 49)" />
     </svg>
-    <span class="rai-tea-pet" aria-hidden="true"></span>
+    <span class="rai-tea-pet" aria-hidden="true">
+      <i class="rai-tea-pet-layer" data-tea-layer="0"></i>
+      <i class="rai-tea-pet-layer" data-tea-layer="1"></i>
+    </span>
     <span class="rai-mascot-speech" id="raiMascotSpeech" role="note" hidden>
       <strong id="raiMascotSpeechTitle"></strong>
       <span id="raiMascotSpeechText"></span>
@@ -2155,11 +2279,16 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="app.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="local-agent.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="crf-ui.js?v=20260814-local-agent-v01300-r1"></script>
-  <script defer src="selection-explainer.js?v=20260814-local-agent-v01300-r1"></script>
+  <script defer src="conversation-cache.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="pet-quotes.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="diagnostics.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="app.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="local-agent.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="crf-ui.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="selection-explainer.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="lib/jsQR.js?v=20260930-gpt61sol-r8"></script>
+  <script defer src="qr-scanner.js?v=20260930-gpt61sol-r8"></script>
+  <script src="secure-sharing.js?v=20260930-gpt61sol-r8" defer></script>
 </body>
 
 </html>

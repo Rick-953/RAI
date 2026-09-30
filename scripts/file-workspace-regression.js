@@ -12,6 +12,7 @@ const {
     MAX_ACTIVE_TASKS,
     MAX_OWNER_ACTIVE_TASKS,
     MAX_WORKSPACE_BYTES,
+    SANDBOX_WORKSPACE_TTL_MS,
     READ_MODES,
     TRANSFORM_OPERATIONS
 } = require('../lib/file-workspace');
@@ -63,6 +64,7 @@ async function main() {
     assert.equal(MAX_ACTIVE_TASKS, 64);
     assert.equal(MAX_OWNER_ACTIVE_TASKS, 8);
     assert.equal(MAX_WORKSPACE_BYTES, 40 * 1024 * 1024);
+    assert.equal(SANDBOX_WORKSPACE_TTL_MS, 3 * 60 * 60 * 1000);
     assert.equal(READ_MODES.has('metadata'), true);
     assert.equal(TRANSFORM_OPERATIONS.has('json_pretty'), true);
 
@@ -207,6 +209,58 @@ async function main() {
         'workspace_task_invalid'
     );
 
+    const sandboxOne = await workspace.createSandboxTask({ userId: 7, sessionId: 'session_alpha' });
+    assert.equal(sandboxOne.manifest.expiresAt, clock + (3 * 60 * 60 * 1000));
+    await fs.promises.mkdir(path.join(sandboxOne.taskPath, 'workspace'), { mode: 0o700 });
+    await fs.promises.writeFile(path.join(sandboxOne.taskPath, 'workspace', 'persist.txt'), 'keep me', { mode: 0o600 });
+    clock += 60 * 1000;
+    const sandboxTwo = await workspace.createSandboxTask({ userId: 7, sessionId: 'session_alpha' });
+    assert.equal(sandboxTwo.taskId, sandboxOne.taskId, 'one user reuses one temporary sandbox');
+    assert.equal(await fs.promises.readFile(path.join(sandboxTwo.taskPath, 'workspace', 'persist.txt'), 'utf8'), 'keep me');
+    assert.equal(sandboxTwo.manifest.expiresAt, clock + (3 * 60 * 60 * 1000), 'sandbox TTL refreshes on use');
+    await fs.promises.writeFile(path.join(sandboxTwo.taskPath, 'workspace', 'generated.txt'), 'generated', { mode: 0o600 });
+    const sandboxArtifact = await workspace.writeSandboxArtifact({
+        task: sandboxTwo,
+        sourcePath: path.join(sandboxTwo.taskPath, 'workspace', 'generated.txt'),
+        fileName: 'generated.txt',
+        mimeType: 'text/plain'
+    });
+    const sandboxDownload = await workspace.prepareDownload({
+        userId: 7,
+        sessionId: 'session_alpha',
+        taskId: sandboxArtifact.taskId,
+        artifactId: sandboxArtifact.artifactId
+    });
+    await sandboxDownload.finalize();
+    assert.equal(fs.existsSync(sandboxTwo.taskPath), true, 'downloading a sandbox artifact keeps the workspace');
+    assert.equal(fs.existsSync(path.join(sandboxTwo.taskPath, 'workspace', 'persist.txt')), true);
+    await fs.promises.writeFile(path.join(sandboxTwo.taskPath, 'workspace', 'cross-session.txt'), 'cross session', { mode: 0o600 });
+    const crossSessionArtifact = await workspace.writeSandboxArtifact({
+        task: sandboxTwo,
+        sourcePath: path.join(sandboxTwo.taskPath, 'workspace', 'cross-session.txt'),
+        fileName: 'cross-session.txt',
+        mimeType: 'text/plain'
+    });
+    const sandboxThree = await workspace.createSandboxTask({ userId: 7, sessionId: 'session_beta' });
+    assert.equal(sandboxThree.taskId, sandboxOne.taskId, 'workspace is reused across sessions for one user');
+    await expectCode(
+        workspace.prepareDownload({ userId: 7, sessionId: 'session_beta', taskId: crossSessionArtifact.taskId, artifactId: crossSessionArtifact.artifactId }),
+        'workspace_artifact_forbidden'
+    );
+    const oldSessionDownload = await workspace.prepareDownload({
+        userId: 7,
+        sessionId: 'session_alpha',
+        taskId: crossSessionArtifact.taskId,
+        artifactId: crossSessionArtifact.artifactId
+    });
+    await oldSessionDownload.finalize();
+    assert.equal(fs.existsSync(sandboxTwo.taskPath), true, 'old-session download keeps the shared workspace');
+    const otherUserSandbox = await workspace.createSandboxTask({ userId: 8, sessionId: 'session_alpha' });
+    assert.notEqual(otherUserSandbox.taskId, sandboxOne.taskId, 'sandboxes are user-isolated');
+    clock += (3 * 60 * 60 * 1000) + 1;
+    assert.ok((await workspace.cleanupExpired()) >= 2);
+    assert.equal(fs.existsSync(sandboxOne.taskPath), false, 'expired sandbox is deleted');
+
     const limitedWorkspace = new FileWorkspace({
         rootDir: path.join(root, 'limited-jobs'),
         maxActiveTasks: 3,
@@ -249,9 +303,18 @@ async function main() {
     assert.match(serverSource, /functionDeclarations: runtimeToolDefinitions\.map/);
     assert.match(serverSource, /normalizeWorkspaceToolArgs/);
     assert.match(serverSource, /download_available: true/);
-    assert.doesNotMatch(serverSource, /download_url:\s*result\?\.downloadPath/);
+    assert.doesNotMatch(serverSource, /download_url: result\?\.downloadPath[\s\S]{0,400}reply_instruction/, 'model tool results must not expose internal download URLs');
+    assert.match(serverSource, /download_url: result\?\.download_url \|\| result\?\.downloadPath/, 'tool status must carry the protected download URL');
+    assert.match(serverSource, /executedToolResults\.push\(\{ toolCall, result: toolResult \}\)/);
     assert.match(appSource, /downloadFileJobArtifact/);
-    assert.match(appSource, /'Authorization': `Bearer \$\{appState\.token\}`/);
+    assert.match(serverSource, /function buildArtifactAttachment\(result = \{\}\)/);
+    assert.match(serverSource, /attachment: artifactAttachment/);
+    assert.match(serverSource, /generatedArtifacts\.push\(artifactAttachment\)/);
+    assert.match(serverSource, /attachments, reasoning_content/);
+    assert.match(appSource, /function appendGeneratedArtifact\(attachment\)/);
+    assert.match(appSource, /const generatedArtifactAttachments = \[\]/);
+    assert.match(appSource, /attachments: generatedArtifactAttachments\.length > 0 \? generatedArtifactAttachments : null/);
+    assert.doesNotMatch(appSource, /attachments: aiMsg\.attachments/);
 
     workspace.stopCleanup();
     await fs.promises.rm(root, { recursive: true, force: true });

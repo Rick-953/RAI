@@ -171,7 +171,7 @@ node -e 'require("bcrypt").hash(process.argv[1], 12).then(console.log)' \
 | 环境变量 | 启用能力 |
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek 对话与推理路由 |
-| `RAI_GPT_GATEWAY_BASE_URL` + `RAI_GPT_GATEWAY_API_KEY_FILE` | 可选 OpenAI 兼容网关，提供 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 与 `gpt-image-2`；生产环境必须显式配置 HTTPS `/v1` 根地址和普通 0600 密钥文件 |
+| `RAI_GPT_GATEWAY_BASE_URL` + `RAI_GPT_GATEWAY_API_KEY_FILE` | 可选 OpenAI 兼容网关，提供 `gpt-6.1-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 与 `gpt-image-2`；生产环境必须显式配置 HTTPS `/v1` 根地址和普通 0600 密钥文件 |
 | `RAI_FAST_GATEWAY_BASE_URL` + `RAI_FAST_GATEWAY_API_KEY_FILE` | Gemini 3.6 的 OpenAI 兼容 Fast 路由；使用独立 0600 密钥文件 |
 | `RAI_CLAUDE_GATEWAY_BASE_URL` + `RAI_CLAUDE_GATEWAY_API_KEY_FILE` | Claude Opus 5 的 OpenAI 兼容 UMAPIS 路由；使用独立 0600 密钥文件 |
 | `SILICONFLOW_API_KEY` | 已配置的 Qwen/Kimi 路由与图片生成 |

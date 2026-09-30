@@ -9,10 +9,12 @@ const path = require('path');
 const sqlite3 = require('sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8').replace(/\r\n/g, '\n');
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
+const localAgentStyles = read('public/local-agent.css');
+const eventBindings = read('public/event-bindings.js');
 const serviceWorker = read('public/sw.js');
 const conversationCache = read('public/conversation-cache.js');
 const raiSystemPrompt = read('public/rai-system-prompt.js');
@@ -556,7 +558,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
+  assert.deepEqual(visibleModelIds, ['gpt-6.1-sol', 'gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
+  assert.match(allModels, />GPT-6.1 Sol</);
   assert.match(allModels, />GPT 5\.6</);
   assert.match(allModels, />Claude Sonnet 5</);
   assert.match(allModels, />Gemini 3\.6</);
@@ -582,14 +585,14 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-5\.6-luna', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
+  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-6.1-sol', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
     'Smart Model text requests must prefer DeepSeek V4 Flash (admin-configurable) with the requested ordered fallback chain');
-  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-5\.6-luna', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
-    'Smart Model multimodal requests must keep Luna first and avoid text-only fallbacks');
+  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-6.1-sol', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
+    'Smart Model multimodal requests must keep GPT-6.1 Sol first and avoid text-only fallbacks');
   assert.match(server, /'gpt-5\.6-luna':\s*\{[\s\S]{0,180}provider:\s*'rai_gpt_gateway'[\s\S]{0,180}model:\s*'gpt-5\.6-luna'/,
     'the public GPT 5.6 selection must call the Luna upstream model');
-  assert.match(server, /'gpt-5\.6-luna': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Luna failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.match(server, /'gpt-5\.6-luna': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Luna failures must follow DeepSeek Flash → Kimi');
   assert.match(server, /'claude-sonnet-5':\s*\{[\s\S]{0,180}provider:\s*'rai_claude_gateway'[\s\S]{0,180}model:\s*'claude-sonnet-5'/,
     'the Claude product route must use UMAPIS Claude Sonnet 5');
   assert.match(server, /'gemini-3\.6-flash-low':\s*\{[\s\S]{0,180}provider:\s*'rai_fast_gateway'[\s\S]{0,180}model:\s*'gemini-3\.6-flash-low'/,
@@ -598,14 +601,14 @@ function testFocusedModelUiReasoningAndSwipe() {
     'the Smart Model preference must resolve to the SiliconFlow Kimi K2.6 route');
   assert.match(server, /'nemotron-3-ultra':\s*\{[\s\S]{0,180}provider:\s*'openrouter'[\s\S]{0,180}model:\s*'nvidia\/nemotron-3-ultra-550b-a55b:free'/,
     'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
-  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-flash'/,
+  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-flash'/,
     'DeepSeek V4 Flash must use the official DeepSeek route');
-  assert.match(server, /'deepseek-pro':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-pro'/,
-    'DeepSeek Pro must use the official DeepSeek route');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Claude failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
-  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Gemini failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
+  assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/,
+    'DeepSeek Pro must not be an active route');
+  assert.match(server, /'claude-sonnet-5': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Claude failures must follow DeepSeek Flash → Kimi');
+  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-flash', 'kimi-k2\.6'\]/,
+    'Gemini failures must follow DeepSeek Flash → Kimi');
   assert.match(server, /智能模型默认使用 \$\{researchModelLabel\(finalModel\)\}/,
     'Smart Model routing notices must use a user-facing model label');
   assert.match(server, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
@@ -676,7 +679,7 @@ async function testMessageRenderingStability() {
     'an existing message must not be detached and recreated during reconciliation');
 
   const finishMessageNode = extractNamedFunction(app, 'finishMessageNodeInPlace');
-  assert.match(finishMessageNode, /let existingText = Array\.from\(existingContent\.children\)\.find/,
+  assert.match(finishMessageNode, /const existingTextNodes = Array\.from\(existingContent\.children\)\.filter/,
     'AI completion must identify its live text subtree before applying final metadata');
   assert.match(finishMessageNode, /syncMessageNodeShell\(existingNode, finalizedTemplate\)/,
     'AI completion must synchronize shell classes without restarting entrance motion');
@@ -684,18 +687,42 @@ async function testMessageRenderingStability() {
     'AI completion must not replay the message entrance animation');
   assert.match(finishMessageNode, /if \(!existingText && finalizedText\)/,
     'AI completion may create text only for an optimistic node that never had a live text subtree');
-  assert.match(finishMessageNode, /if \(existingText\) existingText\.removeAttribute\('id'\);/,
+  assert.match(finishMessageNode, /const existingTextNodes = Array\.from\(existingContent\.children\)\.filter/,
+    'AI completion must inspect every live text node before deduplicating');
+  assert.match(finishMessageNode, /existingTextNodes\.find\(\(child\) =>\s*child\.classList\?\.contains\('stream-flow'\)/,
+    'AI completion must prefer the live stream body over a finalized duplicate');
+  assert.match(finishMessageNode, /existingTextNodes\.forEach\(\(node\) => \{[\s\S]{0,140}if \(node !== existingText\) node\.remove\(\)/,
+    'AI completion must remove a duplicate finalized text node when a live stream body exists');
+  assert.match(finishMessageNode, /const preserveLiveFlow = !!\([\s\S]{0,520}finalizedHasLiveStructure[\s\S]{0,520}\)/,
+    'AI completion must retain a populated live stream body when the finalized template would reintroduce a timeline');
+  assert.match(finishMessageNode, /if \(existingText && finalizedText && !preserveLiveFlow\)/,
+    'AI completion may replace the live body only when no duplicate timeline would be introduced');
+  assert.match(finishMessageNode, /const finalizedHasReasoningBlock = !!finalizedContent\.querySelector\('\.rai-reasoning-block'\)/,
+    'AI completion must recognize a finalized thinking block even when it is nested in the timeline');
+  assert.match(finishMessageNode, /if \(preserveLiveFlow && !finalizedHasReasoningBlock && \([\s\S]{0,220}child\.classList\?\.contains\('thinking-timeline'\)[\s\S]{0,220}child\.classList\?\.contains\('rai-reasoning-block'\)[\s\S]{0,100}\)\) return;/,
+    'AI completion must keep a finalized thinking block while suppressing a bare timeline beside a preserved live stream body');
+  assert.match(finishMessageNode, /if \(existingText\) existingText\.removeAttribute\('id'\);/, 
     'AI completion must retain the live text node while removing the stream-only identifier');
   assert.match(finishMessageNode, /const finalizedMeta = Array\.from\(finalizedContent\.children\)\.find/,
     'AI completion must append final metadata and action controls separately from the live text');
+  assert.match(finishMessageNode, /querySelectorAll\('\.thinking-timeline, \.rai-reasoning-block'\)\.forEach\(\(node\) => node\.remove\(\)\)/,
+    'AI completion must always remove the obsolete live timeline and reasoning containers');
   assert.match(finishMessageNode, /applyMessageNodeMetadata\(existingNode, message\)/,
     'AI completion must still update the saved message ID and request metadata in place');
   assert.match(finishMessageNode, /return existingNode;/,
     'AI completion must return the preserved outer node');
-  assert.doesNotMatch(finishMessageNode, /updateMessageNodeInPlace\(existingNode, message\)|existingNode\.replaceChildren\(|existingText\.replaceWith\(|existingText\.remove\(/,
+  assert.doesNotMatch(finishMessageNode, /updateMessageNodeInPlace\(existingNode, message\)|existingNode\.replaceChildren\(|existingText\.remove\(/,
     'AI completion must not replace or detach the streamed text and image subtree');
-  assert.doesNotMatch(finishMessageNode, /\.replaceWith\(|existingNode\.remove\(/,
+  assert.doesNotMatch(finishMessageNode, /(?:existingNode|finalizedTemplate)\.replaceWith\(|existingNode\.remove\(/,
     'AI completion must not recreate its message node and replay the entrance animation');
+  assert.match(app, /const shouldRenderReasoningTimeline = message\.role === 'assistant' && hasReasoning && !isResearchTrace/,
+    'Reasoning messages must keep their thinking timeline even when interleaved flow exists');
+  assert.match(app, /shouldRenderReasoningTimeline \|\|[\s\S]{0,220}!hasInterleavedFlow/,
+    'Only reasoning timelines may survive interleaved flow; legacy internet/tool timelines stay suppressed');
+  assert.match(app, /if \(shouldRenderReasoningTimeline\) \{/,
+    'The finalized reasoning block must render from the shared reasoning condition');
+  assert.match(styles, /\.message\.assistant \.message-avatar\s*\{[^}]*margin-left:\s*18px/,
+    'The RAI avatar must move right to align with the assistant text inset');
 
   const positionSessionMenu = extractNamedFunction(app, 'positionSessionMenu');
   assert.match(positionSessionMenu, /const fitsRight = rect\.right \+ anchorGap \+ menuRect\.width <= window\.innerWidth - viewportPadding/,
@@ -766,7 +793,7 @@ async function testMessageRenderingStability() {
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 7,
+  assert.equal(modelSelectionBindings.length, 8,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
@@ -778,6 +805,8 @@ async function testMessageRenderingStability() {
     'the completed primary reply must enter application state');
   assert.match(primaryCompletion, /finishMessageNodeInPlace\(\s*aiMsgDiv\s*,\s*aiMsg\b/,
     'the primary completion path must replace only its live assistant node');
+  assert.match(primaryCompletion, /if \(!finalizedNode && aiMsgDiv\.isConnected\)[\s\S]{0,120}updateMessageNodeInPlace\(aiMsgDiv, aiMsg\)/,
+    'the primary completion path must fall back to an in-place final render instead of leaving stale stream content');
   assert.doesNotMatch(primaryCompletion, /\brenderMessages\s*\(/,
     'the primary completion path must not rebuild the complete conversation');
   assert.match(sendMessage, /const isActiveStreamSession = \(\) => \([\s\S]{0,180}streamSessionId === String\(appState\.currentSession\?\.id \|\| ''\)/,
@@ -1036,14 +1065,14 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260814-local-agent-v01300-r1';
+  const expectedBuild = '20260930-gpt61sol-r8';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
   assert.match(app, new RegExp(`const RAI_APP_VERSION = '${expectedVersion.replaceAll('.', '\\.')}'`));
-  assert.match(app, /const RAI_BUILD_ID = '20260814-local-agent-v01300-r1'/);
+  assert.match(app, new RegExp(`const RAI_BUILD_ID = '${expectedBuild}'`));
   assert.match(index, new RegExp(`by Rick \\u00b7 v${expectedVersion.replaceAll('.', '\\.')}`));
-  assert.match(serviceWorker, /0.13.0-20260814-local-agent-v01300-r1/);
+  assert.match(serviceWorker, new RegExp(`${expectedVersion.replaceAll('.', '\\.')}-${expectedBuild}`));
   const indexBuildRefs = [...index.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   const serviceWorkerBuildRefs = [...serviceWorker.matchAll(/[?&]v=([^"'&\s>]+)/g)].map((match) => match[1]);
   assert.ok(indexBuildRefs.length >= 15, 'index build-marker coverage unexpectedly shrank');
@@ -1056,7 +1085,7 @@ function testVersionContract() {
     'the v0.11.86 build marker must not survive the v0.11.87 file sandbox source release');
   assert.doesNotMatch(index, /auth-container active/, 'login must not be the HTML default frame');
   assert.doesNotMatch(index, /id="authEmail"[^>]*autofocus/, 'login email must not claim startup focus');
-  assert.match(index, /conversation-cache\.js\?v=20260814-local-agent-v01300-r1/);
+  assert.match(index, new RegExp(`conversation-cache\\.js\\?v=${expectedBuild}`));
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,500}return 'fast-auto'/,
     'fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]{0,600}return 'think-auto'/,
@@ -1081,8 +1110,10 @@ function testVersionContract() {
     'image-only models must be rejected as preferred model settings');
   assert.match(server, /async function resolveVisibleFastModel\(\)[\s\S]{0,500}fast_default_model/,
     'fast route must consult admin settings');
-  assert.match(server, /async function resolveVisibleThinkingModel\(\)[\s\S]{0,500}thinking_default_model/,
-    'thinking route must consult admin settings');
+  assert.match(server, /async function resolveVisibleThinkingModel\(\)\s*\{\s*return resolveVisibleAutoModel\(\);\s*\}/,
+    'thinking must inherit the Smart Flash route rather than stale Pro admin preferences');
+  assert.match(server, /async function resolveVisibleAutoModel\(\)[\s\S]{0,160}const preferred = 'deepseek-flash'/,
+    'Smart mode must prefer DeepSeek Flash');
   assert.match(server, /async function resolveVisionFallbackModel\(\)[\s\S]{0,400}vision_fallback_model/,
     'vision fallback must consult admin settings');
   assert.match(server, /else if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/,
@@ -1186,7 +1217,7 @@ function testVersionContract() {
   assert.match(serviceWorker, /url\.pathname === (?:appPath\('runtime-config\.js'\)|'\/runtime-config\.js')/);
   const renderSessions = extractNamedFunction(app, 'renderSessions');
   const renderSessionRow = extractNamedFunction(app, 'createSessionElement');
-  assert.match(renderSessionRow, /formatSessionListTimestamp\(session\)[\s\S]{0,1200}class="session-time"/,
+  assert.match(renderSessionRow, /formatSessionListTimestamp\(session\)[\s\S]{0,2200}class="session-time"/,
     'today rows must retain their HH:mm timestamp');
   assert.match(renderSessions, /getSessionDateGroup\(session\)[\s\S]{0,400}session-date-group/,
     'conversation rows must be grouped from browser-local dates');
@@ -1286,6 +1317,138 @@ function testVersionContract() {
   assert.match(app, /version:\s*'v0\.11\.44'[\s\S]*?受控测试账号[\s\S]*?version:\s*'v0\.11\.43'[\s\S]*?GPT Image 2[\s\S]*?低、中、高、自动[\s\S]*?version:\s*'v0\.11\.42'[\s\S]*?遗留弱密码[\s\S]*?version:\s*'v0\.11\.41'[\s\S]*?node-tar[\s\S]*?version:\s*'v0\.11\.40'[\s\S]*?生产环境默认暂停 PDF\/Office 上传解析[\s\S]*?version:\s*'v0\.11\.39'[\s\S]*?卡片坞[\s\S]*?version:\s*'v0\.11\.38'[\s\S]*?72%[\s\S]*?version:\s*'v0\.11\.37'[\s\S]*?选词解释[\s\S]*?version:\s*'v0\.11\.36'[\s\S]*?秘密扫描误报/);
   assert.doesNotMatch([app, index, serviceWorker].join('\n'), /0\.11\.34|message-meta-visibility-logout-ui-v01134/);
   assert.doesNotMatch(index, /20260713-2fa-token-purpose-hotfix-v01129/);
+}
+
+function testDownloadClientsAndTimeline() {
+  const appPanelStart = index.indexOf('id="settingsPanel-app"');
+  const webAppCard = index.indexOf('id="settingsPwaDownloadTitle"');
+  const cxRaiCard = index.indexOf('id="settingsWindowsDownloadTitle"');
+  const connectSection = index.indexOf('id="settingsRaiConnectInstall"');
+  assert.ok(appPanelStart >= 0 && webAppCard > appPanelStart && cxRaiCard > webAppCard && connectSection > cxRaiCard,
+    'download page must lead with Web App and CX RAI before the advanced connection bar');
+  assert.match(index, /<details class="settings-connect-install" id="settingsRaiConnectInstall"/,
+    'RAI Connect must be a details element');
+  assert.doesNotMatch(index, /<details[^>]+id="settingsRaiConnectInstall"[^>]*\sopen(?:\s|=|>)/,
+    'RAI Connect must be collapsed by default');
+  assert.match(index, /settings-connect-summary[\s\S]*local-agent-install-compact-desc/,
+    'RAI Connect summary must render as a compact horizontal bar');
+  assert.match(app, /date: '2026-09-24'[\s\S]*date: '2026-09-21'[\s\S]*date: '2026-09-14'[\s\S]*date: '2026-09-08'[\s\S]*date: '2026-08-19'/,
+    'About timeline must include recent GitHub milestones in descending order');
+  assert.match(app, /GitHub main \/ beta 提交记录[\s\S]*2026-09-24/,
+    'About timeline source must state the GitHub sync horizon');
+  assert.match(index, /id="settingsHandednessSwitch"[\s\S]*settingsToggleHandedness\(\)/,
+    'Adaptive handedness must expose a settings switch');
+  assert.match(eventBindings, /settingsToggleHandedness/,
+    'Adaptive handedness action must be allowed by the CSP event binding contract');
+  assert.match(app, /function detectHandednessFromTouch\(clientX\)[\s\S]*window\.innerWidth \/ 2/,
+    'Mobile touch position must select left- or right-hand mode');
+  assert.match(app, /function isHandednessDetectionAllowed\(\)[\s\S]*appState\.handednessEnabled[\s\S]*isHandednessMobileLayout\(\)[\s\S]*return !appState\.sidebarOpen/,
+    'Only an expanded sidebar may block handedness detection');
+  assert.match(app, /function detectHandednessFromTouch\(clientX\)[\s\S]*isHandednessDetectionAllowed\(\)/,
+    'Handedness detection must use the global screen-half rule');
+  assert.match(app, /document\.addEventListener\('touchstart', \(event\) => \{[\s\S]*detectHandednessFromTouch\(touch\.clientX\)/,
+    'Handedness tracking must run on every touch while the sidebar is closed');
+  assert.match(app, /root\.classList\.add\('handedness-switching'\)[\s\S]*root\.classList\.remove\('handedness-switching'\)/,
+    'Handedness changes must suppress the sidebar slide animation while switching sides');
+  assert.match(styles, /html\.handedness-switching \.sidebar\s*\{[^}]*transition:\s*none/,
+    'The sidebar must not visibly slide across the screen during handedness switching');
+  assert.match(styles, /html\.hand-left \.chat-index-navigator\s*\{[^}]*left:\s*8px[^}]*right:\s*auto/,
+    'Left-hand mode must move the chat index navigator to the left edge');
+  assert.match(styles, /html\.hand-left \.chat-index-timeline\s*\{[^}]*align-items:\s*flex-start/,
+    'Left-hand mode must left-align the chat index marker lines');
+  assert.match(styles, /html\.hand-left \.mobile-header\s*\{[^}]*justify-content:\s*flex-start/,
+    'Left-hand mode must keep the mobile header controls on the left');
+  assert.match(styles, /html\.hand-right \.mobile-left-controls\s*\{[^}]*width:\s*100%/,
+    'Right-hand mode must let the mobile header control row span the full width');
+  assert.match(styles, /html\.hand-right \.mobile-logo\s*\{[^}]*order:\s*-1/,
+    'Right-hand mode must move the RAI logo to the far left');
+  assert.match(styles, /html\.hand-right \.mobile-temp-chat-btn\s*\{[^}]*order:\s*2[^}]*margin-left:\s*auto/,
+    'Right-hand mode must put the temporary chat button second from the right');
+  assert.match(styles, /html\.hand-right \.hamburger-btn\s*\{[^}]*order:\s*3/,
+    'Right-hand mode must put the sidebar button at the far right');
+  assert.match(styles, /\.mobile-center-controls\s*\{[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*transform:\s*translate\(-50%,\s*-50%\)/,
+    'The mobile model selector must stay centered in both handedness modes');
+  assert.match(styles, /html\.hand-left \.mobile-center-controls,\s*html\.hand-right \.mobile-center-controls\s*\{[^}]*left:\s*50%/,
+    'Handedness modes must override the legacy model-selector offset and keep it centered');
+  assert.match(app, /function positionChatIndexFloatingTooltip\(tooltip, rect\)[\s\S]*appState\.handedness === 'right'[\s\S]*rect\.right \+ 16/,
+    'Chat index tooltips must flip to the open side of the navigator');
+  assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
+    'Right-hand mode must support opening the sidebar from the right edge');
+  assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,
+    'Right-hand mode must position the mobile sidebar on the right');
+  assert.match(styles, /html\.hand-left \.input-toolbar > \.send-btn[\s\S]*order: -1/,
+    'Left-hand mode must move the send button to the left side of the composer');
+  assert.match(styles, /\.settings-platform-download \+ \.settings-platform-download\s*\{[^}]*padding-left:\s*0;[^}]*border-left:\s*0/,
+    'Download client columns must not use a vertical divider');
+  assert.match(styles, /\.settings-install-card\s*\{[^}]*border-radius:\s*12px/,
+    'Download client outer surface must use the shared 12px radius');
+  assert.match(localAgentStyles, /\.settings-connect-install\s*\{[^}]*border-radius:\s*12px/,
+    'RAI Connect collapsed bar must use the same 12px radius');
+  assert.match(styles, /\.settings-windows-actions\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'CX RAI download actions must align as equal-width rows');
+  assert.match(styles, /\.settings-windows-mobile-download\s*\{[^}]*width:\s*100%/,
+    'Windows Mobile UWP action must align with the primary installer button');
+  assert.match(extractNamedFunction(app, 'getHandednessPromptHint'), /appState\.handednessEnabled[\s\S]*isHandednessMobileLayout\(\)[\s\S]*' hand='/,
+    'Handedness must remain an opt-in per-turn mobile hint');
+  const appendHint = extractNamedFunction(app, 'appendUserTurnContextHintForPrompt');
+  assert.ok(appendHint.includes("'\\n[ctx '"));
+  assert.ok(appendHint.includes('getHandednessPromptHint()'), 'compact user context must include handedness');
+  assert.match(app, /appendUserTurnContextHintForPrompt\(m\.content\)/,
+    'Only the final user turn may receive the dynamic prompt context hints');
+  const promptApi = require('../public/rai-system-prompt');
+  const stableOptions = { promptLanguage: 'zh-CN', modelIdentity: '智能模型' };
+  const systemLeft = promptApi.buildEffectiveSystemPrompt({ ...stableOptions, time: '2026-09-28', handedness: 'left' });
+  const systemRight = promptApi.buildEffectiveSystemPrompt({ ...stableOptions, time: '2026-09-29', handedness: 'right' });
+  assert.equal(systemLeft, systemRight, 'time/hand changes must not invalidate the cacheable system prefix');
+  assert.doesNotMatch(systemLeft, /hand=[LR]|当前持机手：|Current device hand:/,
+    'the static ctx schema is allowed; per-turn handedness values are not');
+  assert.match(server, /function stripInlinePromptTimeHint\(content = ''\)[\s\S]*?当前持机手[\s\S]*?Current device hand/,
+    'Server persistence must strip the handedness hint together with the time hint');
+}
+
+function testHandednessPromptContext() {
+  const appState = { language: 'zh-CN', handednessEnabled: true, handedness: 'right' };
+  const media = { matches: true };
+  const compose = new Function(
+    'appState',
+    'window',
+    'navigator',
+    'isChineseLanguage',
+    `${extractNamedFunction(app, 'normalizeHandedness')};
+     ${extractNamedFunction(app, 'isHandednessMobileLayout')};
+     ${extractNamedFunction(app, 'getUserTimeContext')};
+     ${extractNamedFunction(app, 'getShortUserTimeHint')};
+     ${extractNamedFunction(app, 'getHandednessPromptHint')};
+     ${extractNamedFunction(app, 'appendUserTurnContextHintForPrompt')};
+     return appendUserTurnContextHintForPrompt;`
+  )(
+    appState,
+    { matchMedia: () => media },
+    { language: 'zh-CN' },
+    () => true
+  );
+
+  const rightHand = compose('测试');
+  assert.match(rightHand, /^测试\n\[ctx /);
+  assert.match(rightHand, / ui=web-mobile hand=R\]$/);
+  assert.ok(rightHand.length - 2 < 90, 'per-turn metadata must remain compact');
+
+  appState.handedness = 'left';
+  assert.match(compose('测试'), / hand=L\]$/);
+
+  media.matches = false;
+  assert.doesNotMatch(compose('测试'), / hand=/);
+
+  media.matches = true;
+  appState.handednessEnabled = false;
+  assert.doesNotMatch(compose('测试'), / hand=/);
+
+  const stripHints = new Function(
+    `${extractNamedFunction(server, 'stripInlinePromptTimeHint')}; return stripInlinePromptTimeHint;`
+  )();
+  assert.equal(stripHints(rightHand), '测试', 'server must strip the compact context before persistence');
+  const stored = stripHints('测试\n\n[当前时间：2026-09-24 20:47。仅作背景，不要把回答中心放在时间上。]\n\n[当前持机手：右手。仅用于理解界面偏好，不要把回答中心放在握持方式上。]');
+  assert.equal(stored, '测试', 'server persistence must remove both per-turn context hints');
 }
 
 function testPromptModelIdentity() {
@@ -1518,7 +1681,9 @@ async function main() {
     testPromptModelIdentity,
     testMainDatabaseTransactionIsolation,
     testMessageRenderingStability,
-    testVersionContract
+    testVersionContract,
+    testDownloadClientsAndTimeline,
+    testHandednessPromptContext
   ];
   for (const test of tests) await test();
   console.log(`formal-user-bugs-regression ok (${tests.length}/${tests.length})`);
@@ -1549,5 +1714,6 @@ module.exports = {
   testPromptModelIdentity,
   testMainDatabaseTransactionIsolation,
   testMessageRenderingStability,
-  testVersionContract
+  testVersionContract,
+  testDownloadClientsAndTimeline
 };

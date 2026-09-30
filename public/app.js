@@ -356,6 +356,7 @@ function sanitizeAssistantDisplayText(text = '') {
     .replace(/<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi, '')
     .replace(/<\|[^|]+\|>/g, '')
     .replace(/functions\.\w+:\d+/g, '')
+    .replace(/(?:\[\s*(?:简易文档已生成|文档已就绪|文件产物已生成|产物已就绪|下载[^\]]*)\s*\]\s*)+/g, '')
     .replace(/(?:^|\n)\s*用户(?:询问的是|想了解|问的是)[^\n]*(?:政治敏感|正常技术问题)[^\n]*(?=\n|$)/g, '\n')
     .replace(/(?:^|\n)\s*这是一个关于[^\n]*(?:正常技术问题|政治敏感)[^\n]*(?=\n|$)/g, '\n');
 
@@ -1317,7 +1318,29 @@ function mergeAndReindexSources(existingSources = [], incomingSources = []) {
   (Array.isArray(existingSources) ? existingSources : []).forEach(append);
   (Array.isArray(incomingSources) ? incomingSources : []).forEach(append);
 
-  return annotateSourceMarkers(merged);
+  const usedMarkers = new Set();
+  const nextMarker = (kind) => {
+    if (kind === 'finance') {
+      let index = 1;
+      while (usedMarkers.has(alphaMarkerFromIndex(index))) index += 1;
+      return alphaMarkerFromIndex(index);
+    }
+    let index = 1;
+    while (usedMarkers.has(String(index))) index += 1;
+    return String(index);
+  };
+  return merged.map((source) => {
+    const kind = getSourceKind(source);
+    const marker = String(source.marker || '').toUpperCase();
+    const assignedMarker = marker && !usedMarkers.has(marker) ? marker : nextMarker(kind);
+    usedMarkers.add(assignedMarker);
+    return {
+      ...source,
+      sourceKind: kind,
+      markerType: source.markerType || (kind === 'finance' ? 'alpha' : 'numeric'),
+      marker: assignedMarker
+    };
+  });
 }
 
 function getSourceKind(source) {
@@ -2387,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.0';
-const RAI_BUILD_ID = '20260814-local-agent-v01300-r1';
+const RAI_APP_VERSION = '0.13.18';
+const RAI_BUILD_ID = '20260930-gpt61sol-r8';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2472,8 +2495,8 @@ const appState = {
   qualityProfile: 'high',
   researchModeEnabled: false,
   researchMode: 'fast',
-  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'],
-  researchMasterModel: 'deepseek-pro',
+  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'],
+  researchMasterModel: 'deepseek-flash',
   researchMaxRounds: 50,
   sendHoldSuppressClick: false,
   sendHoldPicker: null,
@@ -2496,6 +2519,9 @@ const appState = {
   selectionExplanationDeleteMode: 'promote_children',
   showModelBadge: false,
   showInternetBadge: false,
+  handednessEnabled: false,
+  handedness: 'left',
+  handednessTrackingBound: false,
   browserNotifyEnabled: (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'),
   currentSessionMemoryMode: 'normal',
   pendingDomainMode: null,  // 首页功能块注入的领域模式（单次请求）
@@ -2617,6 +2643,7 @@ let windowsDownloadsLoadPromise = null;
 let windowsDownloadsLoadedAt = 0;
 let windowsDownloadsRelease = null;
 const WINDOWS_DOWNLOADS_CLIENT_TTL_MS = 10 * 60 * 1000;
+const WINDOWS_ALL_RELEASES_URL = 'https://github.com/Master-Tea/CX-RAI/releases/latest';
 const RAI_PWA_INSTALLED_HINT_KEY = 'rai_pwa_installed_hint';
 const RAI_INVITE_REF_KEY = 'rai_invite_referrer_id';
 const PWA_INSTALL_REWARD_POINTS = 10;
@@ -2670,8 +2697,7 @@ const raiMascotState = {
       return;
     }
     if (this.mode === 'dwell' && appState.guide.petType === 'tea') {
-      const poses = ['wave', 'camera', 'drink', 'phone', 'laptop'];
-      setTeaPetPose(poses[Math.floor(Math.random() * poses.length)], 1800);
+      TeaPetRuntime.onTap();
       return;
     }
     const expressions = guideRuntime.reducedMotion
@@ -2939,18 +2965,289 @@ function persistPetManualPosition() {
 }
 
 function setTeaPetPose(pose = 'idle', resetAfter = 0) {
-  const mascot = getGuideMascotElement();
-  if (!mascot) return;
-  if (guideRuntime.teaPoseTimer) window.clearTimeout(guideRuntime.teaPoseTimer);
-  guideRuntime.teaPoseTimer = null;
-  mascot.dataset.teaPose = pose;
-  if (resetAfter > 0 && !guideRuntime.reducedMotion) {
-    guideRuntime.teaPoseTimer = window.setTimeout(() => {
-      mascot.dataset.teaPose = 'idle';
-      guideRuntime.teaPoseTimer = null;
-    }, resetAfter);
-  }
+  TeaPetRuntime.setLegacyPose(pose, resetAfter);
 }
+
+// ==================== 茶（MasterTea）桌宠运行时 ====================
+// UWP CXRAIHelper/DesktopPet.cs 状态机移植：idle(1-4 随机 + 双帧交叉溶解) / hello / chat / desktop
+// 闲话调度移植 UWP PetChatterService：本地语录(3-6min 洗牌袋) + AI(GET /api/pet/chitchat, 15-31min)
+const TeaPetRuntime = {
+  IDLE_FILES: ['MasterTea1', 'MasterTea2', 'MasterTea3', 'MasterTea4'],
+  STATE_FILES: { hello: 'MasterTeaHello', chat: 'MasterTeaChat', desktop: 'MasterTeaDesktop' },
+  FRAME_PERIOD_MS: 500,       // 交叉溶解：hold 300ms + transition 200ms（同 UWP）
+  HELLO_MS: 8000,             // hello 停留（同 UWP 8s）
+  CHAT_MS: 10000,             // 气泡停留期间的 chat 状态
+  BUBBLE_MS: 9000,            // 气泡显示时长
+  IDLE_MIN_MS: 30000,         // 空闲换装最小间隔（UWP 30s-600s，网页版缩到 30-180s）
+  IDLE_MAX_MS: 180000,
+  TICK_MS: 20000,             // 闲话调度 tick（同 UWP 20s）
+  LOCAL_MIN_MS: 3 * 60 * 1000,
+  LOCAL_MAX_MS: 6 * 60 * 1000,
+  AI_MIN_MS: 15 * 60 * 1000,
+  AI_MAX_MS: 31 * 60 * 1000,
+  AI_TIMEOUT_MS: 18000,
+
+  state: 'idle',
+  idleKey: 'MasterTea1',
+  frame: 0,
+  activeLayer: 0,
+  animTimer: null,
+  idleTimer: null,
+  stateTimer: null,
+  bubbleTimer: null,
+  tickTimer: null,
+  nextLocalAt: 0,
+  nextAiAt: 0,
+  quotes: [],
+  quoteIndex: 0,
+  running: false,
+  startedOnce: false,
+
+  get mascot() { return document.getElementById('raiGuideMascot'); },
+
+  layerEl(i) {
+    const mascot = this.mascot;
+    return mascot ? mascot.querySelector(`.rai-tea-pet-layer[data-tea-layer="${i}"]`) : null;
+  },
+
+  fileForState() {
+    return this.state === 'idle' ? this.idleKey : (this.STATE_FILES[this.state] || this.idleKey);
+  },
+
+  initQuotes() {
+    if (this.quotes.length) return;
+    const all = (window.RAI_PET_LOCAL_QUOTES || []).slice();
+    for (let i = all.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [all[i], all[j]] = [all[j], all[i]];
+    }
+    this.quotes = all;
+    this.quoteIndex = 0;
+  },
+
+  start() {
+    if (this.running) return;
+    this.initQuotes();
+    this.running = true;
+    const now = Date.now();
+    if (!this.startedOnce) {
+      this.startedOnce = true;
+      this.nextLocalAt = now + randBetween(this.LOCAL_MIN_MS, this.LOCAL_MAX_MS);
+      this.nextAiAt = now + randBetween(this.AI_MIN_MS, this.AI_MAX_MS);
+    }
+    this.setIdle();
+    this.startAnim();
+    this.startTick();
+    // 问候：进入常驻时 AI 冒一句（服务端 15min 节流，节流/失败静默）
+    this.fetchAi();
+  },
+
+  stop() {
+    this.running = false;
+    clearTimeout(this.idleTimer); this.idleTimer = null;
+    clearTimeout(this.stateTimer); this.stateTimer = null;
+    clearTimeout(this.bubbleTimer); this.bubbleTimer = null;
+    clearInterval(this.animTimer); this.animTimer = null;
+    clearInterval(this.tickTimer); this.tickTimer = null;
+    setMascotSpeech('', '');
+  },
+
+  setIdle() {
+    if (!this.running) return;
+    this.state = 'idle';
+    this.idleKey = this.IDLE_FILES[Math.floor(Math.random() * this.IDLE_FILES.length)];
+    this.snapFrame();
+    const mascot = this.mascot;
+    if (mascot) mascot.dataset.teaState = 'idle';
+    this.scheduleIdleSwitch();
+  },
+
+  setState(state, autoReturnMs = 0) {
+    if (!this.running) return;
+    if (state === 'idle') { this.setIdle(); return; }
+    this.state = state;
+    if (this.stateTimer) clearTimeout(this.stateTimer);
+    this.stateTimer = null;
+    if (autoReturnMs > 0) {
+      this.stateTimer = setTimeout(() => { this.stateTimer = null; if (this.running) this.setIdle(); }, autoReturnMs);
+    }
+    this.snapFrame();
+    const mascot = this.mascot;
+    if (mascot) mascot.dataset.teaState = state;
+  },
+
+  scheduleIdleSwitch() {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.running && this.state === 'idle') this.setIdle();
+    }, randBetween(this.IDLE_MIN_MS, this.IDLE_MAX_MS));
+  },
+
+  // 状态切换时直接落定第 0 帧（不做无关帧的交叉溶解）；同时预载 -1 变体到隐藏层
+  snapFrame() {
+    this.frame = 0;
+    if (this._preloadTimer) { clearTimeout(this._preloadTimer); this._preloadTimer = null; }
+    const base = this.fileForState();
+    const a = this.layerEl(0);
+    const b = this.layerEl(1);
+    if (a) { a.style.backgroundImage = `url('images/pets/${base}.webp')`; a.dataset.visible = '1'; }
+    if (b) { b.style.backgroundImage = `url('images/pets/${base}-1.webp')`; b.dataset.visible = '0'; }
+    this.activeLayer = 0;
+  },
+
+  startAnim() {
+    if (this.animTimer || guideRuntime.reducedMotion) return;
+    this.animTimer = setInterval(() => this.onAnimTick(), this.FRAME_PERIOD_MS);
+  },
+
+  onAnimTick() {
+    if (!this.running) return;
+    // 对话生成中 → desktop 坐姿（UWP「工作目录模式」的网页版映射）；结束后回 idle
+    // 状态刚切换的 tick 只落定新状态底帧（snapFrame），下一 tick 再开始交叉溶解
+    if (this.state === 'idle' && this.isStreaming()) {
+      this.setState('desktop');
+      return;
+    } else if (this.state === 'desktop' && !this.isStreaming()) {
+      this.setState('idle');
+      return;
+    }
+    // 双帧 500ms 硬切交替（无交叉溶解，避免透明背景图中间态发白闪烁）
+    // 平滑关键：图片只在层隐藏时替换（提前一个周期预载好），tick 只切 opacity ——
+    // 两帧都是已解码、同 512×512 画布、锚点一致的图片 → 原地变脸，无位移无发白
+    const base = this.fileForState();
+    const nextFrame = this.frame === 0 ? 1 : 0;
+    const incoming = this.layerEl(this.activeLayer ^ 1);
+    const outgoing = this.layerEl(this.activeLayer);
+    if (incoming && outgoing) {
+      incoming.dataset.visible = '1';   // 立即显示（无过渡）
+      this.activeLayer ^= 1;
+      outgoing.dataset.visible = '0';   // 立即隐藏
+      // 预载下一轮帧到刚隐藏的层：无过渡，换图时机不再受淡出约束；
+      // 用极小延迟让浏览器先完成隐藏层重绘，避免同 tick 换图触发合成闪烁。
+      const afterFrame = nextFrame === 1 ? 0 : 1;
+      const afterKey = afterFrame === 1 ? `${base}-1` : base;
+      const outEl = outgoing;
+      if (this._preloadTimer) clearTimeout(this._preloadTimer);
+      this._preloadTimer = setTimeout(() => {
+        outEl.style.backgroundImage = `url('images/pets/${afterKey}.webp')`;
+        this._preloadTimer = null;
+      }, 30);
+    }
+    this.frame = nextFrame;
+  },
+
+  startTick() {
+    if (this.tickTimer) return;
+    this.tickTimer = setInterval(() => this.onTick(), this.TICK_MS);
+  },
+
+  onTick() {
+    if (!this.running || this.isUserBusy()) return;
+    const now = Date.now();
+    if (now >= this.nextLocalAt) {
+      this.nextLocalAt = now + randBetween(this.LOCAL_MIN_MS, this.LOCAL_MAX_MS);
+      this.speakLocal();
+    }
+    if (now >= this.nextAiAt) {
+      this.nextAiAt = now + randBetween(this.AI_MIN_MS, this.AI_MAX_MS);
+      this.fetchAi();
+    }
+  },
+
+  isStreaming() {
+    const stopBtn = document.getElementById('stopBtn');
+    return !!(stopBtn && stopBtn.style.display !== 'none');
+  },
+
+  isUserTyping() {
+    const active = document.activeElement;
+    return !!(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable));
+  },
+
+  isUserBusy() {
+    return this.isStreaming() || this.isUserTyping();
+  },
+
+  shuffleQuotes() {
+    for (let i = this.quotes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this.quotes[i], this.quotes[j]] = [this.quotes[j], this.quotes[i]];
+    }
+    this.quoteIndex = 0;
+  },
+
+  speakLocal() {
+    if (!this.quotes.length) return;
+    if (this.quoteIndex >= this.quotes.length) this.shuffleQuotes();
+    this.speak(this.quotes[this.quoteIndex]);
+    this.quoteIndex++;
+  },
+
+  speak(text) {
+    if (!text || !this.running) return;
+    this.setState('chat', this.CHAT_MS);
+    setMascotSpeech('茶', text);
+    syncMascotSpeechSide();
+    if (this.bubbleTimer) clearTimeout(this.bubbleTimer);
+    this.bubbleTimer = setTimeout(() => {
+      this.bubbleTimer = null;
+      if (this.running) setMascotSpeech('', '');
+    }, this.BUBBLE_MS);
+  },
+
+  async fetchAi() {
+    if (!this.running || !appState.token) return;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.AI_TIMEOUT_MS);
+      const resp = await fetch(`${API_BASE}/pet/chitchat`, {
+        headers: { 'Authorization': `Bearer ${appState.token}` },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data && data.text) this.speak(data.text);
+    } catch (e) {
+      // 静默：节流/断网/超时都不打扰用户
+    }
+  },
+
+  // 旧调用点兼容（拖拽 walk/end idle 等）
+  setLegacyPose(pose = 'idle', resetAfter = 0) {
+    if (!this.running) return;
+    if (pose === 'walk') {
+      // 拖拽中 pointermove 每帧都会调 walk：已处于 idle 则保持当前图（不随机换装、
+      // 不 snapFrame 重置），否则拖动时图片会快速乱闪。首次从非 idle 进入时回 idle 一次。
+      if (this.state !== 'idle') this.setIdle();
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(this.STATE_FILES, pose)) {
+      this.setState(pose, resetAfter || undefined);
+      return;
+    }
+    this.setState('hello', resetAfter || this.HELLO_MS);
+  },
+
+  onTap() {
+    if (!this.running) return;
+    // 点击快捷动作（映射 UWP DesktopPet 点击动作 "main"：把主对话带到面前）
+    // 网页版：聚焦对话输入框可直接开聊，茶宠同时回一句本地语录作反馈
+    const input = document.getElementById('messageInput');
+    if (input && typeof input.focus === 'function') {
+      input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      input.focus();
+    }
+    this.speakLocal();
+  }
+};
+
+function randBetween(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+window.TeaPetRuntime = TeaPetRuntime;
 
 function syncPetAppearance() {
   const mascot = getGuideMascotElement();
@@ -3273,6 +3570,7 @@ function moveMascotToElement(target, { placement = 'above', bounce = true, speec
 }
 
 function hideMascot() {
+  TeaPetRuntime.stop();
   const mascot = getGuideMascotElement();
   if (!mascot) return;
   mascot.hidden = true;
@@ -3311,6 +3609,11 @@ function syncGuideMascotVisibility() {
     mascot.classList.remove('is-auth', 'is-guide');
     mascot.classList.add('is-dwell');
     raiMascotState.mode = 'dwell';
+    if (appState.guide.petType === 'tea') {
+      TeaPetRuntime.start();
+    } else {
+      TeaPetRuntime.stop();
+    }
   } else {
     hideMascot();
     return;
@@ -4472,35 +4775,94 @@ function isTrustedWindowsReleaseAsset(asset, allowedSuffixes) {
   }
 }
 
+function getClientPlatform() {
+  const platform = String(globalThis.RAI_CLIENT_PLATFORM || document.documentElement.dataset.clientPlatform || 'other');
+  return platform || 'other';
+}
+
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const status = document.getElementById('windowsDownloadStatus');
-  const packageLink = document.getElementById('windowsPackageDownload');
-  const certificateLink = document.getElementById('windowsCertificateDownload');
-  if (!status || !packageLink || !certificateLink) return false;
+  const setupLink = document.getElementById('windowsSetupDownload');
+  const mobileLink = document.getElementById('windowsMobilePackageDownload');
+  const note = document.getElementById('windowsDownloadNote');
+  if (!status || !setupLink) return false;
 
-  const packageValid = isTrustedWindowsReleaseAsset(release?.package, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  const certificateValid = isTrustedWindowsReleaseAsset(release?.certificate, ['.cer']);
-  if (!packageValid || !certificateValid) return false;
-
-  packageLink.href = release.package.url;
-  packageLink.title = release.package.name;
-  certificateLink.href = release.certificate.url;
-  certificateLink.title = release.certificate.name;
-  // Lumia 设备下载（Arm 包；依赖请用户到 GitHub 下载页自取）
-  const lumiaSection = document.getElementById('windowsLumiaSection');
-  if (lumiaSection && release?.lumia?.package) {
-    const lumiaPackage = document.getElementById('windowsLumiaPackage');
-    if (lumiaPackage) {
-      lumiaPackage.href = release.lumia.package.url;
-      lumiaPackage.title = release.lumia.package.name;
-      lumiaPackage.textContent = 'Arm 包';
-    }
-    lumiaSection.style.display = '';
+  const clientPlatform = getClientPlatform();
+  const isWindowsMobile = clientPlatform === 'windows-mobile';
+  setupLink.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
+  if (note) {
+    note.textContent = isWindowsMobile
+      ? i18nText('settings-windows-mobile-note', isChineseLanguage(appState.language)
+        ? '下载 UWP 包并在 Windows 10 Mobile 设备上安装。'
+        : 'Download the UWP package and install it on a Windows 10 Mobile device.')
+      : i18nText('settings-windows-auto-note', isChineseLanguage(appState.language)
+        ? '运行安装程序即可一键装完，证书与依赖会自动处理。'
+        : 'Run the installer for a one-step install; certificates and dependencies are handled automatically.');
   }
+  const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
+  const mobilePackage = release?.arm?.package || release?.package;
+  const mobilePackageValid = isTrustedWindowsReleaseAsset(mobilePackage, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
   const tag = String(release.tag || '').trim();
   const isFallback = release.source === 'fallback';
+
+  if (isWindowsMobile) {
+    setupLink.hidden = true;
+    setupLink.removeAttribute('title');
+    if (mobileLink && mobilePackageValid) {
+      mobileLink.hidden = false;
+      mobileLink.classList.add('is-primary');
+      mobileLink.classList.remove('settings-install-download-secondary');
+      mobileLink.href = mobilePackage.url;
+      mobileLink.title = mobilePackage.name;
+      mobileLink.textContent = isChineseLanguage(appState.language)
+        ? '下载 Windows 10 Mobile 安装包'
+        : 'Download Windows 10 Mobile package';
+      status.textContent = isChineseLanguage(appState.language)
+        ? (isFallback ? `Windows 10 Mobile · 备用版 ${tag}` : `Windows 10 Mobile · GitHub 最新版 ${tag}`)
+        : (isFallback ? `Windows 10 Mobile · fallback ${tag}` : `Windows 10 Mobile · latest GitHub release ${tag}`);
+      return true;
+    }
+    if (mobileLink) mobileLink.hidden = true;
+    setupLink.hidden = false;
+    setupLink.href = WINDOWS_ALL_RELEASES_URL;
+    setupLink.removeAttribute('title');
+    setupLink.textContent = isChineseLanguage(appState.language) ? '前往 GitHub 发布页' : 'Open GitHub release page';
+    status.textContent = isChineseLanguage(appState.language)
+      ? '暂时没有可用的 Windows 10 Mobile 安装包，请前往 GitHub 发布页'
+      : 'No Windows 10 Mobile package is available yet; open the GitHub release page';
+    return false;
+  }
+
+  setupLink.hidden = false;
+  if (!setupValid) {
+    setupLink.href = WINDOWS_ALL_RELEASES_URL;
+    setupLink.removeAttribute('title');
+    if (mobileLink) mobileLink.hidden = true;
+    status.textContent = isChineseLanguage(appState.language)
+      ? '暂时没有可用的 EXE 安装程序，请前往 GitHub 发布页'
+      : 'No EXE installer is available yet; open the GitHub release page';
+    return false;
+  }
+
+  setupLink.href = release.setup.url;
+  setupLink.title = release.setup.name;
+
+  if (mobileLink) {
+    const showMobilePackage = mobilePackageValid && (clientPlatform === 'windows' || clientPlatform === 'windows-mobile');
+    mobileLink.hidden = !showMobilePackage;
+    mobileLink.classList.remove('is-primary');
+    mobileLink.classList.add('settings-install-download-secondary');
+    if (showMobilePackage) {
+      mobileLink.href = mobilePackage.url;
+      mobileLink.title = mobilePackage.name;
+      mobileLink.textContent = isChineseLanguage(appState.language)
+        ? 'Windows 10 Mobile（UWP）'
+        : 'Windows 10 Mobile (UWP)';
+    }
+  }
+
   status.textContent = isChineseLanguage(appState.language)
-    ? (isFallback ? `GitHub 暂不可用，当前显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
+    ? (isFallback ? `GitHub 暂不可用，显示备用版 ${tag}` : `GitHub 最新版 ${tag}`)
     : (isFallback ? `GitHub unavailable; showing fallback ${tag}` : `Latest GitHub release ${tag}`);
   return true;
 }
@@ -4621,19 +4983,14 @@ const MODELS = {
     supportsThinking: true
   },
   'deepseek-flash': {
-    name: 'DeepSeek v4',
+    name: 'DeepSeek v4 Flash',
     provider: 'deepseek',
     supportsThinking: true,
-    contextWindow: 1000000
-  },
-  'deepseek-pro': {
-    name: 'DeepSeek Pro',
-    provider: 'deepseek',
-    supportsThinking: true,
+    contextWindow: 1000000,
     maxTokens: 128000
   },
-  'gpt-5.6-sol': {
-    name: 'GPT-5.6 Sol',
+  'gpt-6.1-sol': {
+    name: 'GPT-6.1 Sol',
     provider: 'rai_openai_gateway',
     supportsThinking: true,
     supportsReasoningProfile: true,
@@ -4781,6 +5138,9 @@ const MODELS = {
 
 const LEGACY_MODEL_ALIASES = {
   // Keep the stable public GPT 5.6 selection while its upstream route uses Terra.
+  'gpt-5.6': 'gpt-6.1-sol',
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-6-sol': 'gpt-6.1-sol',
   'gpt-5.6-terra': 'gpt-5.6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
@@ -4794,11 +5154,12 @@ const LEGACY_MODEL_ALIASES = {
   'qwen2.5-7b': 'auto',
   'grok-4.2': 'auto',
   'gpt-5.5': 'auto',
-  'deepseek-chat': 'deepseek-pro',
-  'deepseek-reasoner': 'deepseek-pro',
-  'deepseek-v3': 'deepseek-pro',
-  'deepseek-v3.2-speciale': 'deepseek-pro',
-  'deepseek-v4-pro': 'deepseek-pro',
+  'deepseek-chat': 'deepseek-flash',
+  'deepseek-reasoner': 'deepseek-flash',
+  'deepseek-v3': 'deepseek-flash',
+  'deepseek-v3.2-speciale': 'deepseek-flash',
+  'deepseek-v4-pro': 'deepseek-flash',
+  'deepseek-pro': 'deepseek-flash',
   'deepseek-v4-flash': 'deepseek-flash',
   'kimi-k2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
@@ -4843,7 +5204,7 @@ function getModelPromptIdentity(promptLanguage = getSessionPromptLanguage()) {
   const modelId = identity.startsWith('model:')
     ? normalizeSelectedModelId(identity.slice('model:'.length))
     : (identity === 'research'
-    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')
+    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')
     : normalizeSelectedModelId(appState.selectedModel || 'auto'));
   return MODELS[modelId]?.name || (english ? 'Smart model' : '智能模型');
 }
@@ -4852,7 +5213,7 @@ function getPromptModelIdentityForSession() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (['smart', 'fast', 'think'].includes(identity)) return identity;
   if (identity === 'research') {
-    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')}`;
+    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')}`;
   }
   return `model:${normalizeSelectedModelId(appState.selectedModel || 'auto')}`;
 }
@@ -5196,15 +5557,21 @@ function getShortUserTimeHint() {
   return `${ctx.datetime.replace(/\s+[A-Za-z]+/, '')}`;
 }
 
-function appendUserTimeHintForPrompt(content) {
-  const text = String(content || '');
-  const hint = isChineseLanguage(appState.language)
-    ? `当前时间：${getShortUserTimeHint()}。仅作背景，不要把回答中心放在时间上。`
-    : `Current time: ${getShortUserTimeHint()}. Background only; do not center the answer on time.`;
-  return `${text}\n\n[${hint}]`;
+function getHandednessPromptHint() {
+  return appState.handednessEnabled && isHandednessMobileLayout()
+    ? ' hand=' + (normalizeHandedness(appState.handedness) === 'right' ? 'R' : 'L') : '';
 }
 
-// 动态生成系统提示词（核心原则；每条用户问题末尾另附短时间）
+function appendUserTurnContextHintForPrompt(content) {
+  const now = new Date();
+  const offset = -now.getTimezoneOffset();
+  const zone = (offset >= 0 ? '+' : '-') + String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0') + ':' + String(Math.abs(offset) % 60).padStart(2, '0');
+  const time = getShortUserTimeHint().replace(' ', 'T');
+  const ui = navigator.standalone === true ? 'ios-pwa' : (isHandednessMobileLayout() ? 'web-mobile' : 'web-desktop');
+  return String(content || '') + '\n[ctx ' + time + zone + ' ui=' + ui + getHandednessPromptHint() + ']';
+}
+
+// 动态生成系统提示词（核心原则；时间与持机手只附在每轮用户消息末尾）
 function getRaiSystemPromptApi() {
   const api = globalThis.RaiSystemPrompt;
   if (!api?.buildSystemPrompt || !api?.buildEffectiveSystemPrompt) {
@@ -5253,6 +5620,7 @@ const i18n = {
     'register-subtitle': '加入 RAI 开始对话',
     'email-label': '邮箱',
     'password-label': '密码',
+    'auth-remember-password': '\u8bb0\u4f4f\u5bc6\u7801',
     'username-label': '用户名 (可选)',
     'password-placeholder': '输入密码',
     'username-placeholder': '您的昵称',
@@ -5289,7 +5657,8 @@ const i18n = {
     'auth-rpass-login': 'rPass 登录',
     'auth-coming-soon': '待上线',
     'auth-passkey-or': '或',
-    'auth-passkey-login': '使用通行密钥登录',
+    'auth-qr-login': '扫码登录',
+    'auth-passkey-login': '通行密钥登录',
     'auth-passkey-login-pending': '正在验证通行密钥...',
     'auth-network-unavailable': '由于网络波动，暂时无法连接到 RAI 服务器，请您稍后再试。',
     'passkey-web-only': '通行密钥请在 RAI 网页端使用。',
@@ -5316,6 +5685,7 @@ const i18n = {
     'search-placeholder': '搜索对话',
     'new-chat': '新对话',
     'temporary-chat': '临时对话',
+    'scan-login-qr': '扫码授权登录',
     'temp-chat-modal-title': '选择临时对话模式',
     'temp-chat-modal-desc': '首次点击临时对话按钮会询问；之后可以到设置 > 个性化 > 临时对话模式里修改。',
     'temp-chat-mode-normal': '普通对话',
@@ -5353,6 +5723,8 @@ const i18n = {
     'pet-hidden-after-guide': '宠物已暂时隐藏，可在“设置 > 自定义”中重新开启。',
     'settings-guide-tap-target-label': '功能聚焦提示',
     'settings-guide-tap-target-desc': '在引导流程中高亮当前操作位置，帮助你找到功能入口。',
+    'settings-handedness-label': '适人握持',
+    'settings-handedness-desc': '将常用按钮菜单放置于持机的左右手侧，方便单手操作 RAI。',
     'settings-guide-save-error': '设置保存失败，请重试',
     'message-model-custom-edition': '定制版',
     'browser-notify-settings-title': '回复浏览器通知',
@@ -5394,6 +5766,20 @@ const i18n = {
     'action-translate': '翻译',
     'attach': '附件',
     'local-agent-menu': '本地 Agent',
+    'local-agent-install-title': 'RAI Connect 与本地 Agent',
+    'local-agent-install-compact-desc': '可选：连接浏览器与本地电脑能力',
+    'local-agent-install-optional': '进阶',
+    'local-agent-install-desc': '让 RAI 在你确认后操作本机文件、终端和单独选择的浏览器标签页。',
+    'local-agent-release-link': '发布页',
+    'local-agent-copy-command': '复制命令',
+    'local-agent-install-step-command': '在终端运行与你系统对应的命令；安装器会校验文件、安装本地 Agent，并打印扩展目录。',
+    'local-agent-install-step-browser': '打开 chrome://extensions 或 edge://extensions，开启“开发者模式”，点击“加载已解压的扩展”。',
+    'local-agent-install-step-directory': '选择安装器最后打印的 extension 目录。浏览器不允许安装器跳过这次人工确认。',
+    'local-agent-install-step-pair': '返回 RAI 的“设置 > 能力 > RAI Local Agent”，点击“绑定此设备”。',
+    'local-agent-install-step-chat': '打开已有对话，或在新对话发送第一条消息，然后点击“连接当前对话”。每个对话单独授权。',
+    'local-agent-install-step-use': '向 RAI 描述要完成的本地任务；命令、高风险操作和提权会在 RAI Connect 侧边栏或系统窗口中等待你确认。',
+    'local-agent-extension-download': '单独下载扩展压缩包',
+    'local-agent-extension-store-note': '当前为 GitHub 侧载版，尚未上架 Chrome 或 Edge 扩展商店。',
     'internet': '联网',
     'reasoning': '推理',
     'thinking-budget': '思考预算',
@@ -5444,6 +5830,7 @@ const i18n = {
     'settings-nav-desktop': '桌面端',
     'settings-nav-notifications': '通知',
     'settings-nav-about': '关于',
+    'settings-nav-app': '下载客户端',
     'settings-mobile-section-rai': '我的 RAI',
     'settings-mobile-section-account': '账户',
     'settings-mobile-section-system': '系统',
@@ -5537,16 +5924,28 @@ const i18n = {
     'settings-about-desc': '您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': '作者 Rick',
+    'settings-app-title': '下载客户端',
+    'settings-app-desc': '根据设备推荐合适的安装方式：网页版应用或 CX RAI。',
+    'settings-pwa-badge': '推荐',
+    'settings-pwa-desc': '安装后从桌面或主屏幕独立打开。',
+    'settings-cxrai-badge': 'Windows 10 / 11',
+    'settings-cxrai-desc': 'Master-Tea 发布的 Windows 桌面客户端。',
+    'settings-pwa-title': '网页版应用',
+    'settings-windows-setup': '下载安装程序',
+    'settings-windows-package': '下载安装包',
+    'settings-windows-mobile-package': 'Windows 10 Mobile（UWP）',
+    'settings-windows-mobile-note': '下载 UWP 包并在 Windows 10 Mobile 设备上安装。',
+    'settings-windows-auto-note': '运行安装程序即可一键装完，证书与依赖会自动处理。',
+    'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
-    'settings-update-timeline-source': '来源：本机历史版本目录、版本记录、历史 release manifest、GitHub README。',
+    'settings-update-timeline-source': '来源：GitHub main / beta 提交记录、版本记录与 release manifest，已同步至 2026-09-24。',
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
     'settings-replay-onboarding': '重新观看欢迎引导',
     'settings-macos-title': 'macOS',
-    'settings-windows-title': 'Windows 10 / 11（Phone）',
+    'settings-windows-title': 'CX RAI',
     'settings-platform-download': '下载',
-    'settings-windows-certificate': '安装证书',
     'settings-install-tutorial': '使用教程',
     'settings-install-ready': '当前浏览器可直接安装。',
     'settings-install-installed': 'RAI 已在应用模式中打开。',
@@ -5884,6 +6283,7 @@ const i18n = {
     'register-subtitle': 'Join RAI to start chatting',
     'email-label': 'Email',
     'password-label': 'Password',
+    'auth-remember-password': 'Remember password on this device',
     'username-label': 'Username (optional)',
     'password-placeholder': 'Enter password',
     'username-placeholder': 'Your nickname',
@@ -5920,7 +6320,8 @@ const i18n = {
     'auth-rpass-login': 'Log in with rPass',
     'auth-coming-soon': 'Coming soon',
     'auth-passkey-or': 'or',
-    'auth-passkey-login': 'Log in with a passkey',
+    'auth-qr-login': 'Scan QR code',
+    'auth-passkey-login': 'Passkey login',
     'auth-passkey-login-pending': 'Verifying passkey...',
     'auth-network-unavailable': "Due to network instability, we can't connect to the RAI server right now. Please try again later.",
     'passkey-web-only': 'Please use passkeys in the RAI web app.',
@@ -5930,10 +6331,10 @@ const i18n = {
     'passkey-auth-failed': 'Passkey verification failed. Please try again.',
     'routing-notice-points-exhausted': "You don't have enough points. This request may be routed to another model, which may reduce answer quality.",
     'routing-notice-upstream-timeout': 'Due to an upstream provider issue, this request will be routed to another model and quality may be reduced. A report was automatically sent to RAI Support. Thank you for understanding.',
-    'no-account': "Don't have an account?",
-    'has-account': 'Already have an account?',
-    'register-link': 'Sign up now',
-    'login-link': 'Log in now',
+    'no-account': 'New here?',
+    'has-account': 'Have an account?',
+    'register-link': 'Sign up',
+    'login-link': 'Log in',
     'custom-api-entry': 'I have an API key',
     'custom-api-title': 'Use a custom API',
     'custom-api-desc': 'Your key stays in this browser session and is never sent to the RAI server.',
@@ -5947,6 +6348,7 @@ const i18n = {
     'search-placeholder': 'Search conversations',
     'new-chat': 'New Chat',
     'temporary-chat': 'Temporary Chat',
+    'scan-login-qr': 'Scan login QR',
     'temp-chat-modal-title': 'Choose temporary chat mode',
     'temp-chat-modal-desc': 'The first tap on Temporary Chat asks you to choose. You can change it later in Settings > Personalization > Temporary chat mode.',
     'temp-chat-mode-normal': 'Normal chat',
@@ -5984,6 +6386,8 @@ const i18n = {
     'pet-hidden-after-guide': 'Your pet is hidden for now. Re-enable it under Settings > Personalization.',
     'settings-guide-tap-target-label': 'Feature focus hint',
     'settings-guide-tap-target-desc': 'Highlight the current control during the welcome tour so you can find it.',
+    'settings-handedness-label': 'Adaptive handedness',
+    'settings-handedness-desc': 'Place common controls on the side you are holding so RAI is easier to use one-handed.',
     'settings-guide-save-error': 'Could not save this setting. Please try again.',
     'message-model-custom-edition': 'Custom Edition',
     'browser-notify-settings-title': 'Reply Browser Notification',
@@ -6025,6 +6429,20 @@ const i18n = {
     'action-translate': 'Translate',
     'attach': 'Attach',
     'local-agent-menu': 'Local Agent',
+    'local-agent-install-title': 'RAI Connect and Local Agent',
+    'local-agent-install-compact-desc': 'Optional: connect browser and local computer capabilities',
+    'local-agent-install-optional': 'Advanced',
+    'local-agent-install-desc': 'Let RAI work with local files, terminal tools, and one selected browser tab after you approve access.',
+    'local-agent-release-link': 'Releases',
+    'local-agent-copy-command': 'Copy command',
+    'local-agent-install-step-command': 'Run the command for your system in a terminal. The installer verifies each file, installs Local Agent, and prints the extension directory.',
+    'local-agent-install-step-browser': 'Open chrome://extensions or edge://extensions, enable Developer mode, then select Load unpacked.',
+    'local-agent-install-step-directory': 'Choose the extension directory printed by the installer. Browsers require this manual confirmation.',
+    'local-agent-install-step-pair': 'Return to RAI Settings > Capabilities > RAI Local Agent and select Pair this device.',
+    'local-agent-install-step-chat': 'Open an existing conversation, or send the first message in a new one, then select Connect conversation. Each conversation is authorized separately.',
+    'local-agent-install-step-use': 'Describe the local task to RAI. Commands, high-risk actions, and elevation wait for your approval in the RAI Connect side panel or an OS dialog.',
+    'local-agent-extension-download': 'Download the extension archive separately',
+    'local-agent-extension-store-note': 'This is the GitHub sideload build and is not yet listed in the Chrome or Edge extension stores.',
     'internet': 'Web',
     'reasoning': 'Reasoning',
     'thinking-budget': 'Thinking Budget',
@@ -6075,6 +6493,7 @@ const i18n = {
     'settings-nav-desktop': 'Desktop',
     'settings-nav-notifications': 'Notifications',
     'settings-nav-about': 'About',
+    'settings-nav-app': 'Download Clients',
     'settings-mobile-section-rai': 'My RAI',
     'settings-mobile-section-account': 'Account',
     'settings-mobile-section-system': 'System',
@@ -6168,16 +6587,28 @@ const i18n = {
     'settings-about-desc': 'Your personal AI assistant by Rick. Feel free to chat or discuss ideas anytime.',
     'settings-about-github-label': 'GitHub',
     'settings-about-author-label': 'Author Rick',
+    'settings-app-title': 'Download Clients',
+    'settings-app-desc': 'Choose the recommended install for this device: Web App or CX RAI.',
+    'settings-pwa-badge': 'Recommended',
+    'settings-pwa-desc': 'Install it to open from the desktop or Home Screen in its own window.',
+    'settings-cxrai-badge': 'Windows 10 / 11',
+    'settings-cxrai-desc': 'The Windows desktop client published by Master-Tea.',
+    'settings-pwa-title': 'Web App',
+    'settings-windows-setup': 'Download installer',
+    'settings-windows-package': 'Download package',
+    'settings-windows-mobile-package': 'Windows 10 Mobile (UWP)',
+    'settings-windows-mobile-note': 'Download the UWP package and install it on a Windows 10 Mobile device.',
+    'settings-windows-auto-note': 'Run the installer for a one-step install; the certificate and dependencies are handled automatically.',
+    'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
-    'settings-update-timeline-source': 'Sources: local historical version folders, version records, historical release manifest, and GitHub README.',
+    'settings-update-timeline-source': 'Sources: GitHub main / beta commits, version records, and release manifests, synced through 2026-09-24.',
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
     'settings-replay-onboarding': 'Replay welcome guide',
     'settings-macos-title': 'macOS',
-    'settings-windows-title': 'Windows 10 / 11 (Phone)',
+    'settings-windows-title': 'CX RAI',
     'settings-platform-download': 'Download',
-    'settings-windows-certificate': 'Install certificate',
     'settings-install-tutorial': 'Instructions',
     'settings-install-ready': 'This browser can install RAI directly.',
     'settings-install-installed': 'RAI is already open in app mode.',
@@ -6616,7 +7047,7 @@ Object.assign(i18n['zh-TW'], {
   'system-theme': '跟隨系統',
   'settings-update-timeline-title': 'RAI 的成長故事',
   'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
-  'settings-update-timeline-source': '來源：本機歷史版本目錄、版本記錄、歷史 release manifest、GitHub README。',
+  'settings-update-timeline-source': '來源：GitHub main / beta 提交記錄、版本記錄與 release manifest，已同步至 2026-09-24。',
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
@@ -6650,15 +7081,23 @@ Object.assign(i18n['zh-TW'], {
   'onb-guide-sidebar-try-desc': '從螢幕邊緣向右滑動，開啟側邊欄。',
   'onb-guide-sidebar-try-live': '您來試一次：從螢幕邊緣向右滑動，開啟側邊欄。',
   'settings-macos-title': 'macOS',
-  'settings-windows-title': 'Windows 10 / 11（Phone）',
+  'settings-windows-title': 'CX RAI',
+  'settings-app-title': '下載客戶端',
+  'settings-app-desc': '依裝置推薦合適的安裝方式：網頁版應用或 CX RAI。',
+  'settings-pwa-badge': '推薦',
+  'settings-pwa-desc': '安裝後可從桌面或主畫面以獨立視窗開啟。',
+  'settings-cxrai-badge': 'Windows 10 / 11',
+  'settings-cxrai-desc': '由 Master-Tea 發布的 Windows 桌面客戶端。',
+  'local-agent-install-compact-desc': '可選：連接瀏覽器與本機電腦能力',
+  'local-agent-install-optional': '進階',
   'settings-platform-download': '下載',
-  'settings-windows-certificate': '安裝憑證',
   'settings-install-tutorial': '使用教學',
   'security-device-browser': '瀏覽器',
   'security-device-system': '系統',
   'sidebar-flows-beta': '測試',
   'auth-passkey-or': '或',
-  'auth-passkey-login': '使用通行密鑰登入',
+  'auth-qr-login': '掃碼登入',
+  'auth-passkey-login': '通行密鑰登入',
   'auth-passkey-login-pending': '正在驗證通行密鑰...',
   'auth-network-unavailable': '由於網路波動，暫時無法連線至 RAI 伺服器，請您稍後再試。',
   'passkey-web-only': '通行密鑰請在 RAI 網頁版使用。',
@@ -6778,6 +7217,13 @@ Object.assign(i18n['zh-TW'], {
   'selection-explain-restore-failed': '無法還原這張解釋卡',
   'selection-explain-incomplete-badge': '中斷',
   'selection-explain-unknown-model': '快速模型'
+});
+
+Object.assign(i18n['zh-TW'], {
+  'settings-handedness-label': '適人握持',
+  'settings-handedness-desc': '將常用按鈕選單放置於持機的左右手側，方便單手操作 RAI。',
+  'settings-windows-mobile-package': 'Windows 10 Mobile（UWP）',
+  'settings-windows-mobile-note': '下載 UWP 套件並在 Windows 10 Mobile 裝置上安裝。'
 });
 
 i18n['zh-TW'] = hydrateRuntimeI18nMap(i18n['zh-TW']);
@@ -7795,6 +8241,178 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-09-24',
+    version: 'v0.13.18 · 正式版',
+    zh: {
+      summary: '正式版汇总：客户端下载、CX RAI、适人握持、流式稳定性与移动端布局全面升级。',
+      details: [
+        '同步 main 的 iOS 安全区、2FA、HEIC/大图上传、会话本地电脑上下文、应用下载与 CX RAI 接入。',
+        '下载客户端页以 Web App 和 CX RAI 为主，RAI Connect 与本地 Agent 折叠为进阶横条；Windows 桌面直接下载 Setup.exe，Windows 10 Mobile 自动切换 UWP 包。',
+        '新增“适人握持”：左手/右手模式自动切换侧边栏、发送键、对话索引条和移动端顶栏布局；只有侧边栏展开时暂停检测。',
+        '修复流式结束重复输出与旧时间轴残留；思考模式回答完成后保留折叠的思考过程，推理内容只渲染一次。',
+        'RAI logo 与正文左对齐，移动端模型选择菜单保持居中；正式版版本号和缓存构建号已更新。'
+      ]
+    },
+    en: {
+      summary: 'Stable release: client downloads, CX RAI, adaptive handedness, streaming stability, and mobile layout upgrades.',
+      details: [
+        'Brings main iOS safe-area, 2FA, HEIC/large-image upload, local-computer conversation context, app download, and CX RAI work together.',
+        'Download Clients leads with Web App and CX RAI; RAI Connect and Local Agent collapse into an advanced bar. Windows desktop downloads Setup.exe directly, while Windows 10 Mobile switches to the UWP package.',
+        'Adds Adaptive Handedness: left/right hand modes switch the sidebar, send button, chat index navigator, and mobile header layout; detection pauses only while the sidebar is expanded.',
+        'Fixes duplicate streamed output and stale timelines; thinking mode keeps a collapsed thinking process after completion and renders reasoning only once.',
+        'Aligns the RAI logo with the answer body, keeps the mobile model selector centered, and updates the formal version and cache build id.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-24',
+    version: 'v0.13.17-r5 · Beta',
+    zh: {
+      summary: '思考过程在回答完成后保留为折叠状态，修复流式结束残留，并对齐 RAI logo 与正文。',
+      details: [
+        '开启思考后，思考时间轴与“思考过程”在回答完成后继续保留，可随时展开查看。',
+        '流式完成瞬间只保留一份正文，旧时间轴和重复正文不再停留 1-2 秒。',
+        '适人握持信息只注入每轮用户消息，不写入系统提示词，也不会保存到数据库正文。',
+        '左右手检测覆盖整个屏幕左右半区；只有侧边栏展开时暂停检测，其他区域都能切换握持方向。',
+        '右手模式顶栏改为 RAI 在最左、临时对话在右数第二、侧边栏在右数第一；模型选择在所有握持模式下强制居中。',
+        'RAI logo 右移与生成内容左边缘对齐，并提升 Beta 构建版本以刷新资源缓存。'
+      ]
+    },
+    en: {
+      summary: 'Thinking stays available after completion, streaming finalization is clean, and the RAI logo now aligns with the answer body.',
+      details: [
+        'The thinking timeline and Thinking pill remain available after the answer completes, and can be expanded at any time.',
+        'Only one answer body remains at stream completion; the old timeline and duplicate text no longer linger for 1-2 seconds.',
+        'Adaptive handedness is injected only into the final user turn, never the system prompt, and is stripped before persistence.',
+        'Handedness detection covers the whole left/right screen and pauses only while the sidebar is expanded.',
+        'Right-hand mode places RAI at the far left, Temporary Chat second from the right, and Sidebar at the far right; the model selector stays centered in every handedness mode.',
+        'The RAI logo moves right to align with the generated content, and the Beta build version is bumped to refresh cached assets.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-24',
+    version: 'v0.13.16-r6 · Beta',
+    zh: {
+      summary: '下载客户端按设备类型聚焦，并新增自动识别左右手持机的“适人握持”。',
+      details: [
+        '同步 main 的 iOS 安全区、2FA、HEIC 大图上传、会话本地电脑上下文、应用下载与 CX RAI 接入。',
+        '保留 Beta 的流式时间线、工具追踪、artifact 卡片、文件沙箱和安装器修复，并修复 /beta/ 下主宠闲话请求路径。',
+        '下载客户端页以网页版应用和 CX RAI 为主卡片；RAI Connect 与本地 Agent 改为默认收起的进阶横条。',
+        'Windows 桌面直接下载 Setup.exe，Windows 10 Mobile 自动切换 UWP 包；macOS 与 Linux 优先展示网页版应用。',
+        '移动端触摸左半屏启用左手模式，发送按钮移到输入框左侧；触摸右半屏启用右手模式，侧边栏从右侧滑出。'
+      ]
+    },
+    en: {
+      summary: 'Download Clients now adapts to the device, with automatic left- and right-hand mobile layouts.',
+      details: [
+        'Brings main iOS safe-area, 2FA, HEIC/large-image upload, local-computer conversation context, app download, and CX RAI work into Beta.',
+        'Preserves Beta streaming timelines, tool traces, artifact cards, file sandboxing, and installer fixes, including the /beta/ pet-chitchat request path.',
+        'Download Clients now leads with Web App and CX RAI, while RAI Connect and Local Agent collapse into an advanced bar by default.',
+        'Windows desktop gets the Setup.exe directly, Windows 10 Mobile switches to the UWP package, and macOS/Linux prioritize the Web App.',
+        'Touching the left half of a mobile screen moves Send to the left; touching the right half makes the sidebar open from the right.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-21',
+    version: 'v0.13.9 · main',
+    zh: {
+      summary: '2FA、iOS 独立窗口、HEIC/大图上传和工具续传稳定性集中修复。',
+      details: [
+        '2FA 回到标准 ±1 周期并补充漂移诊断；iOS 主屏幕底部黑边、键盘输入框和卡视口自愈。',
+        'HEIC 与大图会先在本地转码，附件上传完成后再发送，断线上传支持重试。',
+        '工具续传、长任务预算与会话本地电脑上下文完成持久化。'
+      ]
+    },
+    en: {
+      summary: 'Focused fixes for 2FA, iOS standalone layout, HEIC/large uploads, and tool-continuation resilience.',
+      details: [
+        '2FA returns to the standard ±1 period with drift diagnostics; iOS fixes the Home Screen bottom gap, keyboard viewport, and stuck viewports.',
+        'HEIC and large images are prepared locally before upload, sends wait for attachments, and interrupted uploads retry.',
+        'Tool continuation, long-task budgets, and local-computer conversation context are now persisted.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-14',
+    version: 'v0.13.8 · main',
+    zh: {
+      summary: '设置新增“下载应用客户端”，关于页瘦身并接入 CX RAI。',
+      details: [
+        '下载入口与浏览器安装状态集中到独立设置页，CX RAI 直接提供最新 EXE 安装程序。',
+        '关于页缩短并保留版本时间线、GitHub 与支持入口。',
+        '桌面客户端下载链接统一接入 Master-Tea/CX-RAI。'
+      ]
+    },
+    en: {
+      summary: 'Added Download Apps to Settings, simplified About, and connected CX RAI.',
+      details: [
+        'Download entry points and browser install state now live on a dedicated settings page, with the latest CX RAI EXE installer as the primary Windows download.',
+        'About keeps the version timeline, GitHub, and support entry points in a shorter layout.',
+        'Desktop download links now resolve through Master-Tea/CX-RAI.'
+      ]
+    }
+  },
+  {
+    date: '2026-09-08',
+    version: 'v0.13.6 · main',
+    zh: {
+      summary: 'iOS 独立窗口安全区与 PWA 缓存版本契约完成同步。',
+      details: [
+        '修复 iOS 添加到主屏幕后的底部安全区和独立窗口布局。',
+        'Service Worker 缓存名称、页面构建标识与发布版本改为同一契约。'
+      ]
+    },
+    en: {
+      summary: 'Aligned iOS standalone safe areas and the PWA cache version contract.',
+      details: [
+        'Fixes Home Screen safe-area and standalone layout behavior on iOS.',
+        'Service Worker cache names, page build markers, and release versions now share one contract.'
+      ]
+    }
+  },
+  {
+    date: '2026-08-19',
+    version: 'v0.13.16 · Beta',
+    zh: {
+      summary: 'Beta 的流式输出、工具追踪、artifact 与 sandbox 下载链路完成修复。',
+      details: [
+        '流式事件、搜索/生成步骤与工具调用按真实顺序显示，并能从历史记录恢复。',
+        '修复引用链接、artifact 卡片、文件完成态与 sandbox 网络/下载隔离。',
+        'MasterTea 桌宠升级为双帧动画，并补齐快捷动作与闲话。'
+      ]
+    },
+    en: {
+      summary: 'Beta completed repairs for streaming output, tool traces, artifacts, and sandbox downloads.',
+      details: [
+        'Streaming events, search/generation steps, and tool calls now preserve their real order and survive history reloads.',
+        'Restores citation links, artifact cards, file completion states, and sandbox network/download isolation.',
+        'Upgrades the MasterTea pet to two-frame animation with quick actions and chitchat.'
+      ]
+    }
+  },
+  {
+    date: '2026-08-14',
+    version: 'v0.13.1',
+    zh: {
+      summary: '本地 Agent 现在提供完整安装说明、准确连接状态和清晰的对话授权提示。',
+      details: [
+        '“关于”页新增 macOS、Linux 与 Windows 一键安装命令，以及浏览器加载扩展、绑定设备和开始使用的完整步骤。',
+        '本地 Agent 状态从“安全”移到“能力”，并区分需要安装、待绑定、等待创建对话、可连接和当前对话已连接。',
+        '空白新对话会明确提示先发送第一条消息完成创建；桌面设置的搜索框、头像和账号信息不再跟随分类列表滚动。'
+      ]
+    },
+    en: {
+      summary: 'Local Agent now has complete installation guidance, accurate connection states, and clear conversation authorization.',
+      details: [
+        'About now includes one-command macOS, Linux, and Windows installation plus complete browser extension, pairing, and first-use steps.',
+        'Local Agent moved from Security to Capabilities and distinguishes installation, pairing, unsaved conversation, ready, and connected states.',
+        'Blank conversations explicitly ask for the first message before connecting, while desktop Settings keeps search and account identity fixed as categories scroll.'
+      ]
+    }
+  },
   {
     date: '2026-08-14',
     version: 'v0.13.0',
@@ -12123,7 +12741,7 @@ function updatePasskeyLoginEntry() {
   else button.setAttribute('aria-describedby', 'authPasskeyHint');
   button.textContent = appState.passkeyLoginPending
     ? i18nText('auth-passkey-login-pending', isChineseLanguage(appState.language) ? '正在验证通行密钥...' : 'Verifying passkey...')
-    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '使用通行密钥登录' : 'Log in with a passkey');
+    : i18nText('auth-passkey-login', isChineseLanguage(appState.language) ? '通行密钥登录' : 'Passkey login');
 
   if (hint) {
     hint.hidden = capability.available;
@@ -12684,13 +13302,12 @@ function normalizeResearchMode(value) {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
   { id: 'gpt-5.6-luna', label: 'GPT 5.6' },
   { id: 'gemma', label: 'Gemma' },
   { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
   { id: 'kimi-k2.6', label: 'Kimi K2.6' },
   { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
-  { id: 'deepseek-pro', label: 'DeepSeek Pro' },
   { id: 'deepseek-flash', label: 'DeepSeek v4' },
   { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
   { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
@@ -12698,7 +13315,7 @@ const RESEARCH_MODEL_OPTIONS = [
 
 function normalizeResearchModelId(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
-  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
+  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-flash';
   if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
   return normalized;
 }
@@ -12714,12 +13331,12 @@ function normalizeResearchAgentModels(input) {
     if (!allowed.has(modelId) || selected.includes(modelId)) return;
     selected.push(modelId);
   });
-  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'];
+  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'];
 }
 
 function normalizeResearchMasterModel(input) {
   const modelId = normalizeResearchModelId(input);
-  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-pro';
+  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-flash';
 }
 
 
@@ -12875,7 +13492,7 @@ function renderResearchModelControls() {
     masterSelect.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => `
       <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
     `).join('');
-    masterSelect.value = appState.researchMasterModel || currentValue || 'deepseek-pro';
+    masterSelect.value = normalizeResearchMasterModel(appState.researchMasterModel || currentValue || 'deepseek-flash');
   }
 }
 
@@ -12952,7 +13569,7 @@ function getModeRequestConfig(mode = '') {
   if (normalized === 'research') {
     return {
       mode: 'research',
-      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro'),
+      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash'),
       thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
       reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
       researchMode: normalizeResearchMode(appState.researchMode || 'fast')
@@ -13088,7 +13705,8 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   advanced: 'settings-nav-advanced',
   desktop: 'settings-nav-desktop',
   notifications: 'settings-nav-notifications',
-  about: 'settings-nav-about'
+  about: 'settings-nav-about',
+  app: 'settings-nav-app'
 };
 
 function normalizeSettingsSection(section) {
@@ -13308,7 +13926,7 @@ function switchSettingsSection(section = 'general', options = {}) {
   if (section === 'memory') {
     renderMemorySettings();
   }
-  if (section === 'about') {
+  if (section === 'app') {
     loadLatestWindowsDownloads().catch(() => null);
   }
   if (isSettingsMobileLayout() && appState.settingsOpen && !options.keepMobileHome) {
@@ -13421,6 +14039,8 @@ const SETTINGS_SEARCH_TARGET_SELECTOR = [
   '.settings-notification-item',
   '.settings-about-card',
   '.settings-install-card',
+  '.settings-connect-install',
+  '.local-agent-settings-card',
   '.memory-item',
   '.memory-toggle-row',
   '.settings-group'
@@ -13693,6 +14313,94 @@ function settingsToggleInternetBadgeVisibility() {
   appState.showInternetBadge = !appState.showInternetBadge;
   persistLocalSettingsPatch({ showInternetBadge: appState.showInternetBadge });
   updateMessageBadgeVisibilityUI();
+}
+
+function normalizeHandedness(value) {
+  return value === 'right' ? 'right' : 'left';
+}
+
+function isHandednessMobileLayout() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function updateSettingsHandednessUI() {
+  const switchButton = document.getElementById('settingsHandednessSwitch');
+  const toggle = document.getElementById('settingsHandednessToggle');
+  if (switchButton) switchButton.setAttribute('aria-pressed', appState.handednessEnabled ? 'true' : 'false');
+  if (toggle) toggle.classList.toggle('active', !!appState.handednessEnabled);
+}
+
+function applyHandednessLayout() {
+  const enabled = appState.handednessEnabled === true;
+  const handedness = normalizeHandedness(appState.handedness);
+  const root = document.documentElement;
+  const switchToken = Number(appState.handednessSwitchToken || 0) + 1;
+  appState.handednessSwitchToken = switchToken;
+  root.classList.add('handedness-switching');
+  root.dataset.handedness = handedness;
+  root.classList.toggle('handedness-enabled', enabled);
+  root.classList.toggle('hand-left', enabled && handedness === 'left');
+  root.classList.toggle('hand-right', enabled && handedness === 'right');
+  const moveSendLeft = enabled && handedness === 'left';
+  [document.getElementById('sendBtn'), document.getElementById('stopBtn')].forEach((button) => {
+    if (!button) return;
+    if (moveSendLeft) {
+      button.style.order = '-1';
+      button.style.marginRight = '4px';
+    } else {
+      button.style.removeProperty('order');
+      button.style.removeProperty('margin-right');
+    }
+  });
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (appState.handednessSwitchToken === switchToken) {
+      root.classList.remove('handedness-switching');
+    }
+  }));
+  updateSettingsHandednessUI();
+}
+
+function setHandedness(value, { persist = true } = {}) {
+  const normalized = normalizeHandedness(value);
+  appState.handedness = normalized;
+  if (persist) {
+    localStorage.setItem('rai_handedness', normalized);
+    persistLocalSettingsPatch({ handedness: normalized });
+  }
+  applyHandednessLayout();
+}
+
+function isHandednessDetectionAllowed() {
+  if (!appState.handednessEnabled || !isHandednessMobileLayout()) return false;
+  // The expanded sidebar is the only protected area. Every other screen half
+  // may update the holding hand, including the home/welcome screen.
+  return !appState.sidebarOpen;
+}
+
+function detectHandednessFromTouch(clientX) {
+  if (!isHandednessDetectionAllowed()) return;
+  const next = Number(clientX) < window.innerWidth / 2 ? 'left' : 'right';
+  if (next !== appState.handedness) setHandedness(next);
+}
+
+function initHandednessTracking() {
+  if (appState.handednessTrackingBound) return;
+  appState.handednessTrackingBound = true;
+  document.addEventListener('touchstart', (event) => {
+    const touch = event.touches?.[0];
+    if (touch) detectHandednessFromTouch(touch.clientX);
+  }, { passive: true, capture: true });
+  window.addEventListener('resize', applyHandednessLayout, { passive: true });
+  applyHandednessLayout();
+}
+
+function settingsToggleHandedness() {
+  appState.handednessEnabled = !appState.handednessEnabled;
+  persistLocalSettingsPatch({
+    handednessEnabled: appState.handednessEnabled,
+    handedness: normalizeHandedness(appState.handedness)
+  });
+  applyHandednessLayout();
 }
 
 function updateSettingsGuideUI() {
@@ -14519,7 +15227,9 @@ function initEntryAutofocus() {
 // ==================== ZTX6D SSO 配置 ====================
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
-const RAI_SESSION_FETCH = window.fetch.bind(window);
+const RAI_SESSION_FETCH = window.RaiDiagnostics
+  ? window.RaiDiagnostics.wrapFetch(window.fetch.bind(window), () => API_BASE)
+  : window.fetch.bind(window);
 const RAI_ACCESS_REFRESH_LEEWAY_MS = 60 * 1000;
 let userTokenRefreshEntry = null;
 let userTokenRefreshTimer = null;
@@ -14667,6 +15377,14 @@ function adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh) {
   return true;
 }
 
+function getUserRefreshScopeHeaders(token) {
+  const payload = decodeUserAccessTokenPayload(token);
+  // The cookie remains HttpOnly. The accepted/persisted access token selects it;
+  // an ignored late QR cookie can never replace or select another account.
+  if (payload?.auth_method !== 'qr_browser') return {};
+  return { 'X-RAI-QR-Session': /^[A-Za-z0-9_-]{32}$/.test(payload.sid || '') ? payload.sid : 'invalid' };
+}
+
 async function performUserAccessTokenRefresh(context, controller) {
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
@@ -14676,7 +15394,8 @@ async function performUserAccessTokenRefresh(context, controller) {
       cache: 'no-store',
       headers: {
         Accept: 'application/json',
-        'X-RAI-Refresh': '1'
+        'X-RAI-Refresh': '1',
+        ...getUserRefreshScopeHeaders(context.token)
       },
       signal: controller.signal
     });
@@ -14879,6 +15598,7 @@ function showAuthScreen() {
   document.getElementById('appContainer').style.display = 'none';
   document.getElementById('authContainer').classList.add('active');
   initMascotAuthBindings();
+  syncRememberPasswordPreference();
   syncGuideMascotVisibility();
   requestMascotPosition();
   updateMascotPasswordExpression();
@@ -15209,7 +15929,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
   initGuideRuntime();
-  console.log(' RAI v0.13.0 初始化 (local-agent-v1)');
+  console.log(` RAI v${RAI_APP_VERSION} 初始化 (local-agent-install-ux)`);
   applyRuntimeBranding();
 
   // 绑定输入容器点击和触摸事件（移动端支持）
@@ -15243,6 +15963,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   loadSettings();
+  initHandednessTracking();
   initSettingsInteractions();
   initConversationCacheSettings();
   initBrowserNotifySettingControl();
@@ -15817,6 +16538,7 @@ function updateSettingsUI() {
   if (typeof updateBrowserNotifySettingsUI === 'function') updateBrowserNotifySettingsUI();
   updateMessageBadgeVisibilityUI();
   updateSettingsGuideUI();
+  updateSettingsHandednessUI();
   updateSettingsCapabilitiesUI();
   renderSettingsTimeline();
   updateSettingsDirtyState();
@@ -16047,11 +16769,6 @@ function getModelDisplayMeta(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
-  }
-  if (normalized === 'deepseek-pro') {
-    return appState.thinkingMode
-      ? { i18nKey: 'model-expert', fallback: 'Think' }
-      : { i18nKey: null, fallback: MODELS[normalized]?.name || 'DeepSeek Pro' };
   }
   if (normalized === 'deepseek-flash') {
     return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
@@ -16360,7 +17077,9 @@ async function saveSettings(options = {}) {
     newChatDefaultMode: appState.newChatDefaultMode,
     fontPreference: appState.fontPreference || 'rai',
     showModelBadge: appState.showModelBadge,
-    showInternetBadge: appState.showInternetBadge
+    showInternetBadge: appState.showInternetBadge,
+    handednessEnabled: appState.handednessEnabled,
+    handedness: normalizeHandedness(appState.handedness)
   };
   localStorage.setItem('rai_settings', JSON.stringify(settings));
 
@@ -16665,18 +17384,46 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
     existingContent = finalizedContent;
   }
 
-  let existingText = Array.from(existingContent.children).find((child) =>
+  const existingTextNodes = Array.from(existingContent.children).filter((child) =>
     child.classList?.contains('message-text')
-  ) || null;
+  );
+  let existingText = existingTextNodes.find((child) =>
+    child.classList?.contains('stream-flow')
+  ) || existingTextNodes[0] || null;
   const finalizedText = Array.from(finalizedContent.children).find((child) =>
     child.classList?.contains('message-text')
   ) || null;
+  const finalizedHasLiveStructure = Array.from(finalizedContent.children).some((child) =>
+    child.classList?.contains('thinking-timeline') || child.classList?.contains('rai-reasoning-block')
+  );
+  const finalizedHasReasoningBlock = !!finalizedContent.querySelector('.rai-reasoning-block');
+  const preserveLiveFlow = !!(
+    existingText?.classList?.contains('stream-flow') &&
+    !finalizedText?.classList?.contains('stream-flow') &&
+    finalizedHasLiveStructure &&
+    (
+      String(existingText.textContent || '').trim() ||
+      existingText.querySelector('img, .streaming-image-container, .stream-flow-event')
+    )
+  );
+  if (existingText?.classList?.contains('stream-flow')) {
+    existingTextNodes.forEach((node) => {
+      if (node !== existingText) node.remove();
+    });
+  }
+  // The live stream owns temporary timeline and reasoning containers. Always
+  // remove them before grafting the finalized template so ordinary chats do not
+  // keep an obsolete streaming body beside the saved answer.
+  existingContent.querySelectorAll('.thinking-timeline, .rai-reasoning-block').forEach((node) => node.remove());
   const existingMeta = Array.from(existingContent.children).filter((child) =>
     child.classList?.contains('message-meta')
   );
   existingMeta.forEach((meta) => meta.remove());
 
-  if (!existingText && finalizedText) {
+  if (existingText && finalizedText && !preserveLiveFlow) {
+    existingText.replaceWith(finalizedText);
+    existingText = finalizedText;
+  } else if (!existingText && finalizedText) {
     const insertBefore = Array.from(existingContent.children).find((child) =>
       child.classList?.contains('message-meta')
     ) || null;
@@ -16690,6 +17437,10 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   });
   Array.from(finalizedContent.children).forEach((child) => {
     if (child === finalizedText || child.classList?.contains('message-meta')) return;
+    if (preserveLiveFlow && !finalizedHasReasoningBlock && (
+      child.classList?.contains('thinking-timeline') ||
+      child.classList?.contains('rai-reasoning-block')
+    )) return;
     const isLiveStructure = child.classList?.contains('thinking-timeline')
       || child.classList?.contains('rai-reasoning-block')
       || child.classList?.contains('previous-reply-toggle');
@@ -17622,7 +18373,7 @@ function buildContextMessagesFromState(sourceMessages = appState.messages, optio
     const msgObj = {
       role: m.role,
       content: m.role === 'user' && includeLastUserTimeHint && index === lastIndex
-        ? appendUserTimeHintForPrompt(m.content)
+        ? appendUserTurnContextHintForPrompt(m.content)
         : m.content
     };
 
@@ -17737,6 +18488,16 @@ function createMessageElement(message) {
   if (isPreviousRegeneratedReply) {
     div.classList.add('regenerated-previous-message');
   }
+  const hasToolTrace = !!(
+    processTrace &&
+    Array.isArray(processTrace.tools) &&
+    processTrace.tools.length > 0
+  );
+  const hasInterleavedFlow = !!(
+    processTrace &&
+    Array.isArray(processTrace.flowSegments) &&
+    processTrace.flowSegments.some((segment) => segment && segment.kind)
+  );
   const hasAgentProcessTrace = !!(
     processTrace &&
     typeof processTrace === 'object' &&
@@ -17773,8 +18534,17 @@ function createMessageElement(message) {
     content.appendChild(previousHeader);
   }
 
-  if (message.role === 'assistant' && (hasInternet || hasAgentProcessTrace || hasGeneratedImages)) {
+  let messageTimelineDiv = null;
+  const shouldRenderReasoningTimeline = message.role === 'assistant' && hasReasoning && !isResearchTrace;
+  if (
+    message.role === 'assistant' &&
+    (
+      shouldRenderReasoningTimeline ||
+      (!hasInterleavedFlow && (hasInternet || hasAgentProcessTrace || hasToolTrace || hasGeneratedImages))
+    )
+  ) {
     const timelineDiv = document.createElement('div');
+    messageTimelineDiv = timelineDiv;
     timelineDiv.className = isResearchTrace ? 'thinking-timeline research-chat-timeline' : 'thinking-timeline';
     const thinkingId = `thinking-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -17796,26 +18566,78 @@ function createMessageElement(message) {
       ? (isChineseLanguage(appState.language) ? '图片已显示' : 'Image displayed')
       : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
 
-    // 构建时间轴HTML
-    let timelineHtml = `
-          <!-- 步骤1: 分析问题 - 已完成 -->
-          <div class="thinking-step" data-status="done">
-            <div class="thinking-step-node"></div>
-            <div class="thinking-step-content">
-              <div class="thinking-step-title">${isChineseLanguage(appState.language) ? 'RAI分析' : 'RAI Analysis'}</div>
-              <div class="thinking-step-detail">${toolDetail}</div>
-            </div>
-          </div>
-          
-          <!-- 步骤2: 生成回答 - 已完成 -->
-          <div class="thinking-step" data-status="done">
-            <div class="thinking-step-node"></div>
-            <div class="thinking-step-content">
-              <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
-              <div class="thinking-step-detail">${generationDetail}</div>
+    // 优先使用流式阶段快照，确保历史消息保持真实事件顺序。
+    const storedTimeline = Array.isArray(processTrace?.timeline)
+      ? processTrace.timeline.filter((row) => row && typeof row === 'object')
+      : [];
+    const timelineRows = storedTimeline.length > 0
+      ? storedTimeline
+      : [
+        { kind: 'analysis', status: 'done', title: isChineseLanguage(appState.language) ? 'RAI分析' : 'RAI Analysis', detail: toolDetail },
+        { kind: 'generating', status: 'done', title: isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response', detail: generationDetail }
+      ];
+    const timelineToolRows = new Map((processTrace?.tools || []).map((row) => [String(row.id || `${row.tool || 'tool'}:${row.ts || ''}`), row]));
+    let timelineHtml = timelineRows.map((row, index) => {
+      const kind = String(row.kind || 'info');
+      const detail = String(row.detail || '');
+      const isToolRow = kind === 'tool';
+      const traceRow = isToolRow ? Array.from(timelineToolRows.values()).find((tool) =>
+        String(tool.summary || tool.label || tool.tool || '') === String(row.title || '')
+        && String(tool.detail || tool.message || '') === detail
+      ) : null;
+      const traceId = traceRow ? escapeHtml(String(traceRow.id || `tool:${index}`)) : '';
+      const downloadUrl = traceRow ? String(traceRow.download_url || '').trim() : '';
+      const downloadLink = downloadUrl
+        ? `<a class="tool-trace-download" href="${escapeHtml(downloadUrl)}" aria-label="${isChineseLanguage(appState.language) ? '下载文件' : 'Download file'}">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</a>`
+        : '';
+      return `
+        <div class="thinking-step" data-kind="${escapeHtml(String(row.kind || 'info'))}" data-status="${escapeHtml(String(row.status || 'done'))}">
+          <div class="thinking-step-node"></div>
+          <div class="thinking-step-content">
+            ${isToolRow
+              ? `<div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}">
+                  <button type="button" class="tool-trace-summary" aria-expanded="false">${escapeHtml(String(row.title || '工具调用'))}</button>
+                  ${downloadLink}
+                  <div class="tool-trace-detail" tabindex="0">${escapeHtml(detail)}</div>
+                </div>`
+                : `<div class="thinking-step-title">${escapeHtml(String(row.title || ''))}</div>
+                   <div class="thinking-step-detail">${escapeHtml(detail)}</div>`}
             </div>
           </div>
         `;
+    }).join('');
+
+    if (hasToolTrace && storedTimeline.length === 0) {
+      const storedToolRows = processTrace.tools
+        .filter((row) => row && typeof row === 'object')
+        .slice(-200);
+      const storedToolHtml = storedToolRows.map((row) => {
+        const traceId = escapeHtml(String(row.id || `${row.tool || 'tool'}:${row.ts || ''}`));
+        const status = escapeHtml(String(row.status || 'complete').toLowerCase());
+        const summary = escapeHtml(String(row.summary || row.label || row.tool || (isChineseLanguage(appState.language) ? '工具调用' : 'Tool call')));
+        const detail = escapeHtml(String(row.detail || row.message || ''));
+        const downloadUrl = String(row.download_url || '').trim();
+        const downloadLink = downloadUrl
+          ? `<a class="tool-trace-download" href="${escapeHtml(downloadUrl)}" aria-label="${isChineseLanguage(appState.language) ? '下载文件' : 'Download file'}">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</a>`
+          : '';
+        return `
+          <div class="tool-trace-item tool-trace-collapsed" data-trace-id="${traceId}" data-status="${status}">
+            <button type="button" class="tool-trace-summary" aria-expanded="false">${summary}</button>
+            ${downloadLink}
+            <div class="tool-trace-detail" tabindex="0">${detail}</div>
+          </div>
+        `;
+      }).join('');
+      timelineHtml += `
+        <div class="thinking-step tool-history-step" data-status="done">
+          <div class="thinking-step-node"></div>
+          <div class="thinking-step-content">
+            <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '工具调用' : 'Tool calls'}</div>
+            <div class="tool-trace-list tool-trace-history-list">${storedToolHtml}</div>
+          </div>
+        </div>
+      `;
+    }
 
     if (hasAgentProcessTrace) {
       const normalizeStatusClass = (status) => {
@@ -17946,7 +18768,16 @@ function createMessageElement(message) {
 
     timelineDiv.innerHTML = timelineHtml;
 
-    if (hasAgentProcessTrace) {
+    timelineDiv.querySelectorAll('.tool-trace-summary').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = button.closest('.tool-trace-item');
+      const expanded = item?.classList.toggle('tool-trace-expanded');
+      item?.classList.toggle('tool-trace-collapsed', !expanded);
+      button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+    });
+
+    if (hasAgentProcessTrace || hasToolTrace) {
       setTimeout(() => {
         const traceToggleBtn = timelineDiv.querySelector(`#${thinkingId}-trace-toggle`);
         const traceListEl = timelineDiv.querySelector(`#${thinkingId}-trace-list`);
@@ -17982,6 +18813,16 @@ function createMessageElement(message) {
           });
         });
 
+        timelineDiv.querySelectorAll('.tool-trace-summary').forEach((button) => {
+          button.addEventListener('click', () => {
+            const item = button.closest('.tool-trace-item');
+            if (!item) return;
+            const expanded = item.classList.toggle('tool-trace-expanded');
+            item.classList.toggle('tool-trace-collapsed', !expanded);
+            button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          });
+        });
+
         bindResearchThinkingToggles(timelineDiv);
       }, 0);
     }
@@ -17990,14 +18831,14 @@ function createMessageElement(message) {
   }
 
   // RAI 思考内容：放到正文位置，比正文浅、字号小，折叠为圆角矩形按钮（无描边）
-  if (message.role === 'assistant' && hasReasoning && !isResearchTrace) {
+  if (shouldRenderReasoningTimeline) {
     const reasoningBlock = document.createElement('div');
     reasoningBlock.className = 'rai-reasoning-block';
     const reasoningId = `reasoning-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const reasoningLabel = isChineseLanguage(appState.language) ? '思考过程' : 'Thinking';
     const reasoningIcon = getSvgIcon('psychology', 'material-symbols-outlined', 14);
     reasoningBlock.innerHTML = `
-      <button class="rai-reasoning-toggle" id="${reasoningId}-toggle" type="button">
+      <button class="rai-reasoning-toggle" aria-expanded="false" id="${reasoningId}-toggle" type="button">
         <span class="rai-reasoning-label">
           <span class="rai-reasoning-icon">${reasoningIcon}</span>
           <span>${reasoningLabel}</span>
@@ -18014,40 +18855,52 @@ function createMessageElement(message) {
     if (reasoningToggleBtn) {
       reasoningToggleBtn.addEventListener('click', function () {
         const expanded = reasoningBlock.classList.toggle('expanded');
+        this.setAttribute('aria-expanded', String(expanded));
         this.classList.toggle('expanded', expanded);
         if (expanded && reasoningContentEl) {
           reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
         }
       });
     }
-    content.appendChild(reasoningBlock);
+    if (messageTimelineDiv) messageTimelineDiv.appendChild(reasoningBlock);
+    else content.appendChild(reasoningBlock);
   }
 
-  // 为用户消息添加轻量附件元数据（名称、大小和私有下载引用）。
-  if (message.role === 'user' && (message.attachments || message.attachment_refs || message.has_attachments)) {
-    let attachments = message.attachments || message.attachment_refs;
-    // 如果是字符串，尝试解析JSON
-    if (typeof attachments === 'string') {
-      try {
-        attachments = JSON.parse(attachments);
-      } catch (e) {
-        attachments = [];
+  if (hasInterleavedFlow) {
+    const flow = document.createElement('div');
+    flow.className = 'message-text stream-flow';
+    processTrace.flowSegments.forEach((segment) => {
+      if (!segment || !segment.kind) return;
+      if (segment.kind === 'reasoning' && shouldRenderReasoningTimeline) return;
+      if (segment.kind === 'content') {
+        const block = document.createElement('div');
+        block.className = 'stream-flow-content';
+        block.innerHTML = sanitizeRenderedHtml(renderMarkdownWithMath(String(segment.text || '')));
+        flow.appendChild(block);
+        return;
       }
-    }
-
-    if (Array.isArray(attachments) && attachments.length > 0) {
-      const attachmentsDiv = document.createElement('div');
-      attachmentsDiv.className = 'message-attachments';
-
-      attachments.forEach(att => {
-        if (!att || !att.type) return;
-        attachmentsDiv.appendChild(createAttachmentListItem(att));
+      const item = document.createElement('div');
+      item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
+      item.dataset.status = String(segment.status || 'done');
+      item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
+      const stepContent = item.querySelector('.thinking-step-content');
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'stream-flow-event-toggle';
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.textContent = String(segment.title || '');
+      const detail = document.createElement('div');
+      detail.className = 'stream-flow-event-detail';
+      detail.textContent = String(segment.detail || '');
+      toggle.addEventListener('click', () => {
+        const expanded = item.classList.toggle('expanded');
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       });
-
-      if (attachmentsDiv.children.length > 0) {
-        content.appendChild(attachmentsDiv);
-      }
-    }
+      stepContent.appendChild(toggle);
+      stepContent.appendChild(detail);
+      flow.appendChild(item);
+    });
+    content.appendChild(flow);
   }
 
   const textDiv = document.createElement('div');
@@ -18078,8 +18931,31 @@ function createMessageElement(message) {
 
   textDiv.innerHTML = sanitizeRenderedHtml(renderedContent);
   hydrateRenderedImages(textDiv);
-  if (textDiv.innerHTML.trim()) {
+  if (!hasInterleavedFlow && textDiv.innerHTML.trim()) {
     content.appendChild(textDiv);
+  }
+
+  // 用户上传和 AI 生成的附件都使用同一张可下载卡片。
+  // 卡片必须位于回答正文之后，避免工具完成事件抢到答案上方。
+  if ((message.role === 'user' || message.role === 'assistant') && (message.attachments || message.attachment_refs || message.has_attachments)) {
+    let attachments = message.attachments || message.attachment_refs;
+    if (typeof attachments === 'string') {
+      try {
+        attachments = JSON.parse(attachments);
+      } catch (e) {
+        attachments = [];
+      }
+    }
+
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      const attachmentsDiv = document.createElement('div');
+      attachmentsDiv.className = 'message-attachments';
+      attachments.forEach(att => {
+        if (!att || !att.type) return;
+        attachmentsDiv.appendChild(createAttachmentListItem(att));
+      });
+      if (attachmentsDiv.children.length > 0) content.appendChild(attachmentsDiv);
+    }
   }
 
   if (message.role === 'assistant' && askUserResult.prompts.length > 0) {
@@ -19070,7 +19946,7 @@ async function recoverIncompleteChatStream({
       continue;
     }
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let attemptContent = '';
@@ -19152,6 +20028,22 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
   const messageElements = container?.querySelectorAll('.message');
   const aiMsgElement = messageElements ? messageElements[msgIndex] : null;
   const textDiv = aiMsgElement?.querySelector('.message-text');
+
+  function appendGeneratedArtifact(attachment) {
+    if (!attachment || !attachment.type || !aiMsgElement) return;
+    const existing = Array.isArray(aiMsg.attachments) ? aiMsg.attachments : [];
+    const identity = String(attachment.filePath || attachment.downloadPath || '');
+    if (existing.some((item) => String(item.filePath || item.downloadPath || '') === identity)) return;
+    aiMsg.attachments = [...existing, attachment];
+    let attachmentsDiv = aiMsgElement.querySelector('.message-attachments');
+    if (!attachmentsDiv) {
+      attachmentsDiv = document.createElement('div');
+      attachmentsDiv.className = 'message-attachments';
+      const messageContent = aiMsgElement.querySelector('.message-content');
+      if (messageContent) messageContent.appendChild(attachmentsDiv);
+    }
+    attachmentsDiv?.appendChild(createAttachmentListItem(attachment));
+  }
 
   function updateInlineImageGenerationStatus(event = {}) {
     if (!aiMsgElement || !textDiv) return;
@@ -19365,7 +20257,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     });
     if (responseRequestId) requestId = responseRequestId;
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let fullContent = '';
     let reasoningContent = '';
@@ -19433,8 +20325,9 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
             continue;
           }
 
-          if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
-            updateInlineImageGenerationStatus(parsed);
+          if (parsed.type === 'tool_status') {
+            if (parsed.attachment) appendGeneratedArtifact(parsed.attachment);
+            if (parsed.tool === 'generate_image') updateInlineImageGenerationStatus(parsed);
             continue;
           }
 
@@ -19557,7 +20450,10 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
       String(appState.currentSession?.id || '') === String(sessionId || '') &&
       generation === appState.sessionNavigationGeneration
     ) {
-      finishMessageNodeInPlace(aiMsgElement, aiMsg, { sessionId, generation });
+      const finalizedNode = finishMessageNodeInPlace(aiMsgElement, aiMsg, { sessionId, generation });
+      if (!finalizedNode && aiMsgElement.isConnected) {
+        updateMessageNodeInPlace(aiMsgElement, aiMsg);
+      }
     }
     // 获取数据库 ID 时仍只协调有变化的节点。
     if (sessionId && streamSucceeded) {
@@ -19936,6 +20832,7 @@ function openSessionMenu(event, session) {
     <button type="button" data-action="ai-title-continue">${isZh ? '继续总结标题' : 'Continue summarizing title'}</button>
     <button type="button" data-action="folder">${isZh ? '添加到文件夹' : 'Add to folder'}</button>
     <button type="button" data-action="pin">${session.pinned ? (isZh ? '取消置顶' : 'Unpin') : (isZh ? '置顶' : 'Pin')}</button>
+    <button type="button" data-action="share">${isZh ? '分享对话 / 管理链接' : 'Share conversation / Manage link'}</button>
     <button type="button" data-action="export">${isZh ? '导出可验证对话' : 'Export verifiable conversation'}</button>
     <button type="button" data-action="explain">${isZh ? '查看本对话解释' : 'View conversation explanations'}</button>
     <button type="button" class="danger" data-action="delete">${isZh ? '删除对话' : 'Delete conversation'}</button>`;
@@ -19953,6 +20850,7 @@ function openSessionMenu(event, session) {
     if (action === 'ai-title-continue') return requestAiTitleUpdate(session, 'continue_summary');
     if (action === 'folder') return showSessionFolderManager(session);
     if (action === 'export') return exportVerifiableConversation(session);
+    if (action === 'share') return window.shareRaiConversation?.(session);
     if (action === 'explain') {
       if (window.RAISelectionExplainer?.openHistory) window.RAISelectionExplainer.openHistory({ sessionId: session.id });
       else showToast(isZh ? '解释历史正在加载' : 'Explanation history is loading');
@@ -20345,7 +21243,16 @@ function createSessionElement(session, { inFolder = false, pinned = false } = {}
   const canvasMarker = sessionHasCanvas(session)
     ? `<span class="session-canvas-marker" title="${escapeHtml(canvasMarkerLabel)}" aria-label="${escapeHtml(canvasMarkerLabel)}">${getSvgIcon('dashboard_customize', 'material-symbols-outlined', 15)}</span>`
     : '';
-  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
+  // 使用过本地电脑的对话：标识由服务端会话字段持久化，重开页面/换设备都不会消失。
+  const localComputerUsed = Number(session.local_computer_used || 0) > 0 || Boolean(session.working_directory);
+  const localComputerBaseLabel = isChineseLanguage(appState.language) ? '此对话使用过本地电脑' : 'Used local computer';
+  const localComputerMarkerLabel = session.working_directory
+    ? `${localComputerBaseLabel}\n${isChineseLanguage(appState.language) ? '最近工作目录' : 'Last working directory'}: ${session.working_directory}`
+    : localComputerBaseLabel;
+  const localComputerMarker = localComputerUsed
+    ? `<span class="session-local-computer-marker" title="${escapeHtml(localComputerMarkerLabel)}" aria-label="${escapeHtml(localComputerBaseLabel)}">${getSvgIcon('computer', 'material-symbols-outlined', 15)}</span>`
+    : '';
+  div.innerHTML = `<div class="session-title-wrap"><div class="session-title">${escapeHtml(getSessionDisplayTitle(session))}</div>${canvasMarker}${localComputerMarker}</div>${timestamp ? `<time class="session-time">${escapeHtml(timestamp)}</time>` : ''}<button class="session-menu-btn" type="button" aria-label="Conversation menu" aria-haspopup="menu" aria-expanded="false" data-session-menu-id="${escapeHtml(menuId)}">${getSvgIcon('more_vert', 'material-symbols-outlined', 20)}</button>`;
   let suppressPinnedClickUntil = 0;
   div.addEventListener('click', (event) => {
     if (Date.now() < suppressPinnedClickUntil) return;
@@ -20619,6 +21526,20 @@ async function sendMessage(message = null, options = {}) {
     || message;
   const immediateConversationTitle = deriveImmediateConversationTitleFromUserMessage(immediateTitleSource);
 
+  // 附件还在上传时先等待上传完成，否则聊天请求会先发出去、LLM 看不到刚选的文件。
+  if (pendingAttachmentUpload) {
+    if (sendWaitingForAttachmentUpload) return;
+    sendWaitingForAttachmentUpload = true;
+    showToast(isChineseLanguage(appState.language) ? '正在等待附件上传完成…' : 'Waiting for the attachment upload to finish…');
+    try {
+      await pendingAttachmentUpload;
+    } catch (uploadWaitError) {
+      console.warn('附件上传未完成，继续按当前状态发送:', uploadWaitError?.message || uploadWaitError);
+    } finally {
+      sendWaitingForAttachmentUpload = false;
+    }
+  }
+
   // 允许只发送附件（无文字内容）
   if (!messageText && !currentAttachment) return;
   if (appState.customApiMode) {
@@ -20827,27 +21748,38 @@ async function sendMessage(message = null, options = {}) {
             </div>
             ${processTraceStepHtml}
 
-            <!-- 步骤2: 生成回答 -->
-            <div class="thinking-step" id="stepGenerating" data-status="pending">
-              <div class="thinking-step-node"></div>
-              <div class="thinking-step-content">
-                <div class="thinking-step-title">${isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response'}</div>
-                <div class="thinking-step-detail" id="generatingDetail"></div>
+            <!-- 动态步骤：搜索 / 生成 按真实事件顺序追加 -->
+            <div id="timelineDynamicSteps"></div>
+
+            <!-- 当前轮工具调用详情 -->
+            <div class="tool-trace-panel" id="toolTracePanel" hidden>
+              <div class="tool-trace-heading">
+                <span>${isChineseLanguage(appState.language) ? '工具调用' : 'Tool calls'}</span>
+                <span class="tool-trace-count" id="toolTraceCount">0</span>
               </div>
+              <div class="tool-trace-list" id="toolTraceList" aria-live="polite"></div>
             </div>
 
-          <div class="rai-reasoning-block" id="raiReasoningBlock" style="display: none;">
-            <button class="rai-reasoning-toggle" id="raiReasoningToggle" type="button">
-              <span class="rai-reasoning-label">
-                <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
-                <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
+          <div class="rai-reasoning-block" id="raiReasoningBlock" data-reasoning-mode="collapsed" style="display: none;">
+            <div class="rai-reasoning-header">
+              <button class="rai-reasoning-toggle" aria-expanded="false" id="raiReasoningToggle" type="button">
+                <span class="rai-reasoning-label">
+                  <span class="rai-reasoning-icon">${getSvgIcon('psychology', 'material-symbols-outlined', 14)}</span>
+                  <span>${isChineseLanguage(appState.language) ? '思考过程' : 'Thinking'}</span>
+                </span>
+                <span class="toggle-icon">▼</span>
+              </button>
+              <span class="rai-reasoning-modes" role="group">
+                <button type="button" class="rai-reasoning-mode selected" data-reasoning-mode="collapsed" aria-label="${isChineseLanguage(appState.language) ? '折叠思考' : 'Collapse thinking'}">${getSvgIcon('unfold_less', 'material-symbols-outlined', 15)}</button>
+                <button type="button" class="rai-reasoning-mode" data-reasoning-mode="live" aria-label="${isChineseLanguage(appState.language) ? '滚动思考' : 'Live thinking'}">${getSvgIcon('vertical_align_bottom', 'material-symbols-outlined', 15)}</button>
+                <button type="button" class="rai-reasoning-mode" data-reasoning-mode="expanded" aria-label="${isChineseLanguage(appState.language) ? '展开思考' : 'Expand thinking'}">${getSvgIcon('unfold_more', 'material-symbols-outlined', 15)}</button>
               </span>
-              <span class="toggle-icon">▼</span>
-            </button>
+            </div>
             <div class="rai-reasoning-content" id="raiReasoningContent"></div>
           </div>
+          </div>
 
-          <div class="message-text" id="streamingContent"></div>
+          <div class="message-text stream-flow" id="streamingContent"></div>
         </div>
       `;
 
@@ -20863,11 +21795,15 @@ async function sendMessage(message = null, options = {}) {
   const raiReasoningContent = aiMsgDiv.querySelector('#raiReasoningContent');
   if (raiReasoningToggle && raiReasoningBlock) {
     raiReasoningToggle.addEventListener('click', function () {
-      const expanded = raiReasoningBlock.classList.toggle('expanded');
-      this.classList.toggle('expanded', expanded);
-      if (expanded && raiReasoningContent) {
-        raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
-      }
+      const next = appState.thinkingUIMode === 'collapsed' ? 'expanded' : 'collapsed';
+      setReasoningDisplayMode(next);
+      if (raiReasoningContent && next !== 'collapsed') raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
+    });
+    raiReasoningBlock.querySelectorAll('[data-reasoning-mode]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setReasoningDisplayMode(button.dataset.reasoningMode);
+      });
     });
   }
 
@@ -20876,11 +21812,11 @@ async function sendMessage(message = null, options = {}) {
   // 时间轴元素引用
   const thinkingTimeline = aiMsgDiv.querySelector('#thinkingTimeline');
   const stepToolDecision = aiMsgDiv.querySelector('#stepToolDecision');
-  const stepGenerating = aiMsgDiv.querySelector('#stepGenerating');
+  const timelineDynamicSteps = aiMsgDiv.querySelector('#timelineDynamicSteps');
   const stepProcessTrace = aiMsgDiv.querySelector('#stepProcessTrace');
   const stepDeepThinking = null;
   const toolDecisionDetail = aiMsgDiv.querySelector('#toolDecisionDetail');
-  const generatingDetail = aiMsgDiv.querySelector('#generatingDetail');
+  let generatingStepEl = null;
   const processTraceDetail = aiMsgDiv.querySelector('#processTraceDetail');
   const processTraceList = aiMsgDiv.querySelector('#processTraceList');
   const processTraceToggle = aiMsgDiv.querySelector('#processTraceToggle');
@@ -20893,6 +21829,138 @@ async function sendMessage(message = null, options = {}) {
   const deepThinkingContent = null;
   const toolStatusBar = aiMsgDiv.querySelector('#searchStatus');
   const toolStatusText = aiMsgDiv.querySelector('#searchStatusText');
+  const toolTracePanel = aiMsgDiv.querySelector('#toolTracePanel');
+  const toolTraceList = aiMsgDiv.querySelector('#toolTraceList');
+  const toolTraceCount = aiMsgDiv.querySelector('#toolTraceCount');
+  const toolTraceItems = new Map();
+  const toolTraceSnapshots = new Map();
+  const generatedArtifactAttachments = [];
+  let activeToolTraceId = '';
+
+  function appendGeneratedArtifact(attachment) {
+    if (!attachment || !attachment.type || !aiMsgDiv) return;
+    const identity = String(attachment.filePath || attachment.downloadPath || '');
+    if (generatedArtifactAttachments.some((item) => String(item.filePath || item.downloadPath || '') === identity)) return;
+    generatedArtifactAttachments.push(attachment);
+  }
+
+  function formatToolTraceLabel(tool = '') {
+    const labels = {
+      web_search: isChineseLanguage(appState.language) ? '联网搜索' : 'Web search',
+      read_skill: isChineseLanguage(appState.language) ? '加载技能' : 'Load skill',
+      sandbox_exec: isChineseLanguage(appState.language) ? '沙箱命令' : 'Sandbox command',
+      fetch_url: isChineseLanguage(appState.language) ? '下载文件' : 'Download file',
+      read_file: isChineseLanguage(appState.language) ? '读取文件' : 'Read file',
+      edit_file: isChineseLanguage(appState.language) ? '编辑文件' : 'Edit file',
+      create_artifact: isChineseLanguage(appState.language) ? '生成文件' : 'Create file',
+      transform_file: isChineseLanguage(appState.language) ? '转换文件' : 'Transform file',
+      generate_image: isChineseLanguage(appState.language) ? '生成图片' : 'Generate image',
+      save_memory: isChineseLanguage(appState.language) ? '保存记忆' : 'Save memory',
+      delete_memory: isChineseLanguage(appState.language) ? '删除记忆' : 'Delete memory'
+    };
+    return labels[tool] || tool || (isChineseLanguage(appState.language) ? '工具调用' : 'Tool call');
+  }
+
+  function summarizeToolTrace(event = {}) {
+    const tool = String(event.tool || event.name || '');
+    const args = event.args && typeof event.args === 'object' ? event.args : {};
+    if (tool === 'web_search') return `${formatToolTraceLabel(tool)}: ${event.query || args.query || event.message || ''}`.trim();
+    if (tool === 'read_skill') return `${formatToolTraceLabel(tool)}: ${event.skill || args.name || event.message || ''}`.trim();
+    if (tool === 'sandbox_exec') return `${formatToolTraceLabel(tool)}: ${event.command || event.detail || event.message || '执行脚本'}`.trim();
+    if (tool === 'fetch_url') return `${formatToolTraceLabel(tool)}: ${event.file_name || event.url || event.message || '下载外部文件'}`.trim();
+    if (event.message) return `${formatToolTraceLabel(tool)}: ${event.message}`;
+    return formatToolTraceLabel(tool);
+  }
+
+  function upsertToolTraceItem(event = {}) {
+    if (!toolTraceList) return;
+    const tool = String(event.tool || event.name || event.kind || 'tool');
+    const id = String(event.tool_call_id || event.call_id || `${tool}:${event.round || 0}:${event.query || event.skill || event.file_name || event.url || ''}`);
+    const status = String(event.status || 'running').toLowerCase();
+    const isCurrent = status === 'running' || status === 'pending';
+    if (toolTracePanel) toolTracePanel.hidden = false;
+    let item = toolTraceItems.get(id);
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'tool-trace-item tool-trace-collapsed';
+      item.dataset.traceId = id;
+      item.innerHTML = '<button type="button" class="tool-trace-summary" aria-expanded="false"></button><div class="tool-trace-detail" tabindex="0"></div>';
+      const summaryButton = item.querySelector('.tool-trace-summary');
+      summaryButton?.addEventListener('click', () => {
+        item.dataset.userToggled = '1';
+        const expanded = item.classList.toggle('tool-trace-expanded');
+        item.classList.toggle('tool-trace-collapsed', !expanded);
+        summaryButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      });
+      toolTraceList.appendChild(item);
+      toolTraceItems.set(id, item);
+    }
+    const summary = item.querySelector('.tool-trace-summary');
+    const detail = item.querySelector('.tool-trace-detail');
+    const text = summarizeToolTrace(event);
+    if (summary) summary.textContent = text;
+    if (detail) {
+      const detailText = String(event.detail || event.output || event.message || '').slice(0, 12000);
+      detail.textContent = detailText;
+      const downloadUrl = String(event.download_url || event.downloadPath || '').trim();
+      if (downloadUrl && !item.querySelector('.tool-trace-download')) {
+        const download = document.createElement('a');
+        download.className = 'tool-trace-download';
+        download.href = downloadUrl;
+        download.textContent = isChineseLanguage(appState.language) ? '下载' : 'Download';
+        download.setAttribute('aria-label', isChineseLanguage(appState.language) ? '下载文件' : 'Download file');
+        download.addEventListener('click', (clickEvent) => clickEvent.stopPropagation());
+        item.appendChild(download);
+      }
+      toolTraceSnapshots.set(id, {
+        id,
+        tool,
+        label: formatToolTraceLabel(tool),
+        summary: text,
+        detail: detailText,
+        message: String(event.message || '').slice(0, 1000),
+        status,
+        query: String(event.query || (event.args && event.args.query) || '').slice(0, 500),
+        skill: String(event.skill || (event.args && event.args.name) || '').slice(0, 200),
+        file_name: String(event.file_name || '').slice(0, 240),
+        url: String(event.url || '').slice(0, 500),
+        download_url: String(event.download_url || event.downloadPath || '').slice(0, 1000),
+        ts: Date.now()
+      });
+    }
+    item.dataset.status = status;
+    item.classList.toggle('tool-trace-current', isCurrent);
+    if (item.dataset.userToggled !== '1') {
+      item.classList.toggle('tool-trace-expanded', isCurrent);
+      item.classList.toggle('tool-trace-collapsed', !isCurrent);
+      if (summary) summary.setAttribute('aria-expanded', isCurrent ? 'true' : 'false');
+    }
+    if (activeToolTraceId && activeToolTraceId !== id) {
+      const previous = toolTraceItems.get(activeToolTraceId);
+      if (previous) {
+        previous.classList.remove('tool-trace-current', 'tool-trace-expanded');
+        previous.classList.add('tool-trace-collapsed');
+      }
+    }
+    if (isCurrent) activeToolTraceId = id;
+    if (toolTraceCount) toolTraceCount.textContent = String(toolTraceItems.size);
+    if (isCurrent) toolTraceList.scrollTop = toolTraceList.scrollHeight;
+  }
+
+  function setReasoningDisplayMode(mode = 'collapsed') {
+    const allowed = new Set(['collapsed', 'live', 'expanded']);
+    const next = allowed.has(mode) ? mode : 'collapsed';
+    appState.thinkingUIMode = next;
+    if (!raiReasoningBlock) return;
+    raiReasoningBlock.dataset.reasoningMode = next;
+    raiReasoningBlock.classList.toggle('mode-live', next === 'live');
+    raiReasoningBlock.classList.toggle('mode-expanded', next === 'expanded');
+    raiReasoningBlock.classList.toggle('expanded', next !== 'collapsed');
+    if (raiReasoningContent && next === 'live') raiReasoningContent.scrollTop = raiReasoningContent.scrollHeight;
+    aiMsgDiv.querySelectorAll('[data-reasoning-mode]').forEach((button) => {
+      button.classList.toggle('selected', button.dataset.reasoningMode === next);
+    });
+  }
 
   const agentRunState = {
     tasks: new Map(),
@@ -20929,13 +21997,13 @@ async function sendMessage(message = null, options = {}) {
     let text = rawMessage || prefix;
     if (event.status === 'running') {
       text = rawMessage && rawMessage !== prefix ? `${prefix} · ${rawMessage}` : prefix;
-      updateStepStatus(stepGenerating, 'active', text);
+      updateStepStatus(getGeneratingStep(), 'active', text);
     } else if (event.status === 'complete') {
       text = isChineseLanguage(appState.language) ? '图片生成完成' : 'Image ready';
-      updateStepStatus(stepGenerating, 'active', text);
+      updateStepStatus(getGeneratingStep(), 'active', text);
     } else if (event.status === 'failed') {
       text = isChineseLanguage(appState.language) ? '图片生成失败，已记录报错' : 'Image generation failed and was logged';
-      updateStepStatus(stepGenerating, 'failed', text);
+      updateStepStatus(getGeneratingStep(), 'failed', text);
     }
 
     if (toolStatusBar && toolStatusText) {
@@ -21274,15 +22342,78 @@ async function sendMessage(message = null, options = {}) {
     }
   }
 
+  // 动态时间轴：搜索 / 生成步骤按 SSE 事件真实顺序追加，
+  // 避免正文输出到一半时固定时间轴重新出现搜索步骤造成割裂。
+  function appendTimelineStep({ kind, title, detail = '', status = 'pending' }) {
+    if (!timelineDynamicSteps) return null;
+    const el = document.createElement('div');
+    el.className = 'thinking-step';
+    el.dataset.kind = kind;
+    el.dataset.status = status;
+    el.innerHTML = '<div class="thinking-step-node"></div>'
+      + '<div class="thinking-step-content">'
+      + '<div class="thinking-step-title"></div>'
+      + '<div class="thinking-step-detail"></div>'
+      + '</div>';
+    el.querySelector('.thinking-step-title').textContent = title;
+    if (detail) el.querySelector('.thinking-step-detail').textContent = detail;
+    timelineDynamicSteps.appendChild(el);
+    timelineSequence.push({ kind, title, detail, status });
+    return el;
+  }
+
+  function getGeneratingStep() {
+    if (!generatingStepEl || ['done', 'failed'].includes(generatingStepEl.dataset.status)) {
+      generatingStepEl = appendTimelineStep({
+        kind: 'generating',
+        title: isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response',
+        status: 'pending'
+      });
+    }
+    return generatingStepEl;
+  }
+
+  function finalizeGeneratingStep() {
+    // 新一轮搜索开始时，把当前生成阶段标记为已完成的一段输出；
+    // 下一次正文到达会追加新的生成步骤，时间轴保持真实顺序。
+    if (generatingStepEl && generatingStepEl.dataset.status !== 'done') {
+      updateStepStatus(generatingStepEl, 'done', isChineseLanguage(appState.language)
+        ? '已输出，继续检索'
+        : 'Output sent, continuing search');
+    }
+    generatingStepEl = null;
+  }
+
+  function ensureSearchStep(query = '') {
+    if (!timelineDynamicSteps) return null;
+    const steps = timelineDynamicSteps.querySelectorAll('.thinking-step[data-kind="search"]');
+    const last = steps.length > 0 ? steps[steps.length - 1] : null;
+    if (last && (last.dataset.status === 'running' || last.dataset.status === 'pending')) {
+      return last;
+    }
+    finalizeGeneratingStep();
+    const el = appendTimelineStep({
+      kind: 'search',
+      title: isChineseLanguage(appState.language) ? '联网搜索' : 'Web search',
+      detail: query ? `"${query}"` : '',
+      status: 'running'
+    });
+    return el;
+  }
+
   if (processTraceToggle) {
+    processTraceToggle.type = 'button';
+    processTraceToggle.setAttribute('aria-expanded', 'false');
     processTraceToggle.addEventListener('click', function () {
       const expanded = processTraceList?.classList.contains('expanded');
       if (expanded) {
         processTraceList?.classList.remove('expanded');
         processTraceToggle.classList.remove('expanded');
+        processTraceToggle.setAttribute('aria-expanded', 'false');
       } else {
         processTraceList?.classList.add('expanded');
         processTraceToggle.classList.add('expanded');
+        processTraceToggle.setAttribute('aria-expanded', 'true');
       }
     });
   }
@@ -21310,6 +22441,21 @@ async function sendMessage(message = null, options = {}) {
   let traceReasoningChars = 0;
   let traceItems = 0;
   const processTraceEvents = [];
+  const timelineSequence = [];
+
+  function recordTimelineStep(kind, title, detail = '', status = 'done') {
+    const last = timelineSequence[timelineSequence.length - 1];
+    if (last && last.kind === kind && last.title === title) {
+      if (detail) {
+        last.detail = status === 'done' && last.status === 'done'
+          ? `${last.detail || ''}${detail}`
+          : detail;
+      }
+      last.status = status === 'done' ? 'done' : status;
+      return;
+    }
+    timelineSequence.push({ kind, title, detail, status });
+  }
 
   function addProcessTraceItem(kind, text) {
     if (!enableProcessTrace) return;
@@ -21540,7 +22686,7 @@ async function sendMessage(message = null, options = {}) {
       throw new Error('响应体为空');
     }
 
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -21569,11 +22715,89 @@ async function sendMessage(message = null, options = {}) {
 
     const streamingEl = document.getElementById('streamingContent');
     const aiAvatar = aiMsgDiv.querySelector('.ai-avatar');
+    if (thinkingTimeline) thinkingTimeline.style.display = 'none';
 
     //  多图防抖动缓存（状态外置 + 缓存注入）
     const lastValidMermaids = {}; // 格式: { "0": "code...", "1": "code..." }
     const renderedSvgs = {};      // 格式: { "0": "<svg>...</svg>", "1": "<svg>...</svg>" }
     const renderingMermaids = new Set();
+    const streamFlowSegments = [];
+    let activeFlowContent = null;
+
+    function appendInterleavedContent(text) {
+      const chunk = String(text || '');
+      if (!chunk) return;
+      if (!activeFlowContent) {
+        activeFlowContent = { kind: 'content', text: '' };
+        streamFlowSegments.push(activeFlowContent);
+      }
+      activeFlowContent.text += chunk;
+      renderInterleavedFlow();
+    }
+
+    function appendInterleavedEvent(kind, title, detail = '', status = 'done', trace = null) {
+      activeFlowContent = null;
+      const last = streamFlowSegments[streamFlowSegments.length - 1];
+      if (last && last.kind === kind && last.title === title) {
+        last.detail = detail || last.detail;
+        last.status = status;
+        last.trace = trace || last.trace;
+        renderInterleavedFlow();
+        return;
+      }
+      streamFlowSegments.push({ kind, title, detail, status, trace });
+      renderInterleavedFlow();
+    }
+
+    function appendInterleavedReasoning(detail = '') {
+      const last = streamFlowSegments[streamFlowSegments.length - 1];
+      if (last && last.kind === 'reasoning') {
+        last.detail = `${last.detail || ''}${detail}`;
+        renderInterleavedFlow();
+        return;
+      }
+      appendInterleavedEvent('reasoning', isChineseLanguage(appState.language) ? '思考过程' : 'Thinking', detail, 'done');
+    }
+
+    function renderInterleavedFlow() {
+      if (!streamingEl) return;
+      streamingEl.replaceChildren();
+      streamFlowSegments.forEach((segment) => {
+        if (segment.kind === 'reasoning' && document.getElementById('raiReasoningBlock')) return;
+        if (segment.kind === 'content') {
+          const block = document.createElement('div');
+          block.className = 'stream-flow-content';
+          block.innerHTML = renderMarkdownWithMath(
+            sanitizeAssistantDisplayText(stripTrailingTitleMarker(segment.text)),
+            true
+          );
+          streamingEl.appendChild(block);
+          return;
+        }
+        const item = document.createElement('div');
+        item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
+        item.dataset.status = segment.status || 'done';
+        item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
+        const content = item.querySelector('.thinking-step-content');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'stream-flow-event-toggle';
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = segment.title || '';
+        const detail = document.createElement('div');
+        detail.className = 'stream-flow-event-detail';
+        detail.textContent = segment.detail || '';
+        button.addEventListener('click', () => {
+          const expanded = item.classList.toggle('expanded');
+          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        });
+        content.appendChild(button);
+        content.appendChild(detail);
+        streamingEl.appendChild(item);
+      });
+      hydrateRenderedImages(streamingEl);
+      scrollToBottom();
+    }
 
     // ==================== AI Smooth Fusion 渲染队列 ====================
     let charRenderQueue = [];  // 字符渲染队列
@@ -21821,6 +23045,7 @@ async function sendMessage(message = null, options = {}) {
 
     let receivedDoneEvent = false;
     let receivedCancelled = false;
+    let receivedExplicitError = false;
     let streamFailureMessage = '';
     let streamReadError = null;
 
@@ -21867,8 +23092,7 @@ async function sendMessage(message = null, options = {}) {
               // 显示并展开思考内容块（正文位置，比正文浅、字号小）
               if (raiReasoningBlock) {
                 raiReasoningBlock.style.display = '';
-                raiReasoningBlock.classList.add('expanded');
-                if (raiReasoningToggle) raiReasoningToggle.classList.add('expanded');
+                setReasoningDisplayMode('live');
               }
 
               // 更新加载状态文本
@@ -21889,6 +23113,8 @@ async function sendMessage(message = null, options = {}) {
             }
 
             reasoningContent += parsed.content;
+            appendInterleavedReasoning(parsed.content || '');
+            recordTimelineStep('reasoning', isChineseLanguage(appState.language) ? '思考' : 'Thinking', parsed.content || '', 'done');
             traceReasoningChars += (parsed.content || '').length;
             addProcessTraceItem('reasoning', parsed.content || '');
             if (processTraceDetail) {
@@ -21930,7 +23156,7 @@ async function sendMessage(message = null, options = {}) {
                 if (stepDeepThinking && !appState.thinkingMode) {
                   stepDeepThinking.style.display = 'none';
                 }
-                updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
+                updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               }
             }
 
@@ -21946,35 +23172,26 @@ async function sendMessage(message = null, options = {}) {
                 }
               }
               if (raiReasoningBlock) {
-                raiReasoningBlock.classList.remove('expanded');
-                if (raiReasoningToggle) raiReasoningToggle.classList.remove('expanded');
+                setReasoningDisplayMode('collapsed');
               }
 
               // 更新步骤状态：生成回答进行中
-              updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在组织语言...' : 'Organizing response...');
+              updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在组织语言...' : 'Organizing response...');
 
               // 停止AI头像闪烁
               if (aiAvatar) aiAvatar.classList.remove('thinking');
             }
 
-            // 现在开始显示正文 - 使用字符级渲染队列
+            // 正文按到达顺序写入交错流，工具/搜索事件会插入其后。
             const rawChunk = parsed.content || '';
             const cleanChunk = sanitizeAssistantDisplayText(sanitizeToolCallArtifacts(rawChunk));
             if (!cleanChunk) {
               continue;
             }
             fullContent += cleanChunk;
-
-            // 将新字符推入渲染队列（而非直接渲染整个内容）
-            const newChars = cleanChunk;
-            for (const char of newChars) {
-              charRenderQueue.push(char);
-            }
-
-            // 启动渲染消费者（如果尚未启动）
-            if (!isCharRendering) {
-              isCharRendering = true;
-              processCharQueue();
+            appendInterleavedContent(cleanChunk);
+            if (!timelineSequence.some((row) => row.kind === 'generating' && row.status === 'running')) {
+              recordTimelineStep('generating', isChineseLanguage(appState.language) ? '生成回答' : 'Generating Response', '', 'running');
             }
           }
           else if (parsed.type === 'title') {
@@ -22086,7 +23303,7 @@ async function sendMessage(message = null, options = {}) {
               updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
                 ? `讨论记录完成 · ${traceItems}条`
                 : `Discussion logged · ${traceItems} items`);
-              updateStepStatus(stepGenerating, mappedStatus, detail || (mappedStatus === 'done'
+              updateStepStatus(getGeneratingStep(), mappedStatus, detail || (mappedStatus === 'done'
                 ? (isChineseLanguage(appState.language) ? '生成完成' : 'Completed')
                 : (isChineseLanguage(appState.language) ? '最终回答生成中...' : 'Final answer streaming...')));
             } else if (isTaskScope) {
@@ -22106,7 +23323,7 @@ async function sendMessage(message = null, options = {}) {
             } else {
               const stageStepId = String(parsed.stepId || '');
               const targetStep = (stageStepId === 'synthesis' || stageStepId === 'quality')
-                ? stepGenerating
+                ? getGeneratingStep()
                 : (stageStepId === 'master' ? stepProcessTrace : stepToolDecision);
               const fallbackText = detail || (isChineseLanguage(appState.language) ? `${roleName}处理中` : `${roleName} running`);
               updateStepStatus(targetStep, mappedStatus, fallbackText);
@@ -22167,7 +23384,7 @@ async function sendMessage(message = null, options = {}) {
                 updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
                   ? `讨论记录完成 · ${traceItems}条`
                   : `Discussion logged · ${traceItems} items`);
-                updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '最终回答实时生成中...' : 'Final answer streaming...');
+                updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language) ? '最终回答实时生成中...' : 'Final answer streaming...');
               } else {
                 updateStepStatus(stepToolDecision, 'running', isChineseLanguage(appState.language) ? '子AI正在讨论...' : 'Models are discussing...');
                 updateStepStatus(stepProcessTrace, 'running', isChineseLanguage(appState.language) ? '实时展示模型输出...' : 'Showing model output live...');
@@ -22219,15 +23436,21 @@ async function sendMessage(message = null, options = {}) {
           }
           else if (parsed.type === 'agent_retry') {
             agentRetryCount = parsed.round || (agentRetryCount + 1);
-            updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language)
+            updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language)
               ? `返工第${agentRetryCount}轮: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
             addProcessTraceItem('agent', isChineseLanguage(appState.language)
               ? `返工#${agentRetryCount}: ${parsed.reason || '继续优化'}`
               : `Retry #${agentRetryCount}: ${parsed.reason || 'refining'}`);
           }
-          else if (parsed.type === 'tool_status' && parsed.tool === 'generate_image') {
-            updateImageGenerationStatus(parsed);
+          else if (parsed.type === 'tool_status') {
+            if (parsed.attachment) appendGeneratedArtifact(parsed.attachment);
+            upsertToolTraceItem(parsed);
+            if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
+            recordTimelineStep('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done');
+            appendInterleavedEvent('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done', parsed);
+            addProcessTraceItem('tool', summarizeToolTrace(parsed));
+            scrollToBottom();
           }
           else if (parsed.type === 'memory_update') {
             applyMemoryUpdateEvent(parsed);
@@ -22235,28 +23458,48 @@ async function sendMessage(message = null, options = {}) {
           }
           //  处理搜索状态 - 更新到时间轴第一步
           else if (parsed.type === 'search_status') {
+            upsertToolTraceItem({
+              ...parsed,
+              tool: 'web_search',
+              status: parsed.status === 'complete' || parsed.status === 'no_results' ? 'complete' : 'running',
+              detail: parsed.message || parsed.query || ''
+            });
             if (parsed.status === 'analyzing') {
               // 正在分析是否需要搜索
               updateStepStatus(stepToolDecision, 'active', isChineseLanguage(appState.language) ? '正在分析问题...' : 'Analyzing...');
             } else if (parsed.status === 'searching') {
               // 保存搜索词供后续使用
               currentSearchQuery = parsed.query || '';
-              // 决定使用搜索工具，显示搜索词
-              updateStepStatus(stepToolDecision, 'active', isChineseLanguage(appState.language)
-                ? `联网搜索: "${currentSearchQuery}"`
-                : `Web search: "${currentSearchQuery}"`);
+              // 动态追加"联网搜索"步骤（顺序时间轴：分析 → 搜索 → 生成 → 搜索 → 生成）
+              const searchStep = ensureSearchStep(currentSearchQuery);
+              recordTimelineStep('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', currentSearchQuery, 'running');
+              appendInterleavedEvent('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', currentSearchQuery, 'running', parsed);
+              updateStepStatus(searchStep, 'running', isChineseLanguage(appState.language)
+                ? `"${currentSearchQuery}"`
+                : `"${currentSearchQuery}"`);
+              updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
+                ? '已完成分析'
+                : 'Analysis completed');
               addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `开始搜索: ${currentSearchQuery}`
                 : `Search start: ${currentSearchQuery}`);
             } else if (parsed.status === 'complete') {
               const resultCount = parsed.resultCount || 0;
               currentSearchQuery = parsed.query || currentSearchQuery || '';
-              // 搜索完成
+              // 收尾当前搜索步骤
+              const steps = timelineDynamicSteps?.querySelectorAll('.thinking-step[data-kind="search"]') || [];
+              const lastSearch = steps.length > 0 ? steps[steps.length - 1] : null;
+              if (lastSearch) {
+                updateStepStatus(lastSearch, 'done', isChineseLanguage(appState.language)
+                  ? `找到 ${resultCount} 条结果`
+                  : `${resultCount} results`);
+              }
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → ${resultCount}条结果`
                 : `Search done → ${resultCount} results`);
-              // 开始生成回答
-              updateStepStatus(stepGenerating, 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
+              appendInterleavedEvent('search', isChineseLanguage(appState.language) ? '联网搜索' : 'Web search', `${resultCount} ${isChineseLanguage(appState.language) ? '条结果' : 'results'}`, 'done', parsed);
+              // 开始生成回答（本轮正文输出）
+              updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `搜索完成: ${resultCount} 条`
                 : `Search complete: ${resultCount}`);
@@ -22267,28 +23510,45 @@ async function sendMessage(message = null, options = {}) {
             } else if (parsed.status === 'no_results') {
               currentSearchQuery = parsed.query || currentSearchQuery || '';
               // 搜索无结果
+              const steps = timelineDynamicSteps?.querySelectorAll('.thinking-step[data-kind="search"]') || [];
+              const lastSearch = steps.length > 0 ? steps[steps.length - 1] : null;
+              if (lastSearch) {
+                updateStepStatus(lastSearch, 'done', isChineseLanguage(appState.language) ? '无结果' : 'No results');
+              }
               updateStepStatus(stepToolDecision, 'done', isChineseLanguage(appState.language)
                 ? `搜索完成 → 无结果`
                 : `Search done → No results`);
+              updateStepStatus(getGeneratingStep(), 'active', isChineseLanguage(appState.language) ? '正在生成...' : 'Generating...');
               addProcessTraceItem('search', isChineseLanguage(appState.language) ? '搜索无结果' : 'No search results');
             }
             scrollToBottom();
           }
+          else if (parsed.type === 'stream_warning') {
+            showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
+          }
           else if (parsed.type === 'done') {
             receivedDoneEvent = true;
-            console.log(' 流式响应完成');
-
-            // 停止字符渲染队列
+            const incomplete = parsed.degraded === true;
+            // An upstream stop is terminal, not a successful answer. Do not
+            // automatically repeat tools or obscure the interruption in the timeline.
             stopCharRender();
-
-            // 更新步骤状态：生成回答完成
-            updateStepStatus(stepGenerating, 'done', isChineseLanguage(appState.language) ? '生成完成' : 'Completed');
-            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
-              ? `过程完成 · ${traceItems}条记录`
-              : `Done · ${traceItems} trace items`);
-            addProcessTraceItem('info', isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed');
-
-            // 停止AI头像闪烁
+            updateStepStatus(getGeneratingStep(), incomplete ? 'failed' : 'done',
+              incomplete ? (isChineseLanguage(appState.language) ? '回答未完成' : 'Answer incomplete')
+                : (isChineseLanguage(appState.language) ? '生成完成' : 'Completed'));
+            timelineSequence.forEach((row) => {
+              if (row.kind === 'generating' && row.status === 'running') {
+                row.status = incomplete ? 'failed' : 'done';
+                row.detail = incomplete
+                  ? (isChineseLanguage(appState.language) ? '未完成' : 'Incomplete')
+                  : (isChineseLanguage(appState.language) ? '已完成' : 'Completed');
+              }
+            });
+            updateStepStatus(stepProcessTrace, incomplete ? 'failed' : 'done', incomplete
+              ? (isChineseLanguage(appState.language) ? '过程中断' : 'Trace interrupted')
+              : (isChineseLanguage(appState.language) ? `过程完成 · ${traceItems}条记录` : `Done · ${traceItems} trace items`));
+            addProcessTraceItem('info', incomplete
+              ? (isChineseLanguage(appState.language) ? '流式回答中断' : 'Stream ended before the answer completed')
+              : (isChineseLanguage(appState.language) ? '流式响应完成' : 'Streaming completed'));
             if (aiAvatar) aiAvatar.classList.remove('thinking');
           }
           else if (parsed.type === 'cancelled') {
@@ -22302,10 +23562,12 @@ async function sendMessage(message = null, options = {}) {
             break;
           }
           else if (parsed.type === 'error') {
-            streamFailureMessage = String(parsed.error || '未知错误');
+            receivedExplicitError = true;
+            streamFailureMessage = String(parsed.message || parsed.error || '未知错误');
             stopCharRender();  // 停止字符渲染
-            updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
-            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${parsed.error || ''}`);
+            updateStepStatus(getGeneratingStep(), 'failed', isChineseLanguage(appState.language) ? '工具调用或生成失败' : 'Tool call or generation failed');
+            updateStepStatus(stepProcessTrace, 'failed', isChineseLanguage(appState.language) ? '过程异常中断' : 'Trace interrupted by error');
+            addProcessTraceItem('info', `${isChineseLanguage(appState.language) ? '错误' : 'Error'}: ${streamFailureMessage}`);
             // 停止AI头像闪烁
             if (aiAvatar) aiAvatar.classList.remove('thinking');
             break;
@@ -22321,8 +23583,8 @@ async function sendMessage(message = null, options = {}) {
       console.warn('聊天流读取中断，准备自动续传:', error?.message || error);
     }
 
-    if (!receivedDoneEvent && !receivedCancelled) {
-      updateStepStatus(stepGenerating, 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
+    if (!receivedDoneEvent && !receivedCancelled && !receivedExplicitError) {
+      updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '未收到完成事件，开始自动续传' : 'Completion event missing; starting continuation');
       const recovered = await recoverIncompleteChatStream({
         basePayload: chatRequestPayload,
@@ -22346,11 +23608,12 @@ async function sendMessage(message = null, options = {}) {
       if (fullContent) {
         displayedContent = sanitizeAssistantDisplayText(stripTrailingTitleMarker(fullContent));
         charRenderQueue = [];
-        renderStreamingContent();
+        if (streamFlowSegments.length > 0) renderInterleavedFlow();
+        else renderStreamingContent();
       }
       if (receivedDoneEvent) {
         stopCharRender();
-        updateStepStatus(stepGenerating, 'done', isChineseLanguage(appState.language) ? '续传完成' : 'Continuation completed');
+        updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '续传完成' : 'Continuation completed');
         updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
           ? `过程完成 · 自动续传 ${recovered.attempts} 次`
           : `Done · ${recovered.attempts} automatic continuation attempt(s)`);
@@ -22360,6 +23623,11 @@ async function sendMessage(message = null, options = {}) {
       }
     }
 
+    if (receivedExplicitError) {
+      throw new Error(streamFailureMessage || (isChineseLanguage(appState.language)
+        ? '工具调用或生成失败'
+        : 'Tool call or generation failed'));
+    }
     if (!receivedDoneEvent && !receivedCancelled && !String(fullContent || '').trim()) {
       throw new Error(streamFailureMessage || streamReadError?.message || (isChineseLanguage(appState.language)
         ? '模型输出未完成'
@@ -22385,7 +23653,8 @@ async function sendMessage(message = null, options = {}) {
     if (streamingEl && cleanContent) {
       displayedContent = cleanContent;
       charRenderQueue = [];
-      renderStreamingContent();
+      if (streamFlowSegments.length > 0) renderInterleavedFlow();
+      else renderStreamingContent();
     }
 
     const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
@@ -22411,10 +23680,11 @@ async function sendMessage(message = null, options = {}) {
       rawContent: d.rawContent || '',
       reasoningContent: d.reasoningContent || d.reasoning_content || ''
     }));
+    const toolSnapshot = Array.from(toolTraceSnapshots.values()).slice(-200);
     let serializedProcessTrace = null;
-    if (enableProcessTrace) {
+    if (enableProcessTrace || toolSnapshot.length > 0) {
       const processTraceSnapshot = {
-        version: 1,
+        version: 2,
         mode: (currentResearchMode === 'deep' || currentResearchMode === 'fast')
           ? 'research_debate'
           : (appState.agentMode ? 'agent' : 'single'),
@@ -22422,7 +23692,10 @@ async function sendMessage(message = null, options = {}) {
         tasks: taskSnapshot,
         drafts: draftSnapshot,
         metrics: agentRunState.metrics || null,
-        trace: processTraceEvents
+        trace: processTraceEvents,
+        timeline: timelineSequence.slice(-200),
+        flowSegments: streamFlowSegments.slice(-200),
+        tools: toolSnapshot
       };
       if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
         processTraceSnapshot.forceSubAgents = 4;
@@ -22439,7 +23712,8 @@ async function sendMessage(message = null, options = {}) {
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
       process_trace: serializedProcessTrace,
-      sources: currentSources.length > 0 ? currentSources : null,  // 新增：存储来源
+      sources: currentSources.length > 0 ? currentSources : null,
+      attachments: generatedArtifactAttachments.length > 0 ? generatedArtifactAttachments : null,
       created_at: new Date().toISOString()
     };
     if (
@@ -22449,10 +23723,13 @@ async function sendMessage(message = null, options = {}) {
       appState.messages.push(aiMsg);
       chatFlowState.messages = appState.messages;
       reconcileChatFlowNodeMessageRefs();
-      finishMessageNodeInPlace(aiMsgDiv, aiMsg, {
+      const finalizedNode = finishMessageNodeInPlace(aiMsgDiv, aiMsg, {
         sessionId: streamSessionId,
         generation: streamNavigationGeneration
       });
+      if (!finalizedNode && aiMsgDiv.isConnected) {
+        updateMessageNodeInPlace(aiMsgDiv, aiMsg);
+      }
     }
 
     await loadSessions();
@@ -22511,7 +23788,6 @@ function getSendHoldModes() {
 
 function getSendHoldModeFromCurrentState() {
   if (isResearchModeEnabled()) return 'research';
-  if (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode) return 'think';
   if (appState.selectedModel === 'deepseek-flash') return 'fast';
   return 'smart';
 }
@@ -23180,6 +24456,44 @@ appState.authTwoFactorRequired = false;
 let authTwoFactorPrecheckToken = 0;
 let lastPrecheckedAuthEmail = '';
 
+// Only this preference is local. Passwords belong to the OS/browser manager.
+const RAI_REMEMBER_PASSWORD_KEY = 'rai_remember_password';
+let rememberPasswordSessionPreference = null;
+function getRememberPasswordPreference() {
+  if (rememberPasswordSessionPreference !== null) return rememberPasswordSessionPreference;
+  try { return localStorage.getItem(RAI_REMEMBER_PASSWORD_KEY) !== 'false'; }
+  catch (error) { return true; }
+}
+function syncRememberPasswordPreference() {
+  const enabled = getRememberPasswordPreference();
+  const checkbox = document.getElementById('authRememberPassword');
+  if (checkbox) checkbox.checked = enabled;
+  setRememberPasswordAutocomplete(enabled);
+}
+function setRememberPasswordAutocomplete(enabled) {
+  const password = document.getElementById('authPassword');
+  if (password) password.autocomplete = enabled
+    ? (appState.authMode === 'register' ? 'new-password' : 'current-password')
+    : 'off';
+}
+function setRememberPasswordPreference(enabled) {
+  rememberPasswordSessionPreference = Boolean(enabled);
+  try { localStorage.setItem(RAI_REMEMBER_PASSWORD_KEY, enabled ? 'true' : 'false'); }
+  catch (error) { /* Private browsing can deny storage; honor this page's choice. */ }
+  setRememberPasswordAutocomplete(enabled);
+}
+
+// Delegate storage to the platform password manager; never persist raw bytes
+// in localStorage or sessionStorage. Unsupported browsers use autocomplete.
+function offerBrowserPasswordSave(email, password) {
+  if (!getRememberPasswordPreference() || !email || !password
+    || typeof PasswordCredential !== 'function' || !navigator.credentials?.store) return;
+  try {
+    const credential = new PasswordCredential({ id: email, password, name: 'RAI' });
+    Promise.resolve(navigator.credentials.store(credential)).catch(() => {});
+  } catch (error) { /* Browser may deny password storage. */ }
+}
+
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
 
 function normalizeCustomApiUrl(value) {
@@ -23234,7 +24548,7 @@ function clearCustomApiSession() {
 function setCustomApiFormVisibility(visible) {
   const standardIds = [
     'authEmail', 'authLoginMethodStep', 'passwordStep', 'twoFactorStep', 'emailCodeStep',
-    'usernameStep', 'submitStep', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
+    'usernameStep', 'submitStep', 'authAlternativeOptions', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
   ];
   standardIds.forEach((id) => {
     const element = document.getElementById(id);
@@ -23360,7 +24674,7 @@ async function sendCustomApiMessage(messages) {
       renderMessages();
       return;
     }
-    const reader = response.body.getReader();
+    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     while (true) {
@@ -23507,6 +24821,7 @@ function setAuthLoginMethod(method) {
 
 function updateAuthMethodUI() {
   configureAuthSecondFactorInput();
+  syncRememberPasswordPreference();
   const isLogin = appState.authMode === 'login';
   const passwordInput = document.getElementById('authPassword');
   if (passwordInput) {
@@ -24165,7 +25480,13 @@ async function verifyPendingEmailAuth(email, code) {
 	    body: JSON.stringify({ email, code })
   });
 	  const data = await parseApiJsonResponse(response);
-  if (await handleAuthServerResponse(data)) return;
+  const newPassword = purpose === 'register' ? getCurrentAuthPassword() : '';
+  if (await handleAuthServerResponse(data)) {
+    if (purpose === 'register' && data?.success && data.token) {
+      offerBrowserPasswordSave(email, newPassword);
+    }
+    return;
+  }
   if (!response.ok || data.success === false) {
     throw new Error(data.error || '验证码无效或已过期');
   }
@@ -24300,6 +25621,7 @@ async function handleAuthSubmit() {
       if (!(await handleAuthServerResponse(data))) {
         showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '验证码无效' : 'Invalid code'));
       }
+      if (data?.success && data.token) offerBrowserPasswordSave(email, password);
       return;
     }
 
@@ -24331,6 +25653,7 @@ async function handleAuthSubmit() {
     if (!(await handleAuthServerResponse(data))) {
       showAuthError(localizeServerError(data.error, isChineseLanguage(appState.language) ? '操作失败' : 'Operation failed'));
     }
+    if (data?.success && data.token) offerBrowserPasswordSave(email, password);
   } catch (error) {
     const fallbackError = getAuthNetworkUnavailableMessage();
     const rawMessage = String(error?.message || '').trim();
@@ -24361,6 +25684,7 @@ function showApp() {
     initChatIndexListener(); // 初始化对话索引导航器监听
     updateToolbarUI();
     focusEntryTextInput('app-ready', { delay: 0 });
+    window.mobileKeyboardHandler?.healStandaloneViewport?.();
   }, 100);
 }
 
@@ -27267,7 +28591,7 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-	        model: 'deepseek-pro',
+	        model: 'deepseek-flash',
 	        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
 	        promptTimeContext: getUserTimeContext(),
 	        memoryMode: 'off',
@@ -29207,7 +30531,7 @@ function startSessionStreamSubscription(sessionId = appState.currentSession?.id)
         throw new Error(`stream_events_http_${response.status}`);
       }
 
-      const reader = response.body.getReader();
+      const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       while (appState.sessionStreamSource === source) {
@@ -29428,7 +30752,10 @@ function initSwipeGestures() {
   const setSidebarProgress = (progress, dragging = false) => {
     const width = getSidebarWidth();
     const normalized = Math.max(0, Math.min(progress, 1));
-    const translateX = (normalized - 1) * width;
+    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const translateX = opensFromRight
+      ? (1 - normalized) * width
+      : (normalized - 1) * width;
 
     sidebar.classList.toggle('dragging', dragging);
     sidebar.style.transform = `translateX(${Math.round(translateX)}px)`;
@@ -29476,6 +30803,7 @@ function initSwipeGestures() {
   const handleTouchMove = (e) => {
     if (!appState.sidebarGestureMode || !e.touches?.length) return;
 
+    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
     const touch = e.touches[0];
     const deltaX = touch.clientX - appState.touchStartX;
     const deltaY = Math.abs(touch.clientY - appState.touchStartY);
@@ -29491,7 +30819,9 @@ function initSwipeGestures() {
         return;
       }
 
-      const movingWrongWay = appState.sidebarGestureMode === 'opening' ? deltaX <= 0 : deltaX >= 0;
+      const movingWrongWay = appState.sidebarGestureMode === 'opening'
+        ? (opensFromRight ? deltaX >= 0 : deltaX <= 0)
+        : (opensFromRight ? deltaX <= 0 : deltaX >= 0);
       if (movingWrongWay) {
         if (Math.abs(deltaX) > gestureCommitDistance && Math.abs(deltaX) > deltaY * horizontalDominanceRatio) {
           resetSwipeState();
@@ -29510,8 +30840,10 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const rawProgress = appState.sidebarGestureMode === 'opening'
-      ? Math.max(0, deltaX) / width
-      : 1 + (Math.min(0, deltaX) / width);
+      ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
+      : (opensFromRight
+        ? 1 - (Math.max(0, deltaX) / width)
+        : 1 + (Math.min(0, deltaX) / width));
 
     setSidebarProgress(rawProgress, true);
     e.preventDefault();
@@ -29527,9 +30859,12 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const deltaX = appState.touchMoveX - appState.touchStartX;
+    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
     const finalProgress = appState.sidebarGestureMode === 'opening'
-      ? Math.max(0, deltaX) / width
-      : 1 + (Math.min(0, deltaX) / width);
+      ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
+      : (opensFromRight
+        ? 1 - (Math.max(0, deltaX) / width)
+        : 1 + (Math.min(0, deltaX) / width));
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;
@@ -29754,6 +31089,10 @@ function loadSettings() {
       if (settings.fontPreference !== undefined) applyFontPreference(settings.fontPreference);
       if (settings.showModelBadge !== undefined) appState.showModelBadge = settings.showModelBadge === true;
       if (settings.showInternetBadge !== undefined) appState.showInternetBadge = settings.showInternetBadge === true;
+      if (settings.handednessEnabled !== undefined) appState.handednessEnabled = settings.handednessEnabled === true;
+      if (settings.handedness !== undefined) appState.handedness = normalizeHandedness(settings.handedness);
+      const storedHandedness = localStorage.getItem('rai_handedness');
+      if (storedHandedness) appState.handedness = normalizeHandedness(storedHandedness);
       if (settings.browserNotifyEnabled !== undefined) appState.browserNotifyEnabled = settings.browserNotifyEnabled === true;
       if (settings.browserNotifyEnabled === undefined) syncBrowserNotifyStateFromPermission({ persist: true });
       console.log(' 从本地存储加载设置成功');
@@ -29785,6 +31124,10 @@ class MobileKeyboardHandler {
 
     this.isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     this.isAndroid = /Android/i.test(navigator.userAgent);
+    this.isStandalone = Boolean(
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.navigator?.standalone === true
+    );
     this.isMobile = this.isIOS || this.isAndroid;
 
     this.root = document.documentElement;
@@ -29822,6 +31165,8 @@ class MobileKeyboardHandler {
   init() {
     this.root.classList.add('mobile-viewport-managed');
     this.body.classList.add('mobile-viewport-managed');
+    this.root.classList.toggle('ios-standalone', this.isIOS && this.isStandalone);
+    this.body.classList.toggle('ios-standalone', this.isIOS && this.isStandalone);
 
     this.updateViewportVars();
     this.syncComposerMetrics();
@@ -29832,6 +31177,9 @@ class MobileKeyboardHandler {
 
     if (this.isAndroid) this.applyAndroidFixes();
     if (this.isIOS) this.applyIOSFixes();
+    if (this.isIOS && this.isStandalone) {
+      window.setTimeout(() => this.healStandaloneViewport(), 350);
+    }
 
     this.log('MobileKeyboardHandler initialized', {
       isIOS: this.isIOS,
@@ -29840,14 +31188,26 @@ class MobileKeyboardHandler {
   }
 
   setupViewportListeners() {
-    if (this.visualViewport && !this.isIOS) {
-      // iOS 使用原生键盘布局，避免在键盘动画期间反复改写高度变量
+    // iOS Safari 浏览器页继续交给原生 viewport；主屏幕模式没有浏览器
+    // chrome，必须跟踪 visualViewport 才能在键盘/旋转后保持安全区内布局。
+    if (this.visualViewport && (!this.isIOS || this.isStandalone)) {
       this.visualViewport.addEventListener('resize', this.handleViewportChange);
     }
-    if (!this.isIOS) {
+    if (!this.isIOS || this.isStandalone) {
       window.addEventListener('resize', this.handleViewportChange);
     }
+    if (this.isIOS && this.isStandalone && this.visualViewport) {
+      // iOS 在聚焦输入框时会滚动布局视口（即使页面不可滚动），必须监听
+      // scroll 并复位，否则输入框会被顶到状态栏下方、键盘上方留下大空白。
+      this.visualViewport.addEventListener('scroll', this.handleViewportChange);
+    }
     window.addEventListener('orientationchange', this.handleViewportChange);
+    if (this.isIOS && this.isStandalone) {
+      window.addEventListener('pageshow', this.handleViewportChange);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) this.handleViewportChange();
+      });
+    }
   }
 
   setupFocusListeners() {
@@ -29868,8 +31228,26 @@ class MobileKeyboardHandler {
     this.composerObserver.observe(this.inputArea);
   }
 
+  resetStandaloneLayoutScroll() {
+    const reset = () => {
+      if (window.scrollY !== 0 || window.pageYOffset !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (this.root.scrollTop) this.root.scrollTop = 0;
+      if (this.body.scrollTop) this.body.scrollTop = 0;
+    };
+    reset();
+    return reset;
+  }
+
+  scheduleStandaloneLayoutScrollReset() {
+    const reset = this.resetStandaloneLayoutScroll();
+    // iOS 会在聚焦后的几帧里继续滚动布局视口，按稳定节奏再复位几次。
+    [16, 50, 100, 200].forEach((delay) => window.setTimeout(reset, delay));
+  }
+
   updateViewportVars() {
-    if (this.isIOS) {
+    if (this.isIOS && !this.isStandalone) {
       this.keyboardOpen = Boolean(this.activeInput);
       this.root.style.setProperty('--app-height', '100dvh');
       this.root.style.setProperty('--viewport-offset-top', '0px');
@@ -29878,8 +31256,45 @@ class MobileKeyboardHandler {
       return;
     }
 
-    const viewportHeight = this.visualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
-    const viewportTop = this.visualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
+    // In a standalone WebView the visual viewport may lag behind focusout and
+    // pageshow. It never owns the unfocused document/composer height.
+    if (this.isIOS && this.isStandalone) {
+      const viewport = this.visualViewport;
+      const viewportHeight = Math.round(viewport?.height || window.innerHeight || 0);
+      const viewportTop = Math.max(0, Math.round(viewport?.offsetTop || 0));
+      const innerHeight = Math.round(window.innerHeight || 0);
+      const screenHeight = Math.round(window.screen?.height || 0);
+      const observedMax = Math.max(innerHeight, viewportHeight);
+      // Accept screen.height only in an installed iOS app and only when its
+      // difference is inset-sized; never apply it to ordinary Safari.
+      let fullHeight = (screenHeight > observedMax && screenHeight - observedMax <= 120)
+        ? screenHeight
+        : observedMax;
+      const layoutWidth = Math.round(window.innerWidth || 0);
+      if (this.activeInput && this.standaloneLayoutWidth === layoutWidth) {
+        fullHeight = Math.max(fullHeight, this.standaloneLayoutHeight || 0);
+      } else {
+        this.standaloneLayoutWidth = layoutWidth;
+        this.standaloneLayoutHeight = fullHeight;
+      }
+      // Focus can survive keyboard dismissal or come from a hardware keyboard.
+      // A small inset-sized viewport difference is not a keyboard.
+      const keyboardOpen = Boolean(this.activeInput) && fullHeight - viewportHeight - viewportTop > 120;
+      const appHeight = keyboardOpen ? Math.max(320, viewportHeight) : Math.max(320, fullHeight);
+
+      this.keyboardOpen = keyboardOpen;
+      this.root.style.setProperty('--app-height', `${appHeight}px`);
+      this.root.style.setProperty('--viewport-offset-top', keyboardOpen ? `${viewportTop}px` : '0px');
+      this.root.style.setProperty('--keyboard-offset', keyboardOpen ? `${Math.max(0, fullHeight - viewportHeight - viewportTop)}px` : '0px');
+      this.body.classList.toggle('keyboard-open', keyboardOpen);
+      this.resetStandaloneLayoutScroll();
+      this.log('Viewport sync (standalone)', { viewportHeight, fullHeight, appHeight, keyboardOpen });
+      return;
+    }
+
+    const useVisualViewport = Boolean(this.visualViewport && (!this.isIOS || this.isStandalone));
+    const viewportHeight = useVisualViewport ? Math.round(this.visualViewport.height) : window.innerHeight;
+    const viewportTop = useVisualViewport ? Math.max(0, Math.round(this.visualViewport.offsetTop || 0)) : 0;
     const appHeight = Math.max(320, viewportHeight);
     const keyboardHeight = Math.max(0, window.innerHeight - viewportHeight - viewportTop);
     const keyboardThreshold = this.isIOS ? 120 : 150;
@@ -29914,6 +31329,11 @@ class MobileKeyboardHandler {
   }
 
   handleViewportChange() {
+    if (this.isIOS && this.isStandalone) {
+      // visualViewport 的 scroll 事件可能早于 rAF，先同步复位避免闪烁。
+      this.resetStandaloneLayoutScroll();
+    }
+
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
     }
@@ -29940,6 +31360,7 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
+      if (this.isStandalone) this.scheduleStandaloneLayoutScrollReset();
       return;
     }
 
@@ -29957,6 +31378,10 @@ class MobileKeyboardHandler {
 
     if (this.isIOS) {
       this.updateViewportVars();
+      if (this.isStandalone) {
+        this.scheduleStandaloneLayoutScrollReset();
+        window.setTimeout(() => this.healStandaloneViewport(), 400);
+      }
       return;
     }
 
@@ -30030,6 +31455,13 @@ class MobileKeyboardHandler {
     }
   }
 
+  // Reconcile after WebKit's delayed viewport update without toggling display.
+  healStandaloneViewport() {
+    if (!this.isIOS || !this.isStandalone || this.activeInput) return;
+    this.updateViewportVars();
+    this.syncComposerMetrics();
+  }
+
   applyIOSFixes() {
     document.addEventListener('touchstart', (e) => {
       if (e.touches.length > 1) e.preventDefault();
@@ -30057,7 +31489,107 @@ class MobileKeyboardHandler {
 
 // ==================== 文件上传处理 (多模态支持) ====================
 let currentAttachment = null;
+// 正在上传中的附件任务：发送消息时必须等待它结束，否则 LLM 会漏掉刚选中的文件。
+let pendingAttachmentUpload = null;
+let sendWaitingForAttachmentUpload = false;
+let attachmentUploadSequence = 0;
 const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
+
+// HEIC/HEIF 在多数模型网关与浏览器里都无法直接识别：在浏览器能解码时先转成 JPEG。
+const UI_HEIC_IMAGE_EXTENSIONS = new Set(['heic', 'heif']);
+const UI_IMAGE_MAX_DIMENSION = 2048;
+const UI_IMAGE_JPEG_QUALITY = 0.9;
+const UI_IMAGE_RECOMPRESS_MIN_BYTES = 3 * 1024 * 1024;
+const UPLOAD_STALL_TIMEOUT_MS = 45 * 1000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const UPLOAD_MAX_ATTEMPTS = 3;
+
+function replaceUploadFileExtension(fileName, extension) {
+  const name = String(fileName || '').trim() || 'image';
+  const base = name.replace(/\.[^./\\]+$/, '') || 'image';
+  return `${base}.${extension}`;
+}
+
+function loadDecodableImage(blob) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    image.addEventListener('load', () => {
+      cleanup();
+      resolve(image);
+    }, { once: true });
+    image.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('image_decode_failed'));
+    }, { once: true });
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlobAsync(canvas, mimeType, quality) {
+  return new Promise((resolve) => {
+    if (typeof canvas.toBlob !== 'function') {
+      resolve(null);
+      return;
+    }
+    canvas.toBlob((blob) => resolve(blob || null), mimeType, quality);
+  });
+}
+
+/**
+ * 把 HEIC/HEIF（以及过大的图片）在本地转成 JPEG，避免：
+ * 1. 模型网关不支持 HEIC 导致回答报错；
+ * 2. 几十 MB 的原图在移动网络上传时卡在 99% 后被服务器/网关拒绝。
+ * 浏览器无法解码时保持原文件，交给服务端与用户自行处理。
+ */
+async function prepareImageFileForUpload(file) {
+  const extension = getUiUploadExtension(file);
+  const isHeic = UI_HEIC_IMAGE_EXTENSIONS.has(extension);
+  const oversized = Number(file.size || 0) > UI_IMAGE_RECOMPRESS_MIN_BYTES;
+  if (!isHeic && !oversized) return { file, converted: false, decodeFailed: false };
+
+  let image = null;
+  try {
+    image = await loadDecodableImage(file);
+  } catch (error) {
+    return { file, converted: false, decodeFailed: true };
+  }
+
+  const sourceWidth = Number(image.naturalWidth || image.width || 0);
+  const sourceHeight = Number(image.naturalHeight || image.height || 0);
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return { file, converted: false, decodeFailed: true };
+  }
+
+  const longestSide = Math.max(sourceWidth, sourceHeight);
+  const needsResize = longestSide > UI_IMAGE_MAX_DIMENSION;
+  if (!isHeic && !needsResize) return { file, converted: false, decodeFailed: false };
+
+  const scale = needsResize ? UI_IMAGE_MAX_DIMENSION / longestSide : 1;
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+  if (!context) return { file, converted: false, decodeFailed: false };
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const blob = await canvasToBlobAsync(canvas, 'image/jpeg', UI_IMAGE_JPEG_QUALITY);
+  if (!blob || !blob.size) return { file, converted: false, decodeFailed: false };
+  // 转码后反而更大时保留原图；HEIC/HEIF 例外，必须换成 JPEG 才能被模型识别。
+  if (!isHeic && blob.size >= Number(file.size || 0)) {
+    return { file, converted: false, decodeFailed: false };
+  }
+
+  const convertedFile = new File(
+    [blob],
+    replaceUploadFileExtension(file.name, 'jpg'),
+    { type: 'image/jpeg', lastModified: Date.now() }
+  );
+  return { file: convertedFile, converted: true, decodeFailed: false };
+}
 
 let appVersionMonitorTimer = null;
 let appUpdatePromptVisible = false;
@@ -30332,18 +31864,44 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
+    let settled = false;
+    let bodyCompleted = false;
+    let stalled = false;
+    let lastProgressAt = Date.now();
+    const stallTimer = window.setInterval(() => {
+      if (settled || bodyCompleted) return;
+      if (Date.now() - lastProgressAt <= UPLOAD_STALL_TIMEOUT_MS) return;
+      stalled = true;
+      try {
+        xhr.abort();
+      } catch (error) {
+        /* ignore */
+      }
+    }, 5000);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(stallTimer);
+      callback(value);
+    };
+
     formData.append('file', file);
     xhr.open('POST', `${API_BASE}/upload`);
+    xhr.timeout = UPLOAD_REQUEST_TIMEOUT_MS;
     xhr.setRequestHeader('Authorization', `Bearer ${context.token}`);
     xhr.setRequestHeader('X-RAI-Upload-ID', session.uploadId);
     xhr.upload.addEventListener('progress', (event) => {
       if (!event.lengthComputable) return;
+      lastProgressAt = Date.now();
       const uploadedFileBytes = file.size > 0
         ? Math.round(file.size * Math.min(1, event.loaded / event.total))
         : 0;
       onProgress(uploadedFileBytes, Number(file.size || 0));
     });
-    xhr.upload.addEventListener('load', () => onProcessing(Number(file.size || 0)));
+    xhr.upload.addEventListener('load', () => {
+      bodyCompleted = true;
+      onProcessing(Number(file.size || 0));
+    });
     xhr.addEventListener('load', () => {
       let data = null;
       try {
@@ -30354,19 +31912,43 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
       if (xhr.status < 200 || xhr.status >= 300 || !data?.success || data.status !== 'completed') {
         const uploadError = new Error(data?.error || data?.message || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
         uploadError.status = xhr.status;
-        reject(uploadError);
+        finish(reject, uploadError);
         return;
       }
-      resolve(data);
+      finish(resolve, data);
     });
-    xhr.addEventListener('error', () => reject(new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted')));
+    xhr.addEventListener('error', () => {
+      const networkError = new Error(isChineseLanguage(appState.language) ? '上传连接中断' : 'Upload connection interrupted');
+      networkError.retryable = true;
+      finish(reject, networkError);
+    });
+    xhr.addEventListener('timeout', () => {
+      const timeoutError = new Error(isChineseLanguage(appState.language) ? '上传超时' : 'Upload timed out');
+      timeoutError.retryable = true;
+      finish(reject, timeoutError);
+    });
     xhr.addEventListener('abort', () => {
+      if (stalled) {
+        const stallError = new Error(isChineseLanguage(appState.language) ? '上传长时间无进度，已自动重试' : 'Upload stalled, retrying automatically');
+        stallError.name = 'UploadStallError';
+        stallError.retryable = true;
+        finish(reject, stallError);
+        return;
+      }
       const abortError = new Error('Upload aborted');
       abortError.name = 'AbortError';
-      reject(abortError);
+      finish(reject, abortError);
     });
     xhr.send(formData);
   });
+}
+
+function isRetryableUploadError(error) {
+  if (!error) return false;
+  if (error.name === 'AbortError') return false;
+  if (error.retryable === true) return true;
+  const status = Number(error.status || 0);
+  return !status || status >= 500;
 }
 
 // 独立的文件处理函数（供拖拽上传复用）
@@ -30386,10 +31968,6 @@ async function processUploadedFile(file, options = {}) {
   }
   if (UI_AUDIO_UPLOAD_EXTENSIONS.has(getUiUploadExtension(file)) && file.size > maxAudioUnderstandingSize) {
     showToast(isChineseLanguage(appState.language) ? '供 Gemini 理解的音频不能超过20MB' : 'Audio sent to Gemini cannot exceed 20MB');
-    return false;
-  }
-  if (file.size > maxSize) {
-    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
     return false;
   }
 
@@ -30412,11 +31990,37 @@ async function processUploadedFile(file, options = {}) {
     attachmentType = 'document';
   }
 
+  // HEIC/HEIF 与超大图片先本地转码，避免上传卡死与模型网关拒绝。
+  let uploadFile = file;
+  if (attachmentType === 'image') {
+    const needsImagePrep = UI_HEIC_IMAGE_EXTENSIONS.has(getUiUploadExtension(file))
+      || Number(file.size || 0) > UI_IMAGE_RECOMPRESS_MIN_BYTES;
+    if (needsImagePrep) {
+      showToast(isChineseLanguage(appState.language) ? '正在压缩图片…' : 'Compressing image…');
+    }
+    try {
+      const prepared = await prepareImageFileForUpload(file);
+      uploadFile = prepared.file;
+      if (prepared.decodeFailed && UI_HEIC_IMAGE_EXTENSIONS.has(getUiUploadExtension(file))) {
+        showToast(isChineseLanguage(appState.language)
+          ? '当前浏览器无法转换 HEIC，已按原格式上传，部分模型可能无法识别'
+          : 'This browser cannot convert HEIC; uploading the original file, some models may not read it');
+      }
+    } catch (prepareError) {
+      uploadFile = file;
+    }
+  }
+
+  if (uploadFile.size > maxSize) {
+    alert(isChineseLanguage(appState.language) ? '文件大小不能超过50MB' : 'File size cannot exceed 50MB');
+    return false;
+  }
+
   // 图片/视频/音频：保留本地缩略图用于预览，但聊天请求不再塞大 Base64
   // 所有附件统一走 /api/upload，用元数据模式传给后端解析
   let localThumbnail = null;
   if (attachmentType === 'image' && attachToComposer) {
-    localThumbnail = URL.createObjectURL(file);
+    localThumbnail = URL.createObjectURL(uploadFile);
   }
 
   const context = captureUserAuthContext();
@@ -30432,23 +32036,52 @@ async function processUploadedFile(file, options = {}) {
   }
   renderUploadProgress({
     generation,
-    fileName: file.name,
+    fileName: uploadFile.name,
     state: 'preparing',
     loaded: 0,
-    total: file.size,
+    total: uploadFile.size,
     attachToComposer
   });
 
+  const runUploadWithRetry = async () => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+      if (!isUserAuthContextCurrent(context)) {
+        const contextError = new Error('Upload account context changed');
+        contextError.name = 'AbortError';
+        throw contextError;
+      }
+      try {
+        const session = await createUploadSession(uploadFile, context);
+        renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded: 0, total: uploadFile.size, attachToComposer });
+        return await uploadFileWithProgress(
+          uploadFile,
+          session,
+          context,
+          (loaded, total) => renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded, total, attachToComposer }),
+          (total) => renderUploadProgress({ generation, fileName: uploadFile.name, state: 'processing', loaded: total, total, attachToComposer })
+        );
+      } catch (error) {
+        lastError = error;
+        if (error?.name === 'AbortError') throw error;
+        if (attempt >= UPLOAD_MAX_ATTEMPTS || !isRetryableUploadError(error)) throw error;
+        console.warn(' 上传中断，自动重试:', {
+          attempt,
+          errorName: String(error?.name || 'Error').slice(0, 80)
+        });
+        renderUploadProgress({ generation, fileName: uploadFile.name, state: 'uploading', loaded: 0, total: uploadFile.size, attachToComposer });
+        await new Promise((resolve) => window.setTimeout(resolve, 700 * attempt));
+      }
+    }
+    throw lastError || new Error('Upload failed');
+  };
+
+  const uploadSequence = ++attachmentUploadSequence;
+  const uploadTask = runUploadWithRetry();
+  if (attachToComposer) pendingAttachmentUpload = uploadTask;
+
   try {
-    const session = await createUploadSession(file, context);
-    renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded: 0, total: file.size, attachToComposer });
-    const data = await uploadFileWithProgress(
-      file,
-      session,
-      context,
-      (loaded, total) => renderUploadProgress({ generation, fileName: file.name, state: 'uploading', loaded, total, attachToComposer }),
-      (total) => renderUploadProgress({ generation, fileName: file.name, state: 'processing', loaded: total, total, attachToComposer })
-    );
+    const data = await uploadTask;
     if (!isUserAuthContextCurrent(context)) {
       const contextError = new Error('Upload account context changed');
       contextError.name = 'AbortError';
@@ -30456,10 +32089,10 @@ async function processUploadedFile(file, options = {}) {
     }
     const uploadedAttachment = {
       type: attachmentType,
-      fileName: file.name,
-      originalName: file.name,
-      mimeType: file.type,
-      size: file.size,
+      fileName: uploadFile.name,
+      originalName: uploadFile.name,
+      mimeType: uploadFile.type,
+      size: uploadFile.size,
       fileId: data.file?.filename || null,
       filePath: data.file?.filePath || null,
       // 图片保留本地缩略图用于预览（不发送到服务器）
@@ -30467,21 +32100,26 @@ async function processUploadedFile(file, options = {}) {
     };
     console.log(' 文件已上传', {
       attachmentType,
-      filenameLength: String(file.name || '').length,
-      bytes: Number(file.size) || 0
+      filenameLength: String(uploadFile.name || '').length,
+      bytes: Number(uploadFile.size) || 0
     });
     if (attachToComposer) {
-      currentAttachment = uploadedAttachment;
-      updateAttachmentUI();
-      updateNewChatModeSettingsUI();
+      if (uploadSequence === attachmentUploadSequence) {
+        currentAttachment = uploadedAttachment;
+        updateAttachmentUI();
+        updateNewChatModeSettingsUI();
+      } else if (localThumbnail) {
+        // 更新的上传已经开始，旧任务不要覆盖最新的附件预览。
+        URL.revokeObjectURL(localThumbnail);
+      }
     } else if (localThumbnail) {
       URL.revokeObjectURL(localThumbnail);
     }
-    renderUploadProgress({ generation, fileName: file.name, state: 'completed', loaded: file.size, total: file.size, attachToComposer });
+    renderUploadProgress({ generation, fileName: uploadFile.name, state: 'completed', loaded: uploadFile.size, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation);
     return true;
   } catch (error) {
-    renderUploadProgress({ generation, fileName: file.name, state: 'failed', loaded: 0, total: file.size, attachToComposer });
+    renderUploadProgress({ generation, fileName: uploadFile.name, state: 'failed', loaded: 0, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation, 4800);
     if (error?.name === 'AbortError') return false;
     console.error(' 文件上传失败:', {
@@ -30493,6 +32131,10 @@ async function processUploadedFile(file, options = {}) {
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
     alert(error?.message || fallback);
     return false;
+  } finally {
+    if (attachToComposer && pendingAttachmentUpload === uploadTask) {
+      pendingAttachmentUpload = null;
+    }
   }
 }
 
@@ -30832,6 +32474,19 @@ function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelin
   chatIndexLastActiveIndex = activeIdx;
 }
 // 显示横线悬浮提示
+function positionChatIndexFloatingTooltip(tooltip, rect) {
+  const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+  tooltip.style.top = `${rect.top + rect.height / 2}px`;
+  if (opensFromRight) {
+    tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
+    tooltip.style.left = 'auto';
+  } else {
+    tooltip.style.left = `${rect.right + 16}px`;
+    tooltip.style.right = 'auto';
+  }
+  tooltip.style.transform = 'translateY(-50%)';
+}
+
 function showChatIndexTooltip(event, content) {
   const tooltip = document.getElementById('chatIndexTooltip');
   if (!tooltip) return;
@@ -30845,12 +32500,7 @@ function showChatIndexTooltip(event, content) {
 
   tooltip.textContent = displayContent;
 
-  // 定位 - 在元素左侧显示
-  const rect = event.target.getBoundingClientRect();
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-  tooltip.style.left = 'auto';
-  tooltip.style.transform = 'translateY(-50%)';
+  positionChatIndexFloatingTooltip(tooltip, event.target.getBoundingClientRect());
 
   tooltip.classList.add('visible');
 }
@@ -30874,12 +32524,7 @@ function showNavTooltip(event, direction) {
 
   tooltip.textContent = text;
 
-  // 定位 - 在按钮左侧显示
-  const rect = event.target.getBoundingClientRect();
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-  tooltip.style.left = 'auto';
-  tooltip.style.transform = 'translateY(-50%)';
+  positionChatIndexFloatingTooltip(tooltip, event.target.getBoundingClientRect());
 
   tooltip.classList.add('visible');
 }
@@ -31212,10 +32857,70 @@ function initMobileTouchNavigation() {
   }, { passive: true });
 }
 
+// ==================== 视口诊断浮层（?viewport-debug=1 或 #viewport-debug） ====================
+function isViewportDebugEnabled() {
+  try {
+    if (new URLSearchParams(window.location.search).get('viewport-debug') === '1') return true;
+    if (window.location.hash === '#viewport-debug') return true;
+    return window.localStorage?.getItem('raiViewportDebug') === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function installViewportDebugOverlay() {
+  if (!isViewportDebugEnabled() || !document.body) return;
+  const panel = document.createElement('div');
+  panel.id = 'viewportDebugPanel';
+  panel.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:rgba(0,0,0,.88);color:#4ade80;font:11px/1.45 ui-monospace,Menlo,monospace;padding:8px 10px;white-space:pre-wrap;pointer-events:none;';
+  const marker = document.createElement('div');
+  marker.id = 'viewportDebugMarker';
+  marker.style.cssText = 'position:fixed;left:0;right:0;height:0;border-top:2px solid #ff2d55;z-index:2147483647;pointer-events:none;';
+  document.body.appendChild(panel);
+  document.body.appendChild(marker);
+
+  const measureSafeArea = (property) => {
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:fixed;top:0;left:0;width:0;height:env(${property}, 0px);visibility:hidden;pointer-events:none;`;
+    document.body.appendChild(probe);
+    const value = probe.offsetHeight;
+    probe.remove();
+    return value;
+  };
+
+  const update = () => {
+    const viewport = window.visualViewport;
+    const root = document.documentElement;
+    const shell = document.getElementById('appContainer');
+    const rect = shell ? shell.getBoundingClientRect() : null;
+    const appHeight = getComputedStyle(root).getPropertyValue('--app-height').trim();
+    const shellBottom = Math.round(rect?.bottom || 0);
+    panel.textContent = [
+      `RAI ${RAI_APP_VERSION} · ${RAI_BUILD_ID}`,
+      `standalone=${navigator.standalone === true} ios=${/iPad|iPhone|iPod/.test(navigator.userAgent)}`,
+      `screen=${window.screen?.width}x${window.screen?.height} dpr=${window.devicePixelRatio}`,
+      `inner=${window.innerWidth}x${window.innerHeight} scrollY=${window.scrollY}`,
+      viewport
+        ? `vv=${Math.round(viewport.width)}x${Math.round(viewport.height)} offTop=${Math.round(viewport.offsetTop)} scale=${viewport.scale}`
+        : 'vv=none',
+      `safeTop=${measureSafeArea('safe-area-inset-top')} safeBottom=${measureSafeArea('safe-area-inset-bottom')}`,
+      `--app-height=${appHeight}`,
+      `shell top=${Math.round(rect?.top || 0)} h=${Math.round(rect?.height || 0)} bottom=${shellBottom}`,
+      `html=${root.offsetHeight} body=${document.body.offsetHeight}`,
+      `gapBelowShell=${Math.round((window.screen?.height || 0) - shellBottom)}`
+    ].join('\n');
+    marker.style.top = `${shellBottom}px`;
+  };
+
+  update();
+  window.setInterval(update, 500);
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
   initializeComposerMenuHitTargets();
   mountComposerFloatingMenus();
+  installViewportDebugOverlay();
   window.mobileKeyboardHandler = new MobileKeyboardHandler({
     debug: false
   });
@@ -33072,7 +34777,7 @@ async function loadAdminLimits() {
       .map(([id, m]) => ({ id, name: escapeHtml((m.displayName && m.displayName[appState.language]) || m.name || id) }));
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
-      'deepseek-flash-siliconflow', 'deepseek-flash', 'deepseek-pro',
+      'deepseek-flash-siliconflow', 'deepseek-flash',
       'gemini-3.6-flash-low', 'gpt-5.6-luna', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);

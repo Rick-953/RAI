@@ -35,6 +35,8 @@ for (const merge of [mergeClient, mergeServer]) {
 }
 
 assert.match(app, /const CHAT_STREAM_CONTINUATION_LIMIT = 2/);
+assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
+assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
 assert.match(app, /for \(let attempt = 1; attempt <= CHAT_STREAM_CONTINUATION_LIMIT; attempt \+= 1\)/);
 assert.match(app, /event\.type === 'done'[\s\S]*receivedDone = true/);
 assert.match(app, /const rootRequestId = String\(continuationOfRequestId \|\| ''\)/);
@@ -75,6 +77,50 @@ assert.match(server, /SELECT m\.id, m\.content, m\.reasoning_content[\s\S]*WHERE
 assert.match(server, /UPDATE messages[\s\S]*content = \?, reasoning_content = \?/);
 assert.match(server, /formatPrivateLogFingerprint\(normalizedContinuationRequestId, 'request'\)/);
 assert.match(server, /formatPrivateLogFingerprint\(contentToSave, 'content'\)/);
-assert.match(server, /res\.write\(`data: \$\{JSON\.stringify\(\{ type: 'done' \}\)\}\\n\\n`\)/);
+assert.match(server, /const skillToolsEnabled = true;/,
+  'read_skill must remain enabled in temporary and low-latency conversations');
+assert.match(server, /fileToolsEnabled: Boolean\(sessionId\)/,
+  'server file tools must not depend on keyword detection');
+assert.match(server, /Temporary conversations isolate user-specific state only[\s\S]{0,1400}buildCanonicalRaiSystemPrompt/,
+  'temporary conversations must retain canonical Layer 0/1 while excluding user state');
+assert.doesNotMatch(server, /if \(memoryModeOff\) \{\s*systemPrompt = '';/,
+  'temporary mode must never erase the canonical prompt');
+assert.match(server, /const invalidToolCallMessage = '模型请求的工具调用无法验证/,
+  'invalid tool calls must surface a user-visible failure rather than silently complete');
+assert.match(server, /type: 'error',[\s\S]{0,160}error: 'invalid_tool_call'/,
+  'invalid tool calls must emit an SSE error event');
+assert.doesNotMatch(server, /收到 tool_calls 但均无效，已跳过/,
+  'invalid tool calls must never silently skip tool continuation');
+
+assert.match(app, /let receivedExplicitError = false/);
+assert.match(app, /parsed\.type === 'error'[\s\S]{0,260}receivedExplicitError = true[\s\S]{0,600}updateStepStatus\(getGeneratingStep\(\), 'failed'/,
+  'explicit SSE errors must mark generation failed');
+assert.match(app, /!receivedDoneEvent && !receivedCancelled && !receivedExplicitError[\s\S]{0,160}自动续传/,
+  'explicit tool/provider errors must not enter connection continuation');
+assert.match(app, /if \(receivedExplicitError\) \{[\s\S]{0,240}throw new Error\(streamFailureMessage/,
+  'explicit SSE errors must abort normal successful-message finalization');
+
+// A temporary chat has no database session. The same terminal fallback must
+// produce a visible content event after half a reasoning stream, without
+// retrying any tool or pretending that the answer was complete.
+const { DEFAULT_INCOMPLETE_ANSWER, writeIncompleteAnswer } = require('../lib/chat-stream-fallback');
+const events = [];
+const response = { write(chunk) { events.push(JSON.parse(chunk.trim().slice(6))); } };
+assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: '', persistedContent: '' }), true);
+assert.deepEqual(events, [{ type: 'content', content: DEFAULT_INCOMPLETE_ANSWER }]);
+assert.ok(DEFAULT_INCOMPLETE_ANSWER.length > 10, 'empty-answer outcome must be user-visible');
+events.length = 0;
+assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: '', persistedContent: 'saved outcome' }), true);
+assert.deepEqual(events, [{ type: 'content', content: 'saved outcome' }]);
+events.length = 0;
+assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: 'already answered' }), false);
+assert.equal(writeIncompleteAnswer(response, { degraded: false, visibleContent: '' }), false);
+assert.equal(events.length, 0, 'no duplicate or synthetic answer on a healthy stream');
+const terminalSite = server.indexOf('writeIncompleteAnswer(res, {');
+assert.ok(terminalSite > server.indexOf('scheduleConversationIntegritySeal(sessionId, req.user.userId);', server.indexOf('let persistedIncompleteAnswer =')), 'terminal fallback must be outside the session-only persistence branch');
+assert.match(app, /const incomplete = parsed.degraded === true;/, 'the client must not mark a degraded reply complete');
+assert.match(app, /updateStepStatus\(getGeneratingStep\(\), incomplete \? 'failed' : 'done'/);
+assert.match(server, /res\.write\(`data: \${JSON\.stringify\(\{ type: 'done', degraded: streamDegraded \}\)}/,
+    'done must distinguish a degraded stream from a complete answer');
 
 console.log('stream-completion-recovery-regression ok');
