@@ -774,6 +774,11 @@ const KOLORS_IMAGE_SIZES = ['1024x1024', '960x1280', '768x1024', '720x1440', '72
 const IMAGE_GENERATION_SIZES = [...new Set([...KOLORS_IMAGE_SIZES, '1024x1536', '1536x1024', 'auto'])];
 const GENERATED_IMAGES_DIR = path.join(__dirname, 'uploads', 'generated-images');
 const GENERATED_IMAGE_PUBLIC_PREFIX = '/generated-images';
+const SEARCH_IMAGE_CACHE_DIR = path.join(__dirname, 'uploads', 'search-images');
+const SEARCH_IMAGE_CACHE_PUBLIC_PREFIX = '/search-images';
+const MAX_SEARCH_IMAGE_BYTES = Math.max(256 * 1024, Math.min(10 * 1024 * 1024, parseInt(cleanEnvValue(process.env.RAI_SEARCH_IMAGE_MAX_BYTES) || String(8 * 1024 * 1024), 10) || 8 * 1024 * 1024));
+const SEARCH_IMAGE_CACHE_TTL_MS = Math.max(10 * 60 * 1000, Math.min(7 * 24 * 60 * 60 * 1000, parseInt(cleanEnvValue(process.env.RAI_SEARCH_IMAGE_CACHE_TTL_HOURS) || '24', 10) * 60 * 60 * 1000));
+const SEARCH_IMAGE_FETCH_TIMEOUT_MS = Math.max(1000, Math.min(15000, parseInt(cleanEnvValue(process.env.RAI_SEARCH_IMAGE_FETCH_TIMEOUT_MS) || '8000', 10) || 8000));
 const MAX_GENERATED_IMAGE_BYTES = Math.max(
     1024 * 1024,
     parseInt(cleanEnvValue(process.env.RAI_GENERATED_IMAGE_MAX_BYTES) || String(20 * 1024 * 1024), 10) || 20 * 1024 * 1024
@@ -5256,35 +5261,64 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
  * @returns {Promise<boolean>} 是否可访问
  */
 async function validateImageUrl(imageUrl) {
-    // Search references are rendered by the client. CDN HEAD refusals and
-    // server timeouts must not erase images that a client can download.
     if (typeof imageUrl !== 'string' || imageUrl.length > 8192) return false;
     try {
-        const url = new URL(imageUrl);
-        const host = normalizeHostname(url.hostname);
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
-        if (!host || host === 'localhost' || (!host.includes('.') && !net.isIP(host)) ||
-            /\.(?:localhost|local|internal|lan|home|test|invalid)$/.test(host)) return false;
-        if (net.isIP(host) && isPrivateOrReservedIp(host)) return false;
-        return true;
+        const target = await resolveSafeHttpTarget(imageUrl);
+        return Boolean(target?.url && target.addresses?.length);
     } catch (_) {
         return false;
     }
 }
 
-async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 3000) {
-    if (!Array.isArray(imageUrls)) return [];
-    const urls = [];
-    for (const image of imageUrls) {
-        const value = typeof image === 'string' ? image : image?.url;
-        if (!await validateImageUrl(value)) continue;
-        const url = new URL(value).href;
-        if (!urls.includes(url)) urls.push(url);
-        if (urls.length >= maxConcurrent) break;
-    }
-    return urls;
+function getSearchImageCacheFilename(sourceUrl) {
+    return `${crypto.createHash('sha256').update(String(sourceUrl)).digest('hex')}.img`;
 }
 
+function buildSearchImageCacheUrl(sourceUrl) {
+    return `${SEARCH_IMAGE_CACHE_PUBLIC_PREFIX}/${getSearchImageCacheFilename(sourceUrl)}`;
+}
+
+async function cacheSearchImage(sourceUrl) {
+    const normalizedUrl = String(sourceUrl || '').trim();
+    if (!await validateImageUrl(normalizedUrl)) return null;
+    const filename = getSearchImageCacheFilename(normalizedUrl);
+    const filePath = path.join(SEARCH_IMAGE_CACHE_DIR, filename);
+    try {
+        const stat = await fs.promises.stat(filePath);
+        if (stat.isFile() && Date.now() - stat.mtimeMs < SEARCH_IMAGE_CACHE_TTL_MS) return { url: buildSearchImageCacheUrl(normalizedUrl) };
+    } catch (_) { /* cache miss */ }
+    const target = await resolveSafeHttpTarget(normalizedUrl);
+    const response = await requestPinnedHttp(target, {
+        method: 'GET',
+        timeoutMs: SEARCH_IMAGE_FETCH_TIMEOUT_MS,
+        maxBytes: MAX_SEARCH_IMAGE_BYTES,
+        headers: { 'User-Agent': 'RAI/1.0 search-image-cache', 'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8,*/*;q=0.1' }
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+    const sniffed = validateGeneratedImageBuffer(response.buffer, response.headers['content-type'] || '');
+    await fs.promises.mkdir(SEARCH_IMAGE_CACHE_DIR, { recursive: true });
+    const tempPath = `${filePath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    await fs.promises.writeFile(tempPath, response.buffer, { flag: 'wx', mode: 0o600 });
+    try { await fs.promises.rename(tempPath, filePath); } catch (error) { await fs.promises.unlink(tempPath).catch(() => null); if (error.code !== 'EEXIST') throw error; }
+    return { url: buildSearchImageCacheUrl(normalizedUrl), contentType: sniffed.contentType };
+}
+
+async function rewriteSearchImageUrls(imageUrls, maxImages = 5) {
+    if (!Array.isArray(imageUrls)) return [];
+    const unique = [];
+    for (const image of imageUrls) {
+        const value = typeof image === 'string' ? image : image?.url;
+        if (typeof value === 'string' && !unique.includes(value) && unique.length < maxImages) unique.push(value);
+    }
+    const cached = await Promise.all(unique.map(async (sourceUrl) => {
+        try { return await cacheSearchImage(sourceUrl); } catch (error) { console.warn('搜索图片缓存失败:', sanitizeReportContext(error)); return null; }
+    }));
+    return cached.filter(Boolean).map((entry) => entry.url);
+}
+
+async function filterValidImages(imageUrls, maxConcurrent = 5, totalTimeout = 3000) {
+    return rewriteSearchImageUrls(imageUrls, maxConcurrent);
+}
 function formatSearchResults(searchData, query, sources = []) {
     // 兼容旧格式和新格式
     const results = searchData.results || searchData;
@@ -9108,7 +9142,7 @@ function resolveFreeFallbackModelId(currentModel = '', options = {}) {
 
 
 // 创建目录
-const dirs = ['uploads', 'uploads/generated-images', 'avatars', 'database'];
+const dirs = ['uploads', 'uploads/generated-images', 'uploads/search-images', 'avatars', 'database'];
 dirs.forEach(dir => {
     const dirPath = path.join(__dirname, dir);
     if (!fs.existsSync(dirPath)) {
@@ -11583,6 +11617,34 @@ app.get('/verify', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'verify.html'));
 });
 
+app.get(`${SEARCH_IMAGE_CACHE_PUBLIC_PREFIX}/:filename`, async (req, res) => {
+    const filename = String(req.params.filename || '');
+    if (!/^[a-f0-9]{64}\.img$/.test(filename)) return res.status(404).end();
+    const rootPath = path.resolve(SEARCH_IMAGE_CACHE_DIR);
+    const filePath = path.resolve(rootPath, filename);
+    if (!filePath.startsWith(`${rootPath}${path.sep}`)) return res.status(404).end();
+    try {
+        const stat = await fs.promises.lstat(filePath);
+        if (!stat.isFile() || stat.isSymbolicLink()) return res.status(404).end();
+        const age = Date.now() - stat.mtimeMs;
+        if (age < 0 || age >= SEARCH_IMAGE_CACHE_TTL_MS || stat.size <= 0 || stat.size > MAX_SEARCH_IMAGE_BYTES) {
+            await fs.promises.unlink(filePath).catch(() => null);
+            return res.status(404).end();
+        }
+        const bytes = await fs.promises.readFile(filePath);
+        const image = sniffImageBuffer(bytes);
+        if (!image) return res.status(404).end();
+        const etag = `"${crypto.createHash('sha256').update(bytes).digest('hex')}"`;
+        res.setHeader('ETag', etag);
+        res.setHeader('Cache-Control', `public, max-age=${Math.max(0, Math.floor((SEARCH_IMAGE_CACHE_TTL_MS - age) / 1000))}`);
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Type', image.contentType);
+        if (req.headers['if-none-match'] === etag) return res.status(304).end();
+        return res.status(200).send(bytes);
+    } catch (_) {
+        return res.status(404).end();
+    }
+});
 app.get(`${GENERATED_IMAGE_PUBLIC_PREFIX}/:filename`, authenticateToken, async (req, res) => {
     const filename = path.basename(String(req.params.filename || ''));
     const ext = path.extname(filename).toLowerCase().slice(1);
