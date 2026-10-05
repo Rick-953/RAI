@@ -173,7 +173,7 @@ jobs:
       - name: Generate vendored browser SBOM before OSV scan
         run: npm run sbom:vendored-web
       - name: Scan lockfiles and vendored browser SBOM
-        uses: google/osv-scanner-action/osv-scanner-action@8dc09193bb540e09b23da07ad7e30bd33bf87018 # v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@8ac9e5ce44cc7178e0e04229a91bdcc003166e57 # v2.3.8
         continue-on-error: true
         with:
           scan-args: |-
