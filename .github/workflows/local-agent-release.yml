@@ -145,7 +145,7 @@ jobs:
         run: |
           find dist -maxdepth 1 -type f ! -name LOCAL_AGENT_SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > dist/LOCAL_AGENT_SHA256SUMS
       - name: Create signed provenance attestations
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: 'dist/*'
       - name: Attach assets to the security-gated draft Release
