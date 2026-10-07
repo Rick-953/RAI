@@ -5,6 +5,8 @@
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
+const { buildCacheStableMessages } = require('../lib/prompt-prefix');
 const {
     buildMemoryToolPolicyInstruction,
     normalizeSaveMemoryToolArgs,
@@ -34,6 +36,44 @@ function memoryArgs(overrides = {}) {
         reason: '未来回答可持续匹配用户的沟通偏好',
         ...overrides
     };
+}
+
+
+function testMemoryPolicyPlacement() {
+    // Exercise the actual server integration rather than a duplicate implementation.
+    const integration = server.match(/if \(memoryToolsEnabled\) \{\s*const memoryPolicyLanguage[\s\S]*?: memoryToolPolicyInstruction;\s*\}/)?.[0];
+    assert.ok(integration, 'memory policy integration block must exist');
+    assert.match(server, /finalMessages = buildCacheStableMessages\(finalMessages, systemPrompt, systemContent\)/);
+    const history = Object.freeze([
+        Object.freeze({ role: 'user', content: 'Previous question' }),
+        Object.freeze({ role: 'assistant', content: 'Previous answer' }),
+        Object.freeze({ role: 'user', content: 'Current question' })
+    ]);
+    for (const baseline of ['# RAI System Prompt\nCanonical baseline', 'RAI ?????', '']) {
+        for (const enabled of [true, false]) {
+            for (const suffix of ['', '\n\nTrusted runtime context']) {
+                const context = { memoryToolsEnabled: enabled, systemPrompt: baseline,
+                    systemContent: baseline + suffix, buildMemoryToolPolicyInstruction };
+                vm.runInNewContext(integration, context, { timeout: 1000 });
+                const policy = buildMemoryToolPolicyInstruction(baseline.startsWith('# RAI System Prompt') ? 'en' : 'zh');
+                const original = baseline + suffix;
+                assert.equal(context.systemContent, enabled ? (original ? `${original}\n\n${policy}` : policy) : original);
+                const output = buildCacheStableMessages(history, baseline, context.systemContent);
+                if (baseline) {
+                    assert.deepEqual(output[0], { role: 'system', content: baseline }, 'canonical prefix must be unchanged');
+                    assert.deepEqual(output.slice(1, 3), history.slice(0, 2), 'history prefix must be cache-stable');
+                }
+                const policyMessages = output.filter(message => message.role === 'system' && message.content.includes(policy));
+                assert.equal(policyMessages.length, enabled ? 1 : 0, 'policy must exist exactly once only when enabled');
+                if (enabled) {
+                    assert.ok(output.indexOf(policyMessages[0]) < output.findIndex(message => message.content === 'Current question'),
+                        'trusted system policy must precede the current user');
+                }
+                assert.deepEqual(output.filter(message => message.role !== 'system'), history, 'history must not be mutated');
+                for (const message of history) assert.ok(!output.includes(message), 'output must clone history objects');
+            }
+        }
+    }
 }
 
 function main() {
@@ -90,9 +130,11 @@ function main() {
     assert.match(server, /required:\s*\["category", "content", "evidence", "reason"\]/);
     assert.match(server, /const memoryToolsEnabled = !memoryModeOff && longMemoryEnabled/);
     assert.match(server, /buildMemoryToolPolicyInstruction\(memoryPolicyLanguage\)/);
-    assert.match(server, /`\$\{memoryToolPolicyInstruction\}\\n\\n\$\{systemContent\}`/);
+    assert.match(server, /`\$\{systemContent\}\\n\\n\$\{memoryToolPolicyInstruction\}`/);
     assert.doesNotMatch(server, /scheduleConversationMemoryProcessing|callMemoryExtractionModel|extractHeuristicMemoryActions/);
     checks.push('chat_tool_only_architecture');
+    testMemoryPolicyPlacement();
+    checks.push('cache_stable_system_policy_placement');
 
     console.log(`memory tool policy regression passed: ${checks.length} checks`);
 }

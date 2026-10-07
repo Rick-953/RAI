@@ -1,1 +1,4 @@
 skills/** text eol=lf
+
+# Vendored artifacts must remain byte-identical to authenticated upstream archives.
+public/lib/** -text
