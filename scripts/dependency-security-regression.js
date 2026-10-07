@@ -3,6 +3,8 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
+const proxyaddr = require('proxy-addr');
 
 const ROOT = path.join(__dirname, '..');
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -46,7 +48,7 @@ for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6']
   }
 }
 
-for (const [name, exactVersion] of [['multer', '2.4.0'], ['busboy', '1.6.0']]) {
+for (const [name, exactVersion] of [['multer', '2.4.0'], ['busboy', '1.6.0'], ['proxy-addr', '2.0.8']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
@@ -57,9 +59,37 @@ assert.match(busboyMultipartSource, /const MAX_HEADER_PAIRS = 2000;/, 'Busboy mu
 assert.match(busboyMultipartSource, /const MAX_HEADER_SIZE = 16 \* 1024;/, 'Busboy multipart part headers must have a 16 KiB byte bound');
 assert.doesNotMatch(serverSource, /headerPairs\s*:/, 'Multer must not claim that Busboy honors an unsupported headerPairs option');
 
+
+// GHSA-jqcg-44mw-7w3h: an IPv6 trust subnet must not trust every IPv4 client.
+for (const subnet of ['::ffff:10.0.0.0/8', '::/1']) {
+  const trust = proxyaddr.compile(subnet);
+  assert.equal(trust('203.0.113.9', 0), false, `${subnet} must not trust an arbitrary IPv4 client`);
+  const request = { socket: { remoteAddress: '203.0.113.9' }, headers: { 'x-forwarded-for': '127.0.0.1' } };
+  assert.equal(proxyaddr(request, trust), '203.0.113.9', 'untrusted client must not spoof req.ip through X-Forwarded-For');
+}
+const mappedTrust = proxyaddr.compile('::ffff:10.0.0.0/104');
+assert.equal(mappedTrust('10.1.2.3', 0), true, 'correct mapped trust subnet must continue to work');
+assert.equal(mappedTrust('203.0.113.9', 0), false);
+
+// GHSA-238p-pmpm-9mq7: exercise the shipped browser bundle in an isolated realm.
+const katexSource = fs.readFileSync(path.join(ROOT, 'public', 'lib', 'katex', 'katex.min.js'), 'utf8');
+vm.runInNewContext(katexSource + `
+  const renderer = module.exports;
+  const formula = String.raw\`\\href{https://attacker.invalid/}{link}\`;
+  assert.match(renderer.renderToString('x^2 + 1'), /class="katex"/);
+  assert.match(renderer.renderToString(formula, { trust: true }), /href="https:\\/\\/attacker\\.invalid\\/"/);
+  assert.doesNotMatch(renderer.renderToString(formula, Object.create({ trust: true })), /href=/,
+    'inherited trust must not enable external links');
+  Object.prototype.trust = true;
+  try {
+    assert.doesNotMatch(renderer.renderToString(formula), /href=/, 'prototype pollution must not bypass trust defaults');
+    assert.doesNotMatch(renderer.renderToString(formula, { trust: false }), /href=/);
+  } finally { delete Object.prototype.trust; }
+`, { module: { exports: {} }, exports: {}, assert }, { timeout: 2000 });
+
 const expectedVendors = new Map([
   ['dompurify', '3.4.16'],
-  ['katex', '0.16.47']
+  ['katex', '0.18.2']
 ]);
 for (const [name, expectedVersion] of expectedVendors) {
   const component = vendorManifest.components?.find((entry) => entry.name === name);

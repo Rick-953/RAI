@@ -76,12 +76,12 @@
     },
     {
       "name": "katex",
-      "version": "0.16.47",
-      "purl": "pkg:npm/katex@0.16.47",
+      "version": "0.18.2",
+      "purl": "pkg:npm/katex@0.18.2",
       "license": "MIT",
-      "source": "https://github.com/KaTeX/KaTeX/releases/tag/v0.16.47",
-      "npmTarball": "https://registry.npmjs.org/katex/-/katex-0.16.47.tgz",
-      "npmIntegrity": "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==",
+      "source": "https://github.com/KaTeX/KaTeX/releases/tag/v0.18.2",
+      "npmTarball": "https://registry.npmjs.org/katex/-/katex-0.18.2.tgz",
+      "npmIntegrity": "sha512-3snve4y0SXTMequLim1FMiPvLGElySam0blN5xQZBqEY3lOJz1TnuaaiugnBZBqHzlSAGmFTYL7MCQkORuLKCA==",
       "upstreamFiles": {
         "katex/katex.min.css": "package/dist/katex.min.css",
         "katex/katex.min.js": "package/dist/katex.min.js",
@@ -96,10 +96,10 @@
         "licenses/katex/LICENSE"
       ],
       "entrypoint": "katex/katex.min.js",
-      "entrypointSha256": "a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48",
+      "entrypointSha256": "90354db602936d813daadda391a4376d071f5d1241d8cfddf091df4c2e38730d",
       "fileCount": 64,
-      "bytes": 1377529,
-      "treeSha256": "af0a19ab8e476848eec5382bda14b9377026df82e034ede12ac0e79f2f3e5568"
+      "bytes": 1377881,
+      "treeSha256": "0167645a5cfd06e95fdbdef1d19c9ab2d8b99213ef3d289075cbb0279429dbe8"
     },
     {
       "name": "jsqr",
