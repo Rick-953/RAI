@@ -5,7 +5,7 @@ RAI serves these reviewed browser dependencies from `public/lib` so the applicat
 | Component | Version | License | Upstream |
 |---|---:|---|---|
 | Marked | 15.0.12 | MIT | <https://github.com/markedjs/marked/releases/tag/v15.0.12> |
-| DOMPurify | 3.4.12 | Apache-2.0 OR MPL-2.0 | <https://github.com/cure53/DOMPurify/releases/tag/3.4.12> |
+| DOMPurify | 3.4.16 | Apache-2.0 OR MPL-2.0 | <https://github.com/cure53/DOMPurify/releases/tag/3.4.16> |
 | @highlightjs/cdn-assets | 11.9.0 | BSD-3-Clause | <https://github.com/highlightjs/highlight.js/releases/tag/11.9.0> |
 | KaTeX | 0.16.47 | MIT | <https://github.com/KaTeX/KaTeX/releases/tag/v0.16.47> |
 

@@ -58,7 +58,7 @@ assert.match(busboyMultipartSource, /const MAX_HEADER_SIZE = 16 \* 1024;/, 'Busb
 assert.doesNotMatch(serverSource, /headerPairs\s*:/, 'Multer must not claim that Busboy honors an unsupported headerPairs option');
 
 const expectedVendors = new Map([
-  ['dompurify', '3.4.13'],
+  ['dompurify', '3.4.16'],
   ['katex', '0.16.47']
 ]);
 for (const [name, expectedVersion] of expectedVendors) {
@@ -137,6 +137,19 @@ for (const action of actionUses) {
   assert.ok(separator > 0, `action must include a revision: ${action}`);
   assert.match(action.slice(separator + 1), /^[0-9a-f]{40}$/, `action must be pinned to a full commit SHA: ${action}`);
 }
+// Mixed revisions can initialize a database that a different CodeQL binary cannot read.
+for (const [family, expectedActions] of [
+  ['github/codeql-action/', ['init', 'analyze', 'upload-sarif']],
+  ['google/osv-scanner-action/', ['osv-scanner-action', 'osv-reporter-action']]
+]) {
+  const related = actionUses.filter(action => action.startsWith(family));
+  for (const action of expectedActions) {
+    assert.ok(related.some(use => use.startsWith(`${family}${action}@`)), `${family}${action} must remain enabled`);
+  }
+  assert.equal(new Set(related.map(action => action.split('@').pop())).size, 1, `${family} actions must use one coherent revision`);
+}
+const notices = fs.readFileSync(path.join(ROOT, 'public', 'lib', 'THIRD_PARTY_NOTICES.md'), 'utf8');
+assert.match(notices, /\| DOMPurify \| 3\.4\.16 \|/, 'DOMPurify license notices must match the audited bundle');
 assert.match(securityWorkflow, /^defaults:\s*\n\s{2}run:\s*\n\s{4}(?:#[^\n]*\n\s{4})*shell:\s*bash$/m, 'workflow pipelines must use explicit bash with pipefail');
 assert.match(securityWorkflow, /^\s{2}NODE_VERSION:\s*24\.16\.0$/m, 'CI must exercise the production Node release');
 assert.match(securityWorkflow, /^\s{2}NPM_VERSION:\s*11\.13\.0$/m, 'CI must exercise the production npm release');

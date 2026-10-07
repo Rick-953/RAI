@@ -10,6 +10,14 @@ updates:
       timezone: Asia/Singapore
     open-pull-requests-limit: 5
     rebase-strategy: auto
+    # Keep major npm upgrades individually reviewable; do not defer security fixes.
+    groups:
+      npm-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
 
   - package-ecosystem: github-actions
     directory: /
@@ -20,6 +28,10 @@ updates:
       timezone: Asia/Singapore
     open-pull-requests-limit: 5
     rebase-strategy: auto
+    # Related init/analyze/upload and scanner/reporter actions must move together.
+    groups:
+      github-actions:
+        patterns: ['*']
 
   - package-ecosystem: cargo
     directory: /src-tauri
@@ -30,3 +42,13 @@ updates:
       timezone: Asia/Singapore
     open-pull-requests-limit: 5
     rebase-strategy: auto
+    groups:
+      tauri-dependencies:
+        patterns: ['tauri*']
+      cargo-minor-patch:
+        patterns: ['*']
+        exclude-patterns: ['tauri*']
+        update-types: [minor, patch]
+      cargo-security:
+        applies-to: security-updates
+        patterns: ['*']
