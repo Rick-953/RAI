@@ -39,9 +39,9 @@ async function main() {
     assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE request_id='research' AND status='completed'")).n,2);
     await new Promise((resolve,reject)=>db.close(e=>e?reject(e):resolve()));
     for(const id of CHAT_MODEL_IDS){
-        for(const profile of ['low','medium','high','mixed']){
+        for(const profile of ['low','medium','high','max']){
             const body=applyChatReasoningPolicy({model:id},{thinkingMode:true,profile});
-            assert.equal(body.reasoning_effort,profile==='mixed'?undefined:profile);
+            assert.equal(body.reasoning_effort,profile);
         }
         const off=applyChatReasoningPolicy({model:id},{thinkingMode:false,profile:'high'});
         assert.equal(off.reasoning_effort,id.startsWith('gpt')?'low':undefined);

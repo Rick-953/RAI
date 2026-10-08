@@ -4789,6 +4789,11 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
 
   const clientPlatform = getClientPlatform();
   const isWindowsMobile = clientPlatform === 'windows-mobile';
+  const recommendWindows = clientPlatform === 'windows';
+  const installerBadge = document.getElementById('windowsSetupRecommended');
+  const pwaBadge = document.getElementById('pwaInstallRecommended');
+  if (installerBadge) installerBadge.hidden = !recommendWindows;
+  if (pwaBadge) pwaBadge.hidden = recommendWindows;
   setupLink.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
   if (note) {
     note.textContent = isWindowsMobile
@@ -5268,12 +5273,13 @@ function isMembershipLockedModel(modelId) {
 }
 
 function normalizeReasoningProfile(value) {
+  if (value === 'mixed') return 'max';
   const v = String(value || '').toLowerCase();
   if (v === 'medium' || v === 'high' || v === 'mixed') return v;
   return 'low';
 }
 
-const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'mixed'];
+const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'max'];
 
 function reasoningProfileToIndex(profile) {
   const normalized = normalizeReasoningProfile(profile);
@@ -6156,7 +6162,7 @@ const i18n = {
     'reasoning-low': '低',
     'reasoning-medium': '中',
     'reasoning-high': '高',
-    'reasoning-mixed': '自动',
+    'reasoning-mixed': 'max',
     'research-mode': '研究',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
@@ -6819,7 +6825,7 @@ const i18n = {
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
-    'reasoning-mixed': 'Auto',
+    'reasoning-mixed': 'max',
     'research-mode': 'Research',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
@@ -14215,18 +14221,19 @@ function normalizeHandedness(value) {
 }
 
 function isHandednessMobileLayout() {
-  return window.matchMedia('(max-width: 768px)').matches;
+  return ['ios', 'android', 'windows-mobile'].includes(getClientPlatform());
 }
 
 function updateSettingsHandednessUI() {
   const switchButton = document.getElementById('settingsHandednessSwitch');
   const toggle = document.getElementById('settingsHandednessToggle');
-  if (switchButton) switchButton.setAttribute('aria-pressed', appState.handednessEnabled ? 'true' : 'false');
-  if (toggle) toggle.classList.toggle('active', !!appState.handednessEnabled);
+  const allowed = isHandednessMobileLayout();
+  if (switchButton) { switchButton.setAttribute('aria-pressed', allowed && appState.handednessEnabled ? 'true' : 'false'); switchButton.disabled = !allowed; switchButton.title = allowed ? '' : (isChineseLanguage(appState.language) ? '电脑端暂不启用，不影响同账号其他设备' : 'Disabled on computers; other devices retain their setting'); }
+  if (toggle) toggle.classList.toggle('active', allowed && !!appState.handednessEnabled);
 }
 
 function applyHandednessLayout() {
-  const enabled = appState.handednessEnabled === true;
+  const enabled = appState.handednessEnabled === true && isHandednessMobileLayout();
   const handedness = normalizeHandedness(appState.handedness);
   const root = document.documentElement;
   const switchToken = Number(appState.handednessSwitchToken || 0) + 1;
@@ -14290,6 +14297,7 @@ function initHandednessTracking() {
 }
 
 function settingsToggleHandedness() {
+  if (!isHandednessMobileLayout()) return;
   appState.handednessEnabled = !appState.handednessEnabled;
   persistLocalSettingsPatch({
     handednessEnabled: appState.handednessEnabled,
@@ -30649,7 +30657,7 @@ function initSwipeGestures() {
   const setSidebarProgress = (progress, dragging = false) => {
     const width = getSidebarWidth();
     const normalized = Math.max(0, Math.min(progress, 1));
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const opensFromRight = appState.sidebarGestureFromRight === true;
     const translateX = opensFromRight
       ? (1 - normalized) * width
       : (normalized - 1) * width;
@@ -30691,6 +30699,7 @@ function initSwipeGestures() {
     appState.isSwiping = false;
     appState.sidebarGestureMode = canOpen ? 'opening' : 'closing';
     appState.sidebarGestureLocked = false;
+    appState.sidebarGestureFromRight = sidebar.classList.contains('swipe-from-right');
 
     if (canClose) {
       overlay.classList.add('active');
@@ -30700,7 +30709,7 @@ function initSwipeGestures() {
   const handleTouchMove = (e) => {
     if (!appState.sidebarGestureMode || !e.touches?.length) return;
 
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    let opensFromRight = appState.sidebarGestureFromRight === true;
     const touch = e.touches[0];
     const deltaX = touch.clientX - appState.touchStartX;
     const deltaY = Math.abs(touch.clientY - appState.touchStartY);
@@ -30716,9 +30725,14 @@ function initSwipeGestures() {
         return;
       }
 
+      if (appState.sidebarGestureMode === 'opening' && Math.abs(deltaX) >= gestureCommitDistance) {
+        opensFromRight = deltaX < 0;
+        appState.sidebarGestureFromRight = opensFromRight;
+        sidebar.classList.toggle('swipe-from-right', opensFromRight);
+      }
       const movingWrongWay = appState.sidebarGestureMode === 'opening'
         ? (opensFromRight ? deltaX >= 0 : deltaX <= 0)
-        : (opensFromRight ? deltaX <= 0 : deltaX >= 0);
+        : false;
       if (movingWrongWay) {
         if (Math.abs(deltaX) > gestureCommitDistance && Math.abs(deltaX) > deltaY * horizontalDominanceRatio) {
           resetSwipeState();
@@ -30738,9 +30752,7 @@ function initSwipeGestures() {
     const width = getSidebarWidth();
     const rawProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : (opensFromRight
-        ? 1 - (Math.max(0, deltaX) / width)
-        : 1 + (Math.min(0, deltaX) / width));
+      : 1 - (Math.abs(deltaX) / width);
 
     setSidebarProgress(rawProgress, true);
     e.preventDefault();
@@ -30756,7 +30768,7 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const deltaX = appState.touchMoveX - appState.touchStartX;
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const opensFromRight = appState.sidebarGestureFromRight === true;
     const finalProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
       : (opensFromRight
@@ -32372,7 +32384,7 @@ function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelin
 }
 // 显示横线悬浮提示
 function positionChatIndexFloatingTooltip(tooltip, rect) {
-  const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+  const opensFromRight = isHandednessMobileLayout() && appState.handednessEnabled && appState.handedness === 'right';
   tooltip.style.top = `${rect.top + rect.height / 2}px`;
   if (opensFromRight) {
     tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;

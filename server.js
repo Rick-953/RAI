@@ -4419,7 +4419,8 @@ function isInsufficientBalanceError(status, errorText = '') {
 
 function normalizeReasoningProfile(value = 'low') {
     const normalized = String(value || '').trim().toLowerCase();
-    if (['low', 'medium', 'high', 'mixed'].includes(normalized)) return normalized;
+    if (normalized === 'mixed') return 'max';
+    if (['low', 'medium', 'high', 'max'].includes(normalized)) return normalized;
     return 'low';
 }
 
@@ -4566,12 +4567,12 @@ function resolveThinkingBudgetForModel(modelName = '', thinkingMode = false, thi
 
 function resolveDeepSeekReasoningEffort(reasoningProfile = 'low') {
     const profile = normalizeReasoningProfile(reasoningProfile);
-    return profile === 'mixed' ? null : profile;
+    return profile;
 }
 
 function resolveOpenAIReasoningEffort(reasoningProfile = 'low') {
     const profile = normalizeReasoningProfile(reasoningProfile);
-    if (profile === 'high' || profile === 'mixed') return 'high';
+    if (profile === 'high' || profile === 'max') return 'high';
     if (profile === 'medium') return 'medium';
     return 'low';
 }
@@ -4586,7 +4587,7 @@ function resolveOpenAIChatReasoningEffort(modelName = '', thinkingMode = false, 
 
     if (/^gpt-5\.1(?:$|-)/.test(normalizedModel)) {
         if (!thinkingMode) return 'none';
-        if (profile === 'mixed') return 'high';
+        if (profile === 'max') return 'high';
         if (profile === 'high') return 'high';
         if (profile === 'medium') return 'medium';
         return 'low';
@@ -4594,7 +4595,7 @@ function resolveOpenAIChatReasoningEffort(modelName = '', thinkingMode = false, 
 
     if (/^gpt-(?:5\.[2-9]|[6-9](?:\.|$))/.test(normalizedModel)) {
         if (!thinkingMode) return 'none';
-        if (profile === 'mixed') return 'xhigh';
+        if (profile === 'max') return 'xhigh';
         if (profile === 'high') return 'high';
         if (profile === 'medium') return 'medium';
         return 'low';
@@ -4602,7 +4603,7 @@ function resolveOpenAIChatReasoningEffort(modelName = '', thinkingMode = false, 
 
     if (/^gpt-5(?:$|-)/.test(normalizedModel)) {
         if (!thinkingMode) return 'minimal';
-        if (profile === 'mixed') return 'high';
+        if (profile === 'max') return 'high';
         if (profile === 'high') return 'high';
         if (profile === 'medium') return 'medium';
         return 'low';
@@ -4617,12 +4618,12 @@ function resolveOpenRouterReasoningEffort(actualModel = '', reasoningProfile = '
     const normalizedModel = String(actualModel || '').trim().toLowerCase();
 
     if (normalizedModel.includes('gpt-oss')) {
-        if (profile === 'high' || profile === 'mixed') return 'high';
+        if (profile === 'high' || profile === 'max') return 'high';
         if (profile === 'medium') return 'medium';
         return 'low';
     }
 
-    if (profile === 'mixed') return 'high';
+    if (profile === 'max') return 'high';
     if (profile === 'high') return 'high';
     if (profile === 'medium') return 'medium';
     return 'low';
@@ -20862,7 +20863,7 @@ async function fetchModelProvider(url, options = {}) {
     }
     if (parsedBody?.messages) {
         const body = JSON.parse(options.body);
-        const profile = turn?.reasoningProfile || (['low', 'medium', 'high'].includes(body.reasoning_effort) ? body.reasoning_effort : 'mixed');
+        const profile = turn?.reasoningProfile || (['low', 'medium', 'high', 'max'].includes(body.reasoning_effort) ? body.reasoning_effort : 'low');
         const thinkingMode = turn ? turn.thinkingMode : body.thinking?.type === 'enabled' || !!body.reasoning_effort;
         applyChatReasoningPolicy(body, { thinkingMode, profile });
         const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && body.model === 'deepseek-flash' ? officialDeepSeekBody(body) : body;
@@ -21076,8 +21077,8 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
             thinkingMode = false;
         } else if (normalizedResearchMode === 'deep') {
             thinkingMode = true;
-            normalizedReasoningProfile = 'mixed';
-            quotaTurn.reasoningProfile = 'mixed';
+            normalizedReasoningProfile = 'max';
+            quotaTurn.reasoningProfile = 'max';
         }
 
         const normalizedTraceLogValue = ['off', 'summary', 'full'].includes(String(agentTraceLevel))
