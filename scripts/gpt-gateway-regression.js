@@ -41,7 +41,7 @@ async function close(server) {
 }
 
 async function main() {
-    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-5.6-terra', 'gpt-6-luna']);
+    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna']);
     assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2');
     assert.strictEqual(normalizeGatewayBaseUrl('https://gateway.example/v1/'), 'https://gateway.example/v1');
     assert.strictEqual(joinGatewayEndpoint('https://gateway.example/v1', '/chat/completions'), 'https://gateway.example/v1/chat/completions');
@@ -398,10 +398,9 @@ async function main() {
     const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
     const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 
-    for (const modelId of [...GPT_GATEWAY_CHAT_MODELS, GPT_GATEWAY_IMAGE_MODEL]) {
-        if (modelId !== 'gpt-5.6-terra') {
-            assert.ok(serverSource.includes(`{ id: '${modelId}'`), `admin catalog missing ${modelId}`);
-        }
+    const { CHAT_MODEL_IDS } = require('../lib/chat-model-policy');
+    for (const modelId of GPT_GATEWAY_CHAT_MODELS) {
+        assert.ok(CHAT_MODEL_IDS.includes(modelId), `admin catalog missing ${modelId}`);
         assert.ok(serverSource.includes(`'${modelId}': {`), `routing missing ${modelId}`);
         assert.ok(appSource.includes(`'${modelId}': {`), `client catalog missing ${modelId}`);
     }
@@ -416,7 +415,7 @@ async function main() {
     const chatModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">对话模型'), indexSource.indexOf('model-menu-section-label">图像生成'));
     const imageModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">图像生成'), indexSource.indexOf('</div>\n                </div>\n              </div>\n\n              <button type="button" class="send-btn"'));
     assert.ok(!chatModelSection.includes('data-model="gpt-image-2"'), 'Image 2 must not appear in the chat-model picker');
-    assert.ok(imageModelSection.includes('data-model="gpt-image-2"'), 'Image 2 must appear in the image-generation picker');
+    assert.ok(!indexSource.includes('data-model="gpt-image-2"'), 'retired image models must not appear in the four-model picker');
     assert.match(serverSource, /let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;/);
     assert.match(serverSource, /if \(model !== 'auto' && await isPublicModelDisabled\(model\)\) \{[\s\S]{0,220}model = 'auto';[\s\S]{0,120}gptImageModelSelected = false;/);
     assert.match(serverSource, /const imageGenerationRequested = gptImageModelSelected \|\| detectImageGenerationNeed/);

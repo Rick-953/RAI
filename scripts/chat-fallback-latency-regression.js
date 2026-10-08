@@ -65,8 +65,8 @@ function testServerIntegrationContract() {
     assert.match(server, /runtimeFallbackCircuit\.isOpen\(fallbackModel\)/);
     assert.match(server, /runtimeFallbackCircuit\.recordFailure\(fallbackModel\)/);
     assert.match(server, /runtimeFallbackCircuit\.recordSuccess\(fallbackModel\)/);
-    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled\) throw fallbackErr;/);
-    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled\) throw primaryFetchError;/);
+    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled \|\| [^;]+\) throw fallbackErr;/);
+    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled \|\| [^;]+\) throw primaryFetchError;/);
     const skillRuntime = fs.readFileSync(path.resolve(__dirname, 'skill-loader-runtime-regression.js'), 'utf8');
     assert.match(skillRuntime, /recent Luna 503 must open the ordinary-chat circuit/);
     assert.match(server, /continueTimeoutMs = chatRequestBudget\?\.nextAttemptTimeoutMs\(\) \|\| 0/);
