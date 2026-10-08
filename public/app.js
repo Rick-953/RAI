@@ -6145,7 +6145,7 @@ const i18n = {
     'password-confirm-mismatch-error': '两次输入的新密码不一致',
     'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
-    'model-smart': '智能模型',
+    'model-smart': '模型路由规则',
     'model-fast': '快速',
     'model-expert': '思考',
     'model-all': '全部模型',
@@ -6177,7 +6177,7 @@ const i18n = {
     'thinkingMode': '思考模式',
     'regenerateTitle': '重新生成回复',
     'selectModel': '选择模型',
-    'smartMode': '智能模型',
+    'smartMode': '模型路由规则',
     'fastMode': '快速',
     'expertMode': '思考',
     'regenerate': '重新生成'
@@ -6808,7 +6808,7 @@ const i18n = {
     'password-confirm-mismatch-error': 'The new passwords do not match',
     'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
-    'model-smart': 'Smart Model',
+    'model-smart': 'Model Routing Rules',
     'model-fast': 'Fast',
     'model-expert': 'Think',
     'model-all': 'All Models',
@@ -6890,7 +6890,7 @@ const SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP = [
   ['响应式', '響應式'],
   ['联网', '連網'],
   ['模型路由', '模型路由'],
-  ['智能模型', '智慧模型'],
+  ['模型路由规则', '模型路由規則'],
   ['运行期备用链', '執行期備援鏈'],
   ['逻辑', '邏輯'],
   ['补齐', '補齊'],
@@ -32384,16 +32384,30 @@ function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelin
 }
 // 显示横线悬浮提示
 function positionChatIndexFloatingTooltip(tooltip, rect) {
-  const opensFromRight = isHandednessMobileLayout() && appState.handednessEnabled && appState.handedness === 'right';
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  if (opensFromRight) {
-    tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-    tooltip.style.left = 'auto';
-  } else {
-    tooltip.style.left = `${rect.right + 16}px`;
-    tooltip.style.right = 'auto';
-  }
-  tooltip.style.transform = 'translateY(-50%)';
+  // Choose the side from the actual anchor, not an account's mobile handedness.
+  const viewport = window.visualViewport;
+  const margin = 8, gap = 16;
+  const viewportLeft = viewport?.offsetLeft || 0;
+  const viewportTop = viewport?.offsetTop || 0;
+  const viewportRight = viewportLeft + (viewport?.width || window.innerWidth);
+  const viewportBottom = viewportTop + (viewport?.height || window.innerHeight);
+  tooltip.style.boxSizing = 'border-box';
+  tooltip.style.maxWidth = Math.max(0, viewportRight - viewportLeft - margin * 2) + 'px';
+  if (tooltip.id === 'chatIndexTooltip') tooltip.style.maxWidth = Math.min(280, viewportRight - viewportLeft - margin * 2) + 'px';
+  tooltip.style.maxHeight = Math.max(0, viewportBottom - viewportTop - margin * 2) + 'px';
+  tooltip.style.overflow = 'hidden';
+  tooltip.style.whiteSpace = 'normal';
+  tooltip.style.right = 'auto';
+  tooltip.style.transform = 'none';
+  const size = tooltip.getBoundingClientRect();
+  const spaceLeft = rect.left - viewportLeft - margin - gap;
+  const spaceRight = viewportRight - rect.right - margin - gap;
+  const preferLeft = spaceLeft >= size.width || spaceLeft > spaceRight;
+  const desiredLeft = preferLeft ? rect.left - gap - size.width : rect.right + gap;
+  const left = Math.max(viewportLeft + margin, Math.min(desiredLeft, viewportRight - margin - size.width));
+  const top = Math.max(viewportTop + margin, Math.min(rect.top + rect.height / 2 - size.height / 2, viewportBottom - margin - size.height));
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
 }
 
 function showChatIndexTooltip(event, content) {
@@ -34703,9 +34717,7 @@ async function loadAdminLimits() {
         <div class="admin-limits-section">
           <h4>模型路由</h4>
           <div class="admin-limits-grid admin-model-routing-grid">
-            ${modelSelectField('smart_default_model', '智能模型首选模型', routingCandidates, s.smart_default_model, '新对话默认智能模型，首选不可用时会自动回落备用链')}
-            ${modelSelectField('fast_default_model', '快速模型首选模型', routingCandidates, s.fast_default_model, '快速模型模式实际调用的模型')}
-            ${modelSelectField('thinking_default_model', '思考模型首选模型', routingCandidates, s.thinking_default_model, '思考模式实际调用的模型')}
+            <div class="admin-model-switch-note">固定模型路由规则：默认 GPT 6.1 Sol（关闭思考）；快速 Fast DeepSeek V4.1 Flash；思考 GPT 6.1 Sol 自适应低/中/高/max。Fast 10 秒无有效响应切换官方 DeepSeek。图片保留当前模型。</div>
             ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek V4.1 Flash；4 秒无首字时自动切换备用模型')}
           </div>
           <div class="admin-model-switch-note">智能/快速/思考首选若被关闭、凭据缺失或上游失败，会自动回落到内置备用链；隐藏模型请在「模型管理」中关闭对应开关。</div>

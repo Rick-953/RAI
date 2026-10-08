@@ -12,7 +12,7 @@ async function main(){
     vm.runInContext(source.match(/const AUTO_MODEL_PREFERENCE = \[[^;]+;/)[0]+'\n'+section('const MODEL_ROUTING = {','// 创建目录')+'\n'+section('async function resolveVisibleAutoModel()','async function getModelVisibilityPayload')+'\nthis.routes=MODEL_ROUTING;',context);
     for(const id of CHAT_MODEL_IDS){assert.ok(context.routes[id].multimodal,id+' must support vision');assert.equal(context.routes[id].contextWindow,256000);assert.ok(context.routes[id].supportsThinking);for(const candidate of context.getRuntimeFallbackModelIds(id,{requiresMultimodal:true}))assert.ok(CHAT_MODEL_IDS.includes(candidate));}
     assert.equal(context.routes['deepseek-v4.1-flash'].model,'deepseek-v4.1-flash');
-    assert.equal(await context.resolveVisibleAutoModel(),'deepseek-v4.1-flash');assert.equal(await context.resolveVisibleThinkingModel(),'deepseek-v4.1-flash');assert.equal(await context.resolveVisionFallbackModel(),'deepseek-v4.1-flash');
+    assert.equal(await context.resolveVisibleAutoModel(),'gpt-6.1-sol');assert.equal(await context.resolveVisibleThinkingModel(),'gpt-6.1-sol');assert.equal(await context.resolveVisionFallbackModel(),'deepseek-v4.1-flash');
     assert.deepEqual(Array.from(context.getRuntimeFallbackModelIds('gpt-6-luna')),['deepseek-v4.1-flash']);
     assert.deepEqual(Array.from(context.getRuntimeFallbackModelIds('gpt-6-astra',{requiresMultimodal:true})),[],'never silently spend a different GPT vision allowance');
     assert.doesNotMatch(source,/音频附件强制路由到 Gemini|不支持多模态，自动切换到/);

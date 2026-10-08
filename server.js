@@ -20817,6 +20817,13 @@ const fetchDeepSeekProvider = createDeepSeekProviderFetch({
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
     officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY
 });
+const fetchGptProvider = createDeepSeekProviderFetch({
+    primaryUrl: API_PROVIDERS.rai_gpt_gateway.baseURL,
+    primaryKey: GPT_GATEWAY_API_KEY,
+    primaryModels: [...GPT_GATEWAY_CHAT_MODELS],
+    officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
+    officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY
+});
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
     let parsedBody = null;
@@ -20869,8 +20876,12 @@ async function fetchModelProvider(url, options = {}) {
         const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && body.model === 'deepseek-flash' ? officialDeepSeekBody(body) : body;
         options = { ...options, body: JSON.stringify(outgoing) };
     }
-    const response = await fetchDeepSeekProvider(url, options);
-    if (turn && protectedModel && response.ok) turn.used.add(modelId);
+    const providerFetch = protectedModel ? fetchGptProvider : fetchDeepSeekProvider;
+    const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode });
+    if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
+    if (response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 首次有效响应超时或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
+    }
     return response;
 }
 async function settleChatModelTurn(success, completedModels = null) {
@@ -20995,7 +21006,7 @@ app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => 
         let thinkingMode = !!thinkingModeInput;
         // DeepSeek Flash supports tool calls in thinking mode. Keep the
         // existing fast-mode behavior for other local tool providers.
-        const supportsClientToolThinking = model === 'deepseek-v4.1-flash';
+        const supportsClientToolThinking = CHAT_MODEL_IDS.includes(model) || ['auto', 'fast-auto', 'think-auto'].includes(model);
         if (clientFileExecution && !supportsClientToolThinking) {
             thinkingMode = false;
         }
@@ -22037,7 +22048,16 @@ if (clientFileExecution && systemPrompt) {
         // All four public models accept vision; keep the user's selection, including prior images.
         if (model === 'auto' || model === 'fast-auto' || model === 'think-auto') {
             finalModel = model === 'fast-auto' ? await resolveVisibleFastModel() : await resolveVisibleAutoModel();
-            autoRoutingReason = '智能模式使用保留模型；视觉附件不触发旧模型路由';
+            if (model === 'fast-auto') thinkingMode = false;
+            if (model === 'think-auto') thinkingMode = true;
+            if (thinkingMode && normalizedResearchMode === 'off') {
+                const text = getPersistableUserMessageContent(lastUserMessage || {});
+                const score = evaluateComplexity(text).score;
+                normalizedReasoningProfile = score >= 0.75 ? 'max' : score >= 0.45 ? 'high' : score >= 0.2 ? 'medium' : 'low';
+            }
+            quotaTurn.thinkingMode = thinkingMode;
+            quotaTurn.reasoningProfile = normalizedReasoningProfile;
+            autoRoutingReason = model === 'fast-auto' ? '快速：Fast DeepSeek V4.1 Flash；10 秒无响应切官方' : thinkingMode ? '思考：GPT 6.1 Sol，自适应 ' + normalizedReasoningProfile + '；10 秒无响应切官方 DeepSeek' : '模型路由规则：GPT 6.1 Sol 关闭思考；10 秒无响应切官方 DeepSeek';
         } else {
             finalModel = model;
         }
@@ -23297,7 +23317,7 @@ if (clientFileExecution && systemPrompt) {
                     });
                 } catch (fallbackErr) {
                     clearTimeout(fallbackTimeoutId);
-                    if (clientAborted || chatRequestCancelled || fallbackErr.code === 'model_chat_quota_exceeded') throw fallbackErr;
+                    if (clientAborted || chatRequestCancelled || fallbackErr.code === 'model_chat_quota_exceeded' || String(fallbackErr.code || '').startsWith('context_') || fallbackErr.code === 'current_turn_context_too_large') throw fallbackErr;
                     if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ error: fallbackErr })) {
                         runtimeFallbackCircuit.recordFailure(fallbackModel);
                     }
@@ -23588,7 +23608,7 @@ if (clientFileExecution && systemPrompt) {
                         }
                     } catch (primaryFetchError) {
                         clearTimeout(timeoutId);
-                        if (clientAborted || chatRequestCancelled || primaryFetchError.code === 'model_chat_quota_exceeded') throw primaryFetchError;
+                        if (clientAborted || chatRequestCancelled || primaryFetchError.code === 'model_chat_quota_exceeded' || String(primaryFetchError.code || '').startsWith('context_') || primaryFetchError.code === 'current_turn_context_too_large') throw primaryFetchError;
                         if (!chatRequestBudget?.isExpired() && isTransientProviderFailure({ error: primaryFetchError })) {
                             runtimeFallbackCircuit.recordFailure(finalModel);
                         }
@@ -23610,7 +23630,14 @@ if (clientFileExecution && systemPrompt) {
                 }
             }
 
-            console.log(` API响应状态: ${apiResponse.status}`);
+            if (apiResponse.raiOfficialFallback) {
+                finalModel = 'deepseek-v4.1-flash';
+                actualModel = 'deepseek-flash';
+                routing = { ...MODEL_ROUTING[finalModel], model: actualModel };
+                providerConfig = { ...API_PROVIDERS.deepseek, apiKey: ENV_API_KEYS.DEEPSEEK_API_KEY, baseURL: DEEPSEEK_CHAT_COMPLETIONS_URL };
+                requestBody.model = actualModel;
+            }
+            console.log(" API response status: " + apiResponse.status);
 
             //  修复错误处理
             if (!apiResponse.ok) {
@@ -27824,39 +27851,14 @@ function isRuntimeConfiguredModel(modelId = '') {
 }
 
 async function resolveVisibleAutoModel() {
-    const settings = await getAdminRuntimeSettings();
-    const preferred = 'deepseek-v4.1-flash';
-    if (preferred && !(await isPublicModelDisabled(preferred)) && isRuntimeConfiguredModel(preferred)) {
-        return preferred;
-    }
-    const disabled = await getDisabledModelSet();
-    const fallback = AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId));
-    return fallback || 'deepseek-v4.1-flash';
+    // Fixed route policy; never spend Astra/Luna allowances via a hidden fallback.
+    if (!(await isPublicModelDisabled('gpt-6.1-sol')) && isRuntimeConfiguredModel('gpt-6.1-sol')) return 'gpt-6.1-sol';
+    return 'deepseek-v4.1-flash';
 }
-
-async function resolveVisibleFastModel() {
-    const settings = await getAdminRuntimeSettings();
-    const preferred = settings.fast_default_model;
-    if (preferred && !(await isPublicModelDisabled(preferred)) && isRuntimeConfiguredModel(preferred)) {
-        return preferred;
-    }
-    if (!(await isPublicModelDisabled('deepseek-v4.1-flash')) && isRuntimeConfiguredModel('deepseek-v4.1-flash')) {
-        return 'deepseek-v4.1-flash';
-    }
-    // 快速首选被禁用/不可用时，回落到智能模型备用链的首个可用模型
-    const disabled = await getDisabledModelSet();
-    const fallback = AUTO_MODEL_PREFERENCE.find((modelId) => !disabled.has(modelId) && isRuntimeConfiguredModel(modelId));
-    return fallback || 'deepseek-v4.1-flash';
-}
-
-async function resolveVisibleThinkingModel() {
-    return resolveVisibleAutoModel();
-}
-
-async function resolveVisionFallbackModel() { return resolveVisibleAutoModel(); }
-
+async function resolveVisibleFastModel() { return 'deepseek-v4.1-flash'; }
+async function resolveVisibleThinkingModel() { return resolveVisibleAutoModel(); }
+async function resolveVisionFallbackModel() { return 'deepseek-v4.1-flash'; }
 async function resolveVisibleAutoMultimodalModel() { return resolveVisibleAutoModel(); }
-
 async function resolveAudioUnderstandingModel() { return resolveVisibleAutoModel(); }
 
 async function getModelVisibilityPayload({ forceRefresh = false } = {}) {
