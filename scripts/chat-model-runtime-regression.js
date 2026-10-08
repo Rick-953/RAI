@@ -92,7 +92,7 @@ async function main(){
    await remote(devicePath+'/tasks/'+remoteTask.id+'/start','POST',{},deviceHeaders);
    await remote(devicePath+'/tasks/'+remoteTask.id+'/result','POST',{result:{success:true,path:'fixture',entries:[{name:'remote-note.txt',type:'file'}],output:'目录: fixture (1 项)\n  [文件] remote-note.txt'}},deviceHeaders);
    const completed=await stream;assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
-   assert.ok(observations.at(-1).body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt')),'PC result must reach provider continuation: '+JSON.stringify(observations.at(-1).body.messages).slice(-6000));
+   assert.ok(observations.some(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))),'PC result must reach streaming provider continuation (exclude later title generation)');
    assert.ok(!completed.events.some(x=>x.type==='local_agent_tool_call'||x.type==='client_tool_call'),'Web must not execute desktop tool payload');
    await remote(devicePath,'DELETE',undefined,deviceHeaders);mode='answer';
    console.log('chat-model-runtime PASS: authenticated free account, 3 completed Astra turns then 429, zero points, Luna effort, native DeepSeek vision, failure release, real long-context summarization, independent model allowances');
