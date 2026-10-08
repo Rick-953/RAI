@@ -248,15 +248,15 @@ function testNeutralFocus() {
 function testReasoningSwitchAvailability() {
   assert.match(index, /id="thinkingToggle"/);
   const updateToolbar = extractNamedFunction(app, 'updateToolbarUI');
-  const fastModel = app.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
+  const fastModel = app.match(/['"]deepseek-v4\.1-flash['"]:\s*\{([\s\S]*?)\n\s*\},/);
   assert.ok(fastModel, 'missing DeepSeek Flash model metadata');
-  assert.match(fastModel[1], /supportsThinking:\s*true/, 'Fast must expose DeepSeek reasoning support');
-  const serverFastModel = server.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
+  assert.match(fastModel[1], /['"]?supportsThinking['"]?:\s*true/, 'Fast must expose DeepSeek reasoning support');
+  const serverFastModel = server.match(/['"]deepseek-v4\.1-flash['"]:\s*\{([\s\S]*?)\n\s*\},/);
   assert.ok(serverFastModel, 'missing server DeepSeek Flash routing metadata');
-  assert.match(serverFastModel[1], /supportsThinking:\s*true/, 'server Fast metadata must expose DeepSeek reasoning support');
+  assert.match(serverFastModel[1], /['"]?supportsThinking['"]?:\s*true/, 'server Fast metadata must expose DeepSeek reasoning support');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]*?identity === 'fast'[\s\S]*?return 'fast-auto'/, 'Fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]*?identity === 'think'[\s\S]*?return 'think-auto'/, 'Think mode must route through the think-auto virtual id');
-  assert.match(app, /"auto":\s*\{[\s\S]*?supportsThinking:\s*true/, 'Smart mode must expose reasoning support');
+  assert.match(app, /"auto":\s*\{[\s\S]*?"?supportsThinking"?:\s*true/, 'Smart mode must expose reasoning support');
   assert.match(server, /routing\.provider\s*===\s*'deepseek'[\s\S]*?applyDeepSeekV4ModeParams\(requestBody,\s*!!thinkingMode,\s*normalizedReasoningProfile\)/, 'DeepSeek routes must forward thinking mode');
   assert.doesNotMatch(app, /selectedModel\s*===\s*'deepseek-flash'\s*&&\s*!appState\.thinkingMode/, 'Fast identity must survive when reasoning is enabled');
   assert.match(updateToolbar, /if \(!supportsThinking\)\s*\{[\s\S]*?appState\.thinkingMode\s*=\s*false;[\s\S]*?appState\.thinkingBudgetOpen\s*=\s*false;/);
@@ -558,15 +558,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['gpt-6.1-sol', 'gpt-6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
-  assert.match(allModels, />GPT-6.1 Sol</);
-  assert.match(allModels, />GPT 6 Luna</);
-  assert.match(allModels, />Claude Sonnet 5</);
-  assert.match(allModels, />Gemini 3\.6</);
-  assert.match(allModels, />DeepSeek v4</);
-  assert.match(allModels, />Nemotron 3 Ultra</);
-  assert.match(allModels, />Free</);
-  assert.match(allModels, /对话模型[\s\S]*?图像生成/);
+  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
+  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Luna','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
   assert.doesNotMatch(allModels, /model-menu-description|>\s*(?:gpt-|deepseek-|nemotron-)/,
     'the user-facing model list must not expose implementation IDs');
 
@@ -585,32 +578,19 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-6.1-sol', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
-    'Smart Model text requests must prefer DeepSeek V4 Flash (admin-configurable) with the requested ordered fallback chain');
-  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-6.1-sol', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
-    'Smart Model multimodal requests must keep GPT-6.1 Sol first and avoid text-only fallbacks');
-  assert.match(server, /'gpt-6-luna':\s*\{[\s\S]{0,180}provider:\s*'rai_gpt_gateway'[\s\S]{0,180}model:\s*'gpt-6-luna'/,
-    'the public GPT 6 Luna selection must call the Luna upstream model');
-  assert.match(server, /'gpt-6-luna': \['deepseek-flash', 'kimi-k2\.6'\]/,
-    'Luna failures must follow DeepSeek Flash → Kimi');
-  assert.match(server, /'claude-sonnet-5':\s*\{[\s\S]{0,180}provider:\s*'rai_claude_gateway'[\s\S]{0,180}model:\s*'claude-sonnet-5'/,
-    'the Claude product route must use UMAPIS Claude Sonnet 5');
-  assert.match(server, /'gemini-3\.6-flash-low':\s*\{[\s\S]{0,180}provider:\s*'rai_fast_gateway'[\s\S]{0,180}model:\s*'gemini-3\.6-flash-low'/,
-    'the Gemini product route must use the independent Fast gateway');
-  assert.match(server, /'kimi-k2\.6':\s*\{[\s\S]{0,180}provider:\s*'siliconflow'[\s\S]{0,180}model:\s*'Pro\/moonshotai\/Kimi-K2\.6'/,
-    'the Smart Model preference must resolve to the SiliconFlow Kimi K2.6 route');
-  assert.match(server, /'nemotron-3-ultra':\s*\{[\s\S]{0,180}provider:\s*'openrouter'[\s\S]{0,180}model:\s*'nvidia\/nemotron-3-ultra-550b-a55b:free'/,
-    'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
-  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-flash'/,
-    'DeepSeek V4 Flash must use the official DeepSeek route');
-  assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/,
-    'DeepSeek Pro must not be an active route');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-flash', 'kimi-k2\.6'\]/,
-    'Claude failures must follow DeepSeek Flash → Kimi');
-  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-flash', 'kimi-k2\.6'\]/,
-    'Gemini failures must follow DeepSeek Flash → Kimi');
-  assert.match(server, /智能模型默认使用 \$\{researchModelLabel\(finalModel\)\}/,
-    'Smart Model routing notices must use a user-facing model label');
+  for(const id of ['gpt-6.1-sol','gpt-6-luna','gpt-6-astra']) {
+    const route = server.slice(server.indexOf("    '" + id + "': {", server.indexOf('const MODEL_ROUTING = {')));
+    assert.match(route.slice(0,350), /provider: 'rai_gpt_gateway'/);
+    assert.ok(route.slice(0,350).includes("model: '"+id+"'"));
+    assert.match(route.slice(0,350), /multimodal: true/);
+  }
+  assert.match(server, /async function resolveVisibleAutoModel[\s\S]{0,400}return 'gpt-6\.1-sol'/);
+  assert.match(server, /normalizedReasoningProfile = score >= 0\.75 \? 'max'/);
+  assert.match(server, /model === 'fast-auto'\) thinkingMode = false/);
+  assert.match(server, /model === 'think-auto'\) thinkingMode = true/);
+  assert.match(server, /const fetchGptProvider = createDeepSeekProviderFetch/);
+  assert.match(server, /officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL/);
+  assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/);
   assert.match(server, /'gpt-5\.6-terra': 'gpt-6-luna'/,
     'saved Terra preferences must normalize to the stable public GPT 6 Luna ID');
   assert.match(app, /'gpt-5\.6-terra': 'gpt-6-luna'/,
@@ -629,7 +609,7 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.doesNotMatch(activeProductSources, /north-mini-code|cohere\/north-mini-code|Mimo Code|role-mimo|\bmimo\b/i,
     'Mimo Code must not remain in active product, route, fallback, test, style, or README surfaces');
 
-  assert.match(index, /reasoning-low">低<\/span>[\s\S]{0,120}reasoning-medium">中<\/span>[\s\S]{0,120}reasoning-high">高<\/span>[\s\S]{0,120}reasoning-mixed">自动<\/span>/);
+  assert.match(index, /reasoning-low">低<\/span>[\s\S]{0,120}reasoning-medium">中<\/span>[\s\S]{0,120}reasoning-high">高<\/span>[\s\S]{0,120}reasoning-max">max<\/span>/);
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(1\)[\s\S]{0,80}left:\s*0/);
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(2\)[\s\S]{0,80}left:\s*33\.3333%/);
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(3\)[\s\S]{0,80}left:\s*66\.6667%/);
@@ -793,7 +773,7 @@ async function testMessageRenderingStability() {
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 8,
+  assert.equal(modelSelectionBindings.length, 4,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
@@ -1065,7 +1045,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20261007-dompurify-security-r10';
+  const expectedBuild = '20261008-model-policy-r11';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1092,10 +1072,8 @@ function testVersionContract() {
     'think mode must route through the think-auto virtual id');
   assert.match(app, /function resolveSendRequestConfig\([\s\S]{0,700}oneShotModelId = oneShotMode === 'fast'[\s\S]{0,160}'fast-auto'/,
     'one-shot fast sends must map to fast-auto');
-  assert.match(app, /modelSelectField\('smart_default_model', '智能模型首选模型'/,
-    'admin model routing panel must expose smart preferred model');
-  assert.match(app, /modelSelectField\('vision_fallback_model', '视觉备用路由模型'/,
-    'admin model routing panel must expose vision fallback model');
+  assert.match(app, /固定模型路由规则：[\s\S]{0,250}GPT 6\.1 Sol[\s\S]{0,250}Fast DeepSeek/);
+  assert.doesNotMatch(app, /modelSelectField\('vision_fallback_model'/, 'native vision must not offer retired-model routing');
   assert.match(app, /function getModelDisplayMeta\(modelId\)[\s\S]{0,400}identity === 'fast'[\s\S]{0,120}model-fast/,
     'fast identity must keep the Fast label after routing through auto');
   assert.match(styles, /@media \(min-width: 1025px\)[\s\S]{0,400}transition: width var\(--menu-motion-duration\)/,
@@ -1108,16 +1086,9 @@ function testVersionContract() {
     'closing ChatFlow must enter the parallel closing state');
   assert.match(server, /function isSupportedAdminModelSettingValue\(value\)[\s\S]{0,300}imageOnly !== true/,
     'image-only models must be rejected as preferred model settings');
-  assert.match(server, /async function resolveVisibleFastModel\(\)[\s\S]{0,500}fast_default_model/,
-    'fast route must consult admin settings');
-  assert.match(server, /async function resolveVisibleThinkingModel\(\)\s*\{\s*return resolveVisibleAutoModel\(\);\s*\}/,
-    'thinking must inherit the Smart Flash route rather than stale Pro admin preferences');
-  assert.match(server, /async function resolveVisibleAutoModel\(\)[\s\S]{0,160}const preferred = 'deepseek-flash'/,
-    'Smart mode must prefer DeepSeek Flash');
-  assert.match(server, /async function resolveVisionFallbackModel\(\)[\s\S]{0,400}vision_fallback_model/,
-    'vision fallback must consult admin settings');
-  assert.match(server, /else if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/,
-    'server must route fast-auto and think-auto virtual ids');
+  assert.match(server, /async function resolveVisibleFastModel\(\) \{ return 'deepseek-v4\.1-flash'; \}/);
+  assert.match(server, /async function resolveVisibleThinkingModel\(\) \{ return resolveVisibleAutoModel\(\); \}/);
+  assert.match(server, /if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/);
   assert.match(styles, /\.session-title-wrap\s*\{[\s\S]{0,300}flex:\s*1 1 auto[\s\S]{0,120}min-width:\s*0/,
     'conversation titles must share a flexible column before the fixed menu column');
   assert.match(styles, /\.session-time\s*\{[\s\S]{0,260}flex:\s*0 0 48px[\s\S]{0,180}text-align:\s*right/,
@@ -1370,10 +1341,12 @@ function testDownloadClientsAndTimeline() {
     'The mobile model selector must stay centered in both handedness modes');
   assert.match(styles, /html\.hand-left \.mobile-center-controls,\s*html\.hand-right \.mobile-center-controls\s*\{[^}]*left:\s*50%/,
     'Handedness modes must override the legacy model-selector offset and keep it centered');
-  assert.match(app, /function positionChatIndexFloatingTooltip\(tooltip, rect\)[\s\S]*appState\.handedness === 'right'[\s\S]*rect\.right \+ 16/,
-    'Chat index tooltips must flip to the open side of the navigator');
-  assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
-    'Right-hand mode must support opening the sidebar from the right edge');
+  const tooltipPosition = extractNamedFunction(app, 'positionChatIndexFloatingTooltip');
+  assert.match(tooltipPosition, /tooltip\.getBoundingClientRect\(\)/, 'preview bounds must use actual measured size');
+  assert.match(tooltipPosition, /Math\.max\(viewportLeft \+ margin, Math\.min/);
+  assert.match(tooltipPosition, /viewportBottom - margin - size\.height/);
+  assert.doesNotMatch(tooltipPosition, /appState\.handedness/);
+  assert.match(app, /sidebarGestureFromRight = opensFromRight/);
   assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,
     'Right-hand mode must position the mobile sidebar on the right');
   assert.match(styles, /html\.hand-left \.input-toolbar > \.send-btn[\s\S]*order: -1/,
@@ -1415,6 +1388,7 @@ function testHandednessPromptContext() {
     'navigator',
     'isChineseLanguage',
     `${extractNamedFunction(app, 'normalizeHandedness')};
+     function getClientPlatform() { return window.matchMedia().matches ? 'ios' : 'windows'; }
      ${extractNamedFunction(app, 'isHandednessMobileLayout')};
      ${extractNamedFunction(app, 'getUserTimeContext')};
      ${extractNamedFunction(app, 'getShortUserTimeHint')};

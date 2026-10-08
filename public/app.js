@@ -2410,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20261007-dompurify-security-r10';
+const RAI_APP_VERSION = '0.13.19';
+const RAI_BUILD_ID = '20261008-model-policy-r11';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2495,8 +2495,8 @@ const appState = {
   qualityProfile: 'high',
   researchModeEnabled: false,
   researchMode: 'fast',
-  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'],
-  researchMasterModel: 'deepseek-flash',
+  researchAgentModels: ['deepseek-v4.1-flash'],
+  researchMasterModel: 'deepseek-v4.1-flash',
   researchMaxRounds: 50,
   sendHoldSuppressClick: false,
   sendHoldPicker: null,
@@ -4781,6 +4781,7 @@ function getClientPlatform() {
 }
 
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
+  release = release || {};
   const status = document.getElementById('windowsDownloadStatus');
   const setupLink = document.getElementById('windowsSetupDownload');
   const mobileLink = document.getElementById('windowsMobilePackageDownload');
@@ -4789,6 +4790,11 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
 
   const clientPlatform = getClientPlatform();
   const isWindowsMobile = clientPlatform === 'windows-mobile';
+  const recommendWindows = clientPlatform === 'windows';
+  const installerBadge = document.getElementById('windowsSetupRecommended');
+  const pwaBadge = document.getElementById('pwaInstallRecommended');
+  if (installerBadge) installerBadge.hidden = !recommendWindows;
+  if (pwaBadge) pwaBadge.hidden = recommendWindows;
   setupLink.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
   if (note) {
     note.textContent = isWindowsMobile
@@ -4802,7 +4808,7 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
   const mobilePackage = release?.arm?.package || release?.package;
   const mobilePackageValid = isTrustedWindowsReleaseAsset(mobilePackage, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  const tag = String(release.tag || '').trim();
+  const tag = String(release?.tag || '').trim();
   const isFallback = release.source === 'fallback';
 
   if (isWindowsMobile) {
@@ -4977,162 +4983,60 @@ const feedbackModalState = {
 
 const MODELS = {
   "auto": {
-    name: "最佳 Auto",
-    displayName: { "zh-CN": "最佳", "en": "Auto" },
-    provider: "auto",
-    supportsThinking: true
+    "name": "最佳 Auto",
+    "displayName": {
+      "zh-CN": "最佳",
+      "en": "Auto"
+    },
+    "provider": "auto",
+    "supportsThinking": true,
+    "supportsVision": true,
+    "supportsTools": true,
+    "contextWindow": 256000
   },
-  'deepseek-flash': {
-    name: 'DeepSeek v4 Flash',
-    provider: 'deepseek',
-    supportsThinking: true,
-    contextWindow: 1000000,
-    maxTokens: 128000
+  'deepseek-v4.1-flash': {
+    "name": "DeepSeek V4.1 Flash",
+    "provider": "deepseek",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 256000,
+    "maxTokens": 8000
   },
   'gpt-6.1-sol': {
-    name: 'GPT-6.1 Sol',
-    provider: 'rai_openai_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'gpt-5.6-terra': {
-    name: 'GPT 6',
-    provider: 'rai_openai_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
+    "name": "GPT 6.1 Sol",
+    "provider": "rai_gpt_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 256000,
+    "maxTokens": 8000
   },
   'gpt-6-luna': {
-    name: 'GPT 6 Luna',
-    provider: 'rai_openai_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
+    "name": "GPT 6 Luna",
+    "provider": "rai_gpt_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 256000,
+    "maxTokens": 8000
   },
-  'claude-sonnet-5': {
-    name: 'Claude Sonnet 5',
-    provider: 'rai_claude_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'gemini-3.6-flash-low': {
-    name: 'Gemini 3.6',
-    provider: 'rai_fast_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'gpt-image-2': {
-    name: 'GPT Image 2',
-    provider: 'rai_openai_gateway',
-    supportsThinking: false,
-    supportsVision: true,
-    supportsTools: false,
-    imageGeneration: true
-  },
-  'kolors-free': {
-    name: 'Kolors Free',
-    provider: 'siliconflow',
-    supportsThinking: false,
-    supportsVision: true,
-    supportsTools: false,
-    imageGeneration: true
-  },
-  'qwen3.6-35b-a3b': {
-    name: 'Qwen 3.6',
-    provider: 'siliconflow',
-    supportsThinking: false,
-    supportsVision: true,
-    supportsTools: false,
-    contextWindow: 128000
-  },
-  // Kimi K2.6 - 月之暗面高性能模型
-  'kimi-k2.6': {
-    name: 'Kimi K2.6',
-    provider: 'siliconflow',
-    supportsThinking: true,
-    supportsVision: true,
-    supportsTools: true,
-    supportsPrefix: true,
-    contextWindow: 256000
-  },
-  // 兼容旧配置：kimi-k2 自动视作 kimi-k2.6
-  'kimi-k2': {
-    name: 'Kimi K2.6',
-    provider: 'siliconflow',
-    supportsThinking: true
-  },
-  'chatgpt-gpt-oss-120b': {
-    name: 'ChatGPT',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true
-  },
-  'nemotron-3-ultra': {
-    name: 'Nemotron 3 Ultra',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true
-  },
-  'claude-haiku': {
-    name: 'Claude 3 Haiku',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsVision: true
-  },
-  'anthropic/claude-sonnet-4.6': {
-    name: 'Claude Sonnet 4.6',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsVision: true
-  },
-  'anthropic/claude-3-haiku': {
-    name: 'Claude 3 Haiku',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsVision: true
-  },
-  'gemma': {
-    name: 'Gemma',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true,
-    supportsVision: false,
-    contextWindow: 256000
-  },
-  'openrouter-free': {
-    name: 'OpenRouter Free',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true
-  },
-  // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
-  'gemini-3-flash': {
-    name: 'Gemini 3 Flash',
-    provider: 'google_gemini',
-    supportsThinking: true,
-    multimodal: true  // 支持图片/视频等多模态输入
-  },
-  'lmstudio-local': {
-    name: 'LMStudio Local',
-    provider: 'lmstudio',
-    supportsThinking: false
+  'gpt-6-astra': {
+    "name": "GPT 6 Astra",
+    "provider": "rai_gpt_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 256000,
+    "maxTokens": 8000
   }
 };
 
@@ -5155,13 +5059,14 @@ const LEGACY_MODEL_ALIASES = {
   'qwen2.5-7b': 'auto',
   'grok-4.2': 'auto',
   'gpt-5.5': 'auto',
-  'deepseek-chat': 'deepseek-flash',
-  'deepseek-reasoner': 'deepseek-flash',
-  'deepseek-v3': 'deepseek-flash',
-  'deepseek-v3.2-speciale': 'deepseek-flash',
-  'deepseek-v4-pro': 'deepseek-flash',
-  'deepseek-pro': 'deepseek-flash',
-  'deepseek-v4-flash': 'deepseek-flash',
+  'deepseek-flash': 'deepseek-v4.1-flash',
+  'deepseek-chat': 'deepseek-v4.1-flash',
+  'deepseek-reasoner': 'deepseek-v4.1-flash',
+  'deepseek-v3': 'deepseek-v4.1-flash',
+  'deepseek-v3.2-speciale': 'deepseek-v4.1-flash',
+  'deepseek-v4-pro': 'deepseek-v4.1-flash',
+  'deepseek-pro': 'deepseek-v4.1-flash',
+  'deepseek-v4-flash': 'deepseek-v4.1-flash',
   'kimi-k2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.6': 'kimi-k2.6',
@@ -5205,7 +5110,7 @@ function getModelPromptIdentity(promptLanguage = getSessionPromptLanguage()) {
   const modelId = identity.startsWith('model:')
     ? normalizeSelectedModelId(identity.slice('model:'.length))
     : (identity === 'research'
-    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')
+    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash')
     : normalizeSelectedModelId(appState.selectedModel || 'auto'));
   return MODELS[modelId]?.name || (english ? 'Smart model' : '智能模型');
 }
@@ -5214,7 +5119,7 @@ function getPromptModelIdentityForSession() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (['smart', 'fast', 'think'].includes(identity)) return identity;
   if (identity === 'research') {
-    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash')}`;
+    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash')}`;
   }
   return `model:${normalizeSelectedModelId(appState.selectedModel || 'auto')}`;
 }
@@ -5369,12 +5274,13 @@ function isMembershipLockedModel(modelId) {
 }
 
 function normalizeReasoningProfile(value) {
+  if (value === 'mixed') return 'max';
   const v = String(value || '').toLowerCase();
   if (v === 'medium' || v === 'high' || v === 'mixed') return v;
   return 'low';
 }
 
-const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'mixed'];
+const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'max'];
 
 function reasoningProfileToIndex(profile) {
   const normalized = normalizeReasoningProfile(profile);
@@ -6240,7 +6146,7 @@ const i18n = {
     'password-confirm-mismatch-error': '两次输入的新密码不一致',
     'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
-    'model-smart': '智能模型',
+    'model-smart': '模型路由规则',
     'model-fast': '快速',
     'model-expert': '思考',
     'model-all': '全部模型',
@@ -6257,7 +6163,7 @@ const i18n = {
     'reasoning-low': '低',
     'reasoning-medium': '中',
     'reasoning-high': '高',
-    'reasoning-mixed': '自动',
+    'reasoning-max': 'max',
     'research-mode': '研究',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
@@ -6272,7 +6178,7 @@ const i18n = {
     'thinkingMode': '思考模式',
     'regenerateTitle': '重新生成回复',
     'selectModel': '选择模型',
-    'smartMode': '智能模型',
+    'smartMode': '模型路由规则',
     'fastMode': '快速',
     'expertMode': '思考',
     'regenerate': '重新生成'
@@ -6903,7 +6809,7 @@ const i18n = {
     'password-confirm-mismatch-error': 'The new passwords do not match',
     'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
-    'model-smart': 'Smart Model',
+    'model-smart': 'Model Routing Rules',
     'model-fast': 'Fast',
     'model-expert': 'Think',
     'model-all': 'All Models',
@@ -6920,7 +6826,7 @@ const i18n = {
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
-    'reasoning-mixed': 'Auto',
+    'reasoning-max': 'max',
     'research-mode': 'Research',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
@@ -6985,7 +6891,7 @@ const SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP = [
   ['响应式', '響應式'],
   ['联网', '連網'],
   ['模型路由', '模型路由'],
-  ['智能模型', '智慧模型'],
+  ['模型路由规则', '模型路由規則'],
   ['运行期备用链', '執行期備援鏈'],
   ['逻辑', '邏輯'],
   ['补齐', '補齊'],
@@ -8244,7 +8150,7 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-09-24',
-    version: 'v0.13.18 · 正式版',
+    version: 'v0.13.19 · 正式版',
     zh: {
       summary: '正式版汇总：客户端下载、CX RAI、适人握持、流式稳定性与移动端布局全面升级。',
       details: [
@@ -9202,7 +9108,7 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '精简模型界面，修复 GPT Image 2 专用网关并改善移动交互。',
       details: [
-        '模型选择器只保留 GPT 6、DeepSeek v4 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
+        '模型选择器只保留 GPT 6、DeepSeek V4.1 Flash 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
         '智能模式使用 DeepSeek Pro / GPT 6 Terra，快速模式使用 DeepSeek Flash / GPT 6 Luna，思考模式在智能链上开启多档 Thinking。',
         'GPT Image 2 改用独立 0600 密钥文件和 chat/completions 图像协议，仍保留 SiliconFlow 故障回退。',
         '移动端从主界面任意横向起点右滑即可打开侧边栏；推理档位改为低、中、高、自动四个等距锚点。'
@@ -9211,7 +9117,7 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: 'Focuses the model UI, repairs the dedicated GPT Image 2 gateway, and improves mobile controls.',
       details: [
-        'The visible picker now contains only GPT 6, DeepSeek v4, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
+        'The visible picker now contains only GPT 6, DeepSeek V4.1 Flash, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
         'Smart uses DeepSeek Pro with GPT 6 Terra fallback, Fast uses DeepSeek Flash with GPT 6 Luna fallback, and Think enables multi-level reasoning on the Smart chain.',
         'GPT Image 2 now uses a separate 0600 key file and its chat-completions image protocol while retaining the SiliconFlow outage fallback.',
         'A right swipe from any non-interactive point in the mobile main view opens the sidebar, and the Low, Medium, High, and Auto reasoning labels align directly below four equal stops.'
@@ -13303,21 +13209,16 @@ function normalizeResearchMode(value) {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
-  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+  { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
+  { id: 'gpt-6.1-sol', label: 'GPT 6.1 Sol' },
   { id: 'gpt-6-luna', label: 'GPT 6 Luna' },
-  { id: 'gemma', label: 'Gemma' },
-  { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
-  { id: 'kimi-k2.6', label: 'Kimi K2.6' },
-  { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
-  { id: 'deepseek-flash', label: 'DeepSeek v4' },
-  { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
-  { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
+  { id: 'gpt-6-astra', label: 'GPT 6 Astra' }
 ];
 
 function normalizeResearchModelId(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
-  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-flash';
-  if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
+  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-v4.1-flash';
+  if (normalized === 'deepseek-v4-flash') return 'deepseek-v4.1-flash';
   return normalized;
 }
 
@@ -13332,12 +13233,12 @@ function normalizeResearchAgentModels(input) {
     if (!allowed.has(modelId) || selected.includes(modelId)) return;
     selected.push(modelId);
   });
-  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-flash'];
+  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-v4.1-flash'];
 }
 
 function normalizeResearchMasterModel(input) {
   const modelId = normalizeResearchModelId(input);
-  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-flash';
+  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-v4.1-flash';
 }
 
 
@@ -13493,7 +13394,7 @@ function renderResearchModelControls() {
     masterSelect.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => `
       <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
     `).join('');
-    masterSelect.value = normalizeResearchMasterModel(appState.researchMasterModel || currentValue || 'deepseek-flash');
+    masterSelect.value = normalizeResearchMasterModel(appState.researchMasterModel || currentValue || 'deepseek-v4.1-flash');
   }
 }
 
@@ -13570,7 +13471,7 @@ function getModeRequestConfig(mode = '') {
   if (normalized === 'research') {
     return {
       mode: 'research',
-      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-flash'),
+      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash'),
       thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
       reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
       researchMode: normalizeResearchMode(appState.researchMode || 'fast')
@@ -14321,18 +14222,19 @@ function normalizeHandedness(value) {
 }
 
 function isHandednessMobileLayout() {
-  return window.matchMedia('(max-width: 768px)').matches;
+  return ['ios', 'android', 'windows-mobile'].includes(getClientPlatform());
 }
 
 function updateSettingsHandednessUI() {
   const switchButton = document.getElementById('settingsHandednessSwitch');
   const toggle = document.getElementById('settingsHandednessToggle');
-  if (switchButton) switchButton.setAttribute('aria-pressed', appState.handednessEnabled ? 'true' : 'false');
-  if (toggle) toggle.classList.toggle('active', !!appState.handednessEnabled);
+  const allowed = isHandednessMobileLayout();
+  if (switchButton) { switchButton.setAttribute('aria-pressed', allowed && appState.handednessEnabled ? 'true' : 'false'); switchButton.disabled = !allowed; switchButton.title = allowed ? '' : (isChineseLanguage(appState.language) ? '电脑端暂不启用，不影响同账号其他设备' : 'Disabled on computers; other devices retain their setting'); }
+  if (toggle) toggle.classList.toggle('active', allowed && !!appState.handednessEnabled);
 }
 
 function applyHandednessLayout() {
-  const enabled = appState.handednessEnabled === true;
+  const enabled = appState.handednessEnabled === true && isHandednessMobileLayout();
   const handedness = normalizeHandedness(appState.handedness);
   const root = document.documentElement;
   const switchToken = Number(appState.handednessSwitchToken || 0) + 1;
@@ -14396,6 +14298,7 @@ function initHandednessTracking() {
 }
 
 function settingsToggleHandedness() {
+  if (!isHandednessMobileLayout()) return;
   appState.handednessEnabled = !appState.handednessEnabled;
   persistLocalSettingsPatch({
     handednessEnabled: appState.handednessEnabled,
@@ -16771,7 +16674,7 @@ function getModelDisplayMeta(modelId) {
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
   }
-  if (normalized === 'deepseek-flash') {
+  if (normalized === 'deepseek-v4.1-flash') {
     return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
   }
   return { i18nKey: null, fallback: MODELS[normalized]?.name || normalized };
@@ -18277,7 +18180,7 @@ function formatResearchAgentLabel(role = '') {
     gpt55: 'ChatGPT',
     chatgpt: 'ChatGPT',
     deepseek: 'DeepSeek Pro',
-    deepseek_flash: 'DeepSeek v4',
+    deepseek_flash: 'DeepSeek V4.1 Flash',
     nemotron: 'Nemotron 3 Ultra'
   };
   return labelMap[String(role || '').toLowerCase()] || formatAgentRole(role || 'agent');
@@ -19979,6 +19882,8 @@ async function recoverIncompleteChatStream({
             attemptReasoning += String(event.content);
           } else if (event.type === 'sources' && Array.isArray(event.sources)) {
             sources = mergeAndReindexSources(sources, event.sources);
+          } else if (event.type === 'context_compressed') {
+            showToast(isChineseLanguage(appState.language) ? '上下文已自动压缩，原始历史仍然保留（256k）' : 'Context compressed automatically; original history retained (256k)');
           } else if (event.type === 'model_info' && event.model) {
             model = event.model;
           } else if (event.type === 'error') {
@@ -22522,8 +22427,8 @@ async function sendMessage(message = null, options = {}) {
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
     const roleMap = isChineseLanguage(appState.language)
-      ? { master: '主控', judge: '主控质量复核', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '启发式质量复核', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek v4', nemotron: 'Nemotron 3 Ultra' }
-      : { master: 'Master', judge: 'Master Quality Review', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Heuristic Quality Review', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek v4', nemotron: 'Nemotron 3 Ultra' };
+      ? { master: '主控', judge: '主控质量复核', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '启发式质量复核', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek V4.1 Flash', nemotron: 'Nemotron 3 Ultra' }
+      : { master: 'Master', judge: 'Master Quality Review', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Heuristic Quality Review', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek V4.1 Flash', nemotron: 'Nemotron 3 Ultra' };
     return roleMap[role] || role;
   };
 
@@ -23789,7 +23694,7 @@ function getSendHoldModes() {
 
 function getSendHoldModeFromCurrentState() {
   if (isResearchModeEnabled()) return 'research';
-  if (appState.selectedModel === 'deepseek-flash') return 'fast';
+  if (appState.selectedModel === 'deepseek-v4.1-flash') return 'fast';
   return 'smart';
 }
 
@@ -28592,7 +28497,7 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-	        model: 'deepseek-flash',
+	        model: 'deepseek-v4.1-flash',
 	        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
 	        promptTimeContext: getUserTimeContext(),
 	        memoryMode: 'off',
@@ -30753,7 +30658,7 @@ function initSwipeGestures() {
   const setSidebarProgress = (progress, dragging = false) => {
     const width = getSidebarWidth();
     const normalized = Math.max(0, Math.min(progress, 1));
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const opensFromRight = appState.sidebarGestureFromRight === true;
     const translateX = opensFromRight
       ? (1 - normalized) * width
       : (normalized - 1) * width;
@@ -30795,6 +30700,7 @@ function initSwipeGestures() {
     appState.isSwiping = false;
     appState.sidebarGestureMode = canOpen ? 'opening' : 'closing';
     appState.sidebarGestureLocked = false;
+    appState.sidebarGestureFromRight = sidebar.classList.contains('swipe-from-right');
 
     if (canClose) {
       overlay.classList.add('active');
@@ -30804,7 +30710,7 @@ function initSwipeGestures() {
   const handleTouchMove = (e) => {
     if (!appState.sidebarGestureMode || !e.touches?.length) return;
 
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    let opensFromRight = appState.sidebarGestureFromRight === true;
     const touch = e.touches[0];
     const deltaX = touch.clientX - appState.touchStartX;
     const deltaY = Math.abs(touch.clientY - appState.touchStartY);
@@ -30820,9 +30726,14 @@ function initSwipeGestures() {
         return;
       }
 
+      if (appState.sidebarGestureMode === 'opening' && Math.abs(deltaX) >= gestureCommitDistance) {
+        opensFromRight = deltaX < 0;
+        appState.sidebarGestureFromRight = opensFromRight;
+        sidebar.classList.toggle('swipe-from-right', opensFromRight);
+      }
       const movingWrongWay = appState.sidebarGestureMode === 'opening'
         ? (opensFromRight ? deltaX >= 0 : deltaX <= 0)
-        : (opensFromRight ? deltaX <= 0 : deltaX >= 0);
+        : false;
       if (movingWrongWay) {
         if (Math.abs(deltaX) > gestureCommitDistance && Math.abs(deltaX) > deltaY * horizontalDominanceRatio) {
           resetSwipeState();
@@ -30842,9 +30753,7 @@ function initSwipeGestures() {
     const width = getSidebarWidth();
     const rawProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : (opensFromRight
-        ? 1 - (Math.max(0, deltaX) / width)
-        : 1 + (Math.min(0, deltaX) / width));
+      : 1 - (Math.abs(deltaX) / width);
 
     setSidebarProgress(rawProgress, true);
     e.preventDefault();
@@ -30860,12 +30769,10 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const deltaX = appState.touchMoveX - appState.touchStartX;
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const opensFromRight = appState.sidebarGestureFromRight === true;
     const finalProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : (opensFromRight
-        ? 1 - (Math.max(0, deltaX) / width)
-        : 1 + (Math.min(0, deltaX) / width));
+      : 1 - (Math.abs(deltaX) / width);
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;
@@ -32476,16 +32383,30 @@ function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelin
 }
 // 显示横线悬浮提示
 function positionChatIndexFloatingTooltip(tooltip, rect) {
-  const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  if (opensFromRight) {
-    tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-    tooltip.style.left = 'auto';
-  } else {
-    tooltip.style.left = `${rect.right + 16}px`;
-    tooltip.style.right = 'auto';
-  }
-  tooltip.style.transform = 'translateY(-50%)';
+  // Choose the side from the actual anchor, not an account's mobile handedness.
+  const viewport = window.visualViewport;
+  const margin = 8, gap = 16;
+  const viewportLeft = viewport?.offsetLeft || 0;
+  const viewportTop = viewport?.offsetTop || 0;
+  const viewportRight = viewportLeft + (viewport?.width || window.innerWidth);
+  const viewportBottom = viewportTop + (viewport?.height || window.innerHeight);
+  tooltip.style.boxSizing = 'border-box';
+  tooltip.style.maxWidth = Math.max(0, viewportRight - viewportLeft - margin * 2) + 'px';
+  if (tooltip.id === 'chatIndexTooltip') tooltip.style.maxWidth = Math.min(280, viewportRight - viewportLeft - margin * 2) + 'px';
+  tooltip.style.maxHeight = Math.max(0, viewportBottom - viewportTop - margin * 2) + 'px';
+  tooltip.style.overflow = 'hidden';
+  tooltip.style.whiteSpace = 'normal';
+  tooltip.style.right = 'auto';
+  tooltip.style.transform = 'none';
+  const size = tooltip.getBoundingClientRect();
+  const spaceLeft = rect.left - viewportLeft - margin - gap;
+  const spaceRight = viewportRight - rect.right - margin - gap;
+  const preferLeft = spaceLeft >= size.width || spaceLeft > spaceRight;
+  const desiredLeft = preferLeft ? rect.left - gap - size.width : rect.right + gap;
+  const left = Math.max(viewportLeft + margin, Math.min(desiredLeft, viewportRight - margin - size.width));
+  const top = Math.max(viewportTop + margin, Math.min(rect.top + rect.height / 2 - size.height / 2, viewportBottom - margin - size.height));
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
 }
 
 function showChatIndexTooltip(event, content) {
@@ -33491,25 +33412,14 @@ function openGitHubStarTask() {
 
 function renderMembershipModelPricing() {
   const isZh = isChineseLanguage(appState.language);
-  const rows = [
-    ['GPT 6', 5],
-    ['Claude Sonnet 5', 10],
-    ['Gemini 3.6', 3],
-    ['DeepSeek', 1],
-    ['GPT Image 2', 20]
-  ];
-  return `
-    <div class="membership-model-pricing">
-      <div class="membership-model-pricing-heading">
-        <h3>${isZh ? '模型点数标价' : 'Model point pricing'}</h3>
-        <span>${isZh ? '按次扣除' : 'Per request'}</span>
-      </div>
-      <div class="membership-model-pricing-list">
-        ${rows.map(([name, points]) => `<div><span>${name}</span><strong>${isZh ? `${points} 点 / 次` : `${points} points / request`}</strong></div>`).join('')}
-      </div>
-      <small>${isZh ? 'Kolors Free 免费。点数不足时会提示并自动改用可用免费模型。' : 'Kolors Free is free. When points are insufficient, RAI explains the fallback and uses an available free model.'}</small>
-    </div>
-  `;
+  const rows = [['GPT 6 Astra', 3, 50, 80], ['GPT 6.1 Sol', 50, 100, 200], ['GPT 6 Luna', 100, 200, 500]];
+  return `<div class="membership-model-pricing">
+    <h3>${isZh ? '滚动 24 小时对话额度' : 'Rolling 24-hour conversation allowance'}</h3>
+    <div class="membership-model-pricing-list"><div><span>${isZh ? '模型' : 'Model'}</span><strong>Free / Pro / MAX</strong></div>
+    ${rows.map(([name, free, pro, max]) => `<div><span>${name}</span><strong>${free} / ${pro} / ${max}</strong></div>`).join('')}</div>
+    <small>${isZh ? '用户提问且 AI 成功答完计 1 次；失败、取消及内部工具调用不重复扣次。同一账号 Web 与 CX RAI 共用额度，各模型独立按滚动 24 小时计算，到上限后等待恢复，不自动扣积分。DeepSeek V4.1 Flash 未设置本表对话次数上限。研究中使用的每个 GPT 模型每轮问答最多计 1 次。' : 'One user question plus a completed answer counts as one turn. Errors, cancellations and internal tool calls do not charge again. Web and CX RAI share account-wide, per-model rolling allowances. At the limit, wait for recovery; points are not debited. DeepSeek V4.1 Flash has no limit in this table. Each GPT used in research counts at most once per completed turn.'}</small>
+    <p>${isZh ? '四个模型均支持视觉；上下文统一 256k，包含输入、输出预留与安全余量；长历史自动摘要压缩，原始历史保留。' : 'All four models support vision. The shared 256k budget includes input, output reserve and safety margin. Long history is automatically summarized; original history is retained.'}</p>
+  </div>`;
 }
 
 function renderMembershipTasksSection({ compact = false } = {}) {
@@ -34778,12 +34688,12 @@ async function loadAdminLimits() {
       .map(([id, m]) => ({ id, name: escapeHtml((m.displayName && m.displayName[appState.language]) || m.name || id) }));
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
-      'deepseek-flash-siliconflow', 'deepseek-flash',
+      'deepseek-flash-siliconflow', 'deepseek-v4.1-flash',
       'gemini-3.6-flash-low', 'gpt-6-luna', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);
     const selectionExplanationCandidates = [
-      { id: 'deepseek-flash-siliconflow', name: 'DeepSeek v4 Flash（硅基流动）' },
+      { id: 'deepseek-flash-siliconflow', name: 'DeepSeek V4.1 Flash（硅基流动）' },
       ...routingCandidates.filter((model) => selectionExplanationModelIds.has(model.id))
     ].filter((model, index, list) => list.findIndex((candidate) => candidate.id === model.id) === index);
     const modelSelectField = (key, label, candidates, current, hint = '') => {
@@ -34806,11 +34716,8 @@ async function loadAdminLimits() {
         <div class="admin-limits-section">
           <h4>模型路由</h4>
           <div class="admin-limits-grid admin-model-routing-grid">
-            ${modelSelectField('smart_default_model', '智能模型首选模型', routingCandidates, s.smart_default_model, '新对话默认智能模型，首选不可用时会自动回落备用链')}
-            ${modelSelectField('fast_default_model', '快速模型首选模型', routingCandidates, s.fast_default_model, '快速模型模式实际调用的模型')}
-            ${modelSelectField('thinking_default_model', '思考模型首选模型', routingCandidates, s.thinking_default_model, '思考模式实际调用的模型')}
-            ${modelSelectField('vision_fallback_model', '视觉备用路由模型', visionCandidates, s.vision_fallback_model, '纯文本模型遇到图片/多模态内容时自动切换到的多模态模型')}
-            ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek v4 Flash；4 秒无首字时自动切换备用模型')}
+            <div class="admin-model-switch-note">固定模型路由规则：默认 GPT 6.1 Sol（关闭思考）；快速 Fast DeepSeek V4.1 Flash；思考 GPT 6.1 Sol 自适应低/中/高/max。Fast 10 秒无有效响应切换官方 DeepSeek。图片保留当前模型。</div>
+            ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek V4.1 Flash；4 秒无首字时自动切换备用模型')}
           </div>
           <div class="admin-model-switch-note">智能/快速/思考首选若被关闭、凭据缺失或上游失败，会自动回落到内置备用链；隐藏模型请在「模型管理」中关闭对应开关。</div>
         </div>

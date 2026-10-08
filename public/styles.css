@@ -19698,3 +19698,12 @@ html.ios-standalone body.mobile-viewport-managed:not(.keyboard-open) .input-area
 html.ios-standalone body.mobile-viewport-managed .main-content::after,
 html.ios-standalone body.mobile-viewport-managed .chat-edge-blur-bottom { display: none !important; }
 @media (prefers-reduced-motion: reduce) { .rai-reasoning-content, .rai-reasoning-toggle, .tool-trace-item { transition: none !important; animation: none !important; } }
+
+/* Gesture side is independent of per-account adaptive holding preference. */
+@media (max-width: 768px) {
+  .sidebar.swipe-from-right { left: auto; right: 0; transform: translateX(100%); border-radius: 24px 0 0 24px; }
+  .sidebar.swipe-from-right.active { transform: translateX(0); }
+  html.hand-right .sidebar:not(.swipe-from-right) { left: 0; right: auto; transform: translateX(-100%); border-radius: 0 24px 24px 0; }
+  html.hand-right .sidebar:not(.swipe-from-right).active { transform: translateX(0); }
+}
+.settings-windows-actions #windowsSetupRecommended { align-self: center; }

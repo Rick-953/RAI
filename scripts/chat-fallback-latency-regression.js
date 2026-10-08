@@ -65,10 +65,10 @@ function testServerIntegrationContract() {
     assert.match(server, /runtimeFallbackCircuit\.isOpen\(fallbackModel\)/);
     assert.match(server, /runtimeFallbackCircuit\.recordFailure\(fallbackModel\)/);
     assert.match(server, /runtimeFallbackCircuit\.recordSuccess\(fallbackModel\)/);
-    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled\) throw fallbackErr;/);
-    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled\) throw primaryFetchError;/);
+    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled \|\| [^;]+\) throw fallbackErr;/);
+    assert.match(server, /if \(clientAborted \|\| chatRequestCancelled \|\| [^;]+\) throw primaryFetchError;/);
     const skillRuntime = fs.readFileSync(path.resolve(__dirname, 'skill-loader-runtime-regression.js'), 'utf8');
-    assert.match(skillRuntime, /recent Luna 503 must open the ordinary-chat circuit/);
+    assert.match(skillRuntime, /successful direct official failover must not poison subsequent primary tool requests/);
     assert.match(server, /continueTimeoutMs = chatRequestBudget\?\.nextAttemptTimeoutMs\(\) \|\| 0/);
     assert.doesNotMatch(server, /fallbackTimeoutId = setTimeout\(\(\) => fallbackController\.abort\(\), 120000\)/);
     assert.doesNotMatch(server, /continueTimeoutId = setTimeout\(\(\) => continueController\.abort\(\), 120000\)/);

@@ -92,17 +92,9 @@ function extractConstDeclaration(source, name) {
 
 function buildModelHarness(serverSource) {
     const context = vm.createContext({
-        PUBLIC_MODEL_IDS: [
-            'deepseek-flash',
-            'gpt-6.1-sol',
-            'qwen3.6-35b-a3b',
-            'kimi-k2.6',
-            'chatgpt-gpt-oss-120b',
-            'nemotron-3-ultra',
-            'anthropic/claude-sonnet-4.6',
-            'anthropic/claude-3-haiku',
-            'gemma'
-        ],
+        PUBLIC_MODEL_IDS: require('../lib/chat-model-policy').CHAT_MODEL_IDS,
+        DEEPSEEK_FAST_API_KEY: '',
+
         KOLORS_IMAGE_MODEL: 'Kwai-Kolors/Kolors'
     });
     vm.runInContext([
@@ -110,11 +102,11 @@ function buildModelHarness(serverSource) {
         extractConstDeclaration(serverSource, 'SUPPORTED_INCOMING_MODEL_IDS'),
         extractNamedFunction(serverSource, 'normalizeIncomingModelId'),
         extractConstDeclaration(serverSource, 'MODEL_ROUTING'),
-        extractConstDeclaration(serverSource, 'UNIVERSAL_RUNTIME_FALLBACK_MODELS'),
+        extractNamedFunction(serverSource, 'getRuntimeFallbackModelIds'),
         'globalThis.__normalize = normalizeIncomingModelId;',
         'globalThis.__supported = [...SUPPORTED_INCOMING_MODEL_IDS];',
         'globalThis.__routing = MODEL_ROUTING;',
-        'globalThis.__fallbacks = UNIVERSAL_RUNTIME_FALLBACK_MODELS;'
+        'globalThis.__fallbacks = getRuntimeFallbackModelIds("gpt-6-luna");'
     ].join('\n\n'), context, { filename: SERVER_PATH });
     return {
         normalize: context.__normalize,
@@ -139,10 +131,10 @@ function testRetiredRequestsFallBackSafely(serverSource) {
     for (const unknownId of ['', 'unknown-provider-model', 'https://attacker.invalid/model']) {
         assert.equal(harness.normalize(unknownId), 'auto', `${unknownId || '(empty)'} must normalize to auto`);
     }
-    assert.equal(harness.normalize('deepseek-pro'), 'deepseek-flash');
+    assert.equal(harness.normalize('deepseek-pro'), 'deepseek-v4.1-flash');
     assert.equal(harness.normalize('gpt-5.6-sol'), 'gpt-6.1-sol');
     assert.equal(harness.normalize('gpt-6-sol'), 'gpt-6.1-sol');
-    assert.equal(harness.normalize('Qwen/Qwen3.6-35B-A3B'), 'qwen3.6-35b-a3b');
+    assert.equal(harness.normalize('Qwen/Qwen3.6-35B-A3B'), 'auto');
 
     assert.equal(harness.routing.auto?.isAutoMode, true, 'auto route must remain intact');
     for (const modelId of harness.supported) {
@@ -158,7 +150,7 @@ function testRetiredRequestsFallBackSafely(serverSource) {
 function testChatAndConfigUseGuardedNormalization(serverSource) {
     assert.match(serverSource, /let\s+model\s*=\s*normalizeIncomingModelId\(requestedModel\)/, 'chat requests must normalize retired and unknown IDs');
     assert.match(serverSource, /const\s+safeDefaultModel\s*=\s*['"]auto['"]/, 'stored defaults must always reset to smart auto mode');
-    assert.match(serverSource, /else\s+if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
+    assert.match(serverSource, /if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
         'normalized automatic requests must enter the safe automatic route');
 }
 

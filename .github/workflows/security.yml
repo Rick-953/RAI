@@ -85,6 +85,8 @@ jobs:
         run: npx --no-install playwright install --with-deps chromium webkit
       - name: Verify PWA viewport and remember preference in Chromium and WebKit
         run: |
+          npm run test:model-ui-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:model-ui-runtime
           npm run test:ios-standalone-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:ios-standalone-runtime
           npm run test:qr-scan-ux-browser
