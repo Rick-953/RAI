@@ -20810,7 +20810,10 @@ function collectRequestInterjections(requestId) {
 }
 
 //  修复：流式聊天路由
-const cxRemoteControl = installCxRemoteRoutes({ app, authenticateToken, apiLimiter, dbGet: dbGetAsync });
+// Separate bounded pre-auth budget: PC heartbeats and approval polls must not
+// consume the ordinary user API limiter (including clients sharing one NAT IP).
+const cxRemoteLimiter = rateLimit({ windowMs: 60000, max: 300, message: {error:'cx_remote_rate_limited'} });
+const cxRemoteControl = installCxRemoteRoutes({ app, authenticateToken, apiLimiter: cxRemoteLimiter, dbGet: dbGetAsync });
 const chatModelQuotaContext = new AsyncLocalStorage();
 const chatModelQuotaService = createChatModelQuotaService({ withTransaction: withMainDbTransaction });
 const fetchDeepSeekProvider = createDeepSeekProviderFetch({
