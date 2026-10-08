@@ -1,3 +1,14 @@
+## 0.13.19 — 2026-10-08
+
+- 公开对话及研究模型统一为 DeepSeek V4.1 Flash、GPT 6.1 Sol、GPT 6 Luna、GPT 6 Astra；标准 ID 两端一致，旧 ID 仅兼容迁移。
+- 四模型原生视觉，图片不触发旧 Qwen/Gemini/Kimi 视觉备用路由；管理员公开模型与默认路由仅接受四模型。
+- DeepSeek Fast 优先、现有官方备用，独立私密密钥文件；GPT 三模型使用 Fast 独立密钥文件，不将任何密钥下发客户端。
+- 服务端按账号、模型、滚动 24h 原子预占，成功答完后计 1 次；Free Astra/Sol/Luna 为 3/50/100，Pro 为 50/100/200，MAX 为 80/200/500。失败/取消释放，内部工具与供应商重试不重复扣次，达到上限返回明确错误而非偷偷扣积分或换 GPT。
+- 四模型统一 256000 上下文预算，包含保守输入估算、视觉预留、输出和安全余量。每次工具续传也检查；超限自动摘要旧完整轮次，保留系统指令、近期完整工具链及附件引用，原始历史不修改。压缩失败明确报错。
+- 低/中/高/自动思考两端对齐；Fast GPT 实测拒绝 none，关闭思考采用 low 并隐藏思考；DeepSeek 关闭使用 thinking.disabled，官方备用转换其支持的档位。
+- 新增 SQLite 并发、滚动边界、会员到期、取消/崩溃租约、幂等扣次、思考、上下文与备用线路回归；发布前运行隔离 API、正式审计与客户端编译签名验证。
+- 真机 WP/桌面安装及 iPhone 实机验收需与源码/CI/安装包验证区分。
+
 # RAI Web 更新记录
 
 ## 2026-09-29 - Installed iOS viewport and password-manager preference (feature/pwa-viewport-remember-20260929; not deployed)
