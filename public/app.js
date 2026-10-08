@@ -4781,6 +4781,7 @@ function getClientPlatform() {
 }
 
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
+  release = release || {};
   const status = document.getElementById('windowsDownloadStatus');
   const setupLink = document.getElementById('windowsSetupDownload');
   const mobileLink = document.getElementById('windowsMobilePackageDownload');
@@ -4807,7 +4808,7 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
   const mobilePackage = release?.arm?.package || release?.package;
   const mobilePackageValid = isTrustedWindowsReleaseAsset(mobilePackage, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  const tag = String(release.tag || '').trim();
+  const tag = String(release?.tag || '').trim();
   const isFallback = release.source === 'fallback';
 
   if (isWindowsMobile) {
@@ -30771,9 +30772,7 @@ function initSwipeGestures() {
     const opensFromRight = appState.sidebarGestureFromRight === true;
     const finalProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : (opensFromRight
-        ? 1 - (Math.max(0, deltaX) / width)
-        : 1 + (Math.min(0, deltaX) / width));
+      : 1 - (Math.abs(deltaX) / width);
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;

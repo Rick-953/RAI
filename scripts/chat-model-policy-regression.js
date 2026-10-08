@@ -61,6 +61,18 @@ async function main() {
     const response=await provider('https://fast.test/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer private-test'},body:JSON.stringify({model:'deepseek-v4.1-flash',thinking:{type:'enabled'},reasoning_effort:'low'})});
     assert.equal(response.status,200);assert.equal(calls.length,2);assert.equal(calls[1].url,'https://official.test/v1/chat/completions');assert.equal(new Headers(calls[1].options.headers).get('Authorization'),'Bearer official-test');assert.equal(JSON.parse(calls[1].options.body).model,'deepseek-flash');assert.equal(JSON.parse(calls[1].options.body).reasoning_effort,'high');
     calls=[];const cancel=new AbortController();cancel.abort();await assert.rejects(provider('https://fast.test/v1/chat/completions',{signal:cancel.signal,body:JSON.stringify({model:'deepseek-v4.1-flash'})}));assert.equal(calls.length,0);
+    // HTTP headers / keepalive are not a model response. Sol timeout goes DIRECTLY official.
+    let timeoutCalls=[];
+    const timeoutProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'sol-test',primaryModels:['gpt-6.1-sol'],officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async(url,options)=>{
+        timeoutCalls.push({url,options});
+        return url.includes('fast.test') ? new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode(': keepalive\n\n'));}}),{headers:{'Content-Type':'text/event-stream'}}) : new Response('data: {"choices":[{"delta":{"content":"official answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    }});
+    const timeoutResponse=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:false,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,reasoning_effort:'low',messages:[{role:'user',content:'tiny prompt'}]})});
+    assert.equal(timeoutCalls.length,2);assert.equal(timeoutResponse.raiOfficialFallback,true);assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'disabled');assert.match(await timeoutResponse.text(),/official answer/);
+    let deliveredCalls=0;
+    const deliveredProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async()=>{deliveredCalls++;return new Response('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\ndata: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');}});
+    const delivered=await deliveredProvider('https://fast.test/v1/chat/completions',{body:JSON.stringify({model:'deepseek-v4.1-flash',stream:true})});
+    assert.match(await delivered.text(),/thinking/);assert.equal(deliveredCalls,1,'effective reasoning delta must prevent fallback/replay');
     const server=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
     for(const id of CHAT_MODEL_IDS){assert.ok(html.includes('data-model="'+id+'"'));assert.ok(app.includes("'"+id+"': {"));}
     for(const id of ['claude-sonnet-5','gemini-3.6-flash-low','nemotron-3-ultra','gpt-image-2','kolors-free'])assert.ok(!html.includes('data-model="'+id+'"'));
