@@ -2410,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.19';
-const RAI_BUILD_ID = '20261008-model-policy-r11';
+const RAI_APP_VERSION = '0.13.20';
+const RAI_BUILD_ID = '20261009-cx-remote-r12';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -6146,6 +6146,9 @@ const i18n = {
     'password-confirm-mismatch-error': '两次输入的新密码不一致',
     'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
+    'cx-remote-menu': '连接 CX RAI',
+    'cx-remote-install-title': '手机 Web 连接 CX RAI',
+    'cx-remote-install-desc': '同账号在线电脑，本机授权可撤销',
     'model-smart': '模型路由规则',
     'model-fast': '快速',
     'model-expert': '思考',
@@ -6809,6 +6812,9 @@ const i18n = {
     'password-confirm-mismatch-error': 'The new passwords do not match',
     'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
+    'cx-remote-menu': 'Connect CX RAI',
+    'cx-remote-install-title': 'Connect Web to CX RAI',
+    'cx-remote-install-desc': 'Same-account online PC, revocable local consent',
     'model-smart': 'Model Routing Rules',
     'model-fast': 'Fast',
     'model-expert': 'Think',
@@ -8148,6 +8154,22 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-09', version: 'v0.13.20 · CX RAI 1.8.7',
+    zh: { summary: '手机 Web 连接在线 CX RAI 电脑；模型、额度与 256k 自动上下文压缩已统一。', details: [
+      '更多 → 连接 CX RAI；电脑设置 → 通用主动开启，同账号、安全码和每次操作的电脑授权。无需手机扩展。',
+      '文件、产物和 PowerShell 在已授权电脑执行，Web 接收结果继续回答。关闭、离线、登出或到期撤销，不重放任务。',
+      '四个视觉模型：DeepSeek V4.1 Flash、GPT 6.1 Sol、GPT 6 Luna、GPT 6 Astra；低/中/高/max，统一 256k 自动压缩。',
+      '滚动 24h 成功答完计次，两端共享；默认 Sol、快速 Fast DeepSeek、思考 Sol 自适应，10 秒无响应切官方 DeepSeek。',
+      '电脑不启用适人握持，侧栏双向滑动，索引预览夹在屏幕内；Windows 推荐安装器，Mac/手机推荐网页应用。'
+    ] },
+    en: { summary: 'Connect mobile Web to an online CX RAI PC, with unified models, quotas and 256k context.', details: [
+      'More → Connect CX RAI. Opt in on the PC, use the same account, verify the code and approve every action locally. No phone extension.',
+      'Run files and PowerShell on the approved PC; return results to chat. Disconnect, offline, logout or expiry revoke access without replay.',
+      'Four vision models, low/medium/high/max, 256k automatic compression and account-wide rolling completed-turn quotas.',
+      'Default Sol, Fast DeepSeek and adaptive thinking Sol, with official DeepSeek fallback after 10 seconds without a response.'
+    ] }
+  },
   {
     date: '2026-09-24',
     version: 'v0.13.19 · 正式版',

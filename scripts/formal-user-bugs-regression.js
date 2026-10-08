@@ -1045,7 +1045,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20261008-model-policy-r11';
+  const expectedBuild = '20261009-cx-remote-r12';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1301,7 +1301,7 @@ function testDownloadClientsAndTimeline() {
     'RAI Connect must be a details element');
   assert.doesNotMatch(index, /<details[^>]+id="settingsRaiConnectInstall"[^>]*\sopen(?:\s|=|>)/,
     'RAI Connect must be collapsed by default');
-  assert.match(index, /settings-connect-summary[\s\S]*local-agent-install-compact-desc/,
+  assert.match(index, /settings-connect-summary[\s\S]*cx-remote-install-desc/,
     'RAI Connect summary must render as a compact horizontal bar');
   assert.match(app, /date: '2026-09-24'[\s\S]*date: '2026-09-21'[\s\S]*date: '2026-09-14'[\s\S]*date: '2026-09-08'[\s\S]*date: '2026-08-19'/,
     'About timeline must include recent GitHub milestones in descending order');

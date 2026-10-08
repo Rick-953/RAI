@@ -259,3 +259,9 @@
   .settings-connect-command-row { grid-template-columns: 1fr; }
   .settings-connect-command button { justify-self: start; }
 }
+
+/* The current entry uses the online CX device relay, including narrow phones. */
+.local-agent-device-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-color, #ddd); }
+.local-agent-device-row > span { flex:1 1 180px; overflow-wrap:anywhere; min-width:0; }
+.local-agent-settings-card > p { overflow-wrap:anywhere; }
+.local-agent-device-row button { max-width:100%; white-space:normal; }
