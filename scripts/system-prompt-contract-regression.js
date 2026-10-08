@@ -124,12 +124,14 @@ function testServerManagedNativeFallback() {
     'Kimi tool continuation must retain provider reasoning_content');
   assert.match(server, /if \(isKimiK25ActualModel\(actualModel\) \|\| thinkingMode\) \{\s*assistantToolCallMessage\.reasoning_content = roundReasoningContent/,
     'Kimi agent tool continuation must retain provider reasoning_content');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-flash', 'kimi-k2\.6'\]/,
-    'Claude fallback must prefer verified providers before legacy OpenRouter routes');
-  assert.match(server, /'deepseek-flash': \{\s*provider: 'deepseek',\s*model: 'deepseek-flash'/,
-    'DeepSeek Flash must use the verified official provider route');
-  assert.match(server, /const UNIVERSAL_RUNTIME_FALLBACK_MODELS = \[\s*'deepseek-flash',\s*'kimi-k2\.6'/,
-    'universal fallback must prefer verified migrated providers');
+  assert.match(server, /'deepseek-v4\.1-flash': \{\s*provider: 'deepseek'/,
+    'DeepSeek V4.1 Flash must retain a dedicated provider route');
+  assert.match(server, /function getRuntimeFallbackModelIds[\s\S]{0,1000}deepseek-v4\.1-flash/,
+    'fallback must use the retained native-vision DeepSeek, not retired models');
+  const providerPolicy = fs.readFileSync(path.join(__dirname, '../lib/deepseek-provider-fallback.js'), 'utf8');
+  assert.match(providerPolicy, /fetchImpl\(officialUrl/,
+    'Fast timeout fallback must use the official provider, preserving canonical messages');
+  assert.match(providerPolicy, /officialDeepSeekBody\(\{ \.\.\.body/);
   assert.match(server, /routing\.provider === 'openrouter'[\s\S]{0,120}Math\.min\(primaryAttemptTimeoutMs, 6000\)/,
     'legacy OpenRouter connection failures must not consume the full provider attempt budget');
   assert.match(server, /if \(fallbackRouting\.provider === 'deepseek'\) \{\s*applyDeepSeekV4ModeParams\(body, !!thinkingMode, normalizedReasoningProfile\)/,

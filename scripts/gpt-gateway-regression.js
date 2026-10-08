@@ -462,7 +462,7 @@ async function main() {
     );
     assert.match(continuationBlock, /applyGatewayChatRequestPolicy\(continueRequestBody/);
     assert.ok(
-        continuationBlock.indexOf('applyGatewayChatRequestPolicy(continueRequestBody') < continuationBlock.indexOf('await fetch(continueApiUrl'),
+        continuationBlock.indexOf('applyGatewayChatRequestPolicy(continueRequestBody') < continuationBlock.indexOf('await fetchModelProvider(continueApiUrl'),
         'continuation policy must run before the upstream request'
     );
     assert.match(continuationBlock, /let continueController = createChatAbortController\(\)/);

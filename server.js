@@ -20891,7 +20891,7 @@ async function settleChatModelTurn(success, completedModels = null) {
     turn.closed = true;
 }
 
-app.post('/api/chat/stream', authenticateToken, apiLimiter, async (req, res) => chatModelQuotaContext.run({
+app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => chatModelQuotaContext.run({
     userId: req.user.userId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false
 }, async () => {
     console.log(' 收到聊天请求');
