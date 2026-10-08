@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.19-20261008-model-policy-r11';
+const RAI_SW_VERSION = '0.13.20-20261009-cx-remote-r12';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,17 +13,17 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  '', 'index.html', 'runtime-brand.js?v=20261008-model-policy-r11',
-  'rai-system-prompt.js?v=20261008-model-policy-r11', 'event-bindings.js?v=20261008-model-policy-r11',
-  'lib/jsQR.js?v=20261008-model-policy-r11', 'qr-scanner.js?v=20261008-model-policy-r11',
-  'secure-sharing.js?v=20261008-model-policy-r11', 'secure-sharing.css?v=20261008-model-policy-r11',
-  'diagnostics.js?v=20261008-model-policy-r11',
-  'app.js?v=20261008-model-policy-r11', 'styles.css?v=20261008-model-policy-r11',
-  'local-agent.js?v=20261008-model-policy-r11', 'local-agent.css?v=20261008-model-policy-r11',
-  'crf-ui.js?v=20261008-model-policy-r11',
-  'selection-explainer.js?v=20261008-model-policy-r11', 'selection-explainer.css?v=20261008-model-policy-r11',
-  'site.webmanifest?v=20261008-model-policy-r11', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261008-model-policy-r11',
+  '', 'index.html', 'runtime-brand.js?v=20261009-cx-remote-r12',
+  'rai-system-prompt.js?v=20261009-cx-remote-r12', 'event-bindings.js?v=20261009-cx-remote-r12',
+  'lib/jsQR.js?v=20261009-cx-remote-r12', 'qr-scanner.js?v=20261009-cx-remote-r12',
+  'secure-sharing.js?v=20261009-cx-remote-r12', 'secure-sharing.css?v=20261009-cx-remote-r12',
+  'diagnostics.js?v=20261009-cx-remote-r12',
+  'app.js?v=20261009-cx-remote-r12', 'styles.css?v=20261009-cx-remote-r12',
+  'cx-remote.js?v=20261009-cx-remote-r12', 'local-agent.css?v=20261009-cx-remote-r12',
+  'crf-ui.js?v=20261009-cx-remote-r12',
+  'selection-explainer.js?v=20261009-cx-remote-r12', 'selection-explainer.css?v=20261009-cx-remote-r12',
+  'site.webmanifest?v=20261009-cx-remote-r12', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261009-cx-remote-r12',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -33,11 +33,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261008-model-policy-r11', 'lib/purify.min.js?v=20261008-model-policy-r11',
-  'lib/katex/katex.min.css?v=20261008-model-policy-r11', 'lib/katex/katex.min.js?v=20261008-model-policy-r11',
-  'lib/katex/contrib/auto-render.min.js?v=20261008-model-policy-r11',
-  'lib/highlight/styles/github-dark.min.css?v=20261008-model-policy-r11',
-  'lib/highlight/highlight.min.js?v=20261008-model-policy-r11'
+  'lib/marked.min.js?v=20261009-cx-remote-r12', 'lib/purify.min.js?v=20261009-cx-remote-r12',
+  'lib/katex/katex.min.css?v=20261009-cx-remote-r12', 'lib/katex/katex.min.js?v=20261009-cx-remote-r12',
+  'lib/katex/contrib/auto-render.min.js?v=20261009-cx-remote-r12',
+  'lib/highlight/styles/github-dark.min.css?v=20261009-cx-remote-r12',
+  'lib/highlight/highlight.min.js?v=20261009-cx-remote-r12'
 ].map(appPath);
 
 function isAvatarRequest(url) {

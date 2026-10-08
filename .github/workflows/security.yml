@@ -79,12 +79,16 @@ jobs:
         run: npm ci
       - name: Validate isolated harness syntax
         run: node --check scripts/security-smoke-harness.js
+      - name: Verify online CX relay protocol
+        run: npm run test:cx-remote
       - name: Run formal audit suite
         run: npm run test:formal-audit
       - name: Install pinned browser test engines
         run: npx --no-install playwright install --with-deps chromium webkit
       - name: Verify PWA viewport and remember preference in Chromium and WebKit
         run: |
+          npm run test:cx-remote-ui
+          RAI_BROWSER_ENGINE=webkit npm run test:cx-remote-ui
           npm run test:model-ui-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:model-ui-runtime
           npm run test:ios-standalone-runtime

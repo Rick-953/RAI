@@ -12,38 +12,38 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20261008-model-policy-r11"></script>
+  <script src="runtime-brand.js?v=20261009-cx-remote-r12"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20261008-model-policy-r11">
+  <link rel="manifest" href="site.webmanifest?v=20261009-cx-remote-r12">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20261008-model-policy-r11"></script>
-  <script defer src="lib/purify.min.js?v=20261008-model-policy-r11"></script>
+  <script defer src="lib/marked.min.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="lib/purify.min.js?v=20261009-cx-remote-r12"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261008-model-policy-r11">
-  <script defer src="lib/katex/katex.min.js?v=20261008-model-policy-r11"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261008-model-policy-r11"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261009-cx-remote-r12">
+  <script defer src="lib/katex/katex.min.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261009-cx-remote-r12"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20261008-model-policy-r11"></script>
-  <script defer src="event-bindings.js?v=20261008-model-policy-r11"></script>
+  <script defer src="rai-system-prompt.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="event-bindings.js?v=20261009-cx-remote-r12"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261008-model-policy-r11">
-  <script defer src="lib/highlight/highlight.min.js?v=20261008-model-policy-r11"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261009-cx-remote-r12">
+  <script defer src="lib/highlight/highlight.min.js?v=20261009-cx-remote-r12"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20261008-model-policy-r11">
-  <link rel="stylesheet" href="selection-explainer.css?v=20261008-model-policy-r11">
-  <link rel="stylesheet" href="local-agent.css?v=20261008-model-policy-r11">
-  <link rel="stylesheet" href="secure-sharing.css?v=20261008-model-policy-r11">
+  <link rel="stylesheet" href="styles.css?v=20261009-cx-remote-r12">
+  <link rel="stylesheet" href="selection-explainer.css?v=20261009-cx-remote-r12">
+  <link rel="stylesheet" href="local-agent.css?v=20261009-cx-remote-r12">
+  <link rel="stylesheet" href="secure-sharing.css?v=20261009-cx-remote-r12">
 </head>
 
 <body>
@@ -391,7 +391,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.13.19</div>
+                <div class="logo-subtitle">by Rick · v0.13.20</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -778,7 +778,7 @@
                         <path d="M4 4h16c1.1 0 2 .9 2 2v11c0 1.1-.9 2-2 2h-6v2h-4v-2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm0 2v11h16V6H4Zm2 2 3 3-3 3 1.4 1.4L11.8 11 7.4 6.6 6 8Zm6 6h6v2h-6v-2Z" />
                       </svg>
                     </div>
-                    <span class="more-menu-item-text" data-i18n="local-agent-menu">本地 Agent</span>
+                    <span class="more-menu-item-text" data-i18n="cx-remote-menu">连接 CX RAI</span>
                     <div class="more-menu-item-toggle" id="localAgentToggle"></div>
                   </div>
 
@@ -1154,7 +1154,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261008-model-policy-r11" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261009-cx-remote-r12" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1220,7 +1220,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261008-model-policy-r11" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261009-cx-remote-r12" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1235,7 +1235,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261008-model-policy-r11" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261009-cx-remote-r12" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1984,49 +1984,22 @@
                   <img src="icons/settings/capabilities.svg" alt="">
                 </span>
                 <span class="settings-connect-summary-copy">
-                  <strong id="settingsRaiConnectInstallTitle" data-i18n="local-agent-install-title">RAI Connect 与本地 Agent</strong>
-                  <span data-i18n="local-agent-install-compact-desc">可选：连接浏览器与本地电脑能力</span>
+                  <strong id="settingsRaiConnectInstallTitle" data-i18n="cx-remote-install-title">手机 Web 连接 CX RAI</strong>
+                  <span data-i18n="cx-remote-install-desc">同账号在线电脑，本机授权可撤销</span>
                 </span>
                 <span class="settings-connect-summary-badge" data-i18n="local-agent-install-optional">进阶</span>
                 <span class="settings-connect-summary-chevron" aria-hidden="true"></span>
               </summary>
               <div class="settings-connect-install-body">
-                <div class="settings-connect-install-header">
-                  <div>
-                    <p data-i18n="local-agent-install-desc">让 RAI 在你确认后操作本机文件、终端和单独选择的浏览器标签页。</p>
-                  </div>
-                  <a href="https://github.com/Rick-953/RAI/releases/latest" target="_blank" rel="noopener noreferrer"
-                    data-i18n="local-agent-release-link">发布页</a>
-                </div>
-                <div class="settings-connect-command-list">
-                  <div class="settings-connect-command">
-                    <h5>macOS / Linux</h5>
-                    <div class="settings-connect-command-row">
-                      <code>curl --fail --location --proto '=https' --tlsv1.2 https://github.com/Rick-953/RAI/releases/latest/download/install.sh | sh</code>
-                      <button type="button" data-local-agent-copy="unix" data-i18n="local-agent-copy-command">复制命令</button>
-                    </div>
-                  </div>
-                  <div class="settings-connect-command">
-                    <h5>Windows PowerShell</h5>
-                    <div class="settings-connect-command-row">
-                      <code>irm https://github.com/Rick-953/RAI/releases/latest/download/install.ps1 | iex</code>
-                      <button type="button" data-local-agent-copy="windows" data-i18n="local-agent-copy-command">复制命令</button>
-                    </div>
-                  </div>
-                </div>
+                <p>手机或其他设备通过同账号 RAI Web 请求在线 CX RAI 操作 Windows 电脑；无需 RAI Connect 扩展。</p>
                 <ol class="settings-connect-steps">
-                  <li data-i18n="local-agent-install-step-command">在终端运行与你系统对应的命令；安装器会校验文件、安装本地 Agent，并打印扩展目录。</li>
-                  <li data-i18n="local-agent-install-step-browser">打开 chrome://extensions 或 edge://extensions，开启“开发者模式”，点击“加载已解压的扩展”。</li>
-                  <li data-i18n="local-agent-install-step-directory">选择安装器最后打印的 extension 目录。浏览器不允许安装器跳过这次人工确认。</li>
-                  <li data-i18n="local-agent-install-step-pair">返回 RAI 的“设置 > 能力 > RAI Local Agent”，点击“绑定此设备”。</li>
-                  <li data-i18n="local-agent-install-step-chat">打开已有对话，或在新对话发送第一条消息，然后点击“连接当前对话”。每个对话单独授权。</li>
-                  <li data-i18n="local-agent-install-step-use">向 RAI 描述要完成的本地任务；命令、高风险操作和提权会在 RAI Connect 侧边栏或系统窗口中等待你确认。</li>
+                  <li>电脑安装 CX RAI 1.8.7+，登录同账号，在设置 → 通用启用「允许同账号 Web 连接此电脑」，选择工作目录。</li>
+                  <li>手机 Web 先打开或创建保存的对话，点击「更多 → 连接 CX RAI」，选择在线电脑。</li>
+                  <li>在电脑与手机核对连接安全码，电脑明确允许后，本对话最多连接 15 分钟。</li>
+                  <li>向 AI 描述电脑任务。每次文件/命令操作均须电脑确认；脚本可操作系统，不要批准不可信参数。</li>
+                  <li>Web 断开/撤销、电脑关闭开关、退出账号、离线或到期都会失效，不自动重试任务。</li>
                 </ol>
-                <div class="settings-connect-install-links">
-                  <a href="https://github.com/Rick-953/RAI/releases/latest/download/rai-connect-extension.zip"
-                    target="_blank" rel="noopener noreferrer" data-i18n="local-agent-extension-download">单独下载扩展压缩包</a>
-                  <span data-i18n="local-agent-extension-store-note">当前为 GitHub 侧载版，尚未上架 Chrome 或 Edge 扩展商店。</span>
-                </div>
+                <p>电脑需保持在线。当前支持文件与 PowerShell 工具，不提供无人值守授权。桌面 GUI 可通过批准的脚本操作，尚不等同实时桌面视频/触控镜像。</p>
               </div>
             </details>
           </section>
@@ -2047,10 +2020,8 @@
           <option value="auto" data-i18n="smartMode">最佳</option>
           <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
           <option value="gpt-6-luna">GPT 6 Luna</option>
-          <option value="claude-sonnet-5">Claude Sonnet 5</option>
-          <option value="gemini-3.6-flash-low">Gemini 3.6</option>
+          <option value="gpt-6-astra">GPT 6 Astra</option>
           <option value="deepseek-v4.1-flash">DeepSeek V4.1 Flash</option>
-          <option value="nemotron-3-ultra">Nemotron 3 Ultra</option>
         </select>
       </div>
 
@@ -2244,16 +2215,16 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20261008-model-policy-r11"></script>
-  <script defer src="pet-quotes.js?v=20261008-model-policy-r11"></script>
-  <script defer src="diagnostics.js?v=20261008-model-policy-r11"></script>
-  <script defer src="app.js?v=20261008-model-policy-r11"></script>
-  <script defer src="local-agent.js?v=20261008-model-policy-r11"></script>
-  <script defer src="crf-ui.js?v=20261008-model-policy-r11"></script>
-  <script defer src="selection-explainer.js?v=20261008-model-policy-r11"></script>
-  <script defer src="lib/jsQR.js?v=20261008-model-policy-r11"></script>
-  <script defer src="qr-scanner.js?v=20261008-model-policy-r11"></script>
-  <script src="secure-sharing.js?v=20261008-model-policy-r11" defer></script>
+  <script defer src="conversation-cache.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="pet-quotes.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="diagnostics.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="app.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="cx-remote.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="crf-ui.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="selection-explainer.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="lib/jsQR.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="qr-scanner.js?v=20261009-cx-remote-r12"></script>
+  <script src="secure-sharing.js?v=20261009-cx-remote-r12" defer></script>
 </body>
 
 </html>

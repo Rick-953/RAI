@@ -47,6 +47,9 @@ async function main(){
   if(body.stream===false){summaryCalls++;res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:'Summary preserves facts and pending task.'},finish_reason:'stop'}]}));return;}
   if(mode==='failure'){res.writeHead(503);res.end('{}');return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
+  if(mode==='remote'&&!body.messages.some(m=>m.role==='tool')){
+   res.write('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'call_remote_test',type:'function',function:{name:'list_files',arguments:JSON.stringify({path:''})}}]},finish_reason:'tool_calls'}]})+'\n\n');res.end('data: [DONE]\n\n');return;
+  }
   if(mode==='cancel'){res.write('data: '+JSON.stringify({choices:[{delta:{content:'partial'},finish_reason:null}]})+'\n\n');req.on('close',()=>res.end());return;}
   res.write('data: '+JSON.stringify({choices:[{delta:{content:'Runtime answer complete.'},finish_reason:mode==='length'?'length':'stop'}]})+'\n\n');res.end('data: [DONE]\n\n');
  });
@@ -71,6 +74,27 @@ async function main(){
    const compressed=await chat('gpt-6.1-sol',{messages:history});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);
    mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);mode='answer';
    assert.equal((await dbGet(db,'SELECT points FROM users')).points,0,'chat must not debit points');
+   // Real login + software identity + chat -> approved PC -> one-shot tool -> continuation.
+   const {createSoftwareClientAuth}=require('../lib/software-client-auth');
+   const identity=await createSoftwareClientAuth({db}).create({name:'Isolated CX remote test',platform:'windows'});
+   const nativeHeaders={...headers,'X-RAI-Client-Key':identity.rawKey};
+   const actor=await dbGet(db,'SELECT id FROM users LIMIT 1'),remoteChat='remote-'+crypto.randomBytes(12).toString('hex');
+   await dbRun(db,'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)',[remoteChat,actor.id,'Remote fixture','gpt-6.1-sol']);
+   async function remote(path,method='GET',body,auth=headers){const r=await fetch(baseUrl+'/api/cx-remote'+path,{method,headers:auth,body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();assert.equal(r.status,200,JSON.stringify(data));return data;}
+   const computer=(await remote('/devices','POST',{platform:'windows',name:'Isolated PC',version:'1.8.7'},nativeHeaders)).device;
+   const deviceHeaders={...nativeHeaders,'X-CX-Device-Key':computer.deviceKey},devicePath='/devices/'+computer.id;
+   const link=(await remote('/sessions','POST',{deviceId:computer.id,conversationId:remoteChat})).session;
+   await remote(devicePath+'/approve','POST',{sessionId:link.id,approved:true},deviceHeaders);
+   mode='remote';const stream=chat('gpt-6.1-sol',{sessionId:remoteChat,messages:[{role:'user',content:'List the files on my connected computer.'}],local_agent:{protocolVersion:'cx-online-v1',sessionId:link.id}});
+   let remoteTask;
+   for(let i=0;i<250&&!remoteTask;i++){remoteTask=(await remote(devicePath+'/poll','GET',undefined,deviceHeaders)).tasks[0];if(!remoteTask)await delay(100);}
+   assert.ok(remoteTask,'chat must dispatch the remote tool');assert.equal(remoteTask.tool,'list_files');
+   await remote(devicePath+'/tasks/'+remoteTask.id+'/start','POST',{},deviceHeaders);
+   await remote(devicePath+'/tasks/'+remoteTask.id+'/result','POST',{result:{success:true,path:'fixture',entries:[{name:'remote-note.txt',type:'file'}],output:'目录: fixture (1 项)\n  [文件] remote-note.txt'}},deviceHeaders);
+   const completed=await stream;assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
+   assert.ok(observations.some(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))),'PC result must reach streaming provider continuation (exclude later title generation)');
+   assert.ok(!completed.events.some(x=>x.type==='local_agent_tool_call'||x.type==='client_tool_call'),'Web must not execute desktop tool payload');
+   await remote(devicePath,'DELETE',undefined,deviceHeaders);mode='answer';
    console.log('chat-model-runtime PASS: authenticated free account, 3 completed Astra turns then 429, zero points, Luna effort, native DeepSeek vision, failure release, real long-context summarization, independent model allowances');
   }finally{await closeDatabase(db);}
  }catch(error){error.message+='\nIsolated server tail:\n'+logs.slice(-9000);throw error;}finally{if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null)child.kill('SIGKILL');}provider.closeAllConnections?.();await new Promise(r=>provider.close(r));const safe=fs.realpathSync(temp),base=fs.realpathSync(os.tmpdir());assert.ok(safe.startsWith(base+path.sep)&&path.basename(safe).startsWith('rai-model-runtime-'));fs.rmSync(safe,{recursive:true,force:true});}

@@ -3,6 +3,7 @@ const { enforceContextWindow, CONTEXT_WINDOW_TOKENS } = require('./lib/context-w
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
+const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
 const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
@@ -20809,6 +20810,10 @@ function collectRequestInterjections(requestId) {
 }
 
 //  修复：流式聊天路由
+// Separate bounded pre-auth budget: PC heartbeats and approval polls must not
+// consume the ordinary user API limiter (including clients sharing one NAT IP).
+const cxRemoteLimiter = rateLimit({ windowMs: 60000, max: 300, message: {error:'cx_remote_rate_limited'} });
+const cxRemoteControl = installCxRemoteRoutes({ app, authenticateToken, apiLimiter: cxRemoteLimiter, dbGet: dbGetAsync });
 const chatModelQuotaContext = new AsyncLocalStorage();
 const chatModelQuotaService = createChatModelQuotaService({ withTransaction: withMainDbTransaction });
 const fetchDeepSeekProvider = createDeepSeekProviderFetch({
@@ -20978,23 +20983,26 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         // 新 Agent 必须解析并验证签名会话；旧 UWP 仅在可撤销的软件客户端身份有效时兼容。
         // workdir_configured 仅作提示字段：false 时客户端在工具到达后引导用户选择目录。
         let localAgentSession;
+        let cxRemoteSession = null;
         try {
+            cxRemoteSession = cxRemoteControl.resolveChatSession(req.user.userId, rawLocalAgent, requestedSessionId || '');
             await localAgentStartupReady;
             localAgentSession = await localAgentService.resolveChatSession(
                 req.user.userId,
-                rawLocalAgent,
+                cxRemoteSession ? null : rawLocalAgent,
                 requestedSessionId || ''
             );
         } catch (error) {
+            if (rawLocalAgent?.protocolVersion === 'cx-online-v1') return res.status(error.status || 403).json({success:false,error:error.code || 'cx_remote_failed'});
             return sendLocalAgentError(res, error);
         }
         if (rawClientFileExecution === true && !req.softwareClient) {
             return res.status(403).json({ error: 'software_client_key_required' });
         }
-        const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession;
+        const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession || !!cxRemoteSession;
         if (clientFileExecution) {
             console.log(
-                ` 客户端文件执行已启用: requestId=${requestId || 'pending'}, ${formatPrivateLogFingerprint(requestedSessionId || '', 'sessionId')}, protocol=${localAgentSession ? 'local-agent-v1' : 'uwp-v1'}, workdirConfigured=${workdir_configured === true}`
+                ` 客户端文件执行已启用: requestId=${requestId || 'pending'}, ${formatPrivateLogFingerprint(requestedSessionId || '', 'sessionId')}, protocol=${cxRemoteSession ? 'cx-online-v1' : (localAgentSession ? 'local-agent-v1' : 'uwp-v1')}, workdirConfigured=${workdir_configured === true}`
             );
         }
         let systemPrompt = '';
@@ -24437,7 +24445,7 @@ if (clientFileExecution && systemPrompt) {
             // 设置类问题兜底：模型在设置类消息未调设置工具时，强制发起 cxrai_setting list 引导
             // （无论是否只调了 read_skill 占位；只要还没调 cxrai_setting 就强制）
             const alreadyCalledSettingTool = accumulatedToolCalls.some((tc) => tc.function?.name === 'cxrai_setting');
-            if (useStreamingTools && clientFileExecution && !forcedCxraiSettingDone && !alreadyCalledSettingTool && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
+            if (useStreamingTools && clientFileExecution && !cxRemoteSession && !forcedCxraiSettingDone && !alreadyCalledSettingTool && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
                 forcedCxraiSettingDone = true;
                 console.warn(` 设置类问题但未调用 cxrai_setting，自动发起 list 引导: model=${actualModel}`);
                 accumulatedToolCalls.push({
@@ -24543,6 +24551,7 @@ if (clientFileExecution && systemPrompt) {
                             const isMemoryDeleteTool = toolName === 'delete_memory';
                             const isReadSkillTool = toolName === 'read_skill';
                             const isFileTool = isFileWorkspaceToolName(toolName);
+                            if (cxRemoteSession && toolName === 'cxrai_setting') { executedToolResults.push({toolCall,result:{success:false,error:'cx_remote_tool_not_supported'}}); continue; }
                             recordServerToolTrace({
                                 type: isSearchTool ? 'search_status' : 'tool_status',
                                 tool: toolName,
@@ -24673,6 +24682,28 @@ if (clientFileExecution && systemPrompt) {
                             }
 
                             if (isFileTool && clientFileExecution) {
+                                if (cxRemoteSession) {
+                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: 'running', message: '等待在线 CX RAI 电脑确认并执行' }) + '\n\n');
+                                    const remoteController = createChatAbortController();
+                                    let remoteResult;
+                                    const remotePauseStartedAt = Date.now();
+                                    if (chatRequestDeadlineTimer) { clearTimeout(chatRequestDeadlineTimer); chatRequestDeadlineTimer = null; }
+                                    const remoteHeartbeat = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { remoteController.abort(); } }, 15000);
+                                    const remoteStreamError = () => remoteController.abort();
+                                    res.once('error', remoteStreamError);
+                                    try {
+                                        remoteResult = await cxRemoteControl.execute(req.user.userId, cxRemoteSession.id, sessionId, toolName, args, remoteController.signal);
+                                     } catch (error) { remoteResult = { success: false, error: error.code || 'cx_remote_failed' }; }
+                                    finally {
+                                        clearInterval(remoteHeartbeat);res.removeListener('error',remoteStreamError);
+                                        chatAbortControllers.delete(remoteController);
+                                        if (chatRequestBudget) chatRequestBudget.deadlineAt += Date.now() - remotePauseStartedAt;
+                                        chatRequestDeadlineTimer = setTimeout(() => { for (const active of chatAbortControllers) active.abort(); }, Math.max(0, chatRequestBudget ? chatRequestBudget.remainingMs() : 0));
+                                    }
+                                    executedToolResults.push({ toolCall, result: normalizeClientToolResult(remoteResult) });
+                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: remoteResult.success === false ? 'failed' : 'complete', message: remoteResult.success === false ? '在线电脑未完成本次操作' : '在线 CX RAI 执行完成' }) + '\n\n');
+                                    continue;
+                                }
                                 if (getPendingClientToolCountBySession(sessionId) > 0) {
                                     executedToolResults.push({ toolCall, result: { success: false, error: 'client_tool_busy' } });
                                     continue;
