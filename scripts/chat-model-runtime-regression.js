@@ -80,6 +80,11 @@ async function main(){
    assert.equal(smart.events.find(x=>x.type==='done').actualModel,'gpt-6.1-sol');
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6.1-sol');
    mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);mode='answer';
+   // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
+   const rerouted=await chat('gpt-6.1-sol',{sessionId:provenanceChat,thinkingMode:false});
+   const terminalModel=rerouted.events.find(x=>x.type==='done')?.actualModel;
+   assert.equal(terminalModel,'deepseek-v4.1-flash',rerouted.raw.slice(-2000));
+   assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,terminalModel,'history must preserve rerouted upstream ID, not selected Sol');
    assert.equal((await dbGet(db,'SELECT points FROM users')).points,0,'chat must not debit points');
    // Real login + software identity + chat -> approved PC -> one-shot tool -> continuation.
    const {createSoftwareClientAuth}=require('../lib/software-client-auth');
