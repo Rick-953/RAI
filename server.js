@@ -344,6 +344,9 @@ const CHAT_CLIENT_MAX_MESSAGES = Math.max(2, Math.min(parseInt(cleanEnvValue(pro
 const CHAT_CLIENT_MAX_MESSAGE_CHARS = 4 * 1024 * 1024;
 const CHAT_CLIENT_MAX_TOTAL_CHARS = 4 * 1024 * 1024;
 const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
+// First effective token (content or reasoning) deadline before a provider fallback.
+// Kept generous so long thinking on GPT models never counts as a failure.
+const CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS = Math.max(5000, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS) || '20000', 10) || 20000, 120000));
 const ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
 const AUDIO_UNDERSTANDING_MAX_BYTES = 20 * 1024 * 1024;
 const UPLOAD_PROGRESS_TTL_MS = 30 * 60 * 1000;
@@ -13092,8 +13095,22 @@ app.post('/api/auth/refresh', authLimiter, requireTrustedRefreshRequest, async (
             tokenExpiresAt: refreshed.accessTokenExpiresAt
         });
     } catch (error) {
-        clearSelectedCookie();
-        return res.status(401).json({ success: false, error: '刷新会话已失效' });
+        // Only a genuinely invalid/expired/revoked session may clear the refresh
+        // cookie. A transient failure (store not ready yet, DB hiccup) must leave
+        // the cookie intact so the next load can still restore the session.
+        const terminalCodes = new Set([
+            'invalid_refresh_token',
+            'refresh_token_reuse',
+            'session_revoked',
+            'refresh_token_expired',
+            'session_version_changed'
+        ]);
+        if (terminalCodes.has(error?.code)) {
+            clearSelectedCookie();
+            return res.status(401).json({ success: false, error: '刷新会话已失效' });
+        }
+        console.warn(' auth refresh transient failure:', sanitizeReportContext(error));
+        return res.status(503).json({ success: false, error: '会话刷新暂时不可用，请重试' });
     }
 });
 
@@ -20822,14 +20839,16 @@ const fetchDeepSeekProvider = createDeepSeekProviderFetch({
     primaryUrl: joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions'),
     primaryKey: DEEPSEEK_FAST_API_KEY,
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
-    officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY
+    officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
+    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS
 });
 const fetchGptProvider = createDeepSeekProviderFetch({
     primaryUrl: API_PROVIDERS.rai_gpt_gateway.baseURL,
     primaryKey: GPT_GATEWAY_API_KEY,
     primaryModels: [...GPT_GATEWAY_CHAT_MODELS],
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
-    officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY
+    officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
+    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS
 });
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
@@ -20891,7 +20910,7 @@ async function fetchModelProvider(url, options = {}) {
     }
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
     if (response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
-        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 首次有效响应超时或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 20 秒内无首字或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
     }
     return response;
 }
@@ -22066,7 +22085,7 @@ if (clientFileExecution && systemPrompt) {
             if (model === 'think-auto') thinkingMode = true;
             quotaTurn.thinkingMode = thinkingMode;
             quotaTurn.reasoningProfile = normalizedReasoningProfile;
-            autoRoutingReason = model === 'fast-auto' ? '快速：Fast DeepSeek V4.1 Flash；10 秒无响应切官方' : thinkingMode ? '思考：GPT 6.1 Sol，' + (normalizedReasoningProfile === 'auto' ? '自适应' : '手动 ' + normalizedReasoningProfile) + '；10 秒无响应切官方 DeepSeek' : '智能模型：GPT 6.1 Sol 关闭思考；10 秒无响应切官方 DeepSeek';
+            autoRoutingReason = model === 'fast-auto' ? '快速：Fast DeepSeek V4.1 Flash；20 秒无首字切官方' : thinkingMode ? '思考：GPT 6.1 Sol，' + (normalizedReasoningProfile === 'auto' ? '自适应' : '手动 ' + normalizedReasoningProfile) + '；20 秒无首字切官方 DeepSeek' : '智能模型：GPT 6.1 Sol 关闭思考；20 秒无首字切官方 DeepSeek';
         } else {
             finalModel = model;
         }
@@ -24156,6 +24175,41 @@ if (clientFileExecution && systemPrompt) {
                 const incompleteStreamError = new Error('provider_stream_missing_terminal_signal');
                 incompleteStreamError.code = 'provider_stream_missing_terminal_signal';
                 throw incompleteStreamError;
+            }
+            // Some providers finish a thinking stream without ever emitting content
+            // (reasoning-only stop). Recover a real answer on the same provider before
+            // marking the turn degraded, so the user never sees an empty/truncated reply.
+            if (!primaryHasUsableToolCall && !String(fullContent || '').trim() && String(reasoningContent || '').trim()) {
+                try {
+                    const recoveryBody = { ...fetchBody, stream: false };
+                    if (Array.isArray(recoveryBody.messages)) {
+                        recoveryBody.messages = [
+                            ...recoveryBody.messages,
+                            { role: 'system', content: 'Return only the final user-facing answer as normal assistant content. Do not output another reasoning block.' }
+                        ];
+                    }
+                    const recoveryResponse = await fetchModelProvider(apiUrl, {
+                        method: 'POST',
+                        headers: fetchHeaders,
+                        body: JSON.stringify(recoveryBody)
+                    });
+                    if (recoveryResponse.ok) {
+                        const recoveryPayload = await recoveryResponse.json().catch(() => null);
+                        const recovered = String(recoveryPayload?.choices?.[0]?.message?.content || '').trim();
+                        if (recovered) {
+                            const sanitizedRecovered = sanitizeStreamingContent(recovered);
+                            const recoveredVisible = splitEmbeddedThinkContent(sanitizedRecovered, false).visible;
+                            if (recoveredVisible) {
+                                fullContent += recoveredVisible;
+                                res.write(`data: ${JSON.stringify({ type: 'content', content: recoveredVisible })}\n\n`);
+                            }
+                        }
+                    } else {
+                        await recoveryResponse.body?.cancel().catch(() => {});
+                    }
+                } catch (recoveryError) {
+                    console.warn(' reasoning-only recovery failed:', sanitizeReportContext(recoveryError));
+                }
             }
 
             const extractFallbackToolCalls = (rawText = '') => {

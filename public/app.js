@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.22';
-const RAI_BUILD_ID = '20261009-composer-focus-r14';
+const RAI_APP_VERSION = '0.13.23';
+const RAI_BUILD_ID = '20261010-routing-recovery-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8162,6 +8162,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-10', version: 'v0.13.23',
+    zh: { summary: '首字超时改为 20 秒并按有效首 token 计算；补齐流式正文；修复冷启动登录页。', details: ['供应商 20 秒内没有首个有效 token（正文或思考）才切换官方 DeepSeek；思考时间长不再被误判。', '上游只输出思考、未输出正文时，会在同供应商补答一次再落库，正常显示正文。', '修复冷启动偶发显示登录页：暂时性刷新失败不再清除会话，客户端自动重试。'] },
+    en: { summary: '20s first-token deadline, streaming answer recovery, and reliable cold-start auth.', details: ['Fall back to official DeepSeek only when no effective first token (content or reasoning) arrives within 20 seconds; long thinking is never treated as a stall.', 'If an upstream returns reasoning with no content, retry once on the same provider so the answer streams normally.', 'Transient refresh failures no longer clear the session; the client retries on startup so the login frame does not flash.'] }
+  },
   {
     date: '2026-10-09', version: 'v0.13.22',
     zh: { summary: '修复输入框点击和最大思考档，精简模型列表。', details: ['点击或轻触输入框内除按钮、菜单等控件外的空白区域，直接聚焦并输入。', '工具栏与模型按钮周围空白也可输入；发送/停止仍在右侧。', '添加附件整行可点击；支持多文件、多图片与追加批次上传，同一问题一起发送。', '移动端回复正文可上下滑动，流式输出不再把正在查看历史的用户拉回底部。', '统一桌面、手机和网页应用的聚焦逻辑，移除 Android 重复延迟聚焦。', '打开思考默认自适应，由模型决定思考长度；也可手动选择低、中、高、最大（Max）。', '模型列表仅显示名称，后台视觉、思考和上下文压缩能力不变。'] },
@@ -15855,6 +15860,20 @@ function retryStartupAuthentication() {
   return startupAuthRetryPromise;
 }
 
+let startupAuthRetryTimer = null;
+function scheduleStartupAuthRetries(attempt = 0) {
+  if (appState.authState !== 'checking') return;
+  if (attempt >= 5) return;
+  const delayMs = Math.min(4000, 600 * Math.pow(2, attempt));
+  clearTimeout(startupAuthRetryTimer);
+  startupAuthRetryTimer = setTimeout(async () => {
+    startupAuthRetryTimer = null;
+    if (appState.authState !== 'checking') return;
+    const state = await retryStartupAuthentication();
+    if (state === 'checking') scheduleStartupAuthRetries(attempt + 1);
+  }, delayMs);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   window.toggleCustomApiMode = toggleCustomApiMode;
   window.startCustomApiMode = startCustomApiMode;
@@ -15891,6 +15910,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (startupState === 'checking') {
     window.addEventListener('online', retryStartupAuthentication);
     window.addEventListener('focus', retryStartupAuthentication);
+    // A transient first-load failure (store not ready, momentary network blip)
+    // must self-heal instead of leaving the login frame up until a manual reload.
+    scheduleStartupAuthRetries();
   }
 
   loadSettings();
