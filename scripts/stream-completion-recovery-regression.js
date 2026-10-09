@@ -120,7 +120,7 @@ const terminalSite = server.indexOf('writeIncompleteAnswer(res, {');
 assert.ok(terminalSite > server.indexOf('scheduleConversationIntegritySeal(sessionId, req.user.userId);', server.indexOf('let persistedIncompleteAnswer =')), 'terminal fallback must be outside the session-only persistence branch');
 assert.match(app, /const incomplete = parsed.degraded === true;/, 'the client must not mark a degraded reply complete');
 assert.match(app, /updateStepStatus\(getGeneratingStep\(\), incomplete \? 'failed' : 'done'/);
-assert.match(server, /res\.write\(`data: \${JSON\.stringify\(\{ type: 'done', degraded: streamDegraded \}\)}/,
+assert.match(server, /res\.write\(`data: \${JSON\.stringify\(\{ type: 'done', degraded: streamDegraded, actualModel:[^\n]+ \}\)}/,
     'done must distinguish a degraded stream from a complete answer');
 
 console.log('stream-completion-recovery-regression ok');
