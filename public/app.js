@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.23';
-const RAI_BUILD_ID = '20261010-routing-recovery-r1';
+const RAI_APP_VERSION = '0.13.24';
+const RAI_BUILD_ID = '20261010-interjection-fix-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8162,6 +8162,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-10', version: 'v0.13.24',
+    zh: { summary: '修复工具调用期间插话不显示，菜单不再误关。', details: ['多轮工具调用时插话立即出现在对话中，并作为用户消息进入上下文。', '插话不再因带附件被静默丢弃。', '更多菜单与模型下拉按菜单矩形判定点击，圆角穿透不再误关。'] },
+    en: { summary: 'Interjections appear during tool-calling runs; menus no longer close on edge clicks.', details: ['Interjections render immediately and join the tool-call context as user turns.', 'Interjections are not dropped when attachments are present.', 'Menu close uses the menu box so rounded-corner pass-through cannot close it.'] }
+  },
   {
     date: '2026-10-10', version: 'v0.13.23',
     zh: { summary: '首字超时改为 20 秒并按有效首 token 计算；补齐流式正文；修复冷启动登录页。', details: ['供应商 20 秒内没有首个有效 token（正文或思考）才切换官方 DeepSeek；思考时间长不再被误判。', '上游只输出思考、未输出正文时，会在同供应商补答一次再落库，正常显示正文。', '修复冷启动偶发显示登录页：暂时性刷新失败不再清除会话，客户端自动重试。'] },
@@ -16246,11 +16251,23 @@ document.addEventListener('keydown', handleComposerMenuEscape);
 
 
 // 点击外部关闭更多菜单
+function isPointInsideElement(element, event) {
+  if (!element || !event) return false;
+  const rect = element.getBoundingClientRect();
+  if (!rect.width || !rect.height) return false;
+  const x = event.clientX;
+  const y = event.clientY;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  // Rounded corners and inner overlays can let a click pass through to the page
+  // behind the menu. Treat any pointer inside the menu box as belonging to it.
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
 document.addEventListener('click', function (e) {
   const menu = document.getElementById('moreMenu');
   const moreBtn = document.getElementById('moreBtn');
   if (menu && menu.classList.contains('active')) {
-    if (!menu.contains(e.target) && !moreBtn?.contains(e.target)) {
+    if (!menu.contains(e.target) && !moreBtn?.contains(e.target) && !isPointInsideElement(menu, e)) {
       closeMoreMenu();
     }
   }
@@ -16841,7 +16858,7 @@ document.addEventListener('click', (e) => {
     .some((selector) => selector.contains(e.target));
 
   if (menu) {
-    if (!menu.contains(e.target) && !isClickInsideTrigger) {
+    if (!menu.contains(e.target) && !isClickInsideTrigger && !isPointInsideElement(menu, e)) {
       closeModelModal();
     }
   }
@@ -21378,9 +21395,28 @@ function setupSessionsLoaderObserver() {
 
 // 修复：改进sendMessage，添加更多的错误处理
 // 支持多模态：图片、音频、视频附件
+function appendVisibleInterjection(interjection) {
+  const content = String(interjection?.content || '').trim();
+  if (!content) return;
+  const last = appState.messages[appState.messages.length - 1];
+  if (last && last.role === 'user' && String(last.content || '').trim() === content) return;
+  appState.messages.push({
+    role: 'user',
+    content,
+    created_at: interjection?.createdAt || new Date().toISOString(),
+    interjection: true
+  });
+  if (typeof renderMessages === 'function') renderMessages();
+  if (typeof scrollToBottom === 'function') scrollToBottom();
+}
+
 async function submitStreamingInterjection(messageText) {
   const content = String(messageText || '').trim();
-  if (!content || !appState.currentRequestId || !appState.currentSession) return false;
+  if (!content) return false;
+  if (!appState.currentRequestId || !appState.currentSession) {
+    showToast(isChineseLanguage(appState.language) ? '当前没有进行中的回答，请直接发送' : 'No answer is in progress; send normally');
+    return false;
+  }
 
   const input = document.getElementById('messageInput');
   if (input) {
@@ -21399,6 +21435,8 @@ async function submitStreamingInterjection(messageText) {
       appState.activeResearch.render();
     }
     scrollToBottom();
+  } else {
+    appendVisibleInterjection(interjection);
   }
 
   try {
@@ -21511,9 +21549,14 @@ async function sendMessage(message = null, options = {}) {
   }
   closeModelModal();
   if (appState.isStreaming) {
-    if (messageText && currentAttachments.length === 0) {
-      await submitStreamingInterjection(messageText);
+    if (!messageText) {
+      showToast(isChineseLanguage(appState.language) ? '回答生成中，插话需要输入文字' : 'Type text to interject while generating');
+      return;
     }
+    if (currentAttachments.length > 0) {
+      showToast(isChineseLanguage(appState.language) ? '回答生成中，插话暂不支持附件；已只发送文字' : 'While generating, interjections send text only; attachments were skipped');
+    }
+    await submitStreamingInterjection(messageText);
     return;
   }
 
@@ -23345,6 +23388,10 @@ async function sendMessage(message = null, options = {}) {
                 updateStepStatus(stepProcessTrace, 'running', isChineseLanguage(appState.language) ? '实时展示模型输出...' : 'Showing model output live...');
               }
             }
+          }
+          else if (parsed.type === 'user_interjection') {
+            appendVisibleInterjection({ content: parsed.content, createdAt: parsed.createdAt });
+            addProcessTraceItem('agent', isChineseLanguage(appState.language) ? '你的新消息已交给模型继续处理' : 'Your new message was passed to the model');
           }
           else if (parsed.type === 'agent_interjection') {
             addProcessTraceItem('agent', parsed.detail || (isChineseLanguage(appState.language) ? '用户插话已进入讨论上下文' : 'User message added to discussion context'));
