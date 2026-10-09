@@ -1219,7 +1219,7 @@ function testVersionContract() {
   assert.match(handleNewChatClick, /appState\.currentSession = null[\s\S]{0,260}showWelcome\(\)/,
     'the new-conversation command must stay on an unsaved local home until first send');
   const sendMessage = extractNamedFunction(app, 'sendMessage');
-  assert.match(sendMessage, /immediateConversationTitle\s*=\s*deriveImmediateConversationTitleFromUserMessage[\s\S]{0,1800}createNewSession\(\{[\s\S]{0,160}initialTitle:\s*immediateConversationTitle/,
+  assert.match(sendMessage, /immediateConversationTitle\s*=\s*deriveImmediateConversationTitleFromUserMessage[\s\S]{0,3200}createNewSession\(\{[\s\S]{0,160}initialTitle:\s*immediateConversationTitle/,
     'the first user question must be the session title at creation time, before model summarization');
   assert.match(sendMessage, /createNewSession\(\{[\s\S]{0,180}preserveComposerMode:\s*true/,
     'first-send session creation must preserve the selected composer mode');

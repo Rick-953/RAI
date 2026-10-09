@@ -24597,6 +24597,19 @@ if (clientFileExecution && systemPrompt) {
 
                     while (pendingToolCalls.length > 0 && toolRound < maxToolRounds) {
                         toolRound += 1;
+
+                        // Deliver user interjections typed while tools were running as normal user turns,
+                        // and echo them to the client so they are never silently dropped.
+                        for (const interjection of collectRequestInterjections(requestId)) {
+                            if (!interjection || !interjection.content) continue;
+                            conversationMessages = [...conversationMessages, { role: 'user', content: interjection.content }];
+                            if (sessionId) {
+                                db.run('INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)', [sessionId, 'user', interjection.content, interjection.createdAt || new Date().toISOString()], (err) => { if (err) console.warn(' interjection persist failed'); });
+                            }
+                            if (!res.writableEnded) {
+                                res.write(`data: ${JSON.stringify({ type: 'user_interjection', content: interjection.content, createdAt: interjection.createdAt || null })}\n\n`);
+                            }
+                        }
                         console.log(` 工具调用轮次: ${toolRound}, calls=${pendingToolCalls.length}`);
 
                         const executedToolResults = [];
@@ -25258,6 +25271,18 @@ if (clientFileExecution && systemPrompt) {
                             content: JSON.stringify(result)
                         }));
                         conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
+
+                        // Include interjections typed during this round tool execution before the continuation call.
+                        for (const interjection of collectRequestInterjections(requestId)) {
+                            if (!interjection || !interjection.content) continue;
+                            conversationMessages = [...conversationMessages, { role: 'user', content: interjection.content }];
+                            if (sessionId) {
+                                db.run('INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)', [sessionId, 'user', interjection.content, interjection.createdAt || new Date().toISOString()], (err) => { if (err) console.warn(' interjection persist failed'); });
+                            }
+                            if (!res.writableEnded) {
+                                res.write(`data: ${JSON.stringify({ type: 'user_interjection', content: interjection.content, createdAt: interjection.createdAt || null })}\n\n`);
+                            }
+                        }
 
                         const continueRequestBody = {
                             model: actualModel,
