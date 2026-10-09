@@ -87,6 +87,17 @@ async function main() {
     for(const id of CHAT_MODEL_IDS){assert.ok(html.includes('data-model="'+id+'"'));assert.ok(app.includes("'"+id+"': {"));}
     for(const id of ['claude-sonnet-5','gemini-3.6-flash-low','nemotron-3-ultra','gpt-image-2','kolors-free'])assert.ok(!html.includes('data-model="'+id+'"'));
     assert.match(server,/await settleChatModelTurn\(!streamDegraded/);assert.match(server,/chatModelQuotaContext.run/);assert.match(server,/const ADMIN_MODEL_CATALOG = \[\.\.\.CHAT_MODEL_CATALOG\]/);assert.match(app,/3, 50, 80/);assert.match(app,/50, 100, 200/);assert.match(app,/100, 200, 500/);
+    // First effective token (content or reasoning) deadline is 20s by default, and
+    // long thinking must not be mistaken for a stalled provider.
+    assert.match(server, /RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS\) \|\| '20000'/);
+    assert.match(server, /CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS/);
+    assert.match(server, /20 秒内无首字或服务失败/);
+    // Reasoning-only streams are recovered into a real answer instead of being marked truncated.
+    assert.match(server, /reasoning-only recovery failed/);
+    assert.match(server, /Return only the final user-facing answer as normal assistant content/);
+    // A transient refresh failure must not clear a still-valid refresh cookie.
+    assert.match(server, /terminalCodes\.has\(error\?\.code\)/);
+    assert.match(server, /res\.status\(503\)\.json\(\{ success: false, error: '会话刷新暂时不可用，请重试' \}\)/);
     console.log('chat_model_policy_regression_ok: rolling quota, concurrency, expiry, cancellation, idempotency, research, thinking tiers, 256k compression, vision preservation and provider fallback');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
