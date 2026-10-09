@@ -120,7 +120,7 @@ async function main(){
    assert.ok(remoteTask,'chat must dispatch the remote tool');assert.equal(remoteTask.tool,'list_files');
    await remote(devicePath+'/tasks/'+remoteTask.id+'/start','POST',{},deviceHeaders);
    await remote(devicePath+'/tasks/'+remoteTask.id+'/result','POST',{result:{success:true,path:'fixture',entries:[{name:'remote-note.txt',type:'file'}],output:'目录: fixture (1 项)\n  [文件] remote-note.txt'}},deviceHeaders);
-   const completed=await stream;assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol'&&x.body.stream).at(-1).body.reasoning_effort,'max','Manual max survives remote tool continuation');assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
+   const completed=await stream;const remoteContinuation=observations.filter(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))).at(-1);assert.ok(remoteContinuation,'remote continuation is observed');assert.equal(remoteContinuation.body.reasoning_effort,'max','Manual max survives routed remote tool continuation');assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
    assert.ok(observations.some(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))),'PC result must reach streaming provider continuation (exclude later title generation)');
    assert.ok(!completed.events.some(x=>x.type==='local_agent_tool_call'||x.type==='client_tool_call'),'Web must not execute desktop tool payload');
    await remote(devicePath,'DELETE',undefined,deviceHeaders);mode='answer';
