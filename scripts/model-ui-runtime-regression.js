@@ -36,6 +36,11 @@ const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) 
   ];
   for (const [platform,width,height,userAgent] of cases) {
    const ctx = await browser.newContext({viewport:{width,height},userAgent,hasTouch:true,serviceWorkers:'block'});
+   await ctx.addInitScript(platform => {
+    const values={windows:'Win32',macos:'MacIntel',ios:'iPhone',android:'Linux armv8l'};
+    Object.defineProperty(navigator,'platform',{get:()=>values[platform],configurable:true});
+    Object.defineProperty(navigator,'userAgentData',{get:()=>undefined,configurable:true});
+   },platform);
    const page = await ctx.newPage(); await page.goto(url); await page.waitForFunction(()=>typeof showChatIndexTooltip==='function');
    await page.addStyleTag({content:'*,*::before,*::after{animation:none!important;transition:none!important}'});
    const initial = await page.evaluate(()=>{
