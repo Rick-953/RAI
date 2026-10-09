@@ -12,38 +12,38 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20261009-cx-remote-r12"></script>
+  <script src="runtime-brand.js?v=20261009-composer-r13"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20261009-cx-remote-r12">
+  <link rel="manifest" href="site.webmanifest?v=20261009-composer-r13">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="lib/purify.min.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="lib/marked.min.js?v=20261009-composer-r13"></script>
+  <script defer src="lib/purify.min.js?v=20261009-composer-r13"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261009-cx-remote-r12">
-  <script defer src="lib/katex/katex.min.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261009-cx-remote-r12"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261009-composer-r13">
+  <script defer src="lib/katex/katex.min.js?v=20261009-composer-r13"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261009-composer-r13"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="event-bindings.js?v=20261009-cx-remote-r12"></script>
+  <script defer src="rai-system-prompt.js?v=20261009-composer-r13"></script>
+  <script defer src="event-bindings.js?v=20261009-composer-r13"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261009-cx-remote-r12">
-  <script defer src="lib/highlight/highlight.min.js?v=20261009-cx-remote-r12"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261009-composer-r13">
+  <script defer src="lib/highlight/highlight.min.js?v=20261009-composer-r13"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20261009-cx-remote-r12">
-  <link rel="stylesheet" href="selection-explainer.css?v=20261009-cx-remote-r12">
-  <link rel="stylesheet" href="local-agent.css?v=20261009-cx-remote-r12">
-  <link rel="stylesheet" href="secure-sharing.css?v=20261009-cx-remote-r12">
+  <link rel="stylesheet" href="styles.css?v=20261009-composer-r13">
+  <link rel="stylesheet" href="selection-explainer.css?v=20261009-composer-r13">
+  <link rel="stylesheet" href="local-agent.css?v=20261009-composer-r13">
+  <link rel="stylesheet" href="secure-sharing.css?v=20261009-composer-r13">
 </head>
 
 <body>
@@ -340,7 +340,7 @@
         <button type="button" class="model-select-custom mobile-model-selector" id="mobileModelSelectCustom"
           aria-controls="modelDropdownMenu" aria-expanded="false"
           data-rai-click="openModelModal('mobileModelSelectCustom', event)">
-          <span class="model-select-label" data-model-label data-i18n="model-smart">模型路由规则</span>
+          <span class="model-select-label" data-model-label data-i18n="model-smart">智能模型</span>
           <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -391,7 +391,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.13.20</div>
+                <div class="logo-subtitle">by Rick · v0.13.21</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -832,7 +832,7 @@
               <div class="model-selector">
                 <div class="model-select-custom" id="modelSelectCustom" aria-controls="modelDropdownMenu"
                   aria-expanded="false" data-rai-click="openModelModal('modelSelectCustom', event)">
-                  <span id="selectedModelText" class="model-select-label" data-model-label data-i18n="model-smart">模型路由规则</span>
+                  <span id="selectedModelText" class="model-select-label" data-model-label data-i18n="model-smart">智能模型</span>
                   <svg class="material-symbols-outlined model-select-arrow" xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                     <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" />
@@ -847,7 +847,7 @@
                       <path d="M480-80 373-314 140-420l233-107 107-233 107 233 233 107-233 106L480-80Zm0-194 48-106 106-40-106-48-48-106-40 106-106 48 106 40 40 106ZM180-650l-47-103-103-47 103-47 47-103 47 103 103 47-103 47-47 103Zm0-91 16-35 35-16-35-16-16-35-16 35-35 16 35 16 16 35Z" />
                     </svg>
                     <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-smart">模型路由规则</div>
+                      <div class="model-menu-title" data-i18n="model-smart">智能模型</div>
                     </div>
                   </div>
 
@@ -913,7 +913,6 @@
 <div class="model-menu-item" data-model="gpt-6-astra" data-rai-click="selectModelFromMenu('gpt-6-astra', 'GPT 6 Astra', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Astra</span><span class="model-badge">视觉 · 256k</span></div><div class="model-menu-desc">低 / 中 / 高 / max 思考 · 自动上下文压缩</div></div></div>
                   </div>
                 </div>
-              </div>
               </div>
 
               <button type="button" class="send-btn" id="sendBtn" data-rai-click="handleSendButtonClick(event)">
@@ -1154,7 +1153,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261009-cx-remote-r12" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261009-composer-r13" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1220,7 +1219,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261009-cx-remote-r12" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261009-composer-r13" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1235,7 +1234,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261009-cx-remote-r12" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261009-composer-r13" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1961,7 +1960,7 @@
                   </div>
                   <div class="settings-install-status" id="windowsDownloadStatus" data-i18n="settings-install-detecting">检测安装方式...</div>
                   <div class="settings-windows-actions">
-                    <a class="settings-install-download" id="windowsSetupDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-setup">下载安装程序</a><span class="settings-platform-badge" id="windowsSetupRecommended" data-i18n="settings-pwa-badge" hidden>推荐</span>
+                    <a class="settings-install-download" id="windowsSetupDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer"><span id="windowsSetupDownloadLabel" data-i18n="settings-windows-setup">下载安装程序</span><span class="settings-platform-badge settings-download-recommended" id="windowsSetupRecommended" data-i18n="settings-pwa-badge" hidden>推荐</span></a>
                     <a class="settings-install-download settings-install-download-secondary settings-windows-mobile-download"
                       id="windowsMobilePackageDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank"
                       rel="noopener noreferrer" data-i18n="settings-windows-mobile-package" hidden>Windows 10 Mobile（UWP）</a>
@@ -2215,16 +2214,16 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="pet-quotes.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="diagnostics.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="app.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="cx-remote.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="crf-ui.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="selection-explainer.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="lib/jsQR.js?v=20261009-cx-remote-r12"></script>
-  <script defer src="qr-scanner.js?v=20261009-cx-remote-r12"></script>
-  <script src="secure-sharing.js?v=20261009-cx-remote-r12" defer></script>
+  <script defer src="conversation-cache.js?v=20261009-composer-r13"></script>
+  <script defer src="pet-quotes.js?v=20261009-composer-r13"></script>
+  <script defer src="diagnostics.js?v=20261009-composer-r13"></script>
+  <script defer src="app.js?v=20261009-composer-r13"></script>
+  <script defer src="cx-remote.js?v=20261009-composer-r13"></script>
+  <script defer src="crf-ui.js?v=20261009-composer-r13"></script>
+  <script defer src="selection-explainer.js?v=20261009-composer-r13"></script>
+  <script defer src="lib/jsQR.js?v=20261009-composer-r13"></script>
+  <script defer src="qr-scanner.js?v=20261009-composer-r13"></script>
+  <script src="secure-sharing.js?v=20261009-composer-r13" defer></script>
 </body>
 
 </html>

@@ -20883,6 +20883,10 @@ async function fetchModelProvider(url, options = {}) {
     }
     const providerFetch = protectedModel ? fetchGptProvider : fetchDeepSeekProvider;
     const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode });
+    // Only streaming answer/tool requests update provenance, not internal compression summaries.
+    if (turn && response.ok && parsedBody?.stream === true) {
+        turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : JSON.parse(options.body).model;
+    }
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
     if (response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 首次有效响应超时或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
@@ -21982,7 +21986,7 @@ if (clientFileExecution && systemPrompt) {
                     if (liveStreamState) {
                         liveStreamState.assistantContent = contentToSave || '(生成中断)';
                         liveStreamState.reasoningContent = reasoningToSave || '';
-                        liveStreamState.model = finalModel;
+                        liveStreamState.model = chatModelQuotaContext.getStore()?.actualModel || MODEL_ROUTING[finalModel]?.model || finalModel;
                         liveStreamState.status = 'done';
                         liveStreamState.updatedAt = Date.now();
                         await persistSessionStreamDraft(liveStreamState, true);
@@ -22277,7 +22281,7 @@ if (clientFileExecution && systemPrompt) {
 
         // 关键修复：通过SSE发送实际使用的模型信息（因为响应头已经发送，无法再设置X-Model-Used）
         if (liveStreamState) {
-            liveStreamState.model = finalModel;
+            liveStreamState.model = actualModel;
             liveStreamState.updatedAt = Date.now();
             persistSessionStreamDraft(liveStreamState, false);
             broadcastSessionStreamState(liveStreamState, 'session_stream_snapshot');
@@ -22766,6 +22770,7 @@ if (clientFileExecution && systemPrompt) {
                 assistantVisibleStarted = true;
                 recordServerFlowContent(visibleDelta);
                 if (liveStreamState) {
+                    liveStreamState.model = chatModelQuotaContext.getStore()?.actualModel || actualModel;
                     liveStreamState.assistantContent += visibleDelta;
                     liveStreamState.updatedAt = Date.now();
                     persistSessionStreamDraft(liveStreamState, false);
@@ -25876,6 +25881,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
             // 序列化 sources 为 JSON 字符串
             const sourcesJson = (searchSources && searchSources.length > 0) ? JSON.stringify(assignStableSourceMarkers(searchSources)) : null;
             const assistantAttachmentsJson = generatedArtifacts.length > 0 ? JSON.stringify(generatedArtifacts) : null;
+            const persistedModelId = chatModelQuotaContext.getStore()?.actualModel || actualModel || finalModel;
             const assistantProcessTraceJson = JSON.stringify({
                 ...(promptContextTrace || {}),
                 version: 3,
@@ -25906,7 +25912,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                     [
                         contentToSave,
                         mergedReasoning || null,
-                        finalModel,
+                        persistedModelId,
                         internetMode ? 1 : 0,
                         thinkingMode ? 1 : 0,
                         internetMode ? 1 : 0,
@@ -25923,7 +25929,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                 const aiMsgTimestamp = new Date().toISOString();
                 await dbRunAsync(
                     'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, finalModel, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
+                    [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, persistedModelId, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
                 );
             }
             console.log(` AI回复已保存:`);
@@ -25985,7 +25991,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
             if (liveStreamState) {
                 liveStreamState.assistantContent = contentToSave;
                 liveStreamState.reasoningContent = reasoningContent || '';
-                liveStreamState.model = finalModel;
+                liveStreamState.model = persistedModelId;
                 liveStreamState.status = 'done';
                 liveStreamState.updatedAt = Date.now();
                 await persistSessionStreamDraft(liveStreamState, true);
@@ -26014,7 +26020,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
 
         await settleChatModelTurn(!streamDegraded && !clientAborted && !chatRequestCancelled && Boolean(String(fullContent || '').trim()), [finalModel]);
         chatRequestSucceeded = true;
-        res.write(`data: ${JSON.stringify({ type: 'done', degraded: streamDegraded })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', degraded: streamDegraded, actualModel: chatModelQuotaContext.getStore()?.actualModel || actualModel })}\n\n`);
         res.end();
 
         if (requestId) rejectClientToolPending(requestId, 'request_finished');

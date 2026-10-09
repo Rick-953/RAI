@@ -74,6 +74,13 @@ async function main(){
    const compressed=await chat('gpt-6.1-sol',{messages:history});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);
    mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);mode='answer';
    assert.equal((await dbGet(db,'SELECT points FROM users')).points,0,'chat must not debit points');
+   // Actual provider ID is terminal metadata and SQLite history, not the selection alias.
+   const user=await dbGet(db,'SELECT id FROM users LIMIT 1'),provenanceChat='provenance-'+crypto.randomBytes(12).toString('hex');
+   await dbRun(db,'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)',[provenanceChat,user.id,'Provenance fixture','auto']);
+   const smart=await chat('auto',{sessionId:provenanceChat,thinkingMode:false});
+   assert.ok(smart.events.some(x=>x.type==='model_info'&&x.actualModel==='gpt-6.1-sol'),smart.raw.slice(-2000));
+   assert.equal(smart.events.find(x=>x.type==='done').actualModel,'gpt-6.1-sol');
+   assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6.1-sol');
    // Real login + software identity + chat -> approved PC -> one-shot tool -> continuation.
    const {createSoftwareClientAuth}=require('../lib/software-client-auth');
    const identity=await createSoftwareClientAuth({db}).create({name:'Isolated CX remote test',platform:'windows'});
