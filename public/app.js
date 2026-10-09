@@ -14799,7 +14799,7 @@ function handleInputContainerClick(event) {
 
   // Ignore actual controls, not their layout wrappers: empty toolbar/model gaps
   // belong to the composer too. Never steal focus from menus, sliders or previews.
-  if (target.closest('button, a, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="menuitem"], [role="slider"], [data-rai-click], .more-menu, .model-dropdown-menu, .thinking-budget-modal, .quote-preview-content, .attachment-preview, .attachment-item')) return;
+  if (target.closest('button, a, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="menuitem"], [role="slider"], [data-rai-click], .more-menu, .model-dropdown-menu, .thinking-budget-modal, .quote-preview-content, .attachment-item, .attachment-preview')) return;
 
   const input = document.getElementById('messageInput');
   if (!input || input.disabled || input.readOnly) return;
@@ -32075,16 +32075,16 @@ async function processUploadedFile(file, options = {}) {
 
 // 更新附件UI显示
 function updateAttachmentUI() {
-  let preview = document.getElementById('attachmentPreview');
-  if (!currentAttachments.length) { preview?.remove(); return; }
-  if (!preview) {
-    preview = document.createElement('div');
-    preview.id = 'attachmentPreview';
-    preview.className = 'attachment-preview-list';
+  let previewList = document.getElementById('attachmentPreview');
+  if (!currentAttachments.length) { previewList?.remove(); return; }
+  if (!previewList) {
+    previewList = document.createElement('div');
+    previewList.id = 'attachmentPreview';
+    previewList.className = 'attachment-preview-list';
     const container = document.getElementById('inputContainer');
-    container?.insertBefore(preview, container.querySelector('.input-row'));
+    container?.insertBefore(previewList, container.querySelector('.input-row'));
   }
-  preview.replaceChildren(...currentAttachments.map((attachment, index) => {
+  previewList.replaceChildren(...currentAttachments.map((attachment, index) => {
     const attachmentPreview = document.createElement('div');
     attachmentPreview.className = 'attachment-preview';
     let iconSvg = '';
