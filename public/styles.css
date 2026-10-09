@@ -9645,12 +9645,6 @@ html.hand-right .mobile-center-controls {
     transform: translateX(0);
   }
 
-  html.hand-left .input-toolbar > .send-btn,
-  html.hand-left .input-toolbar > .stop-btn {
-    order: -1;
-    margin-right: 4px;
-  }
-
   .sidebar-header-fixed {
     padding-top: calc(var(--spacing-lg) + var(--safe-top, 0px));
   }
@@ -14897,6 +14891,23 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
   line-height: 1;
 }
 
+.settings-platform-badge[hidden] {
+  display: none;
+}
+
+/* Recommendations belong to their action, not a separate grid row. */
+#windowsSetupDownload {
+  gap: 8px;
+}
+
+.settings-download-recommended {
+  flex: 0 0 auto;
+  min-height: 20px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .settings-windows-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -19701,9 +19712,10 @@ html.ios-standalone body.mobile-viewport-managed .chat-edge-blur-bottom { displa
 
 /* Gesture side is independent of per-account adaptive holding preference. */
 @media (max-width: 768px) {
-  .sidebar.swipe-from-right { left: auto; right: 0; transform: translateX(100%); border-radius: 24px 0 0 24px; }
+  .sidebar, .sidebar .sidebar-scrollable, .mobile-overlay { touch-action: pan-y; }
+  .sidebar.swipe-from-right { left: auto; right: 0; transform: translateX(100%); border-radius: 24px 0 0 24px; touch-action: pan-y; }
   .sidebar.swipe-from-right.active { transform: translateX(0); }
-  html.hand-right .sidebar:not(.swipe-from-right) { left: 0; right: auto; transform: translateX(-100%); border-radius: 0 24px 24px 0; }
+  html.hand-right .sidebar:not(.swipe-from-right) { left: 0; right: auto; transform: translateX(-100%); border-radius: 0 24px 24px 0; touch-action: pan-y; }
   html.hand-right .sidebar:not(.swipe-from-right).active { transform: translateX(0); }
 }
 .settings-windows-actions #windowsSetupRecommended { align-self: center; }

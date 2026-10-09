@@ -2410,8 +2410,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.20';
-const RAI_BUILD_ID = '20261009-cx-remote-r12';
+const RAI_APP_VERSION = '0.13.21';
+const RAI_BUILD_ID = '20261009-composer-r13';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -4795,7 +4795,8 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const pwaBadge = document.getElementById('pwaInstallRecommended');
   if (installerBadge) installerBadge.hidden = !recommendWindows;
   if (pwaBadge) pwaBadge.hidden = recommendWindows;
-  setupLink.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
+  const setupLabel = document.getElementById('windowsSetupDownloadLabel');
+  if (setupLabel) setupLabel.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
   if (note) {
     note.textContent = isWindowsMobile
       ? i18nText('settings-windows-mobile-note', isChineseLanguage(appState.language)
@@ -6149,7 +6150,7 @@ const i18n = {
     'cx-remote-menu': '连接 CX RAI',
     'cx-remote-install-title': '手机 Web 连接 CX RAI',
     'cx-remote-install-desc': '同账号在线电脑，本机授权可撤销',
-    'model-smart': '模型路由规则',
+    'model-smart': '智能模型',
     'model-fast': '快速',
     'model-expert': '思考',
     'model-all': '全部模型',
@@ -6181,7 +6182,7 @@ const i18n = {
     'thinkingMode': '思考模式',
     'regenerateTitle': '重新生成回复',
     'selectModel': '选择模型',
-    'smartMode': '模型路由规则',
+    'smartMode': '智能模型',
     'fastMode': '快速',
     'expertMode': '思考',
     'regenerate': '重新生成'
@@ -6815,7 +6816,7 @@ const i18n = {
     'cx-remote-menu': 'Connect CX RAI',
     'cx-remote-install-title': 'Connect Web to CX RAI',
     'cx-remote-install-desc': 'Same-account online PC, revocable local consent',
-    'model-smart': 'Model Routing Rules',
+    'model-smart': 'Smart Model',
     'model-fast': 'Fast',
     'model-expert': 'Think',
     'model-all': 'All Models',
@@ -6897,7 +6898,7 @@ const SIMPLIFIED_TO_TRADITIONAL_PHRASE_MAP = [
   ['响应式', '響應式'],
   ['联网', '連網'],
   ['模型路由', '模型路由'],
-  ['模型路由规则', '模型路由規則'],
+  ['智能模型', '智慧模型'],
   ['运行期备用链', '執行期備援鏈'],
   ['逻辑', '邏輯'],
   ['补齐', '補齊'],
@@ -8154,6 +8155,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-09', version: 'v0.13.21',
+    zh: { summary: '修复发送按钮位置，恢复智能模型名称，整理下载推荐标。', details: ['发送和停止按钮固定在输入工具栏右侧；不受适人握持影响。', '智能模型名称恢复，模型路由、思考档位与额度规则不变。', 'Windows 安装器推荐标嵌入下载按钮；Mac/手机推荐网页版应用，刷新和语言切换不会丢失标签。', '左右侧栏均可反向滑回；回答标签显示真实请求模型 ID，回退和历史记录保留实际模型。'] },
+    en: { summary: 'Fix composer alignment, restore Smart Model and tidy download recommendations.', details: ['Keep send/stop on the right regardless of handedness.', 'Restore Smart Model without changing routing, reasoning or quotas.', 'Compact inline recommendations survive locale switches and download refreshes.', 'Both sidebar edges close with the reverse swipe; reply badges display actual upstream IDs and persist fallback provenance.'] }
+  },
   {
     date: '2026-10-09', version: 'v0.13.20 · CX RAI 1.8.7',
     zh: { summary: '手机 Web 连接在线 CX RAI 电脑；模型、额度与 256k 自动上下文压缩已统一。', details: [
@@ -14266,16 +14272,11 @@ function applyHandednessLayout() {
   root.classList.toggle('handedness-enabled', enabled);
   root.classList.toggle('hand-left', enabled && handedness === 'left');
   root.classList.toggle('hand-right', enabled && handedness === 'right');
-  const moveSendLeft = enabled && handedness === 'left';
+  // Send and stop stay on the right regardless of synced handedness.
   [document.getElementById('sendBtn'), document.getElementById('stopBtn')].forEach((button) => {
     if (!button) return;
-    if (moveSendLeft) {
-      button.style.order = '-1';
-      button.style.marginRight = '4px';
-    } else {
-      button.style.removeProperty('order');
-      button.style.removeProperty('margin-right');
-    }
+    button.style.removeProperty('order');
+    button.style.removeProperty('margin-right');
   });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (appState.handednessSwitchToken === switchToken) {
@@ -17194,7 +17195,7 @@ function getMessageRenderSnapshot(message) {
     role: message.role || '',
     content: message.content || '',
     reasoningContent: message.reasoning_content || null,
-    model: message.model || null,
+    model: message.actual_model || message.actualModel || message.model || null,
     internetMode: message.internet_mode === true || Number(message.internet_mode) === 1,
     enableSearch: message.enable_search === true || Number(message.enable_search) === 1,
     sources: normalizeMessageRenderField(message.sources),
@@ -18911,11 +18912,8 @@ function createMessageElement(message) {
       modelBadge.hidden = !appState.showModelBadge;
 
       // 新老模型标识都保持可读，退役模型不再回到可选菜单。
-      const modelName = getHistoricalModelDisplayName(message.model);
-      const customEditionLabel = [
-        modelName,
-        i18nText('message-model-custom-edition', isChineseLanguage(appState.language) ? '定制版' : 'Custom Edition')
-      ].filter(Boolean).join(' ');
+      // Show provenance, not the user's selection label or a marketing suffix.
+      const customEditionLabel = String(message.actual_model || message.actualModel || message.model || '').trim();
 
       modelBadge.innerHTML = `
             ${getSvgIcon('smart_toy', 'material-symbols-outlined', 24)}
@@ -19897,6 +19895,7 @@ async function recoverIncompleteChatStream({
             continue;
           }
           if (event.type === 'done') {
+            if (event.actualModel) model = event.actualModel;
             receivedDone = true;
           } else if (event.type === 'content' && event.content) {
             attemptContent += sanitizeAssistantDisplayText(event.content);
@@ -19907,7 +19906,7 @@ async function recoverIncompleteChatStream({
           } else if (event.type === 'context_compressed') {
             showToast(isChineseLanguage(appState.language) ? '上下文已自动压缩，原始历史仍然保留（256k）' : 'Context compressed automatically; original history retained (256k)');
           } else if (event.type === 'model_info' && event.model) {
-            model = event.model;
+            model = event.actualModel || event.model;
           } else if (event.type === 'error') {
             errorMessage = String(event.error || 'continuation_failed');
           } else if (event.choices?.[0]?.delta?.content) {
@@ -20190,7 +20189,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     let fullContent = '';
     let reasoningContent = '';
     let sources = null;
-    let finalModel = appState.selectedModel;
+    let finalModel = null;
     let sseBuffer = '';
     let receivedDoneEvent = false;
     let receivedTerminalFailure = false;
@@ -20220,6 +20219,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           const parsed = JSON.parse(data);
 
           if (parsed.type === 'done') {
+            if (parsed.actualModel) { finalModel = parsed.actualModel; aiMsg.model = finalModel; }
             receivedDoneEvent = true;
             continue;
           }
@@ -20247,7 +20247,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
           if (parsed.type === 'model_info') {
             if (parsed.model) {
-              finalModel = parsed.model;
+              finalModel = parsed.actualModel || parsed.model;
               aiMsg.model = finalModel;
             }
             continue;
@@ -21586,6 +21586,8 @@ async function sendMessage(message = null, options = {}) {
   const sendBtn = document.getElementById('sendBtn');
   const stopBtn = document.getElementById('stopBtn');
   const requestConfig = resolveSendRequestConfig(options);
+  let actualRequestModel = null; // Per-turn provenance; never inherit another conversation's model.
+  appState.lastModelUsed = '';
 
   if (sendBtn) {
     sendBtn.style.display = 'flex';
@@ -22576,6 +22578,7 @@ async function sendMessage(message = null, options = {}) {
     }
 
     if (modelUsed) {
+      actualRequestModel = modelUsed;
       appState.lastModelUsed = modelUsed;
       appState.lastRoutingReason = routingReason || '';
       console.log(` 实际使用模型: ${modelUsed}`);
@@ -23148,7 +23151,8 @@ async function sendMessage(message = null, options = {}) {
           }
           // 新增：处理模型信息（显示实际使用的模型）
           else if (parsed.type === 'model_info') {
-            appState.lastModelUsed = parsed.model;
+            actualRequestModel = parsed.actualModel || parsed.model || actualRequestModel;
+            appState.lastModelUsed = actualRequestModel;
             appState.lastRoutingReason = parsed.reason || '';
             console.log(` 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
             console.log(`   路由原因: ${parsed.reason || '用户选择'}`);
@@ -23455,6 +23459,7 @@ async function sendMessage(message = null, options = {}) {
             showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
           }
           else if (parsed.type === 'done') {
+            if (parsed.actualModel) { actualRequestModel = parsed.actualModel; appState.lastModelUsed = actualRequestModel; }
             receivedDoneEvent = true;
             const incomplete = parsed.degraded === true;
             // An upstream stop is terminal, not a successful answer. Do not
@@ -23526,7 +23531,7 @@ async function sendMessage(message = null, options = {}) {
       if (recovered.sources.length > 0) {
         currentSources = mergeAndReindexSources(currentSources, recovered.sources);
       }
-      if (recovered.model) appState.lastModelUsed = recovered.model;
+      if (recovered.model) { actualRequestModel = recovered.model; appState.lastModelUsed = recovered.model; }
       if (recovered.requestId) {
         streamRequestId = recovered.requestId;
         appState.currentRequestId = streamRequestId;
@@ -23636,7 +23641,7 @@ async function sendMessage(message = null, options = {}) {
       content: cleanContent,
       request_id: streamRequestId || null,
       reasoning_content: finalReasoningContent || null,
-      model: appState.lastModelUsed || requestConfig.model,
+      model: actualRequestModel,
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
       process_trace: serializedProcessTrace,
@@ -30371,7 +30376,7 @@ function upsertLiveSessionStream(event) {
 
   liveAssistant.content = assistantContent;
   liveAssistant.reasoning_content = event.reasoningContent || null;
-  liveAssistant.model = event.model || liveAssistant.model || appState.selectedModel;
+  liveAssistant.model = event.actualModel || event.model || liveAssistant.model || null;
   liveAssistant.stream_draft_status = event.status || 'running';
   liveAssistant.created_at = liveAssistant.created_at || updatedAt;
   scheduleLiveStreamRender(streamSessionId, streamGeneration);
@@ -30755,7 +30760,7 @@ function initSwipeGestures() {
       }
       const movingWrongWay = appState.sidebarGestureMode === 'opening'
         ? (opensFromRight ? deltaX >= 0 : deltaX <= 0)
-        : false;
+        : (opensFromRight ? deltaX <= 0 : deltaX >= 0);
       if (movingWrongWay) {
         if (Math.abs(deltaX) > gestureCommitDistance && Math.abs(deltaX) > deltaY * horizontalDominanceRatio) {
           resetSwipeState();
@@ -30775,7 +30780,7 @@ function initSwipeGestures() {
     const width = getSidebarWidth();
     const rawProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : 1 - (Math.abs(deltaX) / width);
+      : 1 - (opensFromRight ? Math.max(0, deltaX) : Math.max(0, -deltaX)) / width;
 
     setSidebarProgress(rawProgress, true);
     e.preventDefault();
@@ -30794,7 +30799,7 @@ function initSwipeGestures() {
     const opensFromRight = appState.sidebarGestureFromRight === true;
     const finalProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : 1 - (Math.abs(deltaX) / width);
+      : 1 - (opensFromRight ? Math.max(0, deltaX) : Math.max(0, -deltaX)) / width;
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;
@@ -30814,13 +30819,16 @@ function initSwipeGestures() {
     }
   };
 
-  [mainContent, mobileHeader, sidebar, overlay].forEach((element) => {
-    if (!element) return;
-    element.addEventListener('touchstart', handleTouchStart, { passive: true });
-    element.addEventListener('touchmove', handleTouchMove, { passive: false });
-    element.addEventListener('touchend', handleTouchEnd, { passive: true });
-    element.addEventListener('touchcancel', handleTouchEnd, { passive: true });
-  });
+  // One capture-phase gesture owner: sidebar descendants may stop bubbling,
+  // and nested gesture surfaces must not reset/finish the same touch twice.
+  document.addEventListener('touchstart', handleTouchStart, { passive: true, capture: true });
+  document.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+  document.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
+  document.addEventListener('touchcancel', () => {
+    const wasOpen = appState.sidebarOpen;
+    resetSwipeState();
+    if (wasOpen) openSidebar(); else closeSidebar();
+  }, { passive: true, capture: true });
 }
 
 function selectModel(value, displayName) {

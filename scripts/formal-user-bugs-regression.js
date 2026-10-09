@@ -356,7 +356,8 @@ function testMessageBadgeVisibilityAndDesktopLogout() {
   const createMessage = app.slice(createMessageStart, createMessageEnd);
   assert.match(createMessage, /modelBadge\.className\s*=\s*'meta-badge model-meta-badge'/);
   assert.match(createMessage, /modelBadge\.hidden\s*=\s*!appState\.showModelBadge/);
-  assert.match(createMessage, /message-model-custom-edition[\s\S]*?'定制版'[\s\S]*?'Custom Edition'/);
+  assert.match(createMessage, /message\.actual_model \|\| message\.actualModel \|\| message\.model/);
+  assert.doesNotMatch(createMessage, /message-model-custom-edition/);
   assert.match(createMessage, /internetBadge\.className\s*=\s*'meta-badge internet-meta-badge'/);
   assert.match(createMessage, /internetBadge\.hidden\s*=\s*!appState\.showInternetBadge/);
   assert.match(createMessage, /thinkingBadge\.className\s*=\s*'meta-badge'/, 'thinking badge must stay independent');
@@ -1045,7 +1046,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20261009-cx-remote-r12';
+  const expectedBuild = '20261009-composer-r13';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1349,8 +1350,10 @@ function testDownloadClientsAndTimeline() {
   assert.match(app, /sidebarGestureFromRight = opensFromRight/);
   assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,
     'Right-hand mode must position the mobile sidebar on the right');
-  assert.match(styles, /html\.hand-left \.input-toolbar > \.send-btn[\s\S]*order: -1/,
-    'Left-hand mode must move the send button to the left side of the composer');
+  assert.doesNotMatch(styles, /html\.hand-left \.input-toolbar > \.send-btn/,
+    'Send stays on the right even when mobile handedness is enabled');
+  assert.doesNotMatch(extractNamedFunction(app, 'applyHandednessLayout'), /style\.order\s*=/,
+    'Synced handedness must not reorder send/stop buttons');
   assert.match(styles, /\.settings-platform-download \+ \.settings-platform-download\s*\{[^}]*padding-left:\s*0;[^}]*border-left:\s*0/,
     'Download client columns must not use a vertical divider');
   assert.match(styles, /\.settings-install-card\s*\{[^}]*border-radius:\s*12px/,

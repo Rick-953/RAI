@@ -72,7 +72,19 @@ async function main(){
    const vision=await chat('deepseek-v4.1-flash',{messages:[{role:'user',content:'Read this image.',attachments:[{type:'image',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/yUAAAAASUVORK5CYII=',mimeType:'image/png',fileName:'pixel.png'}]}]});assert.ok(vision.events.some(x=>x.type==='model_info'&&x.model==='deepseek-v4.1-flash'),vision.raw.slice(-2000));assert.ok(observations.at(-1).body.messages.some(m=>Array.isArray(m.content)&&m.content.some(x=>x.type==='image_url')),'vision preserved');
    const history=Array.from({length:18},(_,i)=>({role:i%2?'assistant':'user',content:'Old fact '+i+' '+ '中'.repeat(9000)}));history.push({role:'user',content:'LATEST_USER_QUESTION'});
    const compressed=await chat('gpt-6.1-sol',{messages:history});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);
-   mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);mode='answer';
+   // Actual provider ID is terminal metadata and SQLite history, not the selection alias.
+   const user=await dbGet(db,'SELECT id FROM users LIMIT 1'),provenanceChat='provenance-'+crypto.randomBytes(12).toString('hex');
+   await dbRun(db,'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)',[provenanceChat,user.id,'Provenance fixture','auto']);
+   const smart=await chat('auto',{sessionId:provenanceChat,thinkingMode:false});
+   assert.ok(smart.events.some(x=>x.type==='model_info'&&x.actualModel==='gpt-6.1-sol'),smart.raw.slice(-2000));
+   assert.equal(smart.events.find(x=>x.type==='done').actualModel,'gpt-6.1-sol');
+   assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6.1-sol');
+   mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);mode='answer';
+   // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
+   const rerouted=await chat('gpt-6.1-sol',{sessionId:provenanceChat,thinkingMode:false});
+   const terminalModel=rerouted.events.find(x=>x.type==='done')?.actualModel;
+   assert.equal(terminalModel,'deepseek-v4.1-flash',rerouted.raw.slice(-2000));
+   assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,terminalModel,'history must preserve rerouted upstream ID, not selected Sol');
    assert.equal((await dbGet(db,'SELECT points FROM users')).points,0,'chat must not debit points');
    // Real login + software identity + chat -> approved PC -> one-shot tool -> continuation.
    const {createSoftwareClientAuth}=require('../lib/software-client-auth');
