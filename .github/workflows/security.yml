@@ -89,6 +89,8 @@ jobs:
         run: |
           npm run test:cx-remote-ui
           RAI_BROWSER_ENGINE=webkit npm run test:cx-remote-ui
+          npm run test:composer-focus-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:composer-focus-runtime
           npm run test:model-ui-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:model-ui-runtime
           npm run test:ios-standalone-runtime

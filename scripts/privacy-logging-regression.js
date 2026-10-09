@@ -56,7 +56,7 @@ for (const pattern of [
 
 assert.match(
   app,
-  /console\.log\('\s*消息包含附件',[\s\S]{0,180}filenameLength:[\s\S]{0,100}bytes:/,
+  /console\.log\('\s*消息包含附件',[\s\S]{0,180}count:[\s\S]{0,80}metadataMode:\s*true/,
   'attachment diagnostics must retain only bounded aggregate metadata'
 );
 assert.match(

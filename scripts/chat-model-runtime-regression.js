@@ -70,14 +70,31 @@ async function main(){
    const luna=await chat('gpt-6-luna',{thinkingMode:false});assert.ok(luna.events.some(x=>x.type==='done'&&!x.degraded),luna.raw.slice(-2000));assert.equal(observations.filter(x=>x.body.model==='gpt-6-luna').at(-1).body.reasoning_effort,'low');
    // Vision stays on the explicitly selected DeepSeek model.
    const vision=await chat('deepseek-v4.1-flash',{messages:[{role:'user',content:'Read this image.',attachments:[{type:'image',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/yUAAAAASUVORK5CYII=',mimeType:'image/png',fileName:'pixel.png'}]}]});assert.ok(vision.events.some(x=>x.type==='model_info'&&x.model==='deepseek-v4.1-flash'),vision.raw.slice(-2000));assert.ok(observations.at(-1).body.messages.some(m=>Array.isArray(m.content)&&m.content.some(x=>x.type==='image_url')),'vision preserved');
+   // Authenticated uploads: two owned images + a text file reach one native vision request.
+   const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/yUAAAAASUVORK5CYII=','base64');
+   const mixed=[];
+   for(const [name,mime,content,type] of [['one.png','image/png',pixel,'image'],['two.png','image/png',pixel,'image'],['notes.txt','text/plain',Buffer.from('MULTI_FILE_FIXTURE_NOTE'),'text']]){
+    const session=await fetch(baseUrl+'/api/uploads/sessions',{method:'POST',headers,body:JSON.stringify({fileName:name,size:content.length,mimeType:mime})});
+    assert.equal(session.status,201);const upload=await session.json();
+    const form=new FormData();form.append('file',new Blob([content],{type:mime}),name);
+    const transfer=await fetch(baseUrl+'/api/upload',{method:'POST',headers:{Authorization:'Bearer '+token,'X-RAI-Upload-ID':upload.uploadId},body:form});
+    const result=await transfer.json();assert.equal(transfer.status,200,JSON.stringify(result));
+    mixed.push({type,fileName:name,mimeType:mime,size:content.length,fileId:result.file.filename,filePath:result.file.filePath});
+   }
+   const combined=await chat('deepseek-v4.1-flash',{messages:[{role:'user',content:'Compare both images using the attached note.',attachments:mixed}],reasoningProfile:'auto'});
+   assert.ok(combined.events.some(x=>x.type==='done'&&!x.degraded),combined.raw.slice(-2000));
+   const mixedBody=observations.filter(x=>x.body.model==='deepseek-v4.1-flash'&&x.body.stream).at(-1).body;
+   assert.equal(mixedBody.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(c=>c.type==='image_url').length,2,'both uploaded images reach provider');
+   assert.ok(JSON.stringify(mixedBody.messages).includes('MULTI_FILE_FIXTURE_NOTE'),'uploaded text context reaches the same request');
    const history=Array.from({length:18},(_,i)=>({role:i%2?'assistant':'user',content:'Old fact '+i+' '+ '中'.repeat(9000)}));history.push({role:'user',content:'LATEST_USER_QUESTION'});
-   const compressed=await chat('gpt-6.1-sol',{messages:history});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);
+   const compressed=await chat('gpt-6.1-sol',{messages:history,reasoningProfile:'auto'});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal(Object.hasOwn(last,'reasoning_effort'),false,'Adaptive survives compression and provider wrapper');assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,1);
    // Actual provider ID is terminal metadata and SQLite history, not the selection alias.
    const user=await dbGet(db,'SELECT id FROM users LIMIT 1'),provenanceChat='provenance-'+crypto.randomBytes(12).toString('hex');
    await dbRun(db,'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)',[provenanceChat,user.id,'Provenance fixture','auto']);
-   const smart=await chat('auto',{sessionId:provenanceChat,thinkingMode:false});
+   const smart=await chat('auto',{sessionId:provenanceChat,thinkingMode:true,reasoningProfile:undefined});
    assert.ok(smart.events.some(x=>x.type==='model_info'&&x.actualModel==='gpt-6.1-sol'),smart.raw.slice(-2000));
    assert.equal(smart.events.find(x=>x.type==='done').actualModel,'gpt-6.1-sol');
+   assert.equal(Object.hasOwn(observations.filter(x=>x.body.model==='gpt-6.1-sol'&&x.body.stream).at(-1).body,'reasoning_effort'),false,'Missing profile defaults to native Adaptive, not question-length heuristics');
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6.1-sol');
    mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);mode='answer';
    // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
@@ -97,13 +114,13 @@ async function main(){
    const deviceHeaders={...nativeHeaders,'X-CX-Device-Key':computer.deviceKey},devicePath='/devices/'+computer.id;
    const link=(await remote('/sessions','POST',{deviceId:computer.id,conversationId:remoteChat})).session;
    await remote(devicePath+'/approve','POST',{sessionId:link.id,approved:true},deviceHeaders);
-   mode='remote';const stream=chat('gpt-6.1-sol',{sessionId:remoteChat,messages:[{role:'user',content:'List the files on my connected computer.'}],local_agent:{protocolVersion:'cx-online-v1',sessionId:link.id}});
+   mode='remote';const stream=chat('gpt-6.1-sol',{sessionId:remoteChat,reasoningProfile:'max',messages:[{role:'user',content:'List the files on my connected computer.'}],local_agent:{protocolVersion:'cx-online-v1',sessionId:link.id}});
    let remoteTask;
    for(let i=0;i<250&&!remoteTask;i++){remoteTask=(await remote(devicePath+'/poll','GET',undefined,deviceHeaders)).tasks[0];if(!remoteTask)await delay(100);}
    assert.ok(remoteTask,'chat must dispatch the remote tool');assert.equal(remoteTask.tool,'list_files');
    await remote(devicePath+'/tasks/'+remoteTask.id+'/start','POST',{},deviceHeaders);
    await remote(devicePath+'/tasks/'+remoteTask.id+'/result','POST',{result:{success:true,path:'fixture',entries:[{name:'remote-note.txt',type:'file'}],output:'目录: fixture (1 项)\n  [文件] remote-note.txt'}},deviceHeaders);
-   const completed=await stream;assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
+   const completed=await stream;const remoteContinuation=observations.filter(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))).at(-1);assert.ok(remoteContinuation,'remote continuation is observed');assert.equal(remoteContinuation.body.reasoning_effort,'max','Manual max survives routed remote tool continuation');assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
    assert.ok(observations.some(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))),'PC result must reach streaming provider continuation (exclude later title generation)');
    assert.ok(!completed.events.some(x=>x.type==='local_agent_tool_call'||x.type==='client_tool_call'),'Web must not execute desktop tool payload');
    await remote(devicePath,'DELETE',undefined,deviceHeaders);mode='answer';

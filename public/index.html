@@ -12,38 +12,38 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20261009-composer-r13"></script>
+  <script src="runtime-brand.js?v=20261009-composer-focus-r14"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20261009-composer-r13">
+  <link rel="manifest" href="site.webmanifest?v=20261009-composer-focus-r14">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20261009-composer-r13"></script>
-  <script defer src="lib/purify.min.js?v=20261009-composer-r13"></script>
+  <script defer src="lib/marked.min.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="lib/purify.min.js?v=20261009-composer-focus-r14"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261009-composer-r13">
-  <script defer src="lib/katex/katex.min.js?v=20261009-composer-r13"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261009-composer-r13"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261009-composer-focus-r14">
+  <script defer src="lib/katex/katex.min.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261009-composer-focus-r14"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20261009-composer-r13"></script>
-  <script defer src="event-bindings.js?v=20261009-composer-r13"></script>
+  <script defer src="rai-system-prompt.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="event-bindings.js?v=20261009-composer-focus-r14"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261009-composer-r13">
-  <script defer src="lib/highlight/highlight.min.js?v=20261009-composer-r13"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261009-composer-focus-r14">
+  <script defer src="lib/highlight/highlight.min.js?v=20261009-composer-focus-r14"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20261009-composer-r13">
-  <link rel="stylesheet" href="selection-explainer.css?v=20261009-composer-r13">
-  <link rel="stylesheet" href="local-agent.css?v=20261009-composer-r13">
-  <link rel="stylesheet" href="secure-sharing.css?v=20261009-composer-r13">
+  <link rel="stylesheet" href="styles.css?v=20261009-composer-focus-r14">
+  <link rel="stylesheet" href="selection-explainer.css?v=20261009-composer-focus-r14">
+  <link rel="stylesheet" href="local-agent.css?v=20261009-composer-focus-r14">
+  <link rel="stylesheet" href="secure-sharing.css?v=20261009-composer-focus-r14">
 </head>
 
 <body>
@@ -391,7 +391,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.13.21</div>
+                <div class="logo-subtitle">by Rick · v0.13.22</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -707,19 +707,21 @@
                     <div class="reasoning-profile-slider-wrap">
                       <input
                         id="reasoningProfileSlider"
+                        data-i18n-aria-label="reasoning-mode" aria-label="推理模式"
                         class="reasoning-profile-slider"
                         type="range"
                         min="0"
-                        max="3"
+                        max="4"
                         step="1"
                         value="0"
                         data-rai-input="setReasoningProfileFromSlider(this.value)"
                       >
                       <div class="reasoning-profile-labels">
+                        <span data-i18n="reasoning-auto">自适应</span>
                         <span data-i18n="reasoning-low">低</span>
                         <span data-i18n="reasoning-medium">中</span>
                         <span data-i18n="reasoning-high">高</span>
-                        <span data-i18n="reasoning-max">max</span>
+                        <span data-i18n="reasoning-max">最大</span>
                       </div>
                     </div>
                   </div>
@@ -785,16 +787,16 @@
                   <div class="more-menu-divider"></div>
 
                   <!-- 添加附件 -->
-                  <div class="more-menu-item" role="button" tabindex="0"
-                    data-rai-click="handleFileUploadFromMenu()" data-rai-keydown="handleComposerMenuItemKeydown(event)">
-                    <div class="more-menu-item-icon">
+                  <button type="button" class="more-menu-item attachment-upload-btn" id="attachmentUploadBtn"
+                    data-rai-click="handleFileUploadFromMenu(event)" data-rai-keydown="handleComposerMenuItemKeydown(event)">
+                    <span class="more-menu-item-icon" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                         <path
                           d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" />
                       </svg>
-                    </div>
+                    </span>
                     <span class="more-menu-item-text" data-i18n="add-attachment">添加附件</span>
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -907,10 +909,10 @@
 
                     <div class="model-menu-section-label">对话模型</div>
 
-                    <div class="model-menu-item" data-model="deepseek-v4.1-flash" data-rai-click="selectModelFromMenu('deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">DeepSeek V4.1 Flash</span><span class="model-badge">视觉 · 256k</span></div><div class="model-menu-desc">低 / 中 / 高 / max 思考 · 自动上下文压缩</div></div></div>
-<div class="model-menu-item" data-model="gpt-6.1-sol" data-rai-click="selectModelFromMenu('gpt-6.1-sol', 'GPT 6.1 Sol', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6.1 Sol</span><span class="model-badge">视觉 · 256k</span></div><div class="model-menu-desc">低 / 中 / 高 / max 思考 · 自动上下文压缩</div></div></div>
-<div class="model-menu-item" data-model="gpt-6-luna" data-rai-click="selectModelFromMenu('gpt-6-luna', 'GPT 6 Luna', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Luna</span><span class="model-badge">视觉 · 256k</span></div><div class="model-menu-desc">低 / 中 / 高 / max 思考 · 自动上下文压缩</div></div></div>
-<div class="model-menu-item" data-model="gpt-6-astra" data-rai-click="selectModelFromMenu('gpt-6-astra', 'GPT 6 Astra', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Astra</span><span class="model-badge">视觉 · 256k</span></div><div class="model-menu-desc">低 / 中 / 高 / max 思考 · 自动上下文压缩</div></div></div>
+                    <div class="model-menu-item" data-model="deepseek-v4.1-flash" data-rai-click="selectModelFromMenu('deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">DeepSeek V4.1 Flash</span></div></div></div>
+<div class="model-menu-item" data-model="gpt-6.1-sol" data-rai-click="selectModelFromMenu('gpt-6.1-sol', 'GPT 6.1 Sol', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6.1 Sol</span></div></div></div>
+<div class="model-menu-item" data-model="gpt-6-luna" data-rai-click="selectModelFromMenu('gpt-6-luna', 'GPT 6 Luna', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Luna</span></div></div></div>
+<div class="model-menu-item" data-model="gpt-6-astra" data-rai-click="selectModelFromMenu('gpt-6-astra', 'GPT 6 Astra', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Astra</span></div></div></div>
                   </div>
                 </div>
               </div>
@@ -1153,7 +1155,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261009-composer-r13" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261009-composer-focus-r14" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1219,7 +1221,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261009-composer-r13" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261009-composer-focus-r14" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1234,7 +1236,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261009-composer-r13" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261009-composer-focus-r14" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -2047,7 +2049,7 @@
     </div>
   </div>
 
-  <input type="file" id="fileInput"
+  <input type="file" id="fileInput" multiple
     accept="image/*,video/*,audio/*,.txt,.md,.json,.xml,.csv,.log,.yaml,.yml,.ini,.conf,.js,.ts,.jsx,.tsx,.py,.java,.c,.cpp,.h,.hpp,.css,.scss,.less,.html,.vue,.svelte,.swift,.kt,.go,.rs,.rb,.php,.sh,.bash,.zsh,.sql"
     style="display: none;" data-rai-change="handleFileSelected(event)">
   <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display: none;"
@@ -2214,16 +2216,16 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20261009-composer-r13"></script>
-  <script defer src="pet-quotes.js?v=20261009-composer-r13"></script>
-  <script defer src="diagnostics.js?v=20261009-composer-r13"></script>
-  <script defer src="app.js?v=20261009-composer-r13"></script>
-  <script defer src="cx-remote.js?v=20261009-composer-r13"></script>
-  <script defer src="crf-ui.js?v=20261009-composer-r13"></script>
-  <script defer src="selection-explainer.js?v=20261009-composer-r13"></script>
-  <script defer src="lib/jsQR.js?v=20261009-composer-r13"></script>
-  <script defer src="qr-scanner.js?v=20261009-composer-r13"></script>
-  <script src="secure-sharing.js?v=20261009-composer-r13" defer></script>
+  <script defer src="conversation-cache.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="pet-quotes.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="diagnostics.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="app.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="cx-remote.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="crf-ui.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="selection-explainer.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="lib/jsQR.js?v=20261009-composer-focus-r14"></script>
+  <script defer src="qr-scanner.js?v=20261009-composer-focus-r14"></script>
+  <script src="secure-sharing.js?v=20261009-composer-focus-r14" defer></script>
 </body>
 
 </html>

@@ -12,6 +12,7 @@ const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnab
 const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.rick.sarl/').trim() || 'https://rai.rick.sarl/';
 const DOCUMENT_SANDBOX_ENABLED = RAI_RUNTIME_CONFIG.documentSandboxEnabled === true;
 const USER_PASSWORD_MIN_LENGTH = 8;
+const UI_MAX_CHAT_ATTACHMENTS = Math.max(1, Math.min(20, Number(RAI_RUNTIME_CONFIG.chatClientMaxAttachments) || 8));
 
 const UI_UPLOAD_EXTENSION_GROUPS = Object.freeze({
   image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'heic', 'heif'],
@@ -2410,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.21';
-const RAI_BUILD_ID = '20261009-composer-r13';
+const RAI_APP_VERSION = '0.13.22';
+const RAI_BUILD_ID = '20261009-composer-focus-r14';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2488,7 +2489,7 @@ const appState = {
   lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
   thinkingMode: false,  // 默认关闭推理模式
-  reasoningProfile: 'low',
+  reasoningProfile: 'auto',
   internetMode: true,  // 默认开启联网
   agentMode: false,  // 兼容旧字段；深度研究由 researchMode 驱动
   agentPolicy: 'dynamic-1-4',
@@ -5275,13 +5276,13 @@ function isMembershipLockedModel(modelId) {
 }
 
 function normalizeReasoningProfile(value) {
-  if (value === 'mixed') return 'max';
-  const v = String(value || '').toLowerCase();
-  if (v === 'medium' || v === 'high' || v === 'mixed') return v;
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'mixed') return 'max';
+  if (v === 'auto' || v === 'medium' || v === 'high' || v === 'max') return v;
   return 'low';
 }
 
-const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'max'];
+const REASONING_PROFILE_ORDER = ['auto', 'low', 'medium', 'high', 'max'];
 
 function reasoningProfileToIndex(profile) {
   const normalized = normalizeReasoningProfile(profile);
@@ -5292,14 +5293,14 @@ function reasoningProfileToIndex(profile) {
 function reasoningIndexToProfile(index) {
   const num = Number(index);
   if (!Number.isFinite(num)) return 'low';
-  const clamped = Math.max(0, Math.min(3, Math.round(num)));
+  const clamped = Math.max(0, Math.min(REASONING_PROFILE_ORDER.length - 1, Math.round(num)));
   return REASONING_PROFILE_ORDER[clamped] || 'low';
 }
 
 function updateReasoningProfileSliderVisual(sliderEl) {
   if (!sliderEl) return;
   const min = Number(sliderEl.min || 0);
-  const max = Number(sliderEl.max || 3);
+  const max = Number(sliderEl.max || 4);
   const current = Number(sliderEl.value || 0);
   const range = max - min || 1;
   const progress = ((current - min) / range) * 100;
@@ -5330,6 +5331,7 @@ function updateReasoningProfileControl() {
     if (slider.value !== targetIndex) {
       slider.value = targetIndex;
     }
+    slider.setAttribute('aria-valuetext', i18nText('reasoning-' + normalized, normalized));
     updateReasoningProfileSliderVisual(slider);
   }
 }
@@ -6164,10 +6166,11 @@ const i18n = {
     'more-tools': '更多工具',
     'reasoning-mode': '推理模式',
     'reasoning-profile': '推理强度',
+    'reasoning-auto': '自适应',
     'reasoning-low': '低',
     'reasoning-medium': '中',
     'reasoning-high': '高',
-    'reasoning-max': 'max',
+    'reasoning-max': '最大',
     'research-mode': '研究',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
@@ -6830,10 +6833,11 @@ const i18n = {
     'more-tools': 'More tools',
     'reasoning-mode': 'Reasoning Mode',
     'reasoning-profile': 'Reasoning Strength',
+    'reasoning-auto': 'Adaptive',
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
-    'reasoning-max': 'max',
+    'reasoning-max': 'Max',
     'research-mode': 'Research',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
@@ -7809,8 +7813,9 @@ function formatFileLibraryDate(value) {
 
 function useFileLibraryItemInChat(file = {}) {
   if (!file.filePath) return false;
-  if (currentAttachment?.localThumbnail) URL.revokeObjectURL(currentAttachment.localThumbnail);
-  currentAttachment = {
+  if (currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS) { showAttachmentLimit(); return false; }
+  if (currentAttachments.some(attachment => String(attachment.fileId || '') === String(file.id || ''))) return true;
+  currentAttachments.push({
     type: file.type || 'document',
     fileName: file.fileName || file.originalName || '',
     originalName: file.originalName || file.fileName || '',
@@ -7819,7 +7824,7 @@ function useFileLibraryItemInChat(file = {}) {
     fileId: file.id || null,
     filePath: file.filePath,
     localThumbnail: null
-  };
+  });
   updateAttachmentUI();
   closeFileLibrary();
   showToast(isChineseLanguage(appState.language) ? '已添加到当前对话' : 'Added to the current chat');
@@ -7841,7 +7846,9 @@ async function deleteFileLibraryItem(file = {}) {
     if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
     fileLibraryState.files = fileLibraryState.files.filter((entry) => entry.id !== file.id);
     fileLibraryState.storage = data.storage || fileLibraryState.storage;
-    if (String(currentAttachment?.fileId || '') === String(file.id || '')) removeAttachment();
+    for (let i = currentAttachments.length - 1; i >= 0; i--) {
+      if (String(currentAttachments[i].fileId || '') === String(file.id || '')) removeAttachment(i);
+    }
     renderFileLibrary();
     showToast(isChineseLanguage(appState.language) ? '文件已删除' : 'File deleted');
     return true;
@@ -8155,6 +8162,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-09', version: 'v0.13.22',
+    zh: { summary: '修复输入框点击和最大思考档，精简模型列表。', details: ['点击或轻触输入框内除按钮、菜单等控件外的空白区域，直接聚焦并输入。', '工具栏与模型按钮周围空白也可输入；发送/停止仍在右侧。', '添加附件整行可点击；支持多文件、多图片与追加批次上传，同一问题一起发送。', '移动端回复正文可上下滑动，流式输出不再把正在查看历史的用户拉回底部。', '统一桌面、手机和网页应用的聚焦逻辑，移除 Android 重复延迟聚焦。', '打开思考默认自适应，由模型决定思考长度；也可手动选择低、中、高、最大（Max）。', '模型列表仅显示名称，后台视觉、思考和上下文压缩能力不变。'] },
+    en: { summary: 'Fix composer focus and maximum reasoning; simplify model names.', details: ['Click or tap blank composer space to type immediately.', 'Toolbar/model-control gaps focus input; send/stop stay on the right.', 'The whole attachment row opens a multi-file picker; images and files can be appended to one question.', 'Mobile reply swipes scroll history without streaming updates snapping readers to the bottom.', 'One synchronous focus path for desktop, mobile and PWA; remove the delayed Android duplicate.', 'Thinking starts in Adaptive mode with model-managed effort; Low, Medium, High and Max remain manual choices.', 'Model lists show names only without changing vision, reasoning or context capabilities.'] }
+  },
   {
     date: '2026-10-09', version: 'v0.13.21',
     zh: { summary: '修复发送按钮位置，恢复智能模型名称，整理下载推荐标。', details: ['发送和停止按钮固定在输入工具栏右侧；不受适人握持影响。', '智能模型名称恢复，模型路由、思考档位与额度规则不变。', 'Windows 安装器推荐标嵌入下载按钮；Mac/手机推荐网页版应用，刷新和语言切换不会丢失标签。', '左右侧栏均可反向滑回；回答标签显示真实请求模型 ID，回退和历史记录保留实际模型。'] },
@@ -13309,7 +13321,7 @@ function setResearchMode(mode, options = {}) {
 
   if (isResearchModeEnabled() && normalized === 'deep') {
     appState.thinkingMode = true;
-    appState.reasoningProfile = 'high';
+    appState.reasoningProfile = 'auto';
   } else if (isResearchModeEnabled() && normalized === 'fast') {
     appState.thinkingMode = false;
     appState.reasoningProfile = 'low';
@@ -13335,7 +13347,7 @@ function toggleResearchModeFromMenu(event) {
     const normalized = normalizeResearchMode(appState.researchMode);
     if (normalized === 'deep') {
       appState.thinkingMode = true;
-      appState.reasoningProfile = 'high';
+      appState.reasoningProfile = 'auto';
     } else {
       appState.thinkingMode = false;
       appState.reasoningProfile = 'low';
@@ -13467,9 +13479,6 @@ function getRequestModelIdForCurrentMode() {
 }
 
 function getRequestReasoningProfileForCurrentMode() {
-  if (getEffectiveResearchMode() === 'deep' && appState.thinkingMode) {
-    return 'mixed';
-  }
   if (getEffectiveResearchMode() === 'fast') {
     return 'low';
   }
@@ -13501,7 +13510,7 @@ function getModeRequestConfig(mode = '') {
       mode: 'research',
       model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash'),
       thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
-      reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
+      reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'auto' : 'low',
       researchMode: normalizeResearchMode(appState.researchMode || 'fast')
     };
   }
@@ -13510,7 +13519,7 @@ function getModeRequestConfig(mode = '') {
       mode: 'think',
       model: 'auto',
       thinkingMode: true,
-      reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile === 'low' ? 'medium' : appState.reasoningProfile),
+      reasoningProfile: 'auto',
       researchMode: 'off'
     };
   }
@@ -14224,6 +14233,7 @@ function settingsToggleThinkingMode() {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
+  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
   updateToolbarUI();
   updateSettingsCapabilitiesUI();
 }
@@ -14783,24 +14793,22 @@ function expandInput() {
 
 
 function handleInputContainerClick(event) {
-  // 点击输入容器时聚焦输入框
   const target = event.target;
+  if (!(target instanceof Element) || event.defaultPrevented) return;
+  if (event.type === 'pointerdown' && (event.button !== 0 || event.isPrimary === false)) return;
 
-  // 如果点击的是工具栏按钮或下拉菜单，不处理
-  if (target.closest('.toolbar-btn') ||
-    target.closest('.model-dropdown') ||
-    target.closest('.model-selector') ||
-    target.closest('.thinking-budget-modal') ||
-    target.closest('.send-btn') ||
-    target.closest('.stop-btn')) {
-    return;
-  }
+  // Ignore actual controls, not their layout wrappers: empty toolbar/model gaps
+  // belong to the composer too. Never steal focus from menus, sliders or previews.
+  if (target.closest('button, a, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="menuitem"], [role="slider"], [data-rai-click], .more-menu, .model-dropdown-menu, .thinking-budget-modal, .quote-preview-content, .attachment-item, .attachment-preview')) return;
 
-  // 点击容器时，如果输入框未聚焦，强制聚焦
   const input = document.getElementById('messageInput');
-  if (input && document.activeElement !== input) {
-    input.focus();
-  }
+  if (!input || input.disabled || input.readOnly) return;
+
+  // Focus synchronously during the user gesture so touch keyboards can open.
+  // Cancel only blank-surface pointer defaults; native text selection and button
+  // clicks remain untouched. A click fallback also supports older WebViews.
+  if (event.type === 'pointerdown') event.preventDefault();
+  if (document.activeElement !== input) input.focus({ preventScroll: true });
 }
 
 function handleActionCard(action) {
@@ -14958,14 +14966,8 @@ async function handleMessageInputPaste(event) {
     return;
   }
 
-  await processUploadedFile(files[0]);
-  if (files.length > 1) {
-    showToast(isChineseLanguage(appState.language)
-      ? `已上传第 1 个文件；当前对话一次只能携带 1 个附件`
-      : 'Uploaded the first file. One attachment can be sent at a time.');
-  } else {
-    showToast(isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachment added from clipboard');
-  }
+  const uploaded = await processUploadedFiles(files);
+  if (uploaded) showToast(isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachments added from clipboard');
 }
 
 function initPasteAttachmentUpload() {
@@ -15202,6 +15204,7 @@ function trackUserAuthRequest(controller) {
 }
 
 function invalidateUserAuthAsyncWork() {
+  removeAttachment();
   appState.authEpoch = Number(appState.authEpoch || 0) + 1;
   userTokenRefreshEntry?.controller?.abort?.();
   userTokenRefreshEntry = null;
@@ -15862,6 +15865,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
   if (inputContainer) {
+    inputContainer.addEventListener('pointerdown', handleInputContainerClick);
     inputContainer.addEventListener('click', handleInputContainerClick);
   }
 
@@ -16257,6 +16261,7 @@ function toggleThinkingFromMenu(event) {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
+  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
 
@@ -16269,9 +16274,10 @@ function toggleThinkingFromMenu(event) {
 
 
 // 从菜单触发文件上传
-function handleFileUploadFromMenu() {
-  closeMoreMenu();
+function handleFileUploadFromMenu(event = null) {
+  event?.stopPropagation?.();
   handleFileUpload();
+  closeMoreMenu();
 }
 
 // 原有的切换函数（向后兼容）
@@ -21449,8 +21455,8 @@ async function sendMessage(message = null, options = {}) {
   const providedMessage = message !== null && message !== undefined ? String(message).trim() : '';
   const messageText = providedMessage || input.value.trim();
   const immediateTitleSource = messageText
-    || currentAttachment?.originalName
-    || currentAttachment?.fileName
+    || currentAttachments[0]?.originalName
+    || currentAttachments[0]?.fileName
     || message;
   const immediateConversationTitle = deriveImmediateConversationTitleFromUserMessage(immediateTitleSource);
 
@@ -21460,7 +21466,7 @@ async function sendMessage(message = null, options = {}) {
     sendWaitingForAttachmentUpload = true;
     showToast(isChineseLanguage(appState.language) ? '正在等待附件上传完成…' : 'Waiting for the attachment upload to finish…');
     try {
-      await pendingAttachmentUpload;
+      while (pendingAttachmentUpload) await pendingAttachmentUpload;
     } catch (uploadWaitError) {
       console.warn('附件上传未完成，继续按当前状态发送:', uploadWaitError?.message || uploadWaitError);
     } finally {
@@ -21469,7 +21475,7 @@ async function sendMessage(message = null, options = {}) {
   }
 
   // 允许只发送附件（无文字内容）
-  if (!messageText && !currentAttachment) return;
+  if (!messageText && currentAttachments.length === 0) return;
   if (appState.customApiMode) {
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
@@ -21483,7 +21489,7 @@ async function sendMessage(message = null, options = {}) {
   }
   closeModelModal();
   if (appState.isStreaming) {
-    if (messageText && !currentAttachment) {
+    if (messageText && currentAttachments.length === 0) {
       await submitStreamingInterjection(messageText);
     }
     return;
@@ -21539,23 +21545,18 @@ async function sendMessage(message = null, options = {}) {
     created_at: new Date().toISOString()
   };
 
-  // 如果有附件，添加到消息中（元数据模式，不塞大 Base64）
-  if (currentAttachment) {
-    userMsg.attachments = [{
-      type: currentAttachment.type,
-      fileName: currentAttachment.fileName,
-      originalName: currentAttachment.originalName || currentAttachment.fileName,
-      mimeType: currentAttachment.mimeType || '',
-      size: currentAttachment.size || 0,
-      fileId: currentAttachment.fileId || null,
-      filePath: currentAttachment.filePath || null
-    }];
-    console.log(' 消息包含附件', {
-      attachmentType: currentAttachment.type,
-      filenameLength: String(currentAttachment.fileName || '').length,
-      bytes: Number(currentAttachment.size) || 0,
-      metadataMode: true
-    });
+  // Send every attached file as owned metadata; never inline large Base64 or local blob URLs.
+  if (currentAttachments.length) {
+    userMsg.attachments = currentAttachments.map(attachment => ({
+      type: attachment.type,
+      fileName: attachment.fileName,
+      originalName: attachment.originalName || attachment.fileName,
+      mimeType: attachment.mimeType || '',
+      size: attachment.size || 0,
+      fileId: attachment.fileId || null,
+      filePath: attachment.filePath || null
+    }));
+    console.log(' 消息包含附件', { count: userMsg.attachments.length, metadataMode: true });
   }
 
   appState.messages.push(userMsg);
@@ -21579,8 +21580,8 @@ async function sendMessage(message = null, options = {}) {
   }
 
   // 清除当前附件
-  const hadAttachment = !!currentAttachment;
-  currentAttachment = null;
+  const hadAttachment = currentAttachments.length > 0;
+  removeAttachment();
   updateAttachmentUI();  // 更新UI显示
 
   const sendBtn = document.getElementById('sendBtn');
@@ -24038,6 +24039,7 @@ function toggleThinking() {
   }
 
   appState.thinkingMode = !appState.thinkingMode;
+  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
   updateToolbarUI();
 
   const thinkingBtn = document.getElementById('thinkingBtn');
@@ -24048,51 +24050,10 @@ function toggleThinking() {
 }
 
 // 修复：改进handleFileSelected - 添加完整的错误处理
-function handleFileSelected(event) {
-  if (!event || !event.target) {
-    console.error(' 事件对象无效');
-    return;
-  }
-
-  const files = event.target.files;
-  if (!files || files.length === 0) {
-    console.warn(' 未选择文件');
-    return;
-  }
-
-  const file = files[0];
-  console.log(` 选中文件: type=${file.type || 'unknown'}, bytes=${file.size}`);
-
-  // 文件类型验证
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'text/plain'];
-  if (!allowedTypes.includes(file.type)) {
-    const msg = isChineseLanguage(appState.language)
-      ? `不支持的文件类型: ${file.type}\n支持的类型: 图片(JPG, PNG, GIF, WebP), 文本文件`
-      : `Unsupported file type: ${file.type}\nSupported: Images (JPG, PNG, GIF, WebP), Text`;
-    alert(msg);
-    return;
-  }
-
-  // 文件大小验证 (最大10MB)
-  const maxSize = 10 * 1024 * 1024;
-  if (file.size > maxSize) {
-    const msg = isChineseLanguage(appState.language)
-      ? `文件过大: ${(file.size / 1024 / 1024).toFixed(2)} MB\n最大支持: 10 MB`
-      : `File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB\nMax size: 10 MB`;
-    alert(msg);
-    return;
-  }
-
-  // TODO: 实现文件上传到服务器的逻辑
-  // 这里应该将文件上传到后端，并获取URL或ID
-  // 然后可以在发送消息时附加文件信息
-  console.log(' 文件已准备，等待上传实现');
-
-  // 临时提示用户
-  const msg = isChineseLanguage(appState.language)
-    ? `文件 "${file.name}" 已选择\n注意: 文件上传功能尚未完全实现`
-    : `File "${file.name}" selected\nNote: File upload not fully implemented yet`;
-  alert(msg);
+async function handleFileSelected(event) {
+  const files = Array.from(event?.target?.files || []);
+  if (event?.target) event.target.value = '';
+  if (files.length) await processUploadedFiles(files);
 }
 
 // 修复：改进showModelRoutingInfo
@@ -29353,6 +29314,7 @@ function isNearBottom(threshold = null) {
 }
 
 function performScrollToBottom() {
+  if (appState.chatTouchScrolling) return;
   const container = getChatScrollElement();
   if (!container) return;
 
@@ -29365,6 +29327,7 @@ function performScrollToBottom() {
 }
 
 function scrollToBottom(force = false) {
+  if (appState.chatTouchScrolling) return;
   const container = getChatScrollElement();
   if (!container) return;
   if (appState.scrollFollowMode === 'pausedByUser' && !force) return;
@@ -29388,6 +29351,28 @@ let chatScrollListenerInitialized = false;
 
 function initChatScrollListener() {
   if (chatScrollListenerInitialized) return;
+
+  // Pause follow-on-output at vertical touch intent, before native scrolling.
+  // Otherwise a pending/streaming scroll-to-bottom can continuously undo the
+  // user's gesture while the programmatic-scroll guard ignores scroll events.
+  const chat = getChatScrollElement();
+  let start = null;
+  chat?.addEventListener('touchstart', event => {
+    if (event.touches.length !== 1 || event.target.closest('button, input, textarea, select, .input-area')) { start = null; return; }
+    const touch = event.touches[0]; start = {x:touch.clientX, y:touch.clientY};
+  }, {passive:true});
+  chat?.addEventListener('touchmove', event => {
+    if (!start || event.touches.length !== 1) return;
+    const touch = event.touches[0], dx = Math.abs(touch.clientX - start.x), dy = Math.abs(touch.clientY - start.y);
+    if (dy < 10 || dy <= dx) return;
+    appState.chatTouchScrolling = true;
+    appState.isProgrammaticScroll = false;
+    cancelPendingAutoScroll();
+    setScrollFollowMode('pausedByUser');
+  }, {passive:true});
+  const finishTouch = () => { start = null; appState.chatTouchScrolling = false; };
+  chat?.addEventListener('touchend', finishTouch, {passive:true});
+  chat?.addEventListener('touchcancel', finishTouch, {passive:true});
 
   chatScrollListenerInitialized = true;
   ensureScrollResumeButton();
@@ -29997,6 +29982,7 @@ async function handleTemporaryChatClick() {
 }
 
 async function handleNewChatClick() {
+  removeAttachment();
   closeFileLibrary();
   closeModelModal();
   abortConversationSessionRefresh(appState.currentSession?.id);
@@ -30665,7 +30651,7 @@ function initSwipeGestures() {
   const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
   const getSidebarWidth = () => sidebar.getBoundingClientRect().width || sidebar.offsetWidth || window.innerWidth * 0.85;
   const isGestureBlockedTarget = (target) => Boolean(target?.closest(
-    '.input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
+    '.message-text pre, .message-text .table-wrapper, .rai-reasoning-content, .input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
   ));
 
   const setOverlayProgress = (progress, dragging = false) => {
@@ -30707,7 +30693,8 @@ function initSwipeGestures() {
   };
 
   const handleTouchStart = (e) => {
-    if (!isMobileViewport() || !e.touches?.length) return;
+    resetSwipeState();
+    if (!isMobileViewport() || e.touches?.length !== 1) return;
 
     const touch = e.touches[0];
     const target = e.target;
@@ -31113,7 +31100,6 @@ class MobileKeyboardHandler {
     this.setupControlFocusGuard();
     this.setupComposerObserver();
 
-    if (this.isAndroid) this.applyAndroidFixes();
     if (this.isIOS) this.applyIOSFixes();
     if (this.isIOS && this.isStandalone) {
       window.setTimeout(() => this.healStandaloneViewport(), 350);
@@ -31381,18 +31367,6 @@ class MobileKeyboardHandler {
     });
   }
 
-  applyAndroidFixes() {
-    const container = document.getElementById('inputContainer');
-    if (container) {
-      container.addEventListener('click', (e) => {
-        const input = document.getElementById('messageInput');
-        if (input && e.target !== input && !e.target.closest('button')) {
-          setTimeout(() => input.focus({ preventScroll: true }), 10);
-        }
-      });
-    }
-  }
-
   // Reconcile after WebKit's delayed viewport update without toggling display.
   healStandaloneViewport() {
     if (!this.isIOS || !this.isStandalone || this.activeInput) return;
@@ -31426,11 +31400,11 @@ class MobileKeyboardHandler {
 }
 
 // ==================== 文件上传处理 (多模态支持) ====================
-let currentAttachment = null;
+let currentAttachments = [];
 // 正在上传中的附件任务：发送消息时必须等待它结束，否则 LLM 会漏掉刚选中的文件。
 let pendingAttachmentUpload = null;
 let sendWaitingForAttachmentUpload = false;
-let attachmentUploadSequence = 0;
+let attachmentComposerGeneration = 0;
 const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
 
 // HEIC/HEIF 在多数模型网关与浏览器里都无法直接识别：在浏览器能解码时先转成 JPEG。
@@ -31663,7 +31637,7 @@ async function checkAndConvertLongInput() {
     // 创建 txt 文件并通过上传接口发送
     const blob = new Blob([content], { type: 'text/plain' });
     const file = new File([blob], `long_input_${Date.now()}.txt`, { type: 'text/plain' });
-    await processUploadedFile(file);
+    await processUploadedFiles([file]);
 
     // 清空输入框，显示提示
     input.value = isChineseLanguage(appState.language)
@@ -31681,16 +31655,41 @@ async function checkAndConvertLongInput() {
 }
 
 function handleFileUpload() {
-  const input = document.createElement('input');
-  input.type = 'file';
+  const input = document.getElementById('fileInput');
+  if (!input) return;
+  input.multiple = true;
   input.accept = getUiUploadPickerAccept();
-
-  input.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    await processUploadedFile(file);
-  }, { once: true });
+  input.value = '';
   input.click();
+}
+
+// One queue covers selection, drop, paste and subsequent batches. Sending waits
+// for the entire queue, not only the last file or its network transfer.
+function showAttachmentLimit() {
+  showToast(isChineseLanguage(appState.language) ? `每条问题最多添加 ${UI_MAX_CHAT_ATTACHMENTS} 个附件，请分批提问` : `Up to ${UI_MAX_CHAT_ATTACHMENTS} attachments per question; please split larger batches`);
+}
+
+function processUploadedFiles(fileList, options = {}) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return Promise.resolve(0);
+  const attachToComposer = options.attachToComposer !== false;
+  const context = captureUserAuthContext();
+  const generation = attachmentComposerGeneration;
+  const previous = attachToComposer ? pendingAttachmentUpload : null;
+  const task = (async () => {
+    if (previous) await previous.catch(() => {});
+    let uploaded = 0;
+    for (const file of files) {
+      if (!isUserAuthContextCurrent(context) || (attachToComposer && generation !== attachmentComposerGeneration)) break;
+      if (attachToComposer && currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS) { showAttachmentLimit(); break; }
+      if (await processUploadedFile(file, { ...options, composerGeneration: generation })) uploaded++;
+    }
+    return uploaded;
+  })();
+  if (attachToComposer) pendingAttachmentUpload = task;
+  return task.finally(() => {
+    if (attachToComposer && pendingAttachmentUpload === task) pendingAttachmentUpload = null;
+  });
 }
 
 let uploadProgressGeneration = 0;
@@ -31892,6 +31891,8 @@ function isRetryableUploadError(error) {
 // 独立的文件处理函数（供拖拽上传复用）
 async function processUploadedFile(file, options = {}) {
   const attachToComposer = options.attachToComposer !== false;
+  const composerGeneration = options.composerGeneration ?? attachmentComposerGeneration;
+  const context = captureUserAuthContext();
   if (!isUiAllowedUploadFile(file)) {
     showUiUploadRejected(file);
     return false;
@@ -31961,7 +31962,6 @@ async function processUploadedFile(file, options = {}) {
     localThumbnail = URL.createObjectURL(uploadFile);
   }
 
-  const context = captureUserAuthContext();
   if (!isUserAuthContextCurrent(context)) {
     if (localThumbnail) URL.revokeObjectURL(localThumbnail);
     showToast(isChineseLanguage(appState.language) ? '登录状态已变化，请重试' : 'Your session changed; please try again');
@@ -32014,9 +32014,7 @@ async function processUploadedFile(file, options = {}) {
     throw lastError || new Error('Upload failed');
   };
 
-  const uploadSequence = ++attachmentUploadSequence;
   const uploadTask = runUploadWithRetry();
-  if (attachToComposer) pendingAttachmentUpload = uploadTask;
 
   try {
     const data = await uploadTask;
@@ -32042,8 +32040,8 @@ async function processUploadedFile(file, options = {}) {
       bytes: Number(uploadFile.size) || 0
     });
     if (attachToComposer) {
-      if (uploadSequence === attachmentUploadSequence) {
-        currentAttachment = uploadedAttachment;
+      if (composerGeneration === attachmentComposerGeneration) {
+        currentAttachments.push(uploadedAttachment);
         updateAttachmentUI();
         updateNewChatModeSettingsUI();
       } else if (localThumbnail) {
@@ -32059,7 +32057,10 @@ async function processUploadedFile(file, options = {}) {
   } catch (error) {
     renderUploadProgress({ generation, fileName: uploadFile.name, state: 'failed', loaded: 0, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation, 4800);
-    if (error?.name === 'AbortError') return false;
+    if (error?.name === 'AbortError') {
+      if (localThumbnail) URL.revokeObjectURL(localThumbnail);
+      return false;
+    }
     console.error(' 文件上传失败:', {
       errorName: String(error?.name || 'Error').slice(0, 80),
       status: Number(error?.status || 0) || undefined,
@@ -32069,104 +32070,86 @@ async function processUploadedFile(file, options = {}) {
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
     alert(error?.message || fallback);
     return false;
-  } finally {
-    if (attachToComposer && pendingAttachmentUpload === uploadTask) {
-      pendingAttachmentUpload = null;
-    }
   }
 }
 
 // 更新附件UI显示
 function updateAttachmentUI() {
-  let attachmentPreview = document.getElementById('attachmentPreview');
-
-  if (!currentAttachment) {
-    // 移除预览
-    if (attachmentPreview) {
-      attachmentPreview.remove();
-    }
-    return;
+  let previewList = document.getElementById('attachmentPreview');
+  if (!currentAttachments.length) { previewList?.remove(); return; }
+  if (!previewList) {
+    previewList = document.createElement('div');
+    previewList.id = 'attachmentPreview';
+    previewList.className = 'attachment-preview-list';
+    const container = document.getElementById('inputContainer');
+    container?.insertBefore(previewList, container.querySelector('.input-row'));
   }
-
-  // 创建或更新预览元素
-  if (!attachmentPreview) {
-    attachmentPreview = document.createElement('div');
-    attachmentPreview.id = 'attachmentPreview';
+  previewList.replaceChildren(...currentAttachments.map((attachment, index) => {
+    const attachmentPreview = document.createElement('div');
     attachmentPreview.className = 'attachment-preview';
+    let iconSvg = '';
+    let typeLabel = '';
 
-    // 插入到input-row之前
-    const inputContainer = document.getElementById('inputContainer');
-    if (inputContainer) {
-      const inputRow = inputContainer.querySelector('.input-row');
-      if (inputRow) {
-        inputContainer.insertBefore(attachmentPreview, inputRow);
-      } else {
-        // 如果找不到input-row，插入到inputContainer开头
-        inputContainer.insertBefore(attachmentPreview, inputContainer.firstChild);
-      }
+    switch (attachment.type) {
+      case 'image':
+        iconSvg = getSvgIcon('image', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '图片' : 'Image';
+        break;
+      case 'audio':
+        iconSvg = getSvgIcon('headphones', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '音频' : 'Audio';
+        break;
+      case 'video':
+        iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '视频' : 'Video';
+        break;
+      case 'text':
+        iconSvg = getSvgIcon('article', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '文本' : 'Text';
+        break;
+      case 'code':
+        iconSvg = getSvgIcon('code', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '代码' : 'Code';
+        break;
+      default:
+        iconSvg = getSvgIcon('description', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '文档' : 'Document';
     }
-  }
 
-  // 根据类型显示不同的预览
-  let iconSvg = '';
-  let typeLabel = '';
 
-  switch (currentAttachment.type) {
-    case 'image':
-      iconSvg = getSvgIcon('image', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '图片' : 'Image';
-      break;
-    case 'audio':
-      iconSvg = getSvgIcon('headphones', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '音频' : 'Audio';
-      break;
-    case 'video':
-      iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '视频' : 'Video';
-      break;
-    case 'text':
-      iconSvg = getSvgIcon('article', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '文本' : 'Text';
-      break;
-    case 'code':
-      iconSvg = getSvgIcon('code', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '代码' : 'Code';
-      break;
-    default:
-      iconSvg = getSvgIcon('description', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '文档' : 'Document';
-  }
-
-  attachmentPreview.innerHTML = `
-        <div class="attachment-info">
-          ${iconSvg}
-          <span class="attachment-type">${typeLabel}</span>
-          <span class="attachment-name">${escapeHtml(currentAttachment.fileName)}</span>
-          <span class="attachment-size">${escapeHtml(formatFileSize(Number(currentAttachment.size) || 0))}</span>
-        </div>
-        <button class="attachment-remove" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="removeAttachment()" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
-          ${getSvgIcon('close', 'remove-icon', 16)}
-        </button>
-      `;
-
-  // 如果是图片，显示本地缩略图（不发送到服务器）
-  const rawLocalThumbnail = String(currentAttachment.localThumbnail || '');
-  const safeLocalThumbnail = rawLocalThumbnail.startsWith('blob:')
-    ? rawLocalThumbnail.replace(/[<>"'`\\\r\n]/g, '')
-    : '';
-  if (currentAttachment.type === 'image' && safeLocalThumbnail && safeLocalThumbnail === rawLocalThumbnail) {
-    const thumbnail = document.createElement('img');
-    thumbnail.src = safeLocalThumbnail;
-    thumbnail.className = 'attachment-thumbnail';
-    attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
-  }
+    attachmentPreview.innerHTML = `
+      <div class="attachment-info">
+        ${iconSvg}
+        <span class="attachment-type">${typeLabel}</span>
+        <span class="attachment-name">${escapeHtml(attachment.fileName)}</span>
+        <span class="attachment-size">${escapeHtml(formatFileSize(Number(attachment.size) || 0))}</span>
+      </div>
+      <button type="button" class="attachment-remove" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="removeAttachment(${index})" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
+        ${getSvgIcon('close', 'remove-icon', 16)}
+      </button>
+    `;
+    const rawLocalThumbnail = String(attachment.localThumbnail || '');
+    const safeLocalThumbnail = rawLocalThumbnail.startsWith('blob:')
+      ? rawLocalThumbnail.replace(/[<>"'\x60\\\r\n]/g, '')
+      : '';
+    if (attachment.type === 'image' && safeLocalThumbnail && safeLocalThumbnail === rawLocalThumbnail) {
+      const thumbnail = document.createElement('img');
+      thumbnail.src = safeLocalThumbnail;
+      thumbnail.className = 'attachment-thumbnail';
+      attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
+    }
+    return attachmentPreview;
+  }));
 }
 
-function removeAttachment() {
-  if (currentAttachment?.localThumbnail) {
-    URL.revokeObjectURL(currentAttachment.localThumbnail);
+function removeAttachment(index = null) {
+  const removed = Number.isInteger(index)
+    ? currentAttachments.splice(index, 1)
+    : currentAttachments.splice(0);
+  if (!Number.isInteger(index)) attachmentComposerGeneration++;
+  for (const attachment of removed) {
+    if (attachment.localThumbnail) URL.revokeObjectURL(attachment.localThumbnail);
   }
-  currentAttachment = null;
   updateAttachmentUI();
 }
 
@@ -32222,7 +32205,7 @@ function initDragAndDrop() {
 
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      processUploadedFile(files[0]);
+      processUploadedFiles(files);
       console.log(' 拖拽上传文件:', {
         filenameLength: String(files[0].name || '').length,
         bytes: Number(files[0].size) || 0
