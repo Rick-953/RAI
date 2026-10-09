@@ -24194,7 +24194,9 @@ if (clientFileExecution && systemPrompt) {
                         body: JSON.stringify(recoveryBody)
                     });
                     if (recoveryResponse.ok) {
-                        const recoveryPayload = await recoveryResponse.json().catch(() => null);
+                        const recoveryText = await readBoundedResponseText(recoveryResponse, 1024 * 1024).catch(() => '');
+                        let recoveryPayload = null;
+                        try { recoveryPayload = recoveryText ? JSON.parse(recoveryText) : null; } catch (_) { recoveryPayload = null; }
                         const recovered = String(recoveryPayload?.choices?.[0]?.message?.content || '').trim();
                         if (recovered) {
                             const sanitizedRecovered = sanitizeStreamingContent(recovered);
