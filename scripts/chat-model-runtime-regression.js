@@ -75,7 +75,7 @@ async function main(){
    const mixed=[];
    for(const [name,mime,content,type] of [['one.png','image/png',pixel,'image'],['two.png','image/png',pixel,'image'],['notes.txt','text/plain',Buffer.from('MULTI_FILE_FIXTURE_NOTE'),'text']]){
     const session=await fetch(baseUrl+'/api/uploads/sessions',{method:'POST',headers,body:JSON.stringify({fileName:name,size:content.length,mimeType:mime})});
-    assert.equal(session.status,200);const upload=await session.json();
+    assert.equal(session.status,201);const upload=await session.json();
     const form=new FormData();form.append('file',new Blob([content],{type:mime}),name);
     const transfer=await fetch(baseUrl+'/api/upload',{method:'POST',headers:{Authorization:'Bearer '+token,'X-RAI-Upload-ID':upload.uploadId},body:form});
     const result=await transfer.json();assert.equal(transfer.status,200,JSON.stringify(result));

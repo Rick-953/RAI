@@ -310,6 +310,57 @@ async function testCase(browser, url, fixture) {
     assert.equal(captured[0].reasoningProfile,'auto');
     assert.ok(message.content.includes('请比较图片并结合两个文件回答'));
     assert.deepEqual(namesUploaded,['first.png','second.png','notes.txt','third.png','extra.txt','queued.txt']);
+    const cancelled = await page.evaluate(async () => {
+      const task=processUploadedFiles([new File(['one'],'discard-a.txt',{type:'text/plain'}),new File(['two'],'discard-b.txt',{type:'text/plain'})]);
+      removeAttachment(); await task;
+      return currentAttachments.length;
+    });
+    assert.equal(cancelled,0);
+    assert.ok(!namesUploaded.includes('discard-b.txt'),'remaining cancelled files are not uploaded');
+    const accountChanged = await page.evaluate(async () => {
+      const task=processUploadedFiles([new File(['fixture'],'old-account.txt',{type:'text/plain'})]);
+      appState.authEpoch++; appState.token='another-fixture-only-token'; removeAttachment(); await task;
+      return currentAttachments.length;
+    });
+    assert.equal(accountChanged,0);
+    if (mobile) {
+      await page.evaluate(async () => {
+        closeMoreMenu(); closeModelModal(); document.getElementById('messageInput').blur();
+        appState.messages=Array.from({length:18},(_,i)=>({role:i%2?'assistant':'user',content:i%2 ? ('回复正文用于上下滑动查看历史。\n\n'.repeat(35)) : '问题 '+i}));
+        renderMessages(); await new Promise(resolve=>setTimeout(resolve,120)); cancelPendingAutoScroll();
+        const chat=getChatScrollElement(); chat.scrollTop=chat.scrollHeight;
+        appState.lastScrollTop=chat.scrollTop; appState.isProgrammaticScroll=false;setScrollFollowMode('following');
+      });
+      const before=await page.evaluate(()=>getChatScrollElement().scrollTop);
+      const target=await page.evaluate(()=>{const el=document.elementFromPoint(window.innerWidth/2,400);return {text:!!el?.closest('.message.assistant'),tag:el?.tagName};});
+      assert.equal(target.text,true,'gesture originates on an assistant reply: '+JSON.stringify(target));
+      if(engine===chromium) {
+        const cdp=await ctx.newCDPSession(page);
+        try {
+          const x=fixture.width/2;
+          await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y:400}]});
+          for(let step=1;step<=12;step++){
+            await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+step*0.2,y:400+step*20}]});
+            await page.evaluate(()=>scrollToBottom()); await page.waitForTimeout(16);
+          }
+          await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+        }finally{await cdp.detach();}
+      } else {
+        // WebKit has no native touch-move driver. Verify unconsumed touch listeners
+        // and then browser scrolling; physical iOS acceptance remains separate.
+        const passive=await page.evaluate(()=>{
+          const target=document.elementFromPoint(window.innerWidth/2,400);
+          const touch=(type,y)=>{const t={identifier:1,target,clientX:window.innerWidth/2,clientY:y};const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(e,'touches',{value:type==='touchend'?[]:[t]});Object.defineProperty(e,'changedTouches',{value:[t]});target.dispatchEvent(e);return e.defaultPrevented;};
+          touch('touchstart',400);const blocked=touch('touchmove',640);const paused=appState.scrollFollowMode==='pausedByUser';touch('touchend',640);return {blocked,paused};
+        });
+        assert.deepEqual(passive,{blocked:false,paused:true});await page.mouse.move(fixture.width/2,400);await page.mouse.wheel(0,-300);
+      }
+      await page.waitForTimeout(160);
+      const after=await page.evaluate(()=>({top:getChatScrollElement().scrollTop,mode:appState.scrollFollowMode,sidebar:appState.sidebarOpen}));
+      assert.ok(after.top < before-60,JSON.stringify({fixture,before,after}));assert.equal(after.mode,'pausedByUser');assert.equal(after.sidebar,false);
+      await page.evaluate(()=>scrollToBottom());await page.waitForTimeout(100);
+      assert.ok(await page.evaluate(()=>getChatScrollElement().scrollTop) < before-60,'stream updates do not drag readers back to the bottom');
+    }
     assert.deepEqual(chatCalls, []);
 
     console.log('composer-focus-runtime PASS', fixture.platform, fixture.standalone ? 'PWA' : 'browser', checked, 'blank-surface hits');
