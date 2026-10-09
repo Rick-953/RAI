@@ -41,7 +41,7 @@ assert.match(index, /id="fileLibraryStorageBar"/);
 assert.match(app, /function openFileLibrary\(\)/);
 assert.match(app, /async function loadFileLibrary[\s\S]*Authorization: `Bearer \$\{appState\.token\}`/);
 assert.match(app, /function createFileLibraryItem[\s\S]*hydratePrivateAttachmentImage\(img, file\)/);
-assert.match(app, /function useFileLibraryItemInChat[\s\S]*currentAttachment =/);
+assert.match(app, /function useFileLibraryItemInChat[\s\S]*currentAttachments\.push\(/);
 assert.match(app, /async function deleteFileLibraryItem[\s\S]*method: 'DELETE'/);
 assert.match(app, /async function processUploadedFile\(file, options = \{\}\)[\s\S]*attachToComposer/);
 assert.match(app, /media-icon">\$\{getSvgIcon\(fileLibraryIconName\(att\)/);

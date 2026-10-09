@@ -1205,7 +1205,8 @@ function buildRuntimeConfigPayload() {
         publicBaseUrl: PUBLIC_BASE_URL,
         defaultDomainNoticeEnabled: !!(DEFAULT_DOMAIN_NOTICE_ENABLED && DEFAULT_DOMAIN_NOTICE_URL),
         defaultDomainNoticeUrl: DEFAULT_DOMAIN_NOTICE_URL || '',
-        documentSandboxEnabled: DOCUMENT_SANDBOX_RUNTIME_ENABLED
+        documentSandboxEnabled: DOCUMENT_SANDBOX_RUNTIME_ENABLED,
+        chatClientMaxAttachments: CHAT_CLIENT_MAX_ATTACHMENTS
     };
 }
 
@@ -4418,10 +4419,10 @@ function isInsufficientBalanceError(status, errorText = '') {
     );
 }
 
-function normalizeReasoningProfile(value = 'low') {
+function normalizeReasoningProfile(value = 'auto') {
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'mixed') return 'max';
-    if (['low', 'medium', 'high', 'max'].includes(normalized)) return normalized;
+    if (['auto', 'low', 'medium', 'high', 'max'].includes(normalized)) return normalized;
     return 'low';
 }
 
@@ -4568,7 +4569,7 @@ function resolveThinkingBudgetForModel(modelName = '', thinkingMode = false, thi
 
 function resolveDeepSeekReasoningEffort(reasoningProfile = 'low') {
     const profile = normalizeReasoningProfile(reasoningProfile);
-    return profile;
+    return profile === 'auto' ? null : profile;
 }
 
 function resolveOpenAIReasoningEffort(reasoningProfile = 'low') {
@@ -4581,6 +4582,7 @@ function resolveOpenAIReasoningEffort(reasoningProfile = 'low') {
 function resolveOpenAIChatReasoningEffort(modelName = '', thinkingMode = false, reasoningProfile = 'low') {
     const profile = normalizeReasoningProfile(reasoningProfile);
     const normalizedModel = String(modelName || '').trim().toLowerCase();
+    if (thinkingMode && profile === 'auto') return null;
 
     if (normalizedModel.includes('gpt-5-pro')) {
         return 'high';
@@ -20957,7 +20959,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             agentPolicy = AGENT_DEFAULT_POLICY,
             qualityProfile = AGENT_DEFAULT_QUALITY,
             agentTraceLevel = 'full',
-            reasoningProfile = 'low',
+            reasoningProfile = 'auto',
             researchMode = 'off',
             researchAgentModels = null,
             researchMasterModel = '',
@@ -21100,8 +21102,8 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             thinkingMode = false;
         } else if (normalizedResearchMode === 'deep') {
             thinkingMode = true;
-            normalizedReasoningProfile = 'max';
-            quotaTurn.reasoningProfile = 'max';
+            // Keep the requested Adaptive/manual profile; deep research must not force max.
+            quotaTurn.reasoningProfile = normalizedReasoningProfile;
         }
 
         const normalizedTraceLogValue = ['off', 'summary', 'full'].includes(String(agentTraceLevel))
@@ -22062,14 +22064,9 @@ if (clientFileExecution && systemPrompt) {
             finalModel = model === 'fast-auto' ? await resolveVisibleFastModel() : await resolveVisibleAutoModel();
             if (model === 'fast-auto') thinkingMode = false;
             if (model === 'think-auto') thinkingMode = true;
-            if (thinkingMode && normalizedResearchMode === 'off') {
-                const text = getPersistableUserMessageContent(lastUserMessage || {});
-                const score = evaluateComplexity(text).score;
-                normalizedReasoningProfile = score >= 0.75 ? 'max' : score >= 0.45 ? 'high' : score >= 0.2 ? 'medium' : 'low';
-            }
             quotaTurn.thinkingMode = thinkingMode;
             quotaTurn.reasoningProfile = normalizedReasoningProfile;
-            autoRoutingReason = model === 'fast-auto' ? '快速：Fast DeepSeek V4.1 Flash；10 秒无响应切官方' : thinkingMode ? '思考：GPT 6.1 Sol，自适应 ' + normalizedReasoningProfile + '；10 秒无响应切官方 DeepSeek' : '模型路由规则：GPT 6.1 Sol 关闭思考；10 秒无响应切官方 DeepSeek';
+            autoRoutingReason = model === 'fast-auto' ? '快速：Fast DeepSeek V4.1 Flash；10 秒无响应切官方' : thinkingMode ? '思考：GPT 6.1 Sol，' + (normalizedReasoningProfile === 'auto' ? '自适应' : '手动 ' + normalizedReasoningProfile) + '；10 秒无响应切官方 DeepSeek' : '智能模型：GPT 6.1 Sol 关闭思考；10 秒无响应切官方 DeepSeek';
         } else {
             finalModel = model;
         }

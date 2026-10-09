@@ -43,6 +43,11 @@ async function main() {
             const body=applyChatReasoningPolicy({model:id},{thinkingMode:true,profile});
             assert.equal(body.reasoning_effort,profile);
         }
+        const adaptive=applyChatReasoningPolicy({model:id,reasoning_effort:'high'},{thinkingMode:true,profile:'auto'});
+        assert.equal(Object.hasOwn(adaptive,'reasoning_effort'),false,'Adaptive delegates effort to provider/model');
+        if(id.startsWith('deepseek'))assert.equal(adaptive.thinking.type,'enabled');
+        const defaultThinking=applyChatReasoningPolicy({model:id},{thinkingMode:true});
+        assert.equal(Object.hasOwn(defaultThinking,'reasoning_effort'),false,'Thinking defaults to Adaptive');
         const off=applyChatReasoningPolicy({model:id},{thinkingMode:false,profile:'high'});
         assert.equal(off.reasoning_effort,id.startsWith('gpt')?'low':undefined);
         if(id.startsWith('deepseek'))assert.equal(off.thinking.type,'disabled');
@@ -69,6 +74,11 @@ async function main() {
     }});
     const timeoutResponse=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:false,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,reasoning_effort:'low',messages:[{role:'user',content:'tiny prompt'}]})});
     assert.equal(timeoutCalls.length,2);assert.equal(timeoutResponse.raiOfficialFallback,true);assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'disabled');assert.match(await timeoutResponse.text(),/official answer/);
+    timeoutCalls=[];
+    const adaptiveFallback=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:true,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,messages:[{role:'user',content:'tiny adaptive prompt'}]})});
+    assert.equal(adaptiveFallback.raiOfficialFallback,true);
+    assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'enabled');
+    assert.equal(Object.hasOwn(JSON.parse(timeoutCalls[1].options.body),'reasoning_effort'),false,'Adaptive fallback remains model-managed');
     let deliveredCalls=0;
     const deliveredProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async()=>{deliveredCalls++;return new Response('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\ndata: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');}});
     const delivered=await deliveredProvider('https://fast.test/v1/chat/completions',{body:JSON.stringify({model:'deepseek-v4.1-flash',stream:true})});

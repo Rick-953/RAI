@@ -188,14 +188,14 @@ function testInternetDefaults() {
 }
 
 function testMenuHitAreasAndGeometry() {
-  assert.match(index, /<div class="more-menu-item" role="button" tabindex="0"\s+data-rai-click="handleFileUploadFromMenu\(\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
+  assert.match(index, /<button type="button" class="more-menu-item attachment-upload-btn" id="attachmentUploadBtn"\s+data-rai-click="handleFileUploadFromMenu\(event\)">/);
   assert.match(index, /<div class="research-mode-header" role="button" tabindex="0"\s+data-rai-click="toggleResearchModeFromMenu\(event\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(app, /function\s+handleComposerMenuItemKeydown\(event\)[\s\S]*?event\.key\s*!==\s*'Enter'[\s\S]*?event\.key\s*!==\s*' '[\s\S]*?event\.currentTarget\.click\(\)/);
   assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)/);
   assert.match(app, /focusableItems = Array\.from[\s\S]*?!item\.closest\('\[aria-hidden="true"\]'\)/);
   assert.match(app, /querySelectorAll\('#modelDropdownMenu \.model-menu-item, \.model-select-custom'\)/);
   assert.match(index, /id="moreBtn"[^>]*data-i18n-aria-label="more-tools"[^>]*aria-controls="moreMenu"[^>]*aria-expanded="false"/);
-  assert.match(app, /function\s+handleFileUploadFromMenu\(\)[\s\S]*?closeMoreMenu\(\)[\s\S]*?handleFileUpload\(\)/);
+  assert.match(app, /function\s+handleFileUploadFromMenu\(event = null\)[\s\S]*?handleFileUpload\(\)[\s\S]*?closeMoreMenu\(\)/);
   assert.match(app, /function\s+handleComposerMenuEscape\(event\)[\s\S]*?event\.key !== 'Escape'[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeMoreMenu\(\)/);
   assert.match(app, /function\s+focusFirstComposerMenuItem\(menu\)[\s\S]*?firstItem\.focus/);
   assert.match(app, /function\s+closeModelModal\(\{ restoreFocus = false \} = \{\}\)[\s\S]*?trigger\.focus/);
@@ -586,7 +586,9 @@ function testFocusedModelUiReasoningAndSwipe() {
     assert.match(route.slice(0,350), /multimodal: true/);
   }
   assert.match(server, /async function resolveVisibleAutoModel[\s\S]{0,400}return 'gpt-6\.1-sol'/);
-  assert.match(server, /normalizedReasoningProfile = score >= 0\.75 \? 'max'/);
+  assert.doesNotMatch(server, /normalizedReasoningProfile = score >=/);
+  assert.match(server, /reasoningProfile = 'auto'/, 'Thinking delegates default effort to the model');
+  assert.match(app, /REASONING_PROFILE_ORDER = \['auto', 'low', 'medium', 'high', 'max'\]/);
   assert.match(server, /model === 'fast-auto'\) thinkingMode = false/);
   assert.match(server, /model === 'think-auto'\) thinkingMode = true/);
   assert.match(server, /const fetchGptProvider = createDeepSeekProviderFetch/);
@@ -610,11 +612,11 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.doesNotMatch(activeProductSources, /north-mini-code|cohere\/north-mini-code|Mimo Code|role-mimo|\bmimo\b/i,
     'Mimo Code must not remain in active product, route, fallback, test, style, or README surfaces');
 
-  assert.match(index, /reasoning-low">低<\/span>[\s\S]{0,120}reasoning-medium">中<\/span>[\s\S]{0,120}reasoning-high">高<\/span>[\s\S]{0,120}reasoning-max">max<\/span>/);
+  assert.match(index, /reasoning-low">低<\/span>[\s\S]{0,120}reasoning-medium">中<\/span>[\s\S]{0,120}reasoning-high">高<\/span>[\s\S]{0,120}reasoning-max">最大<\/span>/);
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(1\)[\s\S]{0,80}left:\s*0/);
-  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(2\)[\s\S]{0,80}left:\s*33\.3333%/);
-  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(3\)[\s\S]{0,80}left:\s*66\.6667%/);
-  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(4\)[\s\S]{0,120}left:\s*100%/);
+  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(2\)[\s\S]{0,80}left:\s*25%/);
+  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(3\)[\s\S]{0,80}left:\s*50%/);
+  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(5\)[\s\S]{0,120}left:\s*100%/);
   assert.match(styles, /\.reasoning-profile-labels span[\s\S]{0,180}transform:\s*translateX\(-50%\)/,
     'each label must be centered directly below its range stop');
 
@@ -1046,7 +1048,7 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20261009-composer-r13';
+  const expectedBuild = '20261009-composer-focus-r14';
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');

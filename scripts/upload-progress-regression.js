@@ -53,7 +53,7 @@ assert.match(app, /const UI_IMAGE_RECOMPRESS_MIN_BYTES = 3 \* 1024 \* 1024/);
 // Sending must wait for the pending attachment upload, otherwise the LLM
 // receives the message before the file finishes uploading.
 assert.match(app, /let pendingAttachmentUpload = null/);
-assert.match(app, /if \(attachToComposer\) pendingAttachmentUpload = uploadTask/);
+assert.match(app, /if \(attachToComposer\) pendingAttachmentUpload = task/);
 assert.match(app, /if \(pendingAttachmentUpload\) \{[\s\S]*?await pendingAttachmentUpload/);
 assert.match(app, /sendWaitingForAttachmentUpload/);
 
