@@ -98,6 +98,11 @@ async function main() {
     // A transient refresh failure must not clear a still-valid refresh cookie.
     assert.match(server, /terminalCodes\.has\(error\?\.code\)/);
     assert.match(server, /res\.status\(503\)\.json\(\{ success: false, error: '会话刷新暂时不可用，请重试' \}\)/);
+    // Reasoning is display-only for storage; it must never be replayed back into
+    // upstream history (keeps token usage down and prefix caches stable).
+    const historyBuilder = app.slice(app.indexOf('function buildContextMessagesFromState'), app.indexOf('async function markMessageAsRegeneratedPrevious'));
+    assert.ok(historyBuilder.length > 0, 'buildContextMessagesFromState must exist');
+    assert.doesNotMatch(historyBuilder, /reasoning_content/, 'assistant reasoning must not be sent back as history');
     console.log('chat_model_policy_regression_ok: rolling quota, concurrency, expiry, cancellation, idempotency, research, thinking tiers, 256k compression, vision preservation and provider fallback');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
