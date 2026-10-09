@@ -13105,11 +13105,13 @@ app.post('/api/auth/refresh', authLimiter, requireTrustedRefreshRequest, async (
             'refresh_token_expired',
             'session_version_changed'
         ]);
-        if (terminalCodes.has(error?.code)) {
+        // Malformed client input (bad QR scope) is a terminal 401, not a transient outage.
+        const terminalMessages = new Set(['invalid_qr_refresh_scope', 'qr_refresh_scope_mismatch']);
+        if (terminalCodes.has(error?.code) || terminalMessages.has(error?.message)) {
             clearSelectedCookie();
             return res.status(401).json({ success: false, error: '刷新会话已失效' });
         }
-        console.warn(' auth refresh transient failure:', sanitizeReportContext(error));
+        console.warn(` auth refresh transient failure: code=${String(error?.code || error?.name || 'unknown').slice(0, 60)}`);
         return res.status(503).json({ success: false, error: '会话刷新暂时不可用，请重试' });
     }
 });
