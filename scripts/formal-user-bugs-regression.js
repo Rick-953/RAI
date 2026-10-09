@@ -188,7 +188,7 @@ function testInternetDefaults() {
 }
 
 function testMenuHitAreasAndGeometry() {
-  assert.match(index, /<button type="button" class="more-menu-item attachment-upload-btn" id="attachmentUploadBtn"\s+data-rai-click="handleFileUploadFromMenu\(event\)">/);
+  assert.match(index, /<button type="button" class="more-menu-item attachment-upload-btn" id="attachmentUploadBtn"\s+data-rai-click="handleFileUploadFromMenu\(event\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(index, /<div class="research-mode-header" role="button" tabindex="0"\s+data-rai-click="toggleResearchModeFromMenu\(event\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(app, /function\s+handleComposerMenuItemKeydown\(event\)[\s\S]*?event\.key\s*!==\s*'Enter'[\s\S]*?event\.key\s*!==\s*' '[\s\S]*?event\.currentTarget\.click\(\)/);
   assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)/);
