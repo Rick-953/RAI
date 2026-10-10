@@ -20838,6 +20838,7 @@ function collectRequestInterjections(requestId) {
 const cxRemoteLimiter = rateLimit({ windowMs: 60000, max: 300, message: {error:'cx_remote_rate_limited'} });
 const cxRemoteControl = installCxRemoteRoutes({
     app, authenticateToken, apiLimiter: cxRemoteLimiter, dbGet: dbGetAsync,
+    statePath: path.join(path.dirname(dbPath), '.cx-remote-consent.json'),
     isLoginSessionActive: async (userId, sessionId) => !!await dbGetAsync(
         'SELECT s.session_id FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.session_id = ? AND s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND s.session_version = COALESCE(u.session_version, 1)',
         [sessionId, userId, Math.floor(Date.now() / 1000)]
@@ -21019,6 +21020,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         // workdir_configured 仅作提示字段：false 时客户端在工具到达后引导用户选择目录。
         let localAgentSession;
         let cxRemoteSession = null;
+        let cxRemoteExecutionUncertain = false;
         try {
             cxRemoteSession = cxRemoteControl.resolveChatSession(req.user.userId, rawLocalAgent, requestedSessionId || '', req.user.sid);
             await localAgentStartupReady;
@@ -24770,7 +24772,11 @@ if (clientFileExecution && systemPrompt) {
 
                             if (isFileTool && clientFileExecution) {
                                 if (cxRemoteSession) {
-                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: 'running', message: '等待在线 CX RAI 电脑确认并执行' }) + '\n\n');
+                                    if (cxRemoteExecutionUncertain) {
+                                        executedToolResults.push({ toolCall, result: { success: false, error: 'cx_remote_previous_result_unknown', executed: 'unknown', retryable: false, message: 'An earlier PC operation may already have executed. Do not retry automatically. Ask the user to verify the PC state and explicitly start a new request.' } });
+                                        continue;
+                                    }
+                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: 'running', message: cxRemoteSession.authorizationProtocol === 'web-v2' ? '等待网页授权并由在线 CX RAI 电脑执行' : '等待在线 CX RAI 电脑确认并执行' }) + '\n\n');
                                     const remoteController = createChatAbortController();
                                     let remoteResult;
                                     const remotePauseStartedAt = Date.now();
@@ -24787,8 +24793,9 @@ if (clientFileExecution && systemPrompt) {
                                         if (chatRequestBudget) chatRequestBudget.deadlineAt += Date.now() - remotePauseStartedAt;
                                         chatRequestDeadlineTimer = setTimeout(() => { for (const active of chatAbortControllers) active.abort(); }, Math.max(0, chatRequestBudget ? chatRequestBudget.remainingMs() : 0));
                                     }
+                                    if (remoteResult.executed === 'unknown') cxRemoteExecutionUncertain = true;
                                     executedToolResults.push({ toolCall, result: normalizeClientToolResult(remoteResult) });
-                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: remoteResult.success === false ? 'failed' : 'complete', message: remoteResult.success === false ? '在线电脑未完成本次操作' : '在线 CX RAI 执行完成' }) + '\n\n');
+                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: remoteResult.success === false ? 'failed' : 'complete', message: remoteResult.executed === 'unknown' ? '结果未确认，操作可能已执行；请核对电脑状态，勿重复执行' : (remoteResult.success === false ? '在线电脑未完成本次操作' : '在线 CX RAI 执行完成') }) + '\n\n');
                                     continue;
                                 }
                                 if (getPendingClientToolCountBySession(sessionId) > 0) {
