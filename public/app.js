@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.25';
-const RAI_BUILD_ID = '20261010-stability-remote-r1';
+const RAI_APP_VERSION = '0.13.26';
+const RAI_BUILD_ID = '20261011-web-authorization-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8167,6 +8167,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-11', version: 'v0.13.26',
+    zh: { summary: '远程电脑支持在网页逐次或持续授权。', details: ['CX RAI 1.8.11+ 在电脑首次明确启用后，可在当前对话查看完整操作参数，选择仅本次、持续授权或拒绝，无需回电脑逐次确认。', '持续授权仅适用于此网页登录有效期间的同一电脑、对话及原工作目录，可撤销；断开连接不等于撤销授权。', '设备及授权元数据可跨服务重启恢复；不持久化本地路径、操作正文或设备密钥明文。', '撤销与启动竞争、旧版授权兼容、任务重放和结果不明防重试均有回归覆盖。候选客户端仍需安装后实机验收。'] },
+    en: { summary: 'Approve remote-PC actions once or persistently from the Web.', details: ['After explicit opt-in on CX RAI 1.8.11+, inspect full action arguments and approve once, allow continuously, or reject in the current chat without returning to the PC.', 'Continuous consent is limited to this Web login, PC, conversation and original directory. Disconnecting is not revocation.', 'Device and scoped consent metadata survive server restarts; paths, tool payloads and plaintext device keys are never persisted.', 'Regression coverage includes revocation races, legacy consent, replay prevention and unknown-result retry blocking. Installed-device acceptance of the candidate client remains open.'] }
+  },
   {
     date: '2026-10-10', version: 'v0.13.25',
     zh: { summary: '修复切模型后的菜单/研究点击，整理诊断入口，增强远程电脑连接。', details: ['隐藏的模型面板不再拦截更多菜单；快速独立点击不再被时间阈值丢弃。', '脱敏诊断导出移到设置 → 高级。', '远程电脑显示设备名及绿黄红连接状态，断线不再回退云端文件操作。', '新增新版 CX helper 心跳与原对话目录协议；仍需电脑本机逐次确认。研究讨论/自定义 API 与远程工具组合会明确提示不支持。'] },
