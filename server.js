@@ -13138,7 +13138,7 @@ app.get('/api/client/capabilities', requireSoftwareClient, (req, res) => {
     });
 });
 
-app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+app.post('/api/auth/logout', apiLimiter, authenticateToken, async (req, res) => {
     await authSessionStore.logoutCurrent({
         sessionId: req.user.sid,
         userId: req.user.userId
@@ -13162,7 +13162,7 @@ app.get('/api/user/devices', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/auth/logout-all', authenticateToken, async (req, res) => {
+app.post('/api/auth/logout-all', apiLimiter, authenticateToken, async (req, res) => {
     await authSessionStore.logoutAll(req.user.userId, 'user_logout_all');
     cxRemoteControl.revokeLoginSessions(req.user.userId);
     res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
