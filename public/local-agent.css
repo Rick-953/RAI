@@ -265,3 +265,12 @@
 .local-agent-device-row > span { flex:1 1 180px; overflow-wrap:anywhere; min-width:0; }
 .local-agent-settings-card > p { overflow-wrap:anywhere; }
 .local-agent-device-row button { max-width:100%; white-space:normal; }
+
+/* Connection status stays in layout: no overlay on the composer or mobile header. */
+.cx-remote-status { flex: 0 0 auto; min-width: 0; padding: 8px 14px; border-bottom: 1px solid var(--border-color, #ddd); z-index: 2; }
+.cx-remote-status[hidden] { display: none; }
+.cx-remote-status-button { display: flex; align-items: center; gap: 8px; max-width: 100%; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 8px; color: var(--text-primary, #222); background: var(--bg-secondary, #eee); cursor: pointer; font: inherit; font-size: 12px; text-align: start; }
+.cx-remote-status-dot { flex: 0 0 9px; height: 9px; border-radius: 50%; background: #b87c00; }
+.cx-remote-status[data-state="green"] .cx-remote-status-dot { background: #178344; }
+.cx-remote-status[data-state="red"] .cx-remote-status-dot { background: #cf3434; }
+.cx-remote-status-label { min-width: 0; overflow-wrap: anywhere; }
