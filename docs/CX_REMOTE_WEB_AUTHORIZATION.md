@@ -31,7 +31,7 @@
 
 ## Durable state and operations
 
-`server.js` puts `.cx-remote-consent.json` beside the configured SQLite database. The file is ignored by Git and preserved by the standard deploy script. Only v2 device metadata/key hashes and scoped grant metadata are stored: never plaintext device keys, local directory labels, tool payloads/results, active jobs or access tokens.
+`server.js` uses `<configured database path>.cx-remote-consent.json`, so separate databases in the same directory cannot share remote identities or consent. The file is ignored by Git and preserved by the standard deploy script. Only v2 device metadata/key hashes and scoped grant metadata are stored: never plaintext device keys, local directory labels, tool payloads/results, active jobs or access tokens.
 
 The codec validates schema, allowed fields, owners, identifiers, hashes, sizes and Linux private-file permissions. Commits are synchronous atomic write/fsync/rename operations, so an earlier snapshot cannot overtake a revocation. State corruption, unsafe files or a write failure disable the remote subsystem with HTTP 503 rather than falling back to volatile authorization. The main chat service can still run. Operators should fix storage permissions/capacity and restart; do not delete consent state casually, since doing so invalidates registered native identities.
 

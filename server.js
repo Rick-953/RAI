@@ -20838,7 +20838,7 @@ function collectRequestInterjections(requestId) {
 const cxRemoteLimiter = rateLimit({ windowMs: 60000, max: 300, message: {error:'cx_remote_rate_limited'} });
 const cxRemoteControl = installCxRemoteRoutes({
     app, authenticateToken, apiLimiter: cxRemoteLimiter, dbGet: dbGetAsync,
-    statePath: path.join(path.dirname(dbPath), '.cx-remote-consent.json'),
+    statePath: dbPath + '.cx-remote-consent.json',
     isLoginSessionActive: async (userId, sessionId) => !!await dbGetAsync(
         'SELECT s.session_id FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.session_id = ? AND s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND s.session_version = COALESCE(u.session_version, 1)',
         [sessionId, userId, Math.floor(Date.now() / 1000)]
