@@ -241,6 +241,19 @@ const otherUser = { 'X-Fixture-User': '2', 'X-Fixture-Sid': 'other-login' };
       codec.save({ schema: 'rai.cx-remote-consent.v1', devices: [], grants: [] });
       fs.chmodSync(testPath, 0o644); assert.throws(() => codec.load(), /invalid/); fs.unlinkSync(testPath);
     }
+    const emptyState = { schema: 'rai.cx-remote-consent.v1', devices: [], grants: [] };
+    codec.save(emptyState);
+    const savedFstat = fs.fstatSync;
+    try {
+      fs.fstatSync = (...args) => {
+        const info = savedFstat(...args);
+        fs.renameSync(testPath, testPath + '.original');
+        fs.writeFileSync(testPath, '{malicious-replacement');
+        return info;
+      };
+      if (process.platform === 'win32') assert.throws(() => codec.load(), /invalid/, 'handle/path mismatch is rejected');
+      else assert.deepEqual(codec.load(), emptyState, 'Linux reads the original validated handle, never a swapped path');
+    } finally { fs.fstatSync = savedFstat; fs.unlinkSync(testPath); fs.unlinkSync(testPath + '.original'); }
     fs.writeFileSync(testPath, 'x'.repeat(2 * 1024 * 1024 + 1)); assert.throws(() => codec.load(), /invalid/);
     fs.unlinkSync(testPath);
     if (process.platform !== 'win32') { fs.symlinkSync(statePath, testPath); assert.throws(() => codec.load(), /invalid/); fs.unlinkSync(testPath); }
