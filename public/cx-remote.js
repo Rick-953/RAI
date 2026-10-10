@@ -65,7 +65,7 @@
       // Access-token renewal is not logout. Keep the user's remote choice fail-closed.
       state.token = token; state.lastRefresh = 0;
       for (const entry of state.connections.values()) {
-        entry.verifiedAt = 0; entry.connecting = false;
+        entry.verifiedAt = 0;
         entry.error = text('正在重新验证电脑连接。', 'Revalidating the PC connection.');
       }
       return;
@@ -103,20 +103,23 @@
     const device = state.devices.find(d => d.id === deviceId);
     const entry = { deviceId, deviceName: device?.name || 'CX RAI PC', wanted: true, connecting: true, error: '', session: null, verifiedAt: 0 };
     state.connections.set(context.conversationId, entry); render();
-    const valid = () => state.token === context.token && ctx().token === context.token && state.connections.get(context.conversationId) === entry;
+    const accountId = String(context.userId || '');
+    const valid = () => !!state.token && ctx().token === state.token
+      && (accountId ? state.userId === accountId && String(ctx().userId || '') === accountId : state.token === context.token)
+      && state.connections.get(context.conversationId) === entry;
     try {
-      const data = await api('/sessions', { method: 'POST', body: JSON.stringify({ deviceId, conversationId: context.conversationId }) }, context.token);
+      const data = await api('/sessions', { method: 'POST', body: JSON.stringify({ deviceId, conversationId: context.conversationId }) }, state.token);
       if (!valid()) {
         await api('/sessions/' + encodeURIComponent(data.session.id), { method: 'DELETE' }, context.token).catch(() => {});
         return;
       }
-      entry.session = data.session; entry.verifiedAt = Date.now(); render();
+      entry.session = data.session; entry.verifiedAt = Date.now(); entry.error = ''; render();
       notify(text('请在电脑核对安全码并允许连接；helper 将尝试唤醒 CX RAI。', 'Check the code and approve on the PC. The helper will try to open CX RAI.'));
       const deadline = data.session.approvalExpiresAt || Date.now() + 180000;
       while (valid() && entry.session.status === 'pending' && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         if (!valid()) return;
-        const update = await api('/sessions/' + encodeURIComponent(entry.session.id), {}, context.token);
+        const update = await api('/sessions/' + encodeURIComponent(entry.session.id), {}, state.token);
         if (!valid()) return;
         entry.session = update.session; entry.verifiedAt = Date.now(); entry.error = ''; render();
       }

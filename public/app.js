@@ -22558,19 +22558,6 @@ async function sendMessage(message = null, options = {}) {
     processTraceList.scrollTop = processTraceList.scrollHeight;
   }
 
-  function appendFrameworkRequirements(promptText) {
-    const text = String(promptText || '').trim();
-    if (!text) return;
-    const lines = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean);
-
-    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '开始展示框架要求' : 'Framework requirements begin');
-    lines.forEach(line => addProcessTraceItem('framework', line));
-    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '框架要求展示完成' : 'Framework requirements end');
-  }
-
   let agentSelectedRoles = [];
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
@@ -22763,7 +22750,6 @@ async function sendMessage(message = null, options = {}) {
 
     if (enableProcessTrace) {
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '开始流式请求' : 'Streaming request started');
-      appendFrameworkRequirements(effectiveSystemPrompt);
       addProcessTraceItem('info', isChineseLanguage(appState.language)
         ? `模型: ${modelUsed || requestConfig.model}`
         : `Model: ${modelUsed || requestConfig.model}`);

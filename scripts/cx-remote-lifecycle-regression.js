@@ -87,6 +87,14 @@ const { installCxRemoteRoutes, APPROVAL_MS, DEVICE_LEASE_MS } = require('../lib/
     const logoutSession = (await request('/sessions', 'POST', { deviceId: device.id, conversationId: 'chat-b' })).session;
     service.revokeLoginSessions(1, 'web-login-1');
     assert.equal((await request('/sessions/' + logoutSession.id)).status, 403, 'logout hook revokes immediately without frontend cleanup');
+    const beforePollSession = (await request('/sessions', 'POST', { deviceId: device.id, conversationId: 'chat-b' })).session;
+    await request(path + '/approve', 'POST', { sessionId: beforePollSession.id, approved: true }, auth);
+    const beforePollJob = service.execute(1, beforePollSession.id, 'chat-b', 'read_file', { path: 'not-delivered.txt' });
+    await new Promise(setImmediate); activeLogins.delete('web-login-1');
+    const afterLogoutPoll = await request(path + '/poll', 'GET', undefined, auth);
+    assert.equal(afterLogoutPoll.status, 200); assert.equal(afterLogoutPoll.tasks.length, 0, 'revoked login cannot disclose queued parameters through poll');
+    assert.equal((await beforePollJob).error, 'cx_remote_connection_revoked');
+    activeLogins.add('web-login-1');
     const replaced = (await request('/devices', 'POST', registration, native)).device;
     assert.equal(replaced.id, device.id); assert.notEqual(replaced.deviceKey, device.deviceKey);
     assert.equal((await request('/devices')).devices.length, 1);

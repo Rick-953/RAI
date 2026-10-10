@@ -14,6 +14,7 @@ const { chromium, webkit } = require('playwright');
       const requests = [], errors = [];
       page.on('pageerror', error => errors.push(error.message));
       let rejected = false, networkDown = false, dropApproval = false, runtime = 'helper';
+      let holdPost = false, releasePost, postEntered;
       const token = crypto.randomBytes(32).toString('hex');
       let session = { id: 'test-session', deviceId: 'test-pc', deviceName: 'Fixture PC', conversationId: 'chat-1', status: 'pending', online: true, expiresAt: Date.now() + 900000, confirmationCode: 'A1B2C3' };
       await page.route('https://cx-fixture.test/api/cx-remote/**', async route => {
@@ -22,6 +23,7 @@ const { chromium, webkit } = require('playwright');
         let data = { success: true };
         if (req.url().endsWith('/devices')) data.devices = [{ id: 'test-pc', name: '<img src=x onerror=alert(1)>', version: '1.8.10', online: true, runtime, lastSeenAt: Date.now() }];
         if (req.url().endsWith('/sessions') && req.method() === 'POST') {
+          if (holdPost) { holdPost = false; const wait = new Promise(resolve => { releasePost = resolve; }); postEntered(); await wait; }
           session = { ...session, conversationId: req.postDataJSON().conversationId, status: 'pending' }; data.session = session;
         }
         if (req.url().endsWith('/sessions/test-session') && req.method() === 'GET') {
@@ -103,7 +105,15 @@ const { chromium, webkit } = require('playwright');
       const beforeDelete = requests.filter(r => r.method === 'DELETE').length;
       await page.evaluate(() => window.RaiLocalAgent.disable());
       assert.equal(requests.filter(r => r.method === 'DELETE').length, beforeDelete + 1);
-      await page.evaluate(() => window.RaiLocalAgent.enable('test-pc'));
+      holdPost = true;
+      const reachedPost = new Promise(resolve => { postEntered = resolve; });
+      const connecting = page.evaluate(() => window.RaiLocalAgent.enable('test-pc'));
+      await reachedPost;
+      const deletesBeforeRenew = requests.filter(r => r.method === 'DELETE').length;
+      await page.evaluate(async () => { window.fixtureContext.token += '-during-connect'; await window.RaiLocalAgent.refreshStatus(); });
+      releasePost(); await connecting;
+      assert.equal(requests.filter(r => r.method === 'DELETE').length, deletesBeforeRenew, 'renewing while POST is pending must not revoke its eventual result');
+      assert.ok(await page.evaluate(() => window.RaiLocalAgent.getChatCapability()));
       await page.evaluate(async () => { window.fixtureContext.token += '-renewed'; await window.RaiLocalAgent.prepareChat(); });
       assert.ok(await page.evaluate(() => window.RaiLocalAgent.getChatCapability()), 'same-account credential renewal revalidates, never switches to cloud');
       networkDown = true;

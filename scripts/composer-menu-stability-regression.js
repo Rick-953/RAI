@@ -64,6 +64,7 @@ async function testFixture(browser, url, fixture) {
   });
   try {
     const page = await ctx.newPage();
+    if (process.env.RAI_COMPOSER_DEBUG === '1') { page.on('console', msg => { if (msg.type() === 'error' || msg.type() === 'warning') console.log('BROWSER:', msg.text()); }); page.on('pageerror', error => console.log('PAGEERROR:', error.message)); }
     const chatCalls = [], chatPayloads = [];
     await page.route('**/api/**', (route) => {
       if (new URL(route.request().url()).pathname.endsWith('/chat/stream')) {
@@ -199,6 +200,8 @@ async function testFixture(browser, url, fixture) {
     });
     assert.equal(chatPayloads.length, 1, 'research actually reaches the intercepted stream endpoint');
     assert.equal(chatPayloads[0].researchMode, 'fast');
+    if (process.env.RAI_COMPOSER_DEBUG === '1') console.log('RESEARCH STATE:', await page.evaluate(() => ({ messages: appState.messages, streaming: appState.isStreaming, toast: document.getElementById('toastNotification')?.textContent })));
+    assert.ok(await page.evaluate(() => appState.messages.some(message => message.role === 'assistant' && String(message.content).includes('fixture answer'))), 'research stream produces a completed assistant message');
     assert.ok(chatPayloads[0].researchAgentModels.length >= 1);
     assert.equal(await page.evaluate(() => window.fixturePrepareCalls), 1, 'send awaited the real prepare hook');
 
@@ -225,7 +228,52 @@ async function testFixture(browser, url, fixture) {
     assert.match(blocked.offlineFeedback, /disconnected/);
     assert.equal(blocked.customDraft, 'keep this remote draft');
 
-    console.log('composer-menu-stability PASS', fixture.platform, mobile ? 'touch' : 'mouse');
+    // 9) The real remote module and real app layout work together (not a minimal DOM).
+    let remoteRevoked = false;
+    await page.route('**/api/cx-remote/**', async route => {
+      const request = route.request(), pathname = new URL(request.url()).pathname;
+      let body = { success: true };
+      if (pathname.endsWith('/devices')) body.devices = [{ id: 'layout-pc', name: 'Fixture Desktop', version: '1.8.10', online: true }];
+      if (pathname.endsWith('/sessions') && request.method() === 'POST') body.session = { id: 'layout-session', deviceId: 'layout-pc', deviceName: 'Fixture Desktop', conversationId: 'fixture-conversation', status: 'pending', expiresAt: Date.now() + 900000, confirmationCode: 'A1B2C3' };
+      if (pathname.endsWith('/sessions/layout-session') && request.method() === 'GET') {
+        if (remoteRevoked) return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'cx_remote_session_unavailable' }) });
+        body.session = { id: 'layout-session', deviceId: 'layout-pc', deviceName: 'Fixture Desktop', conversationId: 'fixture-conversation', status: 'approved', expiresAt: Date.now() + 900000, confirmationCode: 'A1B2C3', online: true };
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await page.evaluate(async () => {
+      await window.RaiLocalAgent.refreshStatus();
+      await window.RaiLocalAgent.enable('layout-pc');
+      closeSettings();
+    });
+    assert.equal(await page.locator('#cxRemoteStatusBanner').getAttribute('data-state'), 'green');
+    const layout = await page.evaluate(() => {
+      const banner = document.getElementById('cxRemoteStatusBanner').getBoundingClientRect();
+      const composer = document.querySelector('.input-container').getBoundingClientRect();
+      return { top: banner.top, bottom: banner.bottom, width: banner.width, inputTop: composer.top, viewport: innerWidth, scroll: document.documentElement.scrollWidth };
+    });
+    assert.ok(layout.top >= 0 && layout.bottom <= layout.inputTop, 'remote status never overlays the composer: ' + JSON.stringify(layout));
+    assert.ok(layout.width <= fixture.width + 1 && layout.scroll <= layout.viewport + 1, 'full app status fits the mobile viewport');
+    const output = path.resolve(__dirname, '../output/playwright'); fs.mkdirSync(output, { recursive: true });
+    await page.screenshot({ path: path.join(output, 'full-app-remote-' + fixture.platform + '-' + (process.env.RAI_BROWSER_ENGINE || 'chromium') + '.png') });
+    remoteRevoked = true;
+    await page.evaluate(async () => { await window.RaiLocalAgent.refreshStatus(); document.getElementById('messageInput').value = 'draft after revoke'; await sendMessage(); });
+    assert.equal(await page.locator('#messageInput').inputValue(), 'draft after revoke');
+    assert.equal(await page.locator('#cxRemoteStatusBanner').getAttribute('data-state'), 'red');
+    assert.equal(chatPayloads.length, 1);
+
+    // 10) Advanced really downloads the bound sanitized report; About no longer owns it.
+    await page.evaluate(() => { openSettings(); switchSettingsSection('advanced'); });
+    assert.equal(await page.locator('#settingsPanel-about #exportDiagnosticsButton').count(), 0);
+    const downloadEvent = page.waitForEvent('download');
+    await page.locator('#settingsPanel-advanced #exportDiagnosticsButton').click();
+    const download = await downloadEvent;
+    assert.match(download.suggestedFilename(), /^RAI-Web-diagnostics-.*\.json$/);
+    const diagnostics = fs.readFileSync(await download.path(), 'utf8');
+    assert.ok(JSON.parse(diagnostics).events);
+    assert.equal(diagnostics.includes('isolated-browser-fixture'), false);
+    assert.equal(diagnostics.includes('keep this remote draft'), false);
+    console.log('composer-menu-stability PASS', fixture.platform, mobile ? 'touch' : 'mouse', 'real sends, remote layout, fail-closed and Advanced download');
   } finally {
     await ctx.close();
   }
