@@ -97,6 +97,9 @@ const otherUser = { 'X-Fixture-User': '2', 'X-Fixture-Sid': 'other-login' };
     const legacy = await connect();
     assert.equal((await req(sp(legacy) + '/authorizations')).status, 409);
     await req(dp, 'DELETE', undefined, auth);
+    await register({ ...registration, name: '\u0000\u0007\n' });
+    assert.equal(device.name, 'CX RAI PC');
+    assert.equal((await req('/devices', 'GET', undefined, otherUser)).status, 200, 'invalid-looking names cannot disable the remote service');
     await register();
     let s = await connect({ prepare: false });
     assert.equal((await req(sp(s) + '/authorizations')).status, 409);
@@ -174,6 +177,13 @@ const otherUser = { 'X-Fixture-User': '2', 'X-Fixture-Sid': 'other-login' };
     s = await connect(); work = await enqueue(s); await decision(s, work.job, 'persistent'); await finishWork(work);
     // Disconnect does not mean revoke; each scope component still has to match.
     assert.equal((await req(sp(s), 'DELETE')).status, 200); assert.equal(service.grants.size, 1);
+    const disconnectedGrant = (await req('/grants?conversationId=chat-a')).grants[0];
+    assert.equal(disconnectedGrant.deviceName, device.name); assert.equal(disconnectedGrant.rootLabel, '');
+    assert.equal((await req('/grants', 'GET', undefined, otherSid)).grants.length, 0);
+    assert.equal((await req('/grants', 'GET', undefined, otherUser)).grants.length, 0);
+    assert.equal((await req('/grants?conversationId=chat-b')).grants.length, 0);
+    assert.equal((await req('/grants/' + disconnectedGrant.id, 'DELETE', undefined, otherSid)).status, 404);
+    assert.equal((await req('/grants/' + disconnectedGrant.id, 'DELETE', undefined, otherUser)).status, 404);
     s = await connect(); assert.equal((await req(sp(s) + '/authorizations')).grant.mode, 'persistent'); await req(sp(s), 'DELETE');
     for (const options of [{ rootId: root2 }, { chat: 'chat-b' }, { headers: otherSid }]) {
       const isolated = await connect(options);
@@ -192,7 +202,14 @@ const otherUser = { 'X-Fixture-User': '2', 'X-Fixture-Sid': 'other-login' };
     // Leases expire independently of durable authorization and device identity.
     work = await enqueue(s); clock += DEVICE_LEASE_MS + 1; service.prune(); await work.completion;
     assert.equal(service.devices.size, 1); assert.equal(service.grants.size, 1);
+    const offlineGrant = (await req('/grants?conversationId=chat-a')).grants[0];
+    assert.equal((await req('/grants/' + offlineGrant.id, 'DELETE')).status, 200, 'offline consent can be revoked without the PC');
+    assert.equal(service.grants.size, 0);
+    await shutdown(); await boot();
+    assert.equal(service.grants.size, 0, 'offline revocation survives restart');
     await req(dp + '/heartbeat', 'POST', {}, auth); s = await connect();
+    work = await enqueue(s); assert.equal(work.job.status, 'awaiting_web', 'offline revocation cannot revive on reconnect');
+    await decision(s, work.job, 'persistent'); await finishWork(work);
     clock += SESSION_MS + 1; service.devices.get(device.id).lastSeen = clock; service.prune();
     assert.equal(service.sessions.size, 0); assert.equal(service.grants.size, 1);
     s = await connect();

@@ -22,6 +22,7 @@
 
 - `DELETE /sessions/:id` disconnects and cancels live work, **without deleting continuous consent**.
 - `DELETE /sessions/:id/grant` removes consent for that exact scope and cancels waiting, queued, delivered and running jobs. It blocks further start immediately. Native receives absent active-job IDs on its next poll and requests local cancellation; the HTTP response does **not** establish that the PC has stopped or undo previous side effects.
+- `GET /grants?conversationId=...` lists this Web login's durable grants, and `DELETE /grants/:grantId` revokes one without a live session or online PC. After disconnect/restart the directory label may be unavailable; never invent it. This permits emergency revocation while the target is offline.
 - Removing a device revokes all its sessions/jobs/grants. An old key cannot heartbeat it back online. A fresh local opt-in is required.
 - All asynchronous login checks are followed by live object/state validation. Revocation cannot be undone by an earlier pending DB result.
 - A running task whose result is lost/cancelled returns `executed:"unknown"`, `retryable:false`. The current chat request cannot dispatch another remote operation automatically. The user must verify the PC state before explicitly starting a new request.
