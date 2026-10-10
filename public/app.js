@@ -2566,6 +2566,7 @@ const appState = {
   ztx6dBindUrl: '/auth/ztx6d/bind/start',
   activeModelMenuAnchorId: 'modelSelectCustom',
   modelMenuOpenedAt: 0,
+  modelMenuOpenedByEvent: null,
   sendStarting: false,
   theme: 'dark',
   themePreference: 'dark',
@@ -2633,6 +2634,7 @@ const appState = {
 
 window.getRaiLocalAgentContext = () => ({
   token: appState.token,
+  userId: appState.user?.id || '',
   conversationId: appState.currentSession?.id || '',
   language: appState.language,
   authenticated: appState.authState === 'authenticated'
@@ -6178,6 +6180,7 @@ const i18n = {
     'research-master-model': '主控模型',
     'research-agent-min-one': '至少保留 1 个子 agent 模型',
     'research-agent-max-four': '最多选择 4 个研究模型，请取消一个不需要的',
+    'research-mode-unavailable': '研究模式暂不可用：所有研究模型均已停用',
     'agent-mode': '深度研究',
     'add-attachment': '添加附件',
     'rpass-pending': 'rPass 登录待上线',
@@ -6845,6 +6848,7 @@ const i18n = {
     'research-master-model': 'Master model',
     'research-agent-min-one': 'Keep at least 1 sub-agent model',
     'research-agent-max-four': 'Choose up to 4 research models. Remove one you do not need.',
+    'research-mode-unavailable': 'Research mode is unavailable: every research model is disabled',
     'agent-mode': 'Deep Research',
     'add-attachment': 'Add Attachment',
     'rpass-pending': 'rPass login is coming soon',
@@ -13297,6 +13301,19 @@ function isResearchModeEnabled() {
   return appState.researchModeEnabled === true;
 }
 
+// Research mode fans out to one or more sub-agent models. If an administrator has
+// disabled every research-capable model, the mode cannot run: report it explicitly
+// instead of letting the tap look like a no-op.
+function hasRunnableResearchModels() {
+  return RESEARCH_MODEL_OPTIONS.some((option) => !isModelDisabledByAdmin(option.id));
+}
+
+function rejectUnsupportedResearchMode() {
+  showToast(i18nText('research-mode-unavailable', isChineseLanguage(appState.language)
+    ? '研究模式暂不可用：所有研究模型均已停用'
+    : 'Research mode is unavailable: every research model is disabled'));
+}
+
 function rememberCurrentNonResearchModel() {
   const selected = normalizeSelectedModelId(appState.selectedModel || 'auto') || 'auto';
   if (selected && selected !== 'research-mode' && MODELS[selected] && !isModelDisabledByAdmin(selected)) {
@@ -13323,6 +13340,10 @@ function setResearchModeFromSlider(indexValue) {
 function setResearchMode(mode, options = {}) {
   const normalized = normalizeResearchMode(mode);
   if (options.enable !== false) {
+    if (!isResearchModeEnabled() && !hasRunnableResearchModels()) {
+      rejectUnsupportedResearchMode();
+      return;
+    }
     if (!isResearchModeEnabled()) rememberCurrentNonResearchModel();
     appState.researchModeEnabled = true;
   }
@@ -13349,6 +13370,10 @@ function setResearchMode(mode, options = {}) {
 function toggleResearchModeFromMenu(event) {
   event?.stopPropagation?.();
   const nextEnabled = !isResearchModeEnabled();
+  if (nextEnabled && !hasRunnableResearchModels()) {
+    rejectUnsupportedResearchMode();
+    return;
+  }
   if (nextEnabled) rememberCurrentNonResearchModel();
   appState.researchModeEnabled = nextEnabled;
   appState.agentMode = false;
@@ -13549,7 +13574,13 @@ function selectRaiModeFromMenu(mode, event) {
 
   if (config.mode === 'research') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    appState.modelPromptIdentity = 'research';
+    // Only claim the research identity if the mode actually turned on (setResearchMode
+    // refuses when no research model is available); otherwise keep the current routing.
+    if (isResearchModeEnabled()) {
+      appState.modelPromptIdentity = 'research';
+    } else if (restoreMenuFocus) {
+      return;
+    }
   } else {
     appState.researchModeEnabled = false;
     appState.selectedModel = config.model;
@@ -16615,6 +16646,7 @@ function openModelModal(anchorOrId = null, event = null) {
     menu.classList.add('active');
     menu.setAttribute('aria-hidden', 'false');
     appState.modelMenuOpenedAt = Date.now();
+    appState.modelMenuOpenedByEvent = event || null;
     appState.activeModelMenuAnchorId = selector.id;
     syncModelMenuTriggerState(selector);
     updateMenuSelection();
@@ -16633,6 +16665,7 @@ function closeModelModal({ restoreFocus = false } = {}) {
   menu.classList.remove('active', 'closing');
   menu.setAttribute('aria-hidden', 'true');
   appState.modelMenuOpenedAt = 0;
+  appState.modelMenuOpenedByEvent = null;
   if (restoreFocus && isComposerMenuAnchorVisible(trigger)) {
     requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
   }
@@ -16803,8 +16836,11 @@ function isTrustedModelMenuSelection(model, event) {
     target.getClientRects().length === 0
   ) return false;
 
-  // Ignore a rapid second click that lands in the just-opened floating menu.
-  if (Number(event.detail || 0) > 0 && Date.now() - Number(appState.modelMenuOpenedAt || 0) < 160) return false;
+  // The single physical gesture that opened the floating menu must never also
+  // activate a menu row that happens to render under the pointer. Suppress only
+  // that exact originating event; every later, independent click is legitimate.
+  // This replaces a wall-clock heuristic that silently dropped fast real taps.
+  if (event && appState.modelMenuOpenedByEvent === event) return false;
   event.stopPropagation();
   return true;
 }
@@ -16814,7 +16850,11 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
   const restoreMenuFocus = document.getElementById('modelDropdownMenu')?.contains(document.activeElement) === true;
   if (model === 'research-mode') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    appState.modelPromptIdentity = 'research';
+    // Only switch to the research identity when the mode actually turned on; otherwise
+    // setResearchMode already reported why research is unavailable and we keep routing.
+    if (isResearchModeEnabled()) {
+      appState.modelPromptIdentity = 'research';
+    }
     closeModelModal({ restoreFocus: restoreMenuFocus });
     if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
@@ -16831,7 +16871,10 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
     return;
   }
   if (isMembershipLockedModel(model)) {
-    console.warn(' 该模型仅 MAX 会员可用');
+    // Do not fail silently: surface why the tap did nothing and keep the composer usable.
+    showToast(i18nText('model-desc-max-only', '仅 MAX 可用'));
+    closeModelModal({ restoreFocus: restoreMenuFocus });
+    if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
   }
   appState.researchModeEnabled = false;
@@ -22625,6 +22668,11 @@ async function sendMessage(message = null, options = {}) {
       useRag: appState.useRag,
       ragTopK: appState.ragTopK
     };
+    // Let the local-agent bridge reject/resolve remote routing before we decide the
+    // capability. This runs inside the existing try/catch, so a rejection (offline or
+    // pending-authorization remote) surfaces through the normal chat error path instead
+    // of silently falling back to a server-side file operation.
+    await window.RaiLocalAgent?.prepareChat?.();
     const localAgentCapability = window.RaiLocalAgent?.getChatCapability?.();
     if (localAgentCapability) chatRequestPayload.local_agent = localAgentCapability;
     const response = await fetch(`${API_BASE}/chat/stream`, {
