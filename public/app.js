@@ -2596,6 +2596,7 @@ const appState = {
   scrollBottomThreshold: 160,
   pendingScrollTimer: null,
   mobileComposerFocusTimer: null,
+  mobileComposerFocusGeneration: 0,
   entryAutofocusTimer: null,
   entryAutofocusBound: false,
   pendingMobileComposerFocus: false,
@@ -15040,39 +15041,49 @@ function focusMessageInputForNewChat(force = false) {
 
   const shouldForceFocus = force || appState.pendingMobileComposerFocus;
   appState.pendingMobileComposerFocus = shouldForceFocus;
+  const generation = (appState.mobileComposerFocusGeneration || 0) + 1;
+  appState.mobileComposerFocusGeneration = generation;
+  const expected = {
+    value: input.value, start: input.selectionStart, end: input.selectionEnd,
+    direction: input.selectionDirection, activeElement: document.activeElement
+  };
+  const stillCurrent = () => appState.mobileComposerFocusGeneration === generation
+    && window.innerWidth <= 768 && input.isConnected && !input.disabled
+    && input.getClientRects().length > 0 && input.value === expected.value
+    && input.selectionStart === expected.start && input.selectionEnd === expected.end
+    && input.selectionDirection === expected.direction
+    && (document.activeElement === expected.activeElement || document.activeElement === input);
 
   if (appState.mobileComposerFocusTimer) {
     clearTimeout(appState.mobileComposerFocusTimer);
   }
 
   const runFocus = () => {
-    if (window.innerWidth > 768) return;
-
-    if (window.expandInput && !appState.inputExpanded) {
-      window.expandInput();
-    }
+    if (!stillCurrent() || document.activeElement === input) return;
+    if (window.expandInput && !appState.inputExpanded) window.expandInput();
 
     requestAnimationFrame(() => {
+      // An old home/new-chat timer must yield to a newer edit, caret, or control.
+      if (!stillCurrent() || document.activeElement === input) return;
       try {
         input.focus({ preventScroll: true });
       } catch (error) {
         input.focus();
       }
-
+      if (document.activeElement !== input) return;
       const end = input.value.length;
-      if (typeof input.setSelectionRange === 'function') {
-        try {
-          input.setSelectionRange(end, end);
-        } catch (error) {
-          console.debug('Skip mobile selection restore:', error);
-        }
+      try { input.setSelectionRange?.(end, end); } catch (error) {
+        console.debug('Skip mobile selection restore:', error);
       }
-
+      expected.activeElement = input;
+      expected.start = input.selectionStart; expected.end = input.selectionEnd;
+      expected.direction = input.selectionDirection;
       window.mobileKeyboardHandler?.keepChatAnchored?.(true);
     });
   };
 
   appState.mobileComposerFocusTimer = window.setTimeout(() => {
+    if (appState.mobileComposerFocusGeneration !== generation) return;
     runFocus();
     window.setTimeout(runFocus, 180);
     appState.mobileComposerFocusTimer = null;
@@ -15086,7 +15097,22 @@ function maybeAutoFocusMobileHomeInput() {
   if (!welcomeScreen || welcomeScreen.classList.contains('hidden') || welcomeScreen.style.display === 'none') return;
   appState.mobileHomeAutoFocusUsed = true;
   appState.pendingMobileComposerFocus = true;
-  window.setTimeout(() => focusMessageInputForNewChat(true), 260);
+  const input = document.getElementById('messageInput');
+  const expected = {
+    value: input?.value, start: input?.selectionStart, end: input?.selectionEnd,
+    direction: input?.selectionDirection, activeElement: document.activeElement,
+    generation: appState.mobileComposerFocusGeneration
+  };
+  window.setTimeout(() => {
+    if (appState.mobileComposerFocusGeneration !== expected.generation) return;
+    if (!input || input.value !== expected.value || input.selectionStart !== expected.start
+      || input.selectionEnd !== expected.end || input.selectionDirection !== expected.direction
+      || document.activeElement !== expected.activeElement) {
+      appState.pendingMobileComposerFocus = false;
+      return;
+    }
+    focusMessageInputForNewChat(true);
+  }, 260);
 }
 
 function isVisibleElement(element) {
@@ -31473,11 +31499,21 @@ class MobileKeyboardHandler {
     const selectionStart = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
     const selectionEnd = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
 
+    const selectionDirection = input.selectionDirection;
+    const value = input.value;
+    const focusedElement = document.activeElement;
+
     requestAnimationFrame(() => {
+      // A later gesture or edit wins over this deferred menu-focus restoration.
+      // In particular, never restore an old end-of-text caret over a new selection.
+      if (!input.isConnected || input.disabled || input.getClientRects().length === 0
+        || input.value !== value || input.selectionStart !== selectionStart
+        || input.selectionEnd !== selectionEnd || input.selectionDirection !== selectionDirection
+        || (document.activeElement !== focusedElement && document.activeElement !== input)) return;
       input.focus({ preventScroll: true });
       if (typeof input.setSelectionRange === 'function') {
         try {
-          input.setSelectionRange(selectionStart, selectionEnd);
+          input.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
         } catch (error) {
           this.log('Selection restore skipped', error);
         }
