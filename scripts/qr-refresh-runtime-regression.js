@@ -5,11 +5,12 @@ const crypto = require('node:crypto'), http = require('node:http');
 const express = require('express'), sqlite3 = require('sqlite3');
 const { createAuthSessionStore } = require('../lib/auth-session-store');
 const cookieHelpers = require('../lib/qr-refresh-cookie');
+const { installCxRemoteRoutes } = require('../lib/cx-remote-control');
 async function main() {
   const db = new sqlite3.Database(':memory:');
   const run = (sql, args = []) => new Promise((resolve, reject) => db.run(sql, args, function(e) { e ? reject(e) : resolve(this); }));
   const get = (sql, args = []) => new Promise((resolve, reject) => db.get(sql, args, (e, row) => e ? reject(e) : resolve(row)));
-  let server, clock = Date.now();
+  let server, remote, clock = Date.now();
   try {
     await run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, last_login TEXT)');
     await run('CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id INTEGER)');
@@ -21,7 +22,10 @@ async function main() {
       try { req.user = await store.verifyAccessToken(String(req.headers.authorization || '').replace(/^Bearer /, '')); next(); }
       catch (_) { res.status(401).json({ success: false }); }
     };
-    const context = { app, authLimiter: (_req, _res, next) => next(), authenticateToken,
+    const apiLimiter = (_req, _res, next) => next();
+    remote = installCxRemoteRoutes({ app, authenticateToken, apiLimiter, dbGet: get, now: () => clock,
+      isLoginSessionActive: async (userId, sid) => !!await get('SELECT session_id FROM auth_sessions WHERE session_id=? AND user_id=? AND revoked_at IS NULL AND expires_at>?', [sid, userId, Math.floor(clock / 1000)]) });
+    const context = { app, authLimiter: (_req, _res, next) => next(), apiLimiter, authenticateToken, cxRemoteControl: remote,
       allowedCorsOrigins: new Set(['https://rai.test']), authSessionStore: store, authSessionStartupReady: Promise.resolve(),
       readAuthDeviceFingerprint: () => '', buildAuthSessionDeviceMetadata: () => ({}), dbRunAsync: run, dbGetAsync: get, ...cookieHelpers };
     const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
@@ -78,13 +82,21 @@ async function main() {
     }
     const malformed = await refresh(oldCookie + '; ' + qrCookie, '../invalid');
     assert.equal(malformed.status, 401); assert.equal(malformed.headers['set-cookie'], undefined);
+    remote.devices.set('fixture-pc', { id: 'fixture-pc', userId: 2, lastSeen: clock });
+    remote.sessions.set('fixture-grant', { id: 'fixture-grant', userId: 2, authSessionId: refreshedClaims.sid, deviceId: 'fixture-pc', conversationId: 'fixture-chat', status: 'approved', expires: clock + 900000 });
+    const pendingRemote = remote.execute(2, 'fixture-grant', 'fixture-chat', 'read_file', { path: 'never-executed.txt' }).catch(error => ({ success: false, error: error.code }));
+    for (let attempt = 0; attempt < 100 && remote.jobs.size === 0; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(remote.jobs.size, 1);
     const loggedOut = await call('/api/auth/logout', { Authorization: 'Bearer ' + accepted.data.token });
+    assert.equal((await pendingRemote).error, 'cx_remote_connection_revoked', 'actual logout handler cancels remote work even though the old token can no longer DELETE');
+    assert.equal(remote.jobs.size, 0); assert.equal(remote.sessions.size, 0);
     assert.equal(loggedOut.status, 200); assert.ok(loggedOut.headers['set-cookie'][0].startsWith(name + '='));
     assert.equal((await refresh(qrCookie, qr.claims.sid)).status, 401);
     const stillOld = await refresh(oldCookie);
     assert.equal(stillOld.status, 200); assert.equal((await store.verifyAccessToken(stillOld.data.token)).userId, 1);
     console.log('QR refresh runtime PASS: real issuance/refresh/logout HTTP handlers, temporary SQLite, expired token refresh, preserved qr_browser method, no default-cookie overwrite/fallback, scoped logout, unrelated account intact');
   } finally {
+    remote?.close();
     if (server) await new Promise(resolve => server.close(resolve));
     await new Promise((resolve, reject) => db.close(e => e ? reject(e) : resolve()));
   }

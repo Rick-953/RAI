@@ -170,6 +170,74 @@ async function testCase(browser, url, fixture) {
     assert.deepEqual(requestProfiles, {manual:'max', adaptive:'auto', thinking:'auto'});
     await page.locator('#moreBtn').click();
 
+    // Deferred menu focus cannot override a newer gesture, edit, or focused control.
+    if (mobile) {
+      const restores = await page.evaluate(async () => {
+        const input = document.getElementById('messageInput');
+        const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+        input.focus(); input.value = 'abcdef'; input.setSelectionRange(6, 6);
+        mobileKeyboardHandler.restoreInputFocus();
+        input.setSelectionRange(0, 1);
+        await frame();
+        const selection = { start: input.selectionStart, end: input.selectionEnd };
+        input.setSelectionRange(2, 4);
+        mobileKeyboardHandler.restoreInputFocus();
+        input.value = 'updated';
+        await frame();
+        const edit = { value: input.value, start: input.selectionStart, end: input.selectionEnd };
+        input.setSelectionRange(1, 3, 'backward');
+        mobileKeyboardHandler.restoreInputFocus();
+        document.getElementById('moreBtn').focus();
+        await frame();
+        const control = document.activeElement.id;
+        input.focus(); input.setSelectionRange(1, 3, 'backward');
+        mobileKeyboardHandler.restoreInputFocus();
+        await frame();
+        const unchanged = { focused: document.activeElement === input, start: input.selectionStart, end: input.selectionEnd, direction: input.selectionDirection };
+        return { selection, edit, control, unchanged };
+      });
+      assert.deepEqual(restores, {
+        selection: { start: 0, end: 1 },
+        edit: { value: 'updated', start: 7, end: 7 },
+        control: 'moreBtn',
+        unchanged: { focused: true, start: 1, end: 3, direction: 'backward' }
+      }, 'queued mobile focus restore yields to newer selection, editing and focus');
+      const timers = await page.evaluate(async () => {
+        const input = document.getElementById('messageInput'), control = document.getElementById('moreBtn');
+        const settle = () => new Promise(resolve => setTimeout(resolve, 260));
+        input.focus(); input.value = 'abcdef'; input.setSelectionRange(6, 6);
+        focusMessageInputForNewChat(true);
+        input.setSelectionRange(0, 1);
+        await settle();
+        const selection = { start: input.selectionStart, end: input.selectionEnd };
+        focusMessageInputForNewChat(true);
+        control.focus();
+        await settle();
+        const newerControl = document.activeElement.id;
+        // The intended unfocused new-chat path still focuses and places the caret once.
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => { input.removeEventListener('focus', focused); reject(new Error('new-chat input was not focused')); }, 2000);
+          function focused() { clearTimeout(timeout); resolve(); }
+          input.addEventListener('focus', focused, { once: true });
+          focusMessageInputForNewChat(true);
+        });
+        const initialFocus = document.activeElement === input;
+        input.setSelectionRange(1, 2);
+        control.focus();
+        await settle();
+        const retry = { control: document.activeElement.id, start: input.selectionStart, end: input.selectionEnd };
+        appState.mobileHomeAutoFocusUsed = false;
+        maybeAutoFocusMobileHomeInput();
+        input.focus(); input.setSelectionRange(2, 4);
+        await new Promise(resolve => setTimeout(resolve, 360));
+        const home = { start: input.selectionStart, end: input.selectionEnd };
+        return { selection, newerControl, initialFocus, retry, home };
+      });
+      assert.deepEqual(timers, {
+        selection: { start: 0, end: 1 }, newerControl: 'moreBtn', initialFocus: true,
+        retry: { control: 'moreBtn', start: 1, end: 2 }, home: { start: 2, end: 4 }
+      }, 'new-chat retries and home autofocus never override subsequent input or control focus');
+    }
     // Click fallback, selection preservation, and native textarea caret placement.
     const fallback = await page.evaluate(() => {
       const input = document.getElementById('messageInput');

@@ -1,0 +1,300 @@
+﻿'use strict';
+// Regression: composer model menu ("+" and model picker) must reliably respond on
+// desktop mouse and mobile touch, across every model switch, repeated open/close,
+// and research mode. Root cause history: a wall-clock heuristic in
+// isTrustedModelMenuSelection() silently dropped fast real selections; research
+// unavailable states returned silently. This suite asserts the root-cause fixes and
+// the local-agent prepareChat integration point, with no live account/provider calls.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+const { chromium, webkit } = require('playwright');
+
+const engine = process.env.RAI_BROWSER_ENGINE === 'webkit' ? webkit : chromium;
+const root = path.resolve(__dirname, '../public');
+
+function createServer() {
+  return http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname.startsWith('/api/')) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end('{}');
+      return;
+    }
+    const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
+    if (!file.startsWith(root + path.sep)) { res.writeHead(404); res.end(); return; }
+    const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+    res.setHeader('Content-Type', mime[path.extname(file)] || 'application/octet-stream');
+    fs.createReadStream(file).on('error', () => { res.writeHead(404); res.end(); }).pipe(res);
+  });
+}
+
+// Static-source contracts: guard against regressing the root-cause fix back into a
+// timing heuristic, and pin the local-agent integration points.
+function sourceContracts() {
+  const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+
+  assert.match(app, /modelMenuOpenedByEvent/, 'menu records the originating gesture event');
+  assert.doesNotMatch(app, /Date\.now\(\)\s*-\s*Number\(appState\.modelMenuOpenedAt[\s\S]{0,40}<\s*160/, 'the 160ms wall-clock guard must not return');
+  assert.match(app, /appState\.modelMenuOpenedByEvent === event\) return false;/, 'guard compares the exact originating event');
+  assert.match(app, /function hasRunnableResearchModels\(\)/, 'research availability helper exists');
+  assert.match(app, /await window\.RaiLocalAgent\?\.prepareChat\?\.\(\);/, 'prepareChat is awaited before capability resolution');
+  const prepareIndex = app.indexOf('await window.RaiLocalAgent?.prepareChat?.();');
+  const capIndex = app.indexOf('window.RaiLocalAgent?.getChatCapability?.()');
+  assert.ok(prepareIndex > 0 && capIndex > prepareIndex, 'prepareChat runs before getChatCapability');
+  assert.match(app, /userId:\s*appState\.user\?\.id \|\| ''/, 'local-agent context exposes the account id');
+
+  assert.match(html, /id="exportDiagnosticsButton"/, 'diagnostics export button keeps its id binding');
+  const aboutPanel = html.slice(html.indexOf('id="settingsPanel-about"'));
+  const advancedPanel = html.slice(html.indexOf('id="settingsPanel-advanced"'), html.indexOf('id="settingsPanel-about"'));
+  assert.ok(advancedPanel.includes('exportDiagnosticsButton'), 'diagnostics export card lives in Advanced');
+  assert.ok(!aboutPanel.includes('exportDiagnosticsButton'), 'diagnostics export card is removed from About');
+}
+
+async function testFixture(browser, url, fixture) {
+  const mobile = fixture.width <= 768;
+  const ctx = await browser.newContext({
+    viewport: { width: fixture.width, height: fixture.height },
+    userAgent: fixture.ua,
+    hasTouch: mobile,
+    isMobile: mobile,
+    serviceWorkers: 'block'
+  });
+  try {
+    const page = await ctx.newPage();
+    if (process.env.RAI_COMPOSER_DEBUG === '1') { page.on('console', msg => { if (msg.type() === 'error' || msg.type() === 'warning') console.log('BROWSER:', msg.text()); }); page.on('pageerror', error => console.log('PAGEERROR:', error.message)); }
+    const chatCalls = [], chatPayloads = [];
+    await page.route('**/api/**', (route) => {
+      if (new URL(route.request().url()).pathname.endsWith('/chat/stream')) {
+        chatCalls.push(route.request().url()); chatPayloads.push(route.request().postDataJSON());
+        return route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"type":"content","content":"fixture answer"}\n\ndata: {"type":"done"}\n\n' });
+      }
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    await page.goto(url);
+    await page.waitForFunction(() => typeof openModelModal === 'function' && typeof selectModelFromMenu === 'function');
+    await page.evaluate(() => showApp());
+    await page.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important}' });
+
+    const trigger = page.locator(mobile ? '#mobileModelSelectCustom' : '#modelSelectCustom');
+    const menuActive = () => page.locator('#modelDropdownMenu').evaluate((el) => el.classList.contains('active'));
+
+    // 1) Repeated open/close of the model picker toggles state every time.
+    for (let i = 0; i < 4; i += 1) {
+      await trigger.click();
+      assert.equal(await menuActive(), true, 'model menu opens (iteration ' + i + ')');
+      await trigger.click();
+      assert.equal(await menuActive(), false, 'model menu closes (iteration ' + i + ')');
+    }
+
+    // 2) Every primary mode row switches on a fast (no artificial delay) activation.
+    const modes = [
+      { mode: 'fast', modeIdentity: 'fast' },
+      { mode: 'think', modeIdentity: 'think' },
+      { mode: 'smart', modeIdentity: 'smart' }
+    ];
+    for (const { mode, modeIdentity } of modes) {
+      await page.evaluate(() => closeModelModal());
+      await trigger.click();
+      await page.locator('#modelDropdownMenu [data-mode="' + mode + '"]').click();
+      assert.equal(await page.evaluate(() => appState.modelPromptIdentity), modeIdentity, mode + ' row applies immediately');
+      assert.equal(await menuActive(), false, mode + ' row closes the menu');
+    }
+
+    // 3) "All models" expanded rows respond within the old 160ms window (the regression).
+    await page.evaluate(() => closeModelModal());
+    await trigger.click();
+    await page.waitForTimeout(260);
+    await page.locator('[data-toggle="all-models"]').click();
+    await page.waitForTimeout(260);
+    await page.evaluate(() => { appState.selectedModel = 'auto'; closeModelModal(); });
+    await trigger.click();
+    // No wait: this used to be silently swallowed by the wall-clock guard.
+    await page.locator('#allModelsSection [data-model="gpt-6-luna"]').click();
+    assert.equal(await page.evaluate(() => appState.selectedModel), 'gpt-6-luna', 'fast all-models selection applies');
+    assert.equal(await menuActive(), false, 'fast all-models selection closes the menu');
+
+    for (const model of ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra']) {
+      await trigger.click();
+      const item = page.locator('#allModelsSection [data-model="' + model + '"]');
+      if (mobile) await item.tap(); else await item.click();
+      assert.equal(await page.evaluate(() => appState.selectedModel), model, 'select ' + model);
+      const more = page.locator('#moreBtn');
+      if (mobile) await more.tap(); else await more.click();
+      const research = page.locator('#researchModeSwitch');
+      if (mobile) await research.tap(); else await research.click();
+      assert.equal(await page.evaluate(() => appState.researchModeEnabled), true, 'plus research works after ' + model);
+      if (mobile) await research.tap(); else await research.click();
+      assert.equal(await page.evaluate(() => appState.researchModeEnabled), false, 'plus research can be disabled');
+      await page.evaluate(() => closeMoreMenu());
+    }
+
+    // 4) Research mode toggles on/off and is reflected in state + menu selection.
+    await page.evaluate(() => {
+      appState.researchModeEnabled = false;
+      appState.researchMode = 'fast';
+      appState.researchAgentModels = ['deepseek-v4.1-flash'];
+      appState.researchMasterModel = 'deepseek-v4.1-flash';
+      appState.selectedModel = 'auto';
+      appState.modelPromptIdentity = 'smart';
+      closeModelModal();
+    });
+    await trigger.click();
+    await page.locator('#modelDropdownMenu [data-mode="research"]').click();
+    assert.equal(await page.evaluate(() => appState.researchModeEnabled), true, 'research enabled via model menu');
+    assert.equal(await page.evaluate(() => appState.modelPromptIdentity), 'research', 'research identity set');
+    assert.equal(await menuActive(), false, 'research selection closes the menu');
+    // Selecting a non-research mode must clear research mode again.
+    await trigger.click();
+    await page.locator('#modelDropdownMenu [data-mode="fast"]').click();
+    assert.equal(await page.evaluate(() => appState.researchModeEnabled), false, 'non-research selection disables research');
+
+    // 5) Research mode from the "+" (more) menu switch works and stays in sync.
+    await page.locator('#moreBtn').click();
+    assert.equal(await page.locator('#moreMenu').evaluate((el) => el.classList.contains('active')), true, 'more menu opens');
+    await page.locator('#researchModeSwitch').click();
+    assert.equal(await page.evaluate(() => appState.researchModeEnabled), true, 'research toggled from more menu');
+    assert.equal(await page.locator('#researchModeToggle').evaluate((el) => el.classList.contains('active')), true, 'research toggle UI reflects state');
+    await page.locator('#researchModeSwitch').click();
+    assert.equal(await page.evaluate(() => appState.researchModeEnabled), false, 'research toggled off from more menu');
+    await page.locator('#moreBtn').click();
+    assert.equal(await page.locator('#moreMenu').evaluate((el) => el.classList.contains('active')), false, 'more menu closes');
+
+    // 6) Unsupported research mode: when every research model is admin-disabled the
+    //    enable attempt must be refused with explicit feedback, not a silent no-op.
+    const unavailable = await page.evaluate(() => {
+      closeMoreMenu(); closeModelModal();
+      const prev = new Set(modelVisibilityState.disabled);
+      ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra'].forEach((id) => modelVisibilityState.disabled.add(id));
+      appState.researchModeEnabled = false;
+      toggleResearchModeFromMenu({ stopPropagation() {} });
+      const enabled = appState.researchModeEnabled;
+      const toast = document.getElementById('toastNotification');
+      const toastShown = !!(toast && toast.classList.contains('show'));
+      modelVisibilityState.disabled = prev;
+      return { enabled, hasHelper: typeof hasRunnableResearchModels === 'function', runnable: hasRunnableResearchModels(), toastShown };
+    });
+    assert.equal(unavailable.hasHelper, true, 'research availability helper is exposed');
+    assert.equal(unavailable.enabled, false, 'research refuses to enable when unsupported');
+    assert.equal(unavailable.toastShown, true, 'unsupported research has visible feedback');
+    assert.equal(unavailable.runnable, true, 'restored availability is runnable again');
+
+    // 7) Exercise the real send function and inspect its intercepted HTTP payload.
+    // No live account/provider is contacted; this is not a paid-model answer acceptance test.
+    await page.evaluate(async () => {
+      window.fixtureOriginalAgent = window.RaiLocalAgent;
+      window.fixturePrepareCalls = 0;
+      window.RaiLocalAgent = {
+        isSelected: () => false,
+        prepareChat: async () => { window.fixturePrepareCalls++; },
+        getChatCapability: () => null
+      };
+      appState.token = 'isolated-browser-fixture'; appState.user = { id: 1001 };
+      appState.authState = 'authenticated'; appState.messages = []; appState.sessions = [];
+      appState.currentSession = { id: 'fixture-conversation', title: 'Fixture', prompt_model_identity: 'research', prompt_language: 'zh' };
+      appState.isStreaming = false; appState.customApiMode = false; appState.agentMode = false;
+      setResearchMode('fast', { enable: true });
+      await sendMessage('fixture research request');
+    });
+    assert.equal(chatPayloads.length, 1, 'research actually reaches the intercepted stream endpoint');
+    assert.equal(chatPayloads[0].researchMode, 'fast');
+    if (process.env.RAI_COMPOSER_DEBUG === '1') console.log('RESEARCH STATE:', await page.evaluate(() => ({ messages: appState.messages, streaming: appState.isStreaming, toast: document.getElementById('toastNotification')?.textContent })));
+    assert.ok(await page.evaluate(() => appState.messages.some(message => message.role === 'assistant' && String(message.content).includes('fixture answer'))), 'research stream produces a completed assistant message');
+    assert.ok(chatPayloads[0].researchAgentModels.length >= 1);
+    assert.equal(await page.evaluate(() => window.fixturePrepareCalls), 1, 'send awaited the real prepare hook');
+
+    // 8) Remote + research/custom modes fail explicitly. Offline normal sends retain the draft.
+    const blocked = await page.evaluate(async () => {
+      const input = document.getElementById('messageInput');
+      input.value = 'keep this remote draft';
+      window.RaiLocalAgent = { isSelected: () => true, prepareChat: async () => { throw Error('fixture PC disconnected'); }, getChatCapability: () => null };
+      await sendMessage();
+      const researchDraft = input.value, researchFeedback = document.getElementById('toastNotification').textContent;
+      appState.researchModeEnabled = false; appState.selectedModel = 'auto';
+      await sendMessage();
+      const offlineDraft = input.value, offlineFeedback = document.getElementById('toastNotification').textContent;
+      appState.customApiMode = true;
+      await sendMessage();
+      const customDraft = input.value;
+      appState.customApiMode = false; window.RaiLocalAgent = window.fixtureOriginalAgent;
+      return { researchDraft, researchFeedback, offlineDraft, offlineFeedback, customDraft };
+    });
+    assert.equal(chatPayloads.length, 1, 'blocked modes never issue another chat request');
+    assert.equal(blocked.researchDraft, 'keep this remote draft');
+    assert.match(blocked.researchFeedback, /研究|Research/);
+    assert.equal(blocked.offlineDraft, 'keep this remote draft');
+    assert.match(blocked.offlineFeedback, /disconnected/);
+    assert.equal(blocked.customDraft, 'keep this remote draft');
+
+    // 9) The real remote module and real app layout work together (not a minimal DOM).
+    let remoteRevoked = false;
+    await page.route('**/api/cx-remote/**', async route => {
+      const request = route.request(), pathname = new URL(request.url()).pathname;
+      let body = { success: true };
+      if (pathname.endsWith('/devices')) body.devices = [{ id: 'layout-pc', name: 'Fixture Desktop', version: '1.8.10', online: true }];
+      if (pathname.endsWith('/sessions') && request.method() === 'POST') body.session = { id: 'layout-session', deviceId: 'layout-pc', deviceName: 'Fixture Desktop', conversationId: 'fixture-conversation', status: 'pending', expiresAt: Date.now() + 900000, confirmationCode: 'A1B2C3' };
+      if (pathname.endsWith('/sessions/layout-session') && request.method() === 'GET') {
+        if (remoteRevoked) return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'cx_remote_session_unavailable' }) });
+        body.session = { id: 'layout-session', deviceId: 'layout-pc', deviceName: 'Fixture Desktop', conversationId: 'fixture-conversation', status: 'approved', expiresAt: Date.now() + 900000, confirmationCode: 'A1B2C3', online: true };
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await page.evaluate(async () => {
+      await window.RaiLocalAgent.refreshStatus();
+      await window.RaiLocalAgent.enable('layout-pc');
+      closeSettings();
+    });
+    assert.equal(await page.locator('#cxRemoteStatusBanner').getAttribute('data-state'), 'green');
+    const layout = await page.evaluate(() => {
+      const banner = document.getElementById('cxRemoteStatusBanner').getBoundingClientRect();
+      const composer = document.querySelector('.input-container').getBoundingClientRect();
+      return { top: banner.top, bottom: banner.bottom, width: banner.width, inputTop: composer.top, viewport: innerWidth, scroll: document.documentElement.scrollWidth };
+    });
+    assert.ok(layout.top >= 0 && layout.bottom <= layout.inputTop, 'remote status never overlays the composer: ' + JSON.stringify(layout));
+    assert.ok(layout.width <= fixture.width + 1 && layout.scroll <= layout.viewport + 1, 'full app status fits the mobile viewport');
+    const output = path.resolve(__dirname, '../output/playwright'); fs.mkdirSync(output, { recursive: true });
+    await page.screenshot({ path: path.join(output, 'full-app-remote-' + fixture.platform + '-' + (process.env.RAI_BROWSER_ENGINE || 'chromium') + '.png') });
+    remoteRevoked = true;
+    await page.evaluate(async () => { await window.RaiLocalAgent.refreshStatus(); document.getElementById('messageInput').value = 'draft after revoke'; await sendMessage(); });
+    assert.equal(await page.locator('#messageInput').inputValue(), 'draft after revoke');
+    assert.equal(await page.locator('#cxRemoteStatusBanner').getAttribute('data-state'), 'red');
+    assert.equal(chatPayloads.length, 1);
+
+    // 10) Advanced really downloads the bound sanitized report; About no longer owns it.
+    await page.evaluate(() => { openSettings(); switchSettingsSection('advanced'); });
+    assert.equal(await page.locator('#settingsPanel-about #exportDiagnosticsButton').count(), 0);
+    const downloadEvent = page.waitForEvent('download');
+    await page.locator('#settingsPanel-advanced #exportDiagnosticsButton').click();
+    const download = await downloadEvent;
+    assert.match(download.suggestedFilename(), /^RAI-Web-diagnostics-.*\.json$/);
+    const diagnostics = fs.readFileSync(await download.path(), 'utf8');
+    assert.ok(JSON.parse(diagnostics).events);
+    assert.equal(diagnostics.includes('isolated-browser-fixture'), false);
+    assert.equal(diagnostics.includes('keep this remote draft'), false);
+    console.log('composer-menu-stability PASS', fixture.platform, mobile ? 'touch' : 'mouse', 'real sends, remote layout, fail-closed and Advanced download');
+  } finally {
+    await ctx.close();
+  }
+}
+
+(async () => {
+  sourceContracts();
+  const server = createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  try {
+    browser = await engine.launch({ headless: true, ...(process.env.RAI_QR_BROWSER_EXECUTABLE ? { executablePath: process.env.RAI_QR_BROWSER_EXECUTABLE } : {}) });
+    const url = process.env.RAI_UI_BASE_URL || 'http://127.0.0.1:' + server.address().port;
+    const fixtures = [
+      { platform: 'windows', width: 1280, height: 800, ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36' },
+      { platform: 'android', width: 412, height: 915, ua: 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/130 Mobile Safari/537.36' },
+      { platform: 'ios', width: 393, height: 852, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1' }
+    ].filter((f) => !process.env.RAI_COMPOSER_CASE || f.platform === process.env.RAI_COMPOSER_CASE);
+    for (const fixture of fixtures) await testFixture(browser, url, fixture);
+  } finally {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+})().catch((error) => { console.error(error); process.exitCode = 1; });

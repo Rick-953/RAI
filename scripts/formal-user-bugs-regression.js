@@ -769,7 +769,7 @@ async function testMessageRenderingStability() {
     'model changes must originate from the currently open model menu');
   assert.match(trustedModelSelection, /requestedModel !== targetModel/,
     'the clicked model row must match the requested model exactly');
-  assert.match(trustedModelSelection, /Number\(event\.detail \|\| 0\) > 0 && Date\.now\(\) - Number\(appState\.modelMenuOpenedAt \|\| 0\) < 160/,
+  assert.match(trustedModelSelection, /appState\.modelMenuOpenedByEvent === event\) return false;/,
     'the opening click must not fall through onto a model row');
   assert.match(selectModelFromMenuTrusted, /if \(!isTrustedModelMenuSelection\(model, event\)\) return;/,
     'untrusted or stale model-menu events must not mutate the composer model');

@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.24';
-const RAI_BUILD_ID = '20261010-interjection-fix-r1';
+const RAI_APP_VERSION = '0.13.25';
+const RAI_BUILD_ID = '20261010-stability-remote-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2566,6 +2566,7 @@ const appState = {
   ztx6dBindUrl: '/auth/ztx6d/bind/start',
   activeModelMenuAnchorId: 'modelSelectCustom',
   modelMenuOpenedAt: 0,
+  modelMenuOpenedByEvent: null,
   sendStarting: false,
   theme: 'dark',
   themePreference: 'dark',
@@ -2595,6 +2596,7 @@ const appState = {
   scrollBottomThreshold: 160,
   pendingScrollTimer: null,
   mobileComposerFocusTimer: null,
+  mobileComposerFocusGeneration: 0,
   entryAutofocusTimer: null,
   entryAutofocusBound: false,
   pendingMobileComposerFocus: false,
@@ -2633,6 +2635,7 @@ const appState = {
 
 window.getRaiLocalAgentContext = () => ({
   token: appState.token,
+  userId: appState.user?.id || '',
   conversationId: appState.currentSession?.id || '',
   language: appState.language,
   authenticated: appState.authState === 'authenticated'
@@ -6178,6 +6181,7 @@ const i18n = {
     'research-master-model': '主控模型',
     'research-agent-min-one': '至少保留 1 个子 agent 模型',
     'research-agent-max-four': '最多选择 4 个研究模型，请取消一个不需要的',
+    'research-mode-unavailable': '研究模式暂不可用：所有研究模型均已停用',
     'agent-mode': '深度研究',
     'add-attachment': '添加附件',
     'rpass-pending': 'rPass 登录待上线',
@@ -6845,6 +6849,7 @@ const i18n = {
     'research-master-model': 'Master model',
     'research-agent-min-one': 'Keep at least 1 sub-agent model',
     'research-agent-max-four': 'Choose up to 4 research models. Remove one you do not need.',
+    'research-mode-unavailable': 'Research mode is unavailable: every research model is disabled',
     'agent-mode': 'Deep Research',
     'add-attachment': 'Add Attachment',
     'rpass-pending': 'rPass login is coming soon',
@@ -8162,6 +8167,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-10', version: 'v0.13.25',
+    zh: { summary: '修复切模型后的菜单/研究点击，整理诊断入口，增强远程电脑连接。', details: ['隐藏的模型面板不再拦截更多菜单；快速独立点击不再被时间阈值丢弃。', '脱敏诊断导出移到设置 → 高级。', '远程电脑显示设备名及绿黄红连接状态，断线不再回退云端文件操作。', '新增新版 CX helper 心跳与原对话目录协议；仍需电脑本机逐次确认。研究讨论/自定义 API 与远程工具组合会明确提示不支持。'] },
+    en: { summary: 'Reliable composer menus and research selection, Advanced diagnostics, and safer remote-PC sessions.', details: ['Hidden model panels no longer intercept composer controls; fast independent taps are accepted.', 'Sanitized diagnostic export is now in Settings → Advanced.', 'Remote sessions show a named colored status and never silently fall back to cloud file operations.', 'New CX helper heartbeat and original-conversation directory protocol; each PC action still needs local approval. Unsupported research/custom-API remote combinations are reported explicitly.'] }
+  },
   {
     date: '2026-10-10', version: 'v0.13.24',
     zh: { summary: '修复工具调用期间插话不显示，菜单不再误关。', details: ['多轮工具调用时插话立即出现在对话中，并作为用户消息进入上下文。', '插话不再因带附件被静默丢弃。', '更多菜单与模型下拉按菜单矩形判定点击，圆角穿透不再误关。'] },
@@ -13297,6 +13307,19 @@ function isResearchModeEnabled() {
   return appState.researchModeEnabled === true;
 }
 
+// Research mode fans out to one or more sub-agent models. If an administrator has
+// disabled every research-capable model, the mode cannot run: report it explicitly
+// instead of letting the tap look like a no-op.
+function hasRunnableResearchModels() {
+  return RESEARCH_MODEL_OPTIONS.some((option) => !isModelDisabledByAdmin(option.id));
+}
+
+function rejectUnsupportedResearchMode() {
+  showToast(i18nText('research-mode-unavailable', isChineseLanguage(appState.language)
+    ? '研究模式暂不可用：所有研究模型均已停用'
+    : 'Research mode is unavailable: every research model is disabled'));
+}
+
 function rememberCurrentNonResearchModel() {
   const selected = normalizeSelectedModelId(appState.selectedModel || 'auto') || 'auto';
   if (selected && selected !== 'research-mode' && MODELS[selected] && !isModelDisabledByAdmin(selected)) {
@@ -13323,6 +13346,10 @@ function setResearchModeFromSlider(indexValue) {
 function setResearchMode(mode, options = {}) {
   const normalized = normalizeResearchMode(mode);
   if (options.enable !== false) {
+    if (!isResearchModeEnabled() && !hasRunnableResearchModels()) {
+      rejectUnsupportedResearchMode();
+      return;
+    }
     if (!isResearchModeEnabled()) rememberCurrentNonResearchModel();
     appState.researchModeEnabled = true;
   }
@@ -13349,6 +13376,10 @@ function setResearchMode(mode, options = {}) {
 function toggleResearchModeFromMenu(event) {
   event?.stopPropagation?.();
   const nextEnabled = !isResearchModeEnabled();
+  if (nextEnabled && !hasRunnableResearchModels()) {
+    rejectUnsupportedResearchMode();
+    return;
+  }
   if (nextEnabled) rememberCurrentNonResearchModel();
   appState.researchModeEnabled = nextEnabled;
   appState.agentMode = false;
@@ -13549,7 +13580,13 @@ function selectRaiModeFromMenu(mode, event) {
 
   if (config.mode === 'research') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    appState.modelPromptIdentity = 'research';
+    // Only claim the research identity if the mode actually turned on (setResearchMode
+    // refuses when no research model is available); otherwise keep the current routing.
+    if (isResearchModeEnabled()) {
+      appState.modelPromptIdentity = 'research';
+    } else if (restoreMenuFocus) {
+      return;
+    }
   } else {
     appState.researchModeEnabled = false;
     appState.selectedModel = config.model;
@@ -15004,39 +15041,49 @@ function focusMessageInputForNewChat(force = false) {
 
   const shouldForceFocus = force || appState.pendingMobileComposerFocus;
   appState.pendingMobileComposerFocus = shouldForceFocus;
+  const generation = (appState.mobileComposerFocusGeneration || 0) + 1;
+  appState.mobileComposerFocusGeneration = generation;
+  const expected = {
+    value: input.value, start: input.selectionStart, end: input.selectionEnd,
+    direction: input.selectionDirection, activeElement: document.activeElement
+  };
+  const stillCurrent = () => appState.mobileComposerFocusGeneration === generation
+    && window.innerWidth <= 768 && input.isConnected && !input.disabled
+    && input.getClientRects().length > 0 && input.value === expected.value
+    && input.selectionStart === expected.start && input.selectionEnd === expected.end
+    && input.selectionDirection === expected.direction
+    && (document.activeElement === expected.activeElement || document.activeElement === input);
 
   if (appState.mobileComposerFocusTimer) {
     clearTimeout(appState.mobileComposerFocusTimer);
   }
 
   const runFocus = () => {
-    if (window.innerWidth > 768) return;
-
-    if (window.expandInput && !appState.inputExpanded) {
-      window.expandInput();
-    }
+    if (!stillCurrent() || document.activeElement === input) return;
+    if (window.expandInput && !appState.inputExpanded) window.expandInput();
 
     requestAnimationFrame(() => {
+      // An old home/new-chat timer must yield to a newer edit, caret, or control.
+      if (!stillCurrent() || document.activeElement === input) return;
       try {
         input.focus({ preventScroll: true });
       } catch (error) {
         input.focus();
       }
-
+      if (document.activeElement !== input) return;
       const end = input.value.length;
-      if (typeof input.setSelectionRange === 'function') {
-        try {
-          input.setSelectionRange(end, end);
-        } catch (error) {
-          console.debug('Skip mobile selection restore:', error);
-        }
+      try { input.setSelectionRange?.(end, end); } catch (error) {
+        console.debug('Skip mobile selection restore:', error);
       }
-
+      expected.activeElement = input;
+      expected.start = input.selectionStart; expected.end = input.selectionEnd;
+      expected.direction = input.selectionDirection;
       window.mobileKeyboardHandler?.keepChatAnchored?.(true);
     });
   };
 
   appState.mobileComposerFocusTimer = window.setTimeout(() => {
+    if (appState.mobileComposerFocusGeneration !== generation) return;
     runFocus();
     window.setTimeout(runFocus, 180);
     appState.mobileComposerFocusTimer = null;
@@ -15050,7 +15097,22 @@ function maybeAutoFocusMobileHomeInput() {
   if (!welcomeScreen || welcomeScreen.classList.contains('hidden') || welcomeScreen.style.display === 'none') return;
   appState.mobileHomeAutoFocusUsed = true;
   appState.pendingMobileComposerFocus = true;
-  window.setTimeout(() => focusMessageInputForNewChat(true), 260);
+  const input = document.getElementById('messageInput');
+  const expected = {
+    value: input?.value, start: input?.selectionStart, end: input?.selectionEnd,
+    direction: input?.selectionDirection, activeElement: document.activeElement,
+    generation: appState.mobileComposerFocusGeneration
+  };
+  window.setTimeout(() => {
+    if (appState.mobileComposerFocusGeneration !== expected.generation) return;
+    if (!input || input.value !== expected.value || input.selectionStart !== expected.start
+      || input.selectionEnd !== expected.end || input.selectionDirection !== expected.direction
+      || document.activeElement !== expected.activeElement) {
+      appState.pendingMobileComposerFocus = false;
+      return;
+    }
+    focusMessageInputForNewChat(true);
+  }, 260);
 }
 
 function isVisibleElement(element) {
@@ -16615,6 +16677,7 @@ function openModelModal(anchorOrId = null, event = null) {
     menu.classList.add('active');
     menu.setAttribute('aria-hidden', 'false');
     appState.modelMenuOpenedAt = Date.now();
+    appState.modelMenuOpenedByEvent = event || null;
     appState.activeModelMenuAnchorId = selector.id;
     syncModelMenuTriggerState(selector);
     updateMenuSelection();
@@ -16633,6 +16696,7 @@ function closeModelModal({ restoreFocus = false } = {}) {
   menu.classList.remove('active', 'closing');
   menu.setAttribute('aria-hidden', 'true');
   appState.modelMenuOpenedAt = 0;
+  appState.modelMenuOpenedByEvent = null;
   if (restoreFocus && isComposerMenuAnchorVisible(trigger)) {
     requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
   }
@@ -16803,8 +16867,11 @@ function isTrustedModelMenuSelection(model, event) {
     target.getClientRects().length === 0
   ) return false;
 
-  // Ignore a rapid second click that lands in the just-opened floating menu.
-  if (Number(event.detail || 0) > 0 && Date.now() - Number(appState.modelMenuOpenedAt || 0) < 160) return false;
+  // The single physical gesture that opened the floating menu must never also
+  // activate a menu row that happens to render under the pointer. Suppress only
+  // that exact originating event; every later, independent click is legitimate.
+  // This replaces a wall-clock heuristic that silently dropped fast real taps.
+  if (event && appState.modelMenuOpenedByEvent === event) return false;
   event.stopPropagation();
   return true;
 }
@@ -16814,7 +16881,11 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
   const restoreMenuFocus = document.getElementById('modelDropdownMenu')?.contains(document.activeElement) === true;
   if (model === 'research-mode') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    appState.modelPromptIdentity = 'research';
+    // Only switch to the research identity when the mode actually turned on; otherwise
+    // setResearchMode already reported why research is unavailable and we keep routing.
+    if (isResearchModeEnabled()) {
+      appState.modelPromptIdentity = 'research';
+    }
     closeModelModal({ restoreFocus: restoreMenuFocus });
     if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
@@ -16831,7 +16902,10 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
     return;
   }
   if (isMembershipLockedModel(model)) {
-    console.warn(' 该模型仅 MAX 会员可用');
+    // Do not fail silently: surface why the tap did nothing and keep the composer usable.
+    showToast(i18nText('model-desc-max-only', '仅 MAX 可用'));
+    closeModelModal({ restoreFocus: restoreMenuFocus });
+    if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
   }
   appState.researchModeEnabled = false;
@@ -21536,6 +21610,16 @@ async function sendMessage(message = null, options = {}) {
 
   // 允许只发送附件（无文字内容）
   if (!messageText && currentAttachments.length === 0) return;
+  if (window.RaiLocalAgent?.isSelected?.()) {
+    if (resolveSendRequestConfig(options).researchMode !== 'off' || appState.agentMode === true || appState.customApiMode) {
+      showToast(isChineseLanguage(appState.language)
+        ? '远程电脑暂不支持研究讨论或自定义 API。请切回普通对话执行电脑任务，或明确断开电脑后再使用这些模式；本次未发送。'
+        : 'Remote PC tools are unavailable in Research or Custom API mode. Use normal chat for PC tasks, or explicitly disconnect first. Nothing was sent.');
+      return;
+    }
+    try { await window.RaiLocalAgent.prepareChat(); }
+    catch (error) { showToast(error.message || '远程电脑未连接；本次未发送。'); return; }
+  }
   if (appState.customApiMode) {
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
@@ -22500,19 +22584,6 @@ async function sendMessage(message = null, options = {}) {
     processTraceList.scrollTop = processTraceList.scrollHeight;
   }
 
-  function appendFrameworkRequirements(promptText) {
-    const text = String(promptText || '').trim();
-    if (!text) return;
-    const lines = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean);
-
-    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '开始展示框架要求' : 'Framework requirements begin');
-    lines.forEach(line => addProcessTraceItem('framework', line));
-    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '框架要求展示完成' : 'Framework requirements end');
-  }
-
   let agentSelectedRoles = [];
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
@@ -22625,6 +22696,11 @@ async function sendMessage(message = null, options = {}) {
       useRag: appState.useRag,
       ragTopK: appState.ragTopK
     };
+    // Let the local-agent bridge reject/resolve remote routing before we decide the
+    // capability. This runs inside the existing try/catch, so a rejection (offline or
+    // pending-authorization remote) surfaces through the normal chat error path instead
+    // of silently falling back to a server-side file operation.
+    await window.RaiLocalAgent?.prepareChat?.();
     const localAgentCapability = window.RaiLocalAgent?.getChatCapability?.();
     if (localAgentCapability) chatRequestPayload.local_agent = localAgentCapability;
     const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -22700,7 +22776,6 @@ async function sendMessage(message = null, options = {}) {
 
     if (enableProcessTrace) {
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '开始流式请求' : 'Streaming request started');
-      appendFrameworkRequirements(effectiveSystemPrompt);
       addProcessTraceItem('info', isChineseLanguage(appState.language)
         ? `模型: ${modelUsed || requestConfig.model}`
         : `Model: ${modelUsed || requestConfig.model}`);
@@ -31424,11 +31499,21 @@ class MobileKeyboardHandler {
     const selectionStart = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
     const selectionEnd = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
 
+    const selectionDirection = input.selectionDirection;
+    const value = input.value;
+    const focusedElement = document.activeElement;
+
     requestAnimationFrame(() => {
+      // A later gesture or edit wins over this deferred menu-focus restoration.
+      // In particular, never restore an old end-of-text caret over a new selection.
+      if (!input.isConnected || input.disabled || input.getClientRects().length === 0
+        || input.value !== value || input.selectionStart !== selectionStart
+        || input.selectionEnd !== selectionEnd || input.selectionDirection !== selectionDirection
+        || (document.activeElement !== focusedElement && document.activeElement !== input)) return;
       input.focus({ preventScroll: true });
       if (typeof input.setSelectionRange === 'function') {
         try {
-          input.setSelectionRange(selectionStart, selectionEnd);
+          input.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
         } catch (error) {
           this.log('Selection restore skipped', error);
         }

@@ -75,17 +75,20 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), path=require(
   await p.evaluate(async()=>{
     const r=await fetch(API_BASE+'/chat/stream',{method:'POST',body:'PRIVATE-REQUEST-CANARY',headers:{Authorization:'Bearer PRIVATE-TOKEN-CANARY'}});
     const reader=RaiDiagnostics.reader(r);while(!(await reader.read()).done) { /* local fixture bytes only */ }
-    openSettings();switchSettingsSection('about');
+    openSettings();switchSettingsSection('advanced');
   });
-  const downloadReady=p.waitForEvent('download');
-  await p.locator('#exportDiagnosticsButton').click();const download=await downloadReady;
+  assert.equal(await p.locator('#settingsPanel-about #exportDiagnosticsButton').count(),0);
+  const [download]=await Promise.all([
+    p.waitForEvent('download'),
+    p.locator('#settingsPanel-advanced #exportDiagnosticsButton').click()
+  ]);
   const exported=fs.readFileSync(await download.path(),'utf8'),report=JSON.parse(exported);
   assert.equal(report.schema,'rai.diagnostics.v1');assert.ok(report.events.length>0);
   for(const canary of ['PRIVATE-REASONING-CANARY','PRIVATE-CONTENT-CANARY','PRIVATE-REQUEST-CANARY','PRIVATE-TOKEN-CANARY','test@example.invalid']) assert.ok(!exported.includes(canary));
   const summary=report.events.find(e=>e.category==='stream'&&e.chatRequestId==='req_1790650000000_0123456789abcdef');
   assert.ok(summary);assert.equal(summary.action,'completed');assert.equal(summary.model,'deepseek-flash');
   assert.equal(summary.serverRequestId,'01234567-89ab-4def-8123-456789abcdef');
-  assert.deepEqual(errors,[]);console.log('Diagnostics browser export PASS: real About button downloads valid local-only JSON, safe HTTP/SSE correlation, no request/response/token canaries');
+  assert.deepEqual(errors,[]);console.log('Diagnostics browser export PASS: real Advanced button downloads valid local-only JSON, safe HTTP/SSE correlation, no request/response/token canaries');
   console.log(JSON.stringify({geometry,scanner:'permission denial, real image decode, device/ip/location, single confirm, desktop/mobile overflow PASS',errors},null,2));
  } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

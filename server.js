@@ -13138,11 +13138,12 @@ app.get('/api/client/capabilities', requireSoftwareClient, (req, res) => {
     });
 });
 
-app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+app.post('/api/auth/logout', apiLimiter, authenticateToken, async (req, res) => {
     await authSessionStore.logoutCurrent({
         sessionId: req.user.sid,
         userId: req.user.userId
     }).catch(() => false);
+    cxRemoteControl.revokeLoginSessions(req.user.userId, req.user.sid);
     res.setHeader('Set-Cookie', clearSelectedRefreshCookie(authSessionStore, req.user.auth_method === 'qr_browser' ? req.user.sid : undefined).header);
     return res.json({ success: true });
 });
@@ -13161,8 +13162,9 @@ app.get('/api/user/devices', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/auth/logout-all', authenticateToken, async (req, res) => {
+app.post('/api/auth/logout-all', apiLimiter, authenticateToken, async (req, res) => {
     await authSessionStore.logoutAll(req.user.userId, 'user_logout_all');
+    cxRemoteControl.revokeLoginSessions(req.user.userId);
     res.setHeader('Set-Cookie', authSessionStore.buildClearRefreshCookie().header);
     return res.json({ success: true });
 });
@@ -20834,7 +20836,13 @@ function collectRequestInterjections(requestId) {
 // Separate bounded pre-auth budget: PC heartbeats and approval polls must not
 // consume the ordinary user API limiter (including clients sharing one NAT IP).
 const cxRemoteLimiter = rateLimit({ windowMs: 60000, max: 300, message: {error:'cx_remote_rate_limited'} });
-const cxRemoteControl = installCxRemoteRoutes({ app, authenticateToken, apiLimiter: cxRemoteLimiter, dbGet: dbGetAsync });
+const cxRemoteControl = installCxRemoteRoutes({
+    app, authenticateToken, apiLimiter: cxRemoteLimiter, dbGet: dbGetAsync,
+    isLoginSessionActive: async (userId, sessionId) => !!await dbGetAsync(
+        'SELECT s.session_id FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.session_id = ? AND s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND s.session_version = COALESCE(u.session_version, 1)',
+        [sessionId, userId, Math.floor(Date.now() / 1000)]
+    )
+});
 const chatModelQuotaContext = new AsyncLocalStorage();
 const chatModelQuotaService = createChatModelQuotaService({ withTransaction: withMainDbTransaction });
 const fetchDeepSeekProvider = createDeepSeekProviderFetch({
@@ -21012,7 +21020,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         let localAgentSession;
         let cxRemoteSession = null;
         try {
-            cxRemoteSession = cxRemoteControl.resolveChatSession(req.user.userId, rawLocalAgent, requestedSessionId || '');
+            cxRemoteSession = cxRemoteControl.resolveChatSession(req.user.userId, rawLocalAgent, requestedSessionId || '', req.user.sid);
             await localAgentStartupReady;
             localAgentSession = await localAgentService.resolveChatSession(
                 req.user.userId,
@@ -21025,6 +21033,12 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         }
         if (rawClientFileExecution === true && !req.softwareClient) {
             return res.status(403).json({ error: 'software_client_key_required' });
+        }
+        if (cxRemoteSession && (normalizeResearchMode(researchMode) !== 'off' || normalizeAgentMode(agentMode) !== 'off')) {
+            return res.status(400).json({
+                success: false, code: 'cx_remote_mode_unsupported',
+                error: '远程电脑任务请使用普通对话；研究讨论暂不支持本地工具执行。'
+            });
         }
         const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession || !!cxRemoteSession;
         if (clientFileExecution) {
@@ -30320,6 +30334,7 @@ async function gracefulShutdown(signalName, exitCode = 0) {
     if (selectionExplanationRecoveryTimer) clearInterval(selectionExplanationRecoveryTimer);
     if (generatedImageCleanupTimer) clearInterval(generatedImageCleanupTimer);
     if (authSessionCleanupTimer) clearInterval(authSessionCleanupTimer);
+    cxRemoteControl.close();
     fileWorkspace.stopCleanup();
     const httpClosePromise = !httpServer?.listening
         ? Promise.resolve(true)

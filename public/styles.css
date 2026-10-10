@@ -7472,6 +7472,15 @@ video.private-file-preview-media {
   pointer-events: none;
 }
 
+/* A closed floating menu must never hit-test, even if an expanded sub-panel
+   (e.g. .all-models-section.expanded) re-enables pointer-events on its rows.
+   Without this, the still-fading menu silently intercepts taps meant for the
+   other composer menu (the "+" 研究 switch), which reads as an unresponsive UI. */
+.model-dropdown-menu:not(.active):not(.closing),
+.model-dropdown-menu:not(.active):not(.closing) * {
+  pointer-events: none;
+}
+
 .model-menu-item {
   width: 100%;
   min-height: 56px;
@@ -7699,11 +7708,16 @@ video.private-file-preview-media {
 
 .all-models-section.expanded {
   visibility: visible;
-  pointer-events: auto;
   opacity: 1;
   transform: translateY(0);
   margin-top: 4px;
   transition-delay: 0s;
+}
+
+/* Only interactive while the picker itself is open; a closed picker must not let
+   its expanded sub-panel keep intercepting taps (the "+" menu sits underneath). */
+.model-dropdown-menu.active .all-models-section.expanded {
+  pointer-events: auto;
 }
 
 .all-models-section .model-menu-item {
@@ -10623,6 +10637,11 @@ html.hand-left .chat-index-timeline {
 
 .more-menu.closing {
   display: block;
+  pointer-events: none;
+}
+
+.more-menu:not(.active),
+.more-menu:not(.active) * {
   pointer-events: none;
 }
 
@@ -14285,6 +14304,38 @@ body.chatflow-iframe-mode .message-content::selection {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.45;
+}
+
+/* Diagnostics export lives in Advanced: one clear card, same visual language as other setting rows. */
+.settings-diagnostics-item {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-diagnostics-button {
+  justify-self: start;
+  margin-top: 4px;
+  padding: 0 18px;
+  min-height: 44px;
+  border-radius: 12px;
+  background: var(--settings-card-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings-diagnostics-button:hover,
+.settings-diagnostics-button:active {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+[data-theme="light"] .settings-diagnostics-button:hover,
+[data-theme="light"] .settings-diagnostics-button:active {
+  background: #d8d8d3;
+  color: #1f1f1f;
 }
 
 .setting-input,
