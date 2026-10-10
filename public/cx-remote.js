@@ -66,7 +66,7 @@
       state.token = token; state.lastRefresh = 0;
       for (const entry of state.connections.values()) {
         entry.verifiedAt = 0; entry.connecting = false;
-        entry.error = text('???????????', 'Revalidating the PC connection.');
+        entry.error = text('正在重新验证电脑连接。', 'Revalidating the PC connection.');
       }
       return;
     }

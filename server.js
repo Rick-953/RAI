@@ -21034,6 +21034,12 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         if (rawClientFileExecution === true && !req.softwareClient) {
             return res.status(403).json({ error: 'software_client_key_required' });
         }
+        if (cxRemoteSession && (normalizeResearchMode(researchMode) !== 'off' || normalizeAgentMode(agentMode) !== 'off')) {
+            return res.status(400).json({
+                success: false, code: 'cx_remote_mode_unsupported',
+                error: '远程电脑任务请使用普通对话；研究讨论暂不支持本地工具执行。'
+            });
+        }
         const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession || !!cxRemoteSession;
         if (clientFileExecution) {
             console.log(

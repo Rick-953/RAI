@@ -64,9 +64,12 @@ async function testFixture(browser, url, fixture) {
   });
   try {
     const page = await ctx.newPage();
-    const chatCalls = [];
+    const chatCalls = [], chatPayloads = [];
     await page.route('**/api/**', (route) => {
-      if (/\/chat(?:\/|\?|$)/.test(new URL(route.request().url()).pathname)) chatCalls.push(route.request().url());
+      if (new URL(route.request().url()).pathname.endsWith('/chat/stream')) {
+        chatCalls.push(route.request().url()); chatPayloads.push(route.request().postDataJSON());
+        return route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"type":"content","content":"fixture answer"}\n\ndata: {"type":"done"}\n\n' });
+      }
       return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
     });
     await page.goto(url);
@@ -111,6 +114,21 @@ async function testFixture(browser, url, fixture) {
     await page.locator('#allModelsSection [data-model="gpt-6-luna"]').click();
     assert.equal(await page.evaluate(() => appState.selectedModel), 'gpt-6-luna', 'fast all-models selection applies');
     assert.equal(await menuActive(), false, 'fast all-models selection closes the menu');
+
+    for (const model of ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra']) {
+      await trigger.click();
+      const item = page.locator('#allModelsSection [data-model="' + model + '"]');
+      if (mobile) await item.tap(); else await item.click();
+      assert.equal(await page.evaluate(() => appState.selectedModel), model, 'select ' + model);
+      const more = page.locator('#moreBtn');
+      if (mobile) await more.tap(); else await more.click();
+      const research = page.locator('#researchModeSwitch');
+      if (mobile) await research.tap(); else await research.click();
+      assert.equal(await page.evaluate(() => appState.researchModeEnabled), true, 'plus research works after ' + model);
+      if (mobile) await research.tap(); else await research.click();
+      assert.equal(await page.evaluate(() => appState.researchModeEnabled), false, 'plus research can be disabled');
+      await page.evaluate(() => closeMoreMenu());
+    }
 
     // 4) Research mode toggles on/off and is reflected in state + menu selection.
     await page.evaluate(() => {
@@ -159,24 +177,54 @@ async function testFixture(browser, url, fixture) {
     });
     assert.equal(unavailable.hasHelper, true, 'research availability helper is exposed');
     assert.equal(unavailable.enabled, false, 'research refuses to enable when unsupported');
+    assert.equal(unavailable.toastShown, true, 'unsupported research has visible feedback');
     assert.equal(unavailable.runnable, true, 'restored availability is runnable again');
 
-    // 7) Research send path uses the same /chat/stream endpoint and does not bypass the
-    //    prepareChat integration point (asserted structurally via a probe).
-    const sendContract = await page.evaluate(() => {
-      let prepareCalls = 0;
-      const original = window.RaiLocalAgent;
+    // 7) Exercise the real send function and inspect its intercepted HTTP payload.
+    // No live account/provider is contacted; this is not a paid-model answer acceptance test.
+    await page.evaluate(async () => {
+      window.fixtureOriginalAgent = window.RaiLocalAgent;
+      window.fixturePrepareCalls = 0;
       window.RaiLocalAgent = {
-        prepareChat: () => { prepareCalls += 1; return Promise.resolve(); },
+        isSelected: () => false,
+        prepareChat: async () => { window.fixturePrepareCalls++; },
         getChatCapability: () => null
       };
-      const used = typeof window.RaiLocalAgent.prepareChat === 'function';
-      window.RaiLocalAgent = original;
-      return { used, prepareCalls };
+      appState.token = 'isolated-browser-fixture'; appState.user = { id: 1001 };
+      appState.authState = 'authenticated'; appState.messages = []; appState.sessions = [];
+      appState.currentSession = { id: 'fixture-conversation', title: 'Fixture', prompt_model_identity: 'research', prompt_language: 'zh' };
+      appState.isStreaming = false; appState.customApiMode = false; appState.agentMode = false;
+      setResearchMode('fast', { enable: true });
+      await sendMessage('fixture research request');
     });
-    assert.equal(sendContract.used, true, 'local-agent prepareChat hook is present');
+    assert.equal(chatPayloads.length, 1, 'research actually reaches the intercepted stream endpoint');
+    assert.equal(chatPayloads[0].researchMode, 'fast');
+    assert.ok(chatPayloads[0].researchAgentModels.length >= 1);
+    assert.equal(await page.evaluate(() => window.fixturePrepareCalls), 1, 'send awaited the real prepare hook');
 
-    assert.deepEqual(chatCalls, [], 'no live chat calls were made');
+    // 8) Remote + research/custom modes fail explicitly. Offline normal sends retain the draft.
+    const blocked = await page.evaluate(async () => {
+      const input = document.getElementById('messageInput');
+      input.value = 'keep this remote draft';
+      window.RaiLocalAgent = { isSelected: () => true, prepareChat: async () => { throw Error('fixture PC disconnected'); }, getChatCapability: () => null };
+      await sendMessage();
+      const researchDraft = input.value, researchFeedback = document.getElementById('toastNotification').textContent;
+      appState.researchModeEnabled = false; appState.selectedModel = 'auto';
+      await sendMessage();
+      const offlineDraft = input.value, offlineFeedback = document.getElementById('toastNotification').textContent;
+      appState.customApiMode = true;
+      await sendMessage();
+      const customDraft = input.value;
+      appState.customApiMode = false; window.RaiLocalAgent = window.fixtureOriginalAgent;
+      return { researchDraft, researchFeedback, offlineDraft, offlineFeedback, customDraft };
+    });
+    assert.equal(chatPayloads.length, 1, 'blocked modes never issue another chat request');
+    assert.equal(blocked.researchDraft, 'keep this remote draft');
+    assert.match(blocked.researchFeedback, /研究|Research/);
+    assert.equal(blocked.offlineDraft, 'keep this remote draft');
+    assert.match(blocked.offlineFeedback, /disconnected/);
+    assert.equal(blocked.customDraft, 'keep this remote draft');
+
     console.log('composer-menu-stability PASS', fixture.platform, mobile ? 'touch' : 'mouse');
   } finally {
     await ctx.close();

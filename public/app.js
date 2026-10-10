@@ -2411,7 +2411,7 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.24';
+const RAI_APP_VERSION = '0.13.25';
 const RAI_BUILD_ID = '20261010-interjection-fix-r1';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
@@ -8166,6 +8166,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-10', version: 'v0.13.25',
+    zh: { summary: '修复切模型后的菜单/研究点击，整理诊断入口，增强远程电脑连接。', details: ['隐藏的模型面板不再拦截更多菜单；快速独立点击不再被时间阈值丢弃。', '脱敏诊断导出移到设置 → 高级。', '远程电脑显示设备名及绿黄红连接状态，断线不再回退云端文件操作。', '新增新版 CX helper 心跳与原对话目录协议；仍需电脑本机逐次确认。研究讨论/自定义 API 与远程工具组合会明确提示不支持。'] },
+    en: { summary: 'Reliable composer menus and research selection, Advanced diagnostics, and safer remote-PC sessions.', details: ['Hidden model panels no longer intercept composer controls; fast independent taps are accepted.', 'Sanitized diagnostic export is now in Settings → Advanced.', 'Remote sessions show a named colored status and never silently fall back to cloud file operations.', 'New CX helper heartbeat and original-conversation directory protocol; each PC action still needs local approval. Unsupported research/custom-API remote combinations are reported explicitly.'] }
+  },
   {
     date: '2026-10-10', version: 'v0.13.24',
     zh: { summary: '修复工具调用期间插话不显示，菜单不再误关。', details: ['多轮工具调用时插话立即出现在对话中，并作为用户消息进入上下文。', '插话不再因带附件被静默丢弃。', '更多菜单与模型下拉按菜单矩形判定点击，圆角穿透不再误关。'] },
@@ -21579,6 +21584,16 @@ async function sendMessage(message = null, options = {}) {
 
   // 允许只发送附件（无文字内容）
   if (!messageText && currentAttachments.length === 0) return;
+  if (window.RaiLocalAgent?.isSelected?.()) {
+    if (resolveSendRequestConfig(options).researchMode !== 'off' || appState.agentMode === true || appState.customApiMode) {
+      showToast(isChineseLanguage(appState.language)
+        ? '远程电脑暂不支持研究讨论或自定义 API。请切回普通对话执行电脑任务，或明确断开电脑后再使用这些模式；本次未发送。'
+        : 'Remote PC tools are unavailable in Research or Custom API mode. Use normal chat for PC tasks, or explicitly disconnect first. Nothing was sent.');
+      return;
+    }
+    try { await window.RaiLocalAgent.prepareChat(); }
+    catch (error) { showToast(error.message || '远程电脑未连接；本次未发送。'); return; }
+  }
   if (appState.customApiMode) {
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
