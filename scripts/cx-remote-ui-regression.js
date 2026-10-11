@@ -21,6 +21,7 @@ const { chromium, webkit } = require('playwright');
         const req = route.request(); requests.push({ url: req.url(), method: req.method(), actor: req.headers().authorization });
         if (networkDown) return route.abort('failed');
         let data = { success: true };
+        if (req.url().includes('/grants?')) data.grants = [];
         if (req.url().endsWith('/devices')) data.devices = [{ id: 'test-pc', name: '<img src=x onerror=alert(1)>', version: '1.8.10', online: true, runtime, lastSeenAt: Date.now() }];
         if (req.url().endsWith('/sessions') && req.method() === 'POST') {
           if (holdPost) { holdPost = false; const wait = new Promise(resolve => { releasePost = resolve; }); postEntered(); await wait; }
