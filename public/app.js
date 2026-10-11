@@ -15370,11 +15370,22 @@ function getPersistedUserAccessToken() {
   }
 }
 
+function isSameUserLoginSession(leftToken, rightToken) {
+  const left = decodeUserAccessTokenPayload(leftToken), right = decodeUserAccessTokenPayload(rightToken);
+  return Boolean(left?.sub && right?.sub && left?.sid && right?.sid && String(left.sub) === String(right.sub) && left.sid === right.sid);
+}
+
+function hasOtherStoredUserSession(token) {
+  const stored = getPersistedUserAccessToken();
+  return Boolean(stored && stored !== token && !isSameUserLoginSession(token, stored));
+}
+
 function adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh) {
   const candidate = getPersistedUserAccessToken();
   if (
     !candidate
     || candidate === tokenBeforeRefresh
+    || !isSameUserLoginSession(tokenBeforeRefresh, candidate)
     || getUserAccessTokenExpiryMs(candidate) <= Date.now() + RAI_ACCESS_REFRESH_LEEWAY_MS
   ) {
     return false;
@@ -15394,6 +15405,7 @@ function getUserRefreshScopeHeaders(token) {
 async function performUserAccessTokenRefresh(context, controller) {
   const timeout = setTimeout(() => controller.abort(), 12000);
   context.refreshOutcome = 'checking';
+  const storedBeforeRefresh = getPersistedUserAccessToken();
   try {
     const response = await RAI_SESSION_FETCH(API_BASE + '/auth/refresh', {
       method: 'POST', credentials: 'include', cache: 'no-store',
@@ -15404,6 +15416,12 @@ async function performUserAccessTokenRefresh(context, controller) {
     // Late failures are as stale as late successes: neither can replace a newer
     // account or a concurrent successful renewal with the login screen.
     if (!isUserAuthContextCurrent(context)) return false;
+    // localStorage changes before its storage event is delivered. Only a same-
+    // login rotation can be adopted; another account/login must use the storage
+    // handler's cleanup, and an old request must not erase its newly saved token.
+    if (getPersistedUserAccessToken() !== storedBeforeRefresh || hasOtherStoredUserSession(context.token)) {
+      return adoptAccessTokenRotatedByAnotherTab(context.token);
+    }
     if (response.ok && data?.success && data?.token) {
       context.refreshOutcome = 'authenticated';
       storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
@@ -15437,6 +15455,7 @@ async function refreshUserAccessToken({ withState = false } = {}) {
         return await navigator.locks.request('rai-auth-refresh', { mode: 'exclusive', signal: controller.signal }, async () => {
           if (!isUserAuthContextCurrent(context)) return false;
           if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
+          if (hasOtherStoredUserSession(context.token)) return false;
           return performUserAccessTokenRefresh(context, controller);
         });
       } catch (_) {
@@ -15446,6 +15465,7 @@ async function refreshUserAccessToken({ withState = false } = {}) {
     }
     if (!isUserAuthContextCurrent(context)) return false;
     if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
+    if (hasOtherStoredUserSession(context.token)) return false;
     return performUserAccessTokenRefresh(context, controller);
   })().finally(() => { if (userTokenRefreshEntry === entry) userTokenRefreshEntry = null; });
   userTokenRefreshEntry = entry;
@@ -15568,7 +15588,10 @@ window.addEventListener('storage', (event) => {
         ''
       );
       const accountChanged = !!currentSubject && !!nextSubject && currentSubject !== nextSubject;
-      if (accountChanged) {
+      const currentSid = decodeUserAccessTokenPayload(appState.token)?.sid;
+      const nextSid = decodeUserAccessTokenPayload(nextToken)?.sid;
+      const loginChanged = !!currentSid && !!nextSid && currentSid !== nextSid;
+      if (accountChanged || loginChanged) {
         invalidateUserAuthAsyncWork();
         abortConversationAsyncWork();
         window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);

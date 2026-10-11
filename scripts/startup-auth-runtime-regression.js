@@ -8,7 +8,7 @@ const { chromium, webkit } = require('playwright');
 const engine = process.env.RAI_BROWSER_ENGINE === 'webkit' ? webkit : chromium;
 const root = path.resolve(__dirname, '../public');
 const sid = 's'.repeat(32);
-const token = (user = 1, expired = false, qr = false) => 'fixture.' + Buffer.from(JSON.stringify({ sub: String(user), sid, auth_method: qr ? 'qr_browser' : 'password', exp: Math.floor(Date.now() / 1000) + (expired ? -60 : 3600) })).toString('base64url') + '.signature';
+const token = (user = 1, expired = false, qr = false, sessionId = sid) => 'fixture.' + Buffer.from(JSON.stringify({ sub: String(user), sid: sessionId, auth_method: qr ? 'qr_browser' : 'password', exp: Math.floor(Date.now() / 1000) + (expired ? -60 : 3600) })).toString('base64url') + '.signature';
 const profile = user => ({ id: user, username: 'Fixture ' + user, email: 'fixture' + user + '@example.invalid', onboarding_completed_version: 99, onboarding_version: 99, guide_completed_version: 99 });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 (async () => {
@@ -20,7 +20,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     fs.createReadStream(file).on('error', () => { res.writeHead(404); res.end(); }).pipe(res);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const url = 'http://127.0.0.1:' + server.address().port;
+  const url = process.env.RAI_STARTUP_AUTH_BASE || ('http://127.0.0.1:' + server.address().port);
   const browser = await engine.launch({ headless: true });
   async function fixture(options, test) {
     const context = await browser.newContext({ serviceWorkers: 'block' });
@@ -108,6 +108,27 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       finishProfile(); await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => appState.user.id), 2, 'late restored profile cannot overwrite a newer account'); await noLogin(page);
     });
+    // Precisely delay delivery of the cross-tab storage event until after the
+    // stale refresh response. Persisted B must not be adopted with A's profile.
+    for (const nextUser of [2, 1]) {
+      let releaseRotation, enterRotation;
+      const rotationPending = new Promise(resolve => { enterRotation = resolve; });
+      await fixture({ stored: token(), refresh: async (route, _n, json) => { enterRotation(); await new Promise(resolve => { releaseRotation = resolve; }); return json(route, 401, {}); } }, async ({ page }) => {
+        await authenticated(page);
+        const original = await page.evaluate(() => appState.token);
+        await page.evaluate(() => { appState.messages = [{role:'user', content:'old-history-canary'}]; window.__rotation = refreshUserAccessToken({withState:true}); });
+        await rotationPending;
+        const next = token(nextUser, false, false, 'n'.repeat(32));
+        await page.evaluate(next => localStorage.setItem('rai_token', next), next);
+        releaseRotation();
+        assert.equal(await page.evaluate(() => window.__rotation), 'checking');
+        assert.equal(await page.evaluate(() => appState.token), original, 'never mix a new bearer with old cached profile');
+        assert.equal(await page.evaluate(() => localStorage.getItem('rai_token')), next, 'stale 401 cannot erase the new login');
+        await page.evaluate(next => window.dispatchEvent(new StorageEvent('storage', { key:'rai_token', newValue:next })), next);
+        await page.waitForFunction(user => appState.user?.id === user && !appState.messages.some(m => m.content === 'old-history-canary'), nextUser);
+        assert.equal(await page.evaluate(() => appState.token), next);
+      });
+    }
     // A late failed startup refresh must not cover a newer account with the login frame.
     let release, entered;
     const pending = new Promise(resolve => { entered = resolve; });
