@@ -84,12 +84,16 @@ async function main() {
     assert.equal(malformed.status, 401); assert.equal(malformed.headers['set-cookie'], undefined);
     remote.devices.set('fixture-pc', { id: 'fixture-pc', userId: 2, lastSeen: clock });
     remote.sessions.set('fixture-grant', { id: 'fixture-grant', userId: 2, authSessionId: refreshedClaims.sid, deviceId: 'fixture-pc', conversationId: 'fixture-chat', status: 'approved', expires: clock + 900000 });
+    const fixtureSession = remote.sessions.get('fixture-grant');
+    fixtureSession.authorizationProtocol = 'web-v2'; fixtureSession.rootId = 'a'.repeat(64); fixtureSession.rootLabel = 'fixture';
+    const fixtureGrant = { id: 'cxg_fixture', userId: 2, authSessionId: refreshedClaims.sid, deviceId: 'fixture-pc', conversationId: 'fixture-chat', rootId: fixtureSession.rootId };
+    remote.grants.set(JSON.stringify([2, refreshedClaims.sid, 'fixture-pc', 'fixture-chat', fixtureSession.rootId]), fixtureGrant);
     const pendingRemote = remote.execute(2, 'fixture-grant', 'fixture-chat', 'read_file', { path: 'never-executed.txt' }).catch(error => ({ success: false, error: error.code }));
     for (let attempt = 0; attempt < 100 && remote.jobs.size === 0; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(remote.jobs.size, 1);
     const loggedOut = await call('/api/auth/logout', { Authorization: 'Bearer ' + accepted.data.token });
     assert.equal((await pendingRemote).error, 'cx_remote_connection_revoked', 'actual logout handler cancels remote work even though the old token can no longer DELETE');
-    assert.equal(remote.jobs.size, 0); assert.equal(remote.sessions.size, 0);
+    assert.equal(remote.jobs.size, 0); assert.equal(remote.sessions.size, 0); assert.equal(remote.grants.size, 0, 'actual logout revokes persistent consent');
     assert.equal(loggedOut.status, 200); assert.ok(loggedOut.headers['set-cookie'][0].startsWith(name + '='));
     assert.equal((await refresh(qrCookie, qr.claims.sid)).status, 401);
     const stillOld = await refresh(oldCookie);

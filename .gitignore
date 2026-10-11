@@ -29,3 +29,7 @@ Thumbs.db
 
 # deepwork local state
 .slim/deepwork/
+
+# Private persistent remote-device hashes and scoped consent
+*.cx-remote-consent.json
+*.cx-remote-consent.json.*.tmp
