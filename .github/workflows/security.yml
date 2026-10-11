@@ -91,6 +91,8 @@ jobs:
           RAI_BROWSER_ENGINE=webkit npm run test:composer-menu-stability
           npm run test:cx-remote-ui
           RAI_BROWSER_ENGINE=webkit npm run test:cx-remote-ui
+          npm run test:startup-auth-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:startup-auth-runtime
           npm run test:composer-focus-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:composer-focus-runtime
           npm run test:model-ui-runtime

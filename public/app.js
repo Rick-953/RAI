@@ -2412,7 +2412,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.26';
-const RAI_BUILD_ID = '20261011-web-authorization-r1';
+const RAI_BUILD_ID = '20261011-web-authorization-r2';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8169,8 +8169,8 @@ function createAttachmentListItem(att = {}) {
 const RAI_UPDATE_TIMELINE = [
   {
     date: '2026-10-11', version: 'v0.13.26',
-    zh: { summary: '远程电脑支持在网页逐次或持续授权。', details: ['CX RAI 1.8.11+ 在电脑首次明确启用后，可在当前对话查看完整操作参数，选择仅本次、持续授权或拒绝，无需回电脑逐次确认。', '持续授权仅适用于此网页登录有效期间的同一电脑、对话及原工作目录，可撤销；断开连接不等于撤销授权。', '设备及授权元数据可跨服务重启恢复；不持久化本地路径、操作正文或设备密钥明文。', '撤销与启动竞争、旧版授权兼容、任务重放和结果不明防重试均有回归覆盖。候选客户端仍需安装后实机验收。'] },
-    en: { summary: 'Approve remote-PC actions once or persistently from the Web.', details: ['After explicit opt-in on CX RAI 1.8.11+, inspect full action arguments and approve once, allow continuously, or reject in the current chat without returning to the PC.', 'Continuous consent is limited to this Web login, PC, conversation and original directory. Disconnecting is not revocation.', 'Device and scoped consent metadata survive server restarts; paths, tool payloads and plaintext device keys are never persisted.', 'Regression coverage includes revocation races, legacy consent, replay prevention and unknown-result retry blocking. Installed-device acceptance of the candidate client remains open.'] }
+    zh: { summary: '修复首次打开误显登录页；远程电脑支持网页逐次或持续授权。', details: ['首次打开与后台续期共用扫码会话和去重逻辑，网络暂时失败不会误清登录状态，迟到响应不能覆盖新账号。','CX RAI 1.8.11+ 在电脑首次明确启用后，可在当前对话查看完整操作参数，选择仅本次、持续授权或拒绝，无需回电脑逐次确认。', '持续授权仅适用于此网页登录有效期间的同一电脑、对话及原工作目录，可撤销；断开连接不等于撤销授权。', '设备及授权元数据可跨服务重启恢复；不持久化本地路径、操作正文或设备密钥明文。', '撤销与启动竞争、旧版授权兼容、任务重放和结果不明防重试均有回归覆盖。候选客户端仍需安装后实机验收。'] },
+    en: { summary: 'Reliable cold-start sign-in and Web-side remote-PC authorization.', details: ['Startup and background renewal share the accepted QR session and single-flight refresh. Temporary failures preserve recoverable sign-in; stale responses cannot replace a newer account.','After explicit opt-in on CX RAI 1.8.11+, inspect full action arguments and approve once, allow continuously, or reject in the current chat without returning to the PC.', 'Continuous consent is limited to this Web login, PC, conversation and original directory. Disconnecting is not revocation.', 'Device and scoped consent metadata survive server restarts; paths, tool payloads and plaintext device keys are never persisted.', 'Regression coverage includes revocation races, legacy consent, replay prevention and unknown-result retry blocking. Installed-device acceptance of the candidate client remains open.'] }
   },
   {
     date: '2026-10-10', version: 'v0.13.25',
@@ -15317,7 +15317,6 @@ function scheduleUserAccessTokenRefresh(expiresAt = 0, { retryDelayMs = 0 } = {}
   if (userTokenRefreshTimer) clearTimeout(userTokenRefreshTimer);
   userTokenRefreshTimer = null;
   if (!appState.token) return;
-
   const expiryMs = getUserAccessTokenExpiryMs(appState.token, expiresAt);
   if (!expiryMs) return;
   const delay = retryDelayMs > 0
@@ -15327,16 +15326,16 @@ function scheduleUserAccessTokenRefresh(expiresAt = 0, { retryDelayMs = 0 } = {}
   userTokenRefreshTimer = setTimeout(async () => {
     userTokenRefreshTimer = null;
     if (!appState.token || appState.token !== scheduledToken) return;
-    const refreshed = await refreshUserAccessToken();
-    if (refreshed || appState.token !== scheduledToken) return;
-
-    if (getUserAccessTokenExpiryMs(scheduledToken) > Date.now()) {
-      const remainingMs = getUserAccessTokenExpiryMs(scheduledToken) - Date.now();
-      scheduleUserAccessTokenRefresh(0, { retryDelayMs: Math.min(30000, remainingMs) });
+    const state = await refreshUserAccessToken({ withState: true });
+    if (state === 'authenticated' || appState.token !== scheduledToken) return;
+    if (state === 'anonymous') {
+      clearAuthenticatedAppState();
+      showAuthScreen();
       return;
     }
-    clearAuthenticatedAppState();
-    showAuthScreen();
+    // Expired access plus a network outage is not a revoked login. Preserve the
+    // HttpOnly-cookie selector and retry, even after access-token expiration.
+    scheduleUserAccessTokenRefresh(0, { retryDelayMs: 30000 });
   }, delay);
 }
 
@@ -15394,58 +15393,63 @@ function getUserRefreshScopeHeaders(token) {
 
 async function performUserAccessTokenRefresh(context, controller) {
   const timeout = setTimeout(() => controller.abort(), 12000);
+  context.refreshOutcome = 'checking';
   try {
-    const response = await RAI_SESSION_FETCH(`${API_BASE}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json',
-        'X-RAI-Refresh': '1',
-        ...getUserRefreshScopeHeaders(context.token)
-      },
+    const response = await RAI_SESSION_FETCH(API_BASE + '/auth/refresh', {
+      method: 'POST', credentials: 'include', cache: 'no-store',
+      headers: { Accept: 'application/json', 'X-RAI-Refresh': '1', ...getUserRefreshScopeHeaders(context.token) },
       signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data?.success || !data?.token) return false;
+    // Late failures are as stale as late successes: neither can replace a newer
+    // account or a concurrent successful renewal with the login screen.
     if (!isUserAuthContextCurrent(context)) return false;
-    storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
-    return true;
-  } catch (error) {
+    if (response.ok && data?.success && data?.token) {
+      context.refreshOutcome = 'authenticated';
+      storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
+      return true;
+    }
+    if (response.status === 401 || response.status === 403) {
+      if (adoptAccessTokenRotatedByAnotherTab(context.token)) return true;
+      context.refreshOutcome = 'anonymous';
+    }
     return false;
-  } finally {
-    clearTimeout(timeout);
-  }
+  } catch (_) {
+    return false;
+  } finally { clearTimeout(timeout); }
 }
 
-async function refreshUserAccessToken() {
+async function refreshUserAccessToken({ withState = false } = {}) {
   const context = captureUserAuthContext();
   const tokenBeforeRefresh = appState.token || getPersistedUserAccessToken();
-  if (userTokenRefreshEntry && isUserAuthContextCurrent(userTokenRefreshEntry.context)) {
-    return userTokenRefreshEntry.promise;
-  }
+  const outcome = async entry => {
+    const refreshed = await entry.promise;
+    if (!withState) return refreshed; // Preserve the protected-fetch boolean API.
+    if (refreshed) return 'authenticated';
+    return isUserAuthContextCurrent(entry.context) && entry.context.refreshOutcome === 'anonymous' ? 'anonymous' : 'checking';
+  };
+  if (userTokenRefreshEntry && isUserAuthContextCurrent(userTokenRefreshEntry.context)) return outcome(userTokenRefreshEntry);
   const controller = new AbortController();
   const entry = { context, controller, promise: null };
   entry.promise = (async () => {
     if (navigator.locks?.request) {
       try {
-        return await navigator.locks.request('rai-auth-refresh', { mode: 'exclusive' }, async () => {
+        return await navigator.locks.request('rai-auth-refresh', { mode: 'exclusive', signal: controller.signal }, async () => {
           if (!isUserAuthContextCurrent(context)) return false;
           if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
           return performUserAccessTokenRefresh(context, controller);
         });
-      } catch (error) {
-        // Fall through for browsers that expose but disable the Web Locks API.
+      } catch (_) {
+        // Exposed-but-disabled Web Locks may fall back; cancellation must not.
+        if (controller.signal.aborted) return false;
       }
     }
     if (!isUserAuthContextCurrent(context)) return false;
     if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
     return performUserAccessTokenRefresh(context, controller);
-  })().finally(() => {
-    if (userTokenRefreshEntry === entry) userTokenRefreshEntry = null;
-  });
+  })().finally(() => { if (userTokenRefreshEntry === entry) userTokenRefreshEntry = null; });
   userTokenRefreshEntry = entry;
-  return entry.promise;
+  return outcome(entry);
 }
 
 function getFetchAuthorizationToken(resource, init) {
@@ -15717,7 +15721,7 @@ async function syncTauriAuthStateFromStorage() {
     storeUserAccessToken(storedToken);
     const valid = await verifyToken();
     if (!valid) {
-      showAuthScreen();
+      if (!appState.token) showAuthScreen();
       return false;
     }
     await fetchUserMembership({ applyPolicy: true });
@@ -15845,28 +15849,9 @@ async function bindZtx6dAccount() {
 }
 
 async function requestStartupRefresh() {
-  const context = captureUserAuthContext();
-  const controller = new AbortController();
-  const untrack = trackUserAuthRequest(controller);
-  const timeout = setTimeout(() => controller.abort(), 12000);
-  try {
-    const response = await RAI_SESSION_FETCH(`${API_BASE}/auth/refresh`, {
-      method: 'POST', credentials: 'include', cache: 'no-store', signal: controller.signal,
-      headers: { Accept: 'application/json', 'X-RAI-Refresh': '1' }
-    });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && data?.success && data?.token) {
-      if (!isUserAuthContextCurrent(context)) return 'checking';
-      storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
-      return 'authenticated';
-    }
-    return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
-  } catch (_) {
-    return 'checking';
-  } finally {
-    clearTimeout(timeout);
-    untrack();
-  }
+  // Boot, timers, protected fetches and tabs share one rotation path, including
+  // the accepted QR login's scoped HttpOnly cookie selector.
+  return refreshUserAccessToken({ withState: true });
 }
 
 async function resolveStartupAuthentication() {
@@ -15882,6 +15867,7 @@ async function resolveStartupAuthentication() {
     const context = captureUserAuthContext();
     const controller = new AbortController();
     const untrack = trackUserAuthRequest(controller);
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
         headers: { Authorization: `Bearer ${context.token}` }, credentials: 'include', cache: 'no-store', signal: controller.signal
@@ -15900,25 +15886,36 @@ async function resolveStartupAuthentication() {
     } catch (_) {
       return 'checking';
     } finally {
+      clearTimeout(timeout);
       untrack();
     }
   }
   const refreshState = await requestStartupRefresh();
   if (refreshState !== 'authenticated') return refreshState;
+  const context = captureUserAuthContext();
+  const controller = new AbortController();
+  const untrack = trackUserAuthRequest(controller);
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
-      headers: { Authorization: `Bearer ${appState.token}` }, credentials: 'include', cache: 'no-store'
+      headers: { Authorization: `Bearer ${context.token}` }, credentials: 'include', cache: 'no-store', signal: controller.signal
     });
     const profile = await response.json().catch(() => ({}));
-    if (response.ok && profile?.id) {
+    if (response.ok && isProfileBoundToAuthContext(profile, context)) {
       showApp();
-      await loadUserData(profile);
-      maybeShowOnboardingAfterAuth();
-      return 'authenticated';
+      if (await loadUserData(profile, { authContext: context })) {
+        maybeShowOnboardingAfterAuth();
+        return 'authenticated';
+      }
+      return 'checking';
     }
+    if (!isUserAuthContextCurrent(context)) return 'checking';
     return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
   } catch (_) {
     return 'checking';
+  } finally {
+    clearTimeout(timeout);
+    untrack();
   }
 }
 
@@ -15926,7 +15923,7 @@ let startupAuthRetryPromise = null;
 function retryStartupAuthentication() {
   if (appState.authState !== 'checking' || startupAuthRetryPromise) return startupAuthRetryPromise;
   startupAuthRetryPromise = resolveStartupAuthentication().then((state) => {
-    if (state === 'anonymous') showAuthScreen();
+    if (state === 'anonymous' && appState.authState === 'checking') showAuthScreen();
     return state;
   }).finally(() => { startupAuthRetryPromise = null; });
   return startupAuthRetryPromise;
@@ -15935,14 +15932,15 @@ function retryStartupAuthentication() {
 let startupAuthRetryTimer = null;
 function scheduleStartupAuthRetries(attempt = 0) {
   if (appState.authState !== 'checking') return;
-  if (attempt >= 5) return;
-  const delayMs = Math.min(4000, 600 * Math.pow(2, attempt));
+  // Keep a single bounded-backoff retry while identity is unknown. A longer
+  // outage must recover by itself, not strand the page until manual reload.
+  const delayMs = Math.min(30000, 600 * Math.pow(2, Math.min(attempt, 6)));
   clearTimeout(startupAuthRetryTimer);
   startupAuthRetryTimer = setTimeout(async () => {
     startupAuthRetryTimer = null;
     if (appState.authState !== 'checking') return;
     const state = await retryStartupAuthentication();
-    if (state === 'checking') scheduleStartupAuthRetries(attempt + 1);
+    if (state === 'checking') scheduleStartupAuthRetries(Math.min(attempt + 1, 6));
   }, delayMs);
 }
 
@@ -15978,7 +15976,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.dataset.raiAuthState = 'checking';
   showWelcome();
   const startupState = await resolveStartupAuthentication();
-  if (startupState === 'anonymous') showAuthScreen();
+  if (startupState === 'anonymous' && appState.authState === 'checking') showAuthScreen();
   if (startupState === 'checking') {
     window.addEventListener('online', retryStartupAuthentication);
     window.addEventListener('focus', retryStartupAuthentication);
@@ -24286,6 +24284,7 @@ async function verifyToken({ allowRefresh = true } = {}) {
     const context = captureUserAuthContext();
     const controller = new AbortController();
     const untrack = trackUserAuthRequest(controller);
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
         headers: { Authorization: `Bearer ${context.token}` },
@@ -24306,13 +24305,17 @@ async function verifyToken({ allowRefresh = true } = {}) {
       console.warn(' 当前 access token 验证未完成:', error?.message || error);
       return false;
     } finally {
+      clearTimeout(timeout);
       untrack();
     }
 
     if (!refreshAttempted) {
       refreshAttempted = true;
-      if (await refreshUserAccessToken()) continue;
+      const state = await refreshUserAccessToken({ withState: true });
+      if (state === 'authenticated') continue;
+      if (state === 'checking') return false;
     }
+    if (!isUserAuthContextCurrent(context)) return false;
     break;
   }
 
