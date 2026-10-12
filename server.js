@@ -21495,7 +21495,18 @@ if (clientFileExecution && systemPrompt) {
             else serverToolTrace.push(row);
             if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
             const kind = row.tool === 'web_search' || event.type === 'search_status' ? 'search' : 'tool';
-            recordServerFlowEvent(kind, row.summary || row.tool, row.detail || row.query || '', row.status === 'running' ? 'running' : (row.status === 'failed' ? 'failed' : 'done'));
+            const flowStatus = ['running', 'pending', 'calling', 'waiting'].includes(row.status)
+                ? 'running' : (['failed', 'error', 'denied', 'cancelled', 'unknown'].includes(row.status) ? 'failed' : 'done');
+            const previousFlow = serverFlowSegments.find((segment) => segment.toolCallId === row.id);
+            if (previousFlow) {
+                previousFlow.title = row.summary || row.tool;
+                previousFlow.detail = row.detail || row.query || previousFlow.detail;
+                previousFlow.status = flowStatus;
+            } else {
+                activeServerFlowContent = null;
+                serverFlowSegments.push({ kind, toolCallId: row.id, title: row.summary || row.tool, detail: row.detail || row.query || '', status: flowStatus });
+                if (serverFlowSegments.length > 200) serverFlowSegments.splice(0, serverFlowSegments.length - 200);
+            }
             return row;
         };
         const emitTrackedToolStatus = (event = {}) => {
@@ -24722,6 +24733,7 @@ if (clientFileExecution && systemPrompt) {
                                 })}\n\n`);
                                 if (loadedSkillNames.has(requestedSkill) || loadedSkillNames.size >= 3) {
                                     executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_load_limit' } });
+                                    emitTrackedToolStatus({ tool: 'read_skill', tool_call_id: toolCall.id, status: loadedSkillNames.has(requestedSkill) ? 'complete' : 'failed', skill: requestedSkill, message: loadedSkillNames.has(requestedSkill) ? '技能已经加载' : '已达到技能加载数量限制' });
                                     continue;
                                 }
                                 // 本地文件执行模式：sandbox 技能替换为本地工作目录说明
@@ -24753,7 +24765,7 @@ if (clientFileExecution && systemPrompt) {
                                     };
                                     loadedSkillNames.add(localSkill.name);
                                     executedToolResults.push({ toolCall, result: buildTrustedSkillResult(localSkill) });
-                                    res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: localSkill.name, detail: `已加载技能: ${localSkill.name}`, message: `Loaded ${localSkill.name} skill` })}\n\n`);
+                                    emitTrackedToolStatus({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: localSkill.name, detail: `已加载技能: ${localSkill.name}`, message: `Loaded ${localSkill.name} skill` });
                                     console.log(' 本地文件执行模式：已注入本地工作目录技能（替换 sandbox）');
                                     continue;
                                 }
@@ -24761,10 +24773,11 @@ if (clientFileExecution && systemPrompt) {
                                     const trustedSkill = loadTrustedSkill(requestedSkill);
                                     loadedSkillNames.add(trustedSkill.name);
                                     executedToolResults.push({ toolCall, result: buildTrustedSkillResult(trustedSkill) });
-                                    res.write(`data: ${JSON.stringify({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: trustedSkill.name, detail: `已加载技能: ${trustedSkill.name}`, message: `Loaded ${trustedSkill.name} skill` })}\n\n`);
+                                    emitTrackedToolStatus({ type: 'tool_status', tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete', skill: trustedSkill.name, detail: `已加载技能: ${trustedSkill.name}`, message: `Loaded ${trustedSkill.name} skill` });
                                 } catch (skillError) {
                                     // Layer 1 remains in the canonical prompt; never use model text as a fallback instruction.
                                     executedToolResults.push({ toolCall, result: { loaded: false, name: requestedSkill, reason: 'skill_unavailable' } });
+                                    emitTrackedToolStatus({ tool: 'read_skill', tool_call_id: toolCall.id, status: 'failed', skill: requestedSkill, message: '技能未能加载' });
                                     console.warn(` 受信技能加载失败: ${requestedSkill}`);
                                 }
                                 continue;
@@ -24776,7 +24789,7 @@ if (clientFileExecution && systemPrompt) {
                                         executedToolResults.push({ toolCall, result: { success: false, error: 'cx_remote_previous_result_unknown', executed: 'unknown', retryable: false, message: 'An earlier PC operation may already have executed. Do not retry automatically. Ask the user to verify the PC state and explicitly start a new request.' } });
                                         continue;
                                     }
-                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: 'running', message: cxRemoteSession.authorizationProtocol === 'web-v2' ? '等待网页授权并由在线 CX RAI 电脑执行' : '等待在线 CX RAI 电脑确认并执行' }) + '\n\n');
+                                    emitTrackedToolStatus({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: 'running', message: cxRemoteSession.authorizationProtocol === 'web-v2' ? '等待网页授权并由在线 CX RAI 电脑执行' : '等待在线 CX RAI 电脑确认并执行' });
                                     const remoteController = createChatAbortController();
                                     let remoteResult;
                                     const remotePauseStartedAt = Date.now();
@@ -24795,7 +24808,7 @@ if (clientFileExecution && systemPrompt) {
                                     }
                                     if (remoteResult.executed === 'unknown') cxRemoteExecutionUncertain = true;
                                     executedToolResults.push({ toolCall, result: normalizeClientToolResult(remoteResult) });
-                                    res.write('data: ' + JSON.stringify({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: remoteResult.success === false ? 'failed' : 'complete', message: remoteResult.executed === 'unknown' ? '结果未确认，操作可能已执行；请核对电脑状态，勿重复执行' : (remoteResult.success === false ? '在线电脑未完成本次操作' : '在线 CX RAI 执行完成') }) + '\n\n');
+                                    emitTrackedToolStatus({ type: 'tool_status', tool: toolName, tool_call_id: toolCall.id, status: remoteResult.executed === 'unknown' || remoteResult.success !== true ? 'failed' : 'complete', message: remoteResult.executed === 'unknown' ? '结果未确认，操作可能已执行；请核对电脑状态，勿重复执行' : (remoteResult.success !== true ? '在线电脑未完成本次操作' : '在线 CX RAI 执行完成') });
                                     continue;
                                 }
                                 if (getPendingClientToolCountBySession(sessionId) > 0) {
@@ -24890,7 +24903,7 @@ if (clientFileExecution && systemPrompt) {
             download_available: Boolean(localResult?.download_available || localResult?.download_url),
             message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成')
         };
-        res.write(`data: ${JSON.stringify(uiResult)}\n\n`);
+        emitTrackedToolStatus({ ...uiResult, tool_call_id: toolCall.id });
                                 continue;
                             }
 

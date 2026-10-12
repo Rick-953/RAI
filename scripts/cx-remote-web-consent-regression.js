@@ -264,7 +264,20 @@ const otherUser = { 'X-Fixture-User': '2', 'X-Fixture-Sid': 'other-login' };
     assert.ok(begin > 0 && end > begin);
     const context = { calls: 0, output: [], setInterval, clearInterval, clearTimeout, setTimeout, Date, AbortController };
     vm.createContext(context);
-    await vm.runInContext('(async () => { let cxRemoteExecutionUncertain = false, chatRequestDeadlineTimer = null; const cxRemoteSession = {id:"s",authorizationProtocol:"web-v2"}, req = {user:{userId:1}}, sessionId = "c", args = {}, chatRequestBudget = null, chatAbortControllers = new Set(), executedToolResults = output, normalizeClientToolResult = x => x, createChatAbortController = () => new AbortController(), res = {write(){}, once(){}, removeListener(){}}, cxRemoteControl = {async execute(){ calls++; return {success:false, executed:"unknown", retryable:false}; }}; for (const toolCall of [{id:"1"},{id:"2"}]) { const toolName="write_file";' + source.slice(begin,end) + '} clearTimeout(chatRequestDeadlineTimer); })()', context);
+    const collectorBegin = source.indexOf('        const serverToolTrace = [];');
+    const collectorEnd = source.indexOf('\n        if (sessionId) {', collectorBegin);
+    assert.ok(collectorBegin > 0 && collectorEnd > collectorBegin);
+    await vm.runInContext(`(async () => {
+      let cxRemoteExecutionUncertain = false, chatRequestDeadlineTimer = null;
+      const cxRemoteSession = {id:'s',authorizationProtocol:'web-v2'}, req = {user:{userId:1}}, sessionId = 'c', args = {},
+        chatRequestBudget = null, chatAbortControllers = new Set(), executedToolResults = output,
+        normalizeClientToolResult = x => x, createChatAbortController = () => new AbortController(),
+        res = {write(){}, once(){}, removeListener(){}},
+        cxRemoteControl = {async execute(){ calls++; return {success:false, executed:'unknown', retryable:false}; }};
+      ${source.slice(collectorBegin, collectorEnd)}
+      for (const toolCall of [{id:'1'},{id:'2'}]) { const toolName='write_file'; ${source.slice(begin,end)} }
+      clearTimeout(chatRequestDeadlineTimer);
+    })()`, context);
     assert.equal(context.calls, 1, 'unknown result cannot automatically dispatch a second operation');
     assert.equal(context.output.length, 2); assert.equal(context.output[1].result.error, 'cx_remote_previous_result_unknown');
     console.log('cx-remote-web-consent PASS: explicit opt-in, complete immutable approval, once/persistent/reject, SID/user/root scope, helper isolation, replay, await revocation races, disconnect/reconnect, durable restart, no payload/secret retention, offline lease, logout, key rotation, corrupt/write-failure fail-closed');
