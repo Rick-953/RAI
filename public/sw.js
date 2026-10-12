@@ -13,17 +13,17 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  '', 'index.html', 'runtime-brand.js?v=20261011-web-authorization-r2',
-  'rai-system-prompt.js?v=20261011-web-authorization-r2', 'event-bindings.js?v=20261011-web-authorization-r2',
-  'lib/jsQR.js?v=20261011-web-authorization-r2', 'qr-scanner.js?v=20261011-web-authorization-r2',
-  'secure-sharing.js?v=20261011-web-authorization-r2', 'secure-sharing.css?v=20261011-web-authorization-r2',
-  'diagnostics.js?v=20261011-web-authorization-r2',
-  'app.js?v=20261011-web-authorization-r2', 'styles.css?v=20261011-web-authorization-r2',
-  'cx-remote.js?v=20261011-web-authorization-r2', 'local-agent.css?v=20261011-web-authorization-r2',
-  'crf-ui.js?v=20261011-web-authorization-r2',
-  'selection-explainer.js?v=20261011-web-authorization-r2', 'selection-explainer.css?v=20261011-web-authorization-r2',
-  'site.webmanifest?v=20261011-web-authorization-r2', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261011-web-authorization-r2',
+  '', 'index.html', 'runtime-brand.js?v=20261012-qr-camera-start',
+  'rai-system-prompt.js?v=20261012-qr-camera-start', 'event-bindings.js?v=20261012-qr-camera-start',
+  'lib/jsQR.js?v=20261012-qr-camera-start', 'qr-scanner.js?v=20261012-qr-camera-start',
+  'secure-sharing.js?v=20261012-qr-camera-start', 'secure-sharing.css?v=20261012-qr-camera-start',
+  'diagnostics.js?v=20261012-qr-camera-start',
+  'app.js?v=20261012-qr-camera-start', 'styles.css?v=20261012-qr-camera-start',
+  'cx-remote.js?v=20261012-qr-camera-start', 'local-agent.css?v=20261012-qr-camera-start',
+  'crf-ui.js?v=20261012-qr-camera-start',
+  'selection-explainer.js?v=20261012-qr-camera-start', 'selection-explainer.css?v=20261012-qr-camera-start',
+  'site.webmanifest?v=20261012-qr-camera-start', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261012-qr-camera-start',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -33,11 +33,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261011-web-authorization-r2', 'lib/purify.min.js?v=20261011-web-authorization-r2',
-  'lib/katex/katex.min.css?v=20261011-web-authorization-r2', 'lib/katex/katex.min.js?v=20261011-web-authorization-r2',
-  'lib/katex/contrib/auto-render.min.js?v=20261011-web-authorization-r2',
-  'lib/highlight/styles/github-dark.min.css?v=20261011-web-authorization-r2',
-  'lib/highlight/highlight.min.js?v=20261011-web-authorization-r2'
+  'lib/marked.min.js?v=20261012-qr-camera-start', 'lib/purify.min.js?v=20261012-qr-camera-start',
+  'lib/katex/katex.min.css?v=20261012-qr-camera-start', 'lib/katex/katex.min.js?v=20261012-qr-camera-start',
+  'lib/katex/contrib/auto-render.min.js?v=20261012-qr-camera-start',
+  'lib/highlight/styles/github-dark.min.css?v=20261012-qr-camera-start',
+  'lib/highlight/highlight.min.js?v=20261012-qr-camera-start'
 ].map(appPath);
 
 function isAvatarRequest(url) {
