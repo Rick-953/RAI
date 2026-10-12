@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.27';
-const RAI_BUILD_ID = '20261012-qr-camera-start';
+const RAI_APP_VERSION = '0.13.28';
+const RAI_BUILD_ID = '20261012-remote-tool-history';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -18953,14 +18953,18 @@ function createMessageElement(message) {
       }
       const item = document.createElement('div');
       item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
-      item.dataset.status = String(segment.status || 'done');
+      const storedStatus = String(segment.status || 'done');
+      const missingHistoricalResult = !message.is_live_stream && ['tool', 'search'].includes(segment.kind) && storedStatus === 'running';
+      item.dataset.status = missingHistoricalResult ? 'unknown' : storedStatus;
       item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
       const stepContent = item.querySelector('.thinking-step-content');
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'stream-flow-event-toggle';
       toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = String(segment.title || '');
+      toggle.textContent = missingHistoricalResult
+        ? `${String(segment.title || '工具执行记录').replace('工具调用进行中', '工具执行记录')} · 历史状态未保存`
+        : String(segment.title || '');
       const detail = document.createElement('div');
       detail.className = 'stream-flow-event-detail';
       detail.textContent = String(segment.detail || '');

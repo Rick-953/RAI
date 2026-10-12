@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.27-20261012-qr-camera-start';
+const RAI_SW_VERSION = '0.13.28-20261012-remote-tool-history';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,17 +13,17 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  '', 'index.html', 'runtime-brand.js?v=20261012-qr-camera-start',
-  'rai-system-prompt.js?v=20261012-qr-camera-start', 'event-bindings.js?v=20261012-qr-camera-start',
-  'lib/jsQR.js?v=20261012-qr-camera-start', 'qr-scanner.js?v=20261012-qr-camera-start',
-  'secure-sharing.js?v=20261012-qr-camera-start', 'secure-sharing.css?v=20261012-qr-camera-start',
-  'diagnostics.js?v=20261012-qr-camera-start',
-  'app.js?v=20261012-qr-camera-start', 'styles.css?v=20261012-qr-camera-start',
-  'cx-remote.js?v=20261012-qr-camera-start', 'local-agent.css?v=20261012-qr-camera-start',
-  'crf-ui.js?v=20261012-qr-camera-start',
-  'selection-explainer.js?v=20261012-qr-camera-start', 'selection-explainer.css?v=20261012-qr-camera-start',
-  'site.webmanifest?v=20261012-qr-camera-start', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261012-qr-camera-start',
+  '', 'index.html', 'runtime-brand.js?v=20261012-remote-tool-history',
+  'rai-system-prompt.js?v=20261012-remote-tool-history', 'event-bindings.js?v=20261012-remote-tool-history',
+  'lib/jsQR.js?v=20261012-remote-tool-history', 'qr-scanner.js?v=20261012-remote-tool-history',
+  'secure-sharing.js?v=20261012-remote-tool-history', 'secure-sharing.css?v=20261012-remote-tool-history',
+  'diagnostics.js?v=20261012-remote-tool-history',
+  'app.js?v=20261012-remote-tool-history', 'styles.css?v=20261012-remote-tool-history',
+  'cx-remote.js?v=20261012-remote-tool-history', 'local-agent.css?v=20261012-remote-tool-history',
+  'crf-ui.js?v=20261012-remote-tool-history',
+  'selection-explainer.js?v=20261012-remote-tool-history', 'selection-explainer.css?v=20261012-remote-tool-history',
+  'site.webmanifest?v=20261012-remote-tool-history', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261012-remote-tool-history',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -33,11 +33,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261012-qr-camera-start', 'lib/purify.min.js?v=20261012-qr-camera-start',
-  'lib/katex/katex.min.css?v=20261012-qr-camera-start', 'lib/katex/katex.min.js?v=20261012-qr-camera-start',
-  'lib/katex/contrib/auto-render.min.js?v=20261012-qr-camera-start',
-  'lib/highlight/styles/github-dark.min.css?v=20261012-qr-camera-start',
-  'lib/highlight/highlight.min.js?v=20261012-qr-camera-start'
+  'lib/marked.min.js?v=20261012-remote-tool-history', 'lib/purify.min.js?v=20261012-remote-tool-history',
+  'lib/katex/katex.min.css?v=20261012-remote-tool-history', 'lib/katex/katex.min.js?v=20261012-remote-tool-history',
+  'lib/katex/contrib/auto-render.min.js?v=20261012-remote-tool-history',
+  'lib/highlight/styles/github-dark.min.css?v=20261012-remote-tool-history',
+  'lib/highlight/highlight.min.js?v=20261012-remote-tool-history'
 ].map(appPath);
 
 function isAvatarRequest(url) {
