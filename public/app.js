@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.29';
-const RAI_BUILD_ID = '20261013-remote-reconnect-state';
+const RAI_APP_VERSION = '0.13.30';
+const RAI_BUILD_ID = '20261013-history-tool-detail';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -18967,7 +18967,12 @@ function createMessageElement(message) {
         : String(segment.title || '');
       const detail = document.createElement('div');
       detail.className = 'stream-flow-event-detail';
-      detail.textContent = String(segment.detail || '');
+      const storedDetail = String(segment.detail || '');
+      detail.textContent = missingHistoricalResult
+        ? (isChineseLanguage(appState.language)
+          ? `历史记录未保存工具的最终结果，无法确认执行状态。${storedDetail.trim() ? `\n\n当时记录：${storedDetail}` : ''}`
+          : `This history did not save the tool's final result; its execution status cannot be confirmed.${storedDetail.trim() ? `\n\nRecorded at the time: ${storedDetail}` : ''}`)
+        : storedDetail;
       toggle.addEventListener('click', () => {
         const expanded = item.classList.toggle('expanded');
         toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
