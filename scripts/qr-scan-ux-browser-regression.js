@@ -102,33 +102,34 @@ const fixture = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\
         navigator.mediaDevices.getUserMedia = () => { cameraRequests++; cameraGesture = navigator.userActivation?.isActive !== false; return new Promise(resolve => { window.resolveCamera = resolve; }); };
       });
       await page.locator('#mobileQrScanButton').click();
-      assert.equal(await page.evaluate(() => cameraRequests), 0, 'iOS18 PWA never requests camera when opening the card');
-      assert.match(await page.locator('.rai-scanner-status').innerText(), /Safari/);
-      await page.getByRole('button', { name: copy.start, exact: true }).click();
-      assert.equal(await page.evaluate(() => cameraRequests), 1); assert.equal(await page.evaluate(() => cameraGesture), true, 'getUserMedia runs inside click activation');
+      assert.equal(await page.evaluate(() => cameraRequests), 1, 'iOS18 PWA must request camera when the scanner opens');
+      assert.equal(await page.evaluate(() => cameraGesture), true, 'getUserMedia runs inside scanner-entry click activation');
       await page.getByRole('button', { name: copy.cancel, exact: true }).click();
       await page.evaluate(() => { window.lateStops = 0; resolveCamera({ getTracks: () => [{ stop: () => { lateStops++; } }] }); });
       await page.waitForFunction(() => lateStops === 1);
       // A denial after the direct gesture has localized iOS18 guidance, not an automatic retry loop.
       await page.evaluate(() => { navigator.mediaDevices.getUserMedia = async () => { cameraRequests++; throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); }; });
-      await page.locator('#mobileQrScanButton').click(); await page.getByRole('button', { name: copy.start, exact: true }).click();
+      await page.locator('#mobileQrScanButton').click();
       await page.waitForFunction(() => document.querySelector('.rai-scanner-status').textContent.includes('Safari'));
       assert.equal(await page.evaluate(() => cameraRequests), 2);
+      await page.getByRole('button', { name: copy.start, exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.rai-scanner-status').textContent.includes('Safari'));
+      assert.equal(await page.evaluate(() => cameraRequests), 3, 'explicit retry remains available after denial');
       await page.keyboard.press('Escape'); await page.locator('dialog[open]').waitFor({ state: 'hidden' });
       // Unmount while a permission prompt is unresolved: late stream must be discarded.
       await page.evaluate(() => { navigator.mediaDevices.getUserMedia = () => new Promise(resolve => { window.resolveUnmounted = resolve; }); });
-      await page.locator('#mobileQrScanButton').click(); await page.getByRole('button', { name: copy.start, exact: true }).click();
+      await page.locator('#mobileQrScanButton').click();
       await page.evaluate(() => document.querySelector('dialog[open]').remove());
       await page.evaluate(() => { window.unmountStops = 0; resolveUnmounted({ getTracks: () => [{ stop: () => { unmountStops++; } }] }); });
       await page.waitForFunction(() => unmountStops === 1);
       // Missing media API still offers image import and localized fallback.
       await page.evaluate(() => { delete navigator.mediaDevices.getUserMedia; });
-      await page.locator('#mobileQrScanButton').click(); await page.getByRole('button', { name: copy.start, exact: true }).click();
+      await page.locator('#mobileQrScanButton').click();
       assert.match(await page.locator('.rai-scanner-status').innerText(), /Safari/);
       await page.keyboard.press('Escape');
       // Closing the native dialog and resolving permission in the same JS task must not adopt the stream.
       await page.evaluate(() => { navigator.mediaDevices.getUserMedia = () => new Promise(resolve => { window.resolveClosed = resolve; }); });
-      await page.locator('#mobileQrScanButton').click(); await page.getByRole('button', { name: copy.start, exact: true }).click();
+      await page.locator('#mobileQrScanButton').click();
       await page.evaluate(() => {
         window.closedStops = 0; const d = document.querySelector('dialog[open]'); d.close();
         resolveClosed({ getTracks: () => [{ stop: () => { closedStops++; } }] });
@@ -216,7 +217,7 @@ const fixture = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\
       await page.waitForFunction(() => document.querySelector('#qrStatus').textContent.includes(document.documentElement.lang === 'en' ? 'Authorized' : document.documentElement.lang === 'zh-TW' ? '已授權' : '已授权'));
       assert.equal(requests.at(-1).body.approve, true); assert.equal(requests.at(-1).headers.authorization, 'Bearer fixture-standalone-bearer');
       assert.deepEqual(errors, []);
-      results.push({ language, sameCard: 'PASS', localizedGestureFallback: 'PASS', lateAndUnmountedStreams: 'PASS', focusAndNotice: 'PASS', cancelAndAccountRaces: 'PASS', standaloneLocalization: 'PASS' });
+      results.push({ language, sameCard: 'PASS', automaticGestureStart: 'PASS', localizedGestureFallback: 'PASS', lateAndUnmountedStreams: 'PASS', focusAndNotice: 'PASS', cancelAndAccountRaces: 'PASS', standaloneLocalization: 'PASS' });
       await context.close();
     }
     console.log(JSON.stringify({ engine, results }, null, 2));

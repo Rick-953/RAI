@@ -299,11 +299,9 @@
       observer.observe(document.body, { childList: true, subtree: true });
     }
     watch = setInterval(() => { if (!scanContextCurrent(context) || !d.open || d.isConnected === false) leave(); }, 250);
-    if (ios18Pwa) {
-      status.textContent = text('Tap Start camera to allow access. If iOS 18 shows no prompt, open this site in Safari or choose a QR image.',
-        '点击“开启相机”以允许访问。如果 iOS 18 没有权限弹窗，请在 Safari 中打开本站或选择二维码图片。',
-        '點擊「開啟相機」以允許存取。如果 iOS 18 沒有權限提示，請在 Safari 中開啟本站或選擇二維碼圖片。');
-    } else start();
+    // The scan-entry click supplies the user gesture on every platform.
+    // Keep Start camera as an explicit retry after denial or pause.
+    start();
   };
   async function checkIncomingScan() {
     if (approving || scannerDialog?.open || !appState.token) return;
