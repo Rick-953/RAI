@@ -48,7 +48,9 @@
     try {
       const selections = [...state.connections].slice(0, 8).map(([conversationId, entry]) => ({
         conversationId, deviceId: entry.deviceId, deviceName: entry.deviceName,
-        sessionId: entry.session?.id || '', expiresAt: entry.session?.expiresAt || 0
+        sessionId: entry.session?.id || '', expiresAt: entry.session?.expiresAt || 0,
+        authorizationProtocol: ['web-v2', 'local-v1'].includes(entry.session?.authorizationProtocol || entry.authorizationProtocol)
+          ? entry.session?.authorizationProtocol || entry.authorizationProtocol : ''
       }));
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: state.userId, selections }));
     } catch { /* Private browsing may deny storage; the in-memory guard remains active. */ }
@@ -65,7 +67,8 @@
           deviceName: row.deviceName, expiresAt: Number(row.expiresAt) || 0, status: 'pending'
         } : null;
         state.connections.set(row.conversationId, { deviceId: row.deviceId, deviceName: row.deviceName,
-          wanted: true, connecting: false, session, verifiedAt: 0, error: '' });
+          wanted: true, connecting: false, session, verifiedAt: 0, error: '',
+          authorizationProtocol: ['web-v2', 'local-v1'].includes(row.authorizationProtocol) ? row.authorizationProtocol : '' });
       }
     } catch { /* Invalid storage never grants a capability; every session is revalidated. */ }
   }
@@ -568,11 +571,19 @@
       const retained = grantList.key === grantListKey() && (grantList.grants.size || grantList.reminder || grantList.error);
       return retained ? { color: 'red', label: text('未连接；请检查 / 撤销保留的持续许可', 'Disconnected; review / revoke retained persistent permissions'), name: [...grantList.grants.values()].map(g => g.deviceName).join(', ') || grantList.reminder } : grantList.key === grantListKey() && grantList.notice ? { color: 'red', label: text('未连接；持续许可状态已更新', 'Disconnected; persistent permission status updated'), name: '' } : { color: 'idle', label: '', name: '' };
     }
-    const color = here() ? 'green' : entry.error || entry.session?.online === false || entry.session?.expiresAt <= Date.now() ? 'red' : 'yellow';
+    const session = entry.session;
+    // Saved device choices are display hints, never a connection or permission.
+    const unavailable = (!session && !entry.connecting) || (session && !['pending', 'approved'].includes(session.status))
+      || session?.online === false || session?.expiresAt <= Date.now()
+      || (session?.status === 'pending' && session.approvalExpiresAt > 0 && session.approvalExpiresAt <= Date.now());
+    const color = here() ? 'green' : entry.error || unavailable ? 'red' : 'yellow';
     const label = color === 'green' ? text('远程电脑已连接', 'Remote PC connected')
       : color === 'red' ? text('远程电脑已断开', 'Remote PC disconnected')
-        : preparingWeb(entry) ? text('电脑自动准备原目录中（无需 PC 确认）', 'PC preparing original folder (no PC confirmation)')
-          : text('等待电脑授权 / 连接中（旧版 local-v1）', 'Awaiting PC approval / connecting (legacy local-v1)');
+        : session && !entry.verifiedAt ? text('正在核验电脑连接', 'Verifying the PC connection')
+          : preparingWeb(entry) ? text('电脑自动准备原目录中（无需 PC 确认）', 'PC preparing original folder (no PC confirmation)')
+            : (session?.authorizationProtocol || entry.authorizationProtocol) === 'local-v1'
+              ? text('等待电脑授权 / 连接中（旧版 local-v1）', 'Awaiting PC approval / connecting (legacy local-v1)')
+              : text('正在连接电脑', 'Connecting to the PC');
     return { color, label, name: entry.session?.deviceName || entry.deviceName };
   }
   function renderBanner(view) {

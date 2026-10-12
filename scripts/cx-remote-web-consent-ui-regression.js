@@ -357,11 +357,14 @@ const clone = value => JSON.parse(JSON.stringify(value));
       offline = false; await refresh(); await query();
       const accountGate = holdRead = defer(); jobs = [job('old-account')]; const oldAccountRead = query(); await accountGate.reached;
       const beforeAccount = postCount();
+      // A queued click can reach an old-account node after the context switches.
+      // Invoke that captured node before cleanup, then verify the handler sends nothing.
       await page.evaluate(() => {
         window.staleConsentButton = document.querySelector('[data-decision="once"]');
+        if (!window.staleConsentButton?.isConnected) throw Error('Expected an active old-account consent button');
         window.fixtureContext.userId = 2; window.fixtureContext.token = 'new-login';
+        window.staleConsentButton.click();
       });
-      if (await page.locator('[data-decision="once"]').count()) await click(page.locator('[data-decision="once"]').first());
       await refresh(); assert.equal(postCount(), beforeAccount);
       accountGate.release(); await oldAccountRead; await page.waitForFunction(() => document.querySelector('#cxRemoteStatusBanner').hidden);
       assert.equal(await page.locator('.cx-remote-consent-job').count(), 0);
