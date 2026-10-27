@@ -36,11 +36,11 @@ function workflowJob(name) {
   return securityWorkflow.match(new RegExp(`^  ${escaped}:[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|(?![\\s\\S]))`, 'm'))?.[0] || '';
 }
 
-assert.equal(packageJson.overrides?.undici, '6.28.1', 'undici must include the GHSA-3wwx-pv8p-q78v fix');
+assert.equal(packageJson.overrides?.undici, '6.29.1', 'undici must include the GHSA-3wwx-pv8p-q78v fix');
 assert.equal(packageJson.overrides?.tar, '7.5.22', 'node-tar must stay on the audited patched release');
-assert.equal(packageJson.overrides?.['body-parser'], '1.20.6', 'body-parser must stay on the audited patched release');
+assert.equal(packageJson.overrides?.['body-parser'], '1.20.9', 'body-parser must stay on the audited patched release');
 
-for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6'], ['undici', '6.28.1']]) {
+for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.9'], ['undici', '6.29.1']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
@@ -48,7 +48,7 @@ for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6']
   }
 }
 
-for (const [name, exactVersion] of [['multer', '2.4.0'], ['busboy', '1.6.0'], ['proxy-addr', '2.0.8']]) {
+for (const [name, exactVersion] of [['multer', '2.5.0'], ['busboy', '1.6.0'], ['proxy-addr', '2.0.8']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
@@ -88,7 +88,7 @@ vm.runInNewContext(katexSource + `
 `, { module: { exports: {} }, exports: {}, assert }, { timeout: 2000 });
 
 const expectedVendors = new Map([
-  ['dompurify', '3.4.16'],
+  ['dompurify', '3.4.17'],
   ['katex', '0.18.2']
 ]);
 for (const [name, expectedVersion] of expectedVendors) {

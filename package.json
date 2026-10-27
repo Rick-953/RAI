@@ -105,7 +105,7 @@
     "ip2region": "2.3.0",
     "ipaddr.js": "2.4.0",
     "jsonwebtoken": "^9.0.3",
-    "multer": "2.4.0",
+    "multer": "2.5.0",
     "qrcode": "^1.5.4",
     "sqlite3": "^6.0.1",
     "yauzl": "3.4.0"
@@ -117,9 +117,9 @@
     "yazl": "3.3.1"
   },
   "overrides": {
-    "body-parser": "1.20.6",
+    "body-parser": "1.20.9",
     "tar": "7.5.22",
-    "undici": "6.28.1",
+    "undici": "6.29.1",
     "qs": "6.16.0"
   }
 }
