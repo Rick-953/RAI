@@ -179,7 +179,7 @@ for (const [family, expectedActions] of [
   assert.equal(new Set(related.map(action => action.split('@').pop())).size, 1, `${family} actions must use one coherent revision`);
 }
 const notices = fs.readFileSync(path.join(ROOT, 'public', 'lib', 'THIRD_PARTY_NOTICES.md'), 'utf8');
-assert.match(notices, /\| DOMPurify \| 3\.4\.16 \|/, 'DOMPurify license notices must match the audited bundle');
+assert.match(notices, /\| DOMPurify \| 3\.4\.17 \|/, 'DOMPurify license notices must match the audited bundle');
 assert.match(securityWorkflow, /^defaults:\s*\n\s{2}run:\s*\n\s{4}(?:#[^\n]*\n\s{4})*shell:\s*bash$/m, 'workflow pipelines must use explicit bash with pipefail');
 assert.match(securityWorkflow, /^\s{2}NODE_VERSION:\s*24\.16\.0$/m, 'CI must exercise the production Node release');
 assert.match(securityWorkflow, /^\s{2}NPM_VERSION:\s*11\.13\.0$/m, 'CI must exercise the production npm release');
