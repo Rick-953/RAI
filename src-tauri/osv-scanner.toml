@@ -69,6 +69,13 @@ id = "RUSTSEC-2025-0075"
 ignoreUntil = 2026-10-31
 reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
 
+# Static version-scope review: docs/block-buffer-advisory-scope-20261028.md.
+# The current 0.10.4 registry checksum is enforced by the expiry regression.
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+ignoreUntil = 2026-11-11
+reason = "Version-scope false positive for pinned block-buffer 0.10.4: cursor is a separate pos u8 field, not an inline buffer byte, and ReadBuffer is absent. Re-review if version/checksum changes."
+
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0080"
 ignoreUntil = 2026-10-31

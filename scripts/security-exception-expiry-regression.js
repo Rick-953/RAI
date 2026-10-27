@@ -24,7 +24,23 @@ for (const block of blocks) {
   assert.ok(expiry >= today, `${id} exception expired on ${expiryText}`);
   const daysRemaining = Math.ceil((expiry - today) / 86400000);
   assert.ok(daysRemaining <= 120, `${id} exception is too long-lived (${daysRemaining} days)`);
-  documentedIds.push(id);
+  if (id.startsWith('RUSTSEC-')) documentedIds.push(id);
+  else assert.equal(id, 'GHSA-qwgh-2vcv-g2f7', 'unexpected advisory scope exception');
+}
+
+// This decision is valid only for the exact older separate-cursor implementation.
+for (const directory of ['src-tauri', 'rai-agent']) {
+  const lock = fs.readFileSync(path.join(root, directory, 'Cargo.lock'), 'utf8');
+  const record = lock.split('[[package]]').find(block => /^\s*name = "block-buffer"$/m.test(block));
+  assert.ok(record, `${directory}: block-buffer record missing`);
+  assert.match(record, /^version = "0\.10\.4"$/m, 'changed block-buffer version needs a new scope review');
+  assert.match(record, /^checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"$/m,
+    'changed block-buffer source needs a new scope review');
+  const config = fs.readFileSync(path.join(root, directory, 'osv-scanner.toml'), 'utf8');
+  const decision = config.split('[[IgnoredVulns]]').find(block => /id = "GHSA-qwgh-2vcv-g2f7"/.test(block));
+  assert.ok(decision && /ignoreUntil = 2026-11-11/.test(decision) && /separate pos u8 field/.test(decision),
+    'advisory scope exception must be documented, narrow and expiring');
+  assert.ok(today <= new Date('2026-11-11T00:00:00Z'), 'block-buffer version-scope review expired');
 }
 
 const workflowIgnore = workflow.match(/^\s*ignore:\s*([^\n]+)$/m)?.[1] || '';

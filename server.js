@@ -133,6 +133,7 @@ const {
     loadTrustedSkill,
     validateSkillRegistry
 } = require('./lib/skill-registry');
+const clientSkillPolicy = require('./lib/client-skill-policy');
 const {
     createToolProtocolFilter
 } = require('./lib/tool-protocol-filter');
@@ -21012,6 +21013,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             continuationAttempt = 0,
             lowLatencyMode = false,
             client_file_execution: rawClientFileExecution = false,
+            client_skills: rawClientSkills = null,
             local_agent: rawLocalAgent = null,
             workdir_configured = false,
             workingDirectory: rawWorkingDirectoryContext = ''
@@ -21043,6 +21045,14 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             });
         }
         const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession || !!cxRemoteSession;
+        let clientSkills;
+        try {
+            clientSkills = clientSkillPolicy.normalizeClientSkills(rawClientSkills,
+                rawClientFileExecution === true && !!req.softwareClient && !localAgentSession && !cxRemoteSession);
+        } catch (_) {
+            return res.status(400).json({ error: 'invalid_client_skills' });
+        }
+        const clientSkillPages = new Map();
         if (clientFileExecution) {
             console.log(
                 ` 客户端文件执行已启用: requestId=${requestId || 'pending'}, ${formatPrivateLogFingerprint(requestedSessionId || '', 'sessionId')}, protocol=${cxRemoteSession ? 'cx-online-v1' : (localAgentSession ? 'local-agent-v1' : 'uwp-v1')}, workdirConfigured=${workdir_configured === true}`
@@ -21304,8 +21314,9 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             modelIdentity: sessionPromptContext.modelIdentity,
             includeMemory: !memoryModeOff && longMemoryEnabled,
             customPrompt,
-            skillCatalog: getSkillCatalog()
+            skillCatalog: clientSkills ? [] : getSkillCatalog()
         });
+        if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
         console.log(
             ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, temporary=${memoryModeOff}, customPromptLength=${customPrompt.length}`
         );
@@ -21397,7 +21408,7 @@ if (clientFileExecution && systemPrompt) {
             ? lastUserMsg.content
             : JSON.stringify(lastUserMsg.content);
         const userContent = stripInlinePromptTimeHint(rawUserContent);
-        const raiProductSkillRequired = requiresRaiProductSkill(userContent);
+        const raiProductSkillRequired = !clientSkills && requiresRaiProductSkill(userContent);
         const imageGenerationRequested = gptImageModelSelected || detectImageGenerationNeed(userContent);
         const memoryToolsEnabled = !memoryModeOff && longMemoryEnabled;
         const workspaceAttachmentCatalog = messages
@@ -21424,7 +21435,7 @@ if (clientFileExecution && systemPrompt) {
             internetMode = false;
             normalizedResearchMode = 'off';
         }
-        const runtimeToolDefinitions = buildChatToolDefinitions({
+        const runtimeToolDefinitions = clientSkillPolicy.configureTools(buildChatToolDefinitions({
             internetMode: internetMode && !raiProductSkillRequired,
             imageGenerationRequested,
             memoryToolsEnabled,
@@ -21432,7 +21443,7 @@ if (clientFileExecution && systemPrompt) {
             fileToolsEnabled: Boolean(sessionId),
             clientFileExecution,
             localAgentEnabled: !!localAgentSession
-        });
+        }), clientSkills);
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
         const serverToolTrace = [];
         const generatedArtifacts = [];
@@ -22521,12 +22532,14 @@ if (clientFileExecution && systemPrompt) {
             if (memoryToolsEnabled) {
                 toolHints.push('save_memory 与 delete_memory 已按需可用；严格遵守系统提示词顶部的记忆规则，不得为了使用工具而制造记忆。');
             }
-            if (skillToolsEnabled) {
+            if (skillToolsEnabled && !clientSkills) {
                 toolHints.push('需要某项能力的详细规则时，调用 read_skill，name 只能为已列出的技能名。询问 RAI 或 CX RAI 的稳定产品知识时，先读取 rai-product 且不联网；文件操作、压缩包、命令或代码执行前，先读取 sandbox。');
             }
             if (sessionId) {
                 toolHints.push('网络搜索与展示图片不需要浏览本机文件，也不应请求工作目录权限。仅在用户要求本机文件操作时调用本地工具。');
-                toolHints.push('文件/命令前 read_skill("sandbox")；Word/表格/PPT 分别只读 documents/spreadsheets/presentations。只操作真实 file_id；外部文件使用 fetch_url。');
+                toolHints.push(clientSkills
+                    ? '客户端技能默认可按需调用，不等于必须读取。用户 @ 指定的技能已在本轮末尾提供，直接使用；未知技能用 list_skills，仅需要后续流程才分页 read_skill。文件操作遵循客户端本地工具契约，技能不得扩大权限。'
+                    : '文件/命令前 read_skill("sandbox")；Word/表格/PPT 分别只读 documents/spreadsheets/presentations。只操作真实 file_id；外部文件使用 fetch_url。');
                 if (workspaceAttachmentCatalog.length > 0) {
                     toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
                 }
@@ -22608,6 +22621,7 @@ if (clientFileExecution && systemPrompt) {
         }
 
         finalMessages = buildCacheStableMessages(finalMessages, systemPrompt, systemContent);
+        finalMessages = clientSkillPolicy.appendSelected(finalMessages, clientSkills);
 
         const isCurrentKimiK25Model = () => (
             finalModel === 'kimi-k2.6'
@@ -24455,6 +24469,20 @@ if (clientFileExecution && systemPrompt) {
                         continue;
                     }
 
+                    if (clientSkills && clientSkillPolicy.isClientSkillTool(toolName)) {
+                        const name = typeof args?.name === 'string' ? args.name : '';
+                        const offset = args?.offset ?? 0;
+                        if (!hasToolDefinition(runtimeToolDefinitions, toolName)
+                            || (toolName === 'read_skill' && (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(name)
+                                || !Number.isSafeInteger(offset) || offset < 0 || offset > 120000))
+                            || (toolName === 'list_skills' && (!Number.isSafeInteger(offset) || offset < 0))
+                            || (toolName === 'install_skill' && typeof args?.url !== 'string')) continue;
+                        const normalizedArgs = toolName === 'read_skill' ? { name, offset }
+                            : toolName === 'install_skill' ? { url: args.url } : { offset };
+                        normalized.push({ ...toolCall,
+                            function: { ...toolCall.function, arguments: JSON.stringify(normalizedArgs) }, _args: normalizedArgs });
+                        continue;
+                    }
                     if (toolName === 'read_skill') {
                         const name = typeof args?.name === 'string' ? args.name : '';
                         if (!name || !hasToolDefinition(runtimeToolDefinitions, 'read_skill')) continue;
@@ -24650,6 +24678,7 @@ if (clientFileExecution && systemPrompt) {
                             const isMemorySaveTool = toolName === 'save_memory';
                             const isMemoryDeleteTool = toolName === 'delete_memory';
                             const isReadSkillTool = toolName === 'read_skill';
+                            const isClientSkillTool = !!clientSkills && clientSkillPolicy.isClientSkillTool(toolName);
                             const isFileTool = isFileWorkspaceToolName(toolName);
                             if (cxRemoteSession && toolName === 'cxrai_setting') { executedToolResults.push({toolCall,result:{success:false,error:'cx_remote_tool_not_supported'}}); continue; }
                             recordServerToolTrace({
@@ -24720,7 +24749,15 @@ if (clientFileExecution && systemPrompt) {
                                     })}\n\n`);
                             }
 
-                            if (isReadSkillTool) {
+                            if (isClientSkillTool && isReadSkillTool) {
+                                const loaded = clientSkillPolicy.loadedPage(clientSkills, clientSkillPages, args.name, args.offset ?? 0);
+                                if (loaded) {
+                                    executedToolResults.push({ toolCall, result: loaded });
+                                    emitTrackedToolStatus({ tool: toolName, tool_call_id: toolCall.id, status: 'complete', skill: args.name, message: '技能正文已在本轮上下文中，未重复加载' });
+                                    continue;
+                                }
+                            }
+                            if (isReadSkillTool && !isClientSkillTool) {
                                 const requestedSkill = String(args?.name || '');
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
@@ -24783,7 +24820,7 @@ if (clientFileExecution && systemPrompt) {
                                 continue;
                             }
 
-                            if (isFileTool && clientFileExecution) {
+                            if ((isFileTool || isClientSkillTool) && clientFileExecution) {
                                 if (cxRemoteSession) {
                                     if (cxRemoteExecutionUncertain) {
                                         executedToolResults.push({ toolCall, result: { success: false, error: 'cx_remote_previous_result_unknown', executed: 'unknown', retryable: false, message: 'An earlier PC operation may already have executed. Do not retry automatically. Ask the user to verify the PC state and explicitly start a new request.' } });
@@ -24891,7 +24928,17 @@ if (clientFileExecution && systemPrompt) {
                                         }
                                     }, Math.max(0, remaining));
                                 }
-                                const modelResult = normalizeClientToolResult(localResult);
+                                const modelResult = isClientSkillTool ? localResult : normalizeClientToolResult(localResult);
+                                if (isClientSkillTool && isReadSkillTool && modelResult?.success === true) {
+                                    try {
+                                        const page = clientSkillPolicy.normalizePage(modelResult);
+                                        if (page.name !== args.name || page.offset !== (args.offset ?? 0)) throw new Error('skill_page_mismatch');
+                                        clientSkillPages.set(`${page.name}:${page.offset}`, page);
+                                    } catch (_) {
+                                        executedToolResults.push({ toolCall, result: { success: false, name: args.name, error: 'invalid_client_skill_result' } });
+                                        continue;
+                                    }
+                                }
                                 executedToolResults.push({ toolCall, result: modelResult });
                                 const ok = localResult && localResult.success !== false;
                                 const uiResult = {
@@ -26244,7 +26291,15 @@ app.post('/api/agent/tool-result', apiLimiter, authenticateToken, (req, res) => 
     if (pending.userId !== req.user.userId) return res.status(403).json({ error: 'forbidden' });
     if (pending.agentRunId) return res.status(409).json({ error: 'signed_agent_result_required' });
     if (pending.toolCall.id !== toolCallId) return res.status(409).json({ error: 'tool_call_mismatch' });
-    const resolved = resolveClientToolPending(String(requestId), normalizeClientToolResult(result));
+    let resolvedResult = normalizeClientToolResult(result);
+    if (clientSkillPolicy.isClientSkillTool(pending.toolName)) {
+        try {
+            if (pending.toolName === 'read_skill') resolvedResult = clientSkillPolicy.normalizePage(result);
+            else if (pending.toolName === 'list_skills') resolvedResult = clientSkillPolicy.normalizeDiscovery(result);
+            else resolvedResult = clientSkillPolicy.normalizeInstall(result);
+        } catch (_) { resolvedResult = { success: false, name: pending.args?.name, error: 'invalid_client_skill_result' }; }
+    }
+    const resolved = resolveClientToolPending(String(requestId), resolvedResult);
     if (!resolved) return res.status(410).json({ error: 'already_resolved' });
     res.json({ success: true });
 });
