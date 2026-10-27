@@ -13,6 +13,21 @@ https://rai.000339.xyz/api
 
 所有请求必须使用 HTTPS。除 SSE 外，响应均为 UTF-8 JSON。
 
+## CX 1.8.18 技能扩展（Web 0.13.31）
+
+软件客户端在 `client_file_execution: true` 时可附 `client_skills`：
+
+```json
+{"protocol":1,"catalog":[{"name":"documents","description":"Word 文档"}],"catalog_truncated":false,"selected":[]}
+```
+
+- `catalog` 仅名称与用途，总 JSON 不超过 2048 字符，每项用途不超过 72 字符；它不是技能正文或 system 指令。
+- `selected` 只放用户通过 @ 明确指定的技能的首段读取结果（最多 8 项）；普通启用状态不触发读取。结果为 `{success,name,offset,total_chars,content,next_offset,complete}`；正文每段最多 12000 字符且结果 JSON 最多 16000 字符。
+- 附加内容只用于本次推理，不写入普通用户消息或历史正文。服务端不把客户端内容升级为系统权限，不以客户端目录替换身份、授权或确认规则。
+- 模型 `read_skill(name,offset)` / `list_skills()` / `install_skill(url)` 通过原有 `tool_pending_client` 与 `/api/agent/tool-result` 往返；读取、列举不要求工作目录，安装仍须用户确认。
+- 同段正文仍在本轮上下文中时返回 `already_loaded:true`；不同轮次不假定旧正文可用。`next_offset` 表示续读，只有需要后续流程才请求。
+- 缺少扩展时旧客户端与 Web 保持原协议。扩展是按需加载契约，不承诺模型执行率或供应商计费 token。
+
 ## 1. 凭据模型
 
 ### 1.1 软件客户端 key

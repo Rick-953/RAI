@@ -12,6 +12,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const bcrypt = require('bcrypt');
 const sqlite3 = require('sqlite3').verbose();
+const { createSoftwareClientAuth } = require('../lib/software-client-auth');
 
 const ROOT = path.resolve(__dirname, '..');
 const STARTUP_TIMEOUT_MS = 45_000;
@@ -140,6 +141,29 @@ function createProviderMock() {
         ? hasObjectKey(body, 'functionResponse')
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
+
+      if (scenario.startsWith('client-')) {
+        const markerCount = count(text, 'CLIENT_SKILL_BODY_MARKER');
+        if (scenario === 'client-unused') {
+          if (markerCount !== 0) errors.push('client-unused: unused body was expanded');
+          writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]client unused[/TITLE]`)]);
+          return;
+        }
+        if (systemText.includes('CLIENT_SKILL_BODY_MARKER')) errors.push('client: body changed the stable system prompt');
+        if (scenario === 'client-selected') {
+          if (markerCount !== 1) errors.push('client-selected: explicit @ body missing or duplicated');
+          if (!hasToolResult) { writeSse(response, [openAiToolCalls(['documents'])]); return; }
+          if (!text.includes('already_loaded')) errors.push('client-selected: repeated read was not deduplicated');
+        } else if (scenario === 'client-read') {
+          if (!hasToolResult) {
+            if (markerCount !== 0) errors.push('client-read: body arrived before a read');
+            writeSse(response, [openAiToolCalls(['custom-workflow'])]); return;
+          }
+          if (markerCount !== 1) errors.push('client-read: returned client body was lost or duplicated');
+        }
+        writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]client skills[/TITLE]`)]);
+        return;
+      }
 
       if (scenario === 'fallback' && body.model === 'gpt-6.1-sol') {
         response.writeHead(503, { 'Content-Type': 'application/json' });
@@ -317,6 +341,43 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal' 
   assert.ok(events.some((event) => event.type === 'done'), `${scenario}: done event missing`);
 }
 
+async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
+    body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario}` }], model: 'gpt-6.1-sol',
+      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: false,
+      client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected } })
+  });
+  assert.equal(response.status, 200, `client HTTP ${scenario}`);
+  let buffer = '', visible = '', pending = 0, done = false;
+  const decoder = new TextDecoder();
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let end;
+    while ((end = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      const event = JSON.parse(line.slice(6));
+      if (event.type === 'content') visible += event.content || event.delta || '';
+      if (event.type === 'done') done = true;
+      if (event.type === 'tool_pending_client') {
+        pending++;
+        assert.equal(event.tool, 'read_skill');
+        assert.equal(scenario, 'client-read', 'selected/unused must not request another client read');
+        const result = { success: true, name: event.parameters.name, offset: 0, total_chars: 24,
+          content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null };
+        const posted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id, result }) });
+        assert.equal(posted.status, 200, 'client result post');
+      }
+    }
+  }
+  assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
+  assert.equal(done, true);
+  assert.equal(pending, scenario === 'client-read' ? 1 : 0);
+}
+
 async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-skill-runtime-'));
   const databasePath = path.join(tempRoot, 'ai_data.db');
@@ -357,6 +418,13 @@ async function main() {
     child.stderr.on('data', capture);
     await waitForReadiness(baseUrl, child, logs);
     const token = await loginSeededUser(databasePath, baseUrl);
+    const clientDb = await openDatabase(databasePath);
+    let softwareKey;
+    try {
+      const auth = createSoftwareClientAuth({ db: clientDb });
+      const created = await auth.create({ name: 'Isolated skill client', platform: 'windows' });
+      softwareKey = created.rawKey;
+    } finally { await closeDatabase(clientDb); }
 
     for (const entry of [
       ['sol','gpt-6.1-sol'], ['luna','gpt-6-luna'], ['deepseek','deepseek-v4.1-flash'],
@@ -366,6 +434,10 @@ async function main() {
       await runChat(baseUrl, token, { scenario: entry[0], model: entry[1] });
     }
     await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
+    await runClientChat(baseUrl, token, softwareKey, [], 'client-unused');
+    await runClientChat(baseUrl, token, softwareKey, [{ success: true, name: 'documents', offset: 0, total_chars: 24,
+      content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null }], 'client-selected');
+    await runClientChat(baseUrl, token, softwareKey, [], 'client-read');
 
     assert.deepEqual(provider.errors, [], `provider assertions failed:\n${provider.errors.join('\n')}`);
     assert.ok(provider.observations.some((item) => item.scenario === 'fallback' && item.url.includes('/deepseek/')),

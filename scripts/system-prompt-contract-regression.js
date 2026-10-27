@@ -110,7 +110,8 @@ function testServerManagedNativeFallback() {
   assert.match(server, /getWebControlledCustomSystemPrompt[\s\S]{0,500}FROM user_configs WHERE user_id = \?/);
   assert.match(server, /const customPrompt = memoryModeOff[\s\S]{0,300}\? ''[\s\S]{0,500}buildCanonicalRaiSystemPrompt\([\s\S]{0,500}includeMemory: !memoryModeOff && longMemoryEnabled[\s\S]{0,500}customPrompt/,
     'temporary conversations must retain canonical Layer 0/1 while excluding user-specific prompt and memory');
-  assert.match(server, /skillCatalog:\s*getSkillCatalog\(\)/);
+  assert.match(server, /skillCatalog:\s*clientSkills \? \[\] : getSkillCatalog\(\)/,
+    'native clients use an ephemeral catalog; legacy/Web retain the server catalog');
   assert.match(server, /rai-product/);
   assert.match(server, /sandbox_exec/);
   assert.match(server, /function buildTrustedSkillResult[\s\S]{0,900}\[Trusted RAI skill:/);
