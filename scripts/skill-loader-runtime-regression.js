@@ -142,6 +142,22 @@ function createProviderMock() {
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
 
+      if (scenario.startsWith('settings-')) {
+        const definition = (body.tools || []).find((tool) => tool.function?.name === 'cxrai_setting');
+        if (!definition) errors.push(`${scenario}: native settings definition missing`);
+        if (!hasToolResult && ['settings-list', 'settings-get'].includes(scenario)) {
+          const args = scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' };
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `native_${scenario}`,
+            type: 'function', function: { name: 'cxrai_setting', arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
+          return;
+        }
+        if (hasToolResult && !text.includes('SYNTHETIC_NATIVE_SETTINGS_RESULT')) {
+          errors.push(`${scenario}: synthetic settings result missing from continuation`);
+        }
+        writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]native preferences[/TITLE]`)]);
+        return;
+      }
+
       if (scenario.startsWith('client-')) {
         const markerCount = count(text, 'CLIENT_SKILL_BODY_MARKER');
         if (scenario === 'client-unused') {
@@ -342,9 +358,16 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal' 
 }
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
+  const userContent = {
+    'settings-navigation': '设置按钮在哪里？',
+    'settings-navigation-en': 'Where is the settings button?',
+    'settings-list': '列出应用内设置',
+    'settings-get': '读取当前主题',
+    'settings-fallback': '查看应用通知设置'
+  }[scenario] || '';
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
-    body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario}` }], model: 'gpt-6.1-sol',
+    body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.1-sol',
       internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: false,
       client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected } })
   });
@@ -358,14 +381,26 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
       const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
       if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
       const event = JSON.parse(line.slice(6));
+      assert.notEqual(event.type, 'error', `${scenario}: unexpected stream error ${JSON.stringify(event)}`);
       if (event.type === 'content') visible += event.content || event.delta || '';
       if (event.type === 'done') done = true;
       if (event.type === 'tool_pending_client') {
         pending++;
-        assert.equal(event.tool, 'read_skill');
-        assert.equal(scenario, 'client-read', 'selected/unused must not request another client read');
-        const result = { success: true, name: event.parameters.name, offset: 0, total_chars: 24,
-          content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null };
+        let result;
+        if (scenario.startsWith('settings-')) {
+          assert.ok(['settings-list', 'settings-get', 'settings-fallback'].includes(scenario), 'navigation answers must not force a settings operation');
+          assert.equal(event.tool, 'cxrai_setting');
+          assert.deepEqual(event.parameters, scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' });
+          // Match SettingsToolService's output envelope, including its readable summary.
+          result = { success: true, action: event.parameters.action, name: event.parameters.name,
+            items: [{ name: 'theme', type: 'string', value: 'system' }], value: 'system',
+            output: 'SYNTHETIC_NATIVE_SETTINGS_RESULT: theme=system; notifications=true' };
+        } else {
+          assert.equal(event.tool, 'read_skill');
+          assert.equal(scenario, 'client-read', 'selected/unused must not request another client read');
+          result = { success: true, name: event.parameters.name, offset: 0, total_chars: 24,
+            content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null };
+        }
         const posted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id, result }) });
@@ -375,7 +410,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   }
   assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
   assert.equal(done, true);
-  assert.equal(pending, scenario === 'client-read' ? 1 : 0);
+  assert.equal(pending, ['client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
 async function main() {
@@ -426,20 +461,30 @@ async function main() {
       softwareKey = created.rawKey;
     } finally { await closeDatabase(clientDb); }
 
-    for (const entry of [
+    const settingsOnly = process.argv.includes('--native-settings-only');
+    for (const entry of settingsOnly ? [] : [
       ['sol','gpt-6.1-sol'], ['luna','gpt-6-luna'], ['deepseek','deepseek-v4.1-flash'],
       ['astra','gpt-6-astra'], ['fallback','gpt-6.1-sol'],
       ['limits','gpt-6.1-sol'], ['invalid','gpt-6.1-sol']
     ]) {
       await runChat(baseUrl, token, { scenario: entry[0], model: entry[1] });
     }
-    await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
-    await runClientChat(baseUrl, token, softwareKey, [], 'client-unused');
-    await runClientChat(baseUrl, token, softwareKey, [{ success: true, name: 'documents', offset: 0, total_chars: 24,
-      content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null }], 'client-selected');
-    await runClientChat(baseUrl, token, softwareKey, [], 'client-read');
+    if (!settingsOnly) {
+      await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-unused');
+      await runClientChat(baseUrl, token, softwareKey, [{ success: true, name: 'documents', offset: 0, total_chars: 24,
+        content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null }], 'client-selected');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-read');
+    }
+    for (const scenario of ['settings-navigation', 'settings-navigation-en', 'settings-list', 'settings-get', 'settings-fallback']) {
+      await runClientChat(baseUrl, token, softwareKey, [], scenario);
+    }
 
     assert.deepEqual(provider.errors, [], `provider assertions failed:\n${provider.errors.join('\n')}`);
+    if (settingsOnly) {
+      console.log('native settings runtime regression passed: Chinese/English navigation, registered list/get, forced list and synthetic client-result continuation (no real settings changed)');
+      return;
+    }
     assert.ok(provider.observations.some((item) => item.scenario === 'fallback' && item.url.includes('/deepseek/')),
       'runtime fallback did not reach the configured secondary provider');
     assert.ok(provider.observations.some((item) => (

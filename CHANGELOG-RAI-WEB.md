@@ -1,3 +1,10 @@
+## Unreleased - native settings routing (2026-10-28)
+
+- Register and dispatch cxrai_setting only for the authenticated native client flow, using the existing action/name/value schema and normalization. Do not broaden remote/local-agent execution or bypass tool validation.
+- Answer settings-entry location questions without forcing a list operation. Explicit list/get requests and the existing fallback have registered tool definitions and a client-result continuation.
+- Add isolated Chinese/English navigation, list/get, fallback and synthetic continuation coverage. Node 24.16.0 targeted runtime and syntax checks passed; no real client settings were changed by the tests.
+- Deployment pending: the configured production SSH connection is closed before login. This is not a live-server fix until the standard PR/check/merge/deploy workflow completes.
+
 ## 0.13.31 — 2026-10-27
 
 - 增加版本化 CX 客户端技能协议：目录仅含有界名称与用途；默认可用不自动读取长正文，用户 @ 指定的正文只为当前请求临时提供，不写入普通对话历史。

@@ -3242,7 +3242,8 @@ function buildChatToolDefinitions({
     skillToolsEnabled = false,
     fileToolsEnabled = false,
     clientFileExecution = false,
-    localAgentEnabled = false
+    localAgentEnabled = false,
+    nativeClientSettings = false
 } = {}) {
     const definitions = [];
     if (internetMode || imageGenerationRequested) {
@@ -3253,6 +3254,7 @@ function buildChatToolDefinitions({
         if (!hasToolDefinition(definitions, 'delete_memory')) definitions.push(MEMORY_DELETE_TOOL_DEFINITION);
     }
     if (skillToolsEnabled) definitions.push(READ_SKILL_TOOL_DEFINITION);
+    if (nativeClientSettings && clientFileExecution) definitions.push(CXRAI_SETTING_TOOL_DEFINITION_LOCAL);
     if (fileToolsEnabled) {
         if (clientFileExecution) {
             definitions.push(
@@ -3437,6 +3439,7 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
         copy_file: new Set(['from', 'to']),
         move_file: new Set(['from', 'to']),
         delete_file: new Set(['file_id']),
+        cxrai_setting: new Set(['action', 'name', 'value']),
         'browser.read': new Set([]),
         'browser.navigate': new Set(['url']),
         'browser.click': new Set(['selector']),
@@ -3597,6 +3600,7 @@ function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
             return { file_id: fileId };
         }
         if (toolName === 'cxrai_setting') {
+            if (!localMode) return null;
             const action = String(args.action || '');
             if (!['list', 'get', 'set'].includes(action)) return null;
             if (action === 'list') return { action };
@@ -6000,7 +6004,7 @@ function normalizeToolCalls(toolCalls = [], localMode = false) {
             continue;
         }
 
-        if (isFileWorkspaceToolName(toolName)) {
+        if (isFileWorkspaceToolName(toolName) || (localMode && toolName === 'cxrai_setting')) {
             const normalizedArgs = normalizeWorkspaceToolArgs(toolName, args, localMode);
             if (!normalizedArgs) continue;
             normalized.push({
@@ -21442,7 +21446,8 @@ if (clientFileExecution && systemPrompt) {
             skillToolsEnabled,
             fileToolsEnabled: Boolean(sessionId),
             clientFileExecution,
-            localAgentEnabled: !!localAgentSession
+            localAgentEnabled: !!localAgentSession,
+            nativeClientSettings: !!req.softwareClient && !localAgentSession && !cxRemoteSession
         }), clientSkills);
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
         const serverToolTrace = [];
@@ -24494,7 +24499,7 @@ if (clientFileExecution && systemPrompt) {
                         continue;
                     }
 
-                    if (isFileWorkspaceToolName(toolName)) {
+                    if (isFileWorkspaceToolName(toolName) || (clientFileExecution && toolName === 'cxrai_setting')) {
                         const normalizedArgs = normalizeWorkspaceToolArgs(toolName, args, clientFileExecution);
                         if (!normalizedArgs) continue;
                         normalized.push({
@@ -24560,7 +24565,10 @@ if (clientFileExecution && systemPrompt) {
             // 设置类问题兜底：模型在设置类消息未调设置工具时，强制发起 cxrai_setting list 引导
             // （无论是否只调了 read_skill 占位；只要还没调 cxrai_setting 就强制）
             const alreadyCalledSettingTool = accumulatedToolCalls.some((tc) => tc.function?.name === 'cxrai_setting');
-            if (useStreamingTools && clientFileExecution && !cxRemoteSession && !forcedCxraiSettingDone && !alreadyCalledSettingTool && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
+            const settingsNavigationQuestion = /(?:在哪|哪里|哪儿|位置|入口|按钮|where\b|find\b)/i.test(String(userContent || ''));
+            if (useStreamingTools && clientFileExecution && !cxRemoteSession && !localAgentSession
+                && hasToolDefinition(runtimeToolDefinitions, 'cxrai_setting') && !settingsNavigationQuestion
+                && !forcedCxraiSettingDone && !alreadyCalledSettingTool && /(?:通知|自启|开机启动|缓存|自定义API|api|主题|语言|默认模型|设置|开关|关闭)/i.test(String(userContent || ''))) {
                 forcedCxraiSettingDone = true;
                 console.warn(` 设置类问题但未调用 cxrai_setting，自动发起 list 引导: model=${actualModel}`);
                 accumulatedToolCalls.push({
@@ -24679,6 +24687,7 @@ if (clientFileExecution && systemPrompt) {
                             const isMemoryDeleteTool = toolName === 'delete_memory';
                             const isReadSkillTool = toolName === 'read_skill';
                             const isClientSkillTool = !!clientSkills && clientSkillPolicy.isClientSkillTool(toolName);
+                            const isClientSettingTool = !!req.softwareClient && !localAgentSession && !cxRemoteSession && toolName === 'cxrai_setting';
                             const isFileTool = isFileWorkspaceToolName(toolName);
                             if (cxRemoteSession && toolName === 'cxrai_setting') { executedToolResults.push({toolCall,result:{success:false,error:'cx_remote_tool_not_supported'}}); continue; }
                             recordServerToolTrace({
@@ -24820,7 +24829,7 @@ if (clientFileExecution && systemPrompt) {
                                 continue;
                             }
 
-                            if ((isFileTool || isClientSkillTool) && clientFileExecution) {
+                            if ((isFileTool || isClientSkillTool || isClientSettingTool) && clientFileExecution) {
                                 if (cxRemoteSession) {
                                     if (cxRemoteExecutionUncertain) {
                                         executedToolResults.push({ toolCall, result: { success: false, error: 'cx_remote_previous_result_unknown', executed: 'unknown', retryable: false, message: 'An earlier PC operation may already have executed. Do not retry automatically. Ask the user to verify the PC state and explicitly start a new request.' } });
