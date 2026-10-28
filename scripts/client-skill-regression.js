@@ -38,7 +38,7 @@ assert.equal(configured[0].function.parameters.properties.offset.maximum, 120000
 const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
 for (const contract of ['clientSkillPolicy.appendSelected(finalMessages, clientSkills)', 'clientSkillPolicy.configureTools(',
     'clientSkillPolicy.loadedPage(clientSkills, clientSkillPages', 'isReadSkillTool && !isClientSkillTool',
-    '(isFileTool || isClientSkillTool) && clientFileExecution', 'clientSkillPolicy.normalizePage(result)']) {
+    '(isFileTool || isClientSkillTool || isClientSettingTool) && clientFileExecution', 'clientSkillPolicy.normalizePage(result)']) {
     assert.ok(server.includes(contract), `missing integration: ${contract}`);
 }
 console.log('client skill request regression passed: unused body isolation, explicit @ context, bounded paging, per-turn deduplication and client tool routing');
