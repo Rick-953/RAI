@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const vm = require('node:vm');
-const { chromium } = require('playwright');
+const browserEngine = require('playwright')[process.env.RAI_BROWSER_ENGINE || 'chromium'];
 
 const root = path.resolve(__dirname, '../public');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
@@ -91,7 +91,7 @@ async function main() {
   const base = `http://127.0.0.1:${server.address().port}`;
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, ...(process.env.RAI_QR_BROWSER_EXECUTABLE ? { executablePath: process.env.RAI_QR_BROWSER_EXECUTABLE } : {}) });
+    browser = await browserEngine.launch({ headless: true, ...(process.env.RAI_QR_BROWSER_EXECUTABLE ? { executablePath: process.env.RAI_QR_BROWSER_EXECUTABLE } : {}) });
     for (const fixture of [
       { locale: 'en-US', expected: 'en' },
       { locale: 'zh-CN', expected: 'zh-CN' },

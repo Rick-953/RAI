@@ -8390,6 +8390,7 @@ video.private-file-preview-media {
 /* Toast 通知样式 */
 .toast-notification {
   position: fixed;
+  pointer-events: none;
   bottom: 100px;
   left: 50%;
   transform: translateX(-50%) translateY(20px) scale(0.98);

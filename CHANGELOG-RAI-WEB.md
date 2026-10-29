@@ -1,9 +1,20 @@
-## Unreleased - native settings routing (2026-10-28)
+## 0.13.32 - bilingual entry and explicit Web skills (2026-10-30)
+
+- New visits follow browser language preferences: Chinese locales open in Simplified Chinese and English locales in English. Explicit choices win, legacy Traditional Chinese choices remain intact, and Auto mode continues following browser changes without saving an accidental override.
+- Complete English/Simplified Chinese sharing, QR confirmation and native registration pages, including accessible controls, validation, progress and errors. Language switches preserve entered form data and original shared content; share authorization, one-shot QR approval and registration-only behavior are unchanged.
+- Choose up to three server-provided skill guides with `@` or the composer's Skills menu in normal Web chat. Guidance is request-local, verified against the bundled registry and injected only into a cloned user message for the provider; it is not saved as ordinary history and does not grant tool permissions. Unsupported research, remote/native execution and mid-response combinations reject explicitly.
+- Temporarily remove the Web bring-your-own-key entry. Saved custom-API sessions no longer auto-enter the app; guarded entry/send functions do not issue provider requests. Existing stored session configuration is not deleted.
+- Refresh native download/remote-PC consent guidance and bilingual release history through 0.13.31. Distinguish scoped Web consent from full-trust command capabilities; a working folder is not a command sandbox.
+- Localize file-library errors and ChatFlow accessibility/default labels. Unknown file storage no longer pretends to be an empty 100 MB quota.
+- Refresh the hash-verified Web usage guide and include the required `skills/` files in both reproducible GitHub release archives; a deployed Git checkout and a downloadable archive must not have different runtime requirements.
+- Add locale-policy and browser regressions for regional locales, manual/automatic choices, denied locale storage, existing auth flows, disabled custom-key entry and mobile layout. Source/fixture checks do not replace live deployment or installed-device acceptance.
+
+## Native settings routing (2026-10-28)
 
 - Register and dispatch cxrai_setting only for the authenticated native client flow, using the existing action/name/value schema and normalization. Do not broaden remote/local-agent execution or bypass tool validation.
 - Answer settings-entry location questions without forcing a list operation. Explicit list/get requests and the existing fallback have registered tool definitions and a client-result continuation.
 - Add isolated Chinese/English navigation, list/get, fallback and synthetic continuation coverage. Node 24.16.0 targeted runtime and syntax checks passed; no real client settings were changed by the tests.
-- Deployment pending: the configured production SSH connection is closed before login. This is not a live-server fix until the standard PR/check/merge/deploy workflow completes.
+- Historical status on October 28: deployment was pending because the then-configured production SSH connection closed before login. This note describes that earlier attempt, not the current service status; deployment evidence belongs to the release PR.
 
 ## 0.13.31 — 2026-10-27
 

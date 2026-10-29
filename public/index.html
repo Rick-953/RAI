@@ -11,40 +11,41 @@
   <meta name="apple-mobile-web-app-title" content="RAI">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
-  <script src="locale.js?v=20261029-bilingual-skills"></script>
+  <script src="locale.js?v=20261030-web-alignment"></script>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20261027-client-skills"></script>
+  <script src="runtime-brand.js?v=20261030-web-alignment"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20261027-client-skills">
+  <link rel="manifest" href="site.webmanifest?v=20261030-web-alignment">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20261027-client-skills"></script>
-  <script defer src="lib/purify.min.js?v=20261027-client-skills"></script>
+  <script defer src="lib/marked.min.js?v=20261030-web-alignment"></script>
+  <script defer src="lib/purify.min.js?v=20261030-web-alignment"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261027-client-skills">
-  <script defer src="lib/katex/katex.min.js?v=20261027-client-skills"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261027-client-skills"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261030-web-alignment">
+  <script defer src="lib/katex/katex.min.js?v=20261030-web-alignment"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261030-web-alignment"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20261027-client-skills"></script>
-  <script defer src="event-bindings.js?v=20261027-client-skills"></script>
+  <script defer src="rai-system-prompt.js?v=20261030-web-alignment"></script>
+  <script defer src="event-bindings.js?v=20261030-web-alignment"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261027-client-skills">
-  <script defer src="lib/highlight/highlight.min.js?v=20261027-client-skills"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261030-web-alignment">
+  <script defer src="lib/highlight/highlight.min.js?v=20261030-web-alignment"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20261027-client-skills">
-  <link rel="stylesheet" href="selection-explainer.css?v=20261027-client-skills">
-  <link rel="stylesheet" href="local-agent.css?v=20261027-client-skills">
-  <link rel="stylesheet" href="secure-sharing.css?v=20261027-client-skills">
+  <link rel="stylesheet" href="styles.css?v=20261030-web-alignment">
+  <link rel="stylesheet" href="selection-explainer.css?v=20261030-web-alignment">
+  <link rel="stylesheet" href="local-agent.css?v=20261030-web-alignment">
+  <link rel="stylesheet" href="secure-sharing.css?v=20261030-web-alignment">
+  <link rel="stylesheet" href="web-skills.css?v=20261030-web-alignment">
 </head>
 
 <body>
@@ -389,7 +390,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.13.31</div>
+                <div class="logo-subtitle">by Rick · v0.13.32</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -450,7 +451,7 @@
           <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
             <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z" />
           </svg>
-          <span>文件</span>
+          <span data-i18n="sidebar-files">文件</span>
         </button>
 
           <!-- 文件夹分组 -->
@@ -460,7 +461,7 @@
                 height="24" fill="currentColor">
                 <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
               </svg>
-              <span class="sidebar-group-title">文件夹</span>
+              <span class="sidebar-group-title" data-i18n="sidebar-folders">文件夹</span>
               <svg class="material-symbols-outlined group-toggle-icon" id="conversationFoldersToggleIcon"
                 xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
@@ -472,7 +473,7 @@
                   height="24" fill="currentColor">
                   <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                 </svg>
-                <span>新建文件夹</span>
+                <span data-i18n="sidebar-new-folder">新建文件夹</span>
               </button>
               <div class="spaces-list conversation-folders-list" id="conversationFoldersList"></div>
             </div>
@@ -542,7 +543,7 @@
           <header class="file-library-header">
             <div>
               <h1 id="fileLibraryTitle">文件</h1>
-              <p id="fileLibrarySummary">0 个文件</p>
+              <p id="fileLibrarySummary">文件</p>
             </div>
             <div class="file-library-header-actions">
               <button class="file-library-upload" type="button" data-rai-click="uploadFilesToLibrary()">
@@ -561,9 +562,9 @@
           <div class="file-library-storage">
             <div class="file-library-storage-copy">
               <span id="fileLibraryStorageLabel">存储空间</span>
-              <strong id="fileLibraryStorageValue">0 MB / 100 MB</strong>
+              <strong id="fileLibraryStorageValue">—</strong>
             </div>
-            <div class="file-library-storage-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="file-library-storage-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
               <span id="fileLibraryStorageBar"></span>
             </div>
           </div>
@@ -936,11 +937,11 @@
   </div>
   </div>
 
-  <div class="chatflow-divider" id="chatflowDivider" role="separator" aria-label="调整聊天和画布大小"
+  <div class="chatflow-divider" id="chatflowDivider" role="separator" aria-label="调整聊天和画布大小" data-i18n-aria-label="chatflow-resize-label"
     aria-orientation="vertical" hidden></div>
 
   <!-- 会话画布：消息和输入继续由普通对话区域提供 -->
-  <section class="chatflow-workspace" id="chatFlowWorkspace" aria-label="对话画布" hidden>
+  <section class="chatflow-workspace" id="chatFlowWorkspace" aria-label="对话画布" data-i18n-aria-label="chatflow-workspace-label" hidden>
     <header class="chatflow-header">
       <div class="chatflow-header-main">
         <h3 class="chatflow-title" id="chatflowTitle" data-i18n="chatflow-title-default">对话画布</h3>
@@ -1153,7 +1154,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261027-client-skills" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261030-web-alignment" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1219,7 +1220,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261027-client-skills" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261030-web-alignment" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1234,7 +1235,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261027-client-skills" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261030-web-alignment" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1346,16 +1347,16 @@
               </div>
               <div class="settings-setting-row settings-setting-row-stacked">
                 <div class="settings-setting-copy">
-                  <div class="setting-label">本地对话缓存</div>
-                  <p class="setting-description">仅保留已打开对话的原始消息和 RAI 私有图片。</p>
+                  <div class="setting-label" data-i18n="cache-title">本地对话缓存</div>
+                  <p class="setting-description" data-i18n="cache-description">仅保留已打开对话的原始消息和 RAI 私有图片。</p>
                 </div>
                 <label class="settings-toggle-row" for="conversationCacheEnabled">
                   <input id="conversationCacheEnabled" type="checkbox" checked>
-                  <span>启用</span>
+                  <span data-i18n="cache-enable">启用</span>
                 </label>
                 <div class="settings-inline-actions">
                   <span class="setting-description" id="conversationCacheUsage">0 MiB / 250 MiB</span>
-                  <button type="button" class="settings-inline-save" id="clearConversationCacheBtn">清除</button>
+                  <button type="button" class="settings-inline-save" id="clearConversationCacheBtn" data-i18n="cache-clear">清除</button>
                 </div>
               </div>
               <div class="settings-setting-row settings-setting-row-stacked">
@@ -1871,8 +1872,8 @@
 
               <div class="setting-item settings-diagnostics-item">
                 <label class="setting-label" data-i18n="settings-export-diagnostics">导出脱敏诊断日志</label>
-                <p class="setting-description">仅当前标签页最近500条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
-                <button type="button" class="settings-inline-save settings-diagnostics-button" id="exportDiagnosticsButton">导出脱敏诊断日志</button>
+                <p class="setting-description" data-i18n="settings-diagnostics-description">仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
+                <button type="button" class="settings-inline-save settings-diagnostics-button" id="exportDiagnosticsButton" data-i18n="settings-export-diagnostics">导出脱敏诊断日志</button>
               </div>
             </div>
           </section>
@@ -1923,6 +1924,7 @@
               <p class="settings-about-timeline-intro" data-i18n="settings-update-timeline-intro">从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。</p>
               <div class="settings-timeline-list" id="settingsTimelineList"></div>
               <p class="settings-about-timeline-source" data-i18n="settings-update-timeline-source">来源：本机历史版本目录、运维记录、历史 release manifest、GitHub README。</p>
+              <a class="settings-about-link" href="https://github.com/Rick-953/RAI/blob/main/CHANGELOG-RAI-WEB.md" target="_blank" rel="noopener noreferrer" data-i18n="settings-github-changelog">查看 GitHub 更新记录</a>
             </div>
           </section>
           <section class="settings-panel" id="settingsPanel-app" data-settings-panel="app">
@@ -2218,16 +2220,17 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20261027-client-skills"></script>
-  <script defer src="pet-quotes.js?v=20261027-client-skills"></script>
-  <script defer src="diagnostics.js?v=20261027-client-skills"></script>
-  <script defer src="app.js?v=20261027-client-skills"></script>
-  <script defer src="cx-remote.js?v=20261027-client-skills"></script>
-  <script defer src="crf-ui.js?v=20261027-client-skills"></script>
-  <script defer src="selection-explainer.js?v=20261027-client-skills"></script>
-  <script defer src="lib/jsQR.js?v=20261027-client-skills"></script>
-  <script defer src="qr-scanner.js?v=20261027-client-skills"></script>
-  <script src="secure-sharing.js?v=20261027-client-skills" defer></script>
+  <script defer src="conversation-cache.js?v=20261030-web-alignment"></script>
+  <script defer src="pet-quotes.js?v=20261030-web-alignment"></script>
+  <script defer src="diagnostics.js?v=20261030-web-alignment"></script>
+  <script defer src="app.js?v=20261030-web-alignment"></script>
+  <script defer src="web-skills.js?v=20261030-web-alignment"></script>
+  <script defer src="cx-remote.js?v=20261030-web-alignment"></script>
+  <script defer src="crf-ui.js?v=20261030-web-alignment"></script>
+  <script defer src="selection-explainer.js?v=20261030-web-alignment"></script>
+  <script defer src="lib/jsQR.js?v=20261030-web-alignment"></script>
+  <script defer src="qr-scanner.js?v=20261030-web-alignment"></script>
+  <script src="secure-sharing.js?v=20261030-web-alignment" defer></script>
 </body>
 
 </html>

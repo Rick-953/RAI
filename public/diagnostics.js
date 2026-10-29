@@ -4,7 +4,7 @@
   else root.RaiDiagnostics = factory(root);
 })(typeof window === 'object' ? window : globalThis, function createDiagnostics(env) {
   'use strict';
-  const schema = 'rai.diagnostics.v1', version = '20261027-client-skills', storageSlot = 'rai_diagnostics_v1';
+  const schema = 'rai.diagnostics.v1', version = '20261030-web-alignment', storageSlot = 'rai_diagnostics_v1';
   const cap = 500, responses = new WeakMap();
   const models = new Set(['auto','fast','thinking','research','custom','deepseek-flash','gpt-6.1-sol','gpt-6-luna','claude-sonnet-5','gemini-3.6-flash-low','gemini-3-flash','gemma','qwen3.6-35b-a3b','kimi-k2.6','chatgpt-gpt-oss-120b','nemotron-3-ultra','kolors-free','gpt-image-2']);
   const labels = new Set(['http','stream','app','started','headers','completed','cancelled','error','incomplete','other','GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','chat','auth','files','sessions','user','shares','qr-login']);
@@ -167,7 +167,7 @@
         url = env.URL.createObjectURL(blob); link = env.document.createElement('a');
         link.href = url; link.download = 'RAI-Web-diagnostics-' + new Date().toISOString().slice(0,10) + '.json';
         env.document.body.append(link); link.click();
-      } catch (_) { env.showToast?.('诊断导出未完成，请重试。'); }
+      } catch (_) { env.showToast?.(env.RAILocale?.getLanguage() === 'en' ? 'Diagnostics could not be exported. Please try again.' : '诊断导出未完成，请重试。'); }
       finally {
         link?.remove();
         if (url) env.setTimeout(() => env.URL.revokeObjectURL(url), 30000);
