@@ -1311,7 +1311,7 @@ function testDownloadClientsAndTimeline() {
     'About timeline must include recent GitHub milestones in descending order');
   assert.match(app, /'settings-update-timeline-source': '来源：RAI Web 公开 GitHub 提交与更新记录，核对至 2026-10-30/,
     'About timeline source must state the GitHub sync horizon');
-  assert.match(index, /https:\/\/github\.com\/Rick-953\/RAI\/blob\/main\/CHANGELOG-RAI-WEB\.md/,
+  assert.ok(index.includes('href="https://github.com/Rick-953/RAI/blob/main/CHANGELOG-RAI-WEB.md"'),
     'About timeline must link to the public source changelog');
   assert.match(index, /id="settingsHandednessSwitch"[\s\S]*settingsToggleHandedness\(\)/,
     'Adaptive handedness must expose a settings switch');
