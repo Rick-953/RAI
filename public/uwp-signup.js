@@ -4,8 +4,12 @@
   var state = {
     email: '',
     password: '',
-    busy: false
+    busy: false,
+    statusKey: '',
+    busyButton: null,
+    busyTextKey: ''
   };
+  var text = window.RAIEntryI18n.text;
 
   function byId(id) {
     return document.getElementById(id);
@@ -26,25 +30,46 @@
     }
   }
 
-  function showStatus(message, isInfo) {
+  function showStatus(messageKey, isInfo) {
     var box = byId('statusMessage');
+    state.statusKey = messageKey;
     box.className = isInfo ? 'status-message info' : 'status-message';
-    box.textContent = message;
+    box.textContent = text(messageKey);
     setHidden(box, false);
   }
 
   function clearStatus() {
     var box = byId('statusMessage');
+    state.statusKey = '';
     box.textContent = '';
     setHidden(box, true);
   }
 
-  function setBusy(busy, button, busyText, normalText) {
+  function setBusy(busy, button, busyTextKey, normalTextKey) {
     state.busy = busy;
+    state.busyButton = busy ? button : null;
+    state.busyTextKey = busy ? busyTextKey : '';
     byId('registerButton').disabled = busy;
     byId('verifyButton').disabled = busy;
     byId('resendButton').disabled = busy;
-    if (button) button.textContent = busy ? busyText : normalText;
+    if (button) button.textContent = text(busy ? busyTextKey : normalTextKey);
+  }
+
+  function renderState() {
+    if (state.statusKey) byId('statusMessage').textContent = text(state.statusKey);
+    if (state.busyButton) state.busyButton.textContent = text(state.busyTextKey);
+  }
+
+  function responseErrorKey(xhr, data) {
+    var message = data && typeof data.error === 'string' ? data.error : '';
+    if (xhr.status === 429) return 'rateLimited';
+    if (/已被注册|already registered/i.test(message)) return 'emailRegistered';
+    if (/邮件发送失败|email.*(?:send|deliver).*fail/i.test(message)) return 'emailDeliveryFailed';
+    if (/验证码|verification code|email code/i.test(message)) return 'invalidCode';
+    if (/邮件格式|邮箱.*格式|invalid email/i.test(message)) return 'invalidEmail';
+    if (/密码|password/i.test(message)) return 'passwordPolicy';
+    if (/用户名|username/i.test(message)) return 'usernameInvalid';
+    return xhr.status >= 400 && xhr.status < 500 ? 'requestRejected' : 'serviceUnavailable';
   }
 
   function parseResponse(xhr) {
@@ -77,13 +102,13 @@
         finish(null, data);
         return;
       }
-      finish((data && data.error) || '注册服务暂时不可用，请稍后再试。', data);
+      finish(responseErrorKey(xhr, data), data);
     };
     xhr.onerror = function () {
-      finish('网络连接失败，请检查网络后重试。', null);
+      finish('networkError', null);
     };
     xhr.ontimeout = function () {
-      finish('请求超时，请稍后重试。', null);
+      finish('timeout', null);
     };
     xhr.send(JSON.stringify(payload));
   }
@@ -97,7 +122,7 @@
     byId('verificationEmail').textContent = email;
     setHidden(byId('registrationForm'), true);
     setHidden(byId('verificationForm'), false);
-    showStatus('请输入邮件中的验证码以完成注册。', true);
+    showStatus('enterCode', true);
     byId('verificationCode').focus();
   }
 
@@ -125,22 +150,22 @@
     passwordConfirm = byId('passwordConfirm').value || '';
 
     if (!isValidEmail(email) || email.length > 254) {
-      showStatus('请输入有效的邮箱地址。', false);
+      showStatus('invalidEmail', false);
       byId('email').focus();
       return false;
     }
     if (username.length > 80) {
-      showStatus('用户名不能超过 80 个字符。', false);
+      showStatus('usernameTooLong', false);
       byId('username').focus();
       return false;
     }
     if (password.length < 8 || password.length > 128) {
-      showStatus('密码需要 8-128 个字符。', false);
+      showStatus('passwordLength', false);
       byId('password').focus();
       return false;
     }
     if (password !== passwordConfirm) {
-      showStatus('两次输入的密码不一致。', false);
+      showStatus('passwordMismatch', false);
       byId('passwordConfirm').focus();
       return false;
     }
@@ -149,14 +174,14 @@
     state.email = email;
     state.password = password;
     button = byId('registerButton');
-    setBusy(true, button, '注册中...', '注册');
+    setBusy(true, button, 'registering', 'register');
     postJson('/api/auth/register', {
       email: email,
       username: username,
       password: password,
       registrationOnly: true
     }, function (error, data) {
-      setBusy(false, button, '注册中...', '注册');
+      setBusy(false, button, 'registering', 'register');
       if (error) {
         showStatus(error, false);
         return;
@@ -177,20 +202,20 @@
     if (state.busy) return false;
     code = trim(byId('verificationCode').value);
     if (!/^\d{6}$/.test(code)) {
-      showStatus('请输入 6 位数字邮箱验证码。', false);
+      showStatus('invalidCodeLength', false);
       byId('verificationCode').focus();
       return false;
     }
 
     clearStatus();
     button = byId('verifyButton');
-    setBusy(true, button, '验证中...', '验证并完成注册');
+    setBusy(true, button, 'verifying', 'verify');
     postJson('/api/auth/register/verify', {
       email: state.email,
       code: code,
       registrationOnly: true
     }, function (error) {
-      setBusy(false, button, '验证中...', '验证并完成注册');
+      setBusy(false, button, 'verifying', 'verify');
       if (error) {
         showStatus(error, false);
         return;
@@ -204,24 +229,24 @@
     var button;
     if (state.busy) return;
     if (!state.email || !state.password) {
-      showStatus('注册资料已失效，请刷新页面后重新注册。', false);
+      showStatus('registrationExpired', false);
       return;
     }
     clearStatus();
     button = byId('resendButton');
-    setBusy(true, button, '发送中...', '重新发送验证码');
+    setBusy(true, button, 'sending', 'resend');
     postJson('/api/auth/register/resend', {
       email: state.email,
       password: state.password,
       registrationOnly: true
     }, function (error, data) {
-      setBusy(false, button, '发送中...', '重新发送验证码');
+      setBusy(false, button, 'sending', 'resend');
       if (error) {
         showStatus(error, false);
         return;
       }
       if (data && data.requiresEmailVerification) {
-        showStatus('新的验证码已发送，请检查邮箱。', true);
+        showStatus('codeResent', true);
         return;
       }
       showCompletion();
@@ -240,6 +265,7 @@
 
   function initialize() {
     var enabled = true;
+    if (window.RAILocale) window.RAILocale.subscribe(renderState);
     try { enabled = localStorage.getItem('rai_remember_password') !== 'false'; }
     catch (error) { /* default on */ }
     syncRememberPreference(enabled, false);
