@@ -2572,7 +2572,7 @@ const appState = {
   themePreference: 'dark',
   fontPreference: 'system',
   systemThemeListenerBound: false,
-  language: 'zh-CN',
+  language: window.RAILocale?.getLanguage() || 'en',
   languageToggleChinese: 'zh-CN',
   lastModelUsed: '',  // 记录最后使用的实际模型
   lastRoutingReason: '',  // 记录路由选择原因
@@ -5527,6 +5527,19 @@ function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt, option
 // 多语言支持
 const i18n = {
   'zh-CN': {
+    'language-auto': '自动',
+    'language-auto-hint': '跟随浏览器语言',
+    'canvas-toggle-title': '打开或关闭 ChatFlow 画布',
+    'canvas-close-title': '关闭画布',
+    'settings-export-diagnostics': '导出脱敏诊断日志',
+    'auth-method-label': '登录方式',
+    'cx-guide-intro': '手机或其他设备通过同账号 RAI Web 请求在线 CX RAI 操作 Windows 电脑；无需浏览器扩展。',
+    'cx-guide-enable': '电脑安装最新 CX RAI，登录同账号，在设置中明确开启 Web 连接并选择工作目录。默认关闭。',
+    'cx-guide-connect': 'Web 打开一个保存的对话，在 + 菜单选择「连接 CX RAI」，选择在线电脑并核对安全码。',
+    'cx-guide-approve': '连接获准后，在 Web 查看完整操作参数，选择仅本次允许、持续授权或拒绝。旧版电脑可能仍需在本机确认。',
+    'cx-guide-scope': '持续授权仅适用于当前网页登录、电脑、对话和原工作目录。可主动撤销；断开连接不等于撤销授权。',
+    'cx-guide-offline': '电脑需要在线。关闭开关、注销、授权到期或撤销后不可继续执行；结果不明的任务不会自动重试。',
+    'cx-guide-warning': '全信任文件和 PowerShell 命令可影响整台电脑，并非工作目录沙箱。只批准理解且信任的操作；这不是实时远程桌面或屏幕镜像。',
     'login-title': '欢迎回来',
     'login-subtitle': '登录继续使用 RAI',
     'register-title': '创建账号',
@@ -5852,7 +5865,7 @@ const i18n = {
     'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
-    'settings-update-timeline-source': '来源：GitHub main / beta 提交记录、版本记录与 release manifest，已同步至 2026-09-24。',
+    'settings-update-timeline-source': '来源：RAI Web 公开 GitHub 提交与更新记录。历史条目反映当时能力，当前使用说明以本版本为准。',
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
     'settings-replay-onboarding': '重新观看欢迎引导',
@@ -5878,7 +5891,7 @@ const i18n = {
     'onb-welcome-desc': '多模型、深度研究、联网搜索，一切尽在指尖。',
     'onb-features-title': '强大的 AI 能力',
     'onb-feat-models-title': '多模型协作',
-    'onb-feat-models': '多模型自由切换（DeepSeek / Kimi / GPT / Claude / Gemma）',
+    'onb-feat-models': '在可用模型之间切换，按任务选择思考强度',
     'onb-feat-research-title': '研究模式',
     'onb-feat-research': '快速 / 深度研究模式，支持多模型互评综合回答',
     'onb-feat-search-title': '实时信息',
@@ -5891,7 +5904,7 @@ const i18n = {
     'onb-usage-input-title': '输入框',
     'onb-usage-input-desc': '在底部输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。',
     'onb-usage-model-title': '模型切换',
-    'onb-usage-model-desc': '点击顶部模型选择器，可切换快速、思考、研究或全部模型。',
+    'onb-usage-model-desc': '点击输入区的模型名称切换模型；在 + 菜单调整思考、搜索和研究模式。',
     'onb-usage-sidebar-title': '侧边栏',
     'onb-usage-sidebar-desc': '左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。',
     'onb-skip': '跳过',
@@ -6195,6 +6208,19 @@ const i18n = {
     'regenerate': '重新生成'
   },
   'en': {
+    'language-auto': 'Auto',
+    'language-auto-hint': 'Use your browser language',
+    'canvas-toggle-title': 'Open or close the ChatFlow canvas',
+    'canvas-close-title': 'Close canvas',
+    'settings-export-diagnostics': 'Export sanitized diagnostics',
+    'auth-method-label': 'Sign-in method',
+    'cx-guide-intro': 'Use RAI Web on your phone or another device to request work on an online CX RAI Windows PC signed into the same account. No browser extension is required.',
+    'cx-guide-enable': 'Install the latest CX RAI on the PC, sign into the same account, explicitly enable Web connections in Settings and choose a working folder. Connections are off by default.',
+    'cx-guide-connect': 'Open a saved conversation on the Web. Choose Connect CX RAI from the + menu, select the online PC and check the connection code.',
+    'cx-guide-approve': 'Once connected, inspect the full action arguments on the Web and approve once, grant ongoing consent or reject. Older clients may still require approval on the PC.',
+    'cx-guide-scope': 'Ongoing consent is scoped to this Web login, PC, conversation and original working folder, and can be revoked. Disconnecting does not revoke consent.',
+    'cx-guide-offline': 'Keep the PC online. Disabling connections, signing out, expiry or revocation stops further execution. Tasks with an unknown outcome are not retried automatically.',
+    'cx-guide-warning': 'Full-trust file and PowerShell commands can affect the whole computer; they are not sandboxed to the working folder. Approve only actions you understand and trust. This is not live remote desktop or screen mirroring.',
     'login-title': 'Welcome Back',
     'login-subtitle': 'Log in to continue using RAI',
     'register-title': 'Create Account',
@@ -6520,7 +6546,7 @@ const i18n = {
     'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
-    'settings-update-timeline-source': 'Sources: GitHub main / beta commits, version records, and release manifests, synced through 2026-09-24.',
+    'settings-update-timeline-source': 'Sources: public RAI Web GitHub commits and change notes. Historical entries describe the product at that time; current instructions apply to this version.',
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
     'settings-replay-onboarding': 'Replay welcome guide',
@@ -6546,7 +6572,7 @@ const i18n = {
     'onb-welcome-desc': 'Multi-model chat, deep research, and web search are ready when you are.',
     'onb-features-title': 'Powerful AI capability',
     'onb-feat-models-title': 'Model collaboration',
-    'onb-feat-models': 'Switch freely across DeepSeek, Kimi, GPT, Claude, and Gemma',
+    'onb-feat-models': 'Switch between available models and choose reasoning effort for the task',
     'onb-feat-research-title': 'Research mode',
     'onb-feat-research': 'Fast and Deep Research modes with multi-model review',
     'onb-feat-search-title': 'Live context',
@@ -6559,7 +6585,7 @@ const i18n = {
     'onb-usage-input-title': 'Composer',
     'onb-usage-input-desc': 'Type at the bottom, press Enter to send, Shift+Enter for a new line. Drag files in to upload.',
     'onb-usage-model-title': 'Model switcher',
-    'onb-usage-model-desc': 'Use the top model picker for Fast, Think, Research, or all models.',
+    'onb-usage-model-desc': 'Choose a model beside the composer. Use the + menu to adjust reasoning, web search and research.',
     'onb-usage-sidebar-title': 'Sidebar',
     'onb-usage-sidebar-desc': 'Manage chat history, search conversations, switch theme and language, and open settings.',
     'onb-skip': 'Skip',
@@ -6970,7 +6996,7 @@ Object.assign(i18n['zh-TW'], {
   'system-theme': '跟隨系統',
   'settings-update-timeline-title': 'RAI 的成長故事',
   'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
-  'settings-update-timeline-source': '來源：GitHub main / beta 提交記錄、版本記錄與 release manifest，已同步至 2026-09-24。',
+  'settings-update-timeline-source': '來源：RAI Web 公開 GitHub 提交與更新記錄。歷史條目反映當時能力，當前使用說明以本版本為準。',
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
@@ -8167,6 +8193,36 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-29', version: 'v0.13.32',
+    zh: { summary: '跟随浏览器的双语入口、完整分享与注册翻译，更新两端使用说明。', details: ['首次打开按浏览器偏好选择简体中文或英文；可手动切换，也可恢复自动。', '补齐分享、注册、下载与远程电脑授权说明的英文文案，并保留既有的手动语言选择。', '暂时关闭网页版自带 API Key 入口与旧会话自动进入，不删除已存的会话配置。', '补全近期版本记录；Windows 下载继续指向公开的最新正式版。'] },
+    en: { summary: 'Browser-aware bilingual entry points, translated sharing and registration, and current cross-device guidance.', details: ['New visits follow browser preferences for Simplified Chinese or English. Choose a language manually or return to automatic selection.', 'Complete English sharing, registration, download and remote-PC consent guidance while preserving existing language choices.', 'Temporarily close Web bring-your-own-key entry and automatic custom-API session restoration without deleting saved session configuration.', 'Bring recent release notes up to date and keep Windows downloads linked to the latest public release.'] }
+  },
+  {
+    date: '2026-10-27', version: 'v0.13.31',
+    zh: { summary: '与 CX RAI 对齐的按需技能服务。', details: ['原生客户端传入有界技能目录，详细指导只在需要时读取。', '用户显式选择的技能资料只用于当前请求，不保存为普通对话历史，也不扩大工具权限。', '2026-10-28 补齐原生设置工具注册与路由。'] },
+    en: { summary: 'On-demand skill services shared with CX RAI.', details: ['Native clients provide a bounded skill catalog; detailed guidance is read only when needed.', 'Explicitly selected skill references apply to the current request, stay out of ordinary chat history and do not grant additional tool permissions.', 'Native settings tool registration and routing were completed on October 28.'] }
+  },
+  {
+    date: '2026-10-13', version: 'v0.13.30',
+    zh: { summary: '历史工具卡片明确区分已知结果与当时记录。', details: ['旧会话缺少最终执行结果时明确说明无法确认，避免把历史进度误显示成正在执行。', '保留已有成功、失败与实时状态，诊断内容继续以纯文本呈现。'] },
+    en: { summary: 'Tool history distinguishes verified outcomes from recorded progress.', details: ['When an older conversation has no final tool result, say so instead of making past progress look live.', 'Preserve known success, failure and live states; render diagnostics as plain text.'] }
+  },
+  {
+    date: '2026-10-13', version: 'v0.13.29',
+    zh: { summary: '恢复远程电脑状态时重新核验连接。', details: ['断开或重新打开会话后，不把保存的电脑选择当成有效连接。', '迟到的授权事件不能跨账号覆盖当前状态。'] },
+    en: { summary: 'Revalidate remote-PC state when reconnecting.', details: ['A saved PC selection is not treated as an active connection after disconnecting or reopening a conversation.', 'Late consent events cannot overwrite state across account switches.'] }
+  },
+  {
+    date: '2026-10-12', version: 'v0.13.28',
+    zh: { summary: '保存工具完成结果，恢复会话时展示执行历史。', details: ['远程工具最终状态与回答一起保存。', '历史卡片与实时卡片使用一致的状态表达，不重放已执行操作。'] },
+    en: { summary: 'Persist completed tool results with conversation history.', details: ['Save remote-tool outcomes alongside the answer.', 'History and live cards use consistent status labels without replaying completed actions.'] }
+  },
+  {
+    date: '2026-10-12', version: 'v0.13.27',
+    zh: { summary: '扫码入口自动启动相机。', details: ['进入扫码流程时请求相机，保留明确的授权与失败提示。'] },
+    en: { summary: 'Start the camera when opening the QR scanner.', details: ['Request camera access on entry while keeping explicit permission and failure feedback.'] }
+  },
   {
     date: '2026-10-11', version: 'v0.13.26',
     zh: { summary: '修复首次打开误显登录页；远程电脑支持网页逐次或持续授权。', details: ['首次打开与后台续期共用扫码会话和去重逻辑，网络暂时失败不会误清登录状态，迟到响应不能覆盖新账号。','CX RAI 1.8.11+ 在电脑首次明确启用后，可在当前对话查看完整操作参数，选择仅本次、持续授权或拒绝，无需回电脑逐次确认。', '持续授权仅适用于此网页登录有效期间的同一电脑、对话及原工作目录，可撤销；断开连接不等于撤销授权。', '设备及授权元数据可跨服务重启恢复；不持久化本地路径、操作正文或设备密钥明文。', '撤销与启动竞争、旧版授权兼容、任务重放和结果不明防重试均有回归覆盖。候选客户端仍需安装后实机验收。'] },
@@ -11419,14 +11475,17 @@ const RAI_UPDATE_TIMELINE = [
 
 const SUPPORTED_LANGUAGES = ['zh-CN', 'zh-TW', 'en'];
 const LANGUAGE_OPTION_LABELS = {
+  'auto': { 'zh-CN': '跟随浏览器', 'zh-TW': '跟隨瀏覽器', 'en': 'Browser language' },
   'zh-CN': { 'zh-CN': '简体中文', 'zh-TW': '简体中文', 'en': 'Simplified Chinese' },
   'zh-TW': { 'zh-CN': '繁體中文', 'zh-TW': '繁體中文', 'en': 'Traditional Chinese' },
   'en': { 'zh-CN': 'English', 'zh-TW': 'English', 'en': 'English' }
 };
 
 function normalizeLanguage(lang) {
-  if (lang === 'zh-HK' || lang === 'zh-MO') return 'zh-TW';
-  return SUPPORTED_LANGUAGES.includes(lang) ? lang : 'zh-CN';
+  if (window.RAILocale) return window.RAILocale.normalize(lang) || 'en';
+  const tag = String(lang || '').replace(/_/g, '-').toLowerCase();
+  if (/^zh(?:-|$)/.test(tag)) return /(?:^|-)(?:tw|hk|mo|hant)(?:-|$)/.test(tag) ? 'zh-TW' : 'zh-CN';
+  return 'en';
 }
 
 function isChineseLanguage(lang = appState.language) {
@@ -13786,7 +13845,9 @@ function updateSettingsOptionButtons() {
   });
 
   document.querySelectorAll('[data-language-option]').forEach((button) => {
-    button.classList.toggle('active', button.getAttribute('data-language-option') === appState.language);
+    const active = button.getAttribute('data-language-option') === (window.RAILocale?.getPreference() || appState.language);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 
   document.querySelectorAll('[data-selection-explain-delete-mode]').forEach((button) => {
@@ -14639,19 +14700,27 @@ function toggleLanguage() {
 
 function updateAuthLanguageButtons() {
   document.querySelectorAll('.auth-lang-text-btn[data-lang]').forEach((button) => {
-    const active = normalizeLanguage(button.dataset.lang) === normalizeLanguage(appState.language);
+    const active = button.dataset.lang === (window.RAILocale?.getPreference() || appState.language);
     button.classList.toggle('active-lang', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 }
 
-function setLanguage(lang) {
+function setLanguage(lang, options = {}) {
+  if (options.persist !== false && window.RAILocale) {
+    lang = window.RAILocale.setPreference(lang);
+    if (appState.localeListenerBound) return;
+  }
   lang = normalizeLanguage(lang);
   appState.language = lang;
-  localStorage.setItem('rai_language', lang);
+  if (options.persist !== false && !window.RAILocale) {
+    try { localStorage.setItem('rai_language', lang); } catch (_) { /* Session-only preference. */ }
+  }
   if (isChineseLanguage(lang)) {
     appState.languageToggleChinese = lang;
-    localStorage.setItem('rai_language_chinese_variant', lang);
+    if (options.persist !== false) {
+      try { localStorage.setItem('rai_language_chinese_variant', lang); } catch (_) { /* Session-only preference. */ }
+    }
   }
 
   // 更新HTML lang属性
@@ -14750,10 +14819,14 @@ function initThemeAndLanguage() {
 
   applyFontPreference(localStorage.getItem('rai_font_preference') || readLocalSettingsObject().fontPreference || 'system');
 
-  // 加载保存的语言
-  const savedLanguage = normalizeLanguage(localStorage.getItem('rai_language') || 'zh-CN');
+  // Browser detection is not an explicit preference; keep automatic mode automatic.
+  const savedLanguage = window.RAILocale?.getLanguage() || normalizeLanguage(navigator.language);
   appState.languageToggleChinese = normalizeLanguage(localStorage.getItem('rai_language_chinese_variant') || (isChineseLanguage(savedLanguage) ? savedLanguage : 'zh-CN'));
-  setLanguage(savedLanguage);
+  if (window.RAILocale && !appState.localeListenerBound) {
+    window.RAILocale.subscribe((language) => setLanguage(language, { persist: false }));
+    appState.localeListenerBound = true;
+  }
+  setLanguage(savedLanguage, { persist: false });
 
   const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: light)');
   if (systemThemeQuery && !appState.systemThemeListenerBound) {
@@ -21656,6 +21729,10 @@ async function sendMessage(message = null, options = {}) {
     catch (error) { showToast(error.message || '远程电脑未连接；本次未发送。'); return; }
   }
   if (appState.customApiMode) {
+    if (!WEB_CUSTOM_API_ENABLED) {
+      notifyCustomApiUnavailable();
+      return;
+    }
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
       return;
@@ -24573,6 +24650,14 @@ function offerBrowserPasswordSave(email, password) {
 }
 
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
+// Keep existing session data intact while the Web entry is temporarily closed.
+const WEB_CUSTOM_API_ENABLED = false;
+
+function notifyCustomApiUnavailable() {
+  showToast(isChineseLanguage(appState.language)
+    ? '网页版暂时关闭自带 API Key，请使用 RAI 账号登录。'
+    : 'Bring your own API key is temporarily unavailable on the Web. Sign in with your RAI account.');
+}
 
 function normalizeCustomApiUrl(value) {
   let raw = String(value || '').trim();
@@ -24598,6 +24683,7 @@ function normalizeCustomApiUrl(value) {
 }
 
 function readCustomApiSession() {
+  if (!WEB_CUSTOM_API_ENABLED) return null;
   try {
     const parsed = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY) || 'null');
     if (!parsed || typeof parsed !== 'object') return null;
@@ -24646,6 +24732,10 @@ function setCustomApiFormVisibility(visible) {
 }
 
 function toggleCustomApiMode(force) {
+  if (!WEB_CUSTOM_API_ENABLED && force !== false) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   const visible = typeof force === 'boolean' ? force : !appState.customApiFormVisible;
   appState.customApiFormVisible = visible;
   const title = document.getElementById('authTitle');
@@ -24668,6 +24758,10 @@ function toggleCustomApiMode(force) {
 }
 
 function enterCustomApiApp(config) {
+  if (!WEB_CUSTOM_API_ENABLED) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   invalidateUserAuthAsyncWork();
   clearUserAccessToken();
   appState.customApiMode = true;
@@ -24702,6 +24796,10 @@ function leaveCustomApiMode() {
 }
 
 async function startCustomApiMode() {
+  if (!WEB_CUSTOM_API_ENABLED) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   const errorEl = document.getElementById('customApiError');
   const url = normalizeCustomApiUrl(document.getElementById('customApiUrl')?.value);
   const key = String(document.getElementById('customApiKey')?.value || '').trim();
@@ -24732,6 +24830,10 @@ function parseCustomApiPayload(payload) {
 }
 
 async function sendCustomApiMessage(messages) {
+  if (!WEB_CUSTOM_API_ENABLED) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   const config = appState.customApiConfig || readCustomApiSession();
   if (!config) return;
   appState.isStreaming = true;
