@@ -8390,6 +8390,7 @@ video.private-file-preview-media {
 /* Toast 通知样式 */
 .toast-notification {
   position: fixed;
+  pointer-events: none;
   bottom: 100px;
   left: 50%;
   transform: translateX(-50%) translateY(20px) scale(0.98);
@@ -9341,9 +9342,10 @@ body.custom-api-mode .main-content {
   display: flex;
 }
 
-/* 登录界面底部：注册提示与精简语言选项共用一行 */
+/* Keep the four locale choices intact; wrap the group rather than splitting the sign-up prompt. */
 .auth-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -9354,6 +9356,8 @@ body.custom-api-mode .main-content {
 .auth-footer .auth-switch {
   margin: 0;
   min-width: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
   text-align: left;
   font-size: 12px;
   line-height: 1.5;
@@ -9365,6 +9369,7 @@ body.custom-api-mode .main-content {
   flex: 0 0 auto;
   gap: 1px;
   margin: 0;
+  margin-left: auto;
   padding: 2px;
   border: 0;
   border-radius: 8px;

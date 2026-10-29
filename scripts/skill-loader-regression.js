@@ -41,6 +41,10 @@ for (const [name, maker] of [['documents','make_docx'], ['spreadsheets','make_xl
 }
 assert.throws(() => registry.loadTrustedSkill('office'), /unknown skill name/);
 assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Adaptive handedness/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Explicit skills: type @/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /API-key button is temporarily removed/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Diagnostics: Settings > Advanced/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /working folder is not a command sandbox/);
 assert.match(registry.loadTrustedSkill('cx-rai-ui').content, /Windows Phone/);
 const productSkill = registry.loadTrustedSkill('rai-product').content;
 assert.match(productSkill, /CX RAI was originally developed by Lao Cha/);

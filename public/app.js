@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.31';
-const RAI_BUILD_ID = '20261027-client-skills';
+const RAI_APP_VERSION = '0.13.32';
+const RAI_BUILD_ID = '20261030-web-alignment';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2572,7 +2572,7 @@ const appState = {
   themePreference: 'dark',
   fontPreference: 'system',
   systemThemeListenerBound: false,
-  language: 'zh-CN',
+  language: window.RAILocale?.getLanguage() || 'en',
   languageToggleChinese: 'zh-CN',
   lastModelUsed: '',  // 记录最后使用的实际模型
   lastRoutingReason: '',  // 记录路由选择原因
@@ -5527,6 +5527,27 @@ function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt, option
 // 多语言支持
 const i18n = {
   'zh-CN': {
+    'language-auto': '自动',
+    'language-auto-hint': '跟随浏览器语言',
+    'canvas-toggle-title': '打开或关闭 ChatFlow 画布',
+    'canvas-close-title': '关闭画布',
+    'settings-export-diagnostics': '导出脱敏诊断日志',
+    'settings-diagnostics-description': '仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。',
+    'auth-method-label': '登录方式',
+    'cache-title': '本地对话缓存',
+    'cache-description': '仅保留已打开对话的原始消息和 RAI 私有图片。',
+    'cache-enable': '启用',
+    'cache-clear': '清除',
+    'sidebar-files': '文件',
+    'sidebar-folders': '文件夹',
+    'sidebar-new-folder': '新建文件夹',
+    'cx-guide-intro': '手机或其他设备通过同账号 RAI Web 请求在线 CX RAI 操作 Windows 电脑；无需浏览器扩展。',
+    'cx-guide-enable': '电脑安装最新 CX RAI，登录同账号，在设置中明确开启 Web 连接并选择工作目录。默认关闭。',
+    'cx-guide-connect': 'Web 打开一个保存的对话，在 + 菜单选择「连接 CX RAI」，选择在线电脑并核对安全码。',
+    'cx-guide-approve': '连接获准后，在 Web 查看完整操作参数，选择仅本次允许、持续授权或拒绝。旧版电脑可能仍需在本机确认。',
+    'cx-guide-scope': '持续授权仅适用于当前网页登录、电脑、对话和原工作目录。可主动撤销；断开连接不等于撤销授权。',
+    'cx-guide-offline': '电脑需要在线。关闭开关、注销、授权到期或撤销后不可继续执行；结果不明的任务不会自动重试。',
+    'cx-guide-warning': '全信任文件和 PowerShell 命令可影响整台电脑，并非工作目录沙箱。只批准理解且信任的操作；这不是实时远程桌面或屏幕镜像。',
     'login-title': '欢迎回来',
     'login-subtitle': '登录继续使用 RAI',
     'register-title': '创建账号',
@@ -5852,7 +5873,8 @@ const i18n = {
     'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
-    'settings-update-timeline-source': '来源：GitHub main / beta 提交记录、版本记录与 release manifest，已同步至 2026-09-24。',
+    'settings-update-timeline-source': '来源：RAI Web 公开 GitHub 提交与更新记录，核对至 2026-10-30。历史条目反映当时能力，当前使用说明以本版本为准。',
+    'settings-github-changelog': '查看 GitHub 更新记录',
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
     'settings-replay-onboarding': '重新观看欢迎引导',
@@ -5878,7 +5900,7 @@ const i18n = {
     'onb-welcome-desc': '多模型、深度研究、联网搜索，一切尽在指尖。',
     'onb-features-title': '强大的 AI 能力',
     'onb-feat-models-title': '多模型协作',
-    'onb-feat-models': '多模型自由切换（DeepSeek / Kimi / GPT / Claude / Gemma）',
+    'onb-feat-models': '在可用模型之间切换，按任务选择思考强度',
     'onb-feat-research-title': '研究模式',
     'onb-feat-research': '快速 / 深度研究模式，支持多模型互评综合回答',
     'onb-feat-search-title': '实时信息',
@@ -5891,7 +5913,7 @@ const i18n = {
     'onb-usage-input-title': '输入框',
     'onb-usage-input-desc': '在底部输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。',
     'onb-usage-model-title': '模型切换',
-    'onb-usage-model-desc': '点击顶部模型选择器，可切换快速、思考、研究或全部模型。',
+    'onb-usage-model-desc': '点击输入区的模型名称切换模型；在 + 菜单调整思考、搜索和研究模式。',
     'onb-usage-sidebar-title': '侧边栏',
     'onb-usage-sidebar-desc': '左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。',
     'onb-skip': '跳过',
@@ -5953,6 +5975,8 @@ const i18n = {
     'canvas-added': '已添加到画布',
     'node-edit-save': '保存',
     'chatflow-title-default': '新 ChatFlow',
+    'chatflow-resize-label': '调整聊天和画布大小',
+    'chatflow-workspace-label': '对话画布',
     'chatflow-session': 'ChatFlow 会话',
     'chatflow-patch-ready': 'AI 画布建议已准备',
     'chatflow-patch-apply': '应用',
@@ -6195,6 +6219,27 @@ const i18n = {
     'regenerate': '重新生成'
   },
   'en': {
+    'language-auto': 'Auto',
+    'language-auto-hint': 'Use your browser language',
+    'canvas-toggle-title': 'Open or close the ChatFlow canvas',
+    'canvas-close-title': 'Close canvas',
+    'settings-export-diagnostics': 'Export sanitized diagnostics',
+    'settings-diagnostics-description': 'The latest 500 events from this tab: request IDs, timings and stream statistics. No keys, message content, file names or account information. Saved locally and never uploaded automatically.',
+    'auth-method-label': 'Sign-in method',
+    'cache-title': 'Local conversation cache',
+    'cache-description': 'Store only original messages and private RAI images from conversations you have opened.',
+    'cache-enable': 'Enable',
+    'cache-clear': 'Clear',
+    'sidebar-files': 'Files',
+    'sidebar-folders': 'Folders',
+    'sidebar-new-folder': 'New folder',
+    'cx-guide-intro': 'Use RAI Web on your phone or another device to request work on an online CX RAI Windows PC signed into the same account. No browser extension is required.',
+    'cx-guide-enable': 'Install the latest CX RAI on the PC, sign into the same account, explicitly enable Web connections in Settings and choose a working folder. Connections are off by default.',
+    'cx-guide-connect': 'Open a saved conversation on the Web. Choose Connect CX RAI from the + menu, select the online PC and check the connection code.',
+    'cx-guide-approve': 'Once connected, inspect the full action arguments on the Web and approve once, grant ongoing consent or reject. Older clients may still require approval on the PC.',
+    'cx-guide-scope': 'Ongoing consent is scoped to this Web login, PC, conversation and original working folder, and can be revoked. Disconnecting does not revoke consent.',
+    'cx-guide-offline': 'Keep the PC online. Disabling connections, signing out, expiry or revocation stops further execution. Tasks with an unknown outcome are not retried automatically.',
+    'cx-guide-warning': 'Full-trust file and PowerShell commands can affect the whole computer; they are not sandboxed to the working folder. Approve only actions you understand and trust. This is not live remote desktop or screen mirroring.',
     'login-title': 'Welcome Back',
     'login-subtitle': 'Log in to continue using RAI',
     'register-title': 'Create Account',
@@ -6401,7 +6446,7 @@ const i18n = {
     'settings-nav-capabilities': 'Capabilities',
     'settings-nav-personalization': 'Personalization',
     'settings-nav-memory': 'Memory',
-    'settings-nav-language': 'Language / 中文',
+    'settings-nav-language': 'Language',
     'settings-nav-subscription': 'Membership',
     'settings-nav-account': 'Account',
     'settings-nav-security': 'Security',
@@ -6520,7 +6565,8 @@ const i18n = {
     'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
-    'settings-update-timeline-source': 'Sources: GitHub main / beta commits, version records, and release manifests, synced through 2026-09-24.',
+    'settings-update-timeline-source': 'Sources: public RAI Web GitHub commits and change notes, checked through October 30, 2026. Historical entries describe the product at that time; current instructions apply to this version.',
+    'settings-github-changelog': 'Read the GitHub changelog',
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
     'settings-replay-onboarding': 'Replay welcome guide',
@@ -6546,7 +6592,7 @@ const i18n = {
     'onb-welcome-desc': 'Multi-model chat, deep research, and web search are ready when you are.',
     'onb-features-title': 'Powerful AI capability',
     'onb-feat-models-title': 'Model collaboration',
-    'onb-feat-models': 'Switch freely across DeepSeek, Kimi, GPT, Claude, and Gemma',
+    'onb-feat-models': 'Switch between available models and choose reasoning effort for the task',
     'onb-feat-research-title': 'Research mode',
     'onb-feat-research': 'Fast and Deep Research modes with multi-model review',
     'onb-feat-search-title': 'Live context',
@@ -6559,7 +6605,7 @@ const i18n = {
     'onb-usage-input-title': 'Composer',
     'onb-usage-input-desc': 'Type at the bottom, press Enter to send, Shift+Enter for a new line. Drag files in to upload.',
     'onb-usage-model-title': 'Model switcher',
-    'onb-usage-model-desc': 'Use the top model picker for Fast, Think, Research, or all models.',
+    'onb-usage-model-desc': 'Choose a model beside the composer. Use the + menu to adjust reasoning, web search and research.',
     'onb-usage-sidebar-title': 'Sidebar',
     'onb-usage-sidebar-desc': 'Manage chat history, search conversations, switch theme and language, and open settings.',
     'onb-skip': 'Skip',
@@ -6621,6 +6667,8 @@ const i18n = {
     'canvas-added': 'Added to canvas',
     'node-edit-save': 'Save',
     'chatflow-title-default': 'New ChatFlow',
+    'chatflow-resize-label': 'Resize chat and canvas',
+    'chatflow-workspace-label': 'Chat canvas',
     'chatflow-session': 'ChatFlow session',
     'chatflow-patch-ready': 'AI canvas suggestion is ready',
     'chatflow-patch-apply': 'Apply',
@@ -6970,7 +7018,7 @@ Object.assign(i18n['zh-TW'], {
   'system-theme': '跟隨系統',
   'settings-update-timeline-title': 'RAI 的成長故事',
   'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
-  'settings-update-timeline-source': '來源：GitHub main / beta 提交記錄、版本記錄與 release manifest，已同步至 2026-09-24。',
+  'settings-update-timeline-source': '來源：RAI Web 公開 GitHub 提交與更新記錄，核對至 2026-10-30。歷史條目反映當時能力，當前使用說明以本版本為準。',
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
@@ -7742,6 +7790,7 @@ const fileLibraryState = {
   nextOffset: null,
   query: '',
   loading: false,
+  status: { kind: '' },
   controller: null,
   searchTimer: null,
   contextKey: ''
@@ -7778,16 +7827,23 @@ function localizeFileLibraryPage() {
 }
 
 function renderFileLibraryStorage(storage = fileLibraryState.storage) {
-  if (!storage) return;
-  const used = Math.max(0, Number(storage.usedBytes || 0));
-  const limit = Math.max(1, Number(storage.limitBytes || 1));
-  const percent = Math.min(100, Math.max(0, (used / limit) * 100));
   const label = document.getElementById('fileLibraryStorageLabel');
   const value = document.getElementById('fileLibraryStorageValue');
   const bar = document.getElementById('fileLibraryStorageBar');
   const track = bar?.parentElement;
   const summary = document.getElementById('fileLibrarySummary');
   const isZh = isChineseLanguage(appState.language);
+  if (!storage) {
+    if (label) label.textContent = isZh ? '存储空间' : 'Storage';
+    if (value) value.textContent = '—';
+    if (bar) bar.style.width = '0%';
+    if (track) track.removeAttribute('aria-valuenow');
+    if (summary) summary.textContent = isZh ? '文件' : 'Files';
+    return;
+  }
+  const used = Math.max(0, Number(storage.usedBytes || 0));
+  const limit = Math.max(1, Number(storage.limitBytes || 1));
+  const percent = Math.min(100, Math.max(0, (used / limit) * 100));
   if (label) label.textContent = `${fileLibraryTierLabel(storage.tier)} ${isZh ? '存储空间' : 'storage'}`;
   if (value) value.textContent = `${formatFileSize(used)} / ${formatFileSize(limit)}`;
   if (bar) bar.style.width = `${percent.toFixed(2)}%`;
@@ -7798,12 +7854,22 @@ function renderFileLibraryStorage(storage = fileLibraryState.storage) {
   }
 }
 
-function setFileLibraryStatus(message = '', { error = false } = {}) {
+function setFileLibraryStatus(kind = '', details = {}) {
+  fileLibraryState.status = { ...details, kind };
+  renderFileLibraryStatus();
+}
+
+function renderFileLibraryStatus() {
   const status = document.getElementById('fileLibraryStatus');
   if (!status) return;
+  const current = fileLibraryState.status;
+  const isZh = isChineseLanguage(appState.language);
+  const message = current.kind === 'loading' ? (isZh ? '正在加载...' : 'Loading...')
+    : current.kind === 'uploading' ? `${isZh ? '正在上传' : 'Uploading'} ${current.index}/${current.total}`
+    : current.kind === 'error' ? localizeServerError(current.error, isZh ? '文件库加载失败' : 'Could not load files') : '';
   status.hidden = !message;
   status.textContent = message;
-  status.classList.toggle('error', error);
+  status.classList.toggle('error', current.kind === 'error');
 }
 
 function formatFileLibraryDate(value) {
@@ -7820,6 +7886,7 @@ function useFileLibraryItemInChat(file = {}) {
   if (!file.filePath) return false;
   if (currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS) { showAttachmentLimit(); return false; }
   if (currentAttachments.some(attachment => String(attachment.fileId || '') === String(file.id || ''))) return true;
+  window.RaiWebSkills?.noteDraftChange?.();
   currentAttachments.push({
     type: file.type || 'document',
     fileName: file.fileName || file.originalName || '',
@@ -7858,7 +7925,7 @@ async function deleteFileLibraryItem(file = {}) {
     showToast(isChineseLanguage(appState.language) ? '文件已删除' : 'File deleted');
     return true;
   } catch (error) {
-    showToast(error?.message || (isChineseLanguage(appState.language) ? '删除文件失败' : 'Could not delete file'));
+    showToast(localizeServerError(error?.message, isChineseLanguage(appState.language) ? '删除文件失败' : 'Could not delete file'));
     return false;
   }
 }
@@ -7903,7 +7970,7 @@ function renderFileLibrary() {
   const loadMore = document.getElementById('fileLibraryLoadMore');
   if (!grid) return;
   grid.innerHTML = '';
-  if (fileLibraryState.files.length === 0 && !fileLibraryState.loading) {
+  if (fileLibraryState.files.length === 0 && !fileLibraryState.loading && fileLibraryState.storage) {
     const empty = document.createElement('div');
     empty.className = 'file-library-empty';
     empty.innerHTML = `${getSvgIcon('description', 'material-symbols-outlined', 32)}<strong>${isChineseLanguage(appState.language) ? '还没有文件' : 'No files yet'}</strong>`;
@@ -7933,7 +8000,7 @@ async function loadFileLibrary({ append = false } = {}) {
   fileLibraryState.controller = controller;
   fileLibraryState.loading = true;
   const offset = append ? Number(fileLibraryState.nextOffset || 0) : 0;
-  setFileLibraryStatus(isChineseLanguage(appState.language) ? '正在加载...' : 'Loading...');
+  setFileLibraryStatus('loading');
   renderFileLibrary();
   try {
     const params = new URLSearchParams({ limit: '100', offset: String(offset) });
@@ -7959,7 +8026,7 @@ async function loadFileLibrary({ append = false } = {}) {
     return true;
   } catch (error) {
     if (error?.name !== 'AbortError') {
-      setFileLibraryStatus(error?.message || (isChineseLanguage(appState.language) ? '文件库加载失败' : 'Could not load files'), { error: true });
+      setFileLibraryStatus('error', { error: error?.message });
     }
     return false;
   } finally {
@@ -8012,7 +8079,7 @@ function uploadFilesToLibrary() {
     const files = Array.from(input.files || []).slice(0, 20);
     let uploaded = 0;
     for (let index = 0; index < files.length; index += 1) {
-      setFileLibraryStatus(`${isChineseLanguage(appState.language) ? '正在上传' : 'Uploading'} ${index + 1}/${files.length}`);
+      setFileLibraryStatus('uploading', { index: index + 1, total: files.length });
       if (await processUploadedFile(files[index], { attachToComposer: false })) uploaded += 1;
     }
     if (uploaded > 0) await loadFileLibrary();
@@ -8168,6 +8235,36 @@ function createAttachmentListItem(att = {}) {
 
 const RAI_UPDATE_TIMELINE = [
   {
+    date: '2026-10-30', version: 'v0.13.32',
+    zh: { summary: '跟随浏览器的双语体验，普通 Web 对话支持显式选择技能。', details: ['首次打开按浏览器偏好选择简体中文或英文；可手动切换，也可恢复自动。', '输入 @ 或打开加号菜单中的「技能」，最多为当前请求选择三项内置指导；不写入普通历史，也不扩大工具权限。不支持的模式会明确提示。', '补齐分享、扫码确认、注册、文件库与远程电脑说明的英文文案，并保留既有的手动语言选择。', '暂时关闭网页版自带 API Key 入口与旧会话自动进入，不删除已存的会话配置。', '补全近期版本记录；Windows 下载继续指向公开的最新正式版。'] },
+    en: { summary: 'Browser-aware bilingual experiences and explicit skill selection in normal Web chat.', details: ['New visits follow browser preferences for Simplified Chinese or English. Choose a language manually or return to automatic selection.', 'Type @ or open Skills in the plus menu to select up to three built-in guides for this request. Guidance stays out of ordinary history and grants no tool permissions; unsupported modes give explicit feedback.', 'Complete English sharing, QR confirmation, registration, file-library and remote-PC guidance while preserving existing language choices.', 'Temporarily close Web bring-your-own-key entry and automatic custom-API session restoration without deleting saved session configuration.', 'Bring recent release notes up to date and keep Windows downloads linked to the latest public release.'] }
+  },
+  {
+    date: '2026-10-27', version: 'v0.13.31',
+    zh: { summary: '与 CX RAI 对齐的按需技能服务。', details: ['原生客户端传入有界技能目录，详细指导只在需要时读取。', '用户显式选择的技能资料只用于当前请求，不保存为普通对话历史，也不扩大工具权限。', '2026-10-28 补齐原生设置工具注册与路由。'] },
+    en: { summary: 'On-demand skill services shared with CX RAI.', details: ['Native clients provide a bounded skill catalog; detailed guidance is read only when needed.', 'Explicitly selected skill references apply to the current request, stay out of ordinary chat history and do not grant additional tool permissions.', 'Native settings tool registration and routing were completed on October 28.'] }
+  },
+  {
+    date: '2026-10-13', version: 'v0.13.30',
+    zh: { summary: '历史工具卡片明确区分已知结果与当时记录。', details: ['旧会话缺少最终执行结果时明确说明无法确认，避免把历史进度误显示成正在执行。', '保留已有成功、失败与实时状态，诊断内容继续以纯文本呈现。'] },
+    en: { summary: 'Tool history distinguishes verified outcomes from recorded progress.', details: ['When an older conversation has no final tool result, say so instead of making past progress look live.', 'Preserve known success, failure and live states; render diagnostics as plain text.'] }
+  },
+  {
+    date: '2026-10-13', version: 'v0.13.29',
+    zh: { summary: '恢复远程电脑状态时重新核验连接。', details: ['断开或重新打开会话后，不把保存的电脑选择当成有效连接。', '迟到的授权事件不能跨账号覆盖当前状态。'] },
+    en: { summary: 'Revalidate remote-PC state when reconnecting.', details: ['A saved PC selection is not treated as an active connection after disconnecting or reopening a conversation.', 'Late consent events cannot overwrite state across account switches.'] }
+  },
+  {
+    date: '2026-10-12', version: 'v0.13.28',
+    zh: { summary: '保存工具完成结果，恢复会话时展示执行历史。', details: ['远程工具最终状态与回答一起保存。', '历史卡片与实时卡片使用一致的状态表达，不重放已执行操作。'] },
+    en: { summary: 'Persist completed tool results with conversation history.', details: ['Save remote-tool outcomes alongside the answer.', 'History and live cards use consistent status labels without replaying completed actions.'] }
+  },
+  {
+    date: '2026-10-12', version: 'v0.13.27',
+    zh: { summary: '扫码入口自动启动相机。', details: ['进入扫码流程时请求相机，保留明确的授权与失败提示。'] },
+    en: { summary: 'Start the camera when opening the QR scanner.', details: ['Request camera access on entry while keeping explicit permission and failure feedback.'] }
+  },
+  {
     date: '2026-10-11', version: 'v0.13.26',
     zh: { summary: '修复首次打开误显登录页；远程电脑支持网页逐次或持续授权。', details: ['首次打开与后台续期共用扫码会话和去重逻辑，网络暂时失败不会误清登录状态，迟到响应不能覆盖新账号。','CX RAI 1.8.11+ 在电脑首次明确启用后，可在当前对话查看完整操作参数，选择仅本次、持续授权或拒绝，无需回电脑逐次确认。', '持续授权仅适用于此网页登录有效期间的同一电脑、对话及原工作目录，可撤销；断开连接不等于撤销授权。', '设备及授权元数据可跨服务重启恢复；不持久化本地路径、操作正文或设备密钥明文。', '撤销与启动竞争、旧版授权兼容、任务重放和结果不明防重试均有回归覆盖。候选客户端仍需安装后实机验收。'] },
     en: { summary: 'Reliable cold-start sign-in and Web-side remote-PC authorization.', details: ['Startup and background renewal share the accepted QR session and single-flight refresh. Temporary failures preserve recoverable sign-in; stale responses cannot replace a newer account.','After explicit opt-in on CX RAI 1.8.11+, inspect full action arguments and approve once, allow continuously, or reject in the current chat without returning to the PC.', 'Continuous consent is limited to this Web login, PC, conversation and original directory. Disconnecting is not revocation.', 'Device and scoped consent metadata survive server restarts; paths, tool payloads and plaintext device keys are never persisted.', 'Regression coverage includes revocation races, legacy consent, replay prevention and unknown-result retry blocking. Installed-device acceptance of the candidate client remains open.'] }
@@ -8215,7 +8312,7 @@ const RAI_UPDATE_TIMELINE = [
   },
   {
     date: '2026-09-24',
-    version: 'v0.13.19 · 正式版',
+    version: 'v0.13.19 · 正式版', versionEn: 'v0.13.19 · Stable',
     zh: {
       summary: '正式版汇总：客户端下载、CX RAI、适人握持、流式稳定性与移动端布局全面升级。',
       details: [
@@ -11297,7 +11394,7 @@ const RAI_UPDATE_TIMELINE = [
   },
   {
     date: '2025-12-10',
-    version: 'v0.6 多模态',
+    version: 'v0.6 多模态', versionEn: 'v0.6 Multimodal',
     zh: {
       summary: '多模态能力归档。',
       details: [
@@ -11419,14 +11516,17 @@ const RAI_UPDATE_TIMELINE = [
 
 const SUPPORTED_LANGUAGES = ['zh-CN', 'zh-TW', 'en'];
 const LANGUAGE_OPTION_LABELS = {
+  'auto': { 'zh-CN': '跟随浏览器', 'zh-TW': '跟隨瀏覽器', 'en': 'Browser language' },
   'zh-CN': { 'zh-CN': '简体中文', 'zh-TW': '简体中文', 'en': 'Simplified Chinese' },
   'zh-TW': { 'zh-CN': '繁體中文', 'zh-TW': '繁體中文', 'en': 'Traditional Chinese' },
   'en': { 'zh-CN': 'English', 'zh-TW': 'English', 'en': 'English' }
 };
 
 function normalizeLanguage(lang) {
-  if (lang === 'zh-HK' || lang === 'zh-MO') return 'zh-TW';
-  return SUPPORTED_LANGUAGES.includes(lang) ? lang : 'zh-CN';
+  if (window.RAILocale) return window.RAILocale.normalize(lang) || 'en';
+  const tag = String(lang || '').replace(/_/g, '-').toLowerCase();
+  if (/^zh(?:-|$)/.test(tag)) return /(?:^|-)(?:tw|hk|mo|hant)(?:-|$)/.test(tag) ? 'zh-TW' : 'zh-CN';
+  return 'en';
 }
 
 function isChineseLanguage(lang = appState.language) {
@@ -11787,7 +11887,7 @@ function renderSettingsTimeline() {
 
     const version = document.createElement('div');
     version.className = 'settings-timeline-version';
-    version.textContent = entry.version;
+    version.textContent = appState.language === 'en' ? (entry.versionEn || entry.version) : entry.version;
 
     const summary = document.createElement('p');
     summary.textContent = content.summary || '';
@@ -13786,7 +13886,9 @@ function updateSettingsOptionButtons() {
   });
 
   document.querySelectorAll('[data-language-option]').forEach((button) => {
-    button.classList.toggle('active', button.getAttribute('data-language-option') === appState.language);
+    const active = button.getAttribute('data-language-option') === (window.RAILocale?.getPreference() || appState.language);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 
   document.querySelectorAll('[data-selection-explain-delete-mode]').forEach((button) => {
@@ -14639,19 +14741,30 @@ function toggleLanguage() {
 
 function updateAuthLanguageButtons() {
   document.querySelectorAll('.auth-lang-text-btn[data-lang]').forEach((button) => {
-    const active = normalizeLanguage(button.dataset.lang) === normalizeLanguage(appState.language);
+    const active = button.dataset.lang === (window.RAILocale?.getPreference() || appState.language);
     button.classList.toggle('active-lang', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 }
 
-function setLanguage(lang) {
+function setLanguage(lang, options = {}) {
+  if (options.persist !== false && lang !== 'auto' && isChineseLanguage(normalizeLanguage(lang))) {
+    try { localStorage.setItem('rai_language_chinese_variant', normalizeLanguage(lang)); } catch (_) { /* Session-only preference. */ }
+  }
+  if (options.persist !== false && window.RAILocale) {
+    lang = window.RAILocale.setPreference(lang);
+    if (appState.localeListenerBound) return;
+  }
   lang = normalizeLanguage(lang);
   appState.language = lang;
-  localStorage.setItem('rai_language', lang);
+  if (options.persist !== false && !window.RAILocale) {
+    try { localStorage.setItem('rai_language', lang); } catch (_) { /* Session-only preference. */ }
+  }
   if (isChineseLanguage(lang)) {
     appState.languageToggleChinese = lang;
-    localStorage.setItem('rai_language_chinese_variant', lang);
+    if (options.persist !== false) {
+      try { localStorage.setItem('rai_language_chinese_variant', lang); } catch (_) { /* Session-only preference. */ }
+    }
   }
 
   // 更新HTML lang属性
@@ -14722,6 +14835,9 @@ function setLanguage(lang) {
   updateUserIdentityUI();
   updateSettingsNavigationUI();
   updatePwaInstallUI();
+  localizeFileLibraryPage();
+  renderFileLibrary();
+  renderFileLibraryStatus();
   if (windowsDownloadsRelease) renderWindowsDownloads();
   updateNotificationButton();
   renderNotificationsPanel();
@@ -14750,10 +14866,14 @@ function initThemeAndLanguage() {
 
   applyFontPreference(localStorage.getItem('rai_font_preference') || readLocalSettingsObject().fontPreference || 'system');
 
-  // 加载保存的语言
-  const savedLanguage = normalizeLanguage(localStorage.getItem('rai_language') || 'zh-CN');
+  // Browser detection is not an explicit preference; keep automatic mode automatic.
+  const savedLanguage = window.RAILocale?.getLanguage() || normalizeLanguage(navigator.language);
   appState.languageToggleChinese = normalizeLanguage(localStorage.getItem('rai_language_chinese_variant') || (isChineseLanguage(savedLanguage) ? savedLanguage : 'zh-CN'));
-  setLanguage(savedLanguage);
+  if (window.RAILocale && !appState.localeListenerBound) {
+    window.RAILocale.subscribe((language) => setLanguage(language, { persist: false }));
+    appState.localeListenerBound = true;
+  }
+  setLanguage(savedLanguage, { persist: false });
 
   const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: light)');
   if (systemThemeQuery && !appState.systemThemeListenerBound) {
@@ -17555,6 +17675,7 @@ function bindAssistantStreamRequestId(response, message, element, { sessionId, g
 
 // 修复：改进renderMessages，防止事件处理中的undefined错误
 function renderMessages(options = {}) {
+  window.RaiWebSkills?.syncContext?.();
   const container = document.getElementById('messagesList');
   const welcome = document.getElementById('welcomeScreen');
   const preserveScroll = options.preserveScroll === true;
@@ -19725,6 +19846,7 @@ function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
 
 // 引用消息
 function quoteMessage(message) {
+  window.RaiWebSkills?.noteDraftChange?.();
   appState.currentQuote = {
     role: message.role,
     content: message.content || ''
@@ -19742,6 +19864,7 @@ function quoteMessage(message) {
 
 // 移除引用
 function removeQuote() {
+  window.RaiWebSkills?.noteDraftChange?.();
   appState.currentQuote = null;
   updateQuoteUI();
 }
@@ -21146,7 +21269,7 @@ function showConversationFolderNameCard({ folder = null, onCreated = null } = {}
       const response = await sessionApi(`/conversation-folders/${encodeURIComponent(folder.id)}`, { method: 'DELETE' });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        return showToast(isZh ? `删除失败：${data.error || '无法删除该文件夹'}` : (data.error || 'Could not delete folder'));
+        return showToast(isZh ? `删除失败：${data.error || '无法删除该文件夹'}` : localizeServerError(data.error, 'Could not delete folder'));
       }
       localStorage.removeItem(`rai.sidebar.folder.${folder.id}.open`);
       close();
@@ -21165,7 +21288,7 @@ function showConversationFolderNameCard({ folder = null, onCreated = null } = {}
       const reason = String(data.error || '');
       const message = response.status === 409
         ? (isZh ? `保存失败：已经有名为“${name}”的文件夹` : `Could not save: a folder named “${name}” already exists`)
-        : (isZh ? `保存失败：${reason || '无法保存该文件夹'}` : (reason || 'Could not save folder'));
+        : (isZh ? `保存失败：${reason || '无法保存该文件夹'}` : localizeServerError(reason, 'Could not save folder'));
       showToast(message);
       return showFolderError(message);
     }
@@ -21645,6 +21768,9 @@ async function sendMessage(message = null, options = {}) {
 
   // 允许只发送附件（无文字内容）
   if (!messageText && currentAttachments.length === 0) return;
+  const selectedSkillNames = window.RaiWebSkills ? window.RaiWebSkills.prepareSend(resolveSendRequestConfig(options)) : [];
+  if (selectedSkillNames === null) return;
+  const selectedSkillDraft = window.RaiWebSkills?.captureDraft?.();
   if (window.RaiLocalAgent?.isSelected?.()) {
     if (resolveSendRequestConfig(options).researchMode !== 'off' || appState.agentMode === true || appState.customApiMode) {
       showToast(isChineseLanguage(appState.language)
@@ -21656,6 +21782,10 @@ async function sendMessage(message = null, options = {}) {
     catch (error) { showToast(error.message || '远程电脑未连接；本次未发送。'); return; }
   }
   if (appState.customApiMode) {
+    if (!WEB_CUSTOM_API_ENABLED) {
+      notifyCustomApiUnavailable();
+      return;
+    }
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
       return;
@@ -21687,6 +21817,7 @@ async function sendMessage(message = null, options = {}) {
         focus: false,
         preserveComposerMode: true,
         preserveInternetMode: true,
+        webSkillDraft: selectedSkillDraft,
         initialTitle: immediateConversationTitle,
         preserveCanvasDraft: chatFlowState.isOpen
       });
@@ -21700,11 +21831,12 @@ async function sendMessage(message = null, options = {}) {
     ? await ensureCanvasFlowForSend()
     : null;
 
+  if (selectedSkillDraft && !window.RaiWebSkills.consume(selectedSkillDraft)) return;
   input.value = '';
   autoResizeInput();
 
   //  处理引用内容
-  let finalMessageContent = messageText || message || '请分析这个文件';
+  let finalMessageContent = messageText || message || (isChineseLanguage(appState.language) ? '请分析这个文件' : 'Please analyze this file.');
   if (appState.currentQuote) {
     const quoteLabel = appState.currentQuote.role === 'user'
       ? (isChineseLanguage(appState.language) ? '引用用户' : 'Quoting User')
@@ -21766,6 +21898,7 @@ async function sendMessage(message = null, options = {}) {
   // 清除当前附件
   const hadAttachment = currentAttachments.length > 0;
   removeAttachment();
+  window.RaiWebSkills?.sealConsumed?.(selectedSkillDraft);
   updateAttachmentUI();  // 更新UI显示
 
   const sendBtn = document.getElementById('sendBtn');
@@ -22688,15 +22821,13 @@ async function sendMessage(message = null, options = {}) {
 
   try {
     await ensureCurrentSessionPromptIdentity();
-  } catch (error) {
-    showToast(error.message || (isChineseLanguage(appState.language) ? '无法锁定会话模型提示词' : 'Could not lock the session model prompt'));
-    return;
-  }
-  const selectedDomainMode = appState.pendingDomainMode || null;
-  appState.pendingDomainMode = null;
-
-  try {
+    if (selectedSkillDraft && !window.RaiWebSkills.isSendContextCurrent(selectedSkillDraft)) {
+      throw new Error(isChineseLanguage(appState.language) ? '对话已切换，本条消息未发送。' : 'The conversation changed. This message was not sent.');
+    }
+    const selectedDomainMode = appState.pendingDomainMode || null;
+    appState.pendingDomainMode = null;
     const chatRequestPayload = {
+      selected_skill_names: selectedSkillNames,
       sessionId: appState.currentSession?.id || null,
       flowId: canvasFlowId,
       messages,
@@ -22736,6 +22867,9 @@ async function sendMessage(message = null, options = {}) {
     // pending-authorization remote) surfaces through the normal chat error path instead
     // of silently falling back to a server-side file operation.
     await window.RaiLocalAgent?.prepareChat?.();
+    if (selectedSkillDraft && !window.RaiWebSkills.isSendContextCurrent(selectedSkillDraft)) {
+      throw new Error(isChineseLanguage(appState.language) ? '对话已切换，本条消息未发送。' : 'The conversation changed. This message was not sent.');
+    }
     const localAgentCapability = window.RaiLocalAgent?.getChatCapability?.();
     if (localAgentCapability) chatRequestPayload.local_agent = localAgentCapability;
     const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -23769,6 +23903,9 @@ async function sendMessage(message = null, options = {}) {
       if (streamFlowSegments.length > 0) renderInterleavedFlow();
       else renderStreamingContent();
     }
+    if (selectedSkillDraft && !cleanContent && !generatedArtifactAttachments.length && !receivedCancelled) {
+      throw new Error(isChineseLanguage(appState.language) ? '模型未返回内容，请重试。' : 'The model returned no answer. Please try again.');
+    }
 
     const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
       stepId: t.stepId,
@@ -23850,6 +23987,14 @@ async function sendMessage(message = null, options = {}) {
   } catch (error) {
     console.error(' 发送消息错误:', error);
     if (aiMsgDiv?.isConnected) aiMsgDiv.remove();
+    if (!String(fullContent || '').trim() && !generatedArtifactAttachments.length
+      && window.RaiWebSkills?.restore?.(selectedSkillDraft)) {
+      // Roll back only this unsaved optimistic echo, never a reconciled/server-persisted row.
+      const optimisticIndex = appState.messages.indexOf(userMsg);
+      if (optimisticIndex >= 0 && !userMsg.id) appState.messages.splice(optimisticIndex, 1);
+      chatFlowState.messages = appState.messages;
+      renderMessages({ preserveScroll: true });
+    }
     const message = error?.message || (isChineseLanguage(appState.language)
       ? '发送失败,请检查网络连接'
       : 'Send failed, check network');
@@ -24358,6 +24503,7 @@ async function verifyToken({ allowRefresh = true } = {}) {
 }
 
 function clearAuthenticatedAppState() {
+  window.RaiWebSkills?.reset?.({ clearCatalog: true });
   if (appState.customApiMode) exitCustomApiMode();
   abortConversationAsyncWork();
   window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);
@@ -24573,6 +24719,14 @@ function offerBrowserPasswordSave(email, password) {
 }
 
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
+// Keep existing session data intact while the Web entry is temporarily closed.
+const WEB_CUSTOM_API_ENABLED = false;
+
+function notifyCustomApiUnavailable() {
+  showToast(isChineseLanguage(appState.language)
+    ? '网页版暂时关闭自带 API Key，请使用 RAI 账号登录。'
+    : 'Bring your own API key is temporarily unavailable on the Web. Sign in with your RAI account.');
+}
 
 function normalizeCustomApiUrl(value) {
   let raw = String(value || '').trim();
@@ -24598,6 +24752,7 @@ function normalizeCustomApiUrl(value) {
 }
 
 function readCustomApiSession() {
+  if (!WEB_CUSTOM_API_ENABLED) return null;
   try {
     const parsed = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY) || 'null');
     if (!parsed || typeof parsed !== 'object') return null;
@@ -24646,6 +24801,10 @@ function setCustomApiFormVisibility(visible) {
 }
 
 function toggleCustomApiMode(force) {
+  if (!WEB_CUSTOM_API_ENABLED && force !== false) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   const visible = typeof force === 'boolean' ? force : !appState.customApiFormVisible;
   appState.customApiFormVisible = visible;
   const title = document.getElementById('authTitle');
@@ -24668,6 +24827,10 @@ function toggleCustomApiMode(force) {
 }
 
 function enterCustomApiApp(config) {
+  if (!WEB_CUSTOM_API_ENABLED) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   invalidateUserAuthAsyncWork();
   clearUserAccessToken();
   appState.customApiMode = true;
@@ -24702,6 +24865,10 @@ function leaveCustomApiMode() {
 }
 
 async function startCustomApiMode() {
+  if (!WEB_CUSTOM_API_ENABLED) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   const errorEl = document.getElementById('customApiError');
   const url = normalizeCustomApiUrl(document.getElementById('customApiUrl')?.value);
   const key = String(document.getElementById('customApiKey')?.value || '').trim();
@@ -24732,6 +24899,10 @@ function parseCustomApiPayload(payload) {
 }
 
 async function sendCustomApiMessage(messages) {
+  if (!WEB_CUSTOM_API_ENABLED) {
+    notifyCustomApiUnavailable();
+    return;
+  }
   const config = appState.customApiConfig || readCustomApiSession();
   if (!config) return;
   appState.isStreaming = true;
@@ -27928,7 +28099,7 @@ function createCanvasNode(message, x, y, sourceReference = null) {
   // 清理 Markdown 标记
   const messageContent = typeof message?.content === 'string' ? message.content : String(message?.content || '');
   const cleanContent = messageContent
-    .replace(/```[\s\S]*?```/g, '[代码块]')
+    .replace(/```[\s\S]*?```/g, isChineseLanguage(appState.language) ? '[代码块]' : '[Code block]')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
     .replace(/#{1,6}\s/g, '')
@@ -27962,7 +28133,7 @@ function createTextNode(text, x, y) {
 
   // 清理和截取内容
   const cleanContent = text
-    .replace(/```[\s\S]*?```/g, '[代码块]')
+    .replace(/```[\s\S]*?```/g, isChineseLanguage(appState.language) ? '[代码块]' : '[Code block]')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
     .replace(/#{1,6}\s/g, '')
@@ -28696,7 +28867,7 @@ async function aiDecomposeSelected() {
         height: 80
       };
       chatFlowState.nodes.push(childNode);
-      createEdge(nodeId, childNode.id, '拆解');
+      createEdge(nodeId, childNode.id, isChineseLanguage(appState.language) ? '拆解' : 'Breakdown');
     });
 
     renderCanvasNodes();
@@ -29112,7 +29283,7 @@ function addAnnotationToNode(targetNodeId) {
 
   chatFlowState.nodes.push(sticky);
   // 创建连线表示关联
-  createEdge(targetNodeId, stickyId, '注释');
+  createEdge(targetNodeId, stickyId, isChineseLanguage(appState.language) ? '注释' : 'Annotation');
   renderCanvasNodes();
   saveFlowState();
 }
@@ -30223,11 +30394,14 @@ async function createNewSession(options = {}) {
     const data = await response.json();
 
     if (data.success) {
+      if (options.webSkillDraft && !window.RaiWebSkills.isDraftCurrent(options.webSkillDraft)) return false;
       await loadSessions();
+      if (options.webSkillDraft && !window.RaiWebSkills.isDraftCurrent(options.webSkillDraft)) return false;
       await loadSession(data.sessionId, {
         preserveInternetMode,
         newlyCreated: true,
-        preserveCanvasDraft: options.preserveCanvasDraft === true
+        preserveCanvasDraft: options.preserveCanvasDraft === true,
+        webSkillDraft: options.webSkillDraft
       });
       appState.currentSessionMemoryMode = isSavedTemporary ? 'saved-temp' : 'normal';
       if (appState.currentSession) {
@@ -30353,6 +30527,7 @@ async function loadSession(sessionId, options = {}) {
       ? 'saved-temp'
       : 'normal';
     const newlyCreated = options.newlyCreated === true;
+    if (newlyCreated) window.RaiWebSkills?.bindCreatedSession?.(options.webSkillDraft);
     const cached = newlyCreated
       ? null
       : await window.RAIConversationCache?.getConversation?.(sessionId);
@@ -32235,6 +32410,7 @@ async function processUploadedFile(file, options = {}) {
     });
     if (attachToComposer) {
       if (composerGeneration === attachmentComposerGeneration) {
+        window.RaiWebSkills?.noteDraftChange?.();
         currentAttachments.push(uploadedAttachment);
         updateAttachmentUI();
         updateNewChatModeSettingsUI();
@@ -32337,6 +32513,7 @@ function updateAttachmentUI() {
 }
 
 function removeAttachment(index = null) {
+  window.RaiWebSkills?.noteDraftChange?.();
   const removed = Number.isInteger(index)
     ? currentAttachments.splice(index, 1)
     : currentAttachments.splice(0);

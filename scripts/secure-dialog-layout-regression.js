@@ -16,9 +16,11 @@ assert.ok(version); assert.ok(read('public/app.js').includes("const RAI_BUILD_ID
 console.log('secure-dialog layout contracts PASS: reset override, stable QR slot, viewport overflow, accessible title, versioned offline assets (browser geometry is separately measured)');
 
 const styles = read('public/styles.css');
-for (const id of ['qrLoginButton', 'authPasskeyBtn', 'customApiToggleBtn']) {
+for (const id of ['qrLoginButton', 'authPasskeyBtn']) {
   assert.match(html, new RegExp('class="auth-alt-button" id="' + id + '"'), 'all login choices share the plain button style');
 }
+assert.doesNotMatch(html, /id="(?:customApiToggleBtn|customApiEntry)"/, 'temporarily disabled custom-key mode must not expose a login choice');
+assert.match(read('public/app.js'), /const WEB_CUSTOM_API_ENABLED = false;/, 'old custom-key paths must remain guarded while the entry is removed');
 assert.match(styles, /\.auth-alternative-options\s*\{[^}]*gap:\s*10px;/);
 assert.match(styles, /\.auth-alternative-row\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[^}]*gap:\s*10px;/);
 assert.match(styles, /\.auth-alt-button\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*10px;[^}]*box-shadow:\s*none;/);

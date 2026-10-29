@@ -36,10 +36,14 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), path=require(
   });
   await p.goto(base);await p.locator('#authFooter').waitFor({state:'visible'});
   const geometry=[];
-  for(const width of [1280,390,320]) for(const lang of ['zh-CN','zh-TW','en']) {
-   await p.setViewportSize({width,height:800});await p.evaluate(l=>setLanguage(l),lang);
-   const measured=await p.evaluate(()=>{const a=document.querySelector('#authSwitch').getBoundingClientRect(),b=document.querySelector('#authLangRow').getBoundingClientRect();return {width:innerWidth,lang:appState.language,height:a.height,gap:b.x-a.right,dy:Math.abs(a.y+a.height/2-b.y-b.height/2),overflow:document.documentElement.scrollWidth>innerWidth};});
-   assert.equal(measured.overflow,false);assert.equal(measured.height,18);assert.equal(measured.dy,0);assert.ok(measured.gap>=8);geometry.push(measured);
+  for(const mode of ['login','register']) for(const width of [1280,390,320]) for(const lang of ['zh-CN','zh-TW','en']) {
+   await p.setViewportSize({width,height:800});await p.evaluate(({lang,mode})=>{if(appState.authMode!==mode)switchAuthMode();setLanguage(lang);},{lang,mode});
+   const measured=await p.evaluate(()=>{const a=document.querySelector('#authSwitch').getBoundingClientRect(),b=document.querySelector('#authLangRow').getBoundingClientRect(),f=document.querySelector('#authFooter').getBoundingClientRect();return {width:innerWidth,lang:appState.language,mode:appState.authMode,height:a.height,gap:b.x-a.right,dy:Math.abs(a.y+a.height/2-b.y-b.height/2),rowGap:b.top-a.bottom,inside:a.left>=f.left&&a.right<=f.right+1&&b.left>=f.left&&b.right<=f.right+1,overflow:document.documentElement.scrollWidth>innerWidth};});
+   assert.equal(measured.overflow,false);assert.equal(measured.height,18);assert.equal(measured.inside,true);
+   if(measured.rowGap>=0) assert.ok(measured.rowGap>=8,'wrapped locale group keeps a clear gap below the unsplit sign-up prompt');
+   else {assert.equal(measured.dy,0);assert.ok(measured.gap>=8);}
+   assert.equal(await p.locator('#authLangRow button').count(),4,'Auto and every explicit language remain reachable');geometry.push(measured);
+   if(width===320) await snapshot(p,`footer-${mode}-${lang}-320`);
   }
   await snapshot(p,'footer-320');
   auth=true; await p.addInitScript(()=>{Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{throw new Error('NotAllowedError');}}});});

@@ -134,6 +134,7 @@ const {
     validateSkillRegistry
 } = require('./lib/skill-registry');
 const clientSkillPolicy = require('./lib/client-skill-policy');
+const webSelectedSkills = require('./lib/web-selected-skills');
 const {
     createToolProtocolFilter
 } = require('./lib/tool-protocol-filter');
@@ -12564,6 +12565,12 @@ app.get('/api/windows-downloads', async (req, res) => {
     }
 });
 
+app.get('/api/skills', apiLimiter, authenticateToken, (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ success: true, maxSelected: webSelectedSkills.MAX_SELECTED_SKILLS,
+        skills: webSelectedSkills.getCatalog({ sandboxEnabled: DOCUMENT_SANDBOX_RUNTIME_ENABLED }) });
+});
+
 app.get('/api/quote/:symbol', financeQuoteLimiter, async (req, res) => {
     try {
         const quote = await fetchYahooFinanceQuote({
@@ -21018,10 +21025,26 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             lowLatencyMode = false,
             client_file_execution: rawClientFileExecution = false,
             client_skills: rawClientSkills = null,
+            selected_skill_names: rawSelectedSkillNames = null,
             local_agent: rawLocalAgent = null,
             workdir_configured = false,
             workingDirectory: rawWorkingDirectoryContext = ''
         } = req.body;
+        let selectedWebSkills;
+        try {
+            selectedWebSkills = webSelectedSkills.prepareSelection(rawSelectedSkillNames, {
+                language: uiLanguage,
+                modeAllowed: !req.softwareClient && !rawClientFileExecution && !rawClientSkills && !rawLocalAgent
+                    && normalizeResearchMode(researchMode) === 'off' && normalizeAgentMode(agentMode) === 'off'
+                    && normalizeIncomingModelId(requestedModel) !== GPT_GATEWAY_IMAGE_MODEL,
+                sandboxEnabled: DOCUMENT_SANDBOX_RUNTIME_ENABLED,
+                hasSavedConversation: Boolean(requestedSessionId || flowId),
+                internetEnabled: Boolean(requestedInternetMode),
+                hasAttachments: Array.isArray(rawMessages) && rawMessages.some(message => Array.isArray(message?.attachments) && message.attachments.length > 0)
+            });
+        } catch (error) {
+            return res.status(error.status || 400).json({ success: false, code: error.code, error: error.message });
+        }
         // 新 Agent 必须解析并验证签名会话；旧 UWP 仅在可撤销的软件客户端身份有效时兼容。
         // workdir_configured 仅作提示字段：false 时客户端在工具到达后引导用户选择目录。
         let localAgentSession;
@@ -21575,7 +21598,7 @@ if (clientFileExecution && systemPrompt) {
         const trimmedContent = userContent.trim().toLowerCase();
         const presetAnswer = presetAnswers[trimmedContent] || presetAnswers[userContent.trim()]; // 兼容原始大小写
 
-        if (presetAnswer) {
+        if (presetAnswer && !selectedWebSkills.skills.length) {
             console.log(`\n 命中预设答案: ${formatPrivateLogFingerprint(userContent.trim(), 'input')} -> 直接返回，无需调用AI`);
 
             // SSE头已在前面设置，直接发送预设答案
@@ -22627,6 +22650,7 @@ if (clientFileExecution && systemPrompt) {
 
         finalMessages = buildCacheStableMessages(finalMessages, systemPrompt, systemContent);
         finalMessages = clientSkillPolicy.appendSelected(finalMessages, clientSkills);
+        finalMessages = webSelectedSkills.appendSelected(finalMessages, selectedWebSkills);
 
         const isCurrentKimiK25Model = () => (
             finalModel === 'kimi-k2.6'
@@ -24768,6 +24792,14 @@ if (clientFileExecution && systemPrompt) {
                             }
                             if (isReadSkillTool && !isClientSkillTool) {
                                 const requestedSkill = String(args?.name || '');
+                                const selectedGuidance = webSelectedSkills.alreadyLoaded(selectedWebSkills, requestedSkill);
+                                if (selectedGuidance) {
+                                    executedToolResults.push({ toolCall, result: selectedGuidance });
+                                    emitTrackedToolStatus({ tool: 'read_skill', tool_call_id: toolCall.id, status: 'complete',
+                                        skill: requestedSkill, message: String(uiLanguage).toLowerCase().startsWith('en')
+                                            ? 'Selected skill is already in this request context' : '已选技能已在本条消息上下文中，无需重复读取' });
+                                    continue;
+                                }
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: 'read_skill',
@@ -26349,6 +26381,13 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
 });
 
 app.post('/api/chat/interject', authenticateToken, (req, res) => {
+    try {
+        if (webSelectedSkills.validateNames(req.body?.selected_skill_names, req.body?.uiLanguage).length) {
+            throw webSelectedSkills.fail('web_skills_mode_unsupported', req.body?.uiLanguage);
+        }
+    } catch (error) {
+        return res.status(error.status || 400).json({ success: false, code: error.code, error: error.message });
+    }
     const { requestId, message } = req.body || {};
     const content = normalizeStreamingInterjection(message);
 

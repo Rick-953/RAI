@@ -87,6 +87,10 @@ jobs:
         run: npx --no-install playwright install --with-deps chromium webkit
       - name: Verify PWA viewport and remember preference in Chromium and WebKit
         run: |
+          npm run test:locale-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:locale-runtime
+          npm run test:web-skills-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:web-skills-browser
           npm run test:composer-menu-stability
           RAI_BROWSER_ENGINE=webkit npm run test:composer-menu-stability
           npm run test:cx-remote-ui
@@ -351,7 +355,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           release_paths=(
             .env.example LICENSE README.md README.zh-CN.md docs
-            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json
+            agent lib workers public scripts skills server.js user-session-token.js package.json package-lock.json
           )
           for release_path in "${release_paths[@]}"; do
             git ls-files --error-unmatch "$release_path" >/dev/null
@@ -393,7 +397,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           release_paths=(
             .env.example LICENSE README.md README.zh-CN.md docs
-            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json
+            agent lib workers public scripts skills server.js user-session-token.js package.json package-lock.json
           )
           for release_path in "${release_paths[@]}"; do
             git ls-files --error-unmatch "$release_path" >/dev/null
