@@ -71,6 +71,8 @@ jobs:
         run: |
           test "$(node --version)" = "v${NODE_VERSION}"
           test "$(npm --version)" = "$NPM_VERSION"
+      - name: Verify release version and channel contract
+        run: node scripts/local-agent-release-regression.js
       - name: Install Tauri check prerequisites
         run: |
           sudo apt-get update

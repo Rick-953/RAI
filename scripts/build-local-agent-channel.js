@@ -38,6 +38,9 @@ function buildChannel({ directory, version, tag, manifest, repository = 'Rick-95
     if (String(manifest.version || '') !== String(version || '')) {
         throw new Error('browser extension version must match the release version');
     }
+    if (!/^\d+\.\d+\.\d+$/.test(String(version || '')) || tag !== `v${version}`) {
+        throw new Error('release tag must match the release version');
+    }
     const extensionId = extensionIdFromManifestKey(manifest.key);
     const artifacts = {};
     for (const [platform, fileName] of Object.entries(ARTIFACTS)) {

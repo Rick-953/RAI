@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'package.json'
+      - 'package-lock.json'
       - 'rai-agent/**'
       - 'browser-extension/**'
       - 'install.sh'
@@ -22,7 +24,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-preflight:
+    name: Release version and channel preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate actual release version and channel
+        run: node scripts/local-agent-release-regression.js
+
   build-agent:
+    needs: [release-preflight]
     name: Build ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -92,6 +107,7 @@ jobs:
           retention-days: 14
 
   agent-sbom:
+    needs: [release-preflight]
     name: Agent SBOM
     runs-on: ubuntu-24.04
     timeout-minutes: 10

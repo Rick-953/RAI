@@ -6,6 +6,15 @@ const os = require('os');
 const path = require('path');
 const { ARTIFACTS, EXTENSION_ASSET, buildChannel, extensionIdFromManifestKey } = require('./build-local-agent-channel');
 
+const root = path.join(__dirname, '..');
+const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+assert.equal(lock.version, version, 'lockfile release version must match package.json');
+assert.equal(lock.packages[''].version, version, 'lockfile root version must match package.json');
+const tag = `v${version}`;
+if (process.env.GITHUB_REF_TYPE === 'tag') {
+    assert.equal(process.env.GITHUB_REF_NAME, tag, 'actual release tag must match package.json before builds');
+}
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-agent-release-test-'));
 try {
     for (const fileName of Object.values(ARTIFACTS)) fs.writeFileSync(path.join(directory, fileName), fileName);
@@ -13,15 +22,15 @@ try {
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'browser-extension', 'manifest.json'), 'utf8'));
     const channel = buildChannel({
         directory,
-        version: '0.13.18',
-        tag: 'v0.13.18',
+        version,
+        tag,
         manifest
     });
     assert.equal(channel.schema, 'rai-local-agent-channel/v1');
     assert.equal(Object.keys(channel.artifacts).length, 4);
     for (const artifact of Object.values(channel.artifacts)) {
         assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
-        assert.match(artifact.url, /^https:\/\/github\.com\/Rick-953\/RAI\/releases\/download\/v0\.13\.18\//);
+        assert.ok(artifact.url.startsWith(`https://github.com/Rick-953/RAI/releases/download/${tag}/`));
     }
     assert.equal(channel.extensions.distribution, 'github-unpacked');
     assert.equal(channel.extensions.id, 'clnmniaaodjmcgnemigghniekmahgcgi');
@@ -31,9 +40,11 @@ try {
     assert.match(channel.extensions.artifact.url, /\/rai-connect-extension\.zip$/);
     assert.equal(extensionIdFromManifestKey(manifest.key), channel.extensions.id);
     assert.throws(() => buildChannel({ directory, version: '0.13.0', tag: 'x', manifest }), /version must match/);
+    assert.throws(() => buildChannel({ directory, version, tag: 'v0.0.0', manifest }), /tag must match/);
+    assert.throws(() => buildChannel({ directory, version, tag, manifest: { ...manifest, version: '0.0.0' } }), /version must match/);
     assert.throws(() => extensionIdFromManifestKey('not-base64'), /manifest key/);
     assert.equal(manifest.manifest_version, 3);
-    assert.equal(manifest.version, '0.13.18');
+    assert.equal(manifest.version, version, 'extension release version must match package.json');
     assert.ok(manifest.key);
     assert.ok(manifest.permissions.includes('nativeMessaging'));
     assert.ok(manifest.host_permissions.includes('https://*/*'));
@@ -71,6 +82,16 @@ try {
     assert.match(installSource, /MOVEFILE_REPLACE_EXISTING/);
     const localReleaseWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'local-agent-release.yml'), 'utf8');
     const securityWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'security.yml'), 'utf8');
+    assert.match(localReleaseWorkflow, /- 'package\.json'/);
+    assert.match(localReleaseWorkflow, /- 'package-lock\.json'/);
+    assert.match(localReleaseWorkflow, /release-preflight:[\s\S]*node scripts\/local-agent-release-regression\.js/);
+    for (const job of ['build-agent', 'agent-sbom']) {
+        assert.match(localReleaseWorkflow, new RegExp(`  ${job}:\\r?\\n    needs: \\[release-preflight\\]`));
+    }
+    const installPosition = securityWorkflow.indexOf('      - name: Install Tauri check prerequisites');
+    const preflightPosition = securityWorkflow.indexOf('      - name: Verify release version and channel contract');
+    assert.ok(preflightPosition > 0 && preflightPosition < installPosition, 'release consistency must fail before dependency/build work');
+    assert.match(securityWorkflow.slice(preflightPosition, installPosition), /node scripts\/local-agent-release-regression\.js/);
     assert.match(localReleaseWorkflow, /dist\/LOCAL_AGENT_SHA256SUMS/);
     assert.doesNotMatch(localReleaseWorkflow, /dist\/SHA256SUMS/);
     assert.match(securityWorkflow, /for attempt in \$\(seq 1 15\)/);
@@ -104,6 +125,10 @@ try {
     assert.match(webAgent, /switchSettingsSection\?\.\('capabilities'\)/);
     assert.match(webAgent, /confirmationCode/);
     const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+    const serviceWorker = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
+    assert.ok(app.includes(`const RAI_APP_VERSION = '${version}';`), 'served app version must match the release');
+    assert.ok(web.includes(`by Rick \u00b7 v${version}</div>`), 'entry version must match the release');
+    assert.ok(serviceWorker.includes(`const RAI_SW_VERSION = '${version}-`), 'service worker must match the release');
     assert.match(app, /SETTINGS_SEARCH_TARGET_SELECTOR[\s\S]*'\.settings-connect-install'/);
     assert.match(app, /SETTINGS_SEARCH_TARGET_SELECTOR[\s\S]*'\.local-agent-settings-card'/);
     const settingsCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
