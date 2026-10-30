@@ -1,3 +1,11 @@
+## 0.13.34 - real-version release preflight (2026-10-30)
+
+- Synchronize the browser extension, Web application, lockfile and cache build for the actual release. Keep the extension public key and stable extension identity unchanged.
+- Replace the obsolete 0.13.18 release fixture with the current package version. Exercise the real channel builder and reject both mismatched extension versions and mismatched tags.
+- Run the no-install release/channel preflight before security dependency installation and before all four Agent builds. Package and lockfile changes now trigger the Agent PR workflow, catching the 0.13.33 tag-only failure before a new tag is created.
+- Review the four updates from dependency PR #123: Express 5.3.0, ipaddr.js 2.5.0, Tauri CLI 2.12.4 and Playwright 1.64.1. Keep exact reviewed-version assertions and check the installed and locked versions, alongside real Express/query/body/error, network-address and QR-context regressions; no blanket version exemption is introduced. The locked Rust desktop graph and its documented exception scope are unchanged.
+- Preserve the existing failed v0.13.33 tag and its audit trail. Publish a new version only after complete PR, post-merge, tag, artifact/provenance and live deployment verification; do not move an existing tag or skip a gate.
+
 ## 0.13.33 - dependency compatibility and reviewed security exceptions (2026-10-30)
 
 - Upgrade SimpleWebAuthn server to 14.0.3 and Express to 5.2.1. Replace the incompatible forced body-parser 1.x override with patched 2.4.0 and explicitly preserve Express 4 extended-query semantics.

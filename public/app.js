@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.33';
-const RAI_BUILD_ID = '20261030-dependency-review';
+const RAI_APP_VERSION = '0.13.34';
+const RAI_BUILD_ID = '20261030-release-preflight';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8234,6 +8234,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-30', version: 'v0.13.34',
+    zh: { summary: '统一 Web 与连接扩展版本，提前核验正式发行。', details: ['浏览器扩展、Web、锁文件和缓存构建同步版本，保留既有扩展身份。', '在 PR 和构建开始前验证真实版本与发行通道，提前拒绝版本或标签不一致；不再用过期固定版本充当发行测试。', '保留旧标签与失败记录，以新版本完成门禁、合并、打包及正式部署。'] },
+    en: { summary: 'Align Web and connection-extension versions and validate releases early.', details: ['Synchronize extension, Web, lockfile and cache versions while keeping the existing extension identity.', 'Validate the real version and release channel before PR builds; reject version or tag mismatches instead of testing an obsolete fixed version.', 'Keep previous tags and failure records intact and complete gates, merge, packaging and formal deployment with a new version.'] }
+  },
   {
     date: '2026-10-30', version: 'v0.13.33',
     zh: { summary: '升级登录与 Web 基础依赖，补齐兼容性和安全门禁。', details: ['升级通行密钥验证库与 Express，保留既有查询参数语义。', '新增请求体大小、表单参数数量、异步错误与原型隔离回归；保留通行密钥重放、并发、签名与来源验证。', '清除已不在依赖图中的 RustSec 例外，对剩余 Linux 桌面依赖逐条记录限期复核，不宣称尚未修复的上游问题已经解决。'] },
