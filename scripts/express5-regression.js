@@ -16,6 +16,8 @@ async function main() {
   app.use(express.urlencoded({ extended: true, limit: '1kb', parameterLimit: 8 }));
   app.get('/query', (req, res) => res.json(req.query));
   app.post('/body', (req, res) => res.json(req.body || {}));
+  app.get('/chunked', (req, res) => res.set('Transfer-Encoding', 'chunked').send('streamed response'));
+  app.get('/download', (req, res) => res.attachment('rai-report.txt').send('report'));
   app.get('/failure', async () => { throw new Error('private-framework-error'); });
   app.use((error, req, res, next) => {
     res.status(error.status || 500).json({ code: error.status ? 'invalid_body' : 'internal_error' });
@@ -30,6 +32,15 @@ async function main() {
     assert.deepEqual(body.ids, ['one', 'two']);
     assert.equal(body.polluted, undefined);
     assert.equal(Object.prototype.polluted, undefined);
+    const chunked = await fetch(`${origin}/chunked`);
+    assert.equal(chunked.status, 200);
+    assert.equal(chunked.headers.get('transfer-encoding'), 'chunked');
+    assert.equal(chunked.headers.get('content-length'), null, 'chunked responses must not also declare Content-Length');
+    assert.equal(await chunked.text(), 'streamed response');
+    const download = await fetch(`${origin}/download`);
+    assert.equal(download.status, 200);
+    assert.match(download.headers.get('content-disposition'), /^attachment; filename=(?:"rai-report\.txt"|rai-report\.txt)$/);
+    assert.equal(await download.text(), 'report');
     for (const [contentType, data, expectedStatus] of [
       ['application/json', '{"ok":true}', 200],
       ['application/json', '{broken', 400],
@@ -48,7 +59,7 @@ async function main() {
     assert.equal(failure.status, 500);
     assert.deepEqual(await failure.json(), { code: 'internal_error' });
     assert.equal((await fetch(`${origin}/missing`)).status, 404);
-    console.log('express5-regression ok: query compatibility, prototype isolation, JSON/form bounds, async errors and 404');
+    console.log('express5-regression ok: query/prototype isolation, chunked/download headers, JSON/form bounds, async errors and 404');
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

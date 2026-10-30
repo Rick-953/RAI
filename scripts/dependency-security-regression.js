@@ -39,7 +39,12 @@ function workflowJob(name) {
 assert.equal(packageJson.overrides?.undici, '6.29.1', 'undici must include the GHSA-3wwx-pv8p-q78v fix');
 assert.equal(packageJson.overrides?.tar, '7.5.22', 'node-tar must stay on the audited patched release');
 assert.equal(packageJson.overrides?.['body-parser'], '2.4.0', 'Express 5 requires the audited body-parser 2 release, not a forced 1.x override');
-assert.equal(packageJson.dependencies.express, '5.2.1');
+for (const [name, exactVersion] of [['express', '5.3.0'], ['ipaddr.js', '2.5.0'], ['@tauri-apps/cli', '2.12.4'], ['playwright', '1.64.1']]) {
+  assert.equal(packageJson.dependencies[name] || packageJson.devDependencies[name], exactVersion, `${name} must stay on its reviewed release`);
+  assert.equal(packageLock.packages[`node_modules/${name}`]?.version, exactVersion, `${name} lock must match the reviewed release`);
+  const installed = JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', name, 'package.json'), 'utf8'));
+  assert.equal(installed.version, exactVersion, `${name} installed runtime must match the lock`);
+}
 assert.equal(packageJson.dependencies['@simplewebauthn/server'], '14.0.3');
 assert.match(serverSource, /app\.set\('query parser', 'extended'\)/, 'Express 5 must preserve the reviewed Express 4 query contract');
 
