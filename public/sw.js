@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.32-20261030-web-alignment';
+const RAI_SW_VERSION = '0.13.33-20261030-dependency-review';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,19 +13,19 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261030-web-alignment',
-  'web-skills.js?v=20261030-web-alignment', 'web-skills.css?v=20261030-web-alignment',
-  '', 'index.html', 'runtime-brand.js?v=20261030-web-alignment',
-  'rai-system-prompt.js?v=20261030-web-alignment', 'event-bindings.js?v=20261030-web-alignment',
-  'lib/jsQR.js?v=20261030-web-alignment', 'qr-scanner.js?v=20261030-web-alignment',
-  'secure-sharing.js?v=20261030-web-alignment', 'secure-sharing.css?v=20261030-web-alignment',
-  'diagnostics.js?v=20261030-web-alignment',
-  'app.js?v=20261030-web-alignment', 'styles.css?v=20261030-web-alignment',
-  'cx-remote.js?v=20261030-web-alignment', 'local-agent.css?v=20261030-web-alignment',
-  'crf-ui.js?v=20261030-web-alignment',
-  'selection-explainer.js?v=20261030-web-alignment', 'selection-explainer.css?v=20261030-web-alignment',
-  'site.webmanifest?v=20261030-web-alignment', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261030-web-alignment',
+  'locale.js?v=20261030-dependency-review',
+  'web-skills.js?v=20261030-dependency-review', 'web-skills.css?v=20261030-dependency-review',
+  '', 'index.html', 'runtime-brand.js?v=20261030-dependency-review',
+  'rai-system-prompt.js?v=20261030-dependency-review', 'event-bindings.js?v=20261030-dependency-review',
+  'lib/jsQR.js?v=20261030-dependency-review', 'qr-scanner.js?v=20261030-dependency-review',
+  'secure-sharing.js?v=20261030-dependency-review', 'secure-sharing.css?v=20261030-dependency-review',
+  'diagnostics.js?v=20261030-dependency-review',
+  'app.js?v=20261030-dependency-review', 'styles.css?v=20261030-dependency-review',
+  'cx-remote.js?v=20261030-dependency-review', 'local-agent.css?v=20261030-dependency-review',
+  'crf-ui.js?v=20261030-dependency-review',
+  'selection-explainer.js?v=20261030-dependency-review', 'selection-explainer.css?v=20261030-dependency-review',
+  'site.webmanifest?v=20261030-dependency-review', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261030-dependency-review',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -35,11 +35,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261030-web-alignment', 'lib/purify.min.js?v=20261030-web-alignment',
-  'lib/katex/katex.min.css?v=20261030-web-alignment', 'lib/katex/katex.min.js?v=20261030-web-alignment',
-  'lib/katex/contrib/auto-render.min.js?v=20261030-web-alignment',
-  'lib/highlight/styles/github-dark.min.css?v=20261030-web-alignment',
-  'lib/highlight/highlight.min.js?v=20261030-web-alignment'
+  'lib/marked.min.js?v=20261030-dependency-review', 'lib/purify.min.js?v=20261030-dependency-review',
+  'lib/katex/katex.min.css?v=20261030-dependency-review', 'lib/katex/katex.min.js?v=20261030-dependency-review',
+  'lib/katex/contrib/auto-render.min.js?v=20261030-dependency-review',
+  'lib/highlight/styles/github-dark.min.css?v=20261030-dependency-review',
+  'lib/highlight/highlight.min.js?v=20261030-dependency-review'
 ].map(appPath);
 
 function isAvatarRequest(url) {

@@ -403,7 +403,7 @@ function testMessageBadgeVisibilityAndDesktopLogout() {
 }
 
 function testPasskeySecurityRewardsAndRoutingNotices() {
-  assert.equal(packageJson.dependencies?.['@simplewebauthn/server'], '13.3.2');
+  assert.equal(packageJson.dependencies?.['@simplewebauthn/server'], '14.0.3');
   assert.match(envExample, /^RAI_PASSKEY_RP_NAME=RAI$/m);
   assert.match(envExample, /^RAI_PASSKEY_ALLOW_LOCALHOST=false$/m);
 

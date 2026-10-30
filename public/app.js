@@ -2411,8 +2411,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.32';
-const RAI_BUILD_ID = '20261030-web-alignment';
+const RAI_APP_VERSION = '0.13.33';
+const RAI_BUILD_ID = '20261030-dependency-review';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8234,6 +8234,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-30', version: 'v0.13.33',
+    zh: { summary: '升级登录与 Web 基础依赖，补齐兼容性和安全门禁。', details: ['升级通行密钥验证库与 Express，保留既有查询参数语义。', '新增请求体大小、表单参数数量、异步错误与原型隔离回归；保留通行密钥重放、并发、签名与来源验证。', '清除已不在依赖图中的 RustSec 例外，对剩余 Linux 桌面依赖逐条记录限期复核，不宣称尚未修复的上游问题已经解决。'] },
+    en: { summary: 'Refresh authentication and Web dependencies with compatibility and security gates.', details: ['Upgrade Passkey verification and Express while preserving existing query parsing semantics.', 'Exercise body and form bounds, asynchronous errors and prototype isolation alongside Passkey replay, concurrency, signature and origin checks.', 'Remove obsolete RustSec exceptions and individually time-bound the remaining Linux desktop dependency reviews without claiming upstream issues are fixed.'] }
+  },
   {
     date: '2026-10-30', version: 'v0.13.32',
     zh: { summary: '跟随浏览器的双语体验，普通 Web 对话支持显式选择技能。', details: ['首次打开按浏览器偏好选择简体中文或英文；可手动切换，也可恢复自动。', '输入 @ 或打开加号菜单中的「技能」，最多为当前请求选择三项内置指导；不写入普通历史，也不扩大工具权限。不支持的模式会明确提示。', '补齐分享、扫码确认、注册、文件库与远程电脑说明的英文文案，并保留既有的手动语言选择。', '暂时关闭网页版自带 API Key 入口与旧会话自动进入，不删除已存的会话配置。', '补全近期版本记录；Windows 下载继续指向公开的最新正式版。'] },
