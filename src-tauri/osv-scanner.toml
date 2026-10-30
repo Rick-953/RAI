@@ -1,73 +1,66 @@
-# Time-bounded exceptions inherited from Tauri 2.11.2's Linux GTK3/WebKitGTK
-# dependency graph. Tauri 2.11.2 is the current upstream release and its own
-# release audit reports the same advisories. RAI's Rust layer does not directly
-# use GTK iterators or any of the listed crates. Re-evaluate on every Tauri
-# update and no later than the date below; do not add unrelated exceptions here.
+# Reviewed 2026-10-30 against locked Tauri 2.12.1 and upstream 2.12.5.
+# Individual advisory paths, compatible-fix review and residual risk:
+# docs/rustsec-review-20261030.md and .json. Existing IDs only, 31-day deadline.
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
-ignoreUntil = 2026-10-31
-reason = "glib 0.18 is an upstream Tauri Linux transitive dependency; RAI does not use VariantStrIter"
+ignoreUntil = 2026-11-30
+reason = "glib@0.18.5: upstream GTK3 pins glib 0.18; the advisory fix is glib 0.20, not a compatible 0.18 update. No direct RAI VariantStrIter use; indirect dependency risk remains. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0411"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gdkwayland-sys@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0412"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gdk@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0413"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "atk@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0414"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gdkx11-sys@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0415"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gtk@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0416"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "atk-sys@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0417"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gdkx11@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0418"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gdk-sys@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0419"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gtk3-macros@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0420"
-ignoreUntil = 2026-10-31
-reason = "unmaintained GTK3 binding inherited from the current Tauri Linux stack; no upstream replacement yet"
+ignoreUntil = 2026-11-30
+reason = "gtk-sys@0.18.2: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0370"
-ignoreUntil = 2026-10-31
-reason = "unmaintained build-time transitive macro dependency inherited from Tauri; no direct RAI usage"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0075"
-ignoreUntil = 2026-10-31
-reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
+ignoreUntil = 2026-11-30
+reason = "proc-macro-error@1.0.4: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
 
 # Static version-scope review: docs/block-buffer-advisory-scope-20261028.md.
 # The current 0.10.4 registry checksum is enforced by the expiry regression.
@@ -75,23 +68,3 @@ reason = "unmaintained transitive Unicode metadata dependency inherited from Tau
 id = "GHSA-qwgh-2vcv-g2f7"
 ignoreUntil = 2026-11-11
 reason = "Version-scope false positive for pinned block-buffer 0.10.4: cursor is a separate pos u8 field, not an inline buffer byte, and ReadBuffer is absent. Re-review if version/checksum changes."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0080"
-ignoreUntil = 2026-10-31
-reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0081"
-ignoreUntil = 2026-10-31
-reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0098"
-ignoreUntil = 2026-10-31
-reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0100"
-ignoreUntil = 2026-10-31
-reason = "unmaintained transitive Unicode metadata dependency inherited from Tauri; no direct RAI usage"

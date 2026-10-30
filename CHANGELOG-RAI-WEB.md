@@ -1,3 +1,11 @@
+## 0.13.33 - dependency compatibility and reviewed security exceptions (2026-10-30)
+
+- Upgrade SimpleWebAuthn server to 14.0.3 and Express to 5.2.1. Replace the incompatible forced body-parser 1.x override with patched 2.4.0 and explicitly preserve Express 4 extended-query semantics.
+- Keep real Passkey registration/authentication, replay, concurrency, signature counter, Origin/RP-ID, TOTP and cleanup tests. Add framework query/prototype isolation, bounded JSON/form parsing and async-error coverage to the full formal gate; do not merely remove the old exact-version assertion.
+- Review all 17 old RustSec exceptions against current OSV metadata and the actual locked dependency paths. Remove 5 obsolete Unicode ignores; retain only 12 present-package IDs with individual reasons and a 2026-11-30 deadline. The separate block-buffer scope review still expires on 2026-11-11.
+- Correct stale upstream-version documentation and make exception reviews fail closed on changed Tauri/affected dependency graphs. Eleven unmaintained-crate advisories and one glib API soundness advisory remain accepted only for the short documented review window; they are not fixed by this change.
+- Update the application/cache build to `20261030-dependency-review`. Deployment is a separate step after all PR checks and independent CodeQL pass, only through `/opt/rai/deploy.sh formal`; a source merge does not prove the public service is updated.
+
 ## 0.13.32 - bilingual entry and explicit Web skills (2026-10-30)
 
 - New visits follow browser language preferences: Chinese locales open in Simplified Chinese and English locales in English. Explicit choices win, legacy Traditional Chinese choices remain intact, and Auto mode continues following browser changes without saving an accidental override.

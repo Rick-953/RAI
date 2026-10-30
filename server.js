@@ -157,6 +157,8 @@ validateSkillRegistry();
 
 const app = express();
 app.disable('x-powered-by');
+// Preserve Express 4 query semantics when upgrading the router to Express 5.
+app.set('query parser', 'extended');
 
 // Ordinary chat fallback shares one request deadline and a short-lived transient-failure circuit.
 const runtimeFallbackCircuit = createProviderCircuitBreaker({
