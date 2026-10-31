@@ -1,3 +1,10 @@
+## 0.13.35 - nine attachments and pasted-text files (2026-10-31)
+
+- Share a nine-attachment limit across images, supported files, picker selection, drag/drop, file-library selection and consecutive clipboard batches. Reject oversized chat requests explicitly and recheck the cap when an upload finishes.
+- Convert plain-text pastes over 4,000 characters into UTF-8 TXT attachments without changing the existing composer draft, Unicode, whitespace or line endings. Failed uploads and late completions after draft clearing keep the draft intact.
+- Treat multimodal media and its cached/file reference as the same attachment. Skip all three synthetic `list_files {}` fallbacks when the current user message contains attachments, while keeping genuine model-requested editing tools available.
+- Add server-policy and real Chromium/WebKit desktop/mobile paste/upload regressions, including multipart byte preservation, mixed batches, overflow, upload failure and draft-clear races. Live production deployment and physical-device acceptance require separate evidence.
+
 ## 0.13.34 - real-version release preflight (2026-10-30)
 
 - Synchronize the browser extension, Web application, lockfile and cache build for the actual release. Keep the extension public key and stable extension identity unchanged.
