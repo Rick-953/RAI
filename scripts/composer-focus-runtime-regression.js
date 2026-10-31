@@ -370,7 +370,8 @@ async function testCase(browser, url, fixture) {
       window.composerFixtureSend = sendMessage();
     });
     await page.waitForFunction(() => currentAttachments.length === 0);
-    await page.waitForTimeout(100);
+    await page.evaluate(() => window.composerFixtureSend);
+    assert.equal(await page.evaluate(() => appState.isStreaming),false,'attachment send finishes before later input and gesture checks');
     assert.equal(captured.length,1,'one question carries all selected attachments');
     const message=captured[0].messages.findLast(m=>m.role==='user');
     assert.deepEqual(message.attachments.map(a=>a.fileName),['first.png','notes.txt','third.png','extra.txt','queued.txt']);
@@ -424,7 +425,7 @@ async function testCase(browser, url, fixture) {
         assert.deepEqual(passive,{blocked:false,paused:true});await page.mouse.move(fixture.width/2,400);await page.mouse.wheel(0,-300);
       }
       await page.waitForTimeout(160);
-      const after=await page.evaluate(()=>({top:getChatScrollElement().scrollTop,mode:appState.scrollFollowMode,sidebar:appState.sidebarOpen}));
+      const after=await page.evaluate(()=>({top:getChatScrollElement().scrollTop,mode:appState.scrollFollowMode,sidebar:appState.sidebarOpen,streaming:appState.isStreaming,touchScrolling:appState.chatTouchScrolling,programmatic:appState.isProgrammaticScroll}));
       assert.ok(after.top < before-60,JSON.stringify({fixture,before,after}));assert.equal(after.mode,'pausedByUser');assert.equal(after.sidebar,false);
       await page.evaluate(()=>scrollToBottom());await page.waitForTimeout(100);
       assert.ok(await page.evaluate(()=>getChatScrollElement().scrollTop) < before-60,'stream updates do not drag readers back to the bottom');
