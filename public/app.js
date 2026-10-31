@@ -12,7 +12,8 @@ const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnab
 const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.rick.sarl/').trim() || 'https://rai.rick.sarl/';
 const DOCUMENT_SANDBOX_ENABLED = RAI_RUNTIME_CONFIG.documentSandboxEnabled === true;
 const USER_PASSWORD_MIN_LENGTH = 8;
-const UI_MAX_CHAT_ATTACHMENTS = Math.max(1, Math.min(20, Number(RAI_RUNTIME_CONFIG.chatClientMaxAttachments) || 8));
+const UI_MAX_CHAT_ATTACHMENTS = 9;
+const LONG_PASTE_TEXT_THRESHOLD = 4000;
 
 const UI_UPLOAD_EXTENSION_GROUPS = Object.freeze({
   image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'heic', 'heif'],
@@ -2411,8 +2412,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.34';
-const RAI_BUILD_ID = '20261030-release-preflight';
+const RAI_APP_VERSION = '0.13.35';
+const RAI_BUILD_ID = '20261031-attachments-nine';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8234,6 +8235,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-10-31', version: 'v0.13.35',
+    zh: { summary: '每条消息支持 9 个混合附件，长文本粘贴自动保存为 TXT。', details: ['图片、文件和粘贴文本共享 9 个附件名额，支持连续粘贴和多选。', '超过 4000 字符的粘贴文本自动转为 UTF-8 TXT，保留已有草稿和原始文本。', '看图直接使用已提供的图片；同一附件的文件引用用于实际编辑，避免答完后强制浏览空目录并重复回答。'] },
+    en: { summary: 'Nine mixed attachments per message and automatic TXT attachments for long pastes.', details: ['Images, files and pasted text share nine slots across batches and multi-selection.', 'Pastes over 4,000 characters become UTF-8 TXT files while preserving the existing draft and original text.', 'Use the supplied image for visual analysis; its file reference supports actual editing without a forced empty-directory round after the answer.'] }
+  },
   {
     date: '2026-10-30', version: 'v0.13.34',
     zh: { summary: '统一 Web 与连接扩展版本，提前核验正式发行。', details: ['浏览器扩展、Web、锁文件和缓存构建同步版本，保留既有扩展身份。', '在 PR 和构建开始前验证真实版本与发行通道，提前拒绝版本或标签不一致；不再用过期固定版本充当发行测试。', '保留旧标签与失败记录，以新版本完成门禁、合并、打包及正式部署。'] },
@@ -15136,10 +15142,11 @@ function getClipboardFiles(event) {
 
 async function handleMessageInputPaste(event) {
   const files = getClipboardFiles(event);
-  if (!files.length) return;
+  const text = event.clipboardData?.getData('text/plain') || '';
+  const longTextPaste = !files.length && text.length > LONG_PASTE_TEXT_THRESHOLD;
+  if (!files.length && !longTextPaste) return;
 
-  const hasText = Boolean(event.clipboardData?.getData('text/plain'));
-  if (!hasText) {
+  if (longTextPaste || !text) {
     event.preventDefault();
   }
 
@@ -15148,8 +15155,13 @@ async function handleMessageInputPaste(event) {
     return;
   }
 
+  if (longTextPaste) {
+    files.push(new File([text], `pasted-text-${Date.now()}.txt`, { type: 'text/plain;charset=utf-8' }));
+  }
   const uploaded = await processUploadedFiles(files);
-  if (uploaded) showToast(isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachments added from clipboard');
+  if (uploaded) showToast(longTextPaste
+    ? (isChineseLanguage(appState.language) ? '长文本已添加为 TXT 附件' : 'Long text added as a TXT attachment')
+    : (isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachments added from clipboard'));
 }
 
 function initPasteAttachmentUpload() {
@@ -32016,7 +32028,8 @@ async function checkAndConvertLongInput() {
     // 创建 txt 文件并通过上传接口发送
     const blob = new Blob([content], { type: 'text/plain' });
     const file = new File([blob], `long_input_${Date.now()}.txt`, { type: 'text/plain' });
-    await processUploadedFiles([file]);
+    const uploaded = await processUploadedFiles([file]);
+    if (!uploaded || input.value !== content) return true;
 
     // 清空输入框，显示提示
     input.value = isChineseLanguage(appState.language)
@@ -32401,6 +32414,11 @@ async function processUploadedFile(file, options = {}) {
       const contextError = new Error('Upload account context changed');
       contextError.name = 'AbortError';
       throw contextError;
+    }
+    if (attachToComposer && (composerGeneration !== attachmentComposerGeneration || currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS)) {
+      if (localThumbnail) URL.revokeObjectURL(localThumbnail);
+      if (composerGeneration === attachmentComposerGeneration) showAttachmentLimit();
+      return false;
     }
     const uploadedAttachment = {
       type: attachmentType,

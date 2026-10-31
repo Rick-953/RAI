@@ -347,7 +347,7 @@ const CHAT_CLIENT_ALLOWED_ROLES = new Set(['user', 'assistant']);
 const CHAT_CLIENT_MAX_MESSAGES = Math.max(2, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_MESSAGES) || '40', 10) || 40, 80));
 const CHAT_CLIENT_MAX_MESSAGE_CHARS = 4 * 1024 * 1024;
 const CHAT_CLIENT_MAX_TOTAL_CHARS = 4 * 1024 * 1024;
-const CHAT_CLIENT_MAX_ATTACHMENTS = Math.max(0, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_CLIENT_MAX_ATTACHMENTS) || '8', 10) || 8, 20));
+const CHAT_CLIENT_MAX_ATTACHMENTS = 9;
 // First effective token (content or reasoning) deadline before a provider fallback.
 // Kept generous so long thinking on GPT models never counts as a failure.
 const CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS = Math.max(5000, Math.min(parseInt(cleanEnvValue(process.env.RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS) || '20000', 10) || 20000, 120000));
@@ -6026,7 +6026,12 @@ function normalizeToolCalls(toolCalls = [], localMode = false) {
 
 const CLIENT_FILE_INTENT_PATTERN = /(?:创建|生成|新建|修改|编辑|插入|删除|复制|移动|重命名|读取|查看|列出|下载|图片|文档|文件|命令|执行|docx|xlsx|pptx|txt|md|csv)/i;
 
-function isClientFileIntent(message = '') {
+function isClientFileIntent(message = '', attachments = [], availableAttachments = []) {
+    // A cached path and the multimodal payload refer to the same attachment.
+    // Browsing an unrelated default workspace after a completed vision answer
+    // would force a second model round with no new information.
+    if (Array.isArray(attachments) && attachments.length > 0) return false;
+    if (Array.isArray(availableAttachments) && availableAttachments.length > 0) return false;
     return CLIENT_FILE_INTENT_PATTERN.test(String(message || ''));
 }
 
@@ -8178,6 +8183,11 @@ function sanitizeClientAttachment(attachment = {}) {
 
 function sanitizeClientAttachments(attachments) {
     if (!Array.isArray(attachments)) return [];
+    if (attachments.length > CHAT_CLIENT_MAX_ATTACHMENTS) {
+        const error = new Error('每条消息最多支持 9 个附件；附件未被截断，请减少选择后重试。');
+        error.code = 'too_many_attachments';
+        throw error;
+    }
     return attachments
         .slice(0, CHAT_CLIENT_MAX_ATTACHMENTS)
         .map((attachment) => sanitizeClientAttachment(attachment))
@@ -21155,7 +21165,15 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             clientFileExecution ? 6000 : (thinkingMode ? 8000 : 0)
         );
 
-        const sanitizedChatInput = sanitizeClientChatMessages(rawMessages);
+        let sanitizedChatInput;
+        try {
+            sanitizedChatInput = sanitizeClientChatMessages(rawMessages);
+        } catch (inputError) {
+            if (inputError.code === 'too_many_attachments') {
+                return res.status(400).json({ code: inputError.code, error: inputError.message });
+            }
+            throw inputError;
+        }
         let messages;
         try {
             messages = await canonicalizeOwnedMessageAttachments(
@@ -22572,6 +22590,9 @@ if (clientFileExecution && systemPrompt) {
                     : '文件/命令前 read_skill("sandbox")；Word/表格/PPT 分别只读 documents/spreadsheets/presentations。只操作真实 file_id；外部文件使用 fetch_url。');
                 if (workspaceAttachmentCatalog.length > 0) {
                     toolHints.push(`当前会话可用的受信附件引用：${JSON.stringify(workspaceAttachmentCatalog)}。读取、修改、解压或重新压缩时必须直接使用其 file_id 调用对应文件工具，不得只说将要处理。`);
+                }
+                if (Array.isArray(lastUserMsg.attachments) && lastUserMsg.attachments.length > 0) {
+                    toolHints.push('本轮图片的多模态输入和文件引用是同一个附件。看图分析直接使用已提供的图片，不要为了再次看图调用 list_files 或读取副本。仅在实际编辑或需要原始文件字节时使用对应引用。需要工具时先完成工具操作，再给出一次完整结论，避免重复回答。');
                 }
             }
             const toolHint = `\n\n[系统提示] ${toolHints.join(' ')}`;
@@ -24635,7 +24656,7 @@ if (clientFileExecution && systemPrompt) {
                 streamFinishReason = 'tool_calls';
             }
 
-            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && isClientFileIntent(userContent)) {
+            if (useStreamingTools && accumulatedToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone && isClientFileIntent(userContent, lastUserMsg.attachments, workspaceAttachmentCatalog)) {
                 forcedClientListFilesDone = true;
                 console.warn(` 本地文件任务但模型未触发工具调用，自动发起 list_files 引导工具链: model=${actualModel}`);
                 accumulatedToolCalls.push(buildForcedClientListFilesCall());
@@ -24659,7 +24680,7 @@ if (clientFileExecution && systemPrompt) {
                 let pendingToolCalls = normalizeToolCalls(accumulatedToolCalls, clientFileExecution);
                 if (pendingToolCalls.length === 0) {
                     console.warn(` 收到 tool_calls 但均无效，尝试安全恢复: rawCalls=${accumulatedToolCalls.length}`);
-                    if (clientFileExecution && !forcedClientListFilesDone && isClientFileIntent(userContent)) {
+                    if (clientFileExecution && !forcedClientListFilesDone && isClientFileIntent(userContent, lastUserMsg.attachments, workspaceAttachmentCatalog)) {
                         forcedClientListFilesDone = true;
                         pendingToolCalls = [buildForcedClientListFilesCall()];
                         console.warn(` 无效工具调用已降级为 list_files 引导: model=${actualModel}`);
@@ -25817,7 +25838,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                         // 续传路径兜底：模型声明调用工具但未输出参数（Kimi 流式 bug），强制 list_files 引导
                         if (pendingToolCalls.length === 0 && clientFileExecution && !forcedClientListFilesDone
                             && String(continueStreamFinishReason) === 'tool_calls'
-                            && isClientFileIntent(userContent)) {
+                            && isClientFileIntent(userContent, lastUserMsg.attachments, workspaceAttachmentCatalog)) {
                             forcedClientListFilesDone = true;
                             console.warn(` 续传声明工具调用但未输出参数，自动发起 list_files 引导: model=${actualModel}`);
                             pendingToolCalls = [buildForcedClientListFilesCall()];
