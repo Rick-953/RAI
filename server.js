@@ -3,8 +3,10 @@ const { enforceContextWindow, CONTEXT_WINDOW_TOKENS } = require('./lib/context-w
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
+const { createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
+const { fetchWithLatency } = require('./lib/chat-latency');
 const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
@@ -557,6 +559,11 @@ const GPT_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_GATEWAY_API_K
 const GPT_GATEWAY_API_KEY = GPT_GATEWAY_API_KEY_FILE
     ? readGatewayApiKeyFile(GPT_GATEWAY_API_KEY_FILE)
     : '';
+const GPT_PRIMARY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_GPT_PRIMARY_BASE_URL) || 'https://sub.dir.mirrorium.cn/v1', { production: IS_PRODUCTION });
+const GPT_PRIMARY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_PRIMARY_API_KEY_FILE);
+const GPT_PRIMARY_API_KEY = GPT_PRIMARY_API_KEY_FILE ? readGatewayApiKeyFile(GPT_PRIMARY_API_KEY_FILE) : '';
+const GPT_PRIMARY_CHAT_URL = joinGatewayEndpoint(GPT_PRIMARY_BASE_URL, 'chat/completions');
+const GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS = 6000;
 const GPT_GATEWAY_CONFIGURED = !!(GPT_GATEWAY_BASE_URL && GPT_GATEWAY_API_KEY);
 if (GPT_GATEWAY_BASE_URL && !GPT_GATEWAY_API_KEY_FILE) {
     console.warn(' GPT 网关已配置 URL，但未配置 RAI_GPT_GATEWAY_API_KEY_FILE；相关模型将 fail closed');
@@ -820,6 +827,7 @@ const GENERATED_IMAGE_ALLOWED_SOURCE_HOSTS = new Set(
     [
         ...parseCsvEnv(process.env.RAI_GENERATED_IMAGE_ALLOWED_HOSTS || 'siliconflow.cn'),
         ...(GPT_GATEWAY_BASE_URL ? [new URL(GPT_GATEWAY_BASE_URL).hostname] : []),
+        ...(GPT_PRIMARY_BASE_URL ? [new URL(GPT_PRIMARY_BASE_URL).hostname] : []),
         ...(GPT_IMAGE_BASE_URL ? [new URL(GPT_IMAGE_BASE_URL).hostname] : [])
     ]
         .map((host) => normalizeHostname(host))
@@ -20885,20 +20893,46 @@ const cxRemoteControl = installCxRemoteRoutes({
 });
 const chatModelQuotaContext = new AsyncLocalStorage();
 const chatModelQuotaService = createChatModelQuotaService({ withTransaction: withMainDbTransaction });
+function chatLatencyProvider(url, modelId = '') {
+    if (url === GPT_PRIMARY_CHAT_URL) return 'gpt_mirrorium';
+    if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return 'deepseek_official';
+    if (url === API_PROVIDERS.rai_gpt_gateway.baseURL && !String(modelId).startsWith('deepseek')) return 'gpt_fast';
+    if (url === API_PROVIDERS.deepseek.baseURL || url === joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions')) return 'deepseek_relay';
+    if (url === API_PROVIDERS.rai_fast_gateway?.baseURL) return 'fast_gateway';
+    if (url === API_PROVIDERS.rai_claude_gateway?.baseURL) return 'claude_gateway';
+    return 'other';
+}
+async function fetchChatProviderWithLatency(url, options = {}) {
+    const latency = chatModelQuotaContext.getStore()?.latency;
+    let body;
+    try { body = JSON.parse(options.body || '{}'); } catch (_) { /* Non-model HTTP. */ }
+    if (!latency || !Array.isArray(body?.messages)) return fetch(url, options);
+    return fetchWithLatency(fetch, url, options, latency, {
+        provider: chatLatencyProvider(url, body.model), model: body.model, streaming: body.stream === true, call: options.raiLatencyCall
+    });
+}
 const fetchDeepSeekProvider = createDeepSeekProviderFetch({
     primaryUrl: joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions'),
     primaryKey: DEEPSEEK_FAST_API_KEY,
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
     officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
-    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS
+    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
+    fetchImpl: fetchChatProviderWithLatency
 });
-const fetchGptProvider = createDeepSeekProviderFetch({
+const fetchGptFastProvider = createDeepSeekProviderFetch({
     primaryUrl: API_PROVIDERS.rai_gpt_gateway.baseURL,
     primaryKey: GPT_GATEWAY_API_KEY,
     primaryModels: [...GPT_GATEWAY_CHAT_MODELS],
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
     officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
-    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS
+    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
+    fetchImpl: fetchChatProviderWithLatency
+});
+const fetchGptProvider = createGptPrimaryFetch({
+    primaryUrl: GPT_PRIMARY_CHAT_URL, primaryKey: GPT_PRIMARY_API_KEY,
+    fallbackUrl: API_PROVIDERS.rai_gpt_gateway.baseURL, fallbackFetch: fetchGptFastProvider,
+    models: [...GPT_GATEWAY_CHAT_MODELS], firstTokenTimeoutMs: GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS,
+    fetchImpl: fetchChatProviderWithLatency
 });
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
@@ -20954,12 +20988,22 @@ async function fetchModelProvider(url, options = {}) {
         options = { ...options, body: JSON.stringify(outgoing) };
     }
     const providerFetch = protectedModel ? fetchGptProvider : fetchDeepSeekProvider;
-    const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode });
+    if (parsedBody?.messages) turn?.latency?.mark('context_ready');
+    const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode,
+        raiLatencyCall: parsedBody?.messages ? turn?.latency?.nextCall() : undefined });
     // Only streaming answer/tool requests update provenance, not internal compression summaries.
     if (turn && response.ok && parsedBody?.stream === true) {
         turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : JSON.parse(options.body).model;
     }
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
+    if (response.raiMirroriumFallback && !response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
+            provider: 'fast', reason: '主线路 6 秒内无有效首字或服务失败，已停止旧请求并切换备用线路' }) + '\n\n');
+    }
+    if (response.raiProvider === 'mirrorium' && turn?.response && !turn.response.writableEnded && parsedBody?.stream === true) {
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
+            provider: 'mirrorium', thinkingMode: true, reasoningProfile: turn.thinkingMode ? turn.reasoningProfile : 'low' }) + '\n\n');
+    }
     if (response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 20 秒内无首字或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
     }
@@ -20973,8 +21017,9 @@ async function settleChatModelTurn(success, completedModels = null) {
 }
 
 app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => chatModelQuotaContext.run({
-    userId: req.user.userId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false
+    userId: req.user.userId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false, latency: req.chatLatency
 }, async () => {
+    req.chatLatency?.mark('authenticated');
     console.log(' 收到聊天请求');
 
     let requestId = null;  //  关键修复：在函数开始声明requestId
@@ -21388,6 +21433,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             toolEnvironment: clientFileExecution ? (localAgentSession ? 'local-agent' : 'windows-client') : 'web-sandbox'
         });
         if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
+        req.chatLatency?.mark('prompt_base_ready');
         console.log(
             ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, temporary=${memoryModeOff}, customPromptLength=${customPrompt.length}`
         );
@@ -22195,10 +22241,9 @@ if (clientFileExecution && systemPrompt) {
             if (model === 'fast-auto') thinkingMode = false;
             if (model === 'think-auto') thinkingMode = true;
             finalModel = thinkingMode ? await resolveVisibleThinkingModel() : await resolveVisibleAutoModel();
-            if (thinkingMode) normalizedReasoningProfile = 'max';
             quotaTurn.thinkingMode = thinkingMode;
             quotaTurn.reasoningProfile = normalizedReasoningProfile;
-            autoRoutingReason = thinkingMode ? '智能思考：GPT 6.1 Sol，max；20 秒无首字切官方 DeepSeek' : '智能/快速：官方 DeepSeek Flash，关闭思考';
+            autoRoutingReason = thinkingMode ? '智能思考：GPT 6.1 Sol，使用所选思考等级；20 秒无首字切官方 DeepSeek' : '智能/快速：官方 DeepSeek Flash，关闭思考';
         } else {
             finalModel = model;
         }
@@ -22406,6 +22451,13 @@ if (clientFileExecution && systemPrompt) {
         }
 
         console.log(` API端点: ${providerConfig.baseURL}`);
+        req.chatLatency?.setRoute({ model: finalModel,
+            provider: routing.provider === 'rai_gpt_gateway' && GPT_PRIMARY_API_KEY ? 'gpt_mirrorium' : chatLatencyProvider(providerConfig.baseURL, actualModel),
+            thinking: thinkingMode, profile: normalizedReasoningProfile });
+        req.chatLatency?.mark('route_resolved');
+        // GPT has a minimum low effort even when an older client sends off.
+        // Surface the provider's actual reasoning instead of making that work invisible.
+        const shouldShowProviderReasoning = () => thinkingMode || routing.provider === 'rai_gpt_gateway';
 
         // 关键修复：通过SSE发送实际使用的模型信息（因为响应头已经发送，无法再设置X-Model-Used）
         if (liveStreamState) {
@@ -22841,6 +22893,7 @@ if (clientFileExecution && systemPrompt) {
             console.log(`   API密钥: 已配置`);
         }
 
+        req.chatLatency?.mark('prompt_ready');
         // One bounded deadline covers the primary request, ordered fallback, and tool continuations.
         // 本地文件执行模式：任务链长（搜索+多次工具+续传），预算放宽到 300s
         chatRequestBudget = clientFileExecution
@@ -24110,7 +24163,7 @@ if (clientFileExecution && systemPrompt) {
                             if (responseEventReasoning) {
                                 const toolReasoningDelta = extractIncrementalChunk(currentToolCallReasoningContent, responseEventReasoning);
                                 if (toolReasoningDelta) currentToolCallReasoningContent += toolReasoningDelta;
-                                if (thinkingMode) {
+                                if (shouldShowProviderReasoning()) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, responseEventReasoning);
                                     if (reasoningDelta) {
                                         reasoningContent += reasoningDelta;
@@ -24125,7 +24178,7 @@ if (clientFileExecution && systemPrompt) {
                             if (responseEventContent) {
                                 rawToolContent += responseEventContent;
                                 const filteredContent = sanitizeStreamingContent(responseEventContent);
-                                const splitThinkContent = splitEmbeddedThinkContent(filteredContent, !!thinkingMode);
+                                const splitThinkContent = splitEmbeddedThinkContent(filteredContent, shouldShowProviderReasoning());
                                 if (splitThinkContent.reasoning) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
                                     if (reasoningDelta) {
@@ -24166,7 +24219,7 @@ if (clientFileExecution && systemPrompt) {
                                         }
                                         if (!part.text) continue;
                                         if (part.thought) {
-                                            if (thinkingMode) {
+                                            if (shouldShowProviderReasoning()) {
                                                 const reasoningDelta = extractIncrementalChunk(reasoningContent, part.text);
                                                 if (reasoningDelta) {
                                                     reasoningContent += reasoningDelta;
@@ -24197,7 +24250,7 @@ if (clientFileExecution && systemPrompt) {
                                 if (reasoning) {
                                     const toolReasoningDelta = extractIncrementalChunk(currentToolCallReasoningContent, reasoning);
                                     if (toolReasoningDelta) currentToolCallReasoningContent += toolReasoningDelta;
-                                    if (thinkingMode) {
+                                    if (shouldShowProviderReasoning()) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
@@ -24210,7 +24263,7 @@ if (clientFileExecution && systemPrompt) {
                                 if (content) {
                                     rawToolContent += content;
                                     const filteredContent = sanitizeStreamingContent(content);
-                                    const splitThinkContent = splitEmbeddedThinkContent(filteredContent, !!thinkingMode);
+                                    const splitThinkContent = splitEmbeddedThinkContent(filteredContent, shouldShowProviderReasoning());
 
                                     if (splitThinkContent.reasoning) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
@@ -24609,7 +24662,7 @@ if (clientFileExecution && systemPrompt) {
             }
             const initialEofContent = streamToolProtocolFilter.flush({ fallbackDetected: accumulatedToolCalls.length > 0 });
             if (initialEofContent) {
-                const splitEofThink = splitEmbeddedThinkContent(initialEofContent, !!thinkingMode);
+                const splitEofThink = splitEmbeddedThinkContent(initialEofContent, shouldShowProviderReasoning());
                 const incrementalEofContent = extractIncrementalChunk(fullContent, splitEofThink.visible);
                 if (incrementalEofContent) emitStructuredAssistantChunk(incrementalEofContent);
             }
@@ -25627,7 +25680,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                     if (continueEventReasoning) {
                                         const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, continueEventReasoning);
                                         if (toolReasoningDelta) continueToolCallReasoningContent += toolReasoningDelta;
-                                        if (thinkingMode) {
+                                        if (shouldShowProviderReasoning()) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, continueEventReasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
@@ -25643,7 +25696,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                         continueRawToolContent += continueEventContent;
                                         rawToolContent += continueEventContent;
                                         const filteredContinueContent = sanitizeStreamingContent(continueEventContent);
-                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, !!thinkingMode);
+                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, shouldShowProviderReasoning());
                                         if (splitContinueThink.reasoning) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
@@ -25699,7 +25752,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                     if (reasoning) {
                                         const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, reasoning);
                                         if (toolReasoningDelta) continueToolCallReasoningContent += toolReasoningDelta;
-                                        if (thinkingMode) {
+                                        if (shouldShowProviderReasoning()) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
@@ -25713,7 +25766,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                         continueRawToolContent += continueDelta.content;
                                         rawToolContent += continueDelta.content;
                                         const filteredContinueContent = sanitizeStreamingContent(continueDelta.content);
-                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, !!thinkingMode);
+                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, shouldShowProviderReasoning());
                                         if (splitContinueThink.reasoning) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
@@ -25814,7 +25867,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                         }
                         const continueEofContent = streamToolProtocolFilter.flush({ fallbackDetected: continueAccumulatedToolCalls.length > 0 });
                         if (continueEofContent) {
-                            const splitContinueEofThink = splitEmbeddedThinkContent(continueEofContent, !!thinkingMode);
+                            const splitContinueEofThink = splitEmbeddedThinkContent(continueEofContent, shouldShowProviderReasoning());
                             const incrementalContinueEofContent = extractIncrementalChunk(fullContent, splitContinueEofThink.visible);
                             if (incrementalContinueEofContent) emitStructuredAssistantChunk(incrementalContinueEofContent);
                         }

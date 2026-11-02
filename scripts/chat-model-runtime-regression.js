@@ -44,7 +44,7 @@ async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'rai-model-runtime-')),databasePath=path.join(temp,'isolated.sqlite');let child,logs='',observations=[];
  let mode='answer',summaryCalls=0; const provider=http.createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part;let body;try{body=JSON.parse(raw);}catch(_){res.writeHead(400);res.end();return;}
-  observations.push({url:req.url,body});
+  observations.push({url:req.url,host:req.headers.host,body});
   if(body.stream===false){summaryCalls++;res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:'Summary preserves facts and pending task.'},finish_reason:'stop'}]}));return;}
   if(mode==='failure'){res.writeHead(503);res.end('{}');return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
@@ -53,13 +53,15 @@ async function main(){
    res.write('data: '+JSON.stringify({choices:[],usage:{prompt_tokens:100,completion_tokens:4,prompt_cache_hit_tokens:80}})+'\n\n');res.end('data: [DONE]\n\n');return;
   }
   if(mode==='cancel'){res.write('data: '+JSON.stringify({choices:[{delta:{content:'partial'},finish_reason:null}]})+'\n\n');req.on('close',()=>res.end());return;}
+  if(body.model==='gpt-6.1-sol')res.write('data: '+JSON.stringify({choices:[{delta:{reasoning_content:'Provider reasoning.'}}]})+'\n\n');
   res.write('data: '+JSON.stringify({choices:[{delta:{content:'Runtime answer complete.'},finish_reason:mode==='length'?'length':'stop'}]})+'\n\n');
   if(mode!=='remote')for(let i=0;i<2;i++)res.write('data: '+JSON.stringify({choices:[],usage:{prompt_tokens:1024,completion_tokens:8,total_tokens:1032,prompt_cache_hit_tokens:768}})+'\n\n');
   res.end('data: [DONE]\n\n');
  });
+ const primaryProvider=http.createServer(provider.listeners('request')[0]),primaryBase=await listen(primaryProvider);
  const providerBase=await listen(provider),port=await reservePort(),baseUrl='http://127.0.0.1:'+port,key=path.join(temp,'key');fs.writeFileSync(key,randomSecret(),{mode:0o600});
  try{
-  child=spawn(process.execPath,[path.join(ROOT,'server.js')],{cwd:ROOT,stdio:['ignore','pipe','pipe'],env:{...process.env,NODE_ENV:'test',NODE_OPTIONS:'',BIND_HOST:'127.0.0.1',HOST:'127.0.0.1',PORT:String(port),TRUST_PROXY:'false',JWT_SECRET:randomSecret(),ADMIN_JWT_SECRET:randomSecret(),ADMIN_PASSWORD_HASH:await bcrypt.hash(randomSecret(),6),RAI_TOTP_ENCRYPTION_KEY:randomSecret(),RAI_REFRESH_TOKEN_PEPPER:randomSecret(),RAI_DB_PATH:databasePath,RAI_RUNTIME_REPORT_PATH:path.join(temp,'report.md'),PUBLIC_BASE_URL:baseUrl,CORS_ORIGINS:baseUrl,RAI_DEFAULT_DOMAIN_NOTICE_ENABLED:'false',RAI_DOCUMENT_PARSER_ENABLED:'false',RAI_CHAT_QUOTA_PER_MINUTE:'100',RAI_CHAT_QUOTA_PER_5H:'1',RAI_CHAT_QUOTA_PER_WEEK:'1',ZTX6D_FORCE_DISABLED:'true',AGENT_HARD_DISABLE:'1',TAVILY_API_KEY:'',SILICONFLOW_API_KEY:'',GOOGLE_GEMINI_API_KEY:'',OPENROUTER_API_KEY:'',DEEPSEEK_API_KEY:randomSecret(),RAI_GPT_GATEWAY_BASE_URL:providerBase+'/v1',RAI_GPT_GATEWAY_API_KEY_FILE:key,RAI_DEEPSEEK_PROVIDER:official?'official':'relay',RAI_DEEPSEEK_FAST_BASE_URL:providerBase+'/v1',RAI_DEEPSEEK_FAST_API_KEY_FILE:key,RAI_TEST_DEEPSEEK_CHAT_COMPLETIONS_URL:providerBase+'/official/v1/chat/completions'}});
+  child=spawn(process.execPath,[path.join(ROOT,'server.js')],{cwd:ROOT,stdio:['ignore','pipe','pipe'],env:{...process.env,NODE_ENV:'test',NODE_OPTIONS:'',BIND_HOST:'127.0.0.1',HOST:'127.0.0.1',PORT:String(port),TRUST_PROXY:'false',JWT_SECRET:randomSecret(),ADMIN_JWT_SECRET:randomSecret(),ADMIN_PASSWORD_HASH:await bcrypt.hash(randomSecret(),6),RAI_TOTP_ENCRYPTION_KEY:randomSecret(),RAI_REFRESH_TOKEN_PEPPER:randomSecret(),RAI_DB_PATH:databasePath,RAI_RUNTIME_REPORT_PATH:path.join(temp,'report.md'),PUBLIC_BASE_URL:baseUrl,CORS_ORIGINS:baseUrl,RAI_DEFAULT_DOMAIN_NOTICE_ENABLED:'false',RAI_DOCUMENT_PARSER_ENABLED:'false',RAI_CHAT_QUOTA_PER_MINUTE:'100',RAI_CHAT_QUOTA_PER_5H:'1',RAI_CHAT_QUOTA_PER_WEEK:'1',ZTX6D_FORCE_DISABLED:'true',AGENT_HARD_DISABLE:'1',TAVILY_API_KEY:'',SILICONFLOW_API_KEY:'',GOOGLE_GEMINI_API_KEY:'',OPENROUTER_API_KEY:'',DEEPSEEK_API_KEY:randomSecret(),RAI_GPT_GATEWAY_BASE_URL:providerBase+'/v1',RAI_GPT_GATEWAY_API_KEY_FILE:key,RAI_GPT_PRIMARY_BASE_URL:primaryBase+'/v1',RAI_GPT_PRIMARY_API_KEY_FILE:key,RAI_DEEPSEEK_PROVIDER:official?'official':'relay',RAI_DEEPSEEK_FAST_BASE_URL:providerBase+'/v1',RAI_DEEPSEEK_FAST_API_KEY_FILE:key,RAI_TEST_DEEPSEEK_CHAT_COMPLETIONS_URL:providerBase+'/official/v1/chat/completions'}});
   child.stdout.on('data',x=>logs=(logs+x).slice(-100000));child.stderr.on('data',x=>logs=(logs+x).slice(-100000));
   for(let i=0;i<450;i++){if(child.exitCode!==null)throw Error('isolated server exit '+logs);try{if((await fetch(baseUrl+'/api/version')).ok)break;}catch(_){}await delay(100);if(i===449)throw Error('readiness timeout '+logs);}
   const token=await loginSeededUser(databasePath,baseUrl),headers={Authorization:'Bearer '+token,'Content-Type':'application/json'};
@@ -84,6 +86,15 @@ async function main(){
    assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6-astra' AND status='completed'")).n,3);
    const before=observations.length,blocked=await chat('gpt-6-astra');assert.equal(blocked.status,429);assert.equal(JSON.parse(blocked.raw).code,'model_chat_quota_exceeded');assert.equal(observations.length,before,'quota cannot issue provider request');
    const minimumEffort=await chat('gpt-6.1-sol',{thinkingMode:false});assert.ok(minimumEffort.events.some(x=>x.type==='done'&&!x.degraded),minimumEffort.raw.slice(-2000));assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body.reasoning_effort,'low');
+   assert.ok(minimumEffort.events.some(x=>x.type==='reasoning'&&x.content==='Provider reasoning.'),'legacy GPT off must reveal actual low reasoning');
+   assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).host,new URL(primaryBase).host,'GPT uses M primary before Fast');
+   await delay(20);
+   const timeline=logs.split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line)];}catch(_){return [];}}).filter(x=>x.event==='chat_latency'&&x.model==='gpt-6.1-sol').at(-1);
+   assert.ok(timeline,'completed request emits one latency summary');
+   assert.equal(timeline.attempts[0].provider,'gpt_mirrorium');
+   assert.ok(timeline.stages.first_reasoning_write>=timeline.attempts[0].first_reasoning);
+   assert.ok(timeline.stages.first_content_write>=timeline.attempts[0].first_content);
+   assert.equal(timeline.attempts[0].fallback,false);
    const beforeRetired=observations.length;const retired=await chat('gpt-6-luna',{thinkingMode:false});assert.ok(retired.events.some(x=>x.type==='done'&&!x.degraded),retired.raw.slice(-1000));assert.equal(observations.slice(beforeRetired).find(x=>x.body.stream).body.model,dsModel,'retired Luna migrates to fast DeepSeek');
    // Vision stays on the explicitly selected DeepSeek model.
    const vision=await chat('deepseek-v4.1-flash',{messages:[{role:'user',content:'Read this image.',attachments:[{type:'image',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/yUAAAAASUVORK5CYII=',mimeType:'image/png',fileName:'pixel.png'}]}]});assert.ok(vision.events.some(x=>x.type==='model_info'&&x.model==='deepseek-v4.1-flash'),vision.raw.slice(-2000));assert.ok(observations.at(-1).body.messages.some(m=>Array.isArray(m.content)&&m.content.some(x=>x.type==='image_url')),'vision preserved');
@@ -112,7 +123,7 @@ async function main(){
    const smart=await chat('auto',{sessionId:provenanceChat,thinkingMode:true,reasoningProfile:undefined});
    assert.ok(smart.events.some(x=>x.type==='model_info'&&x.actualModel==='gpt-6.1-sol'),smart.raw.slice(-2000));
    assert.equal(smart.events.find(x=>x.type==='done').actualModel,'gpt-6.1-sol');
-   assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol'&&x.body.stream).at(-1).body.reasoning_effort,'max','Smart thinking must use Sol max regardless of an omitted effort field');
+   assert.equal(Object.hasOwn(observations.filter(x=>x.body.model==='gpt-6.1-sol'&&x.body.stream).at(-1).body,'reasoning_effort'),false,'Smart thinking without an effort keeps Adaptive');
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6.1-sol');
    mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,3);mode='answer';
    // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
@@ -138,7 +149,7 @@ async function main(){
    assert.ok(remoteTask,'chat must dispatch the remote tool');assert.equal(remoteTask.tool,'list_files');
    await remote(devicePath+'/tasks/'+remoteTask.id+'/start','POST',{},deviceHeaders);
    await remote(devicePath+'/tasks/'+remoteTask.id+'/result','POST',{result:{success:true,path:'fixture',entries:[{name:'remote-note.txt',type:'file'}],output:'目录: fixture (1 项)\n  [文件] remote-note.txt'}},deviceHeaders);
-   const completed=await stream;const remoteContinuation=observations.filter(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))).at(-1);assert.ok(remoteContinuation,'remote continuation is observed');assert.equal(remoteContinuation.body.reasoning_effort,'max','Manual max survives routed remote tool continuation');assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
+   const completed=await stream;const remoteContinuation=observations.filter(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))).at(-1);assert.ok(remoteContinuation,'remote continuation is observed');assert.equal(remoteContinuation.body.reasoning_effort,remoteContinuation.body.model==='deepseek-flash'?'high':'low','Continuation preserves selected effort or official DeepSeek minimum');assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
    const remoteUsage=completed.events.filter(x=>x.type==='usage');
    assert.ok(remoteUsage.some(x=>x.usage.prompt_cache_hit_tokens===80),'initial tool call reports genuine known cache');
    assert.equal(remoteUsage.at(-1).usage_scope,'request');
@@ -148,6 +159,6 @@ async function main(){
    await remote(devicePath,'DELETE',undefined,deviceHeaders);mode='answer';
    console.log('chat-model-runtime PASS: authenticated free account, 3 completed Astra turns then 429, zero points, Sol minimum effort and retired Luna migration, native DeepSeek vision, failure release, real long-context summarization, independent model allowances');
   }finally{await closeDatabase(db);}
- }catch(error){error.message+='\nIsolated server tail:\n'+logs.slice(-9000);throw error;}finally{if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null)child.kill('SIGKILL');}provider.closeAllConnections?.();await new Promise(r=>provider.close(r));const safe=fs.realpathSync(temp),base=fs.realpathSync(os.tmpdir());assert.ok(safe.startsWith(base+path.sep)&&path.basename(safe).startsWith('rai-model-runtime-'));fs.rmSync(safe,{recursive:true,force:true});}
+ }catch(error){error.message+='\nIsolated server tail:\n'+logs.slice(-9000);throw error;}finally{if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null)child.kill('SIGKILL');}provider.closeAllConnections?.();await new Promise(r=>provider.close(r));primaryProvider.closeAllConnections?.();await new Promise(r=>primaryProvider.close(r));const safe=fs.realpathSync(temp),base=fs.realpathSync(os.tmpdir());assert.ok(safe.startsWith(base+path.sep)&&path.basename(safe).startsWith('rai-model-runtime-'));fs.rmSync(safe,{recursive:true,force:true});}
 }
 main().catch(e=>{console.error(e.stack);process.exitCode=1;});
