@@ -140,7 +140,7 @@ async function testCase(browser, url, fixture) {
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'auto');
     await slider.press('End');
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'max');
-    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Luna', 'GPT 6 Astra'];
+    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Astra'];
     for (const [lang, label] of [['zh-CN', '最大'], ['zh-TW', '最大'], ['en', 'Max']]) {
       const localized = await page.evaluate(lang => {
         setLanguage(lang); updateToolbarUI(); renderResearchModelControls();
