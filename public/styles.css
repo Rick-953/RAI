@@ -3513,6 +3513,20 @@ body.keyboard-open .chat-edge-blur-bottom {
   max-width: 200px;
 }
 
+.message.user .message-attachments {
+  justify-content: flex-end;
+}
+
+.message.user .message-attachment-item.image-attachment {
+  width: 112px;
+  height: 112px;
+}
+
+.message.user .message-attachment-item.media-attachment {
+  max-width: min(290px, 100%);
+  box-sizing: border-box;
+}
+
 .message-attachment-item.image-attachment img {
   width: 100%;
   height: 100%;
@@ -10976,6 +10990,57 @@ html.hand-left .chat-index-timeline {
 
 .reasoning-profile-labels span {
   white-space: nowrap;
+}
+
+#reasoningProfileChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+  padding-bottom: 10px;
+}
+
+.reasoning-profile-choice {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  min-width: 42px;
+  min-height: 32px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.reasoning-profile-choice[aria-pressed="true"] {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.reasoning-profile-choice:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.admin-model-create-form {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+.admin-model-capabilities, .admin-model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.admin-model-create-form input, .admin-model-create-form select {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .more-menu-item-toggle {

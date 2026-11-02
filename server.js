@@ -1,10 +1,15 @@
+const { MESSAGE: FILE_NAME_TOO_LONG_MESSAGE, validateUploadFilename, isFileNameTooLong } = require('./lib/upload-filename');
+const { normalizeAdminModelDefinition, validateReasoningProfile } = require('./lib/admin-model-catalog');
+const { registerChatModel, removeChatModel } = require('./lib/chat-model-policy');
 const { applyChatReasoningPolicy, officialDeepSeekBody } = require('./lib/chat-reasoning-policy');
-const { enforceContextWindow, CONTEXT_WINDOW_TOKENS } = require('./lib/context-window');
+const { enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel } = require('./lib/context-window');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
+const { createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
+const { fetchWithLatency } = require('./lib/chat-latency');
 const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
@@ -557,6 +562,16 @@ const GPT_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_GATEWAY_API_K
 const GPT_GATEWAY_API_KEY = GPT_GATEWAY_API_KEY_FILE
     ? readGatewayApiKeyFile(GPT_GATEWAY_API_KEY_FILE)
     : '';
+const GPT_PRIMARY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_GPT_PRIMARY_BASE_URL) || 'https://sub.dir.mirrorium.cn/v1', { production: IS_PRODUCTION });
+const GPT_PRIMARY_API_KEY_FILE = cleanEnvValue(process.env.RAI_GPT_PRIMARY_API_KEY_FILE);
+const GPT_PRIMARY_API_KEY = GPT_PRIMARY_API_KEY_FILE ? readGatewayApiKeyFile(GPT_PRIMARY_API_KEY_FILE) : '';
+const GPT_PRIMARY_CHAT_URL = joinGatewayEndpoint(GPT_PRIMARY_BASE_URL, 'chat/completions');
+const GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS = 6000;
+const LUNA_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_LUNA_GATEWAY_BASE_URL) || 'https://api.000339.xyz/v1', { production: IS_PRODUCTION });
+const LUNA_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_LUNA_GATEWAY_API_KEY_FILE);
+const LUNA_GATEWAY_API_KEY = LUNA_GATEWAY_API_KEY_FILE ? readGatewayApiKeyFile(LUNA_GATEWAY_API_KEY_FILE) : '';
+const LUNA_GATEWAY_CHAT_URL = joinGatewayEndpoint(LUNA_GATEWAY_BASE_URL, 'chat/completions');
+const LUNA_GATEWAY_CONFIGURED = !!(LUNA_GATEWAY_API_KEY_FILE && LUNA_GATEWAY_API_KEY);
 const GPT_GATEWAY_CONFIGURED = !!(GPT_GATEWAY_BASE_URL && GPT_GATEWAY_API_KEY);
 if (GPT_GATEWAY_BASE_URL && !GPT_GATEWAY_API_KEY_FILE) {
     console.warn(' GPT 网关已配置 URL，但未配置 RAI_GPT_GATEWAY_API_KEY_FILE；相关模型将 fail closed');
@@ -820,6 +835,7 @@ const GENERATED_IMAGE_ALLOWED_SOURCE_HOSTS = new Set(
     [
         ...parseCsvEnv(process.env.RAI_GENERATED_IMAGE_ALLOWED_HOSTS || 'siliconflow.cn'),
         ...(GPT_GATEWAY_BASE_URL ? [new URL(GPT_GATEWAY_BASE_URL).hostname] : []),
+        ...(GPT_PRIMARY_BASE_URL ? [new URL(GPT_PRIMARY_BASE_URL).hostname] : []),
         ...(GPT_IMAGE_BASE_URL ? [new URL(GPT_IMAGE_BASE_URL).hostname] : [])
     ]
         .map((host) => normalizeHostname(host))
@@ -4423,7 +4439,7 @@ function isInsufficientBalanceError(status, errorText = '') {
 function normalizeReasoningProfile(value = 'auto') {
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'mixed') return 'max';
-    if (['auto', 'low', 'medium', 'high', 'max'].includes(normalized)) return normalized;
+    if (['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'].includes(normalized)) return normalized;
     return 'low';
 }
 
@@ -4773,7 +4789,7 @@ function shouldUseServerSideSearchContext({
     if (!routing || routing.provider !== 'deepseek') return false;
     if (detectFreshnessNeed(text, internetMode)) return true;
 
-    return /(?:了解|查(?:一下|下)?|搜索|搜一下|联网|资料|来源|数据|报告|论文|文献|官网|价格|成本|便宜|发布|下线|关闭|开启|如何|怎么|为什么|对比|现状|最新|实时|今天|现在|202[0-9]|latest|current|today|news|source|sources|data|docs?|paper|pricing|cost|cheap|compare|search|look\s*up|find|research|how|why)/i.test(text);
+    return /(?:搜索|搜一下|联网|检索|查一下|查询|查找|查证|官网|最新|实时|今天|现状|\b(?:latest|current|today|news|search|look\s*up|find|research)\b)/i.test(text);
 }
 
 function buildServerSideSearchQuery(userMessage = '', previousUserMessage = '') {
@@ -8842,6 +8858,7 @@ const API_PROVIDERS = {
         models: [...GPT_GATEWAY_CHAT_MODELS],
         optional: true
     },
+    rai_luna_gateway: { apiKey: LUNA_GATEWAY_API_KEY, envKey: 'RAI_LUNA_GATEWAY_API_KEY_FILE', baseURL: LUNA_GATEWAY_CHAT_URL, models: ['gpt-6-luna'], optional: true },
     rai_fast_gateway: {
         apiKey: FAST_GATEWAY_API_KEY,
         envKey: 'RAI_FAST_GATEWAY_API_KEY_FILE',
@@ -8916,13 +8933,12 @@ function logApiKeyReadiness() {
 logApiKeyReadiness();
 
 const LEGACY_MODEL_ALIASES = {
-  'gpt-6-luna': 'deepseek-v4.1-flash',
     // Normalize retired model IDs while keeping stored sessions and old clients readable.
     'gpt-5.6': 'gpt-6.1-sol',
     'gpt-5.6-sol': 'gpt-6.1-sol',
     'gpt-6-sol': 'gpt-6.1-sol',
     'gpt-5.6-terra': 'deepseek-v4.1-flash',
-    'gpt-5.6-luna': 'deepseek-v4.1-flash',
+    'gpt-5.6-luna': 'gpt-6-luna',
     'claude-opus-5': 'claude-sonnet-5',
     'qwen3-vl': 'qwen3.6-35b-a3b',
     'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -8957,7 +8973,7 @@ const SUPPORTED_INCOMING_MODEL_IDS = new Set([...PUBLIC_MODEL_IDS, 'auto', 'fast
 
 function normalizeIncomingModelId(modelId = 'auto') {
     const normalized = String(modelId || 'auto').trim();
-    const aliased = LEGACY_MODEL_ALIASES[normalized] || normalized;
+    const aliased = Object.hasOwn(LEGACY_MODEL_ALIASES, normalized) ? LEGACY_MODEL_ALIASES[normalized] : normalized;
     if (String(aliased).startsWith('x-ai/grok-4.20')) return 'auto';
     return SUPPORTED_INCOMING_MODEL_IDS.has(aliased) ? aliased : 'auto';
 }
@@ -8976,15 +8992,16 @@ const MODEL_ROUTING = {
     'deepseek-v4.1-flash': {
         provider: 'deepseek',
         model: DEEPSEEK_FAST_API_KEY ? 'deepseek-v4.1-flash' : 'deepseek-flash',
-        contextWindow: 256000,
+        contextWindow: 1000000, compressionThreshold: 400000,
         supportsThinking: true,
         supportsWebSearch: true,
         multimodal: true
     },
+    'gpt-6-luna': { provider: 'rai_luna_gateway', model: 'gpt-6-luna', contextWindow: 272000, compressionThreshold: 258000, supportsThinking: true, supportsWebSearch: true, multimodal: true, thinkingProfiles: ['auto','low','medium','high','xhigh','max'], canDisableThinking: true },
     'gpt-6.1-sol': {
         provider: 'rai_gpt_gateway',
         model: 'gpt-6.1-sol',
-        contextWindow: 256000,
+        contextWindow: 272000, compressionThreshold: 258000,
         supportsThinking: true,
         supportsWebSearch: true,
         multimodal: true
@@ -8999,7 +9016,7 @@ const MODEL_ROUTING = {
     'gpt-6-astra': {
         provider: 'rai_gpt_gateway',
         model: 'gpt-6-astra',
-        contextWindow: 256000,
+        contextWindow: 272000, compressionThreshold: 258000,
         supportsThinking: true,
         supportsWebSearch: true,
         multimodal: true
@@ -9103,7 +9120,7 @@ const MODEL_ROUTING = {
         supportsThinking: true,
         supportsWebSearch: false,
         multimodal: false,
-        contextWindow: 256000,
+        contextWindow: 272000, compressionThreshold: 258000,
         maxOutputTokens: 8000
     },
     'openrouter-free': {
@@ -9139,7 +9156,7 @@ function findAvailableRuntimeFallbackModelId(currentModel = '', options = {}) {
     return getRuntimeFallbackModelIds(currentModel, options).find((modelId) => {
         const route = MODEL_ROUTING[modelId];
         const provider = route ? API_PROVIDERS[route.provider] : null;
-        return !!(route && provider?.apiKey);
+        return !!(route && provider?.apiKey && !modelAvailabilityCache.disabled.has(modelId));
     }) || null;
 }
 
@@ -10189,7 +10206,7 @@ db.serialize(() => {
 
         // Existing manual defaults must not survive this release. Session-level
         // history intentionally remains untouched.
-        db.run(`UPDATE user_configs SET default_model = 'auto' WHERE COALESCE(default_model, '') != 'auto'`);
+        db.run('ALTER TABLE user_configs ADD COLUMN reasoning_profile TEXT', () => {});
 
         const bumpConversationRevisionSql = (userIdExpression) => `
           INSERT INTO conversation_sync_state (user_id, revision) VALUES (${userIdExpression}, 1)
@@ -11075,9 +11092,12 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     pwa_reward_min_account_age_minutes: parseBoundedInteger(process.env.RAI_PWA_REWARD_MIN_ACCOUNT_AGE_MINUTES, 30, 0, 10080),
     invite_reward_immediate_enabled: parseBooleanEnv(process.env.RAI_INVITE_REWARD_IMMEDIATE_ENABLED, false) ? 1 : 0,
     // 模型路由设置：管理员可配置智能/快速/思考首选模型与视觉备用路由模型
-    smart_default_model: 'deepseek-v4.1-flash',
+    smart_default_model: 'gpt-6.1-sol',
+    smart_reasoning_profile: 'low',
     fast_default_model: 'deepseek-v4.1-flash',
-    thinking_default_model: 'deepseek-v4.1-flash',
+    fast_reasoning_profile: 'none',
+    thinking_default_model: 'gpt-6.1-sol',
+    thinking_reasoning_profile: 'auto',
     vision_fallback_model: 'deepseek-v4.1-flash',
     selection_explanation_model: SELECTION_EXPLANATION_MODEL_ID
 });
@@ -11125,7 +11145,7 @@ function createUploadProgressSession({ userId, fileName = '', mimeType = '', tot
     const session = {
         id: uploadId,
         userId: Number(userId),
-        fileName: String(fileName || '').slice(0, 255),
+        fileName: Array.from(String(fileName || '')).slice(0, 255).join(''),
         mimeType: String(mimeType || '').slice(0, 120),
         totalBytes: Math.max(0, Number(totalBytes || 0)),
         uploadedBytes: 0,
@@ -11146,7 +11166,7 @@ function updateUploadProgressSession(session, updates = {}) {
     if (!session) return null;
     const now = Date.now();
     if (updates.status) session.status = updates.status;
-    if (updates.fileName !== undefined) session.fileName = String(updates.fileName || '').slice(0, 255);
+    if (updates.fileName !== undefined) session.fileName = Array.from(String(updates.fileName || '')).slice(0, 255).join('');
     if (updates.mimeType !== undefined) session.mimeType = String(updates.mimeType || '').slice(0, 120);
     if (updates.totalBytes !== undefined) session.totalBytes = Math.max(0, Number(updates.totalBytes || 0));
     if (updates.uploadedBytes !== undefined) {
@@ -11157,8 +11177,8 @@ function updateUploadProgressSession(session, updates = {}) {
     if (updates.requestBytesTotal !== undefined) session.requestBytesTotal = Math.max(0, Number(updates.requestBytesTotal || 0));
     if (updates.file !== undefined) session.file = updates.file;
     if (updates.errorCode !== undefined) {
-        const errorCode = String(updates.errorCode || '').trim().toLowerCase();
-        session.errorCode = /^[a-z0-9_]{1,64}$/.test(errorCode) ? errorCode : null;
+        const errorCode = String(updates.errorCode || '').trim();
+        session.errorCode = /^[a-zA-Z0-9_]{1,64}$/.test(errorCode) ? errorCode : null;
     }
     session.updatedAt = now;
     session.expiresAt = now + UPLOAD_PROGRESS_TTL_MS;
@@ -11183,6 +11203,7 @@ function serializeUploadProgressSession(session) {
         mimeType: session.mimeType,
         file: session.file || null,
         errorCode: session.errorCode || null,
+        ...(session.errorCode === 'FILE_NAME_TOO_LONG' ? { code: 'FILE_NAME_TOO_LONG', error: FILE_NAME_TOO_LONG_MESSAGE } : {}),
         createdAt: new Date(session.createdAt).toISOString(),
         updatedAt: new Date(session.updatedAt).toISOString(),
         expiresAt: new Date(session.expiresAt).toISOString()
@@ -11280,6 +11301,7 @@ async function resolveUserConcurrentRequestLimit(userId, runtimeSettings = null)
 }
 
 // 管理员可配置的模型路由设置键（值为模型 ID，必须属于公开模型白名单）
+const MODEL_REASONING_SETTING_KEYS = ['smart_reasoning_profile', 'fast_reasoning_profile', 'thinking_reasoning_profile'];
 const MODEL_ROUTING_SETTING_KEYS = ['smart_default_model', 'fast_default_model', 'thinking_default_model', 'selection_explanation_model'];
 
 function isSupportedAdminModelSettingValue(value) {
@@ -11910,7 +11932,7 @@ function normalizeUploadOriginalName(value) {
     // multer/express 常把 multipart 头里的 UTF-8 中文按 latin1 解码（经典乱码坑）。
     // 检测 latin1 误码字节并还原为 UTF-8；已是合法 UTF-8 或纯 ASCII 时原样返回。
     const raw = String(value || '').trim();
-    if (!raw) return raw;
+    if (!raw || [...raw].some(char => char.codePointAt(0) > 255)) return raw;
     try {
         const restored = Buffer.from(raw, 'latin1').toString('utf8');
         if (restored.includes('\uFFFD')) return raw;       // 还原失败（原值本就是合法 UTF-8）
@@ -11927,7 +11949,10 @@ const storage = multer.diskStorage({
         cb(null, path.join(__dirname, uploadPath));
     },
     filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
+        try { validateUploadFilename(normalizeUploadOriginalName(file.originalname)); } catch (error) { return cb(error); }
+        const rawExtension = path.extname(file.originalname);
+        const extension = /^\.[a-zA-Z0-9_-]{1,31}$/.test(rawExtension) ? rawExtension.toLowerCase() : '';
+        const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${extension}`;
         const uploadPath = file.fieldname === 'avatar' ? 'avatars' : 'uploads';
         // Record the target before DiskStorage opens it. On parser failures,
         // req.file may never be assigned even though bytes already reached disk.
@@ -11975,6 +12000,7 @@ function filenameHasBlockedExtension(file) {
 }
 
 function validateAvatarUpload(req, file, cb) {
+    try { validateUploadFilename(normalizeUploadOriginalName(file.originalname)); } catch (error) { return cb(error); }
     const ext = getUploadExtension(file);
     if (filenameHasBlockedExtension(file) || !AVATAR_EXTENSIONS.has(ext)) {
         return cb(new Error('头像仅支持 jpg/png/webp/gif 图片'));
@@ -11986,6 +12012,7 @@ function validateAvatarUpload(req, file, cb) {
 }
 
 function validateAttachmentUpload(req, file, cb) {
+    try { validateUploadFilename(normalizeUploadOriginalName(file.originalname)); } catch (error) { return cb(error); }
     const ext = getUploadExtension(file);
     if (!ext || filenameHasBlockedExtension(file) || BLOCKED_UPLOAD_EXTENSIONS.has(ext) || !ATTACHMENT_EXTENSIONS.has(ext)) {
         return cb(new Error('不支持的文件类型'));
@@ -12013,6 +12040,10 @@ function runUpload(middleware, req, res, next) {
         // returning the rejection; this closes Multer abort races and makes the
         // no-residue guarantee observable to callers.
         await cleanupRejectedRequestUploads(req);
+        if (isFileNameTooLong(err)) {
+            failUploadProgressSession(req, 'FILE_NAME_TOO_LONG');
+            return res.status(400).json({ success: false, code: 'FILE_NAME_TOO_LONG', error: FILE_NAME_TOO_LONG_MESSAGE });
+        }
         if (err instanceof multer.MulterError) {
             console.warn(` Multipart 上传已拒绝: code=${String(err.code || 'unknown').slice(0, 80)}, ${formatPrivateLogFingerprint(err.field || '', 'field')}`);
             const message = err.code === 'LIMIT_FILE_SIZE' ? '文件大小超过限制' : '文件上传失败';
@@ -14211,6 +14242,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
       u.external_provider, u.external_uid, COALESCE(u.two_factor_enabled, 0) as two_factor_enabled,
       COALESCE(c.theme, 'dark') as theme,
       COALESCE(c.default_model, 'auto') as default_model,
+      c.reasoning_profile as reasoning_profile,
       COALESCE(c.temperature, 0.7) as temperature,
       COALESCE(c.top_p, 0.9) as top_p,
       COALESCE(c.max_tokens, 2000) as max_tokens,
@@ -14265,7 +14297,8 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
                 created_at: user.created_at,
                 last_login: user.last_login,
                 theme: user.theme || 'dark',
-                default_model: 'auto',
+                default_model: user.default_model || 'auto',
+                reasoning_profile: user.reasoning_profile || null,
                 temperature: parseFloat(user.temperature) || 0.7,
                 top_p: parseFloat(user.top_p) || 0.9,
                 max_tokens: parseInt(user.max_tokens, 10) || 2000,
@@ -15357,9 +15390,7 @@ function sanitizeUserConfigPayload(payload = {}) {
     const theme = ['light', 'dark', 'system'].includes(String(payload.theme || '').trim())
         ? String(payload.theme).trim()
         : 'dark';
-    // The account preference is deliberately no longer a routing choice. Manual
-    // choices remain request/session-local on clients that support them.
-    const safeDefaultModel = 'auto';
+    const safeDefaultModel = payload.default_model === undefined ? null : normalizeIncomingModelId(payload.default_model);
     const fontPreference = String(payload.font_preference || '').trim().toLowerCase() === 'rai-v1' ? 'rai-v1' : 'system';
     const allowedTabTitleModes = ['default', 'static', 'marquee', 'greeting', 'title', 'custom'];
     const tabTitleMode = allowedTabTitleModes.includes(String(payload.tab_title_mode || '').trim())
@@ -15376,6 +15407,7 @@ function sanitizeUserConfigPayload(payload = {}) {
     return {
         theme,
         default_model: safeDefaultModel,
+        reasoning_profile: payload.reasoning_profile === undefined ? null : normalizeReasoningProfile(payload.reasoning_profile),
         temperature: clampNumber(payload.temperature, 0, 2, 0.7),
         top_p: clampNumber(payload.top_p, 0, 1, 0.9),
         max_tokens: clampInteger(payload.max_tokens, 256, 128000, 2000),
@@ -15396,6 +15428,7 @@ function sanitizeUserConfigPayload(payload = {}) {
 }
 
 app.put('/api/user/config', authenticateToken, async (req, res) => {
+    await ensureAdminModelCatalog();
     const safeConfig = sanitizeUserConfigPayload(req.body);
 
     try {
@@ -15408,7 +15441,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, COALESCE(?, 'promote_children'))
         ON CONFLICT(user_id) DO UPDATE SET
           theme = excluded.theme,
-          default_model = excluded.default_model,
+          default_model = COALESCE(?, user_configs.default_model),
           temperature = excluded.temperature,
           top_p = excluded.top_p,
           max_tokens = excluded.max_tokens,
@@ -15429,17 +15462,19 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
             ELSE excluded.selection_explanation_delete_mode
           END`,
             [
-                req.user.userId, safeConfig.theme, safeConfig.default_model,
+                req.user.userId, safeConfig.theme, safeConfig.default_model || 'auto',
                 safeConfig.temperature, safeConfig.top_p, safeConfig.max_tokens,
                 safeConfig.frequency_penalty, safeConfig.presence_penalty, safeConfig.system_prompt,
                 safeConfig.thinking_mode, safeConfig.internet_mode, safeConfig.long_memory_enabled,
                 safeConfig.font_preference, safeConfig.tab_title_mode, safeConfig.tab_title_custom_text,
                 safeConfig.selection_explanation_delete_mode,
+                safeConfig.default_model,
                 safeConfig.long_memory_enabled,
                 safeConfig.selection_explanation_delete_mode
             ]
         );
 
+        if (safeConfig.reasoning_profile !== null) await dbRunAsync('UPDATE user_configs SET reasoning_profile = ? WHERE user_id = ?', [safeConfig.reasoning_profile, req.user.userId]);
         let memory = null;
         if (safeConfig.long_memory_enabled !== null) {
             memory = await setUserLongMemoryEnabled(req.user.userId, safeConfig.long_memory_enabled === 1);
@@ -20508,11 +20543,11 @@ async function enforceUploadPreflight(req, res, next) {
 
 app.post('/api/uploads/sessions', apiLimiter, authenticateToken, (req, res) => {
     const fileName = String(req.body?.fileName || '').trim();
+    try { validateUploadFilename(fileName); } catch (_) { return res.status(400).json({ success: false, code: 'FILE_NAME_TOO_LONG', error: FILE_NAME_TOO_LONG_MESSAGE }); }
     const mimeType = String(req.body?.mimeType || '').trim();
     const size = Number(req.body?.size);
     if (
         !fileName
-        || fileName.length > 255
         || mimeType.length > 120
         || /[\u0000-\u001f\u007f]/.test(fileName)
         || /[\u0000-\u001f\u007f]/.test(mimeType)
@@ -20561,6 +20596,8 @@ app.post(
     (req, res, next) => runUpload(attachmentUpload.single('file'), req, res, next),
     (req, res, next) => {
         if (req.file) {
+            req.file.originalname = normalizeUploadOriginalName(req.file.originalname);
+            validateUploadFilename(req.file.originalname);
             updateUploadProgressSession(req.uploadProgressSession, {
                 status: 'processing',
                 fileName: req.file.originalname,
@@ -20885,28 +20922,66 @@ const cxRemoteControl = installCxRemoteRoutes({
 });
 const chatModelQuotaContext = new AsyncLocalStorage();
 const chatModelQuotaService = createChatModelQuotaService({ withTransaction: withMainDbTransaction });
+function chatLatencyProvider(url, modelId = '') {
+    if (url === GPT_PRIMARY_CHAT_URL) return 'gpt_mirrorium';
+    if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return 'deepseek_official';
+    if (url === API_PROVIDERS.rai_gpt_gateway.baseURL && !String(modelId).startsWith('deepseek')) return 'gpt_fast';
+    if (url === API_PROVIDERS.deepseek.baseURL || url === joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions')) return 'deepseek_relay';
+    if (url === API_PROVIDERS.rai_fast_gateway?.baseURL) return 'fast_gateway';
+    if (url === API_PROVIDERS.rai_claude_gateway?.baseURL) return 'claude_gateway';
+    return 'other';
+}
+async function fetchChatProviderWithLatency(url, options = {}) {
+    // Only server-configured model endpoints may receive provider credentials.
+    // Never follow a redirect carrying an Authorization header to another host.
+    const allowedDestinations = new Set([
+        GPT_PRIMARY_CHAT_URL, DEEPSEEK_CHAT_COMPLETIONS_URL,
+        joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions'),
+        ...Object.values(API_PROVIDERS).map(provider => provider.baseURL)
+    ].filter(Boolean));
+    if (!allowedDestinations.has(url)) throw new Error('unconfigured_chat_provider_endpoint');
+    options = { ...options, redirect: 'error' };
+    const latency = chatModelQuotaContext.getStore()?.latency;
+    let body;
+    try { body = JSON.parse(options.body || '{}'); } catch (_) { /* Non-model HTTP. */ }
+    if (!latency || !Array.isArray(body?.messages)) return fetch(url, options);
+    return fetchWithLatency(fetch, url, options, latency, {
+        provider: chatLatencyProvider(url, body.model), model: body.model, streaming: body.stream === true, call: options.raiLatencyCall
+    });
+}
 const fetchDeepSeekProvider = createDeepSeekProviderFetch({
     primaryUrl: joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions'),
     primaryKey: DEEPSEEK_FAST_API_KEY,
+    primaryModels: API_PROVIDERS.deepseek.models,
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
     officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
-    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS
+    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
+    fetchImpl: fetchChatProviderWithLatency
 });
-const fetchGptProvider = createDeepSeekProviderFetch({
+const fetchGptFastProvider = createDeepSeekProviderFetch({
     primaryUrl: API_PROVIDERS.rai_gpt_gateway.baseURL,
     primaryKey: GPT_GATEWAY_API_KEY,
-    primaryModels: [...GPT_GATEWAY_CHAT_MODELS],
+    primaryModels: API_PROVIDERS.rai_gpt_gateway.models,
     officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL,
     officialKey: ENV_API_KEYS.DEEPSEEK_API_KEY,
-    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS
+    primaryTimeoutMs: CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
+    fetchImpl: fetchChatProviderWithLatency
+});
+const fetchGptProvider = createGptPrimaryFetch({
+    primaryUrl: GPT_PRIMARY_CHAT_URL, primaryKey: GPT_PRIMARY_API_KEY,
+    fallbackUrl: API_PROVIDERS.rai_gpt_gateway.baseURL, fallbackFetch: fetchGptFastProvider,
+    models: API_PROVIDERS.rai_gpt_gateway.models, firstTokenTimeoutMs: GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS,
+    fetchImpl: fetchChatProviderWithLatency
 });
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
     let parsedBody = null;
     try { parsedBody = JSON.parse(options.body || '{}'); } catch (_) { /* non-model request */ }
+    if (!Array.isArray(parsedBody?.messages)) return fetch(url, { ...options, redirect: 'error' });
     const modelId = parsedBody?.model || '';
-    const protectedModel = Object.hasOwn(CHAT_MODEL_LIMITS.free, modelId)
-        && url === API_PROVIDERS.rai_gpt_gateway.baseURL;
+    const protectedModel = Object.values(CHAT_MODEL_LIMITS).some(limits => Object.hasOwn(limits, modelId));
+    const gptProviderRequest = url === API_PROVIDERS.rai_gpt_gateway.baseURL;
+    const lunaProviderRequest = url === API_PROVIDERS.rai_luna_gateway.baseURL;
     if (turn && protectedModel) {
         if (turn.closed) throw new Error('chat_turn_already_closed');
         if (!turn.reserved.has(modelId)) {
@@ -20914,9 +20989,10 @@ async function fetchModelProvider(url, options = {}) {
             turn.reserved.add(modelId);
         }
     }
-    if (Array.isArray(parsedBody?.messages) && (url === API_PROVIDERS.deepseek.baseURL || url === API_PROVIDERS.rai_gpt_gateway.baseURL)) {
+    if (Array.isArray(parsedBody?.messages)) {
         const body = parsedBody;
         const compressedBody = await enforceContextWindow(body, {
+            policy: contextPolicyForModel(body.model, ADMIN_MODEL_CATALOG.find(item => item.id === body.model)),
             summarize: async transcript => {
                 const provider = API_PROVIDERS.deepseek;
                 const controller = new AbortController();
@@ -20938,6 +21014,7 @@ async function fetchModelProvider(url, options = {}) {
                     return data.choices?.[0]?.message?.content || '';
                 } finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
             },
+            onDiagnostic: event => { turn?.latency?.mark('context_compression_skipped'); console.warn(' 上下文软压缩跳过:', { code: event.code, estimated: true }); },
             onCompressed: event => {
                 if (turn?.response && !turn.response.writableEnded) turn.response.write(`data: ${JSON.stringify(event)}\n\n`);
             }
@@ -20946,20 +21023,31 @@ async function fetchModelProvider(url, options = {}) {
     }
     if (parsedBody?.messages) {
         const body = JSON.parse(options.body);
-        const profile = turn?.reasoningProfile || (['low', 'medium', 'high', 'max'].includes(body.reasoning_effort) ? body.reasoning_effort : 'low');
+        const profile = turn?.reasoningProfile || (['low', 'medium', 'high', 'xhigh', 'max'].includes(body.reasoning_effort) ? body.reasoning_effort : 'low');
         const thinkingMode = turn ? turn.thinkingMode : body.thinking?.type === 'enabled' || !!body.reasoning_effort;
-        applyChatReasoningPolicy(body, { thinkingMode, profile });
-        const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && body.model === 'deepseek-flash' ? officialDeepSeekBody(body) : body;
+        const definition = ADMIN_MODEL_CATALOG.find(item => item.id === body.model || (MODEL_ROUTING[item.id]?.model === body.model));
+        applyChatReasoningPolicy(body, { thinkingMode, profile, definition, provider: definition?.provider });
+        const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && definition?.provider === 'deepseek' ? officialDeepSeekBody(body, body.model) : body;
         requestChatStreamUsage(outgoing);
         options = { ...options, body: JSON.stringify(outgoing) };
     }
-    const providerFetch = protectedModel ? fetchGptProvider : fetchDeepSeekProvider;
-    const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode });
+    const providerFetch = lunaProviderRequest ? fetchChatProviderWithLatency : gptProviderRequest ? fetchGptProvider : fetchDeepSeekProvider;
+    if (parsedBody?.messages) turn?.latency?.mark('context_ready');
+    const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode,
+        raiLatencyCall: parsedBody?.messages ? turn?.latency?.nextCall() : undefined });
     // Only streaming answer/tool requests update provenance, not internal compression summaries.
     if (turn && response.ok && parsedBody?.stream === true) {
         turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : JSON.parse(options.body).model;
     }
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
+    if (response.raiMirroriumFallback && !response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
+            provider: 'fast', reason: '主线路 6 秒内无有效首字或服务失败，已停止旧请求并切换备用线路' }) + '\n\n');
+    }
+    if (response.raiProvider === 'mirrorium' && turn?.response && !turn.response.writableEnded && parsedBody?.stream === true) {
+        turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
+            provider: 'mirrorium', thinkingMode: true, reasoningProfile: turn.thinkingMode ? turn.reasoningProfile : 'low' }) + '\n\n');
+    }
     if (response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 20 秒内无首字或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
     }
@@ -20973,8 +21061,9 @@ async function settleChatModelTurn(success, completedModels = null) {
 }
 
 app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => chatModelQuotaContext.run({
-    userId: req.user.userId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false
+    userId: req.user.userId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false, latency: req.chatLatency
 }, async () => {
+    req.chatLatency?.mark('authenticated');
     console.log(' 收到聊天请求');
 
     let requestId = null;  //  关键修复：在函数开始声明requestId
@@ -21125,6 +21214,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         let flowRecord = null;
         let activeSessionKind = '';
         let ownedSession = null;
+        await ensureAdminModelCatalog();
         let model = normalizeIncomingModelId(requestedModel);
         let thinkingMode = !!thinkingModeInput;
         // DeepSeek Flash supports tool calls in thinking mode. Keep the
@@ -21388,6 +21478,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             toolEnvironment: clientFileExecution ? (localAgentSession ? 'local-agent' : 'windows-client') : 'web-sandbox'
         });
         if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
+        req.chatLatency?.mark('prompt_base_ready');
         console.log(
             ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, temporary=${memoryModeOff}, customPromptLength=${customPrompt.length}`
         );
@@ -21431,7 +21522,7 @@ if (clientFileExecution && systemPrompt) {
         //  关键修复：在所有 res.write() 调用之前，先设置 SSE 响应头
         // 这确保后续所有的 res.write() 都能正常工作
         const explicitQuotaModel = model;
-        if (Object.hasOwn(CHAT_MODEL_LIMITS.free, explicitQuotaModel)) {
+        if (Object.values(CHAT_MODEL_LIMITS).some(limits => Object.hasOwn(limits, explicitQuotaModel))) {
             const turn = chatModelQuotaContext.getStore();
             await chatModelQuotaService.reserve(turn.userId, turn.id, explicitQuotaModel);
             turn.reserved.add(explicitQuotaModel);
@@ -21449,7 +21540,9 @@ if (clientFileExecution && systemPrompt) {
             windows: chatQuota.quotas || []
         })}\n\n`);
 
-        const requestedGptModelUnavailable = GPT_GATEWAY_CHAT_MODELS.includes(model)
+        const requestedGptModelUnavailable = model === 'gpt-6-luna'
+            ? !LUNA_GATEWAY_CONFIGURED
+            : GPT_GATEWAY_CHAT_MODELS.includes(model)
             ? !GPT_GATEWAY_CONFIGURED
             : (model === 'claude-sonnet-5'
                 ? !CLAUDE_GATEWAY_CONFIGURED
@@ -22192,16 +22285,31 @@ if (clientFileExecution && systemPrompt) {
 
         // All four public models accept vision; keep the user's selection, including prior images.
         if (model === 'auto' || model === 'fast-auto' || model === 'think-auto') {
-            if (model === 'fast-auto') thinkingMode = false;
-            if (model === 'think-auto') thinkingMode = true;
-            finalModel = thinkingMode ? await resolveVisibleThinkingModel() : await resolveVisibleAutoModel();
-            if (thinkingMode) normalizedReasoningProfile = 'max';
+            const prefix = model === 'fast-auto' || (model === 'auto' && ((Object.hasOwn(req.body, 'thinkingMode') && !thinkingModeInput) || reasoningProfile === 'none')) ? 'fast' : model === 'think-auto' ? 'thinking' : 'smart';
+            const defaults = await resolveModeDefaults(prefix);
+            finalModel = defaults.model;
+            thinkingMode = Object.hasOwn(req.body, 'thinkingMode') && model === 'auto' ? !!thinkingModeInput : defaults.thinkingMode;
+            normalizedReasoningProfile = prefix === 'fast' ? defaults.reasoningProfile : Object.hasOwn(req.body, 'reasoningProfile') ? normalizedReasoningProfile : defaults.reasoningProfile;
+            if (normalizedReasoningProfile === 'none') thinkingMode = false;
+            const definition = ADMIN_MODEL_CATALOG.find(item => item.id === finalModel);
+            if (!thinkingMode && !definition.canDisableThinking) { thinkingMode = true; normalizedReasoningProfile = 'low'; }
+
             quotaTurn.thinkingMode = thinkingMode;
             quotaTurn.reasoningProfile = normalizedReasoningProfile;
-            autoRoutingReason = thinkingMode ? '智能思考：GPT 6.1 Sol，max；20 秒无首字切官方 DeepSeek' : '智能/快速：官方 DeepSeek Flash，关闭思考';
+            autoRoutingReason = `管理员${prefix}默认模型，思考等级 ${normalizedReasoningProfile}`;
         } else {
             finalModel = model;
         }
+
+        const selectedDefinition = ADMIN_MODEL_CATALOG.find(item => item.id === finalModel);
+        if (isMultimodalRequest && selectedDefinition?.vision === false) { const error = new Error('该模型不支持图片，请选择支持视觉的模型'); error.code = 'model_vision_unsupported'; error.status = 400; throw error; }
+        if (selectedDefinition && !selectedDefinition.supportsThinking) { thinkingMode = false; normalizedReasoningProfile = 'none'; }
+        if (selectedDefinition && !thinkingMode && !selectedDefinition.canDisableThinking) {
+            thinkingMode = true; normalizedReasoningProfile = 'low';
+            res.write(`data: ${JSON.stringify({ type: 'thinking_mode_adjusted', code: 'thinking_cannot_disable', model: finalModel, thinkingMode: true, reasoningProfile: 'low', message: '该模型不支持关闭思考，已使用低等级并显示实际思考内容。' })}\n\n`);
+        }
+        if (selectedDefinition && thinkingMode && !selectedDefinition.thinkingProfiles.includes(normalizedReasoningProfile)) normalizedReasoningProfile = selectedDefinition.thinkingProfiles.includes('low') ? 'low' : selectedDefinition.thinkingProfiles[0];
+        quotaTurn.thinkingMode = thinkingMode; quotaTurn.reasoningProfile = normalizedReasoningProfile;
 
         let enableResearchDebate = (normalizedResearchMode === 'fast' || normalizedResearchMode === 'deep') && !isMultimodalRequest;
         if ((normalizedResearchMode === 'fast' || normalizedResearchMode === 'deep') && isMultimodalRequest) {
@@ -22265,7 +22373,7 @@ if (clientFileExecution && systemPrompt) {
 
         // 注意：多模态检测已在上面执行，这里不再重复
 
-        if (!VALID_MODELS.includes(finalModel) || await isPublicModelDisabled(finalModel)) {
+        if (![...VALID_MODELS, ...PUBLIC_MODEL_IDS].includes(finalModel) || await isPublicModelDisabled(finalModel)) {
             const fallbackModel = resolveFreeFallbackModelId(finalModel);
             const visibleFallbackModel = await isPublicModelDisabled(fallbackModel)
                 ? await resolveVisibleAutoModel()
@@ -22406,6 +22514,13 @@ if (clientFileExecution && systemPrompt) {
         }
 
         console.log(` API端点: ${providerConfig.baseURL}`);
+        req.chatLatency?.setRoute({ model: finalModel,
+            provider: routing.provider === 'rai_gpt_gateway' && GPT_PRIMARY_API_KEY ? 'gpt_mirrorium' : chatLatencyProvider(providerConfig.baseURL, actualModel),
+            thinking: thinkingMode, profile: normalizedReasoningProfile });
+        req.chatLatency?.mark('route_resolved');
+        // GPT has a minimum low effort even when an older client sends off.
+        // Surface the provider's actual reasoning instead of making that work invisible.
+        const shouldShowProviderReasoning = () => thinkingMode || routing.provider === 'rai_gpt_gateway';
 
         // 关键修复：通过SSE发送实际使用的模型信息（因为响应头已经发送，无法再设置X-Model-Used）
         if (liveStreamState) {
@@ -22841,6 +22956,7 @@ if (clientFileExecution && systemPrompt) {
             console.log(`   API密钥: 已配置`);
         }
 
+        req.chatLatency?.mark('prompt_ready');
         // One bounded deadline covers the primary request, ordered fallback, and tool continuations.
         // 本地文件执行模式：任务链长（搜索+多次工具+续传），预算放宽到 300s
         chatRequestBudget = clientFileExecution
@@ -24110,7 +24226,7 @@ if (clientFileExecution && systemPrompt) {
                             if (responseEventReasoning) {
                                 const toolReasoningDelta = extractIncrementalChunk(currentToolCallReasoningContent, responseEventReasoning);
                                 if (toolReasoningDelta) currentToolCallReasoningContent += toolReasoningDelta;
-                                if (thinkingMode) {
+                                if (shouldShowProviderReasoning()) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, responseEventReasoning);
                                     if (reasoningDelta) {
                                         reasoningContent += reasoningDelta;
@@ -24125,7 +24241,7 @@ if (clientFileExecution && systemPrompt) {
                             if (responseEventContent) {
                                 rawToolContent += responseEventContent;
                                 const filteredContent = sanitizeStreamingContent(responseEventContent);
-                                const splitThinkContent = splitEmbeddedThinkContent(filteredContent, !!thinkingMode);
+                                const splitThinkContent = splitEmbeddedThinkContent(filteredContent, shouldShowProviderReasoning());
                                 if (splitThinkContent.reasoning) {
                                     const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
                                     if (reasoningDelta) {
@@ -24166,7 +24282,7 @@ if (clientFileExecution && systemPrompt) {
                                         }
                                         if (!part.text) continue;
                                         if (part.thought) {
-                                            if (thinkingMode) {
+                                            if (shouldShowProviderReasoning()) {
                                                 const reasoningDelta = extractIncrementalChunk(reasoningContent, part.text);
                                                 if (reasoningDelta) {
                                                     reasoningContent += reasoningDelta;
@@ -24197,7 +24313,7 @@ if (clientFileExecution && systemPrompt) {
                                 if (reasoning) {
                                     const toolReasoningDelta = extractIncrementalChunk(currentToolCallReasoningContent, reasoning);
                                     if (toolReasoningDelta) currentToolCallReasoningContent += toolReasoningDelta;
-                                    if (thinkingMode) {
+                                    if (shouldShowProviderReasoning()) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                         if (reasoningDelta) {
                                             reasoningContent += reasoningDelta;
@@ -24210,7 +24326,7 @@ if (clientFileExecution && systemPrompt) {
                                 if (content) {
                                     rawToolContent += content;
                                     const filteredContent = sanitizeStreamingContent(content);
-                                    const splitThinkContent = splitEmbeddedThinkContent(filteredContent, !!thinkingMode);
+                                    const splitThinkContent = splitEmbeddedThinkContent(filteredContent, shouldShowProviderReasoning());
 
                                     if (splitThinkContent.reasoning) {
                                         const reasoningDelta = extractIncrementalChunk(reasoningContent, splitThinkContent.reasoning);
@@ -24609,7 +24725,7 @@ if (clientFileExecution && systemPrompt) {
             }
             const initialEofContent = streamToolProtocolFilter.flush({ fallbackDetected: accumulatedToolCalls.length > 0 });
             if (initialEofContent) {
-                const splitEofThink = splitEmbeddedThinkContent(initialEofContent, !!thinkingMode);
+                const splitEofThink = splitEmbeddedThinkContent(initialEofContent, shouldShowProviderReasoning());
                 const incrementalEofContent = extractIncrementalChunk(fullContent, splitEofThink.visible);
                 if (incrementalEofContent) emitStructuredAssistantChunk(incrementalEofContent);
             }
@@ -25627,7 +25743,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                     if (continueEventReasoning) {
                                         const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, continueEventReasoning);
                                         if (toolReasoningDelta) continueToolCallReasoningContent += toolReasoningDelta;
-                                        if (thinkingMode) {
+                                        if (shouldShowProviderReasoning()) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, continueEventReasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
@@ -25643,7 +25759,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                         continueRawToolContent += continueEventContent;
                                         rawToolContent += continueEventContent;
                                         const filteredContinueContent = sanitizeStreamingContent(continueEventContent);
-                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, !!thinkingMode);
+                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, shouldShowProviderReasoning());
                                         if (splitContinueThink.reasoning) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
@@ -25699,7 +25815,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                     if (reasoning) {
                                         const toolReasoningDelta = extractIncrementalChunk(continueToolCallReasoningContent, reasoning);
                                         if (toolReasoningDelta) continueToolCallReasoningContent += toolReasoningDelta;
-                                        if (thinkingMode) {
+                                        if (shouldShowProviderReasoning()) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, reasoning);
                                             if (reasoningDelta) {
                                                 reasoningContent += reasoningDelta;
@@ -25713,7 +25829,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                         continueRawToolContent += continueDelta.content;
                                         rawToolContent += continueDelta.content;
                                         const filteredContinueContent = sanitizeStreamingContent(continueDelta.content);
-                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, !!thinkingMode);
+                                        const splitContinueThink = splitEmbeddedThinkContent(filteredContinueContent, shouldShowProviderReasoning());
                                         if (splitContinueThink.reasoning) {
                                             const reasoningDelta = extractIncrementalChunk(reasoningContent, splitContinueThink.reasoning);
                                             if (reasoningDelta) {
@@ -25814,7 +25930,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                         }
                         const continueEofContent = streamToolProtocolFilter.flush({ fallbackDetected: continueAccumulatedToolCalls.length > 0 });
                         if (continueEofContent) {
-                            const splitContinueEofThink = splitEmbeddedThinkContent(continueEofContent, !!thinkingMode);
+                            const splitContinueEofThink = splitEmbeddedThinkContent(continueEofContent, shouldShowProviderReasoning());
                             const incrementalContinueEofContent = extractIncrementalChunk(fullContent, splitContinueEofThink.visible);
                             if (incrementalContinueEofContent) emitStructuredAssistantChunk(incrementalContinueEofContent);
                         }
@@ -26303,7 +26419,8 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
             cleanupSessionStreamState(liveStreamState.sessionId, requestId);
         }
         try {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: '聊天请求暂时不可用', code: 'chat_request_failed' })}\n\n`);
+            const publicErrorCodes = new Set(['model_vision_unsupported','no_available_model','current_turn_context_too_large','context_compression_unavailable','context_compression_failed','context_compression_insufficient']);
+            res.write(`data: ${JSON.stringify({ type: 'error', error: publicErrorCodes.has(error.code) ? error.message : '聊天请求暂时不可用', code: publicErrorCodes.has(error.code) ? error.code : 'chat_request_failed' })}\n\n`);
             res.end();
         } catch (writeError) {
             console.error(' 写入响应错误:', sanitizeReportContext(writeError));
@@ -27581,8 +27698,9 @@ async function sendResendEmail({ to, subject, html, text }) {
     const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
     let response;
     try {
-        response = await fetchModelProvider(RESEND_API_URL, {
+        response = await fetch(RESEND_API_URL, {
             method: 'POST',
+            redirect: 'error',
             signal: controller.signal,
             headers: {
                 'Authorization': `Bearer ${RESEND_API_KEY}`,
@@ -27851,11 +27969,16 @@ function shouldBypassResendTestingRestriction(error) {
 }
 
 async function getAdminRuntimeSettings() {
+    await ensureAdminModelCatalog();
     const settings = { ...ADMIN_RUNTIME_LIMIT_DEFAULTS };
     try {
         const rows = await dbAllAsync('SELECT setting_key, setting_value FROM admin_runtime_settings');
         for (const row of rows) {
             if (!Object.prototype.hasOwnProperty.call(settings, row.setting_key)) continue;
+            if (MODEL_REASONING_SETTING_KEYS.includes(row.setting_key)) {
+                if (['none','auto','low','medium','high','xhigh','max'].includes(row.setting_value)) settings[row.setting_key] = row.setting_value;
+                continue;
+            }
             if (MODEL_ROUTING_SETTING_KEYS.includes(row.setting_key)) {
                 const candidate = String(row.setting_value || '').trim();
                 const normalized = normalizeRuntimeModelSettingValue(row.setting_key, candidate);
@@ -27876,50 +27999,39 @@ async function getAdminRuntimeSettings() {
 }
 
 async function setAdminRuntimeSettings(patch = {}) {
-    const allowedRanges = {
-        chat_per_minute: [0, 1000],
-        chat_per_5h: [0, 10000],
-        chat_per_week: [0, 100000],
-        concurrent_requests_free: [1, 20],
-        concurrent_requests_pro_max: [1, 20],
-        upload_per_minute: [0, 1000],
-        upload_max_file_mb: [1, 50],
-        upload_user_total_mb: [0, 102400],
-        upload_user_max_files: [0, 100000],
-        pwa_reward_enabled: [0, 1],
-        pwa_reward_min_account_age_minutes: [0, 10080],
-        invite_reward_immediate_enabled: [0, 1]
-    };
+    patch = patch.settings || patch;
+    const current = await getAdminRuntimeSettings();
     const saved = {};
-    for (const [key, rawValue] of Object.entries(patch || {})) {
-        if (!Object.prototype.hasOwnProperty.call(allowedRanges, key)) continue;
-        const [min, max] = allowedRanges[key];
-        const value = parseBoundedInteger(rawValue, ADMIN_RUNTIME_LIMIT_DEFAULTS[key], min, max);
-        await dbRunAsync(
-            `INSERT INTO admin_runtime_settings (setting_key, setting_value, updated_at)
-             VALUES (?, ?, CURRENT_TIMESTAMP)
-             ON CONFLICT(setting_key) DO UPDATE SET
-                setting_value = excluded.setting_value,
-                updated_at = CURRENT_TIMESTAMP`,
-            [key, String(value)]
-        );
-        saved[key] = value;
-    }
+    const invalid = () => { const error = new Error('模型或思考等级不可用；请选择该模型支持的等级'); error.status = 400; return error; };
     for (const key of MODEL_ROUTING_SETTING_KEYS) {
-        if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
-        const candidate = String(patch[key] || '').trim();
-        const normalized = normalizeRuntimeModelSettingValue(key, candidate);
-        if (!normalized) continue;
-        await dbRunAsync(
-            `INSERT INTO admin_runtime_settings (setting_key, setting_value, updated_at)
-             VALUES (?, ?, CURRENT_TIMESTAMP)
-             ON CONFLICT(setting_key) DO UPDATE SET
-                setting_value = excluded.setting_value,
-                updated_at = CURRENT_TIMESTAMP`,
-            [key, normalized]
-        );
+        if (!(key in patch)) continue;
+        const normalized = normalizeRuntimeModelSettingValue(key, patch[key]);
+        if (!normalized) throw invalid();
         saved[key] = normalized;
     }
+    for (const prefix of ['smart','fast','thinking']) {
+        const modelKey = prefix + '_default_model', profileKey = prefix + '_reasoning_profile';
+        if (!(modelKey in patch) && !(profileKey in patch)) continue;
+        const id = saved[modelKey] ?? current[modelKey];
+        const definition = ADMIN_MODEL_CATALOG.find(item => item.id === id);
+        const profile = patch[profileKey] ?? current[profileKey];
+        if (!definition || await isPublicModelDisabled(id) || !validateReasoningProfile(definition, profile)) throw invalid();
+        if (profileKey in patch) saved[profileKey] = profile;
+    }
+    const allowedRanges = {
+        chat_per_minute: [0,1000], chat_per_5h: [0,10000], chat_per_week: [0,100000],
+        concurrent_requests_free: [1,20], concurrent_requests_pro_max: [1,20], upload_per_minute: [0,1000],
+        upload_max_file_mb: [1,50], upload_user_total_mb: [0,102400], upload_user_max_files: [0,100000],
+        pwa_reward_enabled: [0,1], pwa_reward_min_account_age_minutes: [0,10080], invite_reward_immediate_enabled: [0,1]
+    };
+    for (const [key,ranges] of Object.entries(allowedRanges)) {
+        if (key in patch) saved[key] = parseBoundedInteger(patch[key], ADMIN_RUNTIME_LIMIT_DEFAULTS[key], ...ranges);
+    }
+    await withMainDbTransaction(async tx => {
+        for (const [key,value] of Object.entries(saved)) await tx.run(
+            `INSERT INTO admin_runtime_settings(setting_key,setting_value) VALUES (?,?)
+             ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value,updated_at=CURRENT_TIMESTAMP`, [key,String(value)]);
+    });
     return { ...(await getAdminRuntimeSettings()), ...saved };
 }
 
@@ -28126,12 +28238,47 @@ function normalizeAnnouncementInput(body = {}) {
     return { value: { title, body: text, titleEn: titleEn || null, bodyEn: bodyEn || null, deliveryMode, startAt, endAt, enabled } };
 }
 
+let adminModelCatalogReady;
+function installCustomModel(model) {
+    const previous = ADMIN_MODEL_CATALOG.find(item => item.id === model.id);
+    if (previous && previous.provider !== model.provider) {
+        const oldList = API_PROVIDERS[previous.provider]?.models;
+        if (oldList?.includes(model.id)) oldList.splice(oldList.indexOf(model.id), 1);
+    }
+    if (previous) ADMIN_MODEL_CATALOG[ADMIN_MODEL_CATALOG.indexOf(previous)] = model;
+    else ADMIN_MODEL_CATALOG.push(model);
+    registerChatModel(model);
+    if (!PUBLIC_MODEL_IDS.includes(model.id)) PUBLIC_MODEL_IDS.push(model.id);
+    SUPPORTED_INCOMING_MODEL_IDS.add(model.id);
+    MODEL_ROUTING[model.id] = { provider: model.provider, model: model.id, supportsThinking: model.supportsThinking,
+        multimodal: model.vision, contextWindow: model.contextWindow, compressionThreshold: model.compressionThreshold, supportsWebSearch: true };
+    const list = API_PROVIDERS[model.provider].models;
+    if (!list.includes(model.id)) list.push(model.id);
+    if (model.provider === 'deepseek' && !API_PROVIDERS.deepseek.models.includes(model.id)) API_PROVIDERS.deepseek.models.push(model.id);
+    modelAvailabilityCache.loadedAt = 0;
+}
+function ensureAdminModelCatalog() {
+    if (!adminModelCatalogReady) adminModelCatalogReady = (async () => {
+        await dbRunAsync('CREATE TABLE IF NOT EXISTS admin_model_catalog(model_id TEXT PRIMARY KEY, definition_json TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+        for (const row of await dbAllAsync('SELECT definition_json FROM admin_model_catalog')) installCustomModel(normalizeAdminModelDefinition(JSON.parse(row.definition_json)));
+        await withMainDbTransaction(async tx => {
+            const migrated = await tx.get("SELECT setting_value FROM admin_runtime_settings WHERE setting_key = 'luna_restore_v1'");
+            if (!migrated) {
+                await tx.run("INSERT INTO model_visibility(model_id,enabled) VALUES ('gpt-6-luna',1) ON CONFLICT(model_id) DO UPDATE SET enabled=1,updated_at=CURRENT_TIMESTAMP");
+                await tx.run("INSERT INTO admin_runtime_settings(setting_key,setting_value) VALUES ('luna_restore_v1','1')");
+            }
+        });
+    })().catch(error => { adminModelCatalogReady = null; throw error; });
+    return adminModelCatalogReady;
+}
+
 function normalizeAdminModelId(modelId) {
     const normalized = normalizeIncomingModelId(modelId);
     return PUBLIC_MODEL_IDS.includes(normalized) ? normalized : '';
 }
 
 async function getDisabledModelSet({ forceRefresh = false } = {}) {
+    await ensureAdminModelCatalog();
     const now = Date.now();
     if (!forceRefresh && modelAvailabilityCache.loadedAt && now - modelAvailabilityCache.loadedAt < MODEL_DISABLED_CACHE_TTL_MS) {
         return modelAvailabilityCache.disabled;
@@ -28161,23 +28308,36 @@ function isRuntimeConfiguredModel(modelId = '') {
     return !!(routing && provider?.apiKey);
 }
 
-async function resolveVisibleAutoModel() {
-    // Smart without explicit thinking uses official DeepSeek, without spending a GPT allowance.
-    return 'deepseek-v4.1-flash';
+async function resolveConfiguredDefault(prefix, requiresVision = false) {
+    const settings = await getAdminRuntimeSettings();
+    const preferred = settings[prefix + '_default_model'];
+    const candidates = [preferred, 'gpt-6.1-sol', 'deepseek-v4.1-flash', ...PUBLIC_MODEL_IDS];
+    for (const id of [...new Set(candidates)]) {
+        const definition = ADMIN_MODEL_CATALOG.find(item => item.id === id);
+        if (definition && (!requiresVision || definition.vision) && !(await isPublicModelDisabled(id)) && isRuntimeConfiguredModel(id)) return id;
+    }
+    const error = new Error('暂无可用模型，请联系管理员启用模型'); error.code = 'no_available_model'; error.status = 503; throw error;
 }
-async function resolveVisibleFastModel() { return resolveVisibleAutoModel(); }
-async function resolveVisibleThinkingModel() {
-    if (!(await isPublicModelDisabled('gpt-6.1-sol')) && isRuntimeConfiguredModel('gpt-6.1-sol')) return 'gpt-6.1-sol';
-    return 'deepseek-v4.1-flash';
-}
-async function resolveVisionFallbackModel() { return 'deepseek-v4.1-flash'; }
-async function resolveVisibleAutoMultimodalModel() { return resolveVisibleAutoModel(); }
+async function resolveVisibleAutoModel() { return resolveConfiguredDefault('smart'); }
+async function resolveVisibleFastModel() { return resolveConfiguredDefault('fast'); }
+async function resolveVisibleThinkingModel() { return resolveConfiguredDefault('thinking'); }
+async function resolveVisionFallbackModel() { return resolveConfiguredDefault('smart', true); }
+async function resolveVisibleAutoMultimodalModel() { return resolveVisionFallbackModel(); }
 async function resolveAudioUnderstandingModel() { return resolveVisibleAutoModel(); }
+async function resolveModeDefaults(prefix) {
+    const settings = await getAdminRuntimeSettings();
+    const model = await resolveConfiguredDefault(prefix);
+    const definition = ADMIN_MODEL_CATALOG.find(item => item.id === model);
+    let reasoningProfile = settings[prefix + '_reasoning_profile'];
+    if (!validateReasoningProfile(definition, reasoningProfile)) reasoningProfile = definition.supportsThinking ? (definition.thinkingProfiles.includes('low') ? 'low' : definition.thinkingProfiles[0]) : 'none';
+    return { model, reasoningProfile, thinkingMode: reasoningProfile !== 'none' };
+}
 
 async function getModelVisibilityPayload({ forceRefresh = false } = {}) {
     const disabled = await getDisabledModelSet({ forceRefresh });
     return ADMIN_MODEL_CATALOG.map((model) => ({
         ...model,
+        provider: MODEL_ROUTING[model.id]?.provider || model.provider,
         enabled: !disabled.has(model.id)
     }));
 }
@@ -28238,14 +28398,16 @@ app.post('/api/messages/:messageId/feedback', authenticateToken, async (req, res
     }
 });
 
-app.get('/api/model-availability', async (req, res) => {
+app.get(['/api/model-availability', '/api/models/availability'], async (req, res) => {
     try {
         const models = await getModelVisibilityPayload();
         res.json({
             models,
             disabledModels: models.filter((model) => !model.enabled).map((model) => model.id),
             conversationQuota: { windowHours: 24, limits: CHAT_MODEL_LIMITS, chargeOn: 'completed_answer', sharedAcrossClients: true },
-            contextWindow: 256000, autoContextCompression: true
+            contextWindow: CONTEXT_WINDOW_TOKENS, contextEstimation: 'conservative_utf8_bytes', contextTokensEstimated: true, autoContextCompression: true,
+            contextPolicies: { ...CONTEXT_POLICIES, ...Object.fromEntries(models.map(model => [model.id, { contextWindow: model.contextWindow, compressionThreshold: model.compressionThreshold, estimated: true }])) },
+            uploadFileNameMaxCharacters: 255, smartDefaults: await resolveModeDefaults('smart'), fastDefaults: await resolveModeDefaults('fast'), thinkingDefaults: await resolveModeDefaults('thinking')
         });
     } catch (error) {
         console.error(' 获取模型可见性失败:', sanitizeReportContext(error));
@@ -29205,7 +29367,9 @@ const MODEL_POINT_COSTS = Object.freeze({
 
 function getModelPointCost(modelId = '') {
     const model = normalizeIncomingModelId(modelId);
-    if (CHAT_MODEL_IDS.includes(model) || isFreeModelIdentifier(model)) return 0;
+    const definition = ADMIN_MODEL_CATALOG.find(item => item.id === model);
+    if (definition) return definition.pointCost;
+    if (isFreeModelIdentifier(model)) return 0;
     return Math.max(1, Number(MODEL_POINT_COSTS[model] || 1));
 }
 
@@ -29385,7 +29549,7 @@ async function consumeAdminTotpCode(code) {
 
 // 管理员认证中间件
 const authenticateAdmin = async (req, res, next) => {
-    const token = req.headers['x-admin-token'];
+    const token = getBearerToken(req) || req.headers['x-admin-token'];
     if (!token) {
         return res.status(401).json({ error: '需要管理员令牌' });
     }
@@ -29500,7 +29664,7 @@ app.put('/api/admin/runtime-settings', authenticateAdmin, async (req, res) => {
         res.json({ success: true, settings });
     } catch (error) {
         console.error(' 保存管理员运行限制失败:', sanitizeReportContext(error));
-        res.status(500).json({ error: '保存运行限制失败' });
+        res.status(error.status || 500).json({ error: error.status ? error.message : '保存运行限制失败' });
     }
 });
 
@@ -29516,6 +29680,7 @@ app.get('/api/admin/models', authenticateAdmin, async (req, res) => {
 
 app.put('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
     try {
+        await ensureAdminModelCatalog();
         const modelId = normalizeAdminModelId(req.params.modelId);
         if (!modelId) {
             return res.status(400).json({ error: '无效的模型ID' });
@@ -29537,6 +29702,43 @@ app.put('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
         console.error(' 管理员更新模型开关失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '更新模型开关失败' });
     }
+});
+
+app.post('/api/admin/models', apiLimiter, authenticateAdmin, async (req, res) => {
+    try {
+        await ensureAdminModelCatalog();
+        const model = normalizeAdminModelDefinition(req.body);
+        if (Object.hasOwn(LEGACY_MODEL_ALIASES, model.id)) return res.status(400).json({ error: '模型 ID 是兼容旧别名，不能注册' });
+        if (model.id === 'gpt-6-luna') return res.status(400).json({ error: 'GPT 6 Luna 是内置模型，请使用开关管理' });
+        if (ADMIN_MODEL_CATALOG.some(item => item.id === model.id && item.builtin) || (MODEL_ROUTING[model.id] && !ADMIN_MODEL_CATALOG.some(item => item.id === model.id && !item.builtin))) return res.status(400).json({ error: '内置或保留模型请使用开关管理' });
+        await withMainDbTransaction(async tx => {
+            await tx.run('INSERT INTO admin_model_catalog(model_id,definition_json) VALUES (?,?) ON CONFLICT(model_id) DO UPDATE SET definition_json=excluded.definition_json,updated_at=CURRENT_TIMESTAMP', [model.id, JSON.stringify(model)]);
+            await tx.run('INSERT INTO model_visibility(model_id,enabled) VALUES (?,?) ON CONFLICT(model_id) DO UPDATE SET enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP', [model.id,model.enabled ? 1 : 0]);
+        });
+        installCustomModel(model);
+        return res.status(201).json({ success: true, models: await getModelVisibilityPayload({ forceRefresh: true }) });
+    } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : '保存模型失败' }); }
+});
+app.delete('/api/admin/models/:modelId', apiLimiter, authenticateAdmin, async (req, res) => {
+    try {
+        await ensureAdminModelCatalog();
+        const model = ADMIN_MODEL_CATALOG.find(item => item.id === req.params.modelId && !item.builtin);
+        if (!model) return res.status(400).json({ error: '内置模型请关闭开关；未找到可移除的自定义模型' });
+        await withMainDbTransaction(async tx => {
+            await tx.run('DELETE FROM admin_model_catalog WHERE model_id = ?', [model.id]);
+            await tx.run('DELETE FROM model_visibility WHERE model_id = ?', [model.id]);
+            for (const key of MODEL_ROUTING_SETTING_KEYS) await tx.run('DELETE FROM admin_runtime_settings WHERE setting_key = ? AND setting_value = ?', [key,model.id]);
+        });
+        ADMIN_MODEL_CATALOG.splice(ADMIN_MODEL_CATALOG.indexOf(model),1);
+        PUBLIC_MODEL_IDS.splice(PUBLIC_MODEL_IDS.indexOf(model.id),1);
+        SUPPORTED_INCOMING_MODEL_IDS.delete(model.id);
+        removeChatModel(model.id);
+        delete MODEL_ROUTING[model.id];
+        const list = API_PROVIDERS[model.provider].models;
+        if (list.includes(model.id)) list.splice(list.indexOf(model.id),1);
+        modelAvailabilityCache.loadedAt = 0;
+        return res.json({ success: true, models: await getModelVisibilityPayload({ forceRefresh: true }) });
+    } catch (_) { return res.status(500).json({ error: '移除模型失败' }); }
 });
 
 // ==================== 管理端公告 CRUD（均经 authenticateAdmin）====================
@@ -30318,6 +30520,7 @@ app.use((req, res) => {
 
 // ==================== 错误处理 ====================
 app.use((err, req, res, next) => {
+    if (isFileNameTooLong(err)) { failUploadProgressSession(req, 'FILE_NAME_TOO_LONG'); return res.status(400).json({ success: false, code: 'FILE_NAME_TOO_LONG', error: FILE_NAME_TOO_LONG_MESSAGE }); }
     if (err && err.message === 'CORS origin not allowed') {
         return res.status(403).json({
             error: 'CORS origin not allowed',

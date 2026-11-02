@@ -89,19 +89,27 @@ async function testFixture(browser, url, fixture) {
       assert.equal(await menuActive(), false, 'model menu closes (iteration ' + i + ')');
     }
 
-    // 2) Every primary mode row switches on a fast (no artificial delay) activation.
-    const modes = [
-      { mode: 'fast', modeIdentity: 'fast' },
-      { mode: 'think', modeIdentity: 'think' },
-      { mode: 'smart', modeIdentity: 'smart' }
-    ];
-    for (const { mode, modeIdentity } of modes) {
-      await page.evaluate(() => closeModelModal());
-      await trigger.click();
-      await page.locator('#modelDropdownMenu [data-mode="' + mode + '"]').click();
-      assert.equal(await page.evaluate(() => appState.modelPromptIdentity), modeIdentity, mode + ' row applies immediately');
-      assert.equal(await menuActive(), false, mode + ' row closes the menu');
-    }
+    // 2) Quick/Fast and Think are no longer model-list entries. Smart and
+    // Research remain the only mode shortcuts; per-request Fast/Think behavior
+    // stays available from the send-hold picker.
+    await trigger.click();
+    const visibleModes = await page.locator('#modelDropdownMenu [data-mode]').evaluateAll(rows => rows.map(row => row.dataset.mode));
+    assert.deepEqual(visibleModes, ['smart', 'research'], 'model picker contains Smart and Research only');
+    assert.equal(await page.locator('#modelDropdownMenu [data-model="fast"],#modelDropdownMenu [data-model="thinking"]').count(), 0,
+      'Quick/Fast and Think are absent from the model list');
+    await page.locator('#modelDropdownMenu [data-mode="smart"]').click();
+    assert.equal(await page.evaluate(() => appState.modelPromptIdentity), 'smart', 'Smart mode applies immediately');
+    assert.equal(await menuActive(), false, 'Smart selection closes the model menu');
+    const oneShotModes = await page.evaluate(() => ({
+      modes: getSendHoldModes(),
+      fast: resolveSendRequestConfig({ oneShotMode: 'fast' }),
+      think: resolveSendRequestConfig({ oneShotMode: 'think' })
+    }));
+    assert.deepEqual(oneShotModes.modes, ['fast', 'think', 'research'], 'send-hold retains one-shot Fast, Think and Research');
+    assert.equal(oneShotModes.fast.model, 'fast-auto');
+    assert.equal(oneShotModes.fast.thinkingMode, false);
+    assert.equal(oneShotModes.think.model, 'think-auto');
+    assert.equal(oneShotModes.think.thinkingMode, true);
 
     // 3) "All models" expanded rows respond within the old 160ms window (the regression).
     await page.evaluate(() => closeModelModal());
@@ -123,7 +131,38 @@ async function testFixture(browser, url, fixture) {
       assert.equal(await page.evaluate(() => appState.selectedModel), model, 'select ' + model);
       const more = page.locator('#moreBtn');
       if (mobile) await more.tap(); else await more.click();
+      const reasoningHeader = page.locator('.reasoning-profile-header');
+      await page.evaluate(() => {
+        if (currentThinkingCapability().canDisableThinking) appState.thinkingMode = false;
+        else { appState.thinkingMode = true; appState.reasoningProfile = 'low'; }
+        updateToolbarUI();
+      });
+      await reasoningHeader.hover();
+      assert.equal(await page.locator('#moreMenu').evaluate(el => el.classList.contains('active')), true,
+        'hovering the reasoning picker leaves the plus menu open');
+      if (model === 'deepseek-v4.1-flash') {
+        if (mobile) await reasoningHeader.tap(); else await reasoningHeader.click();
+        assert.equal(await page.locator('#moreMenu').evaluate(el => el.classList.contains('active')), true,
+          'opening the reasoning picker leaves the plus menu open');
+      }
+      const reasoningState = await page.evaluate(() => ({
+        profile: appState.reasoningProfile,
+        thinking: appState.thinkingMode,
+        profiles: currentThinkingCapability().profiles,
+        visible: document.querySelector('#reasoningProfileChoices')?.getAttribute('aria-hidden') === 'false'
+      }));
+      assert.equal(reasoningState.thinking, true, 'reasoning picker enables thinking when opened');
+      assert.equal(reasoningState.profile, model === 'deepseek-v4.1-flash' ? 'auto' : 'low',
+        'reasoning picker uses a valid model-specific profile');
+      assert.equal(reasoningState.visible, true, 'reasoning choices are visible after opening');
+      assert.deepEqual(reasoningState.profiles,
+        model === 'deepseek-v4.1-flash' ? ['auto', 'high', 'max'] : ['auto', 'low', 'medium', 'high', 'xhigh', 'max'],
+        'reasoning picker shows only supported profiles for ' + model);
+      await page.locator('#reasoningProfileChoices [data-profile="auto"]').click();
+      assert.equal(await page.locator('#moreMenu').evaluate(el => el.classList.contains('active')), true,
+        'choosing a reasoning level does not close the plus menu');
       const research = page.locator('#researchModeSwitch');
+      await page.waitForFunction(() => document.getElementById('researchModeSwitch')?.getBoundingClientRect().height > 0);
       if (mobile) await research.tap(); else await research.click();
       assert.equal(await page.evaluate(() => appState.researchModeEnabled), true, 'plus research works after ' + model);
       if (mobile) await research.tap(); else await research.click();
@@ -148,7 +187,7 @@ async function testFixture(browser, url, fixture) {
     assert.equal(await menuActive(), false, 'research selection closes the menu');
     // Selecting a non-research mode must clear research mode again.
     await trigger.click();
-    await page.locator('#modelDropdownMenu [data-mode="fast"]').click();
+    await page.locator('#modelDropdownMenu [data-mode="smart"]').click();
     assert.equal(await page.evaluate(() => appState.researchModeEnabled), false, 'non-research selection disables research');
 
     // 5) Research mode from the "+" (more) menu switch works and stays in sync.
