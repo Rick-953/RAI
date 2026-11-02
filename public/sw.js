@@ -23,6 +23,7 @@ const RAI_STATIC_ASSETS = [
   'secure-sharing.js?v=20261102-smart-official-ds-max', 'secure-sharing.css?v=20261102-smart-official-ds-max',
   'diagnostics.js?v=20261102-smart-official-ds-max',
   'app.js?v=20261102-smart-official-ds-max', 'styles.css?v=20261102-smart-official-ds-max',
+  'markdown-tables.js?v=20261102-ui-completion',
   'cx-remote.js?v=20261102-smart-official-ds-max', 'local-agent.css?v=20261102-smart-official-ds-max',
   'crf-ui.js?v=20261102-smart-official-ds-max',
   'selection-explainer.js?v=20261102-smart-official-ds-max', 'selection-explainer.css?v=20261102-smart-official-ds-max',

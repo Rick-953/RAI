@@ -705,26 +705,7 @@
                       <span class="more-menu-item-text" data-i18n="reasoning-mode">推理模式</span>
                       <div class="more-menu-item-toggle" id="thinkingToggle"></div>
                     </div>
-                    <div class="reasoning-profile-slider-wrap">
-                      <input
-                        id="reasoningProfileSlider"
-                        data-i18n-aria-label="reasoning-mode" aria-label="推理模式"
-                        class="reasoning-profile-slider"
-                        type="range"
-                        min="0"
-                        max="4"
-                        step="1"
-                        value="0"
-                        data-rai-input="setReasoningProfileFromSlider(this.value)"
-                      >
-                      <div class="reasoning-profile-labels">
-                        <span data-i18n="reasoning-auto">自适应</span>
-                        <span data-i18n="reasoning-low">低</span>
-                        <span data-i18n="reasoning-medium">中</span>
-                        <span data-i18n="reasoning-high">高</span>
-                        <span data-i18n="reasoning-max">最大</span>
-                      </div>
-                    </div>
+                    <div class="reasoning-profile-slider-wrap" id="reasoningProfileChoices" role="group" aria-label="Thinking level"></div>
                   </div>
 
                   <!-- 研究模式 -->
@@ -851,28 +832,6 @@
                     </svg>
                     <div class="model-menu-content">
                       <div class="model-menu-title" data-i18n="model-smart">智能模型</div>
-                    </div>
-                  </div>
-
-                  <div class="model-menu-item model-mode-item" data-mode="fast" data-model="deepseek-v4.1-flash"
-                    data-rai-click="selectRaiModeFromMenu('fast', event)">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24px" height="24px" fill="currentColor" aria-hidden="true">
-                      <path d="M20.38 8.57l-1.23 1.85A8 8 0 0 1 18.93 18H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44ZM10.59 15.41a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83Z" />
-                    </svg>
-                    <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-fast">快速</div>
-                    </div>
-                  </div>
-
-                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-v4.1-flash"
-                    data-rai-click="selectRaiModeFromMenu('think', event)">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
-                      viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                      <path
-                        d="M480-80q-26 0-47-12.5T400-126q-33 0-56.5-23.5T320-206v-142q-59-39-94.5-103T190-590q0-121 84.5-205.5T480-880q121 0 205.5 84.5T770-590q0 77-35.5 140T640-348v142q0 33-23.5 56.5T560-126q-12 21-33 33.5T480-80Zm-80-126h160v-36H400v36Zm0-76h160v-38H400v38Zm-8-118h58v-108l-88-88 42-42 76 76 76-76 42 42-88 88v108h58q54-26 88-76.5T690-590q0-88-61-149t-149-61q-88 0-149 61t-61 149q0 63 34 113.5t88 76.5Zm88-162Zm0-38Z" />
-                    </svg>
-                    <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-expert">思考</div>
                     </div>
                   </div>
 
@@ -2249,6 +2208,7 @@
   <script defer src="conversation-cache.js?v=20261102-smart-official-ds-max"></script>
   <script defer src="pet-quotes.js?v=20261102-smart-official-ds-max"></script>
   <script defer src="diagnostics.js?v=20261102-smart-official-ds-max"></script>
+  <script defer src="markdown-tables.js?v=20261102-ui-completion"></script>
   <script defer src="app.js?v=20261102-smart-official-ds-max"></script>
   <script defer src="web-skills.js?v=20261102-smart-official-ds-max"></script>
   <script defer src="cx-remote.js?v=20261102-smart-official-ds-max"></script>

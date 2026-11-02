@@ -764,6 +764,7 @@ function looksLikeMarkdownTableSeparator(line) {
 }
 
 function normalizeMarkdownTables(text) {
+  if (window.RaiMarkdownTables) return window.RaiMarkdownTables.normalize(text);
   const source = String(text || '').replace(/\r\n?/g, '\n');
   const lines = source.split('\n');
   const output = [];
@@ -2489,8 +2490,8 @@ const appState = {
   modelPromptIdentity: 'smart', // 区分模式入口与手动模型选择，仅用于系统提示词中的展示名
   lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
-  thinkingMode: false,  // 默认关闭推理模式
-  reasoningProfile: 'auto',
+  thinkingMode: true,
+  reasoningProfile: 'low',
   internetMode: true,  // 默认开启联网
   agentMode: false,  // 兼容旧字段；深度研究由 researchMode 驱动
   agentPolicy: 'dynamic-1-4',
@@ -5005,10 +5006,13 @@ const MODELS = {
     "provider": "deepseek",
     "supportsThinking": true,
     "supportsReasoningProfile": true,
+    "canDisableThinking": true,
+    "thinkingProfiles": ["auto", "high", "max"],
     "supportsVision": true,
     "supportsTools": true,
     "multimodal": true,
-    "contextWindow": 256000,
+    "contextWindow": 1000000,
+    "compressionThreshold": 400000,
     "maxTokens": 8000
   },
   'gpt-6.1-sol': {
@@ -5016,10 +5020,13 @@ const MODELS = {
     "provider": "rai_gpt_gateway",
     "supportsThinking": true,
     "supportsReasoningProfile": true,
+    "canDisableThinking": false,
+    "thinkingProfiles": ["auto", "low", "medium", "high", "xhigh", "max"],
     "supportsVision": true,
     "supportsTools": true,
     "multimodal": true,
-    "contextWindow": 256000,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000,
     "maxTokens": 8000
   },
   'gpt-6-astra': {
@@ -5027,10 +5034,13 @@ const MODELS = {
     "provider": "rai_gpt_gateway",
     "supportsThinking": true,
     "supportsReasoningProfile": true,
+    "canDisableThinking": false,
+    "thinkingProfiles": ["auto", "low", "medium", "high", "xhigh", "max"],
     "supportsVision": true,
     "supportsTools": true,
     "multimodal": true,
-    "contextWindow": 256000,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000,
     "maxTokens": 8000
   }
 };
@@ -5078,8 +5088,48 @@ const LEGACY_MODEL_ALIASES = {
 const ALWAYS_VISIBLE_MODEL_IDS = ['auto'];
 const modelVisibilityState = {
   loaded: false,
-  disabled: new Set()
+  disabled: new Set(),
+  smartDefaults: { model: 'gpt-6.1-sol', reasoningProfile: 'low', thinkingMode: true },
+  fastDefaults: { model: 'deepseek-v4.1-flash', reasoningProfile: 'low', thinkingMode: false }
 };
+
+function currentThinkingCapability() {
+  const selected = normalizeSelectedModelId(appState.selectedModel);
+  const actual = selected === 'auto' ? modelVisibilityState.smartDefaults.model : selected;
+  const model = MODELS[actual] || MODELS[selected] || {};
+  const supportsThinking = model.supportsThinking === true;
+  const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
+    ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile)) : REASONING_PROFILE_ORDER;
+  return { supportsThinking, canDisableThinking: model.canDisableThinking !== false && actual !== 'gpt-6.1-sol', profiles };
+}
+
+function modelPreferenceStorageKey() {
+  return 'rai_model_preference:' + String(appState.user?.id || 'guest');
+}
+
+function readModelPreference() {
+  try { return JSON.parse(localStorage.getItem(modelPreferenceStorageKey()) || 'null'); } catch (_) { return null; }
+}
+
+function restoreModelPreference(profile = null) {
+  const saved = readModelPreference();
+  const cloudModel = profile?.default_model;
+  const preferred = saved?.model || cloudModel || 'auto';
+  appState.selectedModel = normalizeSelectedModelId(preferred) || 'auto';
+  appState.modelPromptIdentity = appState.selectedModel === 'auto' ? 'smart' : 'manual';
+  appState.profileDefaultModel = appState.selectedModel;
+  const defaults = modelVisibilityState.smartDefaults;
+  appState.reasoningProfile = normalizeReasoningProfileForModel(
+    saved?.reasoningProfile || profile?.reasoning_profile || defaults.reasoningProfile || 'low',
+    appState.selectedModel
+  );
+  appState.thinkingMode = saved && typeof saved.thinkingMode === 'boolean' ? saved.thinkingMode
+    : ((profile?.reasoning_profile || (cloudModel && cloudModel !== 'auto')) && profile.thinking_mode !== undefined ? !!profile.thinking_mode : defaults.thinkingMode !== false);
+  if (!currentThinkingCapability().canDisableThinking) appState.thinkingMode = true;
+  if (saved && (saved.reasoningProfile !== appState.reasoningProfile || saved.thinkingMode !== appState.thinkingMode)) {
+    persistDefaultModelPreference(appState.selectedModel);
+  }
+}
 
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
@@ -5191,14 +5241,42 @@ function applyModelVisibilityToDom() {
   updateMenuSelection();
 }
 
+function renderCustomModelChoices() {
+  const section = document.getElementById('allModelsSection');
+  if (!section) return;
+  section.querySelectorAll('[data-custom-catalog-model]').forEach(element => element.remove());
+  for (const [id, model] of Object.entries(MODELS)) {
+    if (model.builtin !== false) continue;
+    const item = document.createElement('button');
+    item.type = 'button'; item.className = 'model-menu-item';
+    item.dataset.model = id; item.dataset.customCatalogModel = 'true';
+    const label = document.createElement('span');
+    label.className = 'model-menu-title'; label.textContent = model.name || id;
+    item.append(label);
+    item.addEventListener('click', event => selectModelFromMenu(id, model.name || id, '', event));
+    section.append(item);
+  }
+}
+
 async function fetchModelAvailability() {
   try {
     const res = await fetch(`${API_BASE}/model-availability`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    for (const model of Array.isArray(data.models) ? data.models : []) {
+      if (!model?.id) continue;
+      MODELS[model.id] = { ...(MODELS[model.id] || {}), ...model,
+        supportsVision: model.vision === true, multimodal: model.vision === true,
+        supportsReasoningProfile: model.supportsThinking === true };
+    }
+    if (data.smartDefaults) modelVisibilityState.smartDefaults = { ...modelVisibilityState.smartDefaults, ...data.smartDefaults };
+    if (data.fastDefaults) modelVisibilityState.fastDefaults = { ...modelVisibilityState.fastDefaults, ...data.fastDefaults };
     modelVisibilityState.disabled = new Set((data.disabledModels || []).map(normalizeSelectedModelId).filter(Boolean));
     modelVisibilityState.loaded = true;
+    renderCustomModelChoices();
+    if (!appState.currentSession && !appState.isStreaming && !readModelPreference()) restoreModelPreference();
     applyModelVisibilityToDom();
+    updateModelControls();
   } catch (error) {
     console.warn(' 获取模型开关失败:', error.message || error);
   }
@@ -5272,11 +5350,22 @@ function isMembershipLockedModel(modelId) {
 function normalizeReasoningProfile(value) {
   const v = String(value || '').trim().toLowerCase();
   if (v === 'mixed') return 'max';
-  if (v === 'auto' || v === 'medium' || v === 'high' || v === 'max') return v;
+  if (v === 'auto' || v === 'medium' || v === 'high' || v === 'xhigh' || v === 'max') return v;
   return 'low';
 }
 
-const REASONING_PROFILE_ORDER = ['auto', 'low', 'medium', 'high', 'max'];
+const REASONING_PROFILE_ORDER = ['auto', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+function normalizeReasoningProfileForModel(value, modelId = appState.selectedModel) {
+  const normalized = normalizeReasoningProfile(value);
+  const selected = normalizeSelectedModelId(modelId);
+  const actual = selected === 'auto' ? modelVisibilityState.smartDefaults.model : selected;
+  const model = MODELS[actual] || MODELS[selected] || {};
+  const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
+    ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile))
+    : REASONING_PROFILE_ORDER;
+  return profiles.includes(normalized) ? normalized : profiles[0] || 'auto';
+}
 
 function reasoningProfileToIndex(profile) {
   const normalized = normalizeReasoningProfile(profile);
@@ -5307,8 +5396,13 @@ function setReasoningProfileFromSlider(indexValue) {
 }
 
 function setReasoningProfile(profile) {
-  appState.reasoningProfile = normalizeReasoningProfile(profile);
+  const capability = currentThinkingCapability();
+  const normalized = normalizeReasoningProfile(profile);
+  appState.reasoningProfile = capability.profiles.includes(normalized) ? normalized : capability.profiles[0] || 'low';
+  appState.thinkingMode = true;
+  persistDefaultModelPreference();
   updateReasoningProfileControl();
+  updateToolbarUI();
 }
 
 function updateReasoningProfileControl() {
@@ -5328,7 +5422,27 @@ function updateReasoningProfileControl() {
     slider.setAttribute('aria-valuetext', i18nText('reasoning-' + normalized, normalized));
     updateReasoningProfileSliderVisual(slider);
   }
+  const choices = document.getElementById('reasoningProfileChoices');
+  if (choices) {
+    const capability = currentThinkingCapability();
+    choices.replaceChildren(...capability.profiles.map(profile => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.profile = profile;
+      button.textContent = i18nText('reasoning-' + profile, profile);
+      button.className = 'reasoning-profile-choice';
+      button.setAttribute('aria-pressed', profile === normalized ? 'true' : 'false');
+      button.addEventListener('click', event => { event.stopPropagation(); setReasoningProfile(profile); });
+      return button;
+    }));
+  }
 }
+
+document.addEventListener('pointerover', event => {
+  const header = event.target.closest?.('.reasoning-profile-header');
+  if (!header || !document.getElementById('moreMenu')?.classList.contains('active')) return;
+  appState.reasoningChoicesExpanded = true;
+  updateToolbarUI();
+});
 
 const RAI_ROUTING_NOTICE_COOLDOWN_KEY = 'rai_routing_notice_cooldowns_v1';
 const RAI_ROUTING_NOTICE_COOLDOWN_MS = 10 * 60 * 1000;
@@ -8175,17 +8289,18 @@ function getAttachmentTypeLabel(type) {
 }
 
 function createAttachmentListItem(att = {}) {
-  const isImage = att.type === 'image' && (att.data || att.filePath);
+  const isImage = att.type === 'image' && (att.data || att.filePath || att.localThumbnail);
   const sizeLabel = Number(att.size) > 0 ? formatFileSize(Number(att.size)) : '';
   const itemDiv = document.createElement('div');
   itemDiv.className = `message-attachment-item ${isImage ? 'image-attachment' : 'media-attachment'}`;
+  itemDiv.title = att.fileName || att.originalName || '';
 
   if (isImage) {
     const img = document.createElement('img');
     img.alt = att.fileName || '图片';
     img.loading = 'lazy';
-    if (att.data) {
-      img.src = att.data;
+    if (att.data || att.localThumbnail) {
+      img.src = att.data || att.localThumbnail;
     } else {
       img.classList.add('protected-attachment-image');
       img.addEventListener('error', () => itemDiv.classList.add('attachment-preview-error'), { once: true });
@@ -8218,7 +8333,7 @@ function createAttachmentListItem(att = {}) {
     <span class="media-icon">${getSvgIcon(fileLibraryIconName(att), 'material-symbols-outlined', 24)}</span>
     <div class="media-info">
       <div class="media-type">${escapeHtml(getAttachmentTypeLabel(att.type))}${sizeLabel ? ` · ${escapeHtml(sizeLabel)}` : ''}</div>
-      <div class="media-name">${escapeHtml(att.fileName || att.originalName || '')}</div>
+      <div class="media-name" title="${escapeHtml(att.fileName || att.originalName || '')}">${escapeHtml(att.fileName || att.originalName || '')}</div>
       ${canAccessFile ? `<div class="attachment-file-actions">
         <button type="button" class="attachment-preview-btn">${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</button>
         <button type="button" class="attachment-download-btn">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</button>
@@ -13652,11 +13767,12 @@ function getRequestModelIdForCurrentMode() {
 }
 
 function getRequestReasoningProfileForCurrentMode() {
+  if (!appState.thinkingMode && currentThinkingCapability().canDisableThinking) return 'none';
   if (getEffectiveResearchMode() === 'fast') {
     return 'low';
   }
   if (appState.thinkingMode && normalizeSelectedModelId(appState.selectedModel) === 'auto') return 'max';
-  return normalizeReasoningProfile(appState.reasoningProfile);
+  return normalizeReasoningProfileForModel(appState.reasoningProfile);
 }
 
 function normalizeRaiMode(mode = '') {
@@ -13674,8 +13790,8 @@ function getModeRequestConfig(mode = '') {
     return {
       mode: 'smart',
       model: 'auto',
-      thinkingMode: false,
-      reasoningProfile: 'low',
+      thinkingMode: modelVisibilityState.smartDefaults.thinkingMode !== false,
+      reasoningProfile: normalizeReasoningProfile(modelVisibilityState.smartDefaults.reasoningProfile || 'low'),
       researchMode: 'off'
     };
   }
@@ -14406,17 +14522,7 @@ function restoreInternetSearchDefault() {
 }
 
 function settingsToggleThinkingMode() {
-  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  if (!currentModel?.supportsThinking) {
-    appState.thinkingMode = false;
-    updateToolbarUI();
-    updateSettingsCapabilitiesUI();
-    showToast(isChineseLanguage(appState.language) ? '当前模型不支持思考模式' : 'Current model does not support thinking mode');
-    return;
-  }
-  appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
-  updateToolbarUI();
+  toggleThinkingFromMenu();
   updateSettingsCapabilitiesUI();
 }
 
@@ -16139,6 +16245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 初始化主题和语言
   initThemeAndLanguage();
+  restoreModelPreference();
   initEntryAutofocus();
   initTauriDesktopAuthSync();
   syncDesktopSettingsVisibility();
@@ -16534,17 +16641,26 @@ function toggleInternetFromMenu(event) {
 
 // 从菜单切换推理模式
 function toggleThinkingFromMenu(event) {
-  event.stopPropagation(); // 防止关闭菜单
-  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  if (!currentModel?.supportsThinking) {
+  event?.stopPropagation?.();
+  const capability = currentThinkingCapability();
+  if (!capability.supportsThinking) {
     appState.thinkingMode = false;
     updateToolbarUI();
     preserveMobileInputFocus();
     scheduleComposerMenuReposition(8);
     return;
   }
-  appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode && !capability.canDisableThinking) {
+    showToast(isChineseLanguage(appState.language)
+      ? 'GPT 6.1 Sol 不支持关闭思考，可选择低档以缩短等待。'
+      : 'GPT 6.1 Sol requires thinking. Choose Low for a shorter wait.');
+    appState.thinkingMode = true;
+  } else {
+    appState.thinkingMode = !appState.thinkingMode;
+    if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  }
+  appState.reasoningChoicesExpanded = appState.thinkingMode;
+  persistDefaultModelPreference();
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
 
@@ -16628,14 +16744,16 @@ function updateToolbarUI() {
   const reasoningSelect = document.getElementById('reasoningProfileSelect');
   const reasoningSlider = document.getElementById('reasoningProfileSlider');
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  const supportsThinking = !!currentModel?.supportsThinking;
-  const supportsReasoningProfile = supportsThinking && currentModel?.supportsReasoningProfile !== false;
+  const capability = currentThinkingCapability();
+  const supportsThinking = capability.supportsThinking;
+  const supportsReasoningProfile = supportsThinking && capability.profiles.length > 0;
   appState.agentMode = false;
 
   if (!supportsThinking) {
     appState.thinkingMode = false;
     appState.thinkingBudgetOpen = false;
   }
+  if (supportsThinking && !capability.canDisableThinking) appState.thinkingMode = true;
 
   if (internetToggle) {
     internetToggle.classList.toggle('active', appState.internetMode);
@@ -16674,7 +16792,7 @@ function updateToolbarUI() {
   }
 
   const showReasoningItem = supportsThinking;
-  const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode;
+  const showReasoningProfile = supportsReasoningProfile && (appState.thinkingMode || appState.reasoningChoicesExpanded);
   if (reasoningProfileItem) {
     setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningItem);
   }
@@ -16988,9 +17106,6 @@ function getModelDisplayMeta(modelId) {
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
   }
-  if (normalized === 'deepseek-v4.1-flash') {
-    return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
-  }
   return { i18nKey: null, fallback: MODELS[normalized]?.name || normalized };
 }
 
@@ -17011,16 +17126,17 @@ function updateSelectedModelText(modelId = appState.selectedModel) {
 }
 
 function persistDefaultModelPreference(modelId = appState.selectedModel) {
-  // Kept as a compatibility no-op for older event paths. Manual choices are
-  // intentionally scoped to the active composer and never become an account default.
-  appState.profileDefaultModel = 'auto';
+  appState.profileDefaultModel = normalizeSelectedModelId(modelId) || 'auto';
+  appState.reasoningProfile = normalizeReasoningProfileForModel(appState.reasoningProfile, appState.profileDefaultModel);
+  try {
+    localStorage.setItem(modelPreferenceStorageKey(), JSON.stringify({ model: appState.profileDefaultModel,
+      reasoningProfile: appState.reasoningProfile, thinkingMode: appState.thinkingMode }));
+  } catch (_) {}
 }
 
 function resetModelToSmart() {
-  appState.selectedModel = 'auto';
-  appState.modelPromptIdentity = 'smart';
-  appState.profileDefaultModel = 'auto';
-  updateSelectedModelText('auto');
+  restoreModelPreference();
+  updateSelectedModelText(appState.selectedModel);
   updateModelControls();
   updateMenuSelection();
 }
@@ -17094,7 +17210,9 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
   appState.selectedModel = normalizeSelectedModelId(model);
   appState.modelPromptIdentity = 'manual';
   appState.lastNonResearchModel = appState.selectedModel;
-  appState.thinkingMode = false;
+  const capability = currentThinkingCapability();
+  appState.thinkingMode = capability.canDisableThinking ? appState.thinkingMode : true;
+  appState.reasoningProfile = normalizeReasoningProfileForModel(appState.reasoningProfile);
   updateSelectedModelText(appState.selectedModel);
 
   updateResearchModeControl();
@@ -17393,7 +17511,8 @@ async function saveSettings(options = {}) {
         },
         body: JSON.stringify({
           theme: appState.themePreference || appState.theme,
-          default_model: 'auto',
+          default_model: appState.profileDefaultModel || appState.selectedModel || 'auto',
+          reasoning_profile: appState.reasoningProfile,
           temperature,
           top_p: topP,
           max_tokens: maxTokens,
@@ -19173,8 +19292,7 @@ function createMessageElement(message) {
     content.appendChild(textDiv);
   }
 
-  // 用户上传和 AI 生成的附件都使用同一张可下载卡片。
-  // 卡片必须位于回答正文之后，避免工具完成事件抢到答案上方。
+  // User attachments precede the bubble; generated assistant artifacts follow its answer.
   if ((message.role === 'user' || message.role === 'assistant') && (message.attachments || message.attachment_refs || message.has_attachments)) {
     let attachments = message.attachments || message.attachment_refs;
     if (typeof attachments === 'string') {
@@ -19192,7 +19310,10 @@ function createMessageElement(message) {
         if (!att || !att.type) return;
         attachmentsDiv.appendChild(createAttachmentListItem(att));
       });
-      if (attachmentsDiv.children.length > 0) content.appendChild(attachmentsDiv);
+      if (attachmentsDiv.children.length > 0) {
+        if (message.role === 'user') content.prepend(attachmentsDiv);
+        else content.appendChild(attachmentsDiv);
+      }
     }
   }
 
@@ -24389,18 +24510,7 @@ function toggleInternet() {
 
 // 切换推理模式
 function toggleThinking() {
-  const modelConfig = MODELS[appState.selectedModel];
-  if (!modelConfig || !modelConfig.supportsThinking) {
-    const msg = isChineseLanguage(appState.language)
-      ? '当前模型不支持推理模式'
-      : 'Current model does not support thinking mode';
-    alert(msg);
-    return;
-  }
-
-  appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
-  updateToolbarUI();
+  toggleThinkingFromMenu();
 
   const thinkingBtn = document.getElementById('thinkingBtn');
   const tooltipText = isChineseLanguage(appState.language) ? '推理' : 'Reasoning';
@@ -26193,7 +26303,8 @@ async function loadUserData(profileInput = null, { authContext = captureUserAuth
 
     //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
-      resetModelToSmart();
+      restoreModelPreference(profile);
+      persistDefaultModelPreference();
       if (profile.temperature !== undefined) appState.temperature = parseFloat(profile.temperature) || 0.7;
       if (profile.top_p !== undefined) appState.topP = parseFloat(profile.top_p) || 0.9;
       if (profile.max_tokens !== undefined) appState.maxTokens = parseInt(profile.max_tokens, 10) || 2000;
@@ -26211,7 +26322,7 @@ async function loadUserData(profileInput = null, { authContext = captureUserAuth
 	        appState.shortTermMemoryTitles = profile.short_memory_titles;
 	      }
       // 读取用户偏好；若模型不支持会在 updateModelControls 里自动关闭
-      if (profile.thinking_mode !== undefined) {
+      if (!readModelPreference() && profile.reasoning_profile && profile.thinking_mode !== undefined) {
         appState.thinkingMode = (profile.thinking_mode === 1 || profile.thinking_mode === true);
       }
       if (profile.tab_title_mode !== undefined) {
@@ -30162,7 +30273,8 @@ async function loadUserMemories({ force = false } = {}) {
 function buildCurrentConfigPayloadForMemory() {
   return {
     theme: appState.themePreference || appState.theme,
-    default_model: 'auto',
+    default_model: appState.profileDefaultModel || appState.selectedModel || 'auto',
+    reasoning_profile: appState.reasoningProfile,
     temperature: appState.temperature,
     top_p: appState.topP,
     max_tokens: appState.maxTokens,
@@ -32310,7 +32422,9 @@ async function createUploadSession(file, context) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.success || !/^upl_[a-f0-9]{32}$/.test(String(data.uploadId || ''))) {
-    throw new Error(data.error || (isChineseLanguage(appState.language) ? '无法创建上传任务' : 'Could not create upload'));
+    const error = new Error(data.error || (isChineseLanguage(appState.language) ? '无法创建上传任务' : 'Could not create upload'));
+    error.code = data.code;
+    throw error;
   }
   return data;
 }
@@ -32367,6 +32481,7 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
       if (xhr.status < 200 || xhr.status >= 300 || !data?.success || data.status !== 'completed') {
         const uploadError = new Error(data?.error || data?.message || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
         uploadError.status = xhr.status;
+        uploadError.code = data?.code;
         finish(reject, uploadError);
         return;
       }
@@ -32408,6 +32523,12 @@ function isRetryableUploadError(error) {
 
 // 独立的文件处理函数（供拖拽上传复用）
 async function processUploadedFile(file, options = {}) {
+  if (Array.from(String(file?.name || '')).length > 255) {
+    alert(isChineseLanguage(appState.language)
+      ? '文件名过长，无法上传。请先将文件重命名为 255 个字符以内的简短名称，再重新上传。'
+      : 'The filename is too long to upload. Rename the file to a shorter name (up to 255 characters), then upload it again.');
+    return false;
+  }
   const attachToComposer = options.attachToComposer !== false;
   const composerGeneration = options.composerGeneration ?? attachmentComposerGeneration;
   const context = captureUserAuthContext();
@@ -32592,7 +32713,12 @@ async function processUploadedFile(file, options = {}) {
     });
     if (localThumbnail) URL.revokeObjectURL(localThumbnail);
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
-    alert(error?.message || fallback);
+    const filenameProblem = error?.code === 'FILE_NAME_TOO_LONG'
+      || /ENAMETOOLONG|file.?name.{0,15}too long|文件名.{0,10}过长/i.test(String(error?.message || ''));
+    alert(filenameProblem
+      ? (isChineseLanguage(appState.language) ? '文件名过长，无法上传。请先给文件改一个简短名称，再重新上传。'
+        : 'The filename is too long to upload. Rename the file to a shorter name and try again.')
+      : (error?.message || fallback));
     return false;
   }
 }
@@ -35135,39 +35261,82 @@ async function loadAdminFeedback() {
   }
 }
 
+let adminModelsCache = [];
+
 async function loadAdminModels() {
   const container = document.getElementById('adminModelsPanel');
   if (!container) return;
-  container.innerHTML = `<div class="admin-loading">${isChineseLanguage(appState.language) ? '加载模型开关中...' : 'Loading model switches...'}</div>`;
-
+  container.textContent = isChineseLanguage(appState.language) ? '加载模型中…' : 'Loading models…';
   try {
-    const res = await fetch(`${API_BASE}/admin/models`, {
-      headers: { 'X-Admin-Token': adminState.token }
-    });
+    const res = await fetch(`${API_BASE}/admin/models`, { headers: { 'X-Admin-Token': adminState.token } });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '加载失败');
-
-    const models = data.models || [];
+    if (!res.ok) throw new Error(data.error || 'Load failed');
+    adminModelsCache = Array.isArray(data.models) ? data.models : [];
+    const zh = isChineseLanguage(appState.language);
     container.innerHTML = `
       <div class="admin-model-switch-list">
-        <div class="admin-model-switch-note">关闭后普通用户的模型列表会隐藏该模型；如果用户当前已选中该模型，前端会自动切回 智能模型。</div>
-        ${models.map((model) => `
+        <p class="admin-model-switch-note">${zh ? '关闭模型后会从用户列表隐藏。内置模型可关闭，自定义模型可删除。' : 'Disabled models disappear from user menus. Built-in models can be disabled; custom models can be deleted.'}</p>
+        ${adminModelsCache.map((model, index) => `
           <div class="admin-model-switch-item">
-            <div>
-              <div class="admin-model-switch-name">${escapeHtml(model.name || model.id)}</div>
-              <div class="admin-model-switch-meta">${escapeHtml(model.group || '模型')}</div>
+            <div><div class="admin-model-switch-name">${escapeHtml(model.name || model.id)}</div>
+              <div class="admin-model-switch-meta">${escapeHtml(model.id)} · ${escapeHtml(model.provider || '')} · ${model.builtin ? (zh ? '内置' : 'Built in') : (zh ? '自定义' : 'Custom')}</div></div>
+            <div class="admin-model-actions">
+              <label class="admin-switch"><input type="checkbox" aria-label="${escapeHtml(model.name || model.id)}" ${model.enabled ? 'checked' : ''} data-admin-model-toggle="${index}"><span></span></label>
+              ${model.builtin ? '' : `<button type="button" data-admin-model-delete="${index}">${zh ? '删除' : 'Delete'}</button>`}
             </div>
-            <label class="admin-switch">
-              <input type="checkbox" ${model.enabled ? 'checked' : ''} data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-change="toggleAdminModel('${escapeHtml(model.id)}', this.checked, this)">
-              <span></span>
-            </label>
-          </div>
-        `).join('')}
+          </div>`).join('')}
       </div>
-    `;
-  } catch (err) {
-    container.innerHTML = `<div class="admin-error">加载模型开关失败：${escapeHtml(err.message || 'unknown')}</div>`;
-  }
+      <form id="adminModelCreateForm" class="admin-model-create-form">
+        <h4>${zh ? '添加自定义模型' : 'Add a custom model'}</h4>
+        <div class="admin-limits-grid">
+          <label class="admin-limit-field"><span>Model ID</span><input name="id" required maxlength="160" autocomplete="off"></label>
+          <label class="admin-limit-field"><span>${zh ? '显示名称' : 'Display name'}</span><input name="name" required maxlength="120"></label>
+          <label class="admin-limit-field"><span>${zh ? '服务商' : 'Provider'}</span><select name="provider"><option value="rai_gpt_gateway">GPT gateway</option><option value="rai_fast_gateway">Fast gateway</option><option value="deepseek">DeepSeek</option></select></label>
+          <label class="admin-limit-field"><span>${zh ? '上下文窗口' : 'Context window'}</span><input type="number" name="contextWindow" min="1000" max="2000000" value="272000" required></label>
+          <label class="admin-limit-field"><span>${zh ? '自动压缩阈值' : 'Compression threshold'}</span><input type="number" name="compressionThreshold" min="1000" max="2000000" value="258000" required></label>
+          <label class="admin-limit-field"><span>${zh ? '每次积分' : 'Points per turn'}</span><input type="number" name="pointCost" min="0" max="10000" value="5" required></label>
+          ${['free','pro','max'].map(tier => `<label class="admin-limit-field"><span>${tier.toUpperCase()} ${zh ? '每日次数' : 'daily turns'}</span><input type="number" name="limit_${tier}" min="0" max="1000000" value="0" required></label>`).join('')}
+        </div>
+        <div class="admin-model-capabilities">
+          <label><input type="checkbox" name="vision"> ${zh ? '支持图片' : 'Vision'}</label>
+          <label><input type="checkbox" name="supportsThinking" checked> ${zh ? '支持思考' : 'Thinking'}</label>
+          <label><input type="checkbox" name="canDisableThinking"> ${zh ? '允许关闭思考' : 'Thinking can be disabled'}</label>
+          <label>${zh ? '支持档位' : 'Thinking levels'} <input name="thinkingProfiles" value="auto,low,medium,high,xhigh,max"></label>
+        </div>
+        <button type="submit">${zh ? '添加模型' : 'Add model'}</button><p role="status" id="adminModelFormStatus"></p>
+      </form>`;
+    container.querySelectorAll('[data-admin-model-toggle]').forEach(input => input.addEventListener('change', () => toggleAdminModel(adminModelsCache[Number(input.dataset.adminModelToggle)].id, input.checked, input)));
+    container.querySelectorAll('[data-admin-model-delete]').forEach(button => button.addEventListener('click', () => deleteAdminCustomModel(adminModelsCache[Number(button.dataset.adminModelDelete)].id)));
+    container.querySelector('#adminModelCreateForm').addEventListener('submit', submitAdminCustomModel);
+  } catch (error) { container.textContent = (isChineseLanguage(appState.language) ? '加载模型失败：' : 'Failed to load models: ') + error.message; }
+}
+
+async function submitAdminCustomModel(event) {
+  event.preventDefault();
+  const form = event.currentTarget, fields = new FormData(form);
+  const get = name => String(fields.get(name) || '').trim();
+  const payload = { id: get('id'), name: get('name'), provider: get('provider'), enabled: true,
+    vision: fields.has('vision'), supportsThinking: fields.has('supportsThinking'), canDisableThinking: fields.has('canDisableThinking'),
+    thinkingProfiles: get('thinkingProfiles').split(',').map(value => value.trim()).filter(Boolean),
+    contextWindow: Number(get('contextWindow')), compressionThreshold: Number(get('compressionThreshold')), pointCost: Number(get('pointCost')),
+    limits: Object.fromEntries(['free','pro','max'].map(tier => [tier, Number(get('limit_' + tier))])) };
+  const status = form.querySelector('[role="status"]');
+  const button = form.querySelector('[type="submit"]'); button.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE}/admin/models`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminState.token }, body: JSON.stringify(payload) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Save failed');
+    await fetchModelAvailability(); await loadAdminModels();
+    showToast(isChineseLanguage(appState.language) ? '模型已添加' : 'Model added');
+  } catch (error) { status.textContent = error.message; button.disabled = false; }
+}
+
+async function deleteAdminCustomModel(modelId) {
+  if (!confirm(isChineseLanguage(appState.language) ? '删除这个自定义模型？' : 'Delete this custom model?')) return;
+  try {
+    const response = await fetch(`${API_BASE}/admin/models/${encodeURIComponent(modelId)}`, { method: 'DELETE', headers: { 'X-Admin-Token': adminState.token } });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Delete failed');
+    delete MODELS[modelId]; await fetchModelAvailability(); await loadAdminModels();
+  } catch (error) { alert(error.message); }
 }
 
 async function toggleAdminModel(modelId, enabled, inputEl) {
@@ -35247,6 +35416,12 @@ async function loadAdminLimits() {
         </label>
       `;
     };
+    const profileSelectField = (key, label, modelId, current, fallback) => {
+      const model = MODELS[modelId] || {};
+      const profiles = [...(model.canDisableThinking !== false ? ['none'] : []), ...(model.thinkingProfiles || REASONING_PROFILE_ORDER)];
+      const chosen = profiles.includes(current) ? current : fallback;
+      return `<label class="admin-limit-field"><span>${label}</span><select data-admin-limit="${key}">${profiles.map(profile => `<option value="${escapeHtml(profile)}" ${profile === chosen ? 'selected' : ''}>${escapeHtml(profile === 'none' ? (isChineseLanguage(appState.language) ? '关闭' : 'Off') : i18nText('reasoning-' + profile, profile))}</option>`).join('')}</select></label>`;
+    };
 
     container.innerHTML = `
       <div class="admin-limits-panel">
@@ -35254,7 +35429,12 @@ async function loadAdminLimits() {
         <div class="admin-limits-section">
           <h4>模型路由</h4>
           <div class="admin-limits-grid admin-model-routing-grid">
-            <div class="admin-model-switch-note">固定模型路由规则：默认 GPT 6.1 Sol（关闭思考）；快速 Fast DeepSeek V4.1 Flash；思考 GPT 6.1 Sol 自适应低/中/高/max。Fast 10 秒无有效响应切换官方 DeepSeek。图片保留当前模型。</div>
+            ${modelSelectField('smart_default_model', '智能模式默认模型', routingCandidates, s.smart_default_model || 'gpt-6.1-sol')}
+            ${profileSelectField('smart_reasoning_profile', '智能模式思考等级', s.smart_default_model || 'gpt-6.1-sol', s.smart_reasoning_profile, 'low')}
+            ${modelSelectField('fast_default_model', '关闭思考时默认模型', routingCandidates, s.fast_default_model || 'deepseek-v4.1-flash')}
+            ${profileSelectField('fast_reasoning_profile', '关闭思考时等级', s.fast_default_model || 'deepseek-v4.1-flash', s.fast_reasoning_profile, 'none')}
+            ${modelSelectField('thinking_default_model', '兼容思考模式默认模型', routingCandidates, s.thinking_default_model || 'gpt-6.1-sol')}
+            ${profileSelectField('thinking_reasoning_profile', '兼容思考模式等级', s.thinking_default_model || 'gpt-6.1-sol', s.thinking_reasoning_profile, 'auto')}
             ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek V4.1 Flash；4 秒无首字时自动切换备用模型')}
           </div>
           <div class="admin-model-switch-note">智能/快速/思考首选若被关闭、凭据缺失或上游失败，会自动回落到内置备用链；隐藏模型请在「模型管理」中关闭对应开关。</div>
@@ -35291,6 +35471,15 @@ async function loadAdminLimits() {
         </div>
       </div>
     `;
+    for (const mode of ['smart', 'fast', 'thinking']) {
+      const modelSelect = container.querySelector(`[data-admin-limit="${mode}_default_model"]`);
+      modelSelect?.addEventListener('change', () => {
+        const profile = container.querySelector(`[data-admin-limit="${mode}_reasoning_profile"]`);
+        const holder = document.createElement('div');
+        holder.innerHTML = profileSelectField(`${mode}_reasoning_profile`, '', modelSelect.value, profile?.value, mode === 'fast' ? 'none' : 'auto');
+        profile?.replaceChildren(...holder.querySelector('select').childNodes);
+      });
+    }
   } catch (err) {
     container.innerHTML = `<div class="admin-error">加载限制配置失败：${escapeHtml(err.message || 'unknown')}</div>`;
   }
@@ -35321,6 +35510,7 @@ async function saveAdminLimits() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '保存失败');
     showToast('限制配置已保存');
+    await fetchModelAvailability();
     await loadAdminLimits();
   } catch (err) {
     alert(`保存限制配置失败：${err.message || 'unknown'}`);
