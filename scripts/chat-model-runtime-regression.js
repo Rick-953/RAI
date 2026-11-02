@@ -49,10 +49,13 @@ async function main(){
   if(mode==='failure'){res.writeHead(503);res.end('{}');return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   if(mode==='remote'&&!body.messages.some(m=>m.role==='tool')){
-   res.write('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'call_remote_test',type:'function',function:{name:'list_files',arguments:JSON.stringify({path:''})}}]},finish_reason:'tool_calls'}]})+'\n\n');res.end('data: [DONE]\n\n');return;
+   res.write('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'call_remote_test',type:'function',function:{name:'list_files',arguments:JSON.stringify({path:''})}}]},finish_reason:'tool_calls'}]})+'\n\n');
+   res.write('data: '+JSON.stringify({choices:[],usage:{prompt_tokens:100,completion_tokens:4,prompt_cache_hit_tokens:80}})+'\n\n');res.end('data: [DONE]\n\n');return;
   }
   if(mode==='cancel'){res.write('data: '+JSON.stringify({choices:[{delta:{content:'partial'},finish_reason:null}]})+'\n\n');req.on('close',()=>res.end());return;}
-  res.write('data: '+JSON.stringify({choices:[{delta:{content:'Runtime answer complete.'},finish_reason:mode==='length'?'length':'stop'}]})+'\n\n');res.end('data: [DONE]\n\n');
+  res.write('data: '+JSON.stringify({choices:[{delta:{content:'Runtime answer complete.'},finish_reason:mode==='length'?'length':'stop'}]})+'\n\n');
+  if(mode!=='remote')for(let i=0;i<2;i++)res.write('data: '+JSON.stringify({choices:[],usage:{prompt_tokens:1024,completion_tokens:8,total_tokens:1032,prompt_cache_hit_tokens:768}})+'\n\n');
+  res.end('data: [DONE]\n\n');
  });
  const providerBase=await listen(provider),port=await reservePort(),baseUrl='http://127.0.0.1:'+port,key=path.join(temp,'key');fs.writeFileSync(key,randomSecret(),{mode:0o600});
  try{
@@ -65,6 +68,18 @@ async function main(){
    await dbRun(db,'UPDATE users SET points=0,purchased_points=0');
    async function chat(model,fields={}){const response=await fetch(baseUrl+'/api/chat/stream',{method:'POST',headers,body:JSON.stringify({model,messages:[{role:'user',content:'Say hello.'}],internetMode:false,memoryMode:'off',thinkingMode:true,reasoningProfile:'medium',...fields})});const raw=await response.text();return{status:response.status,raw,events:raw.split(/\r?\n/).filter(x=>x.startsWith('data: ')&&!x.includes('[DONE]')).map(x=>JSON.parse(x.slice(6)))};}
    const availability=await(await fetch(baseUrl+'/api/model-availability')).json();assert.deepEqual(availability.models.map(x=>x.id),['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra']);assert.equal(availability.contextWindow,256000);
+   async function gptTurnCount(){return await dbGet(db,"SELECT name FROM sqlite_master WHERE type='table' AND name='chat_model_turns'")?(await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns")).n:0;}
+   const gptTurnsBefore=await gptTurnCount();
+   for(const fields of [{thinkingMode:false,reasoningProfile:'max'},{thinkingMode:undefined,reasoningProfile:undefined}]){
+    const start=observations.length,result=await chat('auto',fields);
+    assert.ok(result.events.some(x=>x.type==='done'&&x.actualModel===dsModel),result.raw.slice(-3000));
+    const request=observations.slice(start).find(x=>x.body.stream);
+    assert.equal(request.body.model,dsModel);assert.equal(request.body.thinking.type,'disabled');
+    assert.equal(request.body.stream_options.include_usage,true);
+    if(official)assert.equal(request.url,'/official/v1/chat/completions','default smart must directly reach the official endpoint');
+    const metered=result.events.filter(x=>x.type==='usage');assert.equal(metered.at(-1).usage.prompt_cache_hit_tokens,768);assert.equal(metered.at(-1).usage.prompt_tokens,1024,'duplicate provider snapshots must not double usage');
+   }
+   assert.equal(await gptTurnCount(),gptTurnsBefore,'default smart cannot reserve or spend GPT allowance');
    for(let i=0;i<3;i++){const response=await chat('gpt-6-astra');assert.equal(response.status,200);assert.ok(response.events.some(x=>x.type==='done'&&!x.degraded),response.raw.slice(-3000));}
    assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6-astra' AND status='completed'")).n,3);
    const before=observations.length,blocked=await chat('gpt-6-astra');assert.equal(blocked.status,429);assert.equal(JSON.parse(blocked.raw).code,'model_chat_quota_exceeded');assert.equal(observations.length,before,'quota cannot issue provider request');
@@ -97,7 +112,7 @@ async function main(){
    const smart=await chat('auto',{sessionId:provenanceChat,thinkingMode:true,reasoningProfile:undefined});
    assert.ok(smart.events.some(x=>x.type==='model_info'&&x.actualModel==='gpt-6.1-sol'),smart.raw.slice(-2000));
    assert.equal(smart.events.find(x=>x.type==='done').actualModel,'gpt-6.1-sol');
-   assert.equal(Object.hasOwn(observations.filter(x=>x.body.model==='gpt-6.1-sol'&&x.body.stream).at(-1).body,'reasoning_effort'),false,'Missing profile defaults to native Adaptive, not question-length heuristics');
+   assert.equal(observations.filter(x=>x.body.model==='gpt-6.1-sol'&&x.body.stream).at(-1).body.reasoning_effort,'max','Smart thinking must use Sol max regardless of an omitted effort field');
    assert.equal((await dbGet(db,"SELECT model FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",[provenanceChat])).model,'gpt-6.1-sol');
    mode='failure';const failed=await chat('gpt-6.1-sol');assert.ok(failed.events.some(x=>x.type==='error'),failed.raw.slice(-3000));assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,3);mode='answer';
    // The failed upstream trips its circuit: user still selects Sol, actual answer uses DeepSeek.
@@ -117,13 +132,17 @@ async function main(){
    const deviceHeaders={...nativeHeaders,'X-CX-Device-Key':computer.deviceKey},devicePath='/devices/'+computer.id;
    const link=(await remote('/sessions','POST',{deviceId:computer.id,conversationId:remoteChat})).session;
    await remote(devicePath+'/approve','POST',{sessionId:link.id,approved:true},deviceHeaders);
-   mode='remote';const stream=chat('gpt-6.1-sol',{sessionId:remoteChat,reasoningProfile:'max',messages:[{role:'user',content:'List the files on my connected computer.'}],local_agent:{protocolVersion:'cx-online-v1',sessionId:link.id}});
+   mode='remote';const stream=chat('auto',{sessionId:remoteChat,reasoningProfile:'low',messages:[{role:'user',content:'List the files on my connected computer.'}],local_agent:{protocolVersion:'cx-online-v1',sessionId:link.id}});
    let remoteTask;
    for(let i=0;i<250&&!remoteTask;i++){remoteTask=(await remote(devicePath+'/poll','GET',undefined,deviceHeaders)).tasks[0];if(!remoteTask)await delay(100);}
    assert.ok(remoteTask,'chat must dispatch the remote tool');assert.equal(remoteTask.tool,'list_files');
    await remote(devicePath+'/tasks/'+remoteTask.id+'/start','POST',{},deviceHeaders);
    await remote(devicePath+'/tasks/'+remoteTask.id+'/result','POST',{result:{success:true,path:'fixture',entries:[{name:'remote-note.txt',type:'file'}],output:'目录: fixture (1 项)\n  [文件] remote-note.txt'}},deviceHeaders);
    const completed=await stream;const remoteContinuation=observations.filter(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))).at(-1);assert.ok(remoteContinuation,'remote continuation is observed');assert.equal(remoteContinuation.body.reasoning_effort,'max','Manual max survives routed remote tool continuation');assert.ok(completed.events.some(x=>x.type==='done'&&!x.degraded),completed.raw.slice(-4000));
+   const remoteUsage=completed.events.filter(x=>x.type==='usage');
+   assert.ok(remoteUsage.some(x=>x.usage.prompt_cache_hit_tokens===80),'initial tool call reports genuine known cache');
+   assert.equal(remoteUsage.at(-1).usage_scope,'request');
+   assert.deepEqual(remoteUsage.at(-1).usage,{},'a successful continuation that omits usage clears prior counters instead of presenting a partial total');
    assert.ok(observations.some(x=>x.body.stream===true&&x.body.messages.some(m=>m.role==='tool'&&String(m.content).includes('remote-note.txt'))),'PC result must reach streaming provider continuation (exclude later title generation)');
    assert.ok(!completed.events.some(x=>x.type==='local_agent_tool_call'||x.type==='client_tool_call'),'Web must not execute desktop tool payload');
    await remote(devicePath,'DELETE',undefined,deviceHeaders);mode='answer';

@@ -13646,7 +13646,7 @@ function setResearchMasterModel(modelId, event) {
 function getRequestModelIdForCurrentMode() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (identity === 'fast') return 'fast-auto';
-  if (identity === 'think') return 'think-auto';
+  if (identity === 'think' && appState.thinkingMode) return 'think-auto';
   const selected = normalizeSelectedModelId(appState.selectedModel);
   return selected;
 }
@@ -13655,6 +13655,7 @@ function getRequestReasoningProfileForCurrentMode() {
   if (getEffectiveResearchMode() === 'fast') {
     return 'low';
   }
+  if (appState.thinkingMode && normalizeSelectedModelId(appState.selectedModel) === 'auto') return 'max';
   return normalizeReasoningProfile(appState.reasoningProfile);
 }
 
@@ -13692,7 +13693,7 @@ function getModeRequestConfig(mode = '') {
       mode: 'think',
       model: 'auto',
       thinkingMode: true,
-      reasoningProfile: 'auto',
+      reasoningProfile: 'max',
       researchMode: 'off'
     };
   }
@@ -14414,7 +14415,7 @@ function settingsToggleThinkingMode() {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode) appState.reasoningProfile = normalizeSelectedModelId(appState.selectedModel) === 'auto' ? 'max' : 'auto';
   updateToolbarUI();
   updateSettingsCapabilitiesUI();
 }
@@ -15345,7 +15346,9 @@ function focusEntryTextInput(reason = 'entry', options = {}) {
     if (!isAuthTarget && (appState.settingsOpen || hasBlockingTextEntryOverlay())) return;
 
     const activeElement = document.activeElement;
-    if (isTextEntryElement(activeElement) && activeElement !== target) return;
+    // A delayed entry callback must not collapse a selection the user has
+    // already made in this input, or move focus from another text field.
+    if (isTextEntryElement(activeElement)) return;
 
     try {
       target.focus({ preventScroll: true });
@@ -16541,7 +16544,7 @@ function toggleThinkingFromMenu(event) {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode) appState.reasoningProfile = normalizeSelectedModelId(appState.selectedModel) === 'auto' ? 'max' : 'auto';
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
 
@@ -24396,7 +24399,7 @@ function toggleThinking() {
   }
 
   appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode) appState.reasoningProfile = normalizeSelectedModelId(appState.selectedModel) === 'auto' ? 'max' : 'auto';
   updateToolbarUI();
 
   const thinkingBtn = document.getElementById('thinkingBtn');

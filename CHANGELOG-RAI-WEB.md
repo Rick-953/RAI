@@ -1,3 +1,15 @@
+## 0.13.38 - smart official routing and observable cache usage (2026-11-02)
+
+- Route Smart with thinking off, including an omitted thinking flag, directly to official DeepSeek Flash. Smart thinking always selects GPT 6.1 Sol with max reasoning; explicit model selections retain their requested tiers and local computer tools remain available with thinking enabled.
+- Request streaming usage on the supported chat providers and forward real prompt/cache/output counters to Web and CX RAI. Replace cumulative snapshots within each provider call and add independent tool continuations once; missing cache counters remain unreported.
+- Add default-collapsed third-party notices in About, including actual dependency versions, applicable license texts, copyright notices and upstream sources.
+- Validate the official and relay HTTP paths in isolated Linux, duplicate usage events, quota isolation, thinking plus local tool continuation, and composer controls in desktop/mobile Chromium and WebKit. Production deployment and physical-device acceptance are recorded separately.
+
+## 0.13.37 - official DeepSeek and importable shared conversations (2026-11-02)
+
+- Switch fast DeepSeek requests directly to the official API using a server-only key file. Retire GPT Luna from public selection and migrate legacy selections to DeepSeek.
+- Preview shared conversation snapshots without signing in, then sign in and explicitly import an independent copy to continue. Preserve source ownership, revocation and import idempotency.
+
 ## 0.13.36 - memory batches, previous versions and native execution boundaries (2026-11-02)
 
 - Save or remove 1–500 memories per call from settings or model tools; reject invalid batches before writing, deduplicate saves and page collections larger than 500.

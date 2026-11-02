@@ -97,6 +97,8 @@
     state.reasoningChars += reasoning; if (reasoning && state.firstReasoningMs < 0) state.firstReasoningMs = Math.round(now() - state.start);
     const usage = event.usage;
     if (usage && typeof usage === 'object') {
+      if (event.usage_scope === 'request')
+        for (const key of ['inputTokens', 'outputTokens', 'cachedTokens']) delete state[key];
       for (const [key, value] of Object.entries({ inputTokens: usage.prompt_tokens ?? usage.input_tokens, outputTokens: usage.completion_tokens ?? usage.output_tokens, cachedTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens }))
         if (Number.isSafeInteger(value) && value >= 0 && value <= 1e12) state[key] = value;
     }

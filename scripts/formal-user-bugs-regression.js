@@ -585,7 +585,7 @@ function testFocusedModelUiReasoningAndSwipe() {
     assert.ok(route.slice(0,350).includes("model: '"+id+"'"));
     assert.match(route.slice(0,350), /multimodal: true/);
   }
-  assert.match(server, /async function resolveVisibleAutoModel[\s\S]{0,400}return 'gpt-6\.1-sol'/);
+  assert.match(server, /async function resolveVisibleAutoModel[\s\S]{0,400}return 'deepseek-v4\.1-flash'/);
   assert.doesNotMatch(server, /normalizedReasoningProfile = score >=/);
   assert.match(server, /reasoningProfile = 'auto'/, 'Thinking delegates default effort to the model');
   assert.match(app, /REASONING_PROFILE_ORDER = \['auto', 'low', 'medium', 'high', 'max'\]/);
@@ -1090,8 +1090,8 @@ function testVersionContract() {
     'closing ChatFlow must enter the parallel closing state');
   assert.match(server, /function isSupportedAdminModelSettingValue\(value\)[\s\S]{0,300}imageOnly !== true/,
     'image-only models must be rejected as preferred model settings');
-  assert.match(server, /async function resolveVisibleFastModel\(\) \{ return 'deepseek-v4\.1-flash'; \}/);
-  assert.match(server, /async function resolveVisibleThinkingModel\(\) \{ return resolveVisibleAutoModel\(\); \}/);
+  assert.match(server, /async function resolveVisibleFastModel\(\) \{ return resolveVisibleAutoModel\(\); \}/);
+  assert.match(server, /async function resolveVisibleThinkingModel\(\)[\s\S]{0,220}return 'gpt-6\.1-sol'/);
   assert.match(server, /if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/);
   assert.match(styles, /\.session-title-wrap\s*\{[\s\S]{0,300}flex:\s*1 1 auto[\s\S]{0,120}min-width:\s*0/,
     'conversation titles must share a flexible column before the fixed menu column');
