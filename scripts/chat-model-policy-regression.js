@@ -8,8 +8,9 @@ const { estimateContextTokens, enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONT
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 async function main() {
-    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra']);
-    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6-astra'],x['gpt-6.1-sol']]), [[3,50],[50,100],[80,200]]);
+    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
+    assert.deepEqual(require('../lib/chat-model-policy').CHAT_MODEL_CATALOG.map(x => x.thinkingProfiles), [['auto','high','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max']]);
+    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6-astra'],x['gpt-6.1-sol'],x['gpt-6-luna']]), [[3,50,100],[50,100,200],[80,200,500]]);
     const db = await new Promise((resolve,reject) => { const connection = new sqlite3.Database(':memory:', e => e ? reject(e) : resolve(connection)); });
     const run = (sql, params=[]) => new Promise((resolve,reject) => db.run(sql, params, function(e){e?reject(e):resolve({changes:this.changes})}));
     const get = (sql, params=[]) => new Promise((resolve,reject) => db.get(sql, params, (e,row)=>e?reject(e):resolve(row)));
@@ -52,6 +53,9 @@ async function main() {
         assert.equal(off.reasoning_effort,id.startsWith('gpt')?'low':undefined);
         if(id.startsWith('deepseek'))assert.equal(off.thinking.type,'disabled');
     }
+    let softSkipped=0; const softBody={model:'gpt-6.1-sol',max_tokens:8000,messages:[{role:'user',content:'x'.repeat(245000)}]};
+    const softResult=await enforceContextWindow(softBody,{summarize:async()=>{throw Object.assign(new Error('test'),{code:'context_compression_failed'});},onDiagnostic:event=>{assert.equal(event.estimated,true);softSkipped++;}});
+    assert.equal(softResult,softBody,'compression threshold is soft while hard output/context reserve remains available');assert.equal(softSkipped,1);
     const original = { model:'gpt-6-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
     const snapshot=JSON.stringify(original);let notices=0, chunks=0;
     const compressed=await enforceContextWindow(original,{summarize:async text=>{chunks++;assert.ok(text.length<=24000);return 'Facts and pending task summary.';},onCompressed:()=>notices++});
@@ -86,7 +90,7 @@ async function main() {
     const server=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
     for(const id of CHAT_MODEL_IDS){assert.ok(html.includes('data-model="'+id+'"'));assert.ok(app.includes("'"+id+"': {"));}
     for(const id of ['claude-sonnet-5','gemini-3.6-flash-low','nemotron-3-ultra','gpt-image-2','kolors-free'])assert.ok(!html.includes('data-model="'+id+'"'));
-    assert.match(server,/await settleChatModelTurn\(!streamDegraded/);assert.match(server,/chatModelQuotaContext.run/);assert.match(server,/const ADMIN_MODEL_CATALOG = \[\.\.\.CHAT_MODEL_CATALOG\]/);assert.match(app,/3, 50, 80/);assert.match(app,/50, 100, 200/);assert.doesNotMatch(html,/data-model="gpt-6-luna"/);assert.doesNotMatch(app,/\['GPT 6 Luna', 100, 200, 500\]/);
+    assert.match(server,/await settleChatModelTurn\(!streamDegraded/);assert.match(server,/chatModelQuotaContext.run/);assert.match(server,/const ADMIN_MODEL_CATALOG = \[\.\.\.CHAT_MODEL_CATALOG\]/);assert.match(app,/3, 50, 80/);assert.match(app,/50, 100, 200/);
     // First effective token (content or reasoning) deadline is 20s by default, and
     // long thinking must not be mistaken for a stalled provider.
     assert.match(server, /RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS\) \|\| '20000'/);
