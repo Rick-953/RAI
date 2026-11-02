@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.35-20261031-attachments-nine';
+const RAI_SW_VERSION = '0.13.36-20261102-memory-batch-versions';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,19 +13,19 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261031-attachments-nine',
-  'web-skills.js?v=20261031-attachments-nine', 'web-skills.css?v=20261031-attachments-nine',
-  '', 'index.html', 'runtime-brand.js?v=20261031-attachments-nine',
-  'rai-system-prompt.js?v=20261031-attachments-nine', 'event-bindings.js?v=20261031-attachments-nine',
-  'lib/jsQR.js?v=20261031-attachments-nine', 'qr-scanner.js?v=20261031-attachments-nine',
-  'secure-sharing.js?v=20261031-attachments-nine', 'secure-sharing.css?v=20261031-attachments-nine',
-  'diagnostics.js?v=20261031-attachments-nine',
-  'app.js?v=20261031-attachments-nine', 'styles.css?v=20261031-attachments-nine',
-  'cx-remote.js?v=20261031-attachments-nine', 'local-agent.css?v=20261031-attachments-nine',
-  'crf-ui.js?v=20261031-attachments-nine',
-  'selection-explainer.js?v=20261031-attachments-nine', 'selection-explainer.css?v=20261031-attachments-nine',
-  'site.webmanifest?v=20261031-attachments-nine', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261031-attachments-nine',
+  'locale.js?v=20261102-memory-batch-versions',
+  'web-skills.js?v=20261102-memory-batch-versions', 'web-skills.css?v=20261102-memory-batch-versions',
+  '', 'index.html', 'runtime-brand.js?v=20261102-memory-batch-versions',
+  'rai-system-prompt.js?v=20261102-memory-batch-versions', 'event-bindings.js?v=20261102-memory-batch-versions',
+  'lib/jsQR.js?v=20261102-memory-batch-versions', 'qr-scanner.js?v=20261102-memory-batch-versions',
+  'secure-sharing.js?v=20261102-memory-batch-versions', 'secure-sharing.css?v=20261102-memory-batch-versions',
+  'diagnostics.js?v=20261102-memory-batch-versions',
+  'app.js?v=20261102-memory-batch-versions', 'styles.css?v=20261102-memory-batch-versions',
+  'cx-remote.js?v=20261102-memory-batch-versions', 'local-agent.css?v=20261102-memory-batch-versions',
+  'crf-ui.js?v=20261102-memory-batch-versions',
+  'selection-explainer.js?v=20261102-memory-batch-versions', 'selection-explainer.css?v=20261102-memory-batch-versions',
+  'site.webmanifest?v=20261102-memory-batch-versions', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261102-memory-batch-versions',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -35,11 +35,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261031-attachments-nine', 'lib/purify.min.js?v=20261031-attachments-nine',
-  'lib/katex/katex.min.css?v=20261031-attachments-nine', 'lib/katex/katex.min.js?v=20261031-attachments-nine',
-  'lib/katex/contrib/auto-render.min.js?v=20261031-attachments-nine',
-  'lib/highlight/styles/github-dark.min.css?v=20261031-attachments-nine',
-  'lib/highlight/highlight.min.js?v=20261031-attachments-nine'
+  'lib/marked.min.js?v=20261102-memory-batch-versions', 'lib/purify.min.js?v=20261102-memory-batch-versions',
+  'lib/katex/katex.min.css?v=20261102-memory-batch-versions', 'lib/katex/katex.min.js?v=20261102-memory-batch-versions',
+  'lib/katex/contrib/auto-render.min.js?v=20261102-memory-batch-versions',
+  'lib/highlight/styles/github-dark.min.css?v=20261102-memory-batch-versions',
+  'lib/highlight/highlight.min.js?v=20261102-memory-batch-versions'
 ].map(appPath);
 
 function isAvatarRequest(url) {

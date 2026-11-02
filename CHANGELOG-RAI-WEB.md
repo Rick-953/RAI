@@ -1,3 +1,10 @@
+## 0.13.36 - memory batches, previous versions and native execution boundaries (2026-11-02)
+
+- Save or remove 1–500 memories per call from settings or model tools; reject invalid batches before writing, deduplicate saves and page collections larger than 500.
+- Snapshot the account's complete active memory state before every save, update, delete or clear. Commit the snapshot and mutation atomically; expose account-scoped version viewing and JSON export without a restore action.
+- Load detailed memory guidance as an on-demand skill. Clarification waits for the user's choice and then answers as needed; Windows/UWP prompts distinguish PowerShell and cmd.exe from Web sandbox execution.
+- Validate real SQLite rollback/concurrency/account isolation, 500-item HTTP/SSE tool continuation and native request payloads. Deploy the server before distributing the updated native client. Source changes remain pending prompt review; the separately authorized DeepSeek configuration now prioritizes xcmapi.org using a server-only key.
+
 ## 0.13.35 - nine attachments and pasted-text files (2026-10-31)
 
 - Share a nine-attachment limit across images, supported files, picker selection, drag/drop, file-library selection and consecutive clipboard batches. Reject oversized chat requests explicitly and recheck the cap when an upload finishes.

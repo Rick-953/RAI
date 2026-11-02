@@ -2412,8 +2412,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.35';
-const RAI_BUILD_ID = '20261031-attachments-nine';
+const RAI_APP_VERSION = '0.13.36';
+const RAI_BUILD_ID = '20261102-memory-batch-versions';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5672,8 +5672,13 @@ const i18n = {
     'memory-settings-desc': '普通对话会使用长期记忆和最近 10 条对话标题；临时对话完全隔离。',
     'memory-enabled-label': '长期记忆',
     'memory-enabled-desc': '开启后，RAI 会自动记住稳定的个人信息和偏好。',
-    'memory-add-placeholder': '添加一条你希望 RAI 长期记住的信息',
+    'memory-add-placeholder': '每行一条记忆，一次最多 500 条，每条 2–360 字',
     'memory-add-btn': '添加记忆',
+    'memory-select-batch': '选择前 500 条',
+    'memory-delete-selected': '移除所选',
+    'memory-backups': '备份记录',
+    'memory-backups-desc': '每次修改前自动保留完整版本；一次批量操作对应一个备份。',
+    'memory-export-backup': '导出此备份',
     'memory-history-note': '开启记忆后，RAI 会先读取最近 10 条对话标题作为滚动短期记忆。',
 	    'memory-clear-btn': '清空记忆',
 	    'memory-empty': '暂无长期记忆',
@@ -6364,8 +6369,13 @@ const i18n = {
     'memory-settings-desc': 'Normal chats use long-term memory and the latest 10 conversation titles. Temporary chats are fully isolated.',
     'memory-enabled-label': 'Long-term memory',
     'memory-enabled-desc': 'When enabled, RAI automatically remembers stable personal facts and preferences.',
-    'memory-add-placeholder': 'Add something you want RAI to remember long term',
+    'memory-add-placeholder': 'One memory per line; up to 500, 2–360 characters each',
     'memory-add-btn': 'Add memory',
+    'memory-select-batch': 'Select first 500',
+    'memory-delete-selected': 'Remove selected',
+    'memory-backups': 'Backups',
+    'memory-backups-desc': 'A complete previous version is saved before every edit, one backup per batch.',
+    'memory-export-backup': 'Export this backup',
     'memory-history-note': 'When memory is on, RAI also uses the latest 10 conversation titles as rolling short-term context.',
 	    'memory-clear-btn': 'Clear memories',
 	    'memory-empty': 'No long-term memories yet',
@@ -8235,6 +8245,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-02', version: 'v0.13.36',
+    zh: { summary: '记忆支持每批 500 条操作，并自动保留修改前版本。', details: ['可一次添加或移除最多 500 条长期记忆，总存量支持分页读取。', '新增、更新、删除和清空前自动备份，可查看旧版本并导出 JSON。', '记忆规则按需读取；CX 本地工具使用 Windows 提示词，区分 PowerShell 与 cmd。'] },
+    en: { summary: 'Batch up to 500 memories with automatic previous versions.', details: ['Add or remove up to 500 memories per batch, with paged access to the complete collection.', 'Save a complete snapshot before additions, updates, deletions and clearing; inspect or export a previous version.', 'Load memory guidance on demand and use Windows-specific CX tool instructions that distinguish PowerShell from cmd.'] }
+  },
   {
     date: '2026-10-31', version: 'v0.13.35',
     zh: { summary: '每条消息支持 9 个混合附件，长文本粘贴自动保存为 TXT。', details: ['图片、文件和粘贴文本共享 9 个附件名额，支持连续粘贴和多选。', '超过 4000 字符的粘贴文本自动转为 UTF-8 TXT，保留已有草稿和原始文本。', '看图直接使用已提供的图片；同一附件的文件引用用于实际编辑，避免答完后强制浏览空目录并重复回答。'] },
@@ -30045,13 +30060,17 @@ function applyMemoryUpdateEvent(data = {}) {
   }
   if (Array.isArray(data.memories)) {
     appState.userMemories = data.memories;
-    appState.userMemoriesLoaded = true;
+    appState.userMemoriesLoaded = !data.hasMore;
   }
   if (Array.isArray(data.shortTermMemory)) {
     appState.shortTermMemoryTitles = data.shortTermMemory;
   }
   renderMemorySettings();
 }
+
+const selectedMemoryIds = new Set();
+let memoryMutationPending = false;
+let selectedMemoryBackup = null;
 
 function renderMemorySettings() {
   const toggle = document.getElementById('memoryEnabledToggle');
@@ -30062,6 +30081,10 @@ function renderMemorySettings() {
   const list = document.getElementById('settingsMemoryList');
   if (!list) return;
   const memories = Array.isArray(appState.userMemories) ? appState.userMemories : [];
+  const visibleIds = new Set(memories.map(memory => Number(memory.id)));
+  for (const id of selectedMemoryIds) if (!visibleIds.has(id)) selectedMemoryIds.delete(id);
+  const deleteSelected = document.getElementById('deleteSelectedMemoriesButton');
+  if (deleteSelected) deleteSelected.disabled = !selectedMemoryIds.size || memoryMutationPending;
   const shortTermTitles = Array.isArray(appState.shortTermMemoryTitles) ? appState.shortTermMemoryTitles : [];
   if (!appState.userMemoriesLoaded) {
     list.innerHTML = `<div class="memory-empty">${escapeHtml(isChineseLanguage(appState.language) ? '正在加载记忆...' : 'Loading memories...')}</div>`;
@@ -30087,6 +30110,8 @@ function renderMemorySettings() {
   }
   list.innerHTML = `${shortTermHtml}${memories.map((memory) => `
     <div class="memory-item" data-memory-id="${escapeHtml(memory.id)}">
+      <input type="checkbox" ${selectedMemoryIds.has(Number(memory.id)) ? 'checked' : ''} aria-label="${escapeHtml(isChineseLanguage(appState.language) ? '选择记忆' : 'Select memory')}"
+        data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-change="selectMemoryForBatch(${Number(memory.id) || 0}, this.checked)">
       <div class="memory-item-main">
         <div class="memory-item-content">${escapeHtml(memory.content || '')}</div>
         <div class="memory-item-meta">${escapeHtml(i18nText('memory-long-term-title', isChineseLanguage(appState.language) ? '长期记忆' : 'Long-term memory'))} · ${escapeHtml(memory.category || 'other')}</div>
@@ -30105,16 +30130,24 @@ async function loadUserMemories({ force = false } = {}) {
     return;
   }
   try {
-    const response = await fetch(`${API_BASE}/user/memories`, {
-      headers: { 'Authorization': `Bearer ${appState.token}` },
-      cache: 'no-store'
-    });
-    const data = await response.json();
-    if (!response.ok || !data?.success) {
-      throw new Error(data?.error || `HTTP ${response.status}`);
-    }
+    let offset = 0;
+    let data;
+    const memories = [];
+    const token = appState.token;
+    do {
+      const response = await fetch(`${API_BASE}/user/memories?offset=${offset}`, {
+        headers: { 'Authorization': `Bearer ${token}` }, cache: 'no-store'
+      });
+      data = await response.json();
+      if (!response.ok || !data?.success) throw new Error(data?.error || `HTTP ${response.status}`);
+      if (token !== appState.token) return;
+      memories.push(...(Array.isArray(data.memories) ? data.memories : []));
+      if (!data.hasMore) break;
+      if (!Number.isSafeInteger(data.nextOffset) || data.nextOffset <= offset) throw new Error('invalid_memory_offset');
+      offset = data.nextOffset;
+    } while (data.hasMore);
     appState.longMemoryEnabled = !!data.enabled;
-    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
+    appState.userMemories = memories;
     appState.shortTermMemoryTitles = Array.isArray(data.shortTermMemory) ? data.shortTermMemory : [];
     appState.userMemoriesLoaded = true;
     renderMemorySettings();
@@ -30176,6 +30209,7 @@ async function toggleLongMemorySetting() {
       appState.shortTermMemoryTitles = Array.isArray(data.memory.shortTermMemory) ? data.memory.shortTermMemory : [];
       appState.userMemoriesLoaded = true;
     }
+    await loadUserMemories({ force: true });
     const titleCount = appState.longMemoryEnabled ? appState.shortTermMemoryTitles.length : 0;
     const enabledMessage = i18nText('memory-enabled-with-titles', isChineseLanguage(appState.language)
       ? '记忆已开启，已读取最近 {count} 条对话标题'
@@ -30200,26 +30234,27 @@ async function addManualMemory() {
     input?.focus();
     return;
   }
+  const memories = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (memories.length > 500 || memories.some(line => line.length < 2 || line.length > 360)) {
+    showToast(isChineseLanguage(appState.language) ? '每批最多 500 条，每条记忆须为 2–360 字；本批未提交。' : 'Up to 500 memories per batch, 2–360 characters each. Nothing submitted.');
+    return;
+  }
+  if (memoryMutationPending) return;
+  memoryMutationPending = true;
   try {
-    const response = await fetch(`${API_BASE}/user/memories`, {
+    const response = await fetch(`${API_BASE}/user/memories/batch`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${appState.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ category: 'other', content })
+      headers: { 'Authorization': `Bearer ${appState.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memories: memories.map(text => ({ category: 'other', content: text })) })
     });
     const data = await response.json();
-    if (!response.ok || !data?.success) {
-      throw new Error(data?.error || `HTTP ${response.status}`);
-    }
-    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
-    appState.userMemoriesLoaded = true;
-    if (input) input.value = '';
-    renderMemorySettings();
+    if (!response.ok || !data?.success) throw new Error(data?.error || `HTTP ${response.status}`);
+    if (input && input.value.trim() === content) input.value = '';
+    await loadUserMemories({ force: true });
+    showToast(isChineseLanguage(appState.language) ? `已保存 ${data.savedCount} 条记忆，修改前备份 #${data.backupVersionId}` : `Saved ${data.savedCount} memories; previous version #${data.backupVersionId}`);
   } catch (error) {
-    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
-  }
+    showToast(error.message || i18nText('settings-save-failed', 'Save failed'));
+  } finally { memoryMutationPending = false; renderMemorySettings(); }
 }
 
 async function deleteUserMemory(memoryId) {
@@ -30239,6 +30274,98 @@ async function deleteUserMemory(memoryId) {
   } catch (error) {
     showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '操作失败，请重试' : 'Operation failed, please try again'));
   }
+}
+
+function selectMemoryForBatch(id, checked) {
+  if (checked && selectedMemoryIds.size >= 500 && !selectedMemoryIds.has(id)) {
+    showToast(isChineseLanguage(appState.language) ? '单次最多选择 500 条记忆' : 'Select at most 500 memories per batch');
+  } else if (checked) selectedMemoryIds.add(id);
+  else selectedMemoryIds.delete(id);
+  renderMemorySettings();
+}
+
+function selectFirstMemoryBatch() {
+  selectedMemoryIds.clear();
+  for (const memory of (appState.userMemories || []).slice(0, 500)) selectedMemoryIds.add(Number(memory.id));
+  renderMemorySettings();
+}
+
+async function deleteSelectedUserMemories() {
+  const ids = [...selectedMemoryIds];
+  if (!ids.length || ids.length > 500 || memoryMutationPending) return;
+  if (!confirm(isChineseLanguage(appState.language) ? `移除所选 ${ids.length} 条记忆？修改前会自动备份。` : `Remove ${ids.length} selected memories? A backup is saved first.`)) return;
+  memoryMutationPending = true;
+  try {
+    const response = await fetch(`${API_BASE}/user/memories/batch-delete`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${appState.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memory_ids: ids })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    selectedMemoryIds.clear();
+    await loadUserMemories({ force: true });
+    showToast(isChineseLanguage(appState.language) ? `已移除 ${data.deletedCount} 条记忆，修改前备份 #${data.backupVersionId}` : `Removed ${data.deletedCount} memories; previous version #${data.backupVersionId}`);
+  } catch (error) { showToast(error.message); }
+  finally { memoryMutationPending = false; renderMemorySettings(); }
+}
+
+async function showMemoryBackups() {
+  selectedMemoryBackup = null;
+  const preview = document.getElementById('memoryBackupPreview');
+  const select = document.getElementById('memoryBackupSelect');
+  preview.textContent = '';
+  select.replaceChildren();
+  try {
+    const token = appState.token;
+    let offset = 0, versions;
+    do {
+      const response = await fetch(`${API_BASE}/user/memories/versions?offset=${offset}`, { headers: { 'Authorization': `Bearer ${token}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+      if (token !== appState.token) return;
+      versions = data.versions || [];
+      for (const version of versions) {
+        const option = document.createElement('option');
+        option.value = version.id;
+        option.textContent = `#${version.id} · ${version.created_at} UTC · ${version.operation} · ${version.memory_count}`;
+        select.append(option);
+      }
+      offset += versions.length;
+    } while (versions.length === 50);
+    document.getElementById('memoryBackupDialog').showModal();
+    if (select.options.length) await readSelectedMemoryBackup();
+    else preview.textContent = isChineseLanguage(appState.language) ? '尚无备份，首次修改记忆时会自动创建。' : 'No backups yet. The first edit creates one automatically.';
+  } catch (error) { showToast(error.message); }
+}
+
+async function readSelectedMemoryBackup() {
+  const id = Number(document.getElementById('memoryBackupSelect').value);
+  selectedMemoryBackup = null;
+  document.getElementById('memoryBackupPreview').textContent = '';
+  if (!Number.isSafeInteger(id) || id <= 0) return;
+  try {
+    const response = await fetch(`${API_BASE}/user/memories/versions/${id}`, { headers: { 'Authorization': `Bearer ${appState.token}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    if (Number(document.getElementById('memoryBackupSelect').value) !== id) return;
+    selectedMemoryBackup = data.version;
+    document.getElementById('memoryBackupPreview').textContent = data.version.memories.map(memory => `#${memory.id} [${memory.category}] ${memory.content}`).join('\n\n') || (isChineseLanguage(appState.language) ? '修改前没有记忆。' : 'No memories before this edit.');
+  } catch (error) { showToast(error.message); }
+}
+
+function closeMemoryBackups() {
+  document.getElementById('memoryBackupDialog').close();
+  document.getElementById('memoryBackupPreview').textContent = '';
+  selectedMemoryBackup = null;
+}
+
+function exportSelectedMemoryBackup() {
+  if (!selectedMemoryBackup) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(selectedMemoryBackup, null, 2)], { type: 'application/json' }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = `rai-memory-backup-${selectedMemoryBackup.id}.json`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function clearAllUserMemories() {

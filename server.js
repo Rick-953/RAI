@@ -121,10 +121,13 @@ const {
 } = require('./lib/password-policy');
 const {
     buildMemoryToolPolicyInstruction,
+    MAX_MEMORY_BATCH_SIZE,
+    validateManualMemoryBatch,
     normalizeMemoryCategory,
     normalizeSaveMemoryToolArgs,
     validateSaveMemoryRequest
 } = require('./lib/memory-tool-policy');
+const { createMemoryVersionStore } = require('./lib/memory-version-store');
 const {
     buildEffectiveSystemPrompt: buildCanonicalRaiSystemPrompt
 } = require('./public/rai-system-prompt');
@@ -2417,66 +2420,41 @@ const TOOL_DEFINITIONS = [{
     }
 }];
 
+const MEMORY_SAVE_ITEM_SCHEMA = {
+    type: 'object', additionalProperties: false,
+    required: ["category", "content", "evidence", "reason"],
+    properties: {
+        category: { type: 'string', enum: ['identity', 'profile', 'preference', 'interest', 'ability', 'weakness', 'health', 'relationship', 'work', 'other'] },
+        content: { type: 'string', minLength: 2, maxLength: 360, description: 'One self-contained durable fact.' },
+        evidence: { type: 'string', minLength: 1, maxLength: 240, description: 'Exact supporting quote from a user message.' },
+        reason: { type: 'string', minLength: 1, maxLength: 180, description: 'How this helps future conversations.' }
+    }
+};
 const MEMORY_SAVE_TOOL_DEFINITION = {
-    type: "function",
+    type: 'function',
     function: {
-        name: "save_memory",
-        description: "按需保存一条对未来跨对话回答有持续帮助的长期记忆。不要每轮调用，也不要保存寒暄、应和、随口反应、短暂状态、一次性任务、仅对当前问题有用的细节、推测、假设、玩笑、公开常识或任何秘密。必须由用户自己的原话直接支持；每次只保存一条原子化、脱离当前上下文仍可理解的事实。",
+        name: 'save_memory', description: 'Save 1–500 user-supported durable memories. Read the memory skill on demand; one previous-version backup per call. Never store secrets or guesses.',
         parameters: {
-            type: "object",
-            additionalProperties: false,
-            required: ["category", "content", "evidence", "reason"],
+            type: 'object', additionalProperties: false,
+            oneOf: [{ required: ['memories'] }, { required: ['category', 'content', 'evidence', 'reason'] }],
             properties: {
-                category: {
-                    type: "string",
-                    enum: ["identity", "profile", "preference", "interest", "ability", "weakness", "health", "relationship", "work", "other"],
-                    description: "最贴切的记忆类别。类别只是整理方式，不是保存理由。"
-                },
-                content: {
-                    type: "string",
-                    description: "一条简短、自包含、面向未来的用户事实，例如“用户偏好直接给出可执行结论”。不要复制整段对话。"
-                },
-                evidence: {
-                    type: "string",
-                    description: "支持这条记忆的简短用户原话，必须逐字来自用户消息，不能引用助手的话或自行改写。"
-                },
-                reason: {
-                    type: "string",
-                    description: "简短说明这条信息会如何实质改善未来跨对话回答；如果说不清，就不要调用工具。"
-                }
+                ...MEMORY_SAVE_ITEM_SCHEMA.properties,
+                memories: { type: 'array', minItems: 1, maxItems: MAX_MEMORY_BATCH_SIZE, items: MEMORY_SAVE_ITEM_SCHEMA }
             }
         }
     }
 };
-
 const MEMORY_DELETE_TOOL_DEFINITION = {
-    type: "function",
+    type: 'function',
     function: {
-        name: "delete_memory",
-        description: "删除用户已保存的一条或多条长期记忆。仅当用户明确要求忘记、删除、移除长期记忆时调用。优先使用[长期记忆]里#后的 memory_id / memory_ids；没有编号时传入要删除的准确记忆文本。",
+        name: 'delete_memory', description: 'Delete 1–500 user-authorized memories by ID, or one precise target. Read the memory skill on demand. A previous-version backup is automatic.',
         parameters: {
-            type: "object",
-            additionalProperties: false,
+            type: 'object', additionalProperties: false,
             properties: {
-                memory_id: {
-                    type: "integer",
-                    description: "长期记忆列表中#后的数字ID，优先使用。"
-                },
-                memory_ids: {
-                    type: "array",
-                    items: {
-                        type: "integer"
-                    },
-                    description: "一次需要删除多条长期记忆时，传入多个#后的数字ID，例如用户确认“这两条都删掉”。"
-                },
-                target: {
-                    type: "string",
-                    description: "没有 memory_id 时，传入要删除的记忆原文或足够精确的目标文本。"
-                },
-                reason: {
-                    type: "string",
-                    description: "简短说明用户为什么要求删除，可省略。"
-                }
+                memory_id: { type: 'integer', minimum: 1 },
+                memory_ids: { type: 'array', minItems: 1, maxItems: MAX_MEMORY_BATCH_SIZE, items: { type: 'integer', minimum: 1 } },
+                target: { type: 'string', description: 'Exact memory text when its ID is unknown.' },
+                reason: { type: 'string', maxLength: 180 }
             }
         }
     }
@@ -3337,6 +3315,8 @@ function formatMemoryIdList(ids = []) {
 }
 
 function normalizeDeleteMemoryToolArgs(args = {}) {
+    if (Object.hasOwn(args, 'memory_ids') && (!Array.isArray(args.memory_ids) || args.memory_ids.length < 1
+        || args.memory_ids.length > MAX_MEMORY_BATCH_SIZE || args.memory_ids.some(id => !Number.isSafeInteger(id) || id <= 0))) return args;
     const rawTarget = sanitizeMemoryContent(args.target || args.memory || args.content || '');
     const explicitIds = uniquePositiveMemoryIds([
         args.memory_ids,
@@ -3715,7 +3695,13 @@ const TOOL_EXECUTORS = {
         });
     },
     delete_memory: async (args, context = {}) => {
+        if (args && Object.hasOwn(args, 'memory_ids') && (!Array.isArray(args.memory_ids)
+            || args.memory_ids.length < 1 || args.memory_ids.length > MAX_MEMORY_BATCH_SIZE
+            || args.memory_ids.some(id => !Number.isSafeInteger(id) || id <= 0))) {
+            return { success: false, code: 'memory_batch_size', deletedCount: 0, message: '需要 1 至 500 个有效正整数记忆编号；本批未删除。' };
+        }
         const safeArgs = normalizeDeleteMemoryToolArgs(args);
+        if (!safeArgs) return { success: false, code: 'memory_arguments_incomplete', deletedCount: 0, message: '需要有效记忆编号或准确文本。' };
         console.log(` 执行工具 delete_memory: userId=${context?.userId || 'missing'}, ids=${formatMemoryIdList(safeArgs?.memory_ids || safeArgs?.memory_id || []) || 'none'}, targetLength=${String(safeArgs?.target || '').length}`);
         return await deleteUserMemoryByModel({
             userId: context?.userId,
@@ -5603,6 +5589,9 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
         return {
             success: !!result?.success,
             saved_memory: result?.savedMemory || null,
+            saved_memories: result?.savedMemories || [],
+            saved_count: Number(result?.savedCount || 0),
+            backup_version_id: result?.backupVersionId || null,
             code: result?.code || '',
             message: result?.message || '',
             reply_instruction: result?.success
@@ -5617,6 +5606,9 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
         return {
             success: !!result?.success,
             deleted_count: Number(result?.deletedCount || 0),
+            backup_version_id: result?.backupVersionId || null,
+            code: result?.code || '',
+            missing_ids: result?.missingIds || [],
             deleted_memory: result?.deletedMemory || null,
             deleted_memories: Array.isArray(result?.deletedMemories) ? result.deletedMemories : [],
             matched_by: result?.matchedBy || '',
@@ -5978,7 +5970,7 @@ function normalizeToolCalls(toolCalls = [], localMode = false) {
         }
 
         if (toolName === 'save_memory') {
-            const normalizedArgs = normalizeSaveMemoryToolArgs(args);
+            const normalizedArgs = normalizeSaveMemoryToolArgs(args) || args;
             if (!normalizedArgs) continue;
             normalized.push({
                 id: toolCall.id || `tool_${Date.now()}_${normalized.length}`,
@@ -9220,6 +9212,16 @@ const db = new sqlite3.Database(dbPath, (err) => {
         db.run("PRAGMA busy_timeout=5000;"); // 5秒锁等待超时
         db.run("PRAGMA synchronous=NORMAL;"); // 平衡性能与安全
         db.run("PRAGMA temp_store=MEMORY;");  // 临时表存内存
+    }
+});
+
+const memoryVersionStore = createMemoryVersionStore({
+    buildMemoryKey,
+    openDatabase: async () => {
+        await databaseInitializationSettled;
+        return new Promise((resolve, reject) => {
+            const connection = new sqlite3.Database(dbPath, error => error ? reject(error) : resolve(connection));
+        });
     }
 });
 
@@ -15552,53 +15554,81 @@ app.patch('/api/user/guide-state', guideStateLimiter, authenticateToken, async (
     }
 });
 
+async function memoryManagementPage(userId, offset = 0) {
+    const enabled = await isUserLongMemoryEnabled(userId);
+    const totalRow = enabled ? await dbGetAsync('SELECT COUNT(*) AS total FROM user_memories WHERE user_id = ? AND deleted_at IS NULL', [userId]) : null;
+    const memories = enabled ? await listActiveUserMemories(userId, MAX_MEMORY_BATCH_SIZE, offset) : [];
+    const total = Number(totalRow?.total || 0);
+    const hasMore = offset + memories.length < total;
+    return { enabled, memories, total, hasMore, nextOffset: hasMore ? offset + memories.length : null };
+}
+
 app.get('/api/user/memories', authenticateToken, async (req, res) => {
     try {
-        const enabled = await isUserLongMemoryEnabled(req.user.userId);
-        const memories = enabled ? await listActiveUserMemories(req.user.userId, 200) : [];
-        const shortTermMemory = enabled
-            ? await refreshUserShortTermMemorySnapshot(req.user.userId)
-            : [];
-        res.json({ success: true, enabled, memories, shortTermMemory });
+        const offset = Number(req.query.offset || 0);
+        if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ success: false, error: 'invalid_memory_offset' });
+        const page = await memoryManagementPage(req.user.userId, offset);
+        const shortTermMemory = page.enabled ? await getRecentConversationTitlesForMemory(req.user.userId) : [];
+        res.json({ success: true, ...page, shortTermMemory });
     } catch (error) {
-        console.error(' 获取用户记忆失败:', sanitizeReportContext(error));
+        console.error(' 获取记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '获取记忆失败' });
     }
 });
 
-app.post('/api/user/memories', authenticateToken, async (req, res) => {
+async function handleManualMemorySave(req, res) {
     try {
-        if (!await isUserLongMemoryEnabled(req.user.userId)) {
-            return res.status(400).json({ success: false, error: '请先开启记忆' });
-        }
-        const content = sanitizeMemoryContent(req.body?.content);
-        const category = normalizeMemoryCategory(req.body?.category);
-        if (!content || content.length < 2) {
-            return res.status(400).json({ success: false, error: '记忆内容不能为空' });
-        }
-        await upsertUserMemory({
-            userId: req.user.userId,
-            category,
-            content,
-            confidence: 1
-        });
-        const memories = await listActiveUserMemories(req.user.userId, 200);
-        res.json({ success: true, memories });
+        if (!await isUserLongMemoryEnabled(req.user.userId)) return res.status(400).json({ success: false, error: '请先开启记忆' });
+        const validation = validateManualMemoryBatch(Object.hasOwn(req.body || {}, 'memories') ? req.body.memories : [req.body]);
+        if (!validation.ok) return res.status(400).json({ success: false, code: validation.code, error: validation.message, failedIndex: validation.failedIndex });
+        const result = await memoryVersionStore.save(req.user.userId, validation.memories);
+        res.json({ success: true, savedCount: result.savedCount, backupVersionId: result.backupVersionId, ...await memoryManagementPage(req.user.userId).catch(() => ({ refreshRequired: true })) });
     } catch (error) {
-        console.error(' 新增用户记忆失败:', sanitizeReportContext(error));
-        res.status(500).json({ success: false, error: '保存记忆失败' });
+        console.error(' 保存记忆失败:', sanitizeReportContext(error));
+        res.status(500).json({ success: false, error: '记忆和备份均未提交，请重试' });
     }
+}
+app.post('/api/user/memories', authenticateToken, handleManualMemorySave);
+app.post('/api/user/memories/batch', authenticateToken, handleManualMemorySave);
+
+app.post('/api/user/memories/batch-delete', authenticateToken, async (req, res) => {
+    const ids = req.body?.memory_ids;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_MEMORY_BATCH_SIZE || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+        return res.status(400).json({ success: false, error: '请选择 1 至 500 个有效记忆编号；本批未删除。' });
+    }
+    try {
+        const result = await memoryVersionStore.deleteIds(req.user.userId, ids);
+        res.json({ success: true, ...result, ...await memoryManagementPage(req.user.userId).catch(() => ({ refreshRequired: true })) });
+    } catch (error) {
+        console.error(' 批量删除记忆失败:', sanitizeReportContext(error));
+        res.status(500).json({ success: false, error: '删除和备份均未提交，请重试' });
+    }
+});
+
+app.get('/api/user/memories/versions', authenticateToken, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+        const offset = Number(req.query.offset || 0);
+        if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ success: false, error: 'invalid_version_offset' });
+        const versions = await memoryVersionStore.versions(req.user.userId, { offset });
+        res.json({ success: true, versions });
+    } catch (error) { res.status(500).json({ success: false, error: '读取记忆备份失败' }); }
+});
+app.get('/api/user/memories/versions/:versionId', authenticateToken, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+        const versionId = Number(req.params.versionId);
+        if (!Number.isSafeInteger(versionId) || versionId <= 0) return res.status(400).json({ success: false, error: 'invalid_memory_version' });
+        const version = await memoryVersionStore.versions(req.user.userId, { versionId });
+        if (!version) return res.status(404).json({ success: false, error: '未找到该账号的记忆备份' });
+        res.json({ success: true, version });
+    } catch (error) { res.status(500).json({ success: false, error: '读取记忆备份失败' }); }
 });
 
 app.post('/api/user/memories/clear', authenticateToken, async (req, res) => {
     try {
-        await dbRunAsync(
-            `UPDATE user_memories
-             SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ? AND deleted_at IS NULL`,
-            [req.user.userId]
-        );
-        res.json({ success: true, memories: [] });
+        const result = await memoryVersionStore.clear(req.user.userId);
+        res.json({ success: true, ...result, memories: [] });
     } catch (error) {
         console.error(' 清空用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '清空记忆失败' });
@@ -15611,24 +15641,15 @@ app.patch('/api/user/memories/:id', authenticateToken, async (req, res) => {
         if (!Number.isInteger(memoryId) || memoryId <= 0) {
             return res.status(400).json({ success: false, error: '记忆 ID 无效' });
         }
+        let result;
         if (req.body?.deleted === true || req.body?.deleted === 1 || req.body?.deleted === '1') {
-            await softDeleteUserMemory(req.user.userId, memoryId);
+            result = await softDeleteUserMemory(req.user.userId, memoryId);
         } else {
-            const content = sanitizeMemoryContent(req.body?.content);
-            const category = normalizeMemoryCategory(req.body?.category);
-            if (!content || content.length < 2) {
-                return res.status(400).json({ success: false, error: '记忆内容不能为空' });
-            }
-            const memoryKey = buildMemoryKey(category, content);
-            await dbRunAsync(
-                `UPDATE user_memories
-                 SET memory_key = ?, category = ?, content = ?, confidence = 1, updated_at = CURRENT_TIMESTAMP, deleted_at = NULL
-                 WHERE id = ? AND user_id = ?`,
-                [memoryKey, category, content, memoryId, req.user.userId]
-            );
+            const validation = validateManualMemoryBatch([req.body]);
+            if (!validation.ok) return res.status(400).json({ success: false, error: validation.message });
+            result = await memoryVersionStore.update(req.user.userId, memoryId, validation.memories[0]);
         }
-        const memories = await listActiveUserMemories(req.user.userId, 200);
-        res.json({ success: true, memories });
+        res.json({ success: true, backupVersionId: result.backupVersionId, ...await memoryManagementPage(req.user.userId).catch(() => ({ refreshRequired: true })) });
     } catch (error) {
         console.error(' 更新用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '更新记忆失败' });
@@ -15641,9 +15662,8 @@ app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
         if (!Number.isInteger(memoryId) || memoryId <= 0) {
             return res.status(400).json({ success: false, error: '记忆 ID 无效' });
         }
-        await softDeleteUserMemory(req.user.userId, memoryId);
-        const memories = await listActiveUserMemories(req.user.userId, 200);
-        res.json({ success: true, memories });
+        const result = await softDeleteUserMemory(req.user.userId, memoryId);
+        res.json({ success: true, deletedCount: result.deletedCount, backupVersionId: result.backupVersionId, ...await memoryManagementPage(req.user.userId).catch(() => ({ refreshRequired: true })) });
     } catch (error) {
         console.error(' 删除用户记忆失败:', sanitizeReportContext(error));
         res.status(500).json({ success: false, error: '删除记忆失败' });
@@ -21361,7 +21381,8 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             modelIdentity: sessionPromptContext.modelIdentity,
             includeMemory: !memoryModeOff && longMemoryEnabled,
             customPrompt,
-            skillCatalog: clientSkills ? [] : getSkillCatalog()
+            skillCatalog: clientSkills ? [] : getSkillCatalog(),
+            toolEnvironment: clientFileExecution ? (localAgentSession ? 'local-agent' : 'windows-client') : 'web-sandbox'
         });
         if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
         console.log(
@@ -24374,6 +24395,8 @@ if (clientFileExecution && systemPrompt) {
                             fallbackCalls.push({ name: functionName, arguments: args });
                         } else if (functionName === 'generate_image' && args.prompt) {
                             fallbackCalls.push({ name: functionName, arguments: args });
+                        } else if (functionName === 'save_memory' && args.memories) {
+                            try { fallbackCalls.push({ name: functionName, arguments: { memories: JSON.parse(args.memories) } }); } catch (_) {}
                         } else if (functionName === 'save_memory' && args.content && args.evidence && args.reason) {
                             fallbackCalls.push({ name: functionName, arguments: args });
                         } else if (functionName === 'delete_memory' && (args.memory_id || args.memory_ids || args.memoryId || args.memoryIds || args.id || args.ids || args.target || args.memory || args.content)) {
@@ -24388,7 +24411,7 @@ if (clientFileExecution && systemPrompt) {
 
                 // 4) 松散文本格式
                 if (fallbackCalls.length === 0 && trimmedText.includes('functions.')) {
-                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,200}?(\{[\s\S]*?"(?:query|symbol|prompt|content|evidence|memory_id|memory_ids|memoryId|memoryIds|target|name|file_id|operation|format|mode)"[\s\S]*?\})/g;
+                    const looseRegex = /functions\.(\w+)(?::\d+)?[\s\S]{0,200}?(\{[\s\S]*?"(?:query|symbol|prompt|content|memories|evidence|memory_id|memory_ids|memoryId|memoryIds|target|name|file_id|operation|format|mode)"[\s\S]*?\})/g;
                     let looseMatch;
                     while ((looseMatch = looseRegex.exec(trimmedText)) !== null) {
                         const functionName = looseMatch[1];
@@ -24488,7 +24511,7 @@ if (clientFileExecution && systemPrompt) {
                     }
 
                     if (toolName === 'save_memory') {
-                        const normalizedArgs = normalizeSaveMemoryToolArgs(args);
+                        const normalizedArgs = normalizeSaveMemoryToolArgs(args) || args;
                         if (!normalizedArgs) {
                             continue;
                         }
@@ -25299,7 +25322,7 @@ if (clientFileExecution && systemPrompt) {
                                         args
                                     })
                                 });
-                                const updatedMemories = await listActiveUserMemories(req.user.userId, 200).catch(() => []);
+                                const updatedMemoryState = await memoryManagementPage(req.user.userId).catch(() => ({ enabled: true, memories: [], hasMore: true }));
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: 'save_memory',
@@ -25309,8 +25332,7 @@ if (clientFileExecution && systemPrompt) {
                                 if (result?.success) {
                                     res.write(`data: ${JSON.stringify({
                                         type: 'memory_update',
-                                        enabled: true,
-                                        memories: updatedMemories
+                                        ...updatedMemoryState
                                     })}\n\n`);
                                 }
                                 console.log(` 工具执行完成: save_memory success=${!!result?.success}, code=${result?.code || 'unknown'}`);
@@ -25324,7 +25346,7 @@ if (clientFileExecution && systemPrompt) {
                                         args
                                     })
                                 });
-                                const updatedMemories = await listActiveUserMemories(req.user.userId, 200).catch(() => []);
+                                const updatedMemoryState = await memoryManagementPage(req.user.userId).catch(() => ({ enabled: true, memories: [], hasMore: true }));
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: 'delete_memory',
@@ -25333,8 +25355,7 @@ if (clientFileExecution && systemPrompt) {
                                 })}\n\n`);
                                 res.write(`data: ${JSON.stringify({
                                     type: 'memory_update',
-                                    enabled: true,
-                                    memories: updatedMemories
+                                    ...updatedMemoryState
                                 })}\n\n`);
                                 console.log(` 工具执行完成: delete_memory success=${!!result?.success}, deleted=${Number(result?.deletedCount || 0)}`);
                             } else if (isFileTool) {
@@ -28590,14 +28611,14 @@ async function isUserLongMemoryEnabled(userId) {
     return isMemoryOptedInConfig(row);
 }
 
-async function listActiveUserMemories(userId, limit = 80) {
+async function listActiveUserMemories(userId, limit = 80, offset = 0) {
     return dbAllAsync(
         `SELECT id, category, content, confidence, source_session_id, source_message_id, created_at, updated_at
          FROM user_memories
          WHERE user_id = ? AND deleted_at IS NULL
          ORDER BY updated_at DESC, id DESC
-         LIMIT ?`,
-        [userId, Math.max(1, Math.min(Number(limit) || 80, 200))]
+         LIMIT ? OFFSET ?`,
+        [userId, Math.max(1, Math.min(Number(limit) || 80, MAX_MEMORY_BATCH_SIZE)), Math.max(0, Math.floor(Number(offset) || 0))]
     );
 }
 
@@ -28671,7 +28692,7 @@ async function setUserLongMemoryEnabled(userId, enabled) {
         [userId]
     );
     const shortTermMemory = await refreshUserShortTermMemorySnapshot(userId);
-    const memories = await listActiveUserMemories(userId, 200);
+    const memories = await listActiveUserMemories(userId, MAX_MEMORY_BATCH_SIZE);
     return {
         enabled: true,
         shortTermMemory,
@@ -28706,88 +28727,28 @@ async function buildConversationMemoryPrompt(userId) {
     return sections.join('\n\n');
 }
 
-async function upsertUserMemory({ userId, category, content, confidence = 0.8, sourceSessionId = null, sourceMessageId = null }) {
-    const safeContent = sanitizeMemoryContent(content);
-    if (safeContent.length < 2) return null;
-    const safeCategory = normalizeMemoryCategory(category);
-    const memoryKey = buildMemoryKey(safeCategory, safeContent);
-    if (!memoryKey) return null;
-    const result = await dbRunAsync(
-        `INSERT INTO user_memories
-         (user_id, memory_key, category, content, confidence, source_session_id, source_message_id, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)
-         ON CONFLICT(user_id, memory_key) DO UPDATE SET
-           category = excluded.category,
-           content = excluded.content,
-           confidence = MAX(COALESCE(user_memories.confidence, 0), excluded.confidence),
-           source_session_id = COALESCE(excluded.source_session_id, user_memories.source_session_id),
-           source_message_id = COALESCE(excluded.source_message_id, user_memories.source_message_id),
-           updated_at = CURRENT_TIMESTAMP,
-           deleted_at = NULL`,
-        [
-            userId,
-            memoryKey,
-            safeCategory,
-            safeContent,
-            Math.max(0.1, Math.min(Number(confidence) || 0.8, 1)),
-            sourceSessionId || null,
-            sourceMessageId || null
-        ]
-    );
-    return result;
+async function upsertUserMemory({ userId, category, content, sourceSessionId = null, sourceMessageId = null }) {
+    return memoryVersionStore.save(userId, [{ category: normalizeMemoryCategory(category), content: sanitizeMemoryContent(content) }], { sessionId: sourceSessionId, sourceMessageId });
 }
 
 async function saveUserMemoryByTool({ userId, sessionId = null, sourceMessageId = null, userMessages = [], args = {} } = {}) {
     const safeUserId = Number(userId);
-    if (!Number.isInteger(safeUserId) || safeUserId <= 0) {
-        return { success: false, code: 'memory_user_missing', message: '缺少用户身份，无法保存记忆。' };
-    }
-    if (!await isUserLongMemoryEnabled(safeUserId)) {
-        return { success: false, code: 'memory_disabled', message: '长期记忆未开启，本轮没有保存。' };
-    }
-
+    if (!Number.isSafeInteger(safeUserId) || safeUserId <= 0) return { success: false, code: 'memory_user_missing', message: '缺少用户身份，无法保存记忆。' };
+    if (!await isUserLongMemoryEnabled(safeUserId)) return { success: false, code: 'memory_disabled', message: '长期记忆未开启，本轮没有保存。' };
     const validation = validateSaveMemoryRequest(args, userMessages);
-    if (!validation.ok) {
-        return {
-            success: false,
-            code: validation.code,
-            message: validation.message
-        };
-    }
-
-    const safeArgs = validation.args;
-    await upsertUserMemory({
-        userId: safeUserId,
-        category: safeArgs.category,
-        content: safeArgs.content,
-        confidence: 1,
-        sourceSessionId: sessionId,
-        sourceMessageId
-    });
-    const memoryKey = buildMemoryKey(safeArgs.category, safeArgs.content);
-    const savedMemory = await dbGetAsync(
-        `SELECT id, category, content, confidence, source_session_id, source_message_id, created_at, updated_at
-         FROM user_memories
-         WHERE user_id = ? AND memory_key = ? AND deleted_at IS NULL`,
-        [safeUserId, memoryKey]
-    ).catch(() => null);
-
+    if (!validation.ok) return { success: false, code: validation.code, failedIndex: validation.failedIndex, message: validation.message };
+    const items = validation.args.memories || [validation.args];
+    const result = await memoryVersionStore.save(safeUserId, items, { sessionId, sourceMessageId });
     return {
-        success: !!savedMemory,
-        code: savedMemory ? 'memory_saved' : 'memory_save_failed',
-        savedMemory: savedMemory || null,
+        ...result, success: true, code: 'memory_saved',
+        savedMemory: result.savedMemories.length === 1 ? result.savedMemories[0] : null,
         explicitMemoryRequest: validation.explicitMemoryRequest,
-        message: savedMemory ? '长期记忆已保存。' : '长期记忆保存失败。'
+        message: `已保存 ${result.savedCount} 条长期记忆，修改前备份 #${result.backupVersionId}。`
     };
 }
 
 async function softDeleteUserMemory(userId, memoryId) {
-    return dbRunAsync(
-        `UPDATE user_memories
-         SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-        [memoryId, userId]
-    );
+    return memoryVersionStore.deleteIds(userId, [Number(memoryId)]);
 }
 
 function serializeDeletedMemory(memory) {
@@ -28816,43 +28777,18 @@ async function deleteUserMemoryByModel({ userId, memoryId = null, memoryIds = []
         extractMemoryIdsFromText(safeTarget)
     ]);
 
+    if (requestedIds.length > MAX_MEMORY_BATCH_SIZE) {
+        return { success: false, code: 'memory_batch_size', deletedCount: 0, message: '单次最多移除 500 条记忆；本批未删除。' };
+    }
     if (requestedIds.length > 0) {
-        const placeholders = requestedIds.map(() => '?').join(',');
-        const memories = await dbAllAsync(
-            `SELECT id, category, content
-             FROM user_memories
-             WHERE user_id = ? AND deleted_at IS NULL AND id IN (${placeholders})`,
-            [safeUserId, ...requestedIds]
-        ).catch(() => []);
-        if (!Array.isArray(memories) || memories.length === 0) {
-            return {
-                success: false,
-                deletedCount: 0,
-                matchedBy: 'id',
-                message: `没有找到 ${formatMemoryIdList(requestedIds)} 这些长期记忆。`
-            };
-        }
-
-        let deletedCount = 0;
-        for (const memory of memories) {
-            const result = await softDeleteUserMemory(safeUserId, memory.id);
-            deletedCount += Number(result?.changes || 0);
-        }
-        const deletedMemories = memories.map(serializeDeletedMemory);
-        const deletedIds = deletedMemories.map((memory) => memory?.id);
-        const missingIds = requestedIds.filter((id) => !deletedIds.includes(id));
-        const deletedIdList = formatMemoryIdList(deletedIds);
-        const missingSuffix = missingIds.length > 0 ? `（未找到 ${formatMemoryIdList(missingIds)}）` : '';
+        const result = await memoryVersionStore.deleteIds(safeUserId, requestedIds);
+        const deletedMemories = result.deletedMemories.map(serializeDeletedMemory);
         return {
-            success: deletedCount > 0,
-            deletedCount,
-            deletedMemory: deletedMemories.length === 1 ? deletedMemories[0] : null,
-            deletedMemories,
-            matchedBy: 'id',
-            reason: sanitizeMemoryContent(reason).slice(0, 180),
-            message: deletedCount > 0
-                ? `已删除长期记忆 ${deletedIdList}。${missingSuffix}`
-                : `没有找到 ${formatMemoryIdList(requestedIds)} 这些长期记忆。`
+            ...result, success: result.deletedCount > 0, matchedBy: 'id',
+            deletedMemories, deletedMemory: deletedMemories.length === 1 ? deletedMemories[0] : null,
+            message: result.deletedCount > 0
+                ? `已删除 ${result.deletedCount} 条记忆，修改前备份 #${result.backupVersionId}。` + (result.missingIds.length ? ` ${result.missingIds.length} 个编号不存在或不属于当前账号。` : '')
+                : '没有找到属于当前账号的指定长期记忆。'
         };
     }
 
@@ -28866,28 +28802,21 @@ async function deleteUserMemoryByModel({ userId, memoryId = null, memoryIds = []
         };
     }
 
-    const memories = await listActiveUserMemories(safeUserId, 200);
+    const memories = await dbAllAsync('SELECT id, category, content FROM user_memories WHERE user_id = ? AND deleted_at IS NULL', [safeUserId]);
     const matches = memories.filter((memory) => {
         const normalizedContent = normalizeMemoryKeyText(memory.content);
         if (!normalizedContent) return false;
         return normalizedContent.includes(normalizedTarget) || normalizedTarget.includes(normalizedContent);
     });
 
-    for (const memory of matches) {
-        await softDeleteUserMemory(safeUserId, memory.id);
+    if (matches.length !== 1) {
+        return { success: false, deletedCount: 0, code: matches.length ? 'memory_target_ambiguous' : 'memory_not_found',
+            message: matches.length ? '文本匹配了多条记忆，请指定要删除的 ID；本次未删除。' : '没有找到匹配的长期记忆。' };
     }
-
-    return {
-        success: matches.length > 0,
-        deletedCount: matches.length,
-        deletedMemory: matches.length === 1 ? serializeDeletedMemory(matches[0]) : null,
-        deletedMemories: matches.map(serializeDeletedMemory),
-        matchedBy: 'target',
-        reason: sanitizeMemoryContent(reason).slice(0, 180),
-        message: matches.length > 0
-            ? `已删除 ${matches.length} 条匹配的长期记忆。`
-            : '没有找到匹配的长期记忆。'
-    };
+    const result = await memoryVersionStore.deleteIds(safeUserId, [matches[0].id]);
+    return { ...result, success: result.deletedCount > 0, deletedMemory: serializeDeletedMemory(matches[0]),
+        deletedMemories: result.deletedMemories.map(serializeDeletedMemory), matchedBy: 'target',
+        message: `已删除 ${result.deletedCount} 条记忆，修改前备份 #${result.backupVersionId}。` };
 }
 
 function buildMembershipEndISO(currentEnd, durationDays) {

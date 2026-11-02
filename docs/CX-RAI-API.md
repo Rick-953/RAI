@@ -498,12 +498,20 @@ POST   /api/user/tasks/pwa-install/complete
 POST   /api/user/tasks/bookmark-domain/complete
 GET    /api/user/memories
 POST   /api/user/memories
+POST   /api/user/memories/batch
+POST   /api/user/memories/batch-delete
+GET    /api/user/memories/versions?offset=0
+GET    /api/user/memories/versions/{versionId}
 PATCH  /api/user/memories/{id}
 DELETE /api/user/memories/{id}
 POST   /api/user/memories/clear
 ```
 
 会员兑换会消耗点数并由服务端校验档位；客户端不要自行计算余额。签到和任务接口具有幂等/防重复领取逻辑，收到 400/409 时刷新 `/api/user/membership`。
+
+记忆批量添加使用 `{memories:[{content,category}]}`，批量删除使用 `{memory_ids:[1,2]}`；单次均为 1–500 条，任一无效输入整批拒绝。500 是单次上限，不是账号总存量上限。`GET /api/user/memories?offset=0` 每页最多 500 条，返回 `total`、`hasMore`、`nextOffset`。每次新增、更新、删除、清空前，服务端在同一事务中保留完整的活动记忆快照，返回 `backupVersionId`。版本摘要每页 50 条，详情仅当前账号可读；历史备份仍保留被删内容，删除账号会清理其备份。
+
+原生 Windows 客户端使用 Windows/UWP 提示词：`sandbox_exec` 为 Windows PowerShell，`run_command` 为 cmd.exe，以实际工具列表和客户端技能为准，不注入网页离线沙箱规则。先部署支持批量/备份接口的 Web 服务，再分发使用这些接口的 CX 客户端。
 
 ## 7. Passkey、2FA 与账号安全
 
