@@ -20932,6 +20932,15 @@ function chatLatencyProvider(url, modelId = '') {
     return 'other';
 }
 async function fetchChatProviderWithLatency(url, options = {}) {
+    // Only server-configured model endpoints may receive provider credentials.
+    // Never follow a redirect carrying an Authorization header to another host.
+    const allowedDestinations = new Set([
+        GPT_PRIMARY_CHAT_URL, DEEPSEEK_CHAT_COMPLETIONS_URL,
+        joinGatewayEndpoint(DEEPSEEK_FAST_BASE_URL, 'chat/completions'),
+        ...Object.values(API_PROVIDERS).map(provider => provider.baseURL)
+    ].filter(Boolean));
+    if (!allowedDestinations.has(url)) throw new Error('unconfigured_chat_provider_endpoint');
+    options = { ...options, redirect: 'error' };
     const latency = chatModelQuotaContext.getStore()?.latency;
     let body;
     try { body = JSON.parse(options.body || '{}'); } catch (_) { /* Non-model HTTP. */ }
@@ -29693,7 +29702,7 @@ app.put('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
     }
 });
 
-app.post('/api/admin/models', authenticateAdmin, async (req, res) => {
+app.post('/api/admin/models', apiLimiter, authenticateAdmin, async (req, res) => {
     try {
         await ensureAdminModelCatalog();
         const model = normalizeAdminModelDefinition(req.body);
@@ -29708,7 +29717,7 @@ app.post('/api/admin/models', authenticateAdmin, async (req, res) => {
         return res.status(201).json({ success: true, models: await getModelVisibilityPayload({ forceRefresh: true }) });
     } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : '保存模型失败' }); }
 });
-app.delete('/api/admin/models/:modelId', authenticateAdmin, async (req, res) => {
+app.delete('/api/admin/models/:modelId', apiLimiter, authenticateAdmin, async (req, res) => {
     try {
         await ensureAdminModelCatalog();
         const model = ADMIN_MODEL_CATALOG.find(item => item.id === req.params.modelId && !item.builtin);
