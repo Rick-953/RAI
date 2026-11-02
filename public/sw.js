@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.37-20261102-official-ds-share-import';
+const RAI_SW_VERSION = '0.13.38-20261102-smart-official-ds-max';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,19 +13,21 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261102-official-ds-share-import',
-  'web-skills.js?v=20261102-official-ds-share-import', 'web-skills.css?v=20261102-official-ds-share-import',
-  '', 'index.html', 'runtime-brand.js?v=20261102-official-ds-share-import',
-  'rai-system-prompt.js?v=20261102-official-ds-share-import', 'event-bindings.js?v=20261102-official-ds-share-import',
-  'lib/jsQR.js?v=20261102-official-ds-share-import', 'qr-scanner.js?v=20261102-official-ds-share-import',
-  'secure-sharing.js?v=20261102-official-ds-share-import', 'secure-sharing.css?v=20261102-official-ds-share-import',
-  'diagnostics.js?v=20261102-official-ds-share-import',
-  'app.js?v=20261102-official-ds-share-import', 'styles.css?v=20261102-official-ds-share-import',
-  'cx-remote.js?v=20261102-official-ds-share-import', 'local-agent.css?v=20261102-official-ds-share-import',
-  'crf-ui.js?v=20261102-official-ds-share-import',
-  'selection-explainer.js?v=20261102-official-ds-share-import', 'selection-explainer.css?v=20261102-official-ds-share-import',
-  'site.webmanifest?v=20261102-official-ds-share-import', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261102-official-ds-share-import',
+  'locale.js?v=20261102-smart-official-ds-max',
+  'web-skills.js?v=20261102-smart-official-ds-max', 'web-skills.css?v=20261102-smart-official-ds-max',
+  'third-party-notices.js?v=20261102-smart-official-ds-max', 'third-party-notices.css?v=20261102-smart-official-ds-max',
+  'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
+  '', 'index.html', 'runtime-brand.js?v=20261102-smart-official-ds-max',
+  'rai-system-prompt.js?v=20261102-smart-official-ds-max', 'event-bindings.js?v=20261102-smart-official-ds-max',
+  'lib/jsQR.js?v=20261102-smart-official-ds-max', 'qr-scanner.js?v=20261102-smart-official-ds-max',
+  'secure-sharing.js?v=20261102-smart-official-ds-max', 'secure-sharing.css?v=20261102-smart-official-ds-max',
+  'diagnostics.js?v=20261102-smart-official-ds-max',
+  'app.js?v=20261102-smart-official-ds-max', 'styles.css?v=20261102-smart-official-ds-max',
+  'cx-remote.js?v=20261102-smart-official-ds-max', 'local-agent.css?v=20261102-smart-official-ds-max',
+  'crf-ui.js?v=20261102-smart-official-ds-max',
+  'selection-explainer.js?v=20261102-smart-official-ds-max', 'selection-explainer.css?v=20261102-smart-official-ds-max',
+  'site.webmanifest?v=20261102-smart-official-ds-max', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261102-smart-official-ds-max',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -35,11 +37,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261102-official-ds-share-import', 'lib/purify.min.js?v=20261102-official-ds-share-import',
-  'lib/katex/katex.min.css?v=20261102-official-ds-share-import', 'lib/katex/katex.min.js?v=20261102-official-ds-share-import',
-  'lib/katex/contrib/auto-render.min.js?v=20261102-official-ds-share-import',
-  'lib/highlight/styles/github-dark.min.css?v=20261102-official-ds-share-import',
-  'lib/highlight/highlight.min.js?v=20261102-official-ds-share-import'
+  'lib/marked.min.js?v=20261102-smart-official-ds-max', 'lib/purify.min.js?v=20261102-smart-official-ds-max',
+  'lib/katex/katex.min.css?v=20261102-smart-official-ds-max', 'lib/katex/katex.min.js?v=20261102-smart-official-ds-max',
+  'lib/katex/contrib/auto-render.min.js?v=20261102-smart-official-ds-max',
+  'lib/highlight/styles/github-dark.min.css?v=20261102-smart-official-ds-max',
+  'lib/highlight/highlight.min.js?v=20261102-smart-official-ds-max'
 ].map(appPath);
 
 function isAvatarRequest(url) {
@@ -133,6 +135,11 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname === appPath('runtime-config.js')) return;
   // Standalone login/share pages must never replace the cached application shell.
   if (url.pathname === appPath('share.html') || url.pathname === appPath('qr-login.html')) return;
+  // A standalone legal document must not replace the offline chat shell.
+  if (url.pathname === appPath('third-party-notices.html')) {
+    event.respondWith(fetch(request).catch(() => caches.match(request)));
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(
