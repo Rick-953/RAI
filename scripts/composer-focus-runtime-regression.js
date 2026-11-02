@@ -108,80 +108,64 @@ async function testCase(browser, url, fixture) {
     await page.keyboard.press('Backspace');
     assert.equal(await input.inputValue(), '', 'native deletion after entry timer clears the selected draft');
 
-    // Maximum reasoning must survive normalization, native dragging and locale switches.
+    // Supported reasoning choices must survive real pointer, touch, keyboard and locale changes.
     await page.evaluate(() => {
       appState.handednessEnabled = false; applyHandednessLayout();
-      appState.selectedModel = 'gpt-6.1-sol'; appState.thinkingMode = false;
-      setReasoningProfile('max'); toggleThinkingFromMenu({stopPropagation(){}});
+      appState.selectedModel = 'gpt-6.1-sol'; appState.thinkingMode = true;
+      setReasoningProfile('max');
     });
     await page.locator('#moreBtn').click();
-    const slider = page.locator('#reasoningProfileSlider');
-    await slider.waitFor({ state: 'visible' });
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await page.evaluate(() => appState.reasoningProfile), 'auto');
-    assert.equal(await slider.inputValue(), '0');
-    for (let level = 0; level <= 4; level++) {
-      await page.evaluate(() => setReasoningProfile('auto'));
-      const r = await slider.boundingBox();
-      const start = r.x + 7, end = start + (r.width - 14) * level / 4, y = r.y + r.height / 2;
-      await page.mouse.move(start, y); await page.mouse.down();
-      await page.mouse.move(end, y, { steps: 12 }); await page.mouse.up();
-      const state = await page.evaluate(() => ({ value: document.getElementById('reasoningProfileSlider').value, profile: appState.reasoningProfile, progress: document.getElementById('reasoningProfileSlider').style.getPropertyValue('--slider-progress') }));
-      assert.equal(state.value, String(level), JSON.stringify({ fixture, level, state }));
-      assert.equal(state.profile, ['auto', 'low', 'medium', 'high', 'max'][level]);
-      if (level === 4) assert.equal(state.progress, '100%');
+    const choices = page.locator('#reasoningProfileChoices');
+    await choices.waitFor({ state: 'visible' });
+    const profiles = ['auto', 'low', 'medium', 'high', 'xhigh', 'max'];
+    assert.deepEqual(await choices.locator('button').evaluateAll(buttons => buttons.map(button => button.dataset.profile)), profiles);
+    for (const profile of profiles) {
+      const button = choices.locator(`[data-profile="${profile}"]`);
+      if (mobile) await button.tap();
+      else await button.click();
+      const state = await page.evaluate(() => ({ profile: appState.reasoningProfile,
+        pressed: document.querySelector('#reasoningProfileChoices [aria-pressed="true"]')?.dataset.profile,
+        thinking: appState.thinkingMode }));
+      assert.deepEqual(state, { profile, pressed: profile, thinking: true }, JSON.stringify({ fixture, profile, state }));
     }
-    if (mobile && engine === chromium) {
-      const cdp = await ctx.newCDPSession(page);
-      try {
-        await page.evaluate(() => setReasoningProfile('auto'));
-        const r = await slider.boundingBox(), y = r.y + r.height / 2;
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: r.x + 7, y }] });
-        for (let step = 1; step <= 12; step++) {
-          await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: r.x + 7 + (r.width - 14) * step / 12, y }] });
-        }
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-        assert.equal(await slider.inputValue(), '4', 'real touch drag reaches maximum');
-        assert.equal(await page.evaluate(() => appState.reasoningProfile), 'max');
-      } finally { await cdp.detach(); }
-    } else if (mobile) {
-      await page.evaluate(() => setReasoningProfile('auto'));
-      const r = await slider.boundingBox();
-      await page.touchscreen.tap(r.x + r.width - 7, r.y + r.height / 2);
-      assert.equal(await slider.inputValue(), '4', 'native touch reaches maximum');
-    }
-    await slider.focus(); await slider.press('Home');
+    await choices.locator('[data-profile="auto"]').focus();
+    await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'auto');
-    await slider.press('End');
+    await choices.locator('[data-profile="max"]').focus();
+    await page.keyboard.press('Space');
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'max');
-    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Astra'];
+    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Luna', 'GPT 6 Astra'];
     for (const [lang, label] of [['zh-CN', '最大'], ['zh-TW', '最大'], ['en', 'Max']]) {
       const localized = await page.evaluate(lang => {
         setLanguage(lang); updateToolbarUI(); renderResearchModelControls();
         return {
-          label: document.querySelector('[data-i18n="reasoning-max"]').textContent,
-          unclipped: Array.from(document.querySelectorAll('.reasoning-profile-labels:not(.research-mode-labels) span')).every(el => { const r=el.getBoundingClientRect(),wrap=el.closest('.reasoning-profile-slider-wrap').getBoundingClientRect(); return r.left >= wrap.left - 1 && r.right <= wrap.right + 1; }),
-          value: document.getElementById('reasoningProfileSlider').value,
+          label: document.querySelector('#reasoningProfileChoices [data-profile="max"]').textContent,
+          unclipped: Array.from(document.querySelectorAll('#reasoningProfileChoices button')).every(el => { const r=el.getBoundingClientRect(),wrap=el.closest('.reasoning-profile-slider-wrap').getBoundingClientRect(); return r.left >= wrap.left - 1 && r.right <= wrap.right + 1; }),
+          value: document.querySelector('#reasoningProfileChoices [aria-pressed="true"]')?.dataset.profile,
           profile: appState.reasoningProfile,
-          normalized: ['auto', 'low', 'medium', 'high', 'max', 'mixed', ' MAX ', 'bad'].map(normalizeReasoningProfile),
-          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
+          normalized: ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'mixed', ' MAX ', 'bad'].map(normalizeReasoningProfile),
+          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
           agents: Array.from(document.querySelectorAll('#researchAgentModelList button')).map(el => el.textContent.trim()),
           masters: Array.from(document.querySelectorAll('#researchMasterModelSelect option')).map(el => el.textContent.trim())
         };
       }, lang);
       assert.equal(localized.label, label);
-      assert.equal(localized.unclipped, true, 'Adaptive/Max labels stay inside the slider wrapper in every locale');
-      assert.equal(localized.value, '4'); assert.equal(localized.profile, 'max');
-      assert.deepEqual(localized.normalized, ['auto', 'low', 'medium', 'high', 'max', 'max', 'max', 'low']);
+      assert.equal(localized.unclipped, true, 'supported thinking buttons stay inside their wrapper in every locale');
+      assert.equal(localized.value, 'max'); assert.equal(localized.profile, 'max');
+      assert.deepEqual(localized.normalized, ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'max', 'max', 'low']);
       assert.deepEqual(localized.models, names.map(name => ({ name, extras: false })));
-      assert.deepEqual(localized.agents, names); assert.deepEqual(localized.masters, names);
+      const researchNames = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Astra'];
+      assert.deepEqual(localized.agents, researchNames); assert.deepEqual(localized.masters, researchNames);
     }
     const requestProfiles = await page.evaluate(() => {
       const manual = getRequestReasoningProfileForCurrentMode();
+      toggleThinkingFromMenu({stopPropagation(){}});
+      const required = { thinking: appState.thinkingMode, profile: getRequestReasoningProfileForCurrentMode() };
+      appState.selectedModel = 'gpt-6-luna';
       toggleThinkingFromMenu({stopPropagation(){}}); toggleThinkingFromMenu({stopPropagation(){}});
-      return {manual, adaptive: getRequestReasoningProfileForCurrentMode(), thinking: getModeRequestConfig('think').reasoningProfile};
+      return {manual, required, adaptive: getRequestReasoningProfileForCurrentMode(), thinking: getModeRequestConfig('think').reasoningProfile};
     });
-    assert.deepEqual(requestProfiles, {manual:'max', adaptive:'auto', thinking:'max'});
+    assert.deepEqual(requestProfiles, {manual:'max', required:{thinking:true,profile:'max'}, adaptive:'auto', thinking:'auto'});
     await page.locator('#moreBtn').click();
 
     // Deferred menu focus cannot override a newer gesture, edit, or focused control.
@@ -274,7 +258,7 @@ async function testCase(browser, url, fixture) {
       const input = document.getElementById('messageInput');
       const original = input.focus; let count = 0; input.focus = () => count++;
       try {
-        for (const control of document.querySelectorAll('#inputContainer button, #inputContainer [role="button"], #moreMenu input[type="range"]')) {
+        for (const control of document.querySelectorAll('#inputContainer button, #inputContainer [role="button"], #reasoningProfileChoices button')) {
           handleInputContainerClick({target:control, type:'pointerdown',button:0,isPrimary:true,preventDefault(){throw new Error('control pointer was cancelled');}});
         }
         return count;
@@ -301,15 +285,15 @@ async function testCase(browser, url, fixture) {
     });
     await page.locator('#stopBtn svg').click();
     assert.deepEqual(await page.evaluate(() => window.composerFixtureActions), ['send', 'stop']);
-    // Disabled/read-only fields and sliders must not become focused by bubbling.
+    // Disabled/read-only fields and thinking controls must not steal input focus by bubbling.
     const guards = await page.evaluate(() => {
       const input = document.getElementById('messageInput'), toolbar = document.querySelector('.input-toolbar');
       input.blur(); input.disabled = true; toolbar.click(); const disabled = document.activeElement !== input;
       input.disabled = false; input.readOnly = true; toolbar.click(); const readOnly = document.activeElement !== input;
       input.readOnly = false;
-      const slider = document.querySelector('#inputContainer input[type="range"]');
-      if (!slider) throw new Error('reasoning slider missing');
-      slider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, isPrimary: true }));
+      const thinkingChoice = document.querySelector('#reasoningProfileChoices button');
+      if (!thinkingChoice) throw new Error('thinking choice missing');
+      thinkingChoice.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, isPrimary: true }));
       const control = document.activeElement !== input;
       toolbar.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 2, isPrimary: true }));
       const secondary = document.activeElement !== input;
