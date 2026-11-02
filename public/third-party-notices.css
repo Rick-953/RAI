@@ -38,6 +38,7 @@
 .third-party-project > summary .third-party-meta { display: block; padding: 4px 0 0 17px; }
 .third-party-project-body { padding: 0 8px 14px; }
 .third-party-source, .third-party-full-link { color: var(--accent-color, #0866b8); font-size: 13px; }
+.third-party-source-archive { margin-inline-start: 14px; }
 .third-party-license { margin-top: 10px; font-size: 12px; }
 .third-party-license > summary { cursor: pointer; overflow-wrap: anywhere; }
 .third-party-license pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, Consolas, monospace; user-select: text; }
