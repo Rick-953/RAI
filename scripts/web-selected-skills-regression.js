@@ -463,6 +463,7 @@ async function browserTests() {
           if (change === 'draft' || change === 'erased-draft') {
             await input.fill('new draft');
             if (change === 'erased-draft') await input.fill('');
+            assert.equal(await input.inputValue(), change === 'draft' ? 'new draft' : '', `${change}: user edit is applied before the late response`);
           } else if (change === 'selection') {
             await page.evaluate(() => { appState.isStreaming = false; });
             await selectSkill('rai-product', 'new selection');

@@ -15346,7 +15346,9 @@ function focusEntryTextInput(reason = 'entry', options = {}) {
     if (!isAuthTarget && (appState.settingsOpen || hasBlockingTextEntryOverlay())) return;
 
     const activeElement = document.activeElement;
-    if (isTextEntryElement(activeElement) && activeElement !== target) return;
+    // A delayed entry callback must not collapse a selection the user has
+    // already made in this input, or move focus from another text field.
+    if (isTextEntryElement(activeElement)) return;
 
     try {
       target.focus({ preventScroll: true });

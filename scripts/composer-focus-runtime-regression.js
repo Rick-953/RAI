@@ -94,6 +94,20 @@ async function testCase(browser, url, fixture) {
         }
       }
     }
+    // Entry autofocus can still be pending when the user selects text to delete.
+    // Exercise the actual timer, then native deletion, so a caret reset is visible.
+    await page.evaluate(() => {
+      const target = document.getElementById('messageInput');
+      target.value = 'new draft';
+      target.focus({ preventScroll: true });
+      focusEntryTextInput('selected-text-regression', { delay: 0 });
+      target.setSelectionRange(0, target.value.length);
+    });
+    await page.waitForFunction(() => appState.entryAutofocusTimer === null);
+    assert.deepEqual(await input.evaluate(el => [el.selectionStart, el.selectionEnd]), [0, 9], 'entry timer preserves user selection');
+    await page.keyboard.press('Backspace');
+    assert.equal(await input.inputValue(), '', 'native deletion after entry timer clears the selected draft');
+
     // Maximum reasoning must survive normalization, native dragging and locale switches.
     await page.evaluate(() => {
       appState.handednessEnabled = false; applyHandednessLayout();
