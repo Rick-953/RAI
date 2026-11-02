@@ -1,3 +1,11 @@
+## 0.13.39 - direct streaming routes and configurable models (2026-11-02)
+
+- Prefer Mirrorium for GPT with a 6-second useful-first-delta deadline. Count reasoning when thinking is enabled, cancel the previous connection before fallback, and keep fixed-schema stage diagnostics without chat content. DeepSeek remains on its official route; ordinary questions no longer wait for speculative search.
+- Start Smart at Sol / low and retain the account's last model and thinking choice. Offer supported reasoning levels only, explain when thinking cannot be disabled, and restore GPT 6 Luna on its independent server-key-only route with explicit none support.
+- Configure Smart, fast output and thinking model/effort pairs atomically in administrator settings. Manage custom model definitions, visibility, capabilities, completed-answer quotas and points from Web and CX RAI.
+- Repair malformed Markdown tables before rendering. Place attachment cards above user bubbles with image previews, file-type icons, full-name tooltips and responsive wrapping. Report overlong filenames explicitly and use bounded server storage names.
+- Begin automatic compression at estimated 258k for GPT with a 272k hard budget, and 400k for DeepSeek with a 1m hard budget. Preserve complete conversation/tool turns and attachment references; retain source history on compression failure.
+
 ## 0.13.38 - smart official routing and observable cache usage (2026-11-02)
 
 - Route Smart with thinking off, including an omitted thinking flag, directly to official DeepSeek Flash. Smart thinking always selects GPT 6.1 Sol with max reasoning; explicit model selections retain their requested tiers and local computer tools remain available with thinking enabled.

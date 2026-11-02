@@ -10,7 +10,9 @@ const sol = { id: 'gpt-6.1-sol', name: 'GPT 6.1 Sol', enabled: true, builtin: tr
   supportsThinking: true, canDisableThinking: false, thinkingProfiles: ['auto','low','medium','high','xhigh','max'], vision: true };
 const ds = { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', enabled: true, builtin: true, provider: 'deepseek',
   supportsThinking: true, canDisableThinking: true, thinkingProfiles: ['auto','high','max'], vision: true };
-let models = [sol, ds];
+const luna = { id: 'gpt-6-luna', name: 'GPT 6 Luna', enabled: true, builtin: true, provider: 'rai_luna_gateway',
+  supportsThinking: true, canDisableThinking: true, thinkingProfiles: ['auto','low','medium','high','xhigh','max'], vision: true };
+let models = [sol, ds, luna];
 let settings = { smart_default_model: sol.id, smart_reasoning_profile: 'low', fast_default_model: ds.id,
   fast_reasoning_profile: 'none', thinking_default_model: sol.id, thinking_reasoning_profile: 'auto',
   selection_explanation_model: ds.id, concurrent_requests_free: 2, concurrent_requests_pro_max: 5, upload_max_file_mb: 50 };
@@ -82,6 +84,16 @@ const tableSamples = [
   },tableSamples);
   assert.equal(rendered.tables,3);assert.deepEqual(rendered.columns,[4,3,3]);assert.deepEqual(rendered.rows,[3,3,3]);assert.equal(rendered.codeTables,0);assert.ok(rendered.codeText.includes('| ---|---|'));assert.deepEqual(rendered.escapedCells,['a|b','x|y']);
   assert.equal(await page.locator('#modelDropdownMenu [data-mode="fast"],#modelDropdownMenu [data-mode="think"]').count(),0);
+  assert.deepEqual(await page.evaluate(()=>({model:appState.selectedModel,profile:getRequestReasoningProfileForCurrentMode()})),
+    {model:'auto',profile:'low'},'Smart retains its low request profile instead of forcing max');
+  await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
+  assert.deepEqual(await page.evaluate(()=>({thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
+    {thinking:false,profile:'none'},'Smart can switch to the configured fast output model');
+  await page.locator('.reasoning-profile-header').click();
+  assert.deepEqual(await page.evaluate(()=>({thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
+    {thinking:true,profile:'auto'},'Enabling Smart thinking uses Adaptive');
+  await page.locator('#moreBtn').click();
+  await openAllModels();await page.locator('#allModelsSection [data-model="gpt-6.1-sol"]').first().click();
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').hover();
   await page.locator('.reasoning-profile-header').click();
   assert.equal(await page.evaluate(()=>appState.thinkingMode),true);
@@ -89,7 +101,7 @@ const tableSamples = [
   await page.locator('#reasoningProfileChoices [data-profile="high"]').click();
   assert.deepEqual(await page.evaluate(()=>({profile:appState.reasoningProfile,thinking:appState.thinkingMode})),{profile:'high',thinking:true});
   await page.reload();await page.waitForFunction(()=>typeof resetModelToSmart==='function');
-  assert.deepEqual(await page.evaluate(()=>{showApp();resetModelToSmart();return{model:appState.selectedModel,profile:appState.reasoningProfile};}),{model:'auto',profile:'high'});
+  assert.deepEqual(await page.evaluate(()=>{showApp();resetModelToSmart();return{model:appState.selectedModel,profile:appState.reasoningProfile};}),{model:sol.id,profile:'high'});
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
   await page.locator('#reasoningProfileChoices [data-profile="low"]').click();
   await page.locator('#moreBtn').click();
@@ -115,6 +127,11 @@ const tableSamples = [
   await page.locator('#reasoningProfileChoices [data-profile="max"]').click();
   await page.reload();await page.waitForFunction(()=>typeof resetModelToSmart==='function');
   assert.deepEqual(await page.evaluate(()=>{showApp();resetModelToSmart();return{model:appState.selectedModel,profile:appState.reasoningProfile};}),{model:ds.id,profile:'max'});
+  await openAllModels();await page.locator('#allModelsSection [data-model="gpt-6-luna"]').first().click();
+  await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
+  assert.deepEqual(await page.evaluate(()=>({model:getRequestModelIdForCurrentMode(),thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
+    {model:luna.id,thinking:false,profile:'none'},'Luna retains its dedicated canonical ID and supports thinking off');
+  await page.locator('#moreBtn').click();
   const attachments=await page.evaluate(()=>{
    let previewCount=0;const original=previewAttachment;window.previewAttachment=()=>previewCount++;
    const message=createMessageElement({role:'user',content:'mixed files',attachments:[{type:'image',fileName:'preview.png',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6RmcAAAAASUVORK5CYII='},{type:'document',fileName:'长文件名'.repeat(20)+'.pdf'}]});

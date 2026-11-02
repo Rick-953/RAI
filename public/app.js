@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.38';
-const RAI_BUILD_ID = '20261102-smart-official-ds-max';
+const RAI_APP_VERSION = '0.13.39';
+const RAI_BUILD_ID = '20261102-stream-models-attachments';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -4999,7 +4999,8 @@ const MODELS = {
     "supportsThinking": true,
     "supportsVision": true,
     "supportsTools": true,
-    "contextWindow": 256000
+    "contextWindow": 272000,
+    "compressionThreshold": 258000
   },
   'deepseek-v4.1-flash': {
     "name": "DeepSeek V4.1 Flash",
@@ -5029,6 +5030,20 @@ const MODELS = {
     "compressionThreshold": 258000,
     "maxTokens": 8000
   },
+  'gpt-6-luna': {
+    "name": "GPT 6 Luna",
+    "provider": "rai_luna_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "canDisableThinking": true,
+    "thinkingProfiles": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000,
+    "maxTokens": 8000
+  },
   'gpt-6-astra': {
     "name": "GPT 6 Astra",
     "provider": "rai_gpt_gateway",
@@ -5046,7 +5061,6 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
-  'gpt-6-luna': 'deepseek-v4.1-flash',
   // Keep the stable public GPT 6 selection while its upstream route uses Terra.
   'gpt-5.6': 'gpt-6.1-sol',
   'gpt-5.6-sol': 'gpt-6.1-sol',
@@ -5090,17 +5104,19 @@ const modelVisibilityState = {
   loaded: false,
   disabled: new Set(),
   smartDefaults: { model: 'gpt-6.1-sol', reasoningProfile: 'low', thinkingMode: true },
-  fastDefaults: { model: 'deepseek-v4.1-flash', reasoningProfile: 'low', thinkingMode: false }
+  fastDefaults: { model: 'deepseek-v4.1-flash', reasoningProfile: 'none', thinkingMode: false }
 };
 
 function currentThinkingCapability() {
   const selected = normalizeSelectedModelId(appState.selectedModel);
-  const actual = selected === 'auto' ? modelVisibilityState.smartDefaults.model : selected;
+  const actual = selected === 'auto'
+    ? (appState.thinkingMode ? modelVisibilityState.smartDefaults.model : modelVisibilityState.fastDefaults.model)
+    : selected;
   const model = MODELS[actual] || MODELS[selected] || {};
   const supportsThinking = model.supportsThinking === true;
   const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
     ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile)) : REASONING_PROFILE_ORDER;
-  return { supportsThinking, canDisableThinking: model.canDisableThinking !== false && actual !== 'gpt-6.1-sol', profiles };
+  return { supportsThinking, canDisableThinking: selected === 'auto' || (model.canDisableThinking !== false && actual !== 'gpt-6.1-sol'), profiles };
 }
 
 function modelPreferenceStorageKey() {
@@ -5133,7 +5149,7 @@ function restoreModelPreference(profile = null) {
 
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
-  const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
+  const normalized = Object.hasOwn(LEGACY_MODEL_ALIASES, raw) ? LEGACY_MODEL_ALIASES[raw] : raw;
   if (String(normalized).startsWith('x-ai/grok-4.20')) return 'auto';
   if (!normalized || normalized === 'research-mode') return normalized;
   return MODELS[normalized] ? normalized : 'auto';
@@ -5359,7 +5375,9 @@ const REASONING_PROFILE_ORDER = ['auto', 'low', 'medium', 'high', 'xhigh', 'max'
 function normalizeReasoningProfileForModel(value, modelId = appState.selectedModel) {
   const normalized = normalizeReasoningProfile(value);
   const selected = normalizeSelectedModelId(modelId);
-  const actual = selected === 'auto' ? modelVisibilityState.smartDefaults.model : selected;
+  const actual = selected === 'auto'
+    ? (appState.thinkingMode ? modelVisibilityState.smartDefaults.model : modelVisibilityState.fastDefaults.model)
+    : selected;
   const model = MODELS[actual] || MODELS[selected] || {};
   const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
     ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile))
@@ -8352,6 +8370,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-02', version: 'v0.13.39 · CX RAI 1.8.40',
+    zh: { summary: '直连优先与有效首字切站，可配置模型和思考等级，修复表格与附件显示。', details: ['智能默认 Sol / low，并记住上次模型与思考选择；Luna 使用独立线路并支持关闭思考。', 'GPT 优先直连，6 秒无有效首字先停止旧连接再切站；开启思考时计入思考首字。普通问题不再等待提前搜索。', '管理员可配置智能、快速与思考模式的模型和等级，并管理模型列表、能力与额度。', '仅展示模型支持的思考等级；打开思考默认自适应，不支持关闭时明确提示。', '修复缺列或压成单行的表格；附件卡片在用户气泡上方，图片可预览，长文件名提示改名。', 'GPT 在估算 258k 开始压缩、272k 上限；DeepSeek 为 400k / 1m，保留完整轮次与附件引用。'] },
+    en: { summary: 'Direct streaming, configurable models and reasoning, repaired tables and attachment cards.', details: ['Smart starts at Sol / low and retains the last model and reasoning choice. Luna uses an independent route with thinking off support.', 'GPT prefers the direct route and cancels the previous connection before switching after 6 seconds without a useful delta. Reasoning counts when enabled; ordinary questions skip speculative search.', 'Administrators manage Smart, fast and thinking model/effort pairs, model capabilities and completed-answer allowances.', 'Show supported reasoning levels only, start enabled thinking in Adaptive mode and explain unsupported off selections.', 'Repair malformed tables and place previewable attachment cards above user bubbles. Prompt for renaming overlong filenames.', 'Estimated compression starts at 258k / 272k hard budget for GPT and 400k / 1m for DeepSeek, preserving full turns and attachment references.'] }
+  },
   {
     date: '2026-11-02', version: 'v0.13.37',
     zh: { summary: '快速模型直连 DeepSeek 官方，分享对话可导入并继续。', details: ['移除 GPT Luna，旧选择迁移到 DeepSeek，保留 Sol 与 Astra。', '分享链接无需登录即可只读预览；登录后可选择保存自己的副本并继续。', '主提示词补充温和语气，分享副本与原对话独立。'] },
@@ -13771,7 +13794,6 @@ function getRequestReasoningProfileForCurrentMode() {
   if (getEffectiveResearchMode() === 'fast') {
     return 'low';
   }
-  if (appState.thinkingMode && normalizeSelectedModelId(appState.selectedModel) === 'auto') return 'max';
   return normalizeReasoningProfileForModel(appState.reasoningProfile);
 }
 
@@ -16652,8 +16674,8 @@ function toggleThinkingFromMenu(event) {
   }
   if (appState.thinkingMode && !capability.canDisableThinking) {
     showToast(isChineseLanguage(appState.language)
-      ? 'GPT 6.1 Sol 不支持关闭思考，可选择低档以缩短等待。'
-      : 'GPT 6.1 Sol requires thinking. Choose Low for a shorter wait.');
+      ? `${MODELS[appState.selectedModel]?.name || '该模型'}不支持关闭思考，可选择较低档位以缩短等待。`
+      : `${MODELS[appState.selectedModel]?.name || 'This model'} requires thinking. Choose a lower supported level for a shorter wait.`);
     appState.thinkingMode = true;
   } else {
     appState.thinkingMode = !appState.thinkingMode;
