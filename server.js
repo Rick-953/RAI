@@ -27697,8 +27697,9 @@ async function sendResendEmail({ to, subject, html, text }) {
     const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
     let response;
     try {
-        response = await fetchModelProvider(RESEND_API_URL, {
+        response = await fetch(RESEND_API_URL, {
             method: 'POST',
+            redirect: 'error',
             signal: controller.signal,
             headers: {
                 'Authorization': `Bearer ${RESEND_API_KEY}`,
