@@ -118,6 +118,9 @@ const tableSamples = [
     'Sol Low becomes a valid DeepSeek Auto preference for UI, persistence and request configuration');
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
   assert.deepEqual(await page.locator('#reasoningProfileChoices button').evaluateAll(buttons=>buttons.map(button=>button.dataset.profile)),['auto','high','max']);
+  await page.mouse.move(0,0);await page.locator('.reasoning-profile-header').hover();
+  await page.waitForFunction(()=>document.getElementById('reasoningProfileChoices').getAttribute('aria-hidden')==='false');
+  assert.equal(await page.evaluate(()=>appState.thinkingMode),false,'deliberate hover opens choices without enabling thinking');
   await page.locator('#reasoningProfileChoices [data-profile="high"]').click();
   await page.locator('#moreBtn').click();
   await openAllModels();
@@ -129,6 +132,8 @@ const tableSamples = [
   await page.locator('#allModelsSection [data-model="deepseek-v4.1-flash"]').first().click();
   assert.equal(await page.evaluate(()=>appState.reasoningProfile),'high','valid High preference survives switching back to DeepSeek');
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
+  await page.mouse.move(0,0);await page.locator('.reasoning-profile-header').hover();
+  await page.waitForFunction(()=>document.getElementById('reasoningProfileChoices').getAttribute('aria-hidden')==='false');
   await page.locator('#reasoningProfileChoices [data-profile="max"]').click();
   await page.reload();await page.waitForFunction(()=>typeof resetModelToSmart==='function');
   assert.deepEqual(await page.evaluate(()=>{showApp();resetModelToSmart();return{model:appState.selectedModel,profile:appState.reasoningProfile};}),{model:ds.id,profile:'max'});

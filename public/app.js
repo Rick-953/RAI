@@ -5465,11 +5465,22 @@ function updateReasoningProfileControl() {
   }
 }
 
+let reasoningHoverTimer = null;
 document.addEventListener('pointerover', event => {
   const header = event.target.closest?.('.reasoning-profile-header');
   if (!header || !document.getElementById('moreMenu')?.classList.contains('active')) return;
-  appState.reasoningChoicesExpanded = true;
-  updateToolbarUI();
+  if (header.contains(event.relatedTarget)) return;
+  clearTimeout(reasoningHoverTimer);
+  reasoningHoverTimer = setTimeout(() => {
+    if (!header.matches(':hover') || !document.getElementById('moreMenu')?.classList.contains('active')) return;
+    appState.reasoningChoicesExpanded = true;
+    updateToolbarUI();
+    scheduleComposerMenuReposition(8);
+  }, 650);
+});
+document.addEventListener('pointerout', event => {
+  const header = event.target.closest?.('.reasoning-profile-header');
+  if (header && !header.contains(event.relatedTarget)) clearTimeout(reasoningHoverTimer);
 });
 
 const RAI_ROUTING_NOTICE_COOLDOWN_KEY = 'rai_routing_notice_cooldowns_v1';

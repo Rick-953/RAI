@@ -262,7 +262,7 @@ function testReasoningSwitchAvailability() {
   assert.match(updateToolbar, /if \(!supportsThinking\)\s*\{[\s\S]*?appState\.thinkingMode\s*=\s*false;[\s\S]*?appState\.thinkingBudgetOpen\s*=\s*false;/);
   assert.match(updateToolbar, /thinkingToggle\.classList\.toggle\('disabled',\s*!supportsThinking\)/);
   assert.match(updateToolbar, /const showReasoningItem\s*=\s*supportsThinking;/, 'unsupported models must hide the reasoning row');
-  assert.match(updateToolbar, /const showReasoningProfile\s*=\s*supportsReasoningProfile\s*&&\s*appState\.thinkingMode;/, 'only the reasoning slider may collapse');
+  assert.match(updateToolbar, /const showReasoningProfile\s*=\s*supportsReasoningProfile\s*&&\s*\(appState\.thinkingMode\s*\|\|\s*appState\.reasoningChoicesExpanded\);/, 'supported reasoning choices open when thinking is enabled or after deliberate hover');
   assert.match(updateToolbar, /thinkingHeader\.setAttribute\('aria-disabled',\s*supportsThinking \? 'false' : 'true'\)/);
 }
 
@@ -559,8 +559,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra']);
-  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
+  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
+  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Luna','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
   assert.doesNotMatch(allModels, /model-menu-description|>\s*(?:gpt-|deepseek-|nemotron-)/,
     'the user-facing model list must not expose implementation IDs');
 
@@ -570,12 +570,14 @@ function testFocusedModelUiReasoningAndSwipe() {
     'the mobile composer must open the shared model menu');
   assert.doesNotMatch(index, /chatflow-model-menu|chatflow-send-btn/,
     'the retired standalone ChatFlow composer must not return after conversation fusion');
-  assert.match(app, /admin-model-switch-meta">\$\{escapeHtml\(model\.group \|\| '模型'\)\}/,
-    'admin model rows must show a product group instead of the implementation ID');
+  assert.match(app, /admin-model-switch-meta">\$\{escapeHtml\(model\.id\)\} · \$\{escapeHtml\(model\.provider \|\| ''\)\}/,
+    'admin configuration rows must identify the model and provider with escaped text');
 
-  for (const mode of ['smart', 'fast', 'think', 'research']) {
+  for (const mode of ['smart', 'research']) {
     assert.match(index, new RegExp(`class="model-menu-item model-mode-item"[^>]*data-mode="${mode}"`));
   }
+  assert.doesNotMatch(index, /class="model-menu-item model-mode-item"[^>]*data-mode="(?:fast|think)"/,
+    'the model menu must not restore retired Fast and Thinking shortcuts');
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
@@ -585,13 +587,20 @@ function testFocusedModelUiReasoningAndSwipe() {
     assert.ok(route.slice(0,350).includes("model: '"+id+"'"));
     assert.match(route.slice(0,350), /multimodal: true/);
   }
-  assert.match(server, /async function resolveVisibleAutoModel[\s\S]{0,400}return 'deepseek-v4\.1-flash'/);
+  assert.match(server, /async function resolveVisibleAutoModel\(\) \{ return resolveConfiguredDefault\('smart'\); \}/);
+  const configuredDefault = extractNamedFunction(server, 'resolveConfiguredDefault');
+  assert.match(configuredDefault, /getAdminRuntimeSettings\(\)/);
+  assert.match(configuredDefault, /settings\[prefix \+ '_default_model'\]/);
+  assert.match(configuredDefault, /!\(await isPublicModelDisabled\(id\)\) && isRuntimeConfiguredModel\(id\)/,
+    'administrator defaults must still require an enabled and configured model');
   assert.doesNotMatch(server, /normalizedReasoningProfile = score >=/);
   assert.match(server, /reasoningProfile = 'auto'/, 'Thinking delegates default effort to the model');
-  assert.match(app, /REASONING_PROFILE_ORDER = \['auto', 'low', 'medium', 'high', 'max'\]/);
-  assert.match(server, /model === 'fast-auto'\) thinkingMode = false/);
-  assert.match(server, /model === 'think-auto'\) thinkingMode = true/);
-  assert.match(server, /const fetchGptProvider = createDeepSeekProviderFetch/);
+  assert.match(app, /REASONING_PROFILE_ORDER = \['auto', 'low', 'medium', 'high', 'xhigh', 'max'\]/);
+  assert.match(server, /const prefix = model === 'fast-auto'[\s\S]{0,250}\? 'fast' : model === 'think-auto' \? 'thinking' : 'smart'/,
+    'legacy mode IDs must resolve through their administrator-configured defaults');
+  assert.match(server, /const defaults = await resolveModeDefaults\(prefix\)/);
+  assert.match(server, /const fetchGptProvider = createGptPrimaryFetch/);
+  assert.match(server, /fallbackFetch: fetchGptFastProvider/);
   assert.match(server, /officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL/);
   assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/);
   assert.match(server, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
@@ -612,7 +621,11 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.doesNotMatch(activeProductSources, /north-mini-code|cohere\/north-mini-code|Mimo Code|role-mimo|\bmimo\b/i,
     'Mimo Code must not remain in active product, route, fallback, test, style, or README surfaces');
 
-  assert.match(index, /reasoning-low">低<\/span>[\s\S]{0,120}reasoning-medium">中<\/span>[\s\S]{0,120}reasoning-high">高<\/span>[\s\S]{0,120}reasoning-max">最大<\/span>/);
+  assert.match(index, /id="reasoningProfileChoices" role="group" aria-label="Thinking level"/,
+    'thinking choices must use the capability-driven group rather than fixed unsupported levels');
+  const updateReasoningControl = extractNamedFunction(app, 'updateReasoningProfileControl');
+  assert.match(updateReasoningControl, /capability\.profiles/,
+    'thinking levels must be built from the selected model capabilities');
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(1\)[\s\S]{0,80}left:\s*0/);
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(2\)[\s\S]{0,80}left:\s*25%/);
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(3\)[\s\S]{0,80}left:\s*50%/);
@@ -776,7 +789,7 @@ async function testMessageRenderingStability() {
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 3,
+  assert.equal(modelSelectionBindings.length, 4,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
@@ -1076,7 +1089,12 @@ function testVersionContract() {
     'think mode must route through the think-auto virtual id');
   assert.match(app, /function resolveSendRequestConfig\([\s\S]{0,700}oneShotModelId = oneShotMode === 'fast'[\s\S]{0,160}'fast-auto'/,
     'one-shot fast sends must map to fast-auto');
-  assert.match(app, /固定模型路由规则：[\s\S]{0,250}GPT 6\.1 Sol[\s\S]{0,250}Fast DeepSeek/);
+  for (const mode of ['smart', 'fast', 'thinking']) {
+    assert.match(app, new RegExp(`modelSelectField\\('${mode}_default_model'`),
+      'administrators must be able to configure each mode model');
+    assert.match(app, new RegExp(`profileSelectField\\('${mode}_reasoning_profile'`),
+      'administrators must be able to configure each mode thinking level');
+  }
   assert.doesNotMatch(app, /modelSelectField\('vision_fallback_model'/, 'native vision must not offer retired-model routing');
   assert.match(app, /function getModelDisplayMeta\(modelId\)[\s\S]{0,400}identity === 'fast'[\s\S]{0,120}model-fast/,
     'fast identity must keep the Fast label after routing through auto');
@@ -1090,14 +1108,17 @@ function testVersionContract() {
     'closing ChatFlow must enter the parallel closing state');
   assert.match(server, /function isSupportedAdminModelSettingValue\(value\)[\s\S]{0,300}imageOnly !== true/,
     'image-only models must be rejected as preferred model settings');
-  assert.match(server, /async function resolveVisibleFastModel\(\) \{ return resolveVisibleAutoModel\(\); \}/);
-  assert.match(server, /async function resolveVisibleThinkingModel\(\)[\s\S]{0,220}return 'gpt-6\.1-sol'/);
+  assert.match(server, /async function resolveVisibleFastModel\(\) \{ return resolveConfiguredDefault\('fast'\); \}/);
+  assert.match(server, /async function resolveVisibleThinkingModel\(\) \{ return resolveConfiguredDefault\('thinking'\); \}/);
   assert.match(server, /if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/);
   assert.match(styles, /\.session-title-wrap\s*\{[\s\S]{0,300}flex:\s*1 1 auto[\s\S]{0,120}min-width:\s*0/,
     'conversation titles must share a flexible column before the fixed menu column');
   assert.match(styles, /\.session-time\s*\{[\s\S]{0,260}flex:\s*0 0 48px[\s\S]{0,180}text-align:\s*right/,
     'conversation timestamps must use a fixed right-aligned column');
-  assert.match(app, /function resetModelToSmart\(\)[\s\S]{0,400}selectedModel = 'auto'/);
+  assert.match(extractNamedFunction(app, 'resetModelToSmart'), /restoreModelPreference\(\)/,
+    'new conversations must restore the last account model preference');
+  assert.doesNotMatch(extractNamedFunction(app, 'resetModelToSmart'), /selectedModel\s*=\s*'auto'/,
+    'new conversations must not replace a saved model with the smart default');
   assert.match(app, /fetch\(`\$\{API_BASE\}\/sessions\/manifest`/);
   assert.match(server, /app\.get\('\/api\/sessions\/manifest'/);
   assert.match(server, /messages_revision INTEGER NOT NULL DEFAULT 0/);
@@ -1284,7 +1305,7 @@ function testVersionContract() {
     'uploaded images must use a captured session context and render from a Blob URL');
   assert.match(app, /async function hydratePrivateGeneratedImage[\s\S]{0,1800}const context = captureConversationCacheContext\(\)[\s\S]{0,900}Authorization: `Bearer \$\{context\.token\}`[\s\S]{0,900}cache\?\.putAsset\?/,
     'generated images must use a captured session context before persisting a private Blob');
-  assert.match(app, /const isImage = att\.type === 'image' && \(att\.data \|\| att\.filePath\)[\s\S]{0,1000}hydratePrivateAttachmentImage\(img, att\)/,
+  assert.match(extractNamedFunction(app, 'createAttachmentListItem'), /const isImage = att\.type === 'image' && \(att\.data \|\| att\.filePath \|\| att\.localThumbnail\)[\s\S]{0,1000}hydratePrivateAttachmentImage\(img, att\)/,
     'stored image attachments must use the authenticated image preview path');
   assert.match(server, /const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1\.com'/);
   assert.match(server, /function isProvisionedTestAccount\(user, normalizedEmail\)[\s\S]*?normalizeEmailForAuth\(normalizedEmail\) === PROVISIONED_TEST_ACCOUNT_EMAIL[\s\S]*?normalizeEmailForAuth\(user\?\.email\) === PROVISIONED_TEST_ACCOUNT_EMAIL/);

@@ -23,7 +23,7 @@ const RAI_STATIC_ASSETS = [
   'secure-sharing.js?v=20261102-stream-models-attachments', 'secure-sharing.css?v=20261102-stream-models-attachments',
   'diagnostics.js?v=20261102-stream-models-attachments',
   'app.js?v=20261102-stream-models-attachments', 'styles.css?v=20261102-stream-models-attachments',
-  'markdown-tables.js?v=20261102-ui-completion',
+  'markdown-tables.js?v=20261102-stream-models-attachments',
   'cx-remote.js?v=20261102-stream-models-attachments', 'local-agent.css?v=20261102-stream-models-attachments',
   'crf-ui.js?v=20261102-stream-models-attachments',
   'selection-explainer.js?v=20261102-stream-models-attachments', 'selection-explainer.css?v=20261102-stream-models-attachments',
