@@ -92,6 +92,11 @@ const tableSamples = [
   await page.locator('.reasoning-profile-header').click();
   assert.deepEqual(await page.evaluate(()=>({thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
     {thinking:true,profile:'auto'},'Enabling Smart thinking uses Adaptive');
+  assert.deepEqual(await page.evaluate(()=>{
+    localStorage.setItem(modelPreferenceStorageKey(),JSON.stringify({model:'auto',thinkingMode:true,reasoningProfile:'low'}));
+    appState.thinkingMode=false;restoreModelPreference();
+    return {thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()};
+  }),{thinking:true,profile:'low'},'Restoring thinking before the profile preserves a valid Smart Low selection');
   await page.locator('#moreBtn').click();
   await openAllModels();await page.locator('#allModelsSection [data-model="gpt-6.1-sol"]').first().click();
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').hover();
@@ -131,6 +136,7 @@ const tableSamples = [
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
   assert.deepEqual(await page.evaluate(()=>({model:getRequestModelIdForCurrentMode(),thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
     {model:luna.id,thinking:false,profile:'none'},'Luna retains its dedicated canonical ID and supports thinking off');
+  assert.equal(await page.evaluate(()=>normalizeSelectedModelId('gpt-5.6-luna')),luna.id,'Legacy Luna retains the canonical dedicated route');
   await page.locator('#moreBtn').click();
   const attachments=await page.evaluate(()=>{
    let previewCount=0;const original=previewAttachment;window.previewAttachment=()=>previewCount++;
@@ -151,6 +157,9 @@ const tableSamples = [
   await page.locator('#adminModelCreateForm [type="submit"]').click();
   await page.waitForFunction(()=>document.getElementById('adminModelsPanel').textContent.includes('Fixture Sol')&&!document.querySelector('#adminModelCreateForm [type="submit"]').disabled);
   assert.ok(models.some(model=>model.id==='fixture-sol'));
+  await page.evaluate(()=>fetchModelAvailability());await openAllModels();
+  await page.locator('#allModelsSection [data-model="fixture-sol"]').click();
+  assert.equal(await page.evaluate(()=>appState.selectedModel),'fixture-sol');
   await page.locator('#adminLimitsPanel [data-admin-limit="smart_reasoning_profile"]').selectOption('high');
   await page.locator('#adminLimitsPanel [data-rai-click="saveAdminLimits()"]').click();
   await page.waitForFunction(()=>document.querySelector('#adminLimitsPanel [data-admin-limit="smart_reasoning_profile"]')?.value==='high');
@@ -158,6 +167,10 @@ const tableSamples = [
   page.once('dialog',dialog=>dialog.accept());
   await page.locator('[data-admin-model-delete]').click();await page.waitForFunction(()=>!document.getElementById('adminModelsPanel').textContent.includes('Fixture Sol'));
   assert.equal(models.some(model=>model.id==='fixture-sol'),false);
+  await page.evaluate(()=>fetchModelAvailability());
+  assert.deepEqual(await page.evaluate(()=>({present:Object.hasOwn(MODELS,'fixture-sol'),selected:appState.selectedModel,
+    choices:document.querySelectorAll('[data-custom-catalog-model][data-model="fixture-sol"]').length})),
+    {present:false,selected:'auto',choices:0},'Refreshing availability removes deleted custom models and stale selection');
   assert.ok(requests.some(request=>request.method==='POST'&&request.path==='/api/admin/models'));
   assert.ok(requests.some(request=>request.method==='DELETE'&&request.path==='/api/admin/models/fixture-sol'));
   assert.deepEqual(errors,[]);

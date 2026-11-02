@@ -5066,7 +5066,7 @@ const LEGACY_MODEL_ALIASES = {
   'gpt-5.6-sol': 'gpt-6.1-sol',
   'gpt-6-sol': 'gpt-6.1-sol',
   'gpt-5.6-terra': 'deepseek-v4.1-flash',
-    'gpt-5.6-luna': 'deepseek-v4.1-flash',
+  'gpt-5.6-luna': 'gpt-6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
   'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -5135,13 +5135,13 @@ function restoreModelPreference(profile = null) {
   appState.modelPromptIdentity = appState.selectedModel === 'auto' ? 'smart' : 'manual';
   appState.profileDefaultModel = appState.selectedModel;
   const defaults = modelVisibilityState.smartDefaults;
+  appState.thinkingMode = saved && typeof saved.thinkingMode === 'boolean' ? saved.thinkingMode
+    : ((profile?.reasoning_profile || (cloudModel && cloudModel !== 'auto')) && profile.thinking_mode !== undefined ? !!profile.thinking_mode : defaults.thinkingMode !== false);
+  if (!currentThinkingCapability().canDisableThinking) appState.thinkingMode = true;
   appState.reasoningProfile = normalizeReasoningProfileForModel(
     saved?.reasoningProfile || profile?.reasoning_profile || defaults.reasoningProfile || 'low',
     appState.selectedModel
   );
-  appState.thinkingMode = saved && typeof saved.thinkingMode === 'boolean' ? saved.thinkingMode
-    : ((profile?.reasoning_profile || (cloudModel && cloudModel !== 'auto')) && profile.thinking_mode !== undefined ? !!profile.thinking_mode : defaults.thinkingMode !== false);
-  if (!currentThinkingCapability().canDisableThinking) appState.thinkingMode = true;
   if (saved && (saved.reasoningProfile !== appState.reasoningProfile || saved.thinkingMode !== appState.thinkingMode)) {
     persistDefaultModelPreference(appState.selectedModel);
   }
@@ -5279,7 +5279,13 @@ async function fetchModelAvailability() {
     const res = await fetch(`${API_BASE}/model-availability`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    for (const model of Array.isArray(data.models) ? data.models : []) {
+    const catalog = Array.isArray(data.models) ? data.models : null;
+    const currentIds = new Set((catalog || []).map(model => model?.id).filter(Boolean));
+    const removedIds = [];
+    if (catalog) for (const [id, model] of Object.entries(MODELS)) {
+      if (model.builtin === false && !currentIds.has(id)) { delete MODELS[id]; removedIds.push(id); }
+    }
+    for (const model of catalog || []) {
       if (!model?.id) continue;
       MODELS[model.id] = { ...(MODELS[model.id] || {}), ...model,
         supportsVision: model.vision === true, multimodal: model.vision === true,
@@ -5287,6 +5293,10 @@ async function fetchModelAvailability() {
     }
     if (data.smartDefaults) modelVisibilityState.smartDefaults = { ...modelVisibilityState.smartDefaults, ...data.smartDefaults };
     if (data.fastDefaults) modelVisibilityState.fastDefaults = { ...modelVisibilityState.fastDefaults, ...data.fastDefaults };
+    if (removedIds.includes(appState.selectedModel) || removedIds.includes(appState.profileDefaultModel)) {
+      appState.selectedModel = 'auto'; appState.profileDefaultModel = 'auto'; appState.modelPromptIdentity = 'smart';
+      persistDefaultModelPreference('auto'); updateSelectedModelText('auto');
+    }
     modelVisibilityState.disabled = new Set((data.disabledModels || []).map(normalizeSelectedModelId).filter(Boolean));
     modelVisibilityState.loaded = true;
     renderCustomModelChoices();
@@ -35357,7 +35367,7 @@ async function deleteAdminCustomModel(modelId) {
   try {
     const response = await fetch(`${API_BASE}/admin/models/${encodeURIComponent(modelId)}`, { method: 'DELETE', headers: { 'X-Admin-Token': adminState.token } });
     const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Delete failed');
-    delete MODELS[modelId]; await fetchModelAvailability(); await loadAdminModels();
+    await fetchModelAvailability(); await loadAdminModels();
   } catch (error) { alert(error.message); }
 }
 
