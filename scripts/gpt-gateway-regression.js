@@ -41,7 +41,7 @@ async function close(server) {
 }
 
 async function main() {
-    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna']);
+    assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-6-astra']);
     assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2');
     assert.strictEqual(normalizeGatewayBaseUrl('https://gateway.example/v1/'), 'https://gateway.example/v1');
     assert.strictEqual(joinGatewayEndpoint('https://gateway.example/v1', '/chat/completions'), 'https://gateway.example/v1/chat/completions');
@@ -270,7 +270,7 @@ async function main() {
                 res.end(JSON.stringify({ choices: [{ message: { content: `![Generated Image](data:image/png;base64,${encoded})` } }] }));
                 return;
             }
-            if (body.model === 'gpt-6-luna') return;
+            if (body.model === 'gpt-6-astra') return;
             res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
         });
     });
@@ -379,7 +379,7 @@ async function main() {
                     baseUrl,
                     endpoint: 'chat/completions',
                     apiKey: testKey,
-                    body: { model: 'gpt-6-luna', messages: [{ role: 'user', content: 'wait' }], stream: true },
+                    body: { model: 'gpt-6-astra', messages: [{ role: 'user', content: 'wait' }], stream: true },
                     signal: cancelController.signal
                 }),
                 (error) => error?.name === 'AbortError',
@@ -408,7 +408,7 @@ async function main() {
     for (const hiddenModelId of ['gpt-5.6-sol', 'gpt-6-sol', 'gpt-5.6-terra']) {
         assert.ok(!indexSource.includes(`data-model="${hiddenModelId}"`), `internal model must stay out of the focused picker: ${hiddenModelId}`);
     }
-    assert.match(serverSource, /'gpt-5\.6-terra': 'gpt-6-luna'/,
+    assert.match(serverSource, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
         'legacy Terra requests must route through the stable public GPT 6 Luna ID');
     assert.match(serverSource, /'gpt-6.1-sol': \{[\s\S]{0,180}model: 'gpt-6.1-sol'/,
         'GPT-6.1 Sol must call the GPT-6.1 Sol upstream model');

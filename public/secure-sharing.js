@@ -331,6 +331,49 @@
   document.getElementById('qrScanButton')?.addEventListener('click', window.openQrScanner);
   document.getElementById('mobileQrScanButton')?.addEventListener('click', window.openQrScanner);
   document.getElementById('qrLoginButton')?.addEventListener('click', window.startQrLogin);
+  let importDialog = null;
+  async function checkIncomingShare() {
+    const match = /^#import-share=([A-Za-z0-9_-]{43})$/.exec(location.hash);
+    if (!match || importDialog?.open || !appState.token || appState.authState !== 'authenticated') return;
+    const context = scanContext();
+    const d = dialog(text('Import shared conversation', '导入分享的对话', '匯入分享的對話'), text(
+      'Save a copy to your conversation list and continue. The original conversation stays with its owner.',
+      '可将只读快照保存到自己的对话列表后继续交流，原分享者的对话不会改变。',
+      '可將唯讀快照儲存到自己的對話清單後繼續交流，原分享者的對話不會改變。'));
+    importDialog = d;
+    const clearLink = () => { if (location.hash === match[0]) history.replaceState(null, '', location.pathname + location.search); };
+    button(d, text('Cancel', '取消', '取消'), () => { clearLink(); d.close(); });
+    const confirm = button(d, text('Import and continue', '导入并继续', '匯入並繼續'), async () => {
+      confirm.disabled = true;
+      try {
+        if (!scanContextCurrent(context)) throw new Error('auth_changed');
+        const response = await RAI_SESSION_FETCH(endpoint('/shares/import', context.base), {
+          method: 'POST', cache: 'no-store', credentials: 'omit', redirect: 'error',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${context.auth.token}` },
+          body: JSON.stringify({ key: match[1] })
+        });
+        const data = await response.json();
+        if (!response.ok || !scanContextCurrent(context) || !d.open) throw new Error('share_import_failed');
+        clearLink(); d.close();
+        await loadSessions();
+        if (scanContextCurrent(context)) await loadSession(data.session.id);
+      } catch (_) {
+        showToast(text('Cannot import. Check your account or whether the share expired.', '无法导入，请检查登录状态或分享是否已过期。', '無法匯入，請檢查登入狀態或分享是否已過期。'));
+        confirm.disabled = false;
+      }
+    });
+    d.addEventListener('cancel', clearLink, { once: true });
+  }
+  function watchIncomingShare() {
+    if (!location.hash.startsWith('#import-share=')) return;
+    const timer = setInterval(() => {
+      if (!location.hash.startsWith('#import-share=')) { clearInterval(timer); return; }
+      checkIncomingShare();
+    }, 500);
+    checkIncomingShare();
+  }
+  addEventListener('hashchange', watchIncomingShare);
+  watchIncomingShare();
   addEventListener('hashchange', checkIncomingScan);
   // Login may complete after landing on a scanned link. Only inspect while a scan is pending.
   const incomingTimer = setInterval(() => {

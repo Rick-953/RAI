@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -48,15 +48,15 @@ const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) 
     return {platform:getClientPlatform(),saved:appState.handednessEnabled,effective:document.documentElement.classList.contains('hand-right'),disabled:document.getElementById('settingsHandednessSwitch').disabled,setup:!document.getElementById('windowsSetupRecommended').hidden,pwa:!document.getElementById('pwaInstallRecommended').hidden,models:Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).map(x=>x.dataset.model)};
    });
    assert.equal(initial.platform,platform);assert.equal(initial.saved,true);assert.equal(initial.effective,['ios','android'].includes(platform));assert.equal(initial.disabled,!['ios','android'].includes(platform));assert.equal(initial.setup,platform==='windows');assert.equal(initial.pwa,platform!=='windows');
-   for(const id of ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra'])assert.ok(initial.models.includes(id));
+   for(const id of ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra'])assert.ok(initial.models.includes(id));
    const provenance=await page.evaluate(()=>{
     appState.showModelBadge=true;
-    return ['gpt-6.1-sol','deepseek-flash','gpt-6-luna'].map(id=>{
+    return ['gpt-6.1-sol','deepseek-flash','gpt-6-astra'].map(id=>{
      const msg=createMessageElement({role:'assistant',content:'fixture',model:id});
      return msg.querySelector('.model-meta-badge').textContent.trim();
     });
    });
-   assert.deepEqual(provenance,['gpt-6.1-sol','deepseek-flash','gpt-6-luna']);
+   assert.deepEqual(provenance,['gpt-6.1-sol','deepseek-flash','gpt-6-astra']);
    // Use parsed DOM and measured geometry: text checks cannot catch an extra closing div.
    for (const hand of ['left','right']) {
     const layout = await page.evaluate(hand => {

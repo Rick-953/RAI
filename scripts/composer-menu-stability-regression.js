@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 // Regression: composer model menu ("+" and model picker) must reliably respond on
 // desktop mouse and mobile touch, across every model switch, repeated open/close,
 // and research mode. Root cause history: a wall-clock heuristic in
@@ -112,11 +112,11 @@ async function testFixture(browser, url, fixture) {
     await page.evaluate(() => { appState.selectedModel = 'auto'; closeModelModal(); });
     await trigger.click();
     // No wait: this used to be silently swallowed by the wall-clock guard.
-    await page.locator('#allModelsSection [data-model="gpt-6-luna"]').click();
-    assert.equal(await page.evaluate(() => appState.selectedModel), 'gpt-6-luna', 'fast all-models selection applies');
+    await page.locator('#allModelsSection [data-model="gpt-6.1-sol"]').click();
+    assert.equal(await page.evaluate(() => appState.selectedModel), 'gpt-6.1-sol', 'fast all-models selection applies');
     assert.equal(await menuActive(), false, 'fast all-models selection closes the menu');
 
-    for (const model of ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra']) {
+    for (const model of ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-astra']) {
       await trigger.click();
       const item = page.locator('#allModelsSection [data-model="' + model + '"]');
       if (mobile) await item.tap(); else await item.click();
@@ -167,7 +167,7 @@ async function testFixture(browser, url, fixture) {
     const unavailable = await page.evaluate(() => {
       closeMoreMenu(); closeModelModal();
       const prev = new Set(modelVisibilityState.disabled);
-      ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra'].forEach((id) => modelVisibilityState.disabled.add(id));
+      ['deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-astra'].forEach((id) => modelVisibilityState.disabled.add(id));
       appState.researchModeEnabled = false;
       toggleResearchModeFromMenu({ stopPropagation() {} });
       const enabled = appState.researchModeEnabled;

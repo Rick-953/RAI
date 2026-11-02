@@ -34,13 +34,13 @@ async function main() {
  let server, issued=0; const events=[];
  try {
   await run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_verified INTEGER)');
-  await run('CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id INTEGER, title TEXT)');
+  await run('CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id INTEGER, title TEXT, model TEXT, session_kind TEXT, messages_revision INTEGER DEFAULT 0)');
   await run('CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, created_at INTEGER)');
   const store = createAuthSessionStore({ db, jwtSecret: require('node:crypto').randomBytes(48), refreshPepper: require('node:crypto').randomBytes(48), production: true });
   await store.migrate();
-  await run("INSERT INTO users (id,email,email_verified) VALUES (1,'test@example.invalid',1)");
+  await run("INSERT INTO users (id,email,email_verified) VALUES (1,'test@example.invalid',1),(2,'reader@example.invalid',1)");
   let phone = await store.createSession({ userId: 1, authMethod: 'password+totp', authTime: Math.floor(Date.now()/1000)-1800 });
-  await run("INSERT INTO sessions VALUES ('owned',1,'Test'),('other',2,'Private')");
+  await run("INSERT INTO sessions (id,user_id,title) VALUES ('owned',1,'Test'),('other',2,'Private')");
   await run("INSERT INTO messages VALUES (1,'owned','user','hello',1),(2,'owned','assistant','<script>private code</script>',2),(3,'owned','tool','do not share tools',3),(4,'owned','system','do not share system',4)");
   const app=express();app.use(express.json());
   const pass=(_q,_s,next)=>next();
@@ -114,6 +114,22 @@ async function main() {
   assert.equal(share.sharePath, '/beta/share.html#'+share.key);
   const snapshot=(await call('/api/shares/read',{key:share.key})).data;
   assert.equal(snapshot.messages.length,2);assert.equal(snapshot.messages[1].content,'<script>private code</script>');
+  assert.equal((await call('/api/shares/import',{key:share.key})).status,401,'anonymous preview cannot create an editable copy');
+  const sourcePhone=phone;
+  phone=await store.createSession({userId:2});
+  const imported=(await call('/api/shares/import',{key:share.key},true));
+  assert.equal(imported.status,200);assert.equal(imported.data.session.user_id,2);assert.equal(imported.data.session.model,'deepseek-v4.1-flash');
+  assert.equal(imported.data.session.session_kind,'chat');assert.notEqual(imported.data.session.id,'owned');
+  const copyId=imported.data.session.id;
+  const copies=await Promise.all(Array.from({length:4},()=>call('/api/shares/import',{key:share.key},true)));
+  assert.ok(copies.every(copy=>copy.status===200&&copy.data.session.id===copyId&&!copy.data.imported),'retry/concurrent imports are idempotent per account');
+  assert.equal((await get('SELECT COUNT(*) AS n FROM messages WHERE session_id=?',[copyId])).n,2);
+  assert.equal((await get("SELECT COUNT(*) AS n FROM messages WHERE session_id=? AND role NOT IN ('user','assistant')",[copyId])).n,0);
+  await run("INSERT INTO messages (session_id,role,content) VALUES (?,'user','My continuation')",[copyId]);
+  assert.equal((await get("SELECT COUNT(*) AS n FROM messages WHERE session_id='owned'")).n,4,'recipient edits cannot modify the source conversation');
+  phone=sourcePhone;
+  const ownerCopy=await call('/api/shares/import',{key:share.key},true);
+  assert.equal(ownerCopy.status,200);assert.notEqual(ownerCopy.data.session.id,copyId,'each account receives its own copy');
   failNextShareInsert = true;
   assert.equal((await call('/api/sessions/owned/share',{},true)).status,500);
   assert.equal((await call('/api/shares/read',{key:share.key})).status,200,'failed rotation must keep the previous link valid');
@@ -126,6 +142,8 @@ async function main() {
   await call('/api/sessions/owned/share',{},true,'DELETE');
   for (const result of rotations) assert.equal((await call('/api/shares/read',{key:result.data.key})).status,404);
   assert.equal((await call('/api/shares/read',{key:share.key})).status,404);
+  assert.equal((await get('SELECT COUNT(*) AS n FROM messages WHERE session_id=?',[copyId])).n,3,'revoking the link preserves the previously imported copy');
+  assert.equal((await call('/api/shares/import',{key:share.key},true)).status,404);
   const next=(await call('/api/sessions/owned/share',{},true)).data;
   await run("DELETE FROM sessions WHERE id='owned'");
   assert.equal((await call('/api/shares/read',{key:next.key})).status,404);

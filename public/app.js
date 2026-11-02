@@ -2412,8 +2412,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.36';
-const RAI_BUILD_ID = '20261102-memory-batch-versions';
+const RAI_APP_VERSION = '0.13.37';
+const RAI_BUILD_ID = '20261102-official-ds-share-import';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5022,17 +5022,6 @@ const MODELS = {
     "contextWindow": 256000,
     "maxTokens": 8000
   },
-  'gpt-6-luna': {
-    "name": "GPT 6 Luna",
-    "provider": "rai_gpt_gateway",
-    "supportsThinking": true,
-    "supportsReasoningProfile": true,
-    "supportsVision": true,
-    "supportsTools": true,
-    "multimodal": true,
-    "contextWindow": 256000,
-    "maxTokens": 8000
-  },
   'gpt-6-astra': {
     "name": "GPT 6 Astra",
     "provider": "rai_gpt_gateway",
@@ -5047,12 +5036,13 @@ const MODELS = {
 };
 
 const LEGACY_MODEL_ALIASES = {
+  'gpt-6-luna': 'deepseek-v4.1-flash',
   // Keep the stable public GPT 6 selection while its upstream route uses Terra.
   'gpt-5.6': 'gpt-6.1-sol',
   'gpt-5.6-sol': 'gpt-6.1-sol',
   'gpt-6-sol': 'gpt-6.1-sol',
-  'gpt-5.6-terra': 'gpt-6-luna',
-    'gpt-5.6-luna': 'gpt-6-luna',
+  'gpt-5.6-terra': 'deepseek-v4.1-flash',
+    'gpt-5.6-luna': 'deepseek-v4.1-flash',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
   'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -8247,6 +8237,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-02', version: 'v0.13.37',
+    zh: { summary: '快速模型直连 DeepSeek 官方，分享对话可导入并继续。', details: ['移除 GPT Luna，旧选择迁移到 DeepSeek，保留 Sol 与 Astra。', '分享链接无需登录即可只读预览；登录后可选择保存自己的副本并继续。', '主提示词补充温和语气，分享副本与原对话独立。'] },
+    en: { summary: 'Official DeepSeek fast routing and importable conversation shares.', details: ['Remove GPT Luna and migrate saved selections to DeepSeek while retaining Sol and Astra.', 'Read shared snapshots without signing in, then choose to import and continue after login.', 'Use a gentle tone and keep imported copies independent from their source.'] }
+  },
   {
     date: '2026-11-02', version: 'v0.13.36',
     zh: { summary: '记忆支持每批 500 条操作，并自动保留修改前版本。', details: ['可一次添加或移除最多 500 条长期记忆，总存量支持分页读取。', '新增、更新、删除和清空前自动备份，可查看旧版本并导出 JSON。', '记忆规则按需读取；CX 本地工具使用 Windows 提示词，区分 PowerShell 与 cmd。'] },
@@ -13409,7 +13404,6 @@ function normalizeResearchMode(value) {
 const RESEARCH_MODEL_OPTIONS = [
   { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
   { id: 'gpt-6.1-sol', label: 'GPT 6.1 Sol' },
-  { id: 'gpt-6-luna', label: 'GPT 6 Luna' },
   { id: 'gpt-6-astra', label: 'GPT 6 Astra' }
 ];
 
@@ -33953,7 +33947,7 @@ function openGitHubStarTask() {
 
 function renderMembershipModelPricing() {
   const isZh = isChineseLanguage(appState.language);
-  const rows = [['GPT 6 Astra', 3, 50, 80], ['GPT 6.1 Sol', 50, 100, 200], ['GPT 6 Luna', 100, 200, 500]];
+  const rows = [['GPT 6 Astra', 3, 50, 80], ['GPT 6.1 Sol', 50, 100, 200]];
   return `<div class="membership-model-pricing">
     <h3>${isZh ? '滚动 24 小时对话额度' : 'Rolling 24-hour conversation allowance'}</h3>
     <div class="membership-model-pricing-list"><div><span>${isZh ? '模型' : 'Model'}</span><strong>Free / Pro / MAX</strong></div>
@@ -35230,7 +35224,7 @@ async function loadAdminLimits() {
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
       'deepseek-flash-siliconflow', 'deepseek-v4.1-flash',
-      'gemini-3.6-flash-low', 'gpt-6-luna', 'kimi-k2.6',
+      'gemini-3.6-flash-low', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);
     const selectionExplanationCandidates = [

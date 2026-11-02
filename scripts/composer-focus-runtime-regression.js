@@ -140,7 +140,7 @@ async function testCase(browser, url, fixture) {
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'auto');
     await slider.press('End');
     assert.equal(await page.evaluate(() => appState.reasoningProfile), 'max');
-    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Luna', 'GPT 6 Astra'];
+    const names = ['DeepSeek V4.1 Flash', 'GPT 6.1 Sol', 'GPT 6 Astra'];
     for (const [lang, label] of [['zh-CN', '最大'], ['zh-TW', '最大'], ['en', 'Max']]) {
       const localized = await page.evaluate(lang => {
         setLanguage(lang); updateToolbarUI(); renderResearchModelControls();
@@ -150,7 +150,7 @@ async function testCase(browser, url, fixture) {
           value: document.getElementById('reasoningProfileSlider').value,
           profile: appState.reasoningProfile,
           normalized: ['auto', 'low', 'medium', 'high', 'max', 'mixed', ' MAX ', 'bad'].map(normalizeReasoningProfile),
-          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
+          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
           agents: Array.from(document.querySelectorAll('#researchAgentModelList button')).map(el => el.textContent.trim()),
           masters: Array.from(document.querySelectorAll('#researchMasterModelSelect option')).map(el => el.textContent.trim())
         };

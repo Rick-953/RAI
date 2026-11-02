@@ -559,8 +559,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
-  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Luna','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
+  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra']);
+  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
   assert.doesNotMatch(allModels, /model-menu-description|>\s*(?:gpt-|deepseek-|nemotron-)/,
     'the user-facing model list must not expose implementation IDs');
 
@@ -579,7 +579,7 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  for(const id of ['gpt-6.1-sol','gpt-6-luna','gpt-6-astra']) {
+  for(const id of ['gpt-6.1-sol','gpt-6-astra']) {
     const route = server.slice(server.indexOf("    '" + id + "': {", server.indexOf('const MODEL_ROUTING = {')));
     assert.match(route.slice(0,350), /provider: 'rai_gpt_gateway'/);
     assert.ok(route.slice(0,350).includes("model: '"+id+"'"));
@@ -594,10 +594,10 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.match(server, /const fetchGptProvider = createDeepSeekProviderFetch/);
   assert.match(server, /officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL/);
   assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/);
-  assert.match(server, /'gpt-5\.6-terra': 'gpt-6-luna'/,
-    'saved Terra preferences must normalize to the stable public GPT 6 Luna ID');
-  assert.match(app, /'gpt-5\.6-terra': 'gpt-6-luna'/,
-    'stale clients must normalize Terra to the stable public GPT 6 Luna ID');
+  assert.match(server, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
+    'saved Terra preferences must normalize to the active DeepSeek ID');
+  assert.match(app, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
+    'stale clients must normalize Terra to the active DeepSeek ID');
 
   assert.match(styles, /\.settings-about-card\s*\{[\s\S]{0,700}background-image:\s*url\(['"]images\/onboarding-saturn\.png['"]\)/,
     'the About RAI card must use the bundled Saturn background');
@@ -776,7 +776,7 @@ async function testMessageRenderingStability() {
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 4,
+  assert.equal(modelSelectionBindings.length, 3,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
