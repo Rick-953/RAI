@@ -24,6 +24,7 @@ function testSharedPromptBuilder() {
   });
   assert.match(chinese, /^# RAI 主系统提示词/);
   assert.match(chinese, /你是 RAI（智能模型）/);
+  assert.match(chinese, /温和回答/);
   assert.match(chinese, /RAI Web 由 Rick 全权构建/);
   assert.match(chinese, /不得冒用上游模型、服务商或编程代理的身份/);
   assert.match(chinese, /## Layer 1：可用技能/);
@@ -47,6 +48,7 @@ function testSharedPromptBuilder() {
   });
   assert.match(english, /^# RAI System Prompt/);
   assert.match(english, /You are RAI \(Smart model\)/);
+  assert.match(english, /Be gentle/);
   assert.match(english, /RAI Web was built entirely by Rick/);
   assert.match(english, /Distinguish the products and credit the original developer accurately/);
   assert.match(english, /## Layer 1: available skills/);

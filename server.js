@@ -501,7 +501,9 @@ const DEEPSEEK_CHAT_COMPLETIONS_URL = resolveLoopbackTestProviderUrl(
 );
 const DEEPSEEK_FAST_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_DEEPSEEK_FAST_BASE_URL) || 'https://fast.000339.xyz/v1', { production: IS_PRODUCTION });
 const DEEPSEEK_FAST_API_KEY_FILE = cleanEnvValue(process.env.RAI_DEEPSEEK_FAST_API_KEY_FILE);
-const DEEPSEEK_FAST_API_KEY = DEEPSEEK_FAST_API_KEY_FILE ? readGatewayApiKeyFile(DEEPSEEK_FAST_API_KEY_FILE) : '';
+// Official is the default even when a legacy relay key remains configured.
+const DEEPSEEK_USE_RELAY = cleanEnvValue(process.env.RAI_DEEPSEEK_PROVIDER).toLowerCase() === 'relay';
+const DEEPSEEK_FAST_API_KEY = DEEPSEEK_USE_RELAY && DEEPSEEK_FAST_API_KEY_FILE ? readGatewayApiKeyFile(DEEPSEEK_FAST_API_KEY_FILE) : '';
 const SILICONFLOW_CHAT_COMPLETIONS_URL = resolveLoopbackTestProviderUrl(
     'RAI_TEST_SILICONFLOW_CHAT_COMPLETIONS_URL',
     'https://api.siliconflow.cn/v1/chat/completions'
@@ -656,7 +658,8 @@ const EMAIL_CODE_PURPOSES = new Set(['register', 'login', 'password_reset']);
 const EMAIL_CODE_LENGTH = 6;
 const ENV_API_KEYS = {
     TAVILY_API_KEY: cleanEnvValue(process.env.TAVILY_API_KEY),
-    DEEPSEEK_API_KEY: cleanEnvValue(process.env.DEEPSEEK_API_KEY),
+    DEEPSEEK_API_KEY: cleanEnvValue(process.env.RAI_DEEPSEEK_OFFICIAL_API_KEY_FILE)
+        ? readGatewayApiKeyFile(cleanEnvValue(process.env.RAI_DEEPSEEK_OFFICIAL_API_KEY_FILE)) : cleanEnvValue(process.env.DEEPSEEK_API_KEY),
     SILICONFLOW_API_KEY: cleanEnvValue(process.env.SILICONFLOW_API_KEY),
     GOOGLE_GEMINI_API_KEY: cleanEnvValue(process.env.GOOGLE_GEMINI_API_KEY),
     OPENROUTER_API_KEY: cleanEnvValue(process.env.OPENROUTER_API_KEY)
@@ -1175,8 +1178,8 @@ const ADMIN_MODEL_CATALOG = [...CHAT_MODEL_CATALOG];
 const PUBLIC_MODEL_IDS = ADMIN_MODEL_CATALOG.map((model) => model.id);
 const DEFAULT_DISABLED_MODEL_IDS = DEFAULT_DISABLED_MODEL_IDS_RAW.filter((modelId) => PUBLIC_MODEL_IDS.includes(modelId));
 const AUTO_MODEL_PREFERENCE = ['deepseek-v4.1-flash'];
-const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'];
-const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gpt-6-luna'];
+const AUTO_MULTIMODAL_MODEL_PREFERENCE = ['gpt-6.1-sol', 'gpt-6-astra'];
+const AUDIO_UNDERSTANDING_MODEL_PREFERENCE = ['gpt-6.1-sol', 'gpt-6-astra'];
 const MODEL_DISABLED_CACHE_TTL_MS = 10 * 1000;
 let modelAvailabilityCache = { loadedAt: 0, disabled: new Set() };
 
@@ -6438,7 +6441,6 @@ function researchModelLabel(modelId = '') {
     const labels = {
         'gpt-6.1-sol': 'GPT-6.1 Sol',
         'gpt-5.6-terra': 'GPT 6',
-        'gpt-6-luna': 'GPT 6 Luna',
         'gpt-6-astra': 'GPT 6 Astra',
         'gemma': 'Gemma',
         'qwen3.6-35b-a3b': 'Qwen 3.6 35B',
@@ -6458,7 +6460,6 @@ function researchModelLabel(modelId = '') {
 function researchRoleFromModel(modelId = '') {
     if (modelId === 'gpt-6.1-sol') return 'gpt_sol';
     if (modelId === 'gpt-5.6-terra') return 'gpt_terra';
-    if (modelId === 'gpt-6-luna') return 'gpt_luna';
     if (modelId === 'gpt-6-astra') return 'gpt_astra';
     if (modelId === 'gemma') return 'gemma';
     if (modelId === 'qwen3.6-35b-a3b') return 'qwen';
@@ -8914,12 +8915,13 @@ function logApiKeyReadiness() {
 logApiKeyReadiness();
 
 const LEGACY_MODEL_ALIASES = {
+  'gpt-6-luna': 'deepseek-v4.1-flash',
     // Normalize retired model IDs while keeping stored sessions and old clients readable.
     'gpt-5.6': 'gpt-6.1-sol',
     'gpt-5.6-sol': 'gpt-6.1-sol',
     'gpt-6-sol': 'gpt-6.1-sol',
-    'gpt-5.6-terra': 'gpt-6-luna',
-    'gpt-5.6-luna': 'gpt-6-luna',
+    'gpt-5.6-terra': 'deepseek-v4.1-flash',
+    'gpt-5.6-luna': 'deepseek-v4.1-flash',
     'claude-opus-5': 'claude-sonnet-5',
     'qwen3-vl': 'qwen3.6-35b-a3b',
     'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -8996,14 +8998,6 @@ const MODEL_ROUTING = {
     'gpt-6-astra': {
         provider: 'rai_gpt_gateway',
         model: 'gpt-6-astra',
-        contextWindow: 256000,
-        supportsThinking: true,
-        supportsWebSearch: true,
-        multimodal: true
-    },
-    'gpt-6-luna': {
-        provider: 'rai_gpt_gateway',
-        model: 'gpt-6-luna',
         contextWindow: 256000,
         supportsThinking: true,
         supportsWebSearch: true,
@@ -22242,7 +22236,6 @@ if (clientFileExecution && systemPrompt) {
             'deepseek-v4.1-flash',
             'gpt-6.1-sol',
             'gpt-5.6-terra',
-            'gpt-6-luna',
             'gpt-6-astra',
             'claude-sonnet-5',
             'gemini-3.6-flash-low',
@@ -22313,7 +22306,7 @@ if (clientFileExecution && systemPrompt) {
             }
         }
 
-        // Preserve the explicitly selected GPT 6 Luna route in local tool mode.
+        // Preserve the explicitly selected model in local tool mode.
         // 关键修复：现在finalModel已经是具体的模型名，再获取routing
         routing = MODEL_ROUTING[finalModel];
         if (!routing) {
@@ -29183,7 +29176,6 @@ const MODEL_POINT_COSTS = Object.freeze({
     'deepseek-v4.1-flash': 1,
     'gpt-6.1-sol': 5,
     'gpt-5.6-terra': 5,
-    'gpt-6-luna': 5,
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
     'gpt-image-2': 20

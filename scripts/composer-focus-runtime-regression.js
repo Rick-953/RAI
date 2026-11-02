@@ -150,7 +150,7 @@ async function testCase(browser, url, fixture) {
           value: document.getElementById('reasoningProfileSlider').value,
           profile: appState.reasoningProfile,
           normalized: ['auto', 'low', 'medium', 'high', 'max', 'mixed', ' MAX ', 'bad'].map(normalizeReasoningProfile),
-          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
+          models: Array.from(document.querySelectorAll('#modelDropdownMenu [data-model]')).filter(el => el.querySelector('.model-menu-name') && ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra'].includes(el.dataset.model)).map(el => ({ name: el.textContent.trim(), extras: !!el.querySelector('.model-badge,.model-menu-desc') })),
           agents: Array.from(document.querySelectorAll('#researchAgentModelList button')).map(el => el.textContent.trim()),
           masters: Array.from(document.querySelectorAll('#researchMasterModelSelect option')).map(el => el.textContent.trim())
         };

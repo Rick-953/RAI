@@ -28,6 +28,9 @@
       }
       const link = document.getElementById('openCxRai');
       link.href = `cxrai://conversation?key=${encodeURIComponent(key)}&origin=${encodeURIComponent(location.origin + root)}`; link.hidden = false;
+      const continueLink = document.getElementById('continueShare');
+      continueLink.href = `${root}/#import-share=${encodeURIComponent(key)}`; continueLink.hidden = false;
+      document.getElementById('shareImportHint').hidden = false;
       state.statusKey = 'shareHandoff';
       renderState();
       // Browsers may require a user gesture; no installation detection, loops or timed navigation away from the page.

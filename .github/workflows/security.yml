@@ -95,6 +95,8 @@ jobs:
           RAI_BROWSER_ENGINE=webkit npm run test:locale-runtime
           npm run test:web-skills-browser
           RAI_BROWSER_ENGINE=webkit npm run test:web-skills-browser
+          npm run test:share-import-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:share-import-browser
           npm run test:composer-menu-stability
           RAI_BROWSER_ENGINE=webkit npm run test:composer-menu-stability
           npm run test:cx-remote-ui

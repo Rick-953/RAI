@@ -554,7 +554,7 @@ async function main() {
 
     const settingsOnly = process.argv.includes('--native-settings-only');
     for (const entry of settingsOnly ? [] : [
-      ['sol','gpt-6.1-sol'], ['luna','gpt-6-luna'], ['deepseek','deepseek-v4.1-flash'],
+      ['sol','gpt-6.1-sol'], ['astra','gpt-6-astra'], ['deepseek','deepseek-v4.1-flash'],
       ['astra','gpt-6-astra'], ['fallback','gpt-6.1-sol'],
       ['limits','gpt-6.1-sol'], ['invalid','gpt-6.1-sol']
     ]) {

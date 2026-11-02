@@ -8,8 +8,8 @@ const { estimateContextTokens, enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONT
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 async function main() {
-    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
-    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6-astra'],x['gpt-6.1-sol'],x['gpt-6-luna']]), [[3,50,100],[50,100,200],[80,200,500]]);
+    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-astra']);
+    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6-astra'],x['gpt-6.1-sol']]), [[3,50],[50,100],[80,200]]);
     const db = await new Promise((resolve,reject) => { const connection = new sqlite3.Database(':memory:', e => e ? reject(e) : resolve(connection)); });
     const run = (sql, params=[]) => new Promise((resolve,reject) => db.run(sql, params, function(e){e?reject(e):resolve({changes:this.changes})}));
     const get = (sql, params=[]) => new Promise((resolve,reject) => db.get(sql, params, (e,row)=>e?reject(e):resolve(row)));
@@ -34,8 +34,8 @@ async function main() {
         const row=await quota.reserve(user,'membership','gpt-6.1-sol');assert.equal(row.limit,CHAT_MODEL_LIMITS[tier]['gpt-6.1-sol']);await quota.settle(user,'membership',[]);
     }
     // At most one count per GPT used in a successful research turn, regardless of tool loops.
-    for(const id of ['gpt-6.1-sol','gpt-6-luna']){await quota.reserve(2,'research',id);await quota.reserve(2,'research',id);}
-    await quota.settle(2,'research',['gpt-6.1-sol','gpt-6-luna','gpt-6-luna']);
+    for(const id of ['gpt-6.1-sol','gpt-6-astra']){await quota.reserve(2,'research',id);await quota.reserve(2,'research',id);}
+    await quota.settle(2,'research',['gpt-6.1-sol','gpt-6-astra','gpt-6-astra']);
     assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE request_id='research' AND status='completed'")).n,2);
     await new Promise((resolve,reject)=>db.close(e=>e?reject(e):resolve()));
     for(const id of CHAT_MODEL_IDS){
@@ -86,7 +86,7 @@ async function main() {
     const server=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
     for(const id of CHAT_MODEL_IDS){assert.ok(html.includes('data-model="'+id+'"'));assert.ok(app.includes("'"+id+"': {"));}
     for(const id of ['claude-sonnet-5','gemini-3.6-flash-low','nemotron-3-ultra','gpt-image-2','kolors-free'])assert.ok(!html.includes('data-model="'+id+'"'));
-    assert.match(server,/await settleChatModelTurn\(!streamDegraded/);assert.match(server,/chatModelQuotaContext.run/);assert.match(server,/const ADMIN_MODEL_CATALOG = \[\.\.\.CHAT_MODEL_CATALOG\]/);assert.match(app,/3, 50, 80/);assert.match(app,/50, 100, 200/);assert.match(app,/100, 200, 500/);
+    assert.match(server,/await settleChatModelTurn\(!streamDegraded/);assert.match(server,/chatModelQuotaContext.run/);assert.match(server,/const ADMIN_MODEL_CATALOG = \[\.\.\.CHAT_MODEL_CATALOG\]/);assert.match(app,/3, 50, 80/);assert.match(app,/50, 100, 200/);assert.doesNotMatch(html,/data-model="gpt-6-luna"/);assert.doesNotMatch(app,/\['GPT 6 Luna', 100, 200, 500\]/);
     // First effective token (content or reasoning) deadline is 20s by default, and
     // long thinking must not be mistaken for a stalled provider.
     assert.match(server, /RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS\) \|\| '20000'/);
