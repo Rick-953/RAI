@@ -129,6 +129,7 @@ function count(text, needle) {
 function createProviderMock() {
   const errors = [];
   const observations = [];
+  const memoryFixtures = { items: [], ids: [] };
   const server = http.createServer(async (request, response) => {
     try {
       const body = await readJsonRequest(request);
@@ -141,6 +142,30 @@ function createProviderMock() {
         ? hasObjectKey(body, 'functionResponse')
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
+
+      if (scenario.startsWith('client-') || scenario.startsWith('settings-')) {
+        assert.match(systemText, /Windows\/UWP/);
+        assert.match(systemText, /Windows PowerShell/);
+        assert.match(systemText, /cmd\.exe/);
+        assert.doesNotMatch(systemText, /沙箱隔离且离线|sandbox is isolated\/offline|文件\/命令→sandbox/);
+      }
+
+      if (scenario === 'memory-batch-save' || scenario === 'memory-batch-delete') {
+        const name = scenario === 'memory-batch-save' ? 'save_memory' : 'delete_memory';
+        if (!hasToolResult) {
+          assert.ok(body.tools.some(tool => tool.function?.name === name), `${name} must be available`);
+          const args = name === 'save_memory' ? { memories: memoryFixtures.items } : { memory_ids: memoryFixtures.ids };
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `memory_${name}`, type: 'function',
+            function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          const result = JSON.parse(body.messages.find(message => message.role === 'tool').content);
+          assert.equal(result.success, true);
+          assert.equal(result[name === 'save_memory' ? 'saved_count' : 'deleted_count'], 500);
+          assert.ok(result.backup_version_id);
+          writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]memory batch[/TITLE]`)]);
+        }
+        return;
+      }
 
       if (scenario.startsWith('settings-')) {
         const definition = (body.tools || []).find((tool) => tool.function?.name === 'cxrai_setting');
@@ -260,7 +285,7 @@ function createProviderMock() {
       response.end(JSON.stringify({ error: 'mock failure' }));
     }
   });
-  return { server, errors, observations };
+  return { server, errors, observations, memoryFixtures };
 }
 
 function openDatabase(filename) {
@@ -329,12 +354,12 @@ async function loginSeededUser(databasePath, baseUrl) {
   return payload.token;
 }
 
-async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal' }) {
+async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal', userText = '' }) {
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      messages: [{ role: 'user', content: `scenario:${scenario}` }],
+      messages: [{ role: 'user', content: `scenario:${scenario} ${userText}` }],
       model,
       internetMode: false,
       memoryMode,
@@ -413,6 +438,67 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   assert.equal(pending, ['client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
+async function runMemoryBatches(baseUrl, token, databasePath, provider) {
+  const id = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+  assert.ok(Number.isSafeInteger(id) && id > 0);
+  const db = await openDatabase(databasePath);
+  try {
+    await dbRun(db, 'INSERT OR IGNORE INTO user_configs (user_id) VALUES (?)', [id]);
+    await dbRun(db, 'UPDATE user_configs SET long_memory_enabled = 1, long_memory_opted_in_at = CURRENT_TIMESTAMP WHERE user_id = ?', [id]);
+  } finally { await closeDatabase(db); }
+  async function api(endpoint, body, expectedStatus = 200, authToken = token) {
+    const response = await fetch(`${baseUrl}/api/user/memories${endpoint}`, {
+      method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const data = await response.json();
+    assert.equal(response.status, expectedStatus, `${endpoint}: ${JSON.stringify(data).slice(0, 500)}`);
+    return data;
+  }
+  const items = Array.from({ length: 500 }, (_, index) => ({ content: `Manual project ${index}`, category: 'work' }));
+  const saved = await api('/batch', { memories: items });
+  assert.equal(saved.savedCount, 500);
+  assert.equal(saved.memories.length, 500);
+  assert.equal(saved.total, 500);
+  const version = await api(`/versions/${saved.backupVersionId}`);
+  assert.equal(version.version.memories.length, 0);
+  await api('/batch', { memories: [...items, items[0]] }, 400);
+  assert.equal((await api('/versions')).versions.length, 1, 'invalid batch cannot create a version');
+  const otherToken = await loginSeededUser(databasePath, baseUrl);
+  await api(`/versions/${saved.backupVersionId}`, undefined, 404, otherToken);
+  const removed = await api('/batch-delete', { memory_ids: saved.memories.map(memory => memory.id) });
+  assert.equal(removed.deletedCount, 500);
+  assert.equal((await api(`/versions/${removed.backupVersionId}`)).version.memories.length, 500);
+  assert.equal((await api('')).memories.length, 0);
+
+  provider.memoryFixtures.items = Array.from({ length: 500 }, (_, index) => ({ category: 'work', content: `Tool project ${index}`,
+    evidence: `Please remember durable project ${index}.`, reason: 'This project is relevant across future conversations.' }));
+  await runChat(baseUrl, token, { scenario: 'memory-batch-save', model: 'gpt-6.1-sol',
+    userText: provider.memoryFixtures.items.map(item => item.evidence).join('\n') });
+  const modelSaved = await api('');
+  assert.equal(modelSaved.total, 500);
+  provider.memoryFixtures.ids = modelSaved.memories.map(memory => memory.id);
+  await api('/batch', { memories: items });
+  const first = await api('');
+  assert.equal(first.total, 1000);
+  assert.equal(first.hasMore, true);
+  assert.equal(first.nextOffset, 500);
+  const second = await api('?offset=500');
+  assert.equal(second.memories.length, 500);
+  assert.equal(second.hasMore, false);
+  assert.equal(new Set([...first.memories, ...second.memories].map(memory => memory.id)).size, 1000);
+  await runChat(baseUrl, token, { scenario: 'memory-batch-delete', model: 'gpt-6.1-sol',
+    userText: 'Please delete only these saved memory IDs: ' + provider.memoryFixtures.ids.join(',') });
+  assert.equal((await api('')).total, 500);
+  const cleared = await api('/clear', {});
+  assert.equal(cleared.deletedCount, 500);
+  const versions = (await api('/versions')).versions;
+  assert.equal(versions.length, 6, 'one previous version per successful API/tool batch');
+  assert.equal((await api(`/versions/${cleared.backupVersionId}`)).version.memories.length, 500);
+  assert.deepEqual((await api('/versions', undefined, 200, otherToken)).versions, []);
+  console.log('memory HTTP/SSE runtime regression passed: API and model-tool 500 saves/deletes, 501 rejection, 1000-memory paging, backup detail isolation, one snapshot per mutation, and clear backup');
+}
+
 async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-skill-runtime-'));
   const databasePath = path.join(tempRoot, 'ai_data.db');
@@ -453,6 +539,11 @@ async function main() {
     child.stderr.on('data', capture);
     await waitForReadiness(baseUrl, child, logs);
     const token = await loginSeededUser(databasePath, baseUrl);
+    if (process.argv.includes('--memory-only')) {
+      await runMemoryBatches(baseUrl, token, databasePath, provider);
+      assert.deepEqual(provider.errors, []);
+      return;
+    }
     const clientDb = await openDatabase(databasePath);
     let softwareKey;
     try {

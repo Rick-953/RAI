@@ -1,0 +1,3 @@
+{"probe": "sol_chat", "output_limit": 1024, "requested_effort": "low", "first_answer_s": 3.011, "last_answer_s": 18.6789, "content_events": 388, "answer_chars": 582, "reasoning_chars": 0, "headers_s": 2.8983, "http_status": 200, "total_s": 18.6807}
+{"probe": "sol_responses", "output_limit": 1024, "requested_effort": "low", "first_answer_s": 4.317, "last_answer_s": 23.9797, "content_events": 405, "answer_chars": 584, "reasoning_chars": 0, "headers_s": 4.3164, "http_status": 200, "total_s": 114.0644}
+{"probe": "ds_xcm_chat", "output_limit": 1024, "requested_effort": "disabled", "first_answer_s": 2.8201, "last_answer_s": 7.1019, "content_events": 332, "answer_chars": 548, "reasoning_chars": 0, "headers_s": 2.805, "http_status": 200, "total_s": 7.1504}

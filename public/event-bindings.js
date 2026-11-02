@@ -18,6 +18,8 @@
   // called from declarative bindings. Attribute text is parsed as a tiny data language and
   // is never passed to a JavaScript source-code compiler.
   const ALLOWED_ACTIONS = new Set([
+    'selectMemoryForBatch', 'selectFirstMemoryBatch', 'deleteSelectedUserMemories',
+    'showMemoryBackups', 'readSelectedMemoryBackup', 'closeMemoryBackups', 'exportSelectedMemoryBackup',
     'addManualMemory', 'addStickyNote', 'aiDecomposeSelected', 'applyPendingCanvasPatch',
     'autoLayoutNodes', 'autoResizeInput', 'bindZtx6dAccount',
     'cancelTwoFactorSetup', 'canvasResetView', 'canvasZoomIn', 'canvasZoomOut',
