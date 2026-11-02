@@ -103,13 +103,19 @@ function buildModelHarness(serverSource) {
         extractNamedFunction(serverSource, 'normalizeIncomingModelId'),
         extractConstDeclaration(serverSource, 'MODEL_ROUTING'),
         extractNamedFunction(serverSource, 'getRuntimeFallbackModelIds'),
+        extractNamedFunction(serverSource, 'clampNumber'),
+        extractNamedFunction(serverSource, 'clampInteger'),
+        extractNamedFunction(serverSource, 'normalizeReasoningProfile'),
+        extractNamedFunction(serverSource, 'sanitizeUserConfigPayload'),
         'globalThis.__normalize = normalizeIncomingModelId;',
+        'globalThis.__sanitize = sanitizeUserConfigPayload;',
         'globalThis.__supported = [...SUPPORTED_INCOMING_MODEL_IDS];',
         'globalThis.__routing = MODEL_ROUTING;',
         'globalThis.__fallbacks = getRuntimeFallbackModelIds("gpt-6-luna");'
     ].join('\n\n'), context, { filename: SERVER_PATH });
     return {
         normalize: context.__normalize,
+        sanitize: context.__sanitize,
         supported: Array.from(context.__supported),
         routing: context.__routing,
         fallbacks: Array.from(context.__fallbacks)
@@ -149,7 +155,15 @@ function testRetiredRequestsFallBackSafely(serverSource) {
 
 function testChatAndConfigUseGuardedNormalization(serverSource) {
     assert.match(serverSource, /let\s+model\s*=\s*normalizeIncomingModelId\(requestedModel\)/, 'chat requests must normalize retired and unknown IDs');
-    assert.match(serverSource, /const\s+safeDefaultModel\s*=\s*['"]auto['"]/, 'stored defaults must always reset to smart auto mode');
+    const { sanitize } = buildModelHarness(serverSource);
+    assert.equal(sanitize({}).default_model, null, 'omitted model must preserve the stored preference');
+    for (const modelId of ['auto', 'gpt-6.1-sol', 'gpt-6-luna', 'deepseek-v4.1-flash']) {
+        assert.equal(sanitize({ default_model: modelId }).default_model, modelId, 'valid model preference must be retained');
+    }
+    for (const modelId of ['poe-claude', 'poe-gpt', 'poe-gemini', 'poe-grok', 'unknown-provider-model', 'https://attacker.invalid/model']) {
+        assert.equal(sanitize({ default_model: modelId }).default_model, 'auto', 'retired or unknown model preference must use safe auto routing');
+    }
+    assert.equal(sanitize({ default_model: 'gpt-6-sol' }).default_model, 'gpt-6.1-sol', 'legacy aliases must retain a supported preference');
     assert.match(serverSource, /if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
         'normalized automatic requests must enter the safe automatic route');
 }
