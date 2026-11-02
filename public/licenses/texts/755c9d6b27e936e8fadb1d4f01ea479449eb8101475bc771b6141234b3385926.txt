@@ -1,0 +1,9 @@
+{
+  "name": "selectors",
+  "version": "0.38.0",
+  "authors": [
+    "The Servo Project Developers"
+  ],
+  "license": "MPL-2.0",
+  "repository": "https://github.com/servo/stylo"
+}
