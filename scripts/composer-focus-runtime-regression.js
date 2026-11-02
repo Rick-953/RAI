@@ -167,7 +167,7 @@ async function testCase(browser, url, fixture) {
       toggleThinkingFromMenu({stopPropagation(){}}); toggleThinkingFromMenu({stopPropagation(){}});
       return {manual, adaptive: getRequestReasoningProfileForCurrentMode(), thinking: getModeRequestConfig('think').reasoningProfile};
     });
-    assert.deepEqual(requestProfiles, {manual:'max', adaptive:'auto', thinking:'auto'});
+    assert.deepEqual(requestProfiles, {manual:'max', adaptive:'auto', thinking:'max'});
     await page.locator('#moreBtn').click();
 
     // Deferred menu focus cannot override a newer gesture, edit, or focused control.

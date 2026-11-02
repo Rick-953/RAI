@@ -4,7 +4,7 @@
   else root.RaiDiagnostics = factory(root);
 })(typeof window === 'object' ? window : globalThis, function createDiagnostics(env) {
   'use strict';
-  const schema = 'rai.diagnostics.v1', version = '20261102-official-ds-share-import', storageSlot = 'rai_diagnostics_v1';
+  const schema = 'rai.diagnostics.v1', version = '20261102-smart-official-ds-max', storageSlot = 'rai_diagnostics_v1';
   const cap = 500, responses = new WeakMap();
   const models = new Set(['auto','fast','thinking','research','custom','deepseek-flash','gpt-6.1-sol','gpt-6-luna','claude-sonnet-5','gemini-3.6-flash-low','gemini-3-flash','gemma','qwen3.6-35b-a3b','kimi-k2.6','chatgpt-gpt-oss-120b','nemotron-3-ultra','kolors-free','gpt-image-2']);
   const labels = new Set(['http','stream','app','started','headers','completed','cancelled','error','incomplete','other','GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','chat','auth','files','sessions','user','shares','qr-login']);
@@ -97,6 +97,8 @@
     state.reasoningChars += reasoning; if (reasoning && state.firstReasoningMs < 0) state.firstReasoningMs = Math.round(now() - state.start);
     const usage = event.usage;
     if (usage && typeof usage === 'object') {
+      if (event.usage_scope === 'request')
+        for (const key of ['inputTokens', 'outputTokens', 'cachedTokens']) delete state[key];
       for (const [key, value] of Object.entries({ inputTokens: usage.prompt_tokens ?? usage.input_tokens, outputTokens: usage.completion_tokens ?? usage.output_tokens, cachedTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens }))
         if (Number.isSafeInteger(value) && value >= 0 && value <= 1e12) state[key] = value;
     }

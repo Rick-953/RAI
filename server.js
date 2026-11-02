@@ -6,6 +6,7 @@ const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallbac
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
 const { buildCacheStableMessages } = require('./lib/prompt-prefix');
+const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
 const express = require('express');
@@ -20949,6 +20950,7 @@ async function fetchModelProvider(url, options = {}) {
         const thinkingMode = turn ? turn.thinkingMode : body.thinking?.type === 'enabled' || !!body.reasoning_effort;
         applyChatReasoningPolicy(body, { thinkingMode, profile });
         const outgoing = url === DEEPSEEK_CHAT_COMPLETIONS_URL && body.model === 'deepseek-flash' ? officialDeepSeekBody(body) : body;
+        requestChatStreamUsage(outgoing);
         options = { ...options, body: JSON.stringify(outgoing) };
     }
     const providerFetch = protectedModel ? fetchGptProvider : fetchDeepSeekProvider;
@@ -20982,6 +20984,13 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
     let chatRequestCancelled = false;
     let chatRequestBudget = null;
     let chatRequestDeadlineTimer = null;
+    const streamUsage = createChatStreamUsage();
+    const writeStreamUsage = usage => {
+        if (usage && !res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'usage', usage_scope: 'request', usage })}\n\n`);
+    };
+    const emitStreamUsage = (call, event) => {
+        writeStreamUsage(streamUsage.observe(call, event));
+    };
     const chatAbortControllers = new Set();
     const quotaLeaseTimer = setInterval(() => {
         const turn = chatModelQuotaContext.getStore();
@@ -22183,12 +22192,13 @@ if (clientFileExecution && systemPrompt) {
 
         // All four public models accept vision; keep the user's selection, including prior images.
         if (model === 'auto' || model === 'fast-auto' || model === 'think-auto') {
-            finalModel = model === 'fast-auto' ? await resolveVisibleFastModel() : await resolveVisibleAutoModel();
             if (model === 'fast-auto') thinkingMode = false;
             if (model === 'think-auto') thinkingMode = true;
+            finalModel = thinkingMode ? await resolveVisibleThinkingModel() : await resolveVisibleAutoModel();
+            if (thinkingMode) normalizedReasoningProfile = 'max';
             quotaTurn.thinkingMode = thinkingMode;
             quotaTurn.reasoningProfile = normalizedReasoningProfile;
-            autoRoutingReason = model === 'fast-auto' ? '快速：Fast DeepSeek V4.1 Flash；20 秒无首字切官方' : thinkingMode ? '思考：GPT 6.1 Sol，' + (normalizedReasoningProfile === 'auto' ? '自适应' : '手动 ' + normalizedReasoningProfile) + '；20 秒无首字切官方 DeepSeek' : '智能模型：GPT 6.1 Sol 关闭思考；20 秒无首字切官方 DeepSeek';
+            autoRoutingReason = thinkingMode ? '智能思考：GPT 6.1 Sol，max；20 秒无首字切官方 DeepSeek' : '智能/快速：官方 DeepSeek Flash，关闭思考';
         } else {
             finalModel = model;
         }
@@ -23944,6 +23954,7 @@ if (clientFileExecution && systemPrompt) {
 
             console.log(' API连接成功，开始接收流式响应\n');
 
+            if (!gptImageModelSelected) writeStreamUsage(streamUsage.begin('primary'));
             const reader = apiResponse.body.getReader();
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
@@ -24079,6 +24090,7 @@ if (clientFileExecution && systemPrompt) {
                         const data = trimmed.slice(6);
                         try {
                             const parsed = JSON.parse(data);
+                            emitStreamUsage('primary', parsed);
                             if (
                                 ['response.completed', 'response.done', 'message_stop'].includes(String(parsed?.type || ''))
                                 || String(parsed?.response?.status || '').toLowerCase() === 'completed'
@@ -24303,9 +24315,11 @@ if (clientFileExecution && systemPrompt) {
                         body: JSON.stringify(recoveryBody)
                     });
                     if (recoveryResponse.ok) {
+                        writeStreamUsage(streamUsage.begin('recovery'));
                         const recoveryText = await readBoundedResponseText(recoveryResponse, 1024 * 1024).catch(() => '');
                         let recoveryPayload = null;
                         try { recoveryPayload = recoveryText ? JSON.parse(recoveryText) : null; } catch (_) { recoveryPayload = null; }
+                        emitStreamUsage('recovery', recoveryPayload);
                         const recovered = String(recoveryPayload?.choices?.[0]?.message?.content || '').trim();
                         if (recovered) {
                             const sanitizedRecovered = sanitizeStreamingContent(recovered);
@@ -25546,6 +25560,7 @@ if (clientFileExecution && systemPrompt) {
                         let continueTimeoutId = setTimeout(() => continueController.abort(), continueTimeoutMs);
 
 for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
+                            const usageCall = `tool-${toolRound}-${continueAttempt}`;
                             // 每轮重置续传解析状态（fullContent 增量提取机制保证重试不重复输出）
                             continueAccumulatedToolCalls.length = 0;
                             continueRawToolContent = '';
@@ -25569,6 +25584,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                 continue;
                             }
 
+                            writeStreamUsage(streamUsage.begin(usageCall));
                             const continueReader = continueResponse.body.getReader();
                             const continueDecoder = new TextDecoder('utf-8');
                             let continueBuffer = '';
@@ -25600,6 +25616,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
 
                                 try {
                                     const continueParsed = JSON.parse(continueTrimmed.slice(6));
+                                    emitStreamUsage(usageCall, continueParsed);
                                     if (
                                         ['response.completed', 'response.done', 'message_stop'].includes(String(continueParsed?.type || ''))
                                         || String(continueParsed?.response?.status || '').toLowerCase() === 'completed'
@@ -25830,9 +25847,12 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                                     signal: continueController.signal
                                 });
                                 if (retryRes.ok) {
+                                    const repairUsageCall = `tool-repair-${toolRound}`;
+                                    writeStreamUsage(streamUsage.begin(repairUsageCall));
                                     const retryJson = JSON.parse(
                                         await readBoundedResponseText(retryRes, 256 * 1024)
                                     );
+                                    emitStreamUsage(repairUsageCall, retryJson);
                                     const rawCalls = retryJson?.choices?.[0]?.message?.tool_calls || [];
                                     const retryCalls = normalizeToolCalls(rawCalls, clientFileExecution);
                                     if (retryCalls.length > 0) {
@@ -28142,12 +28162,14 @@ function isRuntimeConfiguredModel(modelId = '') {
 }
 
 async function resolveVisibleAutoModel() {
-    // Fixed route policy; never spend Astra/Luna allowances via a hidden fallback.
+    // Smart without explicit thinking uses official DeepSeek, without spending a GPT allowance.
+    return 'deepseek-v4.1-flash';
+}
+async function resolveVisibleFastModel() { return resolveVisibleAutoModel(); }
+async function resolveVisibleThinkingModel() {
     if (!(await isPublicModelDisabled('gpt-6.1-sol')) && isRuntimeConfiguredModel('gpt-6.1-sol')) return 'gpt-6.1-sol';
     return 'deepseek-v4.1-flash';
 }
-async function resolveVisibleFastModel() { return 'deepseek-v4.1-flash'; }
-async function resolveVisibleThinkingModel() { return resolveVisibleAutoModel(); }
 async function resolveVisionFallbackModel() { return 'deepseek-v4.1-flash'; }
 async function resolveVisibleAutoMultimodalModel() { return resolveVisibleAutoModel(); }
 async function resolveAudioUnderstandingModel() { return resolveVisibleAutoModel(); }

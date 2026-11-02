@@ -2412,8 +2412,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.37';
-const RAI_BUILD_ID = '20261102-official-ds-share-import';
+const RAI_APP_VERSION = '0.13.38';
+const RAI_BUILD_ID = '20261102-smart-official-ds-max';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -13646,7 +13646,7 @@ function setResearchMasterModel(modelId, event) {
 function getRequestModelIdForCurrentMode() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (identity === 'fast') return 'fast-auto';
-  if (identity === 'think') return 'think-auto';
+  if (identity === 'think' && appState.thinkingMode) return 'think-auto';
   const selected = normalizeSelectedModelId(appState.selectedModel);
   return selected;
 }
@@ -13655,6 +13655,7 @@ function getRequestReasoningProfileForCurrentMode() {
   if (getEffectiveResearchMode() === 'fast') {
     return 'low';
   }
+  if (appState.thinkingMode && normalizeSelectedModelId(appState.selectedModel) === 'auto') return 'max';
   return normalizeReasoningProfile(appState.reasoningProfile);
 }
 
@@ -13692,7 +13693,7 @@ function getModeRequestConfig(mode = '') {
       mode: 'think',
       model: 'auto',
       thinkingMode: true,
-      reasoningProfile: 'auto',
+      reasoningProfile: 'max',
       researchMode: 'off'
     };
   }
@@ -14414,7 +14415,7 @@ function settingsToggleThinkingMode() {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode) appState.reasoningProfile = normalizeSelectedModelId(appState.selectedModel) === 'auto' ? 'max' : 'auto';
   updateToolbarUI();
   updateSettingsCapabilitiesUI();
 }
@@ -16541,7 +16542,7 @@ function toggleThinkingFromMenu(event) {
     return;
   }
   appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode) appState.reasoningProfile = normalizeSelectedModelId(appState.selectedModel) === 'auto' ? 'max' : 'auto';
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
 
@@ -24396,7 +24397,7 @@ function toggleThinking() {
   }
 
   appState.thinkingMode = !appState.thinkingMode;
-  if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  if (appState.thinkingMode) appState.reasoningProfile = normalizeSelectedModelId(appState.selectedModel) === 'auto' ? 'max' : 'auto';
   updateToolbarUI();
 
   const thinkingBtn = document.getElementById('thinkingBtn');

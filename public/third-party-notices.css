@@ -1,0 +1,55 @@
+.third-party-notices {
+  margin-top: 14px;
+  border-radius: 14px;
+  background: var(--settings-card-bg, #f2f3f5);
+  color: var(--text-primary, #18202b);
+  overflow: hidden;
+}
+.third-party-notices > summary {
+  padding: 14px 18px;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.third-party-content { padding: 0 18px 16px; }
+.third-party-description, .third-party-scope {
+  color: var(--text-secondary, #536174);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.third-party-search {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 7px 10px;
+  margin: 8px 0;
+  border: 1px solid var(--border-color, #bac1cb);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--settings-row-bg, #fff);
+  font: inherit;
+  font-size: 13px;
+}
+.third-party-status, .third-party-meta { font-size: 12px; color: var(--text-secondary, #536174); }
+.third-party-list { max-height: 420px; overflow: auto; overscroll-behavior: contain; }
+.third-party-project { border-top: 1px solid var(--border-color, #d8dde4); }
+.third-party-project > summary { cursor: pointer; padding: 10px 2px; overflow-wrap: anywhere; }
+.third-party-name { font-size: 13px; font-weight: 600; }
+.third-party-project > summary .third-party-meta { display: block; padding: 4px 0 0 17px; }
+.third-party-project-body { padding: 0 8px 14px; }
+.third-party-source, .third-party-full-link { color: var(--accent-color, #0866b8); font-size: 13px; }
+.third-party-license { margin-top: 10px; font-size: 12px; }
+.third-party-license > summary { cursor: pointer; overflow-wrap: anywhere; }
+.third-party-license pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, Consolas, monospace; user-select: text; }
+.third-party-notices summary:focus-visible, .third-party-notices a:focus-visible { outline: 2px solid var(--accent-color, #0866b8); outline-offset: -2px; }
+.third-party-standalone { margin: 0; padding: 20px; font-family: system-ui, sans-serif; background: #fff; }
+.third-party-standalone .third-party-notices { max-width: 940px; margin: 0 auto; }
+.third-party-standalone .third-party-list { max-height: none; }
+@media (prefers-color-scheme: dark) {
+  .third-party-standalone { background: #16191e; --settings-card-bg: #20252c; --settings-row-bg: #181d23; --text-primary: #edf2fa; --text-secondary: #abb7c7; --border-color: #3c4653; --accent-color: #87c6ff; }
+}
+@media (max-width: 480px) {
+  .third-party-content { padding: 0 14px 14px; }
+  .third-party-notices > summary { padding: 13px 14px; }
+  .third-party-standalone { padding: 8px; }
+}
