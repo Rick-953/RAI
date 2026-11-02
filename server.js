@@ -15563,7 +15563,7 @@ async function memoryManagementPage(userId, offset = 0) {
     return { enabled, memories, total, hasMore, nextOffset: hasMore ? offset + memories.length : null };
 }
 
-app.get('/api/user/memories', authenticateToken, async (req, res) => {
+app.get('/api/user/memories', apiLimiter, authenticateToken, async (req, res) => {
     try {
         const offset = Number(req.query.offset || 0);
         if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ success: false, error: 'invalid_memory_offset' });
@@ -15588,10 +15588,10 @@ async function handleManualMemorySave(req, res) {
         res.status(500).json({ success: false, error: '记忆和备份均未提交，请重试' });
     }
 }
-app.post('/api/user/memories', authenticateToken, handleManualMemorySave);
-app.post('/api/user/memories/batch', authenticateToken, handleManualMemorySave);
+app.post('/api/user/memories', apiLimiter, authenticateToken, handleManualMemorySave);
+app.post('/api/user/memories/batch', apiLimiter, authenticateToken, handleManualMemorySave);
 
-app.post('/api/user/memories/batch-delete', authenticateToken, async (req, res) => {
+app.post('/api/user/memories/batch-delete', apiLimiter, authenticateToken, async (req, res) => {
     const ids = req.body?.memory_ids;
     if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_MEMORY_BATCH_SIZE || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
         return res.status(400).json({ success: false, error: '请选择 1 至 500 个有效记忆编号；本批未删除。' });
@@ -15605,7 +15605,7 @@ app.post('/api/user/memories/batch-delete', authenticateToken, async (req, res) 
     }
 });
 
-app.get('/api/user/memories/versions', authenticateToken, async (req, res) => {
+app.get('/api/user/memories/versions', apiLimiter, authenticateToken, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const offset = Number(req.query.offset || 0);
@@ -15614,7 +15614,7 @@ app.get('/api/user/memories/versions', authenticateToken, async (req, res) => {
         res.json({ success: true, versions });
     } catch (error) { res.status(500).json({ success: false, error: '读取记忆备份失败' }); }
 });
-app.get('/api/user/memories/versions/:versionId', authenticateToken, async (req, res) => {
+app.get('/api/user/memories/versions/:versionId', apiLimiter, authenticateToken, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const versionId = Number(req.params.versionId);
@@ -15625,7 +15625,7 @@ app.get('/api/user/memories/versions/:versionId', authenticateToken, async (req,
     } catch (error) { res.status(500).json({ success: false, error: '读取记忆备份失败' }); }
 });
 
-app.post('/api/user/memories/clear', authenticateToken, async (req, res) => {
+app.post('/api/user/memories/clear', apiLimiter, authenticateToken, async (req, res) => {
     try {
         const result = await memoryVersionStore.clear(req.user.userId);
         res.json({ success: true, ...result, memories: [] });
@@ -15635,7 +15635,7 @@ app.post('/api/user/memories/clear', authenticateToken, async (req, res) => {
     }
 });
 
-app.patch('/api/user/memories/:id', authenticateToken, async (req, res) => {
+app.patch('/api/user/memories/:id', apiLimiter, authenticateToken, async (req, res) => {
     try {
         const memoryId = Number(req.params.id);
         if (!Number.isInteger(memoryId) || memoryId <= 0) {
@@ -15656,7 +15656,7 @@ app.patch('/api/user/memories/:id', authenticateToken, async (req, res) => {
     }
 });
 
-app.delete('/api/user/memories/:id', authenticateToken, async (req, res) => {
+app.delete('/api/user/memories/:id', apiLimiter, authenticateToken, async (req, res) => {
     try {
         const memoryId = Number(req.params.id);
         if (!Number.isInteger(memoryId) || memoryId <= 0) {
