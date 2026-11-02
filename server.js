@@ -20977,6 +20977,7 @@ async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
     let parsedBody = null;
     try { parsedBody = JSON.parse(options.body || '{}'); } catch (_) { /* non-model request */ }
+    if (!Array.isArray(parsedBody?.messages)) return fetch(url, { ...options, redirect: 'error' });
     const modelId = parsedBody?.model || '';
     const protectedModel = Object.values(CHAT_MODEL_LIMITS).some(limits => Object.hasOwn(limits, modelId));
     const gptProviderRequest = url === API_PROVIDERS.rai_gpt_gateway.baseURL;
