@@ -329,8 +329,6 @@ const MEMORY_KEY_MAX_LENGTH = 96;
 const TITLE_FALLBACK_MODEL_IDS = ['deepseek-v4.1-flash'];
 const TITLE_FALLBACK_MAX_TOKENS = 80;
 const TITLE_FALLBACK_TIMEOUT_MS = 10000;
-const IMAGE_WAITING_LINE_MODEL_ID = 'deepseek-v4.1-flash';
-const IMAGE_WAITING_LINE_TIMEOUT_MS = 5000;
 const SELECTION_EXPLANATION_MODEL_ID = 'deepseek-v4.1-flash';
 const SELECTION_EXPLANATION_MODEL_IDS = Object.freeze([...CHAT_MODEL_IDS]);
 const SELECTION_EXPLANATION_FIRST_VISIBLE_TIMEOUT_MS = 4000;
@@ -2057,6 +2055,7 @@ async function generateImages(rawArgs = {}, context = {}) {
     try {
         const result = await requestAndPersistGeneratedImages({ model: args.model,
             requestBody: buildImageGenerationRequest(args), args, context: { ...context, requestId } });
+        throwIfExternalRequestAborted(externalSignal);
         return { ...result, requestedModel: args.model, actualModel: args.model,
             pointsDeducted: imagePoints.pointsDeducted, remainingPoints: imagePoints.remainingPoints };
     } catch (error) {
@@ -5407,65 +5406,6 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
     }
 
     return result;
-}
-
-function sanitizeImageWaitingLine(text = '') {
-    let line = String(text || '')
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-        .replace(/https?:\/\/\S+/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    line = line.replace(/^["“'「『]+|["”'」』。.!！]+$/g, '').trim();
-    if (!line) return '';
-    const firstSentence = line.match(/^(.{6,90}?[。.!！?？])/);
-    if (firstSentence) line = firstSentence[1].trim();
-    if (line.length > 64) line = `${line.slice(0, 64).trim()}。`;
-    if (!/[。.!！?？]$/.test(line)) line += '。';
-    return line;
-}
-
-async function buildImageWaitingLineFromUserPrompt(userPrompt = '') {
-    const prompt = String(userPrompt || '').trim().slice(0, 600);
-    if (!prompt || !isRuntimeConfiguredModel(IMAGE_WAITING_LINE_MODEL_ID)) {
-        return '正在生成图片中，我会先把画面细节稳稳铺好。';
-    }
-
-    try {
-        const result = await callResearchModelNonStream({
-            modelId: IMAGE_WAITING_LINE_MODEL_ID,
-            thinkingMode: false,
-            reasoningProfile: 'low',
-            maxTokens: 512,
-            timeoutMs: IMAGE_WAITING_LINE_TIMEOUT_MS,
-            messages: [
-                {
-                    role: 'system',
-                    content: [
-                        '你是 RAI 的图片生成等待文案助手。',
-                        '只根据用户这一轮图片请求，写一句安定、克制、贴近画面主题的状态文案。',
-                        '要求：使用用户同语种；18 到 36 个中文字符或 8 到 18 个英文词；不要夸张、不要卖萌、不要表情、不要 Markdown、不要引号。',
-                        '不要提模型、API、token、失败、等待时间；不要承诺一定完美。只输出这一句话。'
-                    ].join('\n')
-                },
-                {
-                    role: 'user',
-                    content: `用户这一轮图片请求：${prompt}`
-                }
-            ]
-        });
-        return sanitizeImageWaitingLine(result?.content) || '正在生成图片中，我会先把画面细节稳稳铺好。';
-    } catch (error) {
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'image_waiting_line_failed',
-            message: error.message,
-            context: {
-                modelId: IMAGE_WAITING_LINE_MODEL_ID
-            }
-        });
-        return '正在生成图片中，我会先把画面细节稳稳铺好。';
-    }
 }
 
 /**
@@ -24896,7 +24836,7 @@ if (clientFileExecution && systemPrompt) {
                             let result;
                             try {
                                 if (isImageTool) {
-                                    const resultPromise = executor(args, {
+                                    result = await executor(args, {
                                         userId: req.user.userId,
                                         sessionId,
                                         requestId,
@@ -24904,32 +24844,6 @@ if (clientFileExecution && systemPrompt) {
                                         requestedImageModel: gptImageModelSelected ? model : 'auto',
                                         signal: controller.signal
                                     });
-                                    if (gptImageModelSelected) {
-                                        result = await resultPromise;
-                                    } else {
-                                        const waitingLinePromise = buildImageWaitingLineFromUserPrompt(userContent);
-                                        const firstImageEvent = await Promise.race([
-                                            waitingLinePromise.then((line) => ({ kind: 'line', line })).catch(() => ({ kind: 'line', line: '' })),
-                                            resultPromise.then((value) => ({ kind: 'result', value }), (error) => ({ kind: 'error', error })),
-                                            new Promise((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 1800))
-                                        ]);
-                                        if (firstImageEvent.kind === 'line' && firstImageEvent.line) {
-                                            res.write(`data: ${JSON.stringify({
-                                                type: 'tool_status',
-                                                tool: 'generate_image',
-                                                status: 'running',
-                                                message: firstImageEvent.line,
-                                                generatedBy: IMAGE_WAITING_LINE_MODEL_ID
-                                            })}\n\n`);
-                                        } else if (firstImageEvent.kind === 'result') {
-                                            result = firstImageEvent.value;
-                                        } else if (firstImageEvent.kind === 'error') {
-                                            throw firstImageEvent.error;
-                                        }
-                                        if (!result) {
-                                            result = await resultPromise;
-                                        }
-                                    }
                                 } else {
                                     if (isSearchTool) {
                                         result = await executor(args, searchDepth);
@@ -25148,7 +25062,7 @@ if (clientFileExecution && systemPrompt) {
                                     tool: 'generate_image',
                                     status: result?.success === true ? 'complete' : 'rejected',
                                     provider: result?.provider || '',
-                                    requestedModel: result?.requestedModel || selectedModel || '',
+                                    requestedModel: result?.requestedModel || result?.model || model || '',
                                     model: result?.actualModel || result?.model || '',
                                     fallbackUsed: result?.fallbackUsed === true,
                                     routingReason: result?.routingReason || '',

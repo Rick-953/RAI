@@ -31,7 +31,7 @@ async function main() {
     const key = path.join(temp, 'key');
     fs.writeFileSync(key, secret(), { mode: 0o600 });
     const png = await sharp({ create: { width: 1254, height: 1254, channels: 3, background: '#4488cc' } }).png().toBuffer();
-    let imageCalls = 0, mode = 'ok', requestedModel = 'gpt-image-2.5', child, db, logs = '';
+    let imageCalls = 0, mode = 'ok', requestedModel = 'gpt-image-2.5', child, db, ownedUserId = 0, logs = '';
     const toolResults = [], createdFiles = [];
     const provider = http.createServer(async (req, res) => {
         let text = ''; for await (const chunk of req) text += chunk;
@@ -41,6 +41,7 @@ async function main() {
             assert.ok(Object.hasOwn(IMAGE_MODEL_COSTS, body.model));
             assert.ok(body.size.split('x').every(edge => Number(edge) <= 1024));
             if (mode === 'failure') { res.writeHead(502); res.end('{}'); return; }
+            if (mode === 'cancel') return; // Hold the real upstream request until the client abort propagates.
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })); return;
         }
@@ -85,6 +86,7 @@ async function main() {
         const password = secret() + 'Z9!', email = 'image-' + secret().slice(0, 10) + '@local.test';
         const user = await run(db, `INSERT INTO users (email,password_hash,username,email_verified,email_verified_at,points,membership,session_version,password_policy_version)
             VALUES (?,?,'Image Runtime',1,CURRENT_TIMESTAMP,1000,'max',1,1)`, [email, await bcrypt.hash(password, 6)]);
+        ownedUserId = user.lastID;
         const login = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
         const identity = await login.json(); assert.equal(login.status, 200); assert.ok(identity.token);
         const headers = { Authorization: 'Bearer ' + identity.token, 'Content-Type': 'application/json' };
@@ -108,8 +110,10 @@ async function main() {
         }
         for (const native of [false, true]) {
             requestedModel = 'gpt-image-2.5-flare'; await wallet(199); const before = imageCalls;
+            const previousResults = toolResults.length;
             const response = await chat('gpt-6.1-sol', native);
             assert.equal(imageCalls, before); assert.equal(await balance(), 199);
+            assert.ok(toolResults.length > previousResults, 'AI did not receive image tool result: ' + response.raw + '\n' + logs.slice(-3000));
             const failure = toolResults.at(-1); assert.equal(failure.code, 'insufficient_points');
             assert.equal(failure.required_points, 200); assert.equal(failure.remaining_points, 199);
             assert.match(failure.display_instruction, /insufficient points/); assert.match(response.raw, /点数不足/);
@@ -126,12 +130,26 @@ async function main() {
         assert.doesNotMatch(directDenied.raw, /稍后重试/);
         mode = 'failure'; await wallet(300); const callsBeforeFailure = imageCalls; await chat('gpt-image-2.5-sunburst');
         assert.equal(imageCalls, callsBeforeFailure + 1); assert.equal(await balance(), 300, 'HTTP failure refunds the actual wallet');
-        const rows = await new Promise((resolve, reject) => db.all('SELECT filename FROM generated_images WHERE user_id=?', [user.lastID], (error, result) => error ? reject(error) : resolve(result)));
-        createdFiles.push(...rows.map(row => path.join(ROOT, 'uploads/generated-images', row.filename)));
-        console.log('image HTTP runtime PASS: Web/native skill catalogs, three prices, one charge, 1K bytes, exact name, insufficient-points AI continuation, failed-provider refund, no fallback');
+        mode = 'cancel'; const callsBeforeCancel = imageCalls; const abort = new AbortController();
+        const cancelling = await fetch(base + '/api/chat/stream', { method: 'POST', headers, signal: abort.signal,
+            body: JSON.stringify({ model: 'gpt-image-2.5', internetMode: false, memoryMode: 'off', messages: [{ role: 'user', content: 'Draw a blue circle image' }] }) });
+        const bodyFinished = cancelling.text().catch(error => { assert.equal(error.name, 'AbortError'); });
+        for (let tick = 0; tick < 200 && imageCalls === callsBeforeCancel; tick++) await delay(25);
+        assert.equal(imageCalls, callsBeforeCancel + 1); assert.equal(await balance(), 200);
+        abort.abort(); await bodyFinished;
+        for (let tick = 0; tick < 200 && await balance() !== 300; tick++) await delay(25);
+        assert.equal(await balance(), 300, 'client cancellation refunds the actual wallet');
+        assert.equal(imageCalls, callsBeforeCancel + 1, 'cancel cannot retry');
+        console.log('image HTTP runtime PASS: Web/native skill catalogs, three prices, one charge, 1K bytes, exact name, insufficient-points AI continuation, failure/cancellation refunds, no fallback');
     } finally {
         if (child && child.exitCode === null) { child.kill('SIGTERM'); for (let tick = 0; tick < 100 && child.exitCode === null; tick++) await delay(50); if (child.exitCode === null) child.kill('SIGKILL'); }
-        if (db) await new Promise(resolve => db.close(resolve));
+        if (db) {
+            if (ownedUserId) {
+                const rows = await new Promise((resolve, reject) => db.all('SELECT filename FROM generated_images WHERE user_id=?', [ownedUserId], (error, result) => error ? reject(error) : resolve(result)));
+                createdFiles.push(...rows.map(row => path.join(ROOT, 'uploads/generated-images', row.filename)));
+            }
+            await new Promise(resolve => db.close(resolve));
+        }
         await close(provider);
         for (const file of createdFiles) if (path.dirname(file) === path.join(ROOT, 'uploads/generated-images')) fs.rmSync(file, { force: true });
         fs.rmSync(temp, { recursive: true, force: true });
