@@ -13,7 +13,7 @@ const ds = { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', enabled: tr
 const luna = { id: 'gpt-6-luna', name: 'GPT 6 Luna', enabled: true, builtin: true, provider: 'rai_luna_gateway',
   supportsThinking: true, canDisableThinking: true, thinkingProfiles: ['auto','low','medium','high','xhigh','max'], vision: true };
 let models = [sol, ds, luna];
-let settings = { smart_default_model: sol.id, smart_reasoning_profile: 'low', fast_default_model: ds.id,
+let settings = { smart_default_model: luna.id, smart_reasoning_profile: 'none', fast_default_model: luna.id,
   fast_reasoning_profile: 'none', thinking_default_model: sol.id, thinking_reasoning_profile: 'auto',
   selection_explanation_model: ds.id, concurrent_requests_free: 2, concurrent_requests_pro_max: 5, upload_max_file_mb: 50 };
 const server = http.createServer(async (request, response) => {
@@ -25,8 +25,8 @@ const server = http.createServer(async (request, response) => {
     requests.push(record);
     const reply = (status, value) => { response.writeHead(status, {'Content-Type':'application/json'}); response.end(JSON.stringify(value)); };
     if (url.pathname === '/api/model-availability') return reply(200, { models, disabledModels:models.filter(model=>!model.enabled).map(model=>model.id),
-      smartDefaults:{model:sol.id,reasoningProfile:settings.smart_reasoning_profile,thinkingMode:true},
-      fastDefaults:{model:ds.id,reasoningProfile:'none',thinkingMode:false} });
+      smartDefaults:{model:settings.smart_default_model,reasoningProfile:settings.smart_reasoning_profile,thinkingMode:settings.smart_reasoning_profile!=='none'},
+      fastDefaults:{model:settings.fast_default_model,reasoningProfile:settings.fast_reasoning_profile,thinkingMode:false} });
     if (url.pathname.startsWith('/api/admin/')) {
       assert.equal(record.admin, 'isolated-admin-fixture', 'admin requests retain separate admin token');
       assert.equal(record.user, undefined, 'user bearer must not replace admin auth');
@@ -72,6 +72,22 @@ const tableSamples = [
    await page.waitForFunction(()=>document.querySelector('#allModelsSection')?.classList.contains('expanded'));
   };
   await page.evaluate(async()=>{showApp();await fetchModelAvailability();updateToolbarUI();});
+  await page.evaluate(()=>openSettings());
+  assert.equal(await page.locator('#settingsDeveloperNav').isVisible(), false, 'ordinary settings hide the developer/admin entry');
+  const developerShots=process.env.RAI_UI_SCREENSHOTS;
+  if(developerShots){fs.mkdirSync(developerShots,{recursive:true});await page.screenshot({path:path.join(developerShots,'settings-default.png')});}
+  await page.keyboard.press('Control+Shift+A');
+  assert.equal(await page.locator('#adminLoginModal.active,#adminPanel.active').count(), 0, 'global shortcut cannot expose administration');
+  assert.equal(await page.evaluate(()=>buildSettingsSearchEntries().some(entry=>entry.section==='developer')), false, 'settings search cannot reveal hidden administration');
+  await page.evaluate(()=>switchSettingsSection('about'));
+  for(let i=0;i<7;i++)await page.locator('#settingsDeveloperVersion').click();
+  assert.equal(await page.locator('#settingsDeveloperNav').isVisible(), true);
+  assert.equal(await page.evaluate(()=>appState.activeSettingsSection), 'developer');
+  if(developerShots)await page.screenshot({path:path.join(developerShots,'developer-options.png')});
+  await page.locator('#settingsAdminEntry').click();
+  assert.equal(await page.locator('#adminLoginModal').isVisible(), true, 'developer entry still requires separate administrator authentication');
+  await page.evaluate(()=>{closeAdminLogin();closeSettings({skipHistory:true});});
+  await page.locator('#settingsModal').waitFor({state:'hidden'});
   const rendered=await page.evaluate(samples=>{
    const host=document.createElement('div');host.id='tableAudit';host.className='message-text';
    host.innerHTML=renderMarkdownWithMath(samples.join('\n\n'));document.getElementById('messagesList').append(host);
@@ -84,14 +100,14 @@ const tableSamples = [
   },tableSamples);
   assert.equal(rendered.tables,3);assert.deepEqual(rendered.columns,[4,3,3]);assert.deepEqual(rendered.rows,[3,3,3]);assert.equal(rendered.codeTables,0);assert.ok(rendered.codeText.includes('| ---|---|'));assert.deepEqual(rendered.escapedCells,['a|b','x|y']);
   assert.equal(await page.locator('#modelDropdownMenu [data-mode="fast"],#modelDropdownMenu [data-mode="think"]').count(),0);
-  assert.deepEqual(await page.evaluate(()=>({model:appState.selectedModel,profile:getRequestReasoningProfileForCurrentMode()})),
-    {model:'auto',profile:'low'},'Smart retains its low request profile instead of forcing max');
+  assert.deepEqual(await page.evaluate(()=>({model:appState.selectedModel,thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode(),actual:modelVisibilityState.fastDefaults.model})),
+    {model:'auto',thinking:false,profile:'none',actual:luna.id},'New users default to Luna with thinking disabled');
   await page.locator('#moreBtn').click();await page.locator('.reasoning-profile-header').click();
   assert.deepEqual(await page.evaluate(()=>({thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
-    {thinking:false,profile:'none'},'Smart can switch to the configured fast output model');
+    {thinking:true,profile:'auto'},'Enabling Smart thinking uses Adaptive');
   await page.locator('.reasoning-profile-header').click();
   assert.deepEqual(await page.evaluate(()=>({thinking:appState.thinkingMode,profile:getRequestReasoningProfileForCurrentMode()})),
-    {thinking:true,profile:'auto'},'Enabling Smart thinking uses Adaptive');
+    {thinking:false,profile:'none'},'Disabling Smart thinking returns to Luna without reasoning');
   assert.deepEqual(await page.evaluate(()=>{
     localStorage.setItem(modelPreferenceStorageKey(),JSON.stringify({model:'auto',thinkingMode:true,reasoningProfile:'low'}));
     appState.thinkingMode=false;restoreModelPreference();

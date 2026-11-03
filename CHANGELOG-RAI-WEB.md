@@ -1,3 +1,11 @@
+## 0.13.40 - official Luna allowance and private administration (2026-11-03)
+
+- Default Smart and thinking-off requests to GPT 6 Luna with effort `none`. Preserve saved per-user model and thinking preferences.
+- Prefer the official OpenAI Responses API for GPT 6 Luna. Keep search on RAI's existing function and provider; never enable OpenAI hosted search. Preserve encrypted reasoning between tool rounds in request memory only.
+- Share a daily 250,000-token limit across input and output, including reasoning. Keep a 10,000-token safety margin, count the exact input before admission and atomically reserve input plus maximum output. Fall back to the existing dedicated Luna gateway when the full request cannot fit or the official provider fails. Retain uncertain reservations across restarts; reset at UTC 00:00 and use the relay around the reset window.
+- Persist numeric provider usage for administrator daily totals and averages over complete measured days. Historical token totals remain unknown; account-wide traffic outside RAI requires a separate external-usage reserve.
+- Move administration into Developer options, hidden by default and absent from ordinary settings search. Tap the About version seven times to reveal it; existing administrator authentication is still required. Scope the old shortcut to that settings section.
+
 ## 0.13.39 - direct streaming routes and configurable models (2026-11-02)
 
 - Prefer Mirrorium for GPT with a 6-second useful-first-delta deadline. Count reasoning when thinking is enabled, cancel the previous connection before fallback, and keep fixed-schema stage diagnostics without chat content. DeepSeek remains on its official route; ordinary questions no longer wait for speculative search.

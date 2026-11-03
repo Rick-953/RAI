@@ -11429,6 +11429,20 @@ body > svg[id^="mermaid-"][aria-roledescription="error"] {
   }
 }
 
+/* Author display rules must not override the hidden developer controls. */
+#settingsDeveloperNav[hidden],
+#settingsPanel-developer[hidden] {
+  display: none !important;
+}
+.admin-token-usage-card {
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+#adminTokenUsage p {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+
 /* ==================== 管理员与会员面板样式 ==================== */
 /* ==================== 管理员模态框通用样式 ==================== */
 .admin-modal-overlay,

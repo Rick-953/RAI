@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.39-20261102-stream-models-attachments';
+const RAI_SW_VERSION = '0.13.40-20261103-luna-official-quota';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,22 +13,22 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261102-stream-models-attachments',
-  'web-skills.js?v=20261102-stream-models-attachments', 'web-skills.css?v=20261102-stream-models-attachments',
-  'third-party-notices.js?v=20261102-stream-models-attachments', 'third-party-notices.css?v=20261102-stream-models-attachments',
+  'locale.js?v=20261103-luna-official-quota',
+  'web-skills.js?v=20261103-luna-official-quota', 'web-skills.css?v=20261103-luna-official-quota',
+  'third-party-notices.js?v=20261103-luna-official-quota', 'third-party-notices.css?v=20261103-luna-official-quota',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261102-stream-models-attachments',
-  'rai-system-prompt.js?v=20261102-stream-models-attachments', 'event-bindings.js?v=20261102-stream-models-attachments',
-  'lib/jsQR.js?v=20261102-stream-models-attachments', 'qr-scanner.js?v=20261102-stream-models-attachments',
-  'secure-sharing.js?v=20261102-stream-models-attachments', 'secure-sharing.css?v=20261102-stream-models-attachments',
-  'diagnostics.js?v=20261102-stream-models-attachments',
-  'app.js?v=20261102-stream-models-attachments', 'styles.css?v=20261102-stream-models-attachments',
-  'markdown-tables.js?v=20261102-stream-models-attachments',
-  'cx-remote.js?v=20261102-stream-models-attachments', 'local-agent.css?v=20261102-stream-models-attachments',
-  'crf-ui.js?v=20261102-stream-models-attachments',
-  'selection-explainer.js?v=20261102-stream-models-attachments', 'selection-explainer.css?v=20261102-stream-models-attachments',
-  'site.webmanifest?v=20261102-stream-models-attachments', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261102-stream-models-attachments',
+  '', 'index.html', 'runtime-brand.js?v=20261103-luna-official-quota',
+  'rai-system-prompt.js?v=20261103-luna-official-quota', 'event-bindings.js?v=20261103-luna-official-quota',
+  'lib/jsQR.js?v=20261103-luna-official-quota', 'qr-scanner.js?v=20261103-luna-official-quota',
+  'secure-sharing.js?v=20261103-luna-official-quota', 'secure-sharing.css?v=20261103-luna-official-quota',
+  'diagnostics.js?v=20261103-luna-official-quota',
+  'app.js?v=20261103-luna-official-quota', 'styles.css?v=20261103-luna-official-quota',
+  'markdown-tables.js?v=20261103-luna-official-quota',
+  'cx-remote.js?v=20261103-luna-official-quota', 'local-agent.css?v=20261103-luna-official-quota',
+  'crf-ui.js?v=20261103-luna-official-quota',
+  'selection-explainer.js?v=20261103-luna-official-quota', 'selection-explainer.css?v=20261103-luna-official-quota',
+  'site.webmanifest?v=20261103-luna-official-quota', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261103-luna-official-quota',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -38,11 +38,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261102-stream-models-attachments', 'lib/purify.min.js?v=20261102-stream-models-attachments',
-  'lib/katex/katex.min.css?v=20261102-stream-models-attachments', 'lib/katex/katex.min.js?v=20261102-stream-models-attachments',
-  'lib/katex/contrib/auto-render.min.js?v=20261102-stream-models-attachments',
-  'lib/highlight/styles/github-dark.min.css?v=20261102-stream-models-attachments',
-  'lib/highlight/highlight.min.js?v=20261102-stream-models-attachments'
+  'lib/marked.min.js?v=20261103-luna-official-quota', 'lib/purify.min.js?v=20261103-luna-official-quota',
+  'lib/katex/katex.min.css?v=20261103-luna-official-quota', 'lib/katex/katex.min.js?v=20261103-luna-official-quota',
+  'lib/katex/contrib/auto-render.min.js?v=20261103-luna-official-quota',
+  'lib/highlight/styles/github-dark.min.css?v=20261103-luna-official-quota',
+  'lib/highlight/highlight.min.js?v=20261103-luna-official-quota'
 ].map(appPath);
 
 function isAvatarRequest(url) {
