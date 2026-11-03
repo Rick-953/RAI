@@ -1,6 +1,6 @@
 ---
 name: image_generation
-description: Generate named GPT Image 2.5 images at up to 1K for 100-300 points.
+description: GPT Image 2.5: named images, 1K, 100-300 points.
 ---
 
 # Image generation
