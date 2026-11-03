@@ -47,6 +47,10 @@ async function main() {
   const normal = 'data: '+JSON.stringify({type:'model_info',model:'deepseek-flash'})+'\n\ndata: '+JSON.stringify({type:'reasoning',content:canary})+'\n\ndata: '+JSON.stringify({type:'content',content:'你好'})+'\n\ndata: '+JSON.stringify({type:'usage',usage:{prompt_tokens:20,completion_tokens:2,prompt_cache_hit_tokens:15}})+'\n\ndata: {"type":"done"}\n\n';
   const streamResponse = response(normal); assert.equal(await drain(h.diagnostics.reader(streamResponse)), normal);
   let summary = h.diagnostics.report().events.at(-1); assert.equal(summary.category, 'stream'); assert.equal(summary.action, 'completed'); assert.equal(summary.model, 'deepseek-flash'); assert.equal(summary.cachedTokens, 15); assert.equal(summary.contentChars, 2); assert.equal(summary.reasoningChars, canary.length);
+  for (const model of ['gpt-image-2.5', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst']) {
+    await drain(h.diagnostics.reader(response('data: ' + JSON.stringify({type: 'model_info', model}) + '\n\ndata: {"type":"content","content":"ok"}\n\ndata: {"type":"done"}\n\n')));
+    assert.equal(h.diagnostics.report().events.at(-1).model, model, 'retain the exact image model in safe diagnostics');
+  }
   for (const usage of [{prompt_tokens:300,completion_tokens:12},{}]) {
     const snapshots=[{type:'usage',usage_scope:'request',usage:{prompt_tokens:100,completion_tokens:4,prompt_cache_hit_tokens:80}},{type:'usage',usage_scope:'request',usage},{type:'done'}];
     await drain(h.diagnostics.reader(response(snapshots.map(e=>'data: '+JSON.stringify(e)+'\n\n').join(''))));
