@@ -7,6 +7,8 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
 const { createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
+const { createLunaOfficialFetch } = require('./lib/luna-official-provider');
+const { createProviderTokenStore, meterChatResponse } = require('./lib/provider-token-usage');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
 const { fetchWithLatency } = require('./lib/chat-latency');
@@ -571,7 +573,14 @@ const LUNA_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.
 const LUNA_GATEWAY_API_KEY_FILE = cleanEnvValue(process.env.RAI_LUNA_GATEWAY_API_KEY_FILE);
 const LUNA_GATEWAY_API_KEY = LUNA_GATEWAY_API_KEY_FILE ? readGatewayApiKeyFile(LUNA_GATEWAY_API_KEY_FILE) : '';
 const LUNA_GATEWAY_CHAT_URL = joinGatewayEndpoint(LUNA_GATEWAY_BASE_URL, 'chat/completions');
-const LUNA_GATEWAY_CONFIGURED = !!(LUNA_GATEWAY_API_KEY_FILE && LUNA_GATEWAY_API_KEY);
+const OPENAI_LUNA_API_KEY_FILE = cleanEnvValue(process.env.RAI_OPENAI_LUNA_API_KEY_FILE);
+const OPENAI_LUNA_API_KEY = OPENAI_LUNA_API_KEY_FILE ? readGatewayApiKeyFile(OPENAI_LUNA_API_KEY_FILE) : '';
+const OPENAI_LUNA_BASE_URL = !IS_PRODUCTION && process.env.NODE_ENV === 'test' && process.env.RAI_TEST_OPENAI_BASE_URL
+    ? normalizeGatewayBaseUrl(process.env.RAI_TEST_OPENAI_BASE_URL) : 'https://api.openai.com/v1';
+const OPENAI_LUNA_DAILY_TOKEN_LIMIT = parseBoundedInteger(process.env.RAI_OPENAI_LUNA_DAILY_TOKEN_LIMIT, 250000, 0, 250000);
+const OPENAI_LUNA_SAFETY_MARGIN = parseBoundedInteger(process.env.RAI_OPENAI_LUNA_SAFETY_MARGIN, 10000, 10000, 250000);
+const OPENAI_LUNA_EXTERNAL_TOKEN_RESERVE = parseBoundedInteger(process.env.RAI_OPENAI_LUNA_EXTERNAL_TOKEN_RESERVE, 0, 0, 250000);
+const LUNA_GATEWAY_CONFIGURED = !!(LUNA_GATEWAY_API_KEY || OPENAI_LUNA_API_KEY);
 const GPT_GATEWAY_CONFIGURED = !!(GPT_GATEWAY_BASE_URL && GPT_GATEWAY_API_KEY);
 if (GPT_GATEWAY_BASE_URL && !GPT_GATEWAY_API_KEY_FILE) {
     console.warn(' GPT 网关已配置 URL，但未配置 RAI_GPT_GATEWAY_API_KEY_FILE；相关模型将 fail closed');
@@ -8858,7 +8867,7 @@ const API_PROVIDERS = {
         models: [...GPT_GATEWAY_CHAT_MODELS],
         optional: true
     },
-    rai_luna_gateway: { apiKey: LUNA_GATEWAY_API_KEY, envKey: 'RAI_LUNA_GATEWAY_API_KEY_FILE', baseURL: LUNA_GATEWAY_CHAT_URL, models: ['gpt-6-luna'], optional: true },
+    rai_luna_gateway: { apiKey: LUNA_GATEWAY_API_KEY || (OPENAI_LUNA_API_KEY ? 'official-configured' : ''), envKey: 'RAI_LUNA_GATEWAY_API_KEY_FILE / RAI_OPENAI_LUNA_API_KEY_FILE', baseURL: LUNA_GATEWAY_CHAT_URL, models: ['gpt-6-luna'], optional: true },
     rai_fast_gateway: {
         apiKey: FAST_GATEWAY_API_KEY,
         envKey: 'RAI_FAST_GATEWAY_API_KEY_FILE',
@@ -11092,9 +11101,9 @@ const ADMIN_RUNTIME_LIMIT_DEFAULTS = Object.freeze({
     pwa_reward_min_account_age_minutes: parseBoundedInteger(process.env.RAI_PWA_REWARD_MIN_ACCOUNT_AGE_MINUTES, 30, 0, 10080),
     invite_reward_immediate_enabled: parseBooleanEnv(process.env.RAI_INVITE_REWARD_IMMEDIATE_ENABLED, false) ? 1 : 0,
     // 模型路由设置：管理员可配置智能/快速/思考首选模型与视觉备用路由模型
-    smart_default_model: 'gpt-6.1-sol',
-    smart_reasoning_profile: 'low',
-    fast_default_model: 'deepseek-v4.1-flash',
+    smart_default_model: 'gpt-6-luna',
+    smart_reasoning_profile: 'none',
+    fast_default_model: 'gpt-6-luna',
     fast_reasoning_profile: 'none',
     thinking_default_model: 'gpt-6.1-sol',
     thinking_reasoning_profile: 'auto',
@@ -20922,6 +20931,8 @@ const cxRemoteControl = installCxRemoteRoutes({
 });
 const chatModelQuotaContext = new AsyncLocalStorage();
 const chatModelQuotaService = createChatModelQuotaService({ withTransaction: withMainDbTransaction });
+const providerTokenStore = createProviderTokenStore({ withTransaction: withMainDbTransaction,
+    dailyLimit: OPENAI_LUNA_DAILY_TOKEN_LIMIT, safetyMargin: OPENAI_LUNA_SAFETY_MARGIN, externalReserve: OPENAI_LUNA_EXTERNAL_TOKEN_RESERVE });
 function chatLatencyProvider(url, modelId = '') {
     if (url === GPT_PRIMARY_CHAT_URL) return 'gpt_mirrorium';
     if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return 'deepseek_official';
@@ -20972,6 +20983,17 @@ const fetchGptProvider = createGptPrimaryFetch({
     fallbackUrl: API_PROVIDERS.rai_gpt_gateway.baseURL, fallbackFetch: fetchGptFastProvider,
     models: API_PROVIDERS.rai_gpt_gateway.models, firstTokenTimeoutMs: GPT_PRIMARY_FIRST_TOKEN_TIMEOUT_MS,
     fetchImpl: fetchChatProviderWithLatency
+});
+const fetchLunaProvider = createLunaOfficialFetch({
+    officialKey: OPENAI_LUNA_API_KEY, officialBase: OPENAI_LUNA_BASE_URL,
+    fallbackUrl: LUNA_GATEWAY_CHAT_URL, fallbackKey: LUNA_GATEWAY_API_KEY,
+    fallbackFetch: fetchChatProviderWithLatency, store: providerTokenStore,
+    metadata: () => {
+        const turn = chatModelQuotaContext.getStore();
+        if (turn) turn.lunaReasoningItems ||= new Map();
+        return { requestId: turn?.id, userId: turn?.userId, reasoningItems: turn?.lunaReasoningItems };
+    },
+    onMeterError: () => console.error(' 官方 Luna 用量结算失败，保留预留额度')
 });
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
@@ -21031,10 +21053,19 @@ async function fetchModelProvider(url, options = {}) {
         requestChatStreamUsage(outgoing);
         options = { ...options, body: JSON.stringify(outgoing) };
     }
-    const providerFetch = lunaProviderRequest ? fetchChatProviderWithLatency : gptProviderRequest ? fetchGptProvider : fetchDeepSeekProvider;
+    const providerFetch = lunaProviderRequest ? fetchLunaProvider : gptProviderRequest ? fetchGptProvider : fetchDeepSeekProvider;
     if (parsedBody?.messages) turn?.latency?.mark('context_ready');
-    const response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode,
+    let response = await providerFetch(url, { ...options, raiThinkingMode: turn?.thinkingMode,
         raiLatencyCall: parsedBody?.messages ? turn?.latency?.nextCall() : undefined });
+    if (response.ok && response.raiProvider !== 'openai_official') {
+        try {
+            const id = await providerTokenStore.begin({ requestId: turn?.id, userId: turn?.userId,
+                provider: response.raiProvider || (response.raiOfficialFallback ? 'deepseek_official' : chatLatencyProvider(url, modelId)),
+                model: response.raiOfficialFallback ? 'deepseek-flash' : modelId });
+            response = await meterChatResponse(response, { store: providerTokenStore, id,
+                onError: () => console.error(' 上游 Token 统计写入失败') });
+        } catch (_) { console.error(' 上游 Token 统计初始化失败'); }
+    }
     // Only streaming answer/tool requests update provenance, not internal compression summaries.
     if (turn && response.ok && parsedBody?.stream === true) {
         turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : JSON.parse(options.body).model;
@@ -29655,6 +29686,15 @@ app.get('/api/admin/runtime-settings', authenticateAdmin, async (req, res) => {
     } catch (error) {
         console.error(' 获取管理员运行限制失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取运行限制失败' });
+    }
+});
+
+app.get('/api/admin/token-usage', apiLimiter, authenticateAdmin, async (req, res) => {
+    try {
+        res.json({ ...await providerTokenStore.summary(), officialConfigured: !!OPENAI_LUNA_API_KEY });
+    } catch (error) {
+        console.error(' 获取 Token 用量失败:', sanitizeReportContext(error));
+        res.status(500).json({ error: '获取 Token 用量失败' });
     }
 });
 

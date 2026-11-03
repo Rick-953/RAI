@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.39';
-const RAI_BUILD_ID = '20261102-stream-models-attachments';
+const RAI_APP_VERSION = '0.13.40';
+const RAI_BUILD_ID = '20261103-luna-official-quota';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2490,7 +2490,7 @@ const appState = {
   modelPromptIdentity: 'smart', // 区分模式入口与手动模型选择，仅用于系统提示词中的展示名
   lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
-  thinkingMode: true,
+  thinkingMode: false,
   reasoningProfile: 'low',
   internetMode: true,  // 默认开启联网
   agentMode: false,  // 兼容旧字段；深度研究由 researchMode 驱动
@@ -5103,8 +5103,8 @@ const ALWAYS_VISIBLE_MODEL_IDS = ['auto'];
 const modelVisibilityState = {
   loaded: false,
   disabled: new Set(),
-  smartDefaults: { model: 'gpt-6.1-sol', reasoningProfile: 'low', thinkingMode: true },
-  fastDefaults: { model: 'deepseek-v4.1-flash', reasoningProfile: 'none', thinkingMode: false }
+  smartDefaults: { model: 'gpt-6-luna', reasoningProfile: 'none', thinkingMode: false },
+  fastDefaults: { model: 'gpt-6-luna', reasoningProfile: 'none', thinkingMode: false }
 };
 
 function currentThinkingCapability() {
@@ -5676,6 +5676,8 @@ const i18n = {
     'canvas-toggle-title': '打开或关闭 ChatFlow 画布',
     'canvas-close-title': '关闭画布',
     'settings-export-diagnostics': '导出脱敏诊断日志',
+    'settings-nav-developer': '开发者选项',
+    'settings-admin-entry': '管理员登录',
     'settings-diagnostics-description': '仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。',
     'auth-method-label': '登录方式',
     'cache-title': '本地对话缓存',
@@ -6374,6 +6376,8 @@ const i18n = {
     'canvas-toggle-title': 'Open or close the ChatFlow canvas',
     'canvas-close-title': 'Close canvas',
     'settings-export-diagnostics': 'Export sanitized diagnostics',
+    'settings-nav-developer': 'Developer options',
+    'settings-admin-entry': 'Admin sign in',
     'settings-diagnostics-description': 'The latest 500 events from this tab: request IDs, timings and stream statistics. No keys, message content, file names or account information. Saved locally and never uploaded automatically.',
     'auth-method-label': 'Sign-in method',
     'cache-title': 'Local conversation cache',
@@ -8391,6 +8395,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-03', version: 'v0.13.40',
+    zh: { summary: '默认 Luna、关闭思考，优先使用官方额度。', details: ['未保存模型偏好时默认使用 GPT 6 Luna，关闭思考。', 'Luna 在额度内优先使用 OpenAI 官方服务，余量不足时切回原线路。', '联网搜索继续使用 RAI 原有服务。', '管理员可查看输入、输出和完整统计日的平均 Token 用量。'] },
+    en: { summary: 'Luna by default, thinking off, official allowance first.', details: ['Without a saved model preference, start with GPT 6 Luna and thinking disabled.', 'Prefer official OpenAI Luna while the full request fits the daily allowance; otherwise use the existing route.', 'Search continues through the existing RAI service.', 'Administrators can inspect input, output and averages over complete measured days.'] }
+  },
   {
     date: '2026-11-02', version: 'v0.13.39 · CX RAI 1.8.40',
     zh: { summary: '直连优先与有效首字切站，可配置模型和思考等级，修复表格与附件显示。', details: ['智能默认 Sol / low，并记住上次模型与思考选择；Luna 使用独立线路并支持关闭思考。', 'GPT 优先直连，6 秒无有效首字先停止旧连接再切站；开启思考时计入思考首字。普通问题不再等待提前搜索。', '管理员可配置智能、快速与思考模式的模型和等级，并管理模型列表、能力与额度。', '仅展示模型支持的思考等级；打开思考默认自适应，不支持关闭时明确提示。', '修复缺列或压成单行的表格；附件卡片在用户气泡上方，图片可预览，长文件名提示改名。', 'GPT 在估算 258k 开始压缩、272k 上限；DeepSeek 为 400k / 1m，保留完整轮次与附件引用。'] },
@@ -13981,6 +13990,7 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   personalization: 'settings-nav-personalization',
   memory: 'settings-nav-memory',
   advanced: 'settings-nav-advanced',
+  developer: 'settings-nav-developer',
   desktop: 'settings-nav-desktop',
   notifications: 'settings-nav-notifications',
   about: 'settings-nav-about',
@@ -14182,6 +14192,7 @@ function updateSettingsNavigationUI() {
 
 function switchSettingsSection(section = 'general', options = {}) {
   section = normalizeSettingsSection(section);
+  if (section === 'developer' && !developerOptionsEnabled()) return;
   if (section === 'desktop' && !RAI_IS_TAURI_DESKTOP) return;
   const nextPanel = document.querySelector(`[data-settings-panel="${section}"]`);
   if (!nextPanel) return;
@@ -14415,6 +14426,7 @@ function buildSettingsSearchEntries() {
   document.querySelectorAll('[data-settings-panel]').forEach((panel) => {
     const section = panel.getAttribute('data-settings-panel');
     if (!section) return;
+    if (section === 'developer' && !developerOptionsEnabled()) return;
     const navButton = document.querySelector(`.settings-nav-item[data-settings-section="${section}"]`);
     const sectionTitle = String(navButton?.textContent || getSettingsSectionTitle(section)).replace(/\s+/g, ' ').trim();
     const targetMap = new Map();
@@ -17296,6 +17308,7 @@ function openSettings() {
     settingsModal.classList.remove('closing');
     settingsModal.classList.add('active');
     appState.settingsOpen = true;
+    updateDeveloperOptionsUI();
     updateSettingsUI();
     updateNewChatModeSettingsUI();
     updateTabTitleModeSettingsUI();
@@ -34486,6 +34499,37 @@ const adminState = {
   currentTab: 'stats'
 };
 
+let developerVersionTaps = 0;
+let developerLastVersionTap = 0;
+function developerOptionsEnabled() {
+  return localStorage.getItem('raiDeveloperOptions') === 'true' || adminState.isLoggedIn;
+}
+function updateDeveloperOptionsUI() {
+  const enabled = developerOptionsEnabled();
+  const nav = document.getElementById('settingsDeveloperNav');
+  if (nav) { nav.hidden = !enabled; nav.classList.toggle('is-hidden', !enabled); }
+  const panel = document.getElementById('settingsPanel-developer');
+  if (panel) panel.hidden = !enabled;
+  const button = document.getElementById('settingsAdminEntry');
+  if (button) button.textContent = adminState.isLoggedIn
+    ? (isChineseLanguage(appState.language) ? '打开管理后台' : 'Open admin panel')
+    : i18nText('settings-admin-entry', 'Admin sign in');
+}
+function handleDeveloperVersionTap() {
+  const time = Date.now();
+  developerVersionTaps = time - developerLastVersionTap > 3000 ? 1 : developerVersionTaps + 1;
+  developerLastVersionTap = time;
+  if (developerVersionTaps < 7) return;
+  developerVersionTaps = 0;
+  localStorage.setItem('raiDeveloperOptions', 'true');
+  updateDeveloperOptionsUI();
+  switchSettingsSection('developer');
+}
+function openDeveloperAdmin() {
+  if (!developerOptionsEnabled() || !appState.settingsOpen || appState.activeSettingsSection !== 'developer') return;
+  if (adminState.isLoggedIn) openAdminPanel(); else openAdminLogin();
+}
+
 // 检查管理员登录状态
 function checkAdminLogin() {
   const token = localStorage.getItem('adminToken');
@@ -34513,6 +34557,7 @@ async function verifyAdminToken() {
       adminState.token = null;
       adminState.isLoggedIn = false;
     }
+    updateDeveloperOptionsUI();
   } catch (e) {
     console.log('Admin token verification failed');
   }
@@ -34606,6 +34651,7 @@ async function handleAdminLogin(e) {
       adminState.token = data.token;
       adminState.isLoggedIn = true;
       localStorage.setItem('adminToken', data.token);
+      updateDeveloperOptionsUI();
       closeAdminLogin();
       openAdminPanel();
     } else {
@@ -34625,6 +34671,7 @@ function openAdminPanel() {
   createAdminPanel();
   document.getElementById('adminPanel').classList.add('active');
   loadAdminStats();
+  loadAdminTokenUsage();
 }
 
 // 创建管理面板
@@ -34697,6 +34744,10 @@ function createAdminPanel() {
                 <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
                 <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
               </div>
+                <div class="admin-chart-card admin-token-usage-card">
+                  <h3>Token 用量 · 官方 Luna 额度</h3>
+                  <div id="adminTokenUsage" aria-live="polite"></div>
+                </div>
               <div class="admin-charts-row">
                 <div class="admin-chart-card">
                   <h3>每日消息趋势 (最近30天)</h3>
@@ -34790,6 +34841,34 @@ function switchAdminTab(tab) {
 }
 
 // 加载统计数据
+async function loadAdminTokenUsage() {
+  const container = document.getElementById('adminTokenUsage');
+  if (!container || !adminState.isLoggedIn) return;
+  try {
+    const response = await fetch(`${API_BASE}/admin/token-usage`, { headers: { 'X-Admin-Token': adminState.token } });
+    if (!response.ok) throw new Error('token_usage_unavailable');
+    const data = await response.json(), quota = data.official;
+    const number = value => Number(value || 0).toLocaleString();
+    container.replaceChildren();
+    const lines = [
+      `官方 Luna：${data.officialConfigured ? '已配置' : '未配置'}；每日输入＋输出总额 ${number(quota.limit)}，保留 ${number(quota.safetyMargin)}。`,
+      `今日已用／预留 ${number(quota.usedOrReserved)}；可安排 ${number(quota.remaining)}；UTC 00:00（北京时间 08:00）重置。`,
+      data.averageDailyTokens === null ? '日均 Token：等待完整统计日。历史 Token 未保存，无法追溯精确值。'
+        : `最近 ${data.completeDays} 个完整统计日日均 ${number(data.averageDailyTokens)} Token；未完整计量请求 ${number(data.unmeasuredCalls)}。`,
+      '额度涵盖 RAI 已计量请求。组织中其他应用共享同一免费池时，应在服务端配置外部用量预留。'
+    ];
+    for (const line of lines) { const paragraph = document.createElement('p'); paragraph.textContent = line; container.appendChild(paragraph); }
+    const table = document.createElement('table'); table.className = 'admin-table';
+    for (const values of [['UTC 日期', '服务／模型', '输入', '输出', '计量请求'], ...(data.daily || []).slice(0, 60).map(row =>
+      [row.day, `${row.provider} / ${row.model}`, number(row.input_tokens), number(row.output_tokens), `${row.measured_calls}/${row.calls}`])]) {
+      const row = document.createElement('tr');
+      for (const value of values) { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell); }
+      table.appendChild(row);
+    }
+    container.appendChild(table);
+  } catch (_) { container.textContent = 'Token 用量暂时无法加载。'; }
+}
+
 async function loadAdminStats() {
   try {
     const res = await fetch(`${API_BASE}/admin/stats`, {
@@ -35472,10 +35551,10 @@ async function loadAdminLimits() {
         <div class="admin-limits-section">
           <h4>模型路由</h4>
           <div class="admin-limits-grid admin-model-routing-grid">
-            ${modelSelectField('smart_default_model', '智能模式默认模型', routingCandidates, s.smart_default_model || 'gpt-6.1-sol')}
-            ${profileSelectField('smart_reasoning_profile', '智能模式思考等级', s.smart_default_model || 'gpt-6.1-sol', s.smart_reasoning_profile, 'low')}
-            ${modelSelectField('fast_default_model', '关闭思考时默认模型', routingCandidates, s.fast_default_model || 'deepseek-v4.1-flash')}
-            ${profileSelectField('fast_reasoning_profile', '关闭思考时等级', s.fast_default_model || 'deepseek-v4.1-flash', s.fast_reasoning_profile, 'none')}
+            ${modelSelectField('smart_default_model', '智能模式默认模型', routingCandidates, s.smart_default_model || 'gpt-6-luna')}
+            ${profileSelectField('smart_reasoning_profile', '智能模式思考等级', s.smart_default_model || 'gpt-6-luna', s.smart_reasoning_profile, 'none')}
+            ${modelSelectField('fast_default_model', '关闭思考时默认模型', routingCandidates, s.fast_default_model || 'gpt-6-luna')}
+            ${profileSelectField('fast_reasoning_profile', '关闭思考时等级', s.fast_default_model || 'gpt-6-luna', s.fast_reasoning_profile, 'none')}
             ${modelSelectField('thinking_default_model', '兼容思考模式默认模型', routingCandidates, s.thinking_default_model || 'gpt-6.1-sol')}
             ${profileSelectField('thinking_reasoning_profile', '兼容思考模式等级', s.thinking_default_model || 'gpt-6.1-sol', s.thinking_reasoning_profile, 'auto')}
             ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek V4.1 Flash；4 秒无首字时自动切换备用模型')}
@@ -35953,7 +36032,7 @@ document.addEventListener('keydown', (e) => {
     (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) ||
     (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey)
   );
-  if (adminShortcutPressed) {
+  if (adminShortcutPressed && developerOptionsEnabled() && appState.settingsOpen && appState.activeSettingsSection === 'developer') {
     e.preventDefault();
     console.log(' 管理员快捷键触发');
     if (adminState.isLoggedIn) {
