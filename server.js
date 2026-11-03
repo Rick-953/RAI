@@ -29689,7 +29689,7 @@ app.get('/api/admin/runtime-settings', authenticateAdmin, async (req, res) => {
     }
 });
 
-app.get('/api/admin/token-usage', authenticateAdmin, async (req, res) => {
+app.get('/api/admin/token-usage', apiLimiter, authenticateAdmin, async (req, res) => {
     try {
         res.json({ ...await providerTokenStore.summary(), officialConfigured: !!OPENAI_LUNA_API_KEY });
     } catch (error) {
