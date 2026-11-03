@@ -6,6 +6,12 @@ const policy = require('../lib/client-skill-policy');
 const page = { success: true, name: 'documents', offset: 0, total_chars: 12, content: 'BODY_MARKER!', complete: true, next_offset: null };
 const raw = { protocol: 1, catalog: [{ name: 'documents', description: 'Word creation' }], selected: [] };
 const context = policy.normalizeClientSkills(raw, true);
+const imageSkill = { ...page, name: 'image_generation' };
+assert.equal(policy.normalizeClientSkills({ protocol: 1,
+    catalog: [{ name: 'image_generation', description: 'Named images, up to 1K' }], selected: [imageSkill] }, true).selected[0].name, 'image_generation');
+for (const name of ['../image_generation', '/image_generation', 'image.generation', 'image/generation']) {
+    assert.throws(() => policy.normalizeClientSkills({ ...raw, catalog: [{ name }] }, true), /invalid_client_skills/);
+}
 assert.equal(policy.normalizeClientSkills(raw, false), null);
 assert.equal(policy.normalizeClientSkills(null, true), null);
 assert.deepEqual(context.selected, []);

@@ -27,6 +27,8 @@ OUTPUT = ROOT / 'public' / 'licenses'
 CACHE = Path(tempfile.gettempdir()) / 'rai-notice-sources-v1'
 LEGAL = re.compile(r'^(?:licen[cs]e|copying|notice|copyright|unlicense)(?:[._-]|$)', re.I)
 FONT_COMMIT = '6c1dbe27dcf7d817d4b62cec033ba77fa8e2a5ec'
+SHARP_LIBVIPS_COMMIT = 'ebb95f8add54eee8bed840e3fb587e4cbec857d7'  # v1.3.4 / libvips 8.18.7
+GNULIB_COMMIT = 'f721a23f9a17f4e5b71361bd5c9a6c7aaf15533d'
 components: list[dict] = []
 texts: dict[str, bytes] = {}
 
@@ -96,6 +98,19 @@ def add_npm() -> None:
                 if LEGAL.match(filename):
                     file = Path(directory_name) / filename
                     legal_files.append(notice(file.relative_to(directory).as_posix(), file.read_bytes()))
+        if name.startswith('@img/sharp-'):
+            # libvips npm binaries publish their legal inventory in the source
+            # release README rather than a LICENSE file. Include that upstream
+            # inventory plus the full LGPL/GPL terms, including static Windows/WASM builds.
+            if name.startswith('@img/sharp-libvips-') and version != '1.3.4':
+                raise ValueError(f'Update pinned libvips notices for {name} {version}')
+            documents = [
+                ('libvips bundled third-party notices', f'https://raw.githubusercontent.com/lovell/sharp-libvips/{SHARP_LIBVIPS_COMMIT}/THIRD-PARTY-NOTICES.md', '6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe'),
+                ('libvips LGPL 2.1 or later', 'https://raw.githubusercontent.com/libvips/libvips/v8.18.7/LICENSE', 'dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551'),
+                ('GNU LGPL 3', f'https://raw.githubusercontent.com/coreutils/gnulib/{GNULIB_COMMIT}/doc/COPYING.LESSERv3', 'e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118'),
+                ('GNU GPL 3 incorporated by LGPL 3', f'https://raw.githubusercontent.com/coreutils/gnulib/{GNULIB_COMMIT}/doc/COPYINGv3', '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986'),
+            ]
+            legal_files.extend(notice(title, download(url, checksum)) for title, url, checksum in documents)
         if not legal_files:
             raise ValueError(f'Complete upstream license missing: {location}')
         components.append({

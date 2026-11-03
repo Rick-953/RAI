@@ -1,3 +1,9 @@
+## 0.13.41 - GPT Image 2.5 with shared points (2026-11-04)
+
+- Replace the old image generation/fallback pipeline with GPT Image 2.5, Flare and Sunburst at 100/200/300 points per image.
+- Reject insufficient points with required/current balance in the tool result, enforce <=1024px on stored bytes, and refund failed/cancelled generation.
+- Add exact image names and filenames to the official Web/native skill and tool results; update the shared account pricing display.
+
 ## 0.13.40 - official Luna allowance and private administration (2026-11-03)
 
 - Default Smart and thinking-off requests to GPT 6 Luna with effort `none`. Preserve saved per-user model and thinking preferences.

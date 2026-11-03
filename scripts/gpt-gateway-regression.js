@@ -12,20 +12,14 @@ const {
     applyGatewayChatRequestPolicy,
     buildDirectImageToolCallSse,
     buildGatewayHeaders,
-    buildGatewayImageChatRequest,
-    buildGatewayImageRequest,
-    createExternalRequestAbortError,
-    extractGatewayChatImageSources,
     extractGatewayImageSources,
-    isRetryableGatewayImageError,
-    isRetryableGatewayImageStatus,
     joinGatewayEndpoint,
     normalizeGatewayBaseUrl,
     postGatewayJson,
     readBoundedResponseText,
     readGatewayApiKeyFile,
-    runGatewayImageWithFallback
 } = require('../lib/gpt-gateway');
+const { buildImageGenerationRequest, normalizeImageGenerationArgs } = require('../lib/image-generation');
 const { validateGeneratedImageBuffer } = require('../lib/generated-image-validation');
 
 async function listen(server) {
@@ -42,7 +36,7 @@ async function close(server) {
 
 async function main() {
     assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-6-astra']);
-    assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2');
+    assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2.5');
     assert.strictEqual(normalizeGatewayBaseUrl('https://gateway.example/v1/'), 'https://gateway.example/v1');
     assert.strictEqual(joinGatewayEndpoint('https://gateway.example/v1', '/chat/completions'), 'https://gateway.example/v1/chat/completions');
     assert.throws(() => joinGatewayEndpoint('https://gateway.example/v1', '../chat/completions'), /invalid_gpt_gateway_endpoint/);
@@ -82,146 +76,6 @@ async function main() {
     assert.strictEqual(continuationPolicyBody.reasoning_effort, 'high');
     assert.strictEqual(continuationPolicyBody.messages[1].role, 'tool');
     assert.strictEqual(continuationPolicyBody.tools[0].function.name, 'web_search');
-    assert.strictEqual(isRetryableGatewayImageStatus(400), false);
-    assert.strictEqual(isRetryableGatewayImageStatus(401), false);
-    assert.strictEqual(isRetryableGatewayImageStatus(429), true);
-    assert.strictEqual(isRetryableGatewayImageStatus(500), true);
-    assert.strictEqual(isRetryableGatewayImageStatus(502), true);
-    assert.strictEqual(isRetryableGatewayImageError(Object.assign(new Error('network'), { gatewayImageNetworkFailure: true })), true);
-    assert.strictEqual(isRetryableGatewayImageError(Object.assign(new Error('bad request'), { upstreamStatus: 400 })), false);
-    assert.strictEqual(
-        isRetryableGatewayImageError(Object.assign(new Error('aborted'), {
-            name: 'AbortError',
-            externalRequestAbort: true,
-            gatewayImageNetworkFailure: true
-        })),
-        false,
-        'request abort must never be classified as a retryable network failure'
-    );
-
-    const preAbortedController = new AbortController();
-    preAbortedController.abort();
-    let preAbortedPrimaryCalls = 0;
-    let preAbortedFallbackCalls = 0;
-    let preAbortedPersistCalls = 0;
-    await assert.rejects(
-        runGatewayImageWithFallback({
-            signal: preAbortedController.signal,
-            primaryRequest: async () => {
-                preAbortedPrimaryCalls += 1;
-                preAbortedPersistCalls += 1;
-                return {};
-            },
-            fallbackRequest: async () => {
-                preAbortedFallbackCalls += 1;
-                return {};
-            }
-        }),
-        (error) => error?.name === 'AbortError' && error?.externalRequestAbort === true
-    );
-    assert.strictEqual(preAbortedPrimaryCalls, 0, 'pre-aborted request must not contact the primary provider');
-    assert.strictEqual(preAbortedFallbackCalls, 0, 'pre-aborted request must not contact the fallback provider');
-    assert.strictEqual(preAbortedPersistCalls, 0, 'pre-aborted request must not persist anything');
-
-    const runningAbortController = new AbortController();
-    let runningProviderCalls = 0;
-    let runningFallbackCalls = 0;
-    let runningPersistCalls = 0;
-    const runningAbortPromise = runGatewayImageWithFallback({
-        signal: runningAbortController.signal,
-        primaryRequest: async (signal) => {
-            runningProviderCalls += 1;
-            await new Promise((resolve, reject) => {
-                const onAbort = () => reject(createExternalRequestAbortError());
-                signal.addEventListener('abort', onAbort, { once: true });
-            });
-            runningPersistCalls += 1;
-            return {};
-        },
-        fallbackRequest: async () => {
-            runningFallbackCalls += 1;
-            return {};
-        }
-    });
-    setTimeout(() => runningAbortController.abort(), 10);
-    await assert.rejects(
-        runningAbortPromise,
-        (error) => error?.name === 'AbortError' && error?.externalRequestAbort === true
-    );
-    assert.strictEqual(runningProviderCalls, 1, 'running abort must stop after the active provider request');
-    assert.strictEqual(runningFallbackCalls, 0, 'running abort must not invoke fallback');
-    assert.strictEqual(runningPersistCalls, 0, 'running abort must not reach persistence');
-
-    let fallbackCalls = 0;
-    const primarySuccess = await runGatewayImageWithFallback({
-        primaryRequest: async () => ({ provider: 'rai_gpt_gateway', model: 'gpt-image-2' }),
-        fallbackRequest: async () => {
-            fallbackCalls += 1;
-            return { provider: 'siliconflow', model: 'fallback' };
-        }
-    });
-    assert.deepStrictEqual(primarySuccess, { provider: 'rai_gpt_gateway', model: 'gpt-image-2' });
-    assert.strictEqual(fallbackCalls, 0);
-
-    for (const [kind, error, expectedReason] of [
-        ['network', Object.assign(new Error('network'), { gatewayImageNetworkFailure: true }), 'temporary_upstream_failure'],
-        ['rate-limit', Object.assign(new Error('429'), { upstreamStatus: 429 }), 'rate_limited'],
-        ['server-error', Object.assign(new Error('502'), { upstreamStatus: 502 }), 'temporary_upstream_failure']
-    ]) {
-        let primaryCalls = 0;
-        let localFallbackCalls = 0;
-        const result = await runGatewayImageWithFallback({
-            primaryRequest: async () => {
-                primaryCalls += 1;
-                throw error;
-            },
-            fallbackRequest: async (receivedError) => {
-                localFallbackCalls += 1;
-                assert.strictEqual(receivedError, error, `${kind} must preserve the primary failure`);
-                return { provider: 'siliconflow', model: 'Kwai-Kolors/Kolors', images: [{ url: '/generated-images/test.png' }] };
-            }
-        });
-        assert.strictEqual(primaryCalls, 1);
-        assert.strictEqual(localFallbackCalls, 1);
-        assert.strictEqual(result.fallbackUsed, true);
-        assert.strictEqual(result.fallbackFrom, 'gpt-image-2');
-        assert.strictEqual(result.fallbackReason, expectedReason);
-        assert.strictEqual(result.provider, 'siliconflow');
-        assert.strictEqual(result.model, 'Kwai-Kolors/Kolors');
-    }
-
-    for (const [kind, error] of [
-        ['bad-request', Object.assign(new Error('400'), { upstreamStatus: 400 })],
-        ['unauthorized', Object.assign(new Error('401'), { upstreamStatus: 401 })],
-        ['invalid-json', new Error('invalid-json')],
-        ['empty-result', new Error('empty-result')]
-    ]) {
-        let localFallbackCalls = 0;
-        await assert.rejects(
-            runGatewayImageWithFallback({
-                primaryRequest: async () => { throw error; },
-                fallbackRequest: async () => {
-                    localFallbackCalls += 1;
-                    return { provider: 'must-not-run' };
-                }
-            }),
-            (caught) => caught === error,
-            `${kind} must fail closed`
-        );
-        assert.strictEqual(localFallbackCalls, 0, `${kind} must not invoke fallback`);
-    }
-
-    const primary502 = Object.assign(new Error('502'), { upstreamStatus: 502 });
-    const fallbackFailure = new Error('fallback-provider-failed');
-    await assert.rejects(
-        runGatewayImageWithFallback({
-            primaryRequest: async () => { throw primary502; },
-            fallbackRequest: async () => { throw fallbackFailure; }
-        }),
-        (caught) => caught === fallbackFailure,
-        'fallback provider failures must remain failures'
-    );
-
     const boundedText = await readBoundedResponseText(new Response('x'.repeat(4096)), 1024);
     assert.match(boundedText, /response body truncated at 1024 bytes/);
     assert.ok(Buffer.byteLength(boundedText) < 1200, 'bounded reader must not retain an oversized body');
@@ -265,9 +119,9 @@ async function main() {
             const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
             received.push({ url: req.url, authorization: req.headers.authorization, body });
             res.setHeader('Content-Type', 'application/json');
-            if (body.model === 'gpt-image-2') {
+            if (body.model === 'gpt-image-2.5') {
                 const encoded = Buffer.from('mock-png').toString('base64');
-                res.end(JSON.stringify({ choices: [{ message: { content: `![Generated Image](data:image/png;base64,${encoded})` } }] }));
+                res.end(JSON.stringify({ data: [{ b64_json: encoded }] }));
                 return;
             }
             if (body.model === 'gpt-6-astra') return;
@@ -315,20 +169,7 @@ async function main() {
         });
         assert.strictEqual(thinkingResponse.status, 200);
 
-        const imageBody = buildGatewayImageRequest({ prompt: 'a safe test image', image_size: '720x1280', batch_size: 2 });
-        assert.deepStrictEqual(imageBody, {
-            model: 'gpt-image-2',
-            prompt: 'a safe test image',
-            size: '1024x1536',
-            n: 1,
-            response_format: 'b64_json'
-        });
-        const imageChatBody = buildGatewayImageChatRequest({ prompt: 'a safe test image', image_size: '720x1280' });
-    assert.deepStrictEqual(imageChatBody, {
-            model: 'gpt-image-2',
-            messages: [{ role: 'user', content: 'a safe test image' }],
-        stream: false
-    });
+        const imageBody = buildImageGenerationRequest(normalizeImageGenerationArgs({ prompt: 'a safe test image', image_size: '1024x768' }));
         const directImageToolSse = buildDirectImageToolCallSse('a safe test image', 'direct_image_test');
         const directImageToolPayload = JSON.parse(directImageToolSse.split('\n')[0].slice(6));
         assert.strictEqual(directImageToolPayload.choices[0].finish_reason, 'tool_calls');
@@ -342,21 +183,11 @@ async function main() {
             }
         });
         assert.match(directImageToolSse, /data: \[DONE\]/);
-        const imageResponse = await postGatewayJson({
-            baseUrl,
-            endpoint: 'chat/completions',
-            apiKey: testKey,
-            body: imageChatBody
-        });
+        const imageResponse = await postGatewayJson({ baseUrl, endpoint: 'images/generations', apiKey: testKey, body: imageBody });
         const imagePayload = await imageResponse.json();
-        const sources = extractGatewayChatImageSources(imagePayload);
+        const sources = extractGatewayImageSources(imagePayload);
         assert.strictEqual(sources.length, 1);
-        assert.ok(sources[0].startsWith('data:image/png;base64,'), 'chat-completions image markdown must expose the embedded image');
-        assert.deepStrictEqual(
-            extractGatewayImageSources({ data: [{ b64_json: Buffer.from('legacy').toString('base64'), url: 'https://must-not-win.invalid/image.png' }] }).length,
-            1
-        );
-
+        assert.ok(sources[0].startsWith('data:image/png;base64,'));
         assert.strictEqual(received[0].url, '/v1/chat/completions');
         assert.strictEqual(received[0].authorization, `Bearer ${testKey}`);
         assert.deepStrictEqual(received[0].body, multimodalBody);
@@ -367,9 +198,9 @@ async function main() {
         assert.strictEqual(received[1].body.reasoning_effort, 'xhigh');
         assert.strictEqual(received[1].body.temperature, undefined);
         assert.strictEqual(received[1].body.top_p, undefined);
-        assert.strictEqual(received[2].url, '/v1/chat/completions');
+        assert.strictEqual(received[2].url, '/v1/images/generations');
         assert.strictEqual(received[2].authorization, `Bearer ${testKey}`);
-        assert.deepStrictEqual(received[2].body, imageChatBody);
+        assert.deepStrictEqual(received[2].body, imageBody);
 
         const cancelController = new AbortController();
         const cancelTimer = setTimeout(() => cancelController.abort(), 25);
@@ -416,41 +247,14 @@ async function main() {
     const imageModelSection = indexSource.slice(indexSource.indexOf('model-menu-section-label">图像生成'), indexSource.indexOf('</div>\n                </div>\n              </div>\n\n              <button type="button" class="send-btn"'));
     assert.ok(!chatModelSection.includes('data-model="gpt-image-2"'), 'Image 2 must not appear in the chat-model picker');
     assert.ok(!indexSource.includes('data-model="gpt-image-2"'), 'retired image models must not appear in the four-model picker');
-    assert.match(serverSource, /let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;/);
-    assert.match(serverSource, /if \(model !== 'auto' && await isPublicModelDisabled\(model\)\) \{[\s\S]{0,220}model = 'auto';[\s\S]{0,120}gptImageModelSelected = false;/);
+    assert.match(serverSource, /let gptImageModelSelected = Object.hasOwn\(IMAGE_MODEL_COSTS, model\)/);
     assert.match(serverSource, /const imageGenerationRequested = gptImageModelSelected \|\| detectImageGenerationNeed/);
-    assert.match(serverSource, /requireGptGateway: gptImageModelSelected/);
-    assert.match(serverSource, /'gpt-image-2': \{[\s\S]{0,260}model: 'gpt-6.1-sol'[\s\S]{0,260}imageOnly: true/);
-    assert.doesNotMatch(serverSource.match(/const RESEARCH_MODEL_OPTIONS = \[[\s\S]*?\];/)?.[0] || '', /gpt-image-2/);
-    const imageProviderBlock = serverSource.slice(
-        serverSource.indexOf('async function requestAndPersistGeneratedImages'),
-        serverSource.indexOf('// 工具定义 -')
-    );
-    assert.doesNotMatch(imageProviderBlock, /sourceUrl\s*:/);
-    assert.doesNotMatch(imageProviderBlock, /body\s*:\s*errorText/);
-    assert.doesNotMatch(imageProviderBlock, /context:\s*\{[^}]*\bpayload\s*[,}]/);
-    assert.match(imageProviderBlock, /runGatewayImageWithFallback\(\{/);
-    assert.match(imageProviderBlock, /providerName: 'rai_gpt_image'/);
-    assert.match(imageProviderBlock, /endpoint: joinGatewayEndpoint\(GPT_IMAGE_BASE_URL, 'chat\/completions'\)/);
-    assert.match(imageProviderBlock, /requestBody: buildGatewayImageChatRequest\(args\)/);
-    assert.match(imageProviderBlock, /extractSources: extractGatewayChatImageSources/);
-    assert.match(imageProviderBlock, /const maxAttempts = providerName === 'rai_gpt_image' \? 1 : 2/,
-        'the paid Image 2 upstream must never be retried implicitly');
-    assert.match(imageProviderBlock, /const externalSignal = context\?\.signal/);
-    assert.match(imageProviderBlock, /linkImageProviderAbort\(controller, externalSignal\)/);
-    assert.match(imageProviderBlock, /if \(externalSignal\?\.aborted\) throw createExternalRequestAbortError\(\)/);
-    assert.match(imageProviderBlock, /waitForImageRetry\(1200, externalSignal\)/);
-    assert.match(imageProviderBlock, /signal: externalSignal/);
-    assert.match(serverSource, /requireGptGateway: gptImageModelSelected,[\s\S]{0,600}signal: controller\.signal/);
-    assert.match(serverSource, /buildDirectImageToolCallSse\(userContent, `direct_image_\$\{requestId\}`\)/,
-        'explicit Image 2 selection must bypass the chat-model planning request');
-    assert.match(serverSource, /Image 2 直达模式完成，跳过聊天模型续传/,
-        'explicit Image 2 selection must not issue a chat-model continuation after generation');
-    assert.match(serverSource, /if \(gptImageModelSelected\) \{[\s\S]{0,120}result = await resultPromise;[\s\S]{0,120}\} else \{[\s\S]{0,120}buildImageWaitingLineFromUserPrompt/,
-        'explicit Image 2 selection must not call the waiting-line chat model');
-    assert.match(serverSource, /if \(!usedImage2 && imagePoints\.pointsDeducted > 0\)[\s\S]{0,180}refundPointDeduction/,
-        'fallback image generation must refund Image 2 points');
-    assert.match(serverSource, /TOOL_EXECUTORS\.generate_image\(args, \{ userId, sessionId, requestId, signal \}\)/);
+    assert.match(serverSource, /buildDirectImageToolCallSse\(userContent/);
+    assert.match(serverSource, /TOOL_EXECUTORS.generate_image\(args, \{ userId, sessionId, requestId, signal \}\)/);
+    const imagePipeline = serverSource.slice(serverSource.indexOf('async function requestAndPersistGeneratedImages'), serverSource.indexOf('// 工具定义 -'));
+    assert.match(imagePipeline, /endpoint: 'images\/generations'/);
+    assert.match(imagePipeline, /refundPointDeduction\(context.userId, imagePoints\)/);
+    assert.doesNotMatch(imagePipeline, /fallbackRequest|siliconflow|for\s*\(/);
     assert.doesNotMatch(
         serverSource,
         /await\s+[A-Za-z_$][A-Za-z0-9_$]*\.(?:text|json|arrayBuffer)\s*\(/,

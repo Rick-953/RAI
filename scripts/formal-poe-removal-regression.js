@@ -95,7 +95,7 @@ function buildModelHarness(serverSource) {
         PUBLIC_MODEL_IDS: require('../lib/chat-model-policy').CHAT_MODEL_IDS,
         DEEPSEEK_FAST_API_KEY: '',
 
-        KOLORS_IMAGE_MODEL: 'Kwai-Kolors/Kolors'
+        IMAGE_MODEL_COSTS: require('../lib/image-generation').IMAGE_MODEL_COSTS, KOLORS_IMAGE_MODEL: 'Kwai-Kolors/Kolors'
     });
     vm.runInContext([
         extractConstDeclaration(serverSource, 'LEGACY_MODEL_ALIASES'),

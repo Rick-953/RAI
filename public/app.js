@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.40';
-const RAI_BUILD_ID = '20261103-luna-official-quota';
+const RAI_APP_VERSION = '0.13.41';
+const RAI_BUILD_ID = '20261104-image25-points';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8395,6 +8395,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-04', version: 'v0.13.41 · CX RAI 1.8.46',
+    zh: { summary: '替换 GPT Image 2.5 生图，按张扣点，修复 Windows 启动和关闭残留。', details: ['三个图片型号每张消耗 100/200/300 点，点数不足会停止并向当前 AI 返回原因。', '生成图片提供准确名称与文件名，最长边限制 1024 像素。', 'Web 与 Windows 使用内置官方生图技能；失败或取消退还点数。', 'Windows 修复登录跳转异常、已登录启动闪退、扫码后导航及主窗口关闭残留；安装器增加桌面快捷方式。'] },
+    en: { summary: 'GPT Image 2.5 with per-image points; Windows startup and resident-window fixes.', details: ['Three image models cost 100/200/300 points each; insufficient funds stop generation and tell the current AI why.', 'Every image has an exact name and filename; maximum edge is 1024 pixels.', 'Web and Windows share an official image skill; failed or cancelled generations are refunded.', 'Windows repairs authenticated startup, login navigation and resident taskbar ownership, and adds a desktop shortcut.'] }
+  },
   {
     date: '2026-11-03', version: 'v0.13.40',
     zh: { summary: '默认 Luna、关闭思考，优先使用官方额度。', details: ['未保存模型偏好时默认使用 GPT 6 Luna，关闭思考。', 'Luna 在额度内优先使用 OpenAI 官方服务，余量不足时切回原线路。', '联网搜索继续使用 RAI 原有服务。', '管理员可查看输入、输出和完整统计日的平均 Token 用量。'] },
@@ -33591,7 +33596,7 @@ let userMembershipState = {
   points: 0,
   purchasedPoints: 0,
   totalPoints: 0,
-  image2Quota: { limit: 0, used: 0, remaining: 0, resetAt: null },
+  imageGeneration: { modelCosts: {}, maxDimension: 1024 },
   canCheckin: true,
   createdAt: null,
   tasks: {
@@ -33650,7 +33655,7 @@ function applyUserMembershipData(data = {}) {
     points: data.points || 0,
     purchasedPoints: data.purchasedPoints || 0,
     totalPoints: data.totalPoints || 0,
-    image2Quota: data.image2Quota || { limit: 0, used: 0, remaining: 0, resetAt: null },
+    imageGeneration: data.imageGeneration || { modelCosts: {}, maxDimension: 1024 },
     canCheckin: data.canCheckin,
     createdAt: data.createdAt,
     tasks: normalizeMembershipTasks(data.tasks)
@@ -34423,12 +34428,13 @@ function updateSettingsMembership() {
   if (points) points.textContent = m.totalPoints;
   const mobilePoints = document.getElementById('settingsMobilePointsDisplay');
   if (mobilePoints) mobilePoints.textContent = m.totalPoints;
-  const image2Quota = document.getElementById('settingsImage2Quota');
-  if (image2Quota) {
-    const quota = m.image2Quota || {};
-    image2Quota.textContent = isChineseLanguage(appState.language)
-      ? `Image 2: ${Number(quota.used || 0)} / ${Number(quota.limit || 0)}，剩余 ${Number(quota.remaining || 0)}`
-      : `Image 2: ${Number(quota.used || 0)} / ${Number(quota.limit || 0)}, ${Number(quota.remaining || 0)} left`;
+  const imagePricing = document.getElementById('settingsImagePricing');
+  if (imagePricing) {
+    const costs = Object.entries(m.imageGeneration?.modelCosts || {});
+    const details = costs.map(([model, cost]) => `${model.replace('gpt-image-2.5', 'GPT Image 2.5')}: ${cost}`).join(' · ');
+    imagePricing.textContent = isChineseLanguage(appState.language)
+      ? `生图：${details || '每张 100–300 点'} · 仅 1K 及以下`
+      : `Images: ${details || '100–300 points each'} · up to 1K`;
   }
 
   // 更新签到按钮
