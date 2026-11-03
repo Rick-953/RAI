@@ -3,7 +3,7 @@
   "product": "RAI Web",
   "scopeNote": "Production npm lock dependencies; browser libraries and fonts; all locked Cargo dependencies for the optional RAI Desktop and Local Agent, including build and target-specific crates. Development-only npm tools are excluded. Brand names and logos belong to their respective owners.",
   "inputs": {
-    "package-lock.json": "9e027264ee4e46f2a125042cec5623295dd0d2a03ef4761fb1d5c6d5ae842f57",
+    "package-lock.json": "3d15c511a31ee4aab1ac929826084cf6a7d0d5e9b85fb83ac9d2f62f2dc59b13",
     "public/lib/vendor-manifest.json": "6a86dcbb79a57b7ffa8a844f7f0188f3c1e5427bd7dfe4445bfb94d870277d8e",
     "src-tauri/Cargo.lock": "d57240d860ee4a350c59356711296a80f3fef7902e4d7f9689ef1bb4882a08b9",
     "rai-agent/Cargo.lock": "677570442506028cafd206f97529159d535c5a7c748659b73f024f3dc70acf5c"
@@ -12543,6 +12543,24 @@
       ]
     },
     {
+      "id": "npm-3bbaefa8dc436e99",
+      "name": "@emnapi/runtime",
+      "version": "1.11.3",
+      "license": "MIT",
+      "source": "https://github.com/toyobayashi/emnapi",
+      "scope": "server",
+      "dependencyPath": "node_modules/@emnapi/runtime",
+      "integrity": "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==",
+      "sourceArchive": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.3.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/2088f55c6731498410b20c95ebd345ed4a4a800bf74c0fba4d282fd2a021daaa.txt",
+          "sha256": "2088f55c6731498410b20c95ebd345ed4a4a800bf74c0fba4d282fd2a021daaa"
+        }
+      ]
+    },
+    {
       "id": "npm-79f2f3baee1b72ac",
       "name": "@hexagon/base64",
       "version": "1.1.28",
@@ -12557,6 +12575,962 @@
           "name": "LICENSE",
           "path": "texts/b9c657e3785c8b54b6165808e2a2744dfa33251f5bb8f2324ac5f70ff0d9af57.txt",
           "sha256": "b9c657e3785c8b54b6165808e2a2744dfa33251f5bb8f2324ac5f70ff0d9af57"
+        }
+      ]
+    },
+    {
+      "id": "npm-8d0b773d65a33f0a",
+      "name": "@img/colour",
+      "version": "1.1.0",
+      "license": "MIT",
+      "source": "https://github.com/lovell/colour",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/colour",
+      "integrity": "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/colour/-/colour-1.1.0.tgz",
+      "notices": [
+        {
+          "name": "LICENSE.md",
+          "path": "texts/e2eaa4603c14cb26f301e88648c12a853fa3f0f5da6d4b0972958c666e7f2ab8.txt",
+          "sha256": "e2eaa4603c14cb26f301e88648c12a853fa3f0f5da6d4b0972958c666e7f2ab8"
+        }
+      ]
+    },
+    {
+      "id": "npm-426ae662fe1e9020",
+      "name": "@img/sharp-darwin-arm64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-darwin-arm64",
+      "integrity": "sha512-QRUlFQ0WxvdWyqqG/WtI3iupfD5rBzmCHXSdPsY91sAtVtTo7Q4cb6zOccZ3gqEqkr0f1As1ehLqmEpDsRf+lg==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-8226c6ae36f9c2cd",
+      "name": "@img/sharp-darwin-x64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-darwin-x64",
+      "integrity": "sha512-+BR255RhDlpygUpOc/Jdt1nT6DQ3XG/ERo5wbcdOf5Q320dKtPCKPLR1LJs9VGXRaMa8l1uUa0tkCNOXiAxZUw==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-9e957983d353ba83",
+      "name": "@img/sharp-freebsd-wasm32",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-freebsd-wasm32",
+      "integrity": "sha512-Y/z91nEZ4uIBX5X3nfTovjU9lHNKFYbL2lpHCLVNmXQK03VIZvXBBt0KxbPGp2SdGSF+2mQU4e+hQaWOt86iAw==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-freebsd-wasm32/-/sharp-freebsd-wasm32-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-37fabdebc1eeb252",
+      "name": "@img/sharp-libvips-darwin-arm64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-darwin-arm64",
+      "integrity": "sha512-5R89nBYiRdUlSWJxPhO+GVtaXzXSxKnRu/xqMn3KTA3L9EB9Oy/P+Nn2f2vlhPuUdy/Zusb2DarbyTpGCfEDuw==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-5397ba74e460cc29",
+      "name": "@img/sharp-libvips-darwin-x64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-darwin-x64",
+      "integrity": "sha512-iR2OKH80yi0U+dUplyh3/xdpFvps6YkCwsXenIJxqxR1v9o+xtKTGbS9H7cps+2Vxjc8B1j96p75NmTGjIhtpQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-ab2989012b6fbe2b",
+      "name": "@img/sharp-libvips-linux-arm",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linux-arm",
+      "integrity": "sha512-LmRtTsOHuvM2+wlO2Db37dx5MiZhB0FvSunciw48YjdOkZz9KAiRbm8ujeMOA1INqmei5NapFxYEK1D1ZSidmw==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-1353fe95fb944d9c",
+      "name": "@img/sharp-libvips-linux-arm64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linux-arm64",
+      "integrity": "sha512-Y3dgX/6lE2QhQb+Gxy0WZxfg9MEm/JBjamZpS2IklP7xIQoKN4hzAm7KcMVGtaVDt3neE9OKBC7vAfonA/Lr1A==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-e3fa9bfca063d139",
+      "name": "@img/sharp-libvips-linux-ppc64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linux-ppc64",
+      "integrity": "sha512-Le6boB8Tai0Nis+gIxIpKx68UDVVIqdR8Tin5Yf1z2LJJQLDJvCDRqRu+jC2qCoD+eIomonmOwB4smBRxfVpYQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-acdbdd9b840ee24c",
+      "name": "@img/sharp-libvips-linux-riscv64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linux-riscv64",
+      "integrity": "sha512-aHkkIEHPRdQEegJN20MLmGtxYD9R2wQr3Cwpddnu5+YKMt6Uzax7S9h5gpZTo8wyrGuZSlfQ63OevL5mTyOC7Q==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-08b4a1284c7753ea",
+      "name": "@img/sharp-libvips-linux-s390x",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linux-s390x",
+      "integrity": "sha512-ra/mB6MikESDUO7Yg+Mi95bFBb9GsObURuhnOv3OqknjGe9sZrG8tCe9q0xSIGrtLgvgw0gKnFWcK4blSgQOuQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-6fe808aac569cef4",
+      "name": "@img/sharp-libvips-linux-x64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linux-x64",
+      "integrity": "sha512-GJ//SSXbnwSDes02umB3nDJLFcQzw8a18V8fyhqr6tV515tOEMdImjjxj1AoafMRz56F3PHgftnj1QEKSU1zkw==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-065b5603aeada842",
+      "name": "@img/sharp-libvips-linuxmusl-arm64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linuxmusl-arm64",
+      "integrity": "sha512-hvulFwtjUcagsis6BBxHwGFwWoNZjgYmULGVrZcyfNbjA8hKILbRxGg15/7w5HDyXHXUos/j6baAWqnCyQ2DWA==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-1e75c8a4b798a302",
+      "name": "@img/sharp-libvips-linuxmusl-x64",
+      "version": "1.3.4",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp-libvips",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-libvips-linuxmusl-x64",
+      "integrity": "sha512-6zXKeE/p39I1AmA3cJG35eyBGNqNddLnUXjhwBnsGjFPWqf5VKkDBEqaEkPDoTEtkxwi2vv8Tcr2mDyP4So7Fg==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.3.4.tgz",
+      "notices": [
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-717e47a9c301434f",
+      "name": "@img/sharp-linux-arm",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linux-arm",
+      "integrity": "sha512-LEaXK2WdXVK5ykcw0buWyPMsmLLL2vpHLD6yrNSW+JGEL3BZPA4tpKN6iaMc4AxTTAoaX/sU1rOL51lcIz48ZQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linux-arm/-/sharp-linux-arm-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-d0d2b4b043b2b3e4",
+      "name": "@img/sharp-linux-arm64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linux-arm64",
+      "integrity": "sha512-LYVx5JTsOM2CBzmxreh+nl64/3H6Xb09iSLknqH47z2T2DFFxDeFLP5y4dJwe6H7uGQlHPyEEtIqyo3DYsRwdQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-8f0f33a05dfc5330",
+      "name": "@img/sharp-linux-ppc64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linux-ppc64",
+      "integrity": "sha512-QVxAAq8evVRI9ia2vqgwrmWucn5Dfv+JdWzj75pD8omHLPSP7f8p20O8jxzjCcuCEQEOtYOZUmX1hkiZ0kdevA==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linux-ppc64/-/sharp-linux-ppc64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-810cb8a951f5cba9",
+      "name": "@img/sharp-linux-riscv64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linux-riscv64",
+      "integrity": "sha512-LtdreXguaavKODPIfzJ4kffx7UNt1omwtK0rch4EBbbSTXPnxWmYSayXdLJw0fJzQ97kHt1gL/yh4tvU+nCyRQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linux-riscv64/-/sharp-linux-riscv64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-ed39d27a5e4ae1f7",
+      "name": "@img/sharp-linux-s390x",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linux-s390x",
+      "integrity": "sha512-UZasTOFiYzotTsGOCu42BfUzP6Tu6Do/947iRm1RsLKvlllxwGcn4RN27LibGWceix4Y+Pmw3jsnTcCQIgWjqA==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linux-s390x/-/sharp-linux-s390x-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-ee3da038802d6031",
+      "name": "@img/sharp-linux-x64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linux-x64",
+      "integrity": "sha512-SxFtLTeJInhAA9Q836kux2vZNeOBQEx658qvbboZScr0wIARym3IcGmW7KpVD5sbVg0Ojy+udFQdayYIZyoNog==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-fce7160de267381d",
+      "name": "@img/sharp-linuxmusl-arm64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linuxmusl-arm64",
+      "integrity": "sha512-9HbMclmI1zlNkFRs3z9/eBtDjfD0sGlrX1z6b1qwmiFY5ElDLh4BC0LPBdVp7z1DXFiKlIcznf+ZlsuZzLxQqg==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linuxmusl-arm64/-/sharp-linuxmusl-arm64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-1041ecb22ecc246d",
+      "name": "@img/sharp-linuxmusl-x64",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-linuxmusl-x64",
+      "integrity": "sha512-4KOphqB035HrVdqLZfCgMzzERrQkkzOwRhl4OAkRO1YCldbaFjySXMaK534Mo0V+LndnlJk+sbUyLeU0ULyD1A==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-569ae8520d918368",
+      "name": "@img/sharp-wasm32",
+      "version": "0.35.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-wasm32",
+      "integrity": "sha512-Ptsga1su4tQx+LLF1ECS9U6nz5kmrXKo6XVbtR48Ke3ZRxxgaWBu7IDtEe1quo8hiupwm6WFqxVlXaSf7IINGQ==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-3c697aeb73762d7b",
+      "name": "@img/sharp-webcontainers-wasm32",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-webcontainers-wasm32",
+      "integrity": "sha512-hfhF/FmoQyTUkA0bIKFOtw536BQSeBMe6BF6QyWlrPxT754+TFLaZ7sKKTfvvM0yJgKgaYTwnFCIZ/GuDw5SUA==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-webcontainers-wasm32/-/sharp-webcontainers-wasm32-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-28f92215620c588f",
+      "name": "@img/sharp-win32-arm64",
+      "version": "0.35.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-win32-arm64",
+      "integrity": "sha512-X4t7g+7ZA5DKblCBEXGjUqqemj4vczING/5viFwAL8h4N3qYeyjwdCvRLHi4EdOUI+2Z7UFlp1VM+p/AuEtm6Q==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/dc1f5d2d43c5531dfe0acaf4e950ea5dbe3e61e1850cf0e983bda7efc10d6693.txt",
+          "sha256": "dc1f5d2d43c5531dfe0acaf4e950ea5dbe3e61e1850cf0e983bda7efc10d6693"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-c888bdc2eaa5f6b6",
+      "name": "@img/sharp-win32-ia32",
+      "version": "0.35.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-win32-ia32",
+      "integrity": "sha512-5Zm82LoBc43nhwNybZlG7Y1KO//Zhsn306fQl29ZOuStHLGTo3BWL83q3cznX0poxSAMuYL1On/BHBxkBeKr6A==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/dc1f5d2d43c5531dfe0acaf4e950ea5dbe3e61e1850cf0e983bda7efc10d6693.txt",
+          "sha256": "dc1f5d2d43c5531dfe0acaf4e950ea5dbe3e61e1850cf0e983bda7efc10d6693"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "id": "npm-7b06f750aa609390",
+      "name": "@img/sharp-win32-x64",
+      "version": "0.35.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/@img/sharp-win32-x64",
+      "integrity": "sha512-x76eH0vEiHlcMQu8Y8IenntaACtddpT6W0wmXtWrnKcnKI7ME5DdgqhAD6SEWOEl1v2zDvkZDhFA9KnURwpfqg==",
+      "sourceArchive": "https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/dc1f5d2d43c5531dfe0acaf4e950ea5dbe3e61e1850cf0e983bda7efc10d6693.txt",
+          "sha256": "dc1f5d2d43c5531dfe0acaf4e950ea5dbe3e61e1850cf0e983bda7efc10d6693"
+        },
+        {
+          "name": "libvips bundled third-party notices",
+          "path": "texts/6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe.txt",
+          "sha256": "6f0d5086e3bcbee12bcdacf5878b31d1104002aeecaeb241d3fff466108082fe"
+        },
+        {
+          "name": "libvips LGPL 2.1 or later",
+          "path": "texts/dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "name": "GNU LGPL 3",
+          "path": "texts/e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+        },
+        {
+          "name": "GNU GPL 3 incorporated by LGPL 3",
+          "path": "texts/3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
         }
       ]
     },
@@ -15657,13 +16631,13 @@
     {
       "id": "npm-e295d2ab5a731388",
       "name": "semver",
-      "version": "7.7.3",
+      "version": "7.8.6",
       "license": "ISC",
       "source": "https://github.com/npm/node-semver",
       "scope": "server",
       "dependencyPath": "node_modules/semver",
-      "integrity": "sha512-SdsKMrI9TdgjdweUSR9MweHA4EJ8YxHn8DFaDisvhVlUOe4BF1tLD7GAj0lIqWVl+dPb/rExr0Btby5loQm20Q==",
-      "sourceArchive": "https://registry.npmjs.org/semver/-/semver-7.7.3.tgz",
+      "integrity": "sha512-9lpSSU4Mly3mrtruwLs1eLK6+gzbzqeBFwRNjIjE+9LuDpWdYctrQlQ3ej1Ilgi7gknpsTRnPoLP8DpCHqHIJw==",
+      "sourceArchive": "https://registry.npmjs.org/semver/-/semver-7.8.6.tgz",
       "notices": [
         {
           "name": "LICENSE",
@@ -15741,6 +16715,24 @@
           "name": "LICENSE",
           "path": "texts/76d6d1ea0c268da37dd3c961b4fcfb23dee8417fff9e8786d4d44c585b781b69.txt",
           "sha256": "76d6d1ea0c268da37dd3c961b4fcfb23dee8417fff9e8786d4d44c585b781b69"
+        }
+      ]
+    },
+    {
+      "id": "npm-bc30f9f18bf38e29",
+      "name": "sharp",
+      "version": "0.35.5",
+      "license": "Apache-2.0",
+      "source": "https://github.com/lovell/sharp",
+      "scope": "server",
+      "dependencyPath": "node_modules/sharp",
+      "integrity": "sha512-Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g==",
+      "sourceArchive": "https://registry.npmjs.org/sharp/-/sharp-0.35.5.tgz",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68.txt",
+          "sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68"
         }
       ]
     },

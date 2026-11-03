@@ -7,7 +7,7 @@ const root = path.resolve(__dirname,'..');
 const server = fs.readFileSync(path.join(root,'server.js'),'utf8');
 const app = fs.readFileSync(path.join(root,'public/app.js'),'utf8');
 assert.match(server,/if \(definition\) return definition.pointCost/,'catalog pricing must drive dynamic chat pricing');
-assert.match(server,/'gpt-image-2': 20/,'existing image tool point cost is unrelated to chat quotas');
+assert.deepEqual(Object.values(require('../lib/image-generation').IMAGE_MODEL_COSTS),[100,200,300],'image prices remain separate from chat quotas');
 assert.match(server,/RAI_DEEPSEEK_FAST_API_KEY_FILE/);
 assert.match(server,/DEEPSEEK_FAST_API_KEY \|\| ENV_API_KEYS.DEEPSEEK_API_KEY/);
 assert.match(app,/renderMembershipModelPricing/);

@@ -101,21 +101,19 @@ const {
 } = require('./lib/admin-session-security');
 const {
     GPT_GATEWAY_CHAT_MODELS,
-    GPT_GATEWAY_IMAGE_MODEL,
     applyGatewayChatRequestPolicy,
     buildDirectImageToolCallSse,
     buildGatewayHeaders,
-    buildGatewayImageChatRequest,
     createExternalRequestAbortError,
-    extractGatewayChatImageSources,
+    extractGatewayImageSources,
     joinGatewayEndpoint,
     normalizeGatewayBaseUrl,
     postGatewayJson,
     readBoundedResponseText,
     readGatewayApiKeyFile,
-    runGatewayImageWithFallback,
     throwIfExternalRequestAborted
 } = require('./lib/gpt-gateway');
+const { IMAGE_MODEL_COSTS, IMAGE_GENERATION_SIZES, normalizeImageGenerationArgs, buildImageGenerationRequest, prepareGeneratedImage } = require('./lib/image-generation');
 const {
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
@@ -597,7 +595,7 @@ const GPT_IMAGE_API_KEY = GPT_IMAGE_API_KEY_FILE
     : '';
 const GPT_IMAGE_CONFIGURED = !!(GPT_IMAGE_BASE_URL && GPT_IMAGE_API_KEY);
 if (GPT_IMAGE_BASE_URL && !GPT_IMAGE_API_KEY_FILE) {
-    console.warn(' GPT 图像网关已配置 URL，但未配置 RAI_GPT_IMAGE_API_KEY_FILE；GPT Image 2 将 fail closed');
+    console.warn(' GPT 图像网关已配置 URL，但未配置 RAI_GPT_IMAGE_API_KEY_FILE；GPT Image 2.5 将 fail closed');
 }
 if (GPT_IMAGE_API_KEY_FILE && !GPT_IMAGE_BASE_URL) {
     throw new Error('gpt_image_api_key_file_requires_explicit_base_url');
@@ -712,7 +710,7 @@ function buildGeneratedImageMarkdown(result = {}) {
         .map((image, index) => {
             const url = String(image?.url || '').trim();
             if (!url || !url.startsWith(GENERATED_IMAGE_PUBLIC_PREFIX + '/')) return '';
-            return `![生成图片 ${index + 1}](${url})`;
+            return `![${String(image.name || image.filename || ('生成图片 ' + (index + 1))).replace(/[\[\]\\\r\n]/g, '')}](${url})`;
         })
         .filter(Boolean)
         .join('\n\n');
@@ -808,10 +806,7 @@ function appendRaiProductIdentityGuard(messages = [], promptLanguage = 'zh-CN') 
     return guarded;
 }
 
-const KOLORS_IMAGE_MODEL = 'Kwai-Kolors/Kolors';
 const SILICONFLOW_IMAGE_GENERATION_URL = cleanEnvValue(process.env.SILICONFLOW_IMAGE_GENERATION_URL) || 'https://api.siliconflow.cn/v1/images/generations';
-const KOLORS_IMAGE_SIZES = ['1024x1024', '960x1280', '768x1024', '720x1440', '720x1280'];
-const IMAGE_GENERATION_SIZES = [...new Set([...KOLORS_IMAGE_SIZES, '1024x1536', '1536x1024', 'auto'])];
 const GENERATED_IMAGES_DIR = path.join(__dirname, 'uploads', 'generated-images');
 const GENERATED_IMAGE_PUBLIC_PREFIX = '/generated-images';
 const SEARCH_IMAGE_CACHE_DIR = path.join(__dirname, 'uploads', 'search-images');
@@ -1747,33 +1742,6 @@ async function fetchYahooFinanceQuote({ symbol, range = FINANCE_DEFAULT_RANGE, i
 
 
 
-function normalizeImageGenerationArgs(args = {}) {
-    const prompt = String(args.prompt || args.description || '').trim().slice(0, 2000);
-    if (!prompt) {
-        throw new Error('图片生成缺少 prompt');
-    }
-
-    const requestedSize = String(args.image_size || args.size || '').trim();
-    const imageSize = IMAGE_GENERATION_SIZES.includes(requestedSize) ? requestedSize : '1024x1024';
-    const normalized = {
-        prompt,
-        image_size: imageSize,
-        batch_size: clampInteger(args.batch_size, 1, 4, 1),
-        num_inference_steps: clampInteger(args.num_inference_steps, 1, 100, 20),
-        guidance_scale: clampNumber(args.guidance_scale, 0, 20, 7.5)
-    };
-
-    return normalized;
-}
-
-function normalizeSiliconflowImageArgs(args = {}) {
-    const normalized = { ...args };
-    if (!KOLORS_IMAGE_SIZES.includes(normalized.image_size)) {
-        normalized.image_size = normalized.image_size === '1024x1536' ? '768x1024' : '1024x1024';
-    }
-    return normalized;
-}
-
 function sniffImageBuffer(buffer) {
     return sniffRasterImageBuffer(buffer);
 }
@@ -1947,8 +1915,10 @@ async function persistGeneratedImage(imageUrl = '', index = 0, context = {}) {
     if (buffer.length > MAX_GENERATED_IMAGE_BYTES) {
         throw new Error(`image too large: ${buffer.length}`);
     }
-    const sniffed = validateGeneratedImageBuffer(buffer, contentType);
-    contentType = sniffed.contentType;
+    validateGeneratedImageBuffer(buffer, contentType);
+    const prepared = await prepareGeneratedImage(buffer, context.imageSize || '1024x1024');
+    buffer = prepared.buffer;
+    contentType = 'image/png';
 
     throwIfExternalRequestAborted(externalSignal);
     await fs.promises.mkdir(GENERATED_IMAGES_DIR, { recursive: true });
@@ -1989,6 +1959,7 @@ async function persistGeneratedImage(imageUrl = '', index = 0, context = {}) {
     }
     return {
         url: `${GENERATED_IMAGE_PUBLIC_PREFIX}/${filename}`,
+        filename, width: prepared.width, height: prepared.height,
         bytes: buffer.length,
         content_type: contentType || `image/${ext === 'jpg' ? 'jpeg' : ext}`,
         expires_at: expiresAt
@@ -2003,24 +1974,6 @@ function linkImageProviderAbort(controller, externalSignal) {
     if (externalSignal.aborted) abort();
     else externalSignal.addEventListener('abort', abort, { once: true });
     return () => externalSignal.removeEventListener('abort', abort);
-}
-
-function waitForImageRetry(delayMs, externalSignal) {
-    throwIfExternalRequestAborted(externalSignal);
-    return new Promise((resolve, reject) => {
-        let settled = false;
-        const finish = (callback) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            externalSignal?.removeEventListener?.('abort', onAbort);
-            callback();
-        };
-        const onAbort = () => finish(() => reject(createExternalRequestAbortError()));
-        const timer = setTimeout(() => finish(resolve), delayMs);
-        externalSignal?.addEventListener?.('abort', onAbort, { once: true });
-        if (externalSignal?.aborted) onAbort();
-    });
 }
 
 async function readBoundedImageProviderResponse(response, maxBytes, { parseJson = false } = {}) {
@@ -2048,318 +2001,68 @@ async function readBoundedImageProviderResponse(response, maxBytes, { parseJson 
     return parseJson ? JSON.parse(text) : text;
 }
 
-async function requestAndPersistGeneratedImages({
-    providerName,
-    model,
-    endpoint,
-    apiKey,
-    requestBody,
-    args,
-    context,
-    extractSources
-}) {
-    if (!apiKey) throw new Error(`image_provider_not_configured:${providerName}`);
-    const externalSignal = context?.signal;
+async function requestAndPersistGeneratedImages({ model, requestBody, args, context }) {
+    const externalSignal = context.signal;
     throwIfExternalRequestAborted(externalSignal);
-    let response;
-    let releaseSelectedAttempt = () => undefined;
-    // Image 2 is billed per generation. Never retry that upstream implicitly;
-    // one failed attempt may still use the cheaper fallback provider below.
-    const maxAttempts = providerName === 'rai_gpt_image' ? 1 : 2;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        throwIfExternalRequestAborted(externalSignal);
-        const controller = new AbortController();
-        const unlinkExternalAbort = linkImageProviderAbort(controller, externalSignal);
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
-        const releaseAttempt = () => {
-            clearTimeout(timeoutId);
-            unlinkExternalAbort();
-        };
-        try {
-            response = providerName === 'rai_gpt_image'
-                ? await postGatewayJson({
-                    baseUrl: GPT_IMAGE_BASE_URL,
-                    endpoint: 'chat/completions',
-                    apiKey,
-                    body: requestBody,
-                    signal: controller.signal
-                })
-                : await fetchModelProvider(endpoint, {
-                    method: 'POST',
-                    headers: buildGatewayHeaders(apiKey),
-                    body: JSON.stringify(requestBody),
-                    signal: controller.signal
-                });
-        } catch (error) {
-            releaseAttempt();
-            if (externalSignal?.aborted) throw createExternalRequestAbortError();
-            appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'image_generation_network_failed',
-                message: error.message,
-                context: {
-                    provider: providerName,
-                    model,
-                    attempt,
-                    image_size: args.image_size,
-                    batch_size: args.batch_size
-                }
-            });
-            if (attempt < maxAttempts) {
-                await waitForImageRetry(1200, externalSignal);
-                continue;
-            }
-            error.gatewayImageNetworkFailure = true;
-            throw error;
-        }
-
-        if (response.ok || response.status < 500 || attempt >= maxAttempts) {
-            releaseSelectedAttempt = releaseAttempt;
-            break;
-        }
-        throwIfExternalRequestAborted(externalSignal);
-        appendRaiRuntimeReport({
-            level: '报错',
-            tag: 'image_generation_retry',
-            message: `Image generation HTTP ${response.status}, retrying`,
-            context: {
-                provider: providerName,
-                model,
-                attempt,
-                image_size: args.image_size,
-                batch_size: args.batch_size
-            }
-        });
-        if (response.body && typeof response.body.cancel === 'function') {
-            await response.body.cancel().catch(() => null);
-        }
-        releaseAttempt();
-        await waitForImageRetry(1200, externalSignal);
-    }
-
+    const controller = new AbortController();
+    const unlinkExternalAbort = linkImageProviderAbort(controller, externalSignal);
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
     try {
-        throwIfExternalRequestAborted(externalSignal);
-        if (!response?.ok) {
-            const errorText = await readBoundedImageProviderResponse(response, 64 * 1024).catch(() => '');
-            throwIfExternalRequestAborted(externalSignal);
-            appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'image_generation_http_failed',
-                message: `Image generation failed with HTTP ${response.status}`,
-                context: {
-                    provider: providerName,
-                    model,
-                    status: response.status,
-                    bodyLength: errorText.length,
-                    image_size: args.image_size,
-                    batch_size: args.batch_size
-                }
-            });
-            const upstreamError = new Error(`图片生成上游服务返回 HTTP ${response.status}`);
-            upstreamError.upstreamStatus = response.status;
-            throw upstreamError;
+        // One paid request. An upstream error never switches providers or replays it.
+        const response = await postGatewayJson({
+            baseUrl: GPT_IMAGE_BASE_URL, endpoint: 'images/generations',
+            apiKey: GPT_IMAGE_API_KEY, body: requestBody, signal: controller.signal
+        });
+        if (!response.ok) {
+            await response.body?.cancel?.().catch(() => null);
+            throw new Error(`图片生成服务返回 HTTP ${response.status}`);
         }
-
-        let payload;
-        try {
-            payload = await readBoundedImageProviderResponse(
-                response,
-                (MAX_GENERATED_IMAGE_BYTES * 2) + (256 * 1024),
-                { parseJson: true }
-            );
-            throwIfExternalRequestAborted(externalSignal);
-        } catch (error) {
-            if (externalSignal?.aborted || error?.externalRequestAbort) throw createExternalRequestAbortError();
-            appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'image_generation_invalid_json',
-                message: error.message,
-                context: { provider: providerName, model }
-            });
-            throw new Error('图片生成返回无法解析');
-        }
-
-        const rawSources = extractSources(payload);
+        const payload = await readBoundedImageProviderResponse(response, (MAX_GENERATED_IMAGE_BYTES * 2) + 262144, { parseJson: true });
         throwIfExternalRequestAborted(externalSignal);
-        const images = (await Promise.all(rawSources.map(async (imageSource, index) => {
-            try {
-                throwIfExternalRequestAborted(externalSignal);
-                const persisted = await persistGeneratedImage(imageSource, index, context);
-                if (!persisted?.url) return null;
-                return {
-                    index: index + 1,
-                    url: persisted.url,
-                    bytes: persisted.bytes,
-                    content_type: persisted.content_type
-                };
-            } catch (error) {
-                if (externalSignal?.aborted || error?.externalRequestAbort) throw createExternalRequestAbortError();
-                appendRaiRuntimeReport({
-                    level: '报错',
-                    tag: 'image_generation_persist_failed',
-                    message: error.message,
-                    context: { provider: providerName, model, sourceKind: imageSource.startsWith('data:') ? 'base64' : 'url' }
-                });
-                return null;
-            }
-        }))).filter(Boolean);
-        throwIfExternalRequestAborted(externalSignal);
-
-        if (images.length === 0) {
-            appendRaiRuntimeReport({
-                level: '报错',
-                tag: 'image_generation_empty_result',
-                message: 'Image provider returned no persistable image',
-                context: {
-                    provider: providerName,
-                    model,
-                    resultCount: rawSources.length,
-                    responseKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : []
-                }
-            });
-            throw new Error('图片生成没有返回可用图片');
-        }
-
+        const source = extractGatewayImageSources(payload)[0];
+        if (!source) throw new Error('图片生成没有返回可用图片');
+        const image = await persistGeneratedImage(source, 0, { ...context, imageSize: args.image_size });
+        if (!image?.url) throw new Error('图片保存失败');
         return {
-            provider: providerName,
-            model,
-            endpoint: (() => {
-                try {
-                    return new URL(endpoint).pathname;
-                } catch (error) {
-                    return '/images/generations';
-                }
-            })(),
-            prompt: args.prompt,
-            parameters: {
-                image_size: args.image_size,
-                batch_size: args.batch_size
-            },
-            images,
-            note: 'Generated images were cached by RAI. Use only the local /generated-images/ URLs.'
+            success: true, provider: 'rai_gpt_image', model, prompt: args.prompt,
+            parameters: { image_size: args.image_size, batch_size: 1 },
+            images: [{ index: 1, name: args.name, ...image }],
+            note: 'RAI already displayed the named image. Use its exact name and filename; never invent one.'
         };
+    } catch (error) {
+        if (externalSignal?.aborted) throw createExternalRequestAbortError();
+        throw error;
     } finally {
-        releaseSelectedAttempt();
+        clearTimeout(timeoutId);
+        unlinkExternalAbort();
     }
 }
 
 async function generateImages(rawArgs = {}, context = {}) {
-    const args = normalizeImageGenerationArgs(rawArgs);
-    const externalSignal = context?.signal;
+    const args = normalizeImageGenerationArgs({ ...rawArgs,
+        model: context.requestedImageModel && context.requestedImageModel !== 'auto' ? context.requestedImageModel : rawArgs.model });
+    const externalSignal = context.signal;
     throwIfExternalRequestAborted(externalSignal);
-    const requestedModel = context.requestedImageModel || (context.requireGptGateway ? 'gpt-image-2' : 'auto');
-    const requestId = String(context.requestId || `image_${crypto.randomUUID().replace(/-/g, '')}`);
-
-    const requestSiliconflowFallback = async (gatewayFailure = null) => {
-        throwIfExternalRequestAborted(externalSignal);
-        if (gatewayFailure) {
-            console.warn(' GPT 图片网关不可用，回退到 SiliconFlow:', sanitizeReportContext(gatewayFailure));
-        }
-        const provider = API_PROVIDERS.siliconflow;
-        if (!provider?.apiKey) throw new Error(`缺少环境变量: ${provider?.envKey || 'SILICONFLOW_API_KEY'}`);
-        const siliconflowArgs = normalizeSiliconflowImageArgs(args);
-        const result = await requestAndPersistGeneratedImages({
-            providerName: 'siliconflow',
-            model: KOLORS_IMAGE_MODEL,
-            endpoint: provider.imageGenerationURL || SILICONFLOW_IMAGE_GENERATION_URL,
-            apiKey: provider.apiKey,
-            requestBody: { model: KOLORS_IMAGE_MODEL, ...siliconflowArgs },
-            args: siliconflowArgs,
-            context,
-            extractSources: (payload) => {
-                const rows = Array.isArray(payload?.images) ? payload.images : (Array.isArray(payload?.data) ? payload.data : []);
-                return rows.map((item) => {
-                    const b64 = String(item?.b64_json || '').trim();
-                    return String(item?.url || item?.image_url || '').trim() || (b64 ? `data:image/png;base64,${b64}` : '');
-                }).filter(Boolean);
-            }
-        });
-        return { ...result, requestedModel, actualModel: 'kolors-free', routingReason: gatewayFailure?.quotaReason || (gatewayFailure ? 'upstream_fallback' : 'free_model') };
-    };
-
-    let reservation = null;
-    let imagePoints = null;
-    let imagePointsRefunded = false;
-    try {
-        if (requestedModel === 'kolors-free' || !context?.userId) return await requestSiliconflowFallback();
-        reservation = await reserveImage2Quota(context.userId, requestId);
-        if (!reservation.allowed || !GPT_IMAGE_CONFIGURED) {
-            const quotaReason = reservation.reason || 'gateway_unavailable';
-            const quotaSnapshot = reservation;
-            if (reservation.allowed) {
-                await settleImage2QuotaReservation(requestId, false);
-                reservation = null;
-            }
-            const fallback = await requestSiliconflowFallback({ quotaReason });
-            return { ...fallback, quota: quotaSnapshot, routingReason: quotaReason };
-        }
-        imagePoints = await checkAndDeductPoints(context.userId, GPT_GATEWAY_IMAGE_MODEL);
-        if (imagePoints.useFreeModel) {
-            await settleImage2QuotaReservation(requestId, false);
-            reservation = null;
-            const fallback = await requestSiliconflowFallback({ quotaReason: 'user_points_exhausted' });
-            return {
-                ...fallback,
-                quota: await getImage2QuotaSnapshot(context.userId),
-                routingReason: 'user_points_exhausted',
-                requiredPoints: imagePoints.requiredPoints,
-                remainingPoints: imagePoints.remainingPoints
-            };
-        }
-        const result = await runGatewayImageWithFallback({
-            primaryRequest: () => requestAndPersistGeneratedImages({
-                providerName: 'rai_gpt_image',
-                model: GPT_GATEWAY_IMAGE_MODEL,
-                endpoint: joinGatewayEndpoint(GPT_IMAGE_BASE_URL, 'chat/completions'),
-                apiKey: GPT_IMAGE_API_KEY,
-                requestBody: buildGatewayImageChatRequest(args),
-                args: { ...args, batch_size: 1 },
-                context,
-                extractSources: extractGatewayChatImageSources
-            }),
-            fallbackRequest: requestSiliconflowFallback,
-            fallbackFrom: GPT_GATEWAY_IMAGE_MODEL,
-            signal: externalSignal
-        });
-        const usedImage2 = result?.provider === 'rai_gpt_image' && !result?.fallbackUsed;
-        await settleImage2QuotaReservation(requestId, usedImage2);
-        reservation = null;
-        let remainingPoints = imagePoints.remainingPoints;
-        if (!usedImage2 && imagePoints.pointsDeducted > 0) {
-            const refund = await refundPointDeduction(context.userId, imagePoints);
-            imagePointsRefunded = true;
-            remainingPoints = refund.remainingPoints;
-        }
+    if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('图片生成需要登录');
+    if (!GPT_IMAGE_CONFIGURED) return { success: false, code: 'image_provider_unavailable', message: '图片生成服务暂不可用，本次未扣点。', images: [] };
+    const imagePoints = await checkAndDeductPoints(context.userId, args.model);
+    if (imagePoints.useFreeModel) {
         return {
-            ...result,
-            requestedModel,
-            actualModel: usedImage2 ? 'gpt-image-2' : 'kolors-free',
-            routingReason: usedImage2 ? 'quota_available' : 'upstream_fallback',
-            pointsDeducted: usedImage2 ? imagePoints.pointsDeducted : 0,
-            remainingPoints,
-            quota: await getImage2QuotaSnapshot(context.userId)
+            success: false, code: 'insufficient_points', reason: 'insufficient_points', model: args.model,
+            requiredPoints: IMAGE_MODEL_COSTS[args.model], remainingPoints: imagePoints.remainingPoints, pointsDeducted: 0, images: [],
+            message: `点数不足：本次需要 ${IMAGE_MODEL_COSTS[args.model]} 点，当前 ${imagePoints.remainingPoints} 点，未生成图片。`
         };
+    }
+    const requestId = String(context.requestId || `image_${crypto.randomUUID().replace(/-/g, '')}`);
+    try {
+        const result = await requestAndPersistGeneratedImages({ model: args.model,
+            requestBody: buildImageGenerationRequest(args), args, context: { ...context, requestId } });
+        return { ...result, requestedModel: args.model, actualModel: args.model,
+            pointsDeducted: imagePoints.pointsDeducted, remainingPoints: imagePoints.remainingPoints };
     } catch (error) {
-        if (reservation?.allowed) await settleImage2QuotaReservation(requestId, false).catch(() => null);
-        if (imagePoints?.pointsDeducted > 0 && !imagePointsRefunded) {
-            try {
-                await refundPointDeduction(context.userId, imagePoints);
-                imagePointsRefunded = true;
-            } catch (refundError) {
-                appendRaiRuntimeReport({
-                    level: '报错',
-                    tag: 'image_points_refund_failed',
-                    message: refundError.message,
-                    context: { userId: context?.userId, requestId }
-                });
-            }
-        }
+        await refundPointDeduction(context.userId, imagePoints);
         if (externalSignal?.aborted || error?.externalRequestAbort) {
-            await cleanupFailedChatGeneratedImagesBestEffort({
-                userId: context?.userId,
-                requestId: context?.requestId,
-                cause: 'client_aborted'
-            });
+            await cleanupFailedChatGeneratedImagesBestEffort({ userId: context.userId, requestId, cause: 'client_aborted' });
             throw createExternalRequestAbortError();
         }
         throw error;
@@ -2387,15 +2090,20 @@ const TOOL_DEFINITIONS = [{
     type: "function",
     function: {
         name: "generate_image",
-        description: "生成图片。当用户要求画图、生图、生成海报、插画、视觉方案或图片时调用。只传 prompt 和尺寸等参数，不要传 image、image_url 或参考图 URL。服务端会使用已配置的首选图片提供商并自动把图片展示给用户。",
+        description: "生成一张有明确名称的图片，最长边不超过 1024。按模型消耗 100/200/300 点；点数不足会拒绝并返回当前余额，必须向用户说明。不要传参考图 URL。",
         parameters: {
             type: "object",
-            required: ["prompt"],
+            required: ["prompt", "name"],
             additionalProperties: false,
             properties: {
                 prompt: {
                     type: "string",
                     description: "图片生成提示词。应包含主体、场景、风格、构图、光线、颜色和需要避免的歧义。"
+                },
+                name: { type: "string", description: "本张图片的简短具体名称，供展示、保存和后续引用。" },
+                model: {
+                    type: "string", enum: Object.keys(IMAGE_MODEL_COSTS),
+                    description: "gpt-image-2.5: 100 点；gpt-image-2.5-flare: 200 点，日常高质量生成；gpt-image-2.5-sunburst: 300 点，精细控制。默认 100 点型号。"
                 },
                 image_size: {
                     type: "string",
@@ -2405,20 +2113,8 @@ const TOOL_DEFINITIONS = [{
                 batch_size: {
                     type: "integer",
                     minimum: 1,
-                    maximum: 4,
-                    description: "生成张数，1 到 4，默认 1。"
-                },
-                num_inference_steps: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 100,
-                    description: "推理步数，默认 20。"
-                },
-                guidance_scale: {
-                    type: "number",
-                    minimum: 0,
-                    maximum: 20,
-                    description: "提示词遵循强度，默认 7.5。"
+                    maximum: 1,
+                    description: "每次一张，每张独立扣点。"
                 }
             }
         }
@@ -3709,7 +3405,7 @@ const TOOL_EXECUTORS = {
     },
     generate_image: async (args, context = {}) => {
         const safeArgs = normalizeImageGenerationArgs(args);
-        console.log(` 执行工具 generate_image: provider=${GPT_IMAGE_CONFIGURED ? 'preferred_gateway' : 'siliconflow_fallback'}, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
+        console.log(` 执行工具 generate_image: provider=rai_gpt_image, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
         return await generateImages(safeArgs, context);
     },
     save_memory: async (args, context = {}) => {
@@ -5598,19 +5294,23 @@ function buildToolResultForLLM({ toolName, result, sources = [], args = {} }) {
             ? result.images.filter((image) => String(image?.url || '').trim().startsWith(GENERATED_IMAGE_PUBLIC_PREFIX + '/')).length
             : 0;
         return {
-            provider: result?.provider || 'configured_image_provider',
+            success: result?.success === true && imageCount > 0,
+            code: result?.code || '',
+            message: result?.message || '',
+            required_points: Number(result?.requiredPoints || 0),
+            remaining_points: Number(result?.remainingPoints || 0),
+            points_deducted: Number(result?.pointsDeducted || 0),
             model: result?.model || 'configured_image_model',
-            endpoint: result?.endpoint || '/images/generations',
-            fallback_used: result?.fallbackUsed === true,
-            fallback_from: result?.fallbackFrom || null,
-            fallback_reason: result?.fallbackReason || null,
             prompt: result?.prompt || args.prompt || '',
             parameters: result?.parameters || {},
+            images: (result?.images || []).map(image => ({ name: image.name, filename: image.filename, width: image.width, height: image.height })),
             image_count: imageCount,
             displayed_by_server: imageCount > 0,
-            display_instruction: result?.fallbackUsed
-                ? 'The server already displayed the generated image. Briefly tell the user that the requested image provider was temporarily unavailable and RAI used the named fallback provider/model. Do not output Markdown images, image URLs, provider URLs, endpoints, or base64.'
-                : 'The server already displayed the generated image to the user. Do not output Markdown images, image URLs, provider URLs, endpoints, or base64. Reply with only a brief natural-language note.'
+            display_instruction: imageCount > 0
+                ? 'The server already displayed the image. Use its exact returned name or filename; do not guess. Briefly mention the points charged. Do not repeat images, URLs, endpoints or base64.'
+                : result?.code === 'insufficient_points'
+                    ? 'Image generation was refused because the user has insufficient points. Tell the user the required and current points. No image was generated or charged. Do not retry, switch models or claim success.'
+                    : 'Image generation failed. Tell the user the returned reason; do not claim that an image was created.'
         };
     }
 
@@ -8944,6 +8644,8 @@ logApiKeyReadiness();
 const LEGACY_MODEL_ALIASES = {
     // Normalize retired model IDs while keeping stored sessions and old clients readable.
     'gpt-5.6': 'gpt-6.1-sol',
+    'gpt-image-2': 'gpt-image-2.5',
+    'kolors-free': 'gpt-image-2.5',
     'gpt-5.6-sol': 'gpt-6.1-sol',
     'gpt-6-sol': 'gpt-6.1-sol',
     'gpt-5.6-terra': 'deepseek-v4.1-flash',
@@ -8978,7 +8680,7 @@ const LEGACY_MODEL_ALIASES = {
     'openrouter/free': 'openrouter-free'
 };
 
-const SUPPORTED_INCOMING_MODEL_IDS = new Set([...PUBLIC_MODEL_IDS, 'auto', 'fast-auto', 'think-auto']);
+const SUPPORTED_INCOMING_MODEL_IDS = new Set([...PUBLIC_MODEL_IDS, ...Object.keys(IMAGE_MODEL_COSTS), 'auto', 'fast-auto', 'think-auto']);
 
 function normalizeIncomingModelId(modelId = 'auto') {
     const normalized = String(modelId || 'auto').trim();
@@ -9044,22 +8746,10 @@ const MODEL_ROUTING = {
         supportsWebSearch: true,
         multimodal: true
     },
-    'gpt-image-2': {
-        provider: 'rai_gpt_gateway',
-        model: 'gpt-6.1-sol',
-        supportsThinking: false,
-        supportsWebSearch: false,
-        multimodal: true,
-        imageOnly: true
-    },
-    'kolors-free': {
-        provider: 'siliconflow',
-        model: KOLORS_IMAGE_MODEL,
-        supportsThinking: false,
-        supportsWebSearch: false,
-        multimodal: true,
-        imageOnly: true
-    },
+    ...Object.fromEntries(Object.keys(IMAGE_MODEL_COSTS).map(id => [id, {
+        provider: 'rai_gpt_gateway', model: 'gpt-6.1-sol', supportsThinking: false,
+        supportsWebSearch: false, multimodal: true, imageOnly: true
+    }])),
     // Qwen 3.6 35B - 便宜多模态模型
     'qwen3.6-35b-a3b': {
         provider: 'siliconflow',
@@ -21191,7 +20881,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
                 language: uiLanguage,
                 modeAllowed: !req.softwareClient && !rawClientFileExecution && !rawClientSkills && !rawLocalAgent
                     && normalizeResearchMode(researchMode) === 'off' && normalizeAgentMode(agentMode) === 'off'
-                    && normalizeIncomingModelId(requestedModel) !== GPT_GATEWAY_IMAGE_MODEL,
+                    && !Object.hasOwn(IMAGE_MODEL_COSTS, normalizeIncomingModelId(requestedModel)),
                 sandboxEnabled: DOCUMENT_SANDBOX_RUNTIME_ENABLED,
                 hasSavedConversation: Boolean(requestedSessionId || flowId),
                 internetEnabled: Boolean(requestedInternetMode),
@@ -21255,7 +20945,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             thinkingMode = false;
         }
         let internetMode = !!requestedInternetMode;
-        let gptImageModelSelected = model === GPT_GATEWAY_IMAGE_MODEL;
+        let gptImageModelSelected = Object.hasOwn(IMAGE_MODEL_COSTS, model);
         if (gptImageModelSelected) thinkingMode = false;
         const normalizedContinuationRequestId = /^req_\d+_[a-f0-9]{16}$/i.test(String(continuationOfRequestId || '').trim())
             ? String(continuationOfRequestId).trim()
@@ -21579,7 +21269,7 @@ if (clientFileExecution && systemPrompt) {
                 ? !CLAUDE_GATEWAY_CONFIGURED
                 : (model === 'gemini-3.6-flash-low'
                     ? !FAST_GATEWAY_CONFIGURED
-                    : (model === GPT_GATEWAY_IMAGE_MODEL && !GPT_IMAGE_CONFIGURED)));
+                    : (Object.hasOwn(IMAGE_MODEL_COSTS, model) && !GPT_IMAGE_CONFIGURED)));
         if (requestedGptModelUnavailable) {
             appendRaiRuntimeReport({
                 level: '报错',
@@ -22388,7 +22078,7 @@ if (clientFileExecution && systemPrompt) {
             'gpt-6-astra',
             'claude-sonnet-5',
             'gemini-3.6-flash-low',
-            'gpt-image-2',
+            ...Object.keys(IMAGE_MODEL_COSTS),
             'qwen3.6-35b-a3b',
             'kimi-k2.6',
             'kimi-k2',
@@ -22424,7 +22114,7 @@ if (clientFileExecution && systemPrompt) {
                 ? `${autoRoutingReason}; ${fallbackReason}`
                 : fallbackReason;
             console.log(` 强制免费模型: user=${req.user.userId}, cause=${freeModelFallbackCause || 'unknown'}`);
-        } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted && finalModel !== GPT_GATEWAY_IMAGE_MODEL) {
+        } else if (!forceFreeModelByQuota && !pointsAlreadyDeducted && !Object.hasOwn(IMAGE_MODEL_COSTS, finalModel)) {
             try {
                 const pointsResult = await checkAndDeductPoints(req.user.userId, finalModel);
                 if (pointsResult?.useFreeModel && !isFreeModelIdentifier(finalModel)) {
@@ -22745,7 +22435,7 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”或找、看、展示真实网络图片，请至少调用一次 web_search 再回答。要看图片时，把搜索结果 images 中的真实 URL 用 ![简短描述](图片URL) 放在回复合适位置；客户端能显示，不能声称无法展示。涉及天气、新闻、股价、时效数据时也应按需调用。');
             }
             if (imageGenerationRequested) {
-                toolHints.push(`用户正在请求生成图片。请调用 generate_image 工具；只传 prompt/image_size/batch_size 等文生图参数，禁止传 image、image_url、示例图片 URL 或上游临时 URL。服务端会选择已配置的图片提供商、优先生成并展示本站短链接图片，后续回复只需简短说明。`);
+                toolHints.push('用户正在请求生成图片。按需读取 image_generation 官方技能并调用 generate_image，提供明确 name、prompt、model 和不超过 1024 的 image_size，每次一张。gpt-image-2.5、gpt-image-2.5-flare、gpt-image-2.5-sunburst 分别消耗 100、200、300 点。余额不足时明确告知所需与当前点数，停止生成；不得重试或切换模型绕过扣点。禁止传 image、image_url、示例或上游临时 URL。图片已由服务端展示，后续简短说明并使用工具返回的真实名称和文件名。');
             }
             if (memoryToolsEnabled) {
                 toolHints.push('save_memory 与 delete_memory 已按需可用；严格遵守系统提示词顶部的记忆规则，不得为了使用工具而制造记忆。');
@@ -23016,6 +22706,7 @@ if (clientFileExecution && systemPrompt) {
         let agentResearcherRunning = false;
         let directImageToolSucceeded = false;
         let directImageToolFailed = false;
+        let directImageToolMessage = '';
         let rawAssistantStructuredBuffer = '';
         // A provider can close a stream after emitting useful reasoning/content
         // (most often when the bounded request deadline is reached). Keep that
@@ -25210,7 +24901,7 @@ if (clientFileExecution && systemPrompt) {
                                         sessionId,
                                         requestId,
                                         requireGptGateway: gptImageModelSelected,
-                                        requestedImageModel: gptImageModelSelected ? 'gpt-image-2' : (model === 'kolors-free' ? 'kolors-free' : 'auto'),
+                                        requestedImageModel: gptImageModelSelected ? model : 'auto',
                                         signal: controller.signal
                                     });
                                     if (gptImageModelSelected) {
@@ -25433,7 +25124,11 @@ if (clientFileExecution && systemPrompt) {
                                 console.log(` 工具执行完成: finance_quote ${formatPrivateLogFingerprint(result?.resolvedSymbol || args.symbol, 'symbol')}`);
                             } else if (isImageTool) {
                                 if (gptImageModelSelected) {
-                                    directImageToolSucceeded = true;
+                                    directImageToolSucceeded = result?.success === true;
+                                    directImageToolFailed = result?.success !== true;
+                                    directImageToolMessage = result?.success === true
+                                        ? `图片「${result.images?.[0]?.name || '图片'}」已生成，消耗 ${result.pointsDeducted} 点。`
+                                        : result?.message || '图片生成失败，本次已退还点数。';
                                 }
                                 const imageMarkdown = buildGeneratedImageMarkdown(result);
                                 if (imageMarkdown) {
@@ -25451,19 +25146,17 @@ if (clientFileExecution && systemPrompt) {
                                 res.write(`data: ${JSON.stringify({
                                     type: 'tool_status',
                                     tool: 'generate_image',
-                                    status: 'complete',
+                                    status: result?.success === true ? 'complete' : 'rejected',
                                     provider: result?.provider || '',
                                     requestedModel: result?.requestedModel || selectedModel || '',
                                     model: result?.actualModel || result?.model || '',
                                     fallbackUsed: result?.fallbackUsed === true,
                                     routingReason: result?.routingReason || '',
-                                    message: result?.fallbackUsed
-                                        ? `GPT Image 2 暂时不可用，已使用 ${result?.provider || '备用线路'} / ${result?.model || '备用图像模型'} 生成 ${result?.images?.length || 0} 张图片`
-                                        : result?.routingReason === 'user_points_exhausted'
-                                            ? `点数不足（需要 ${result?.requiredPoints || 20} 点，当前 ${result?.remainingPoints || 0} 点），已使用免费生图`
-                                        : result?.routingReason === 'quota_exhausted'
-                                            ? '额度已用完，已使用免费生图'
-                                            : `使用 ${result?.actualModel || result?.model || '图像模型'} 生成 ${result?.images?.length || 0} 张图片`
+                                    code: result?.code || '',
+                                    requiredPoints: result?.requiredPoints || 0,
+                                    remainingPoints: result?.remainingPoints || 0,
+                                    pointsDeducted: result?.pointsDeducted || 0,
+                                    message: result?.message || `使用 ${result?.actualModel || result?.model} 生成「${result?.images?.[0]?.name || '图片'}」，消耗 ${result?.pointsDeducted || 0} 点`
                                 })}\n\n`);
                                 console.log(` 工具执行完成: generate_image provider=${result?.provider || 'unknown'}, model=${result?.model || 'unknown'}, fallback=${result?.fallbackUsed === true}, count=${result?.images?.length || 0}`);
                             } else if (isMemorySaveTool) {
@@ -25561,9 +25254,7 @@ if (clientFileExecution && systemPrompt) {
                         }
 
                         if (gptImageModelSelected && (directImageToolSucceeded || directImageToolFailed)) {
-                            emitStructuredAssistantChunk(directImageToolSucceeded
-                                ? '\n\n图片已生成。'
-                                : '\n\n图片生成失败，请稍后重试。');
+                            emitStructuredAssistantChunk('\n\n' + (directImageToolMessage || '图片生成失败，本次未扣点。'));
                             pendingToolCalls = [];
                             console.log(' Image 2 直达模式完成，跳过聊天模型续传');
                             break;
@@ -28436,6 +28127,7 @@ app.get(['/api/model-availability', '/api/models/availability'], async (req, res
             models,
             disabledModels: models.filter((model) => !model.enabled).map((model) => model.id),
             conversationQuota: { windowHours: 24, limits: CHAT_MODEL_LIMITS, chargeOn: 'completed_answer', sharedAcrossClients: true },
+            imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 1024, maxBatchSize: 1 },
             contextWindow: CONTEXT_WINDOW_TOKENS, contextEstimation: 'conservative_utf8_bytes', contextTokensEstimated: true, autoContextCompression: true,
             contextPolicies: { ...CONTEXT_POLICIES, ...Object.fromEntries(models.map(model => [model.id, { contextWindow: model.contextWindow, compressionThreshold: model.compressionThreshold, estimated: true }])) },
             uploadFileNameMaxCharacters: 255, smartDefaults: await resolveModeDefaults('smart'), fastDefaults: await resolveModeDefaults('fast'), thinkingDefaults: await resolveModeDefaults('thinking')
@@ -28610,69 +28302,12 @@ function getShanghaiResetAt(now = new Date()) {
     return new Date(`${date}T16:00:00.000Z`).toISOString();
 }
 
-function image2LimitForMembership(membership) {
-    return membership === 'MAX' ? 10 : membership === 'Pro' ? 3 : 0;
-}
-
 const conversationOrganizationStartupReady = chatFlowStartupReady
     .then(() => ensureConversationOrganizationSchema())
     .then(() => {
         console.log(' 对话文件夹、置顶和图片配额结构就绪');
         return true;
     });
-
-async function reserveImage2Quota(userId, requestId) {
-    await ensureConversationOrganizationSchema();
-    const usageDate = getShanghaiUsageDate();
-    const now = Date.now();
-    return withMainDbTransaction(async (tx) => {
-        await tx.run(`UPDATE image_quota_reservations SET status = 'released', updated_at = ?
-                      WHERE status = 'reserved' AND created_at < ?`, [now, now - 15 * 60 * 1000]);
-        const user = await tx.get('SELECT COALESCE(membership, \'free\') AS membership, membership_end FROM users WHERE id = ?', [userId]);
-        const activeMembership = user?.membership !== 'free' && user?.membership_end && new Date(user.membership_end) > new Date()
-            ? user.membership : 'free';
-        const limit = image2LimitForMembership(activeMembership);
-        const usage = await tx.get('SELECT COALESCE(used_count, 0) AS used FROM image_quota_daily_usage WHERE user_id = ? AND usage_date = ? AND model_id = ?', [userId, usageDate, 'gpt-image-2']);
-        const reserved = await tx.get("SELECT COUNT(*) AS count FROM image_quota_reservations WHERE user_id = ? AND usage_date = ? AND model_id = ? AND status = 'reserved'", [userId, usageDate, 'gpt-image-2']);
-        const used = Number(usage?.used || 0);
-        const pending = Number(reserved?.count || 0);
-        if (!limit || used + pending >= limit) {
-            return { allowed: false, limit, used, remaining: Math.max(0, limit - used - pending), resetAt: getShanghaiResetAt(), reason: limit ? 'quota_exhausted' : 'membership_required' };
-        }
-        await tx.run(`INSERT INTO image_quota_reservations (request_id, user_id, usage_date, model_id, status, created_at, updated_at)
-                      VALUES (?, ?, ?, 'gpt-image-2', 'reserved', ?, ?)`, [requestId, userId, usageDate, now, now]);
-        return { allowed: true, usageDate, limit, used, remaining: limit - used - pending - 1, resetAt: getShanghaiResetAt() };
-    });
-}
-
-async function settleImage2QuotaReservation(requestId, consume) {
-    if (!requestId) return;
-    await withMainDbTransaction(async (tx) => {
-        const row = await tx.get("SELECT user_id, usage_date, status FROM image_quota_reservations WHERE request_id = ?", [requestId]);
-        if (!row || row.status !== 'reserved') return;
-        if (consume) {
-            await tx.run(`INSERT INTO image_quota_daily_usage (user_id, usage_date, model_id, used_count, updated_at)
-                          VALUES (?, ?, 'gpt-image-2', 1, CURRENT_TIMESTAMP)
-                          ON CONFLICT(user_id, usage_date, model_id) DO UPDATE SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP`, [row.user_id, row.usage_date]);
-            await tx.run("UPDATE image_quota_reservations SET status = 'consumed', updated_at = ? WHERE request_id = ? AND status = 'reserved'", [Date.now(), requestId]);
-        } else {
-            await tx.run("UPDATE image_quota_reservations SET status = 'released', updated_at = ? WHERE request_id = ? AND status = 'reserved'", [Date.now(), requestId]);
-        }
-    });
-}
-
-async function getImage2QuotaSnapshot(userId) {
-    await ensureConversationOrganizationSchema();
-    const usageDate = getShanghaiUsageDate();
-    const user = await dbGetAsync('SELECT COALESCE(membership, \'free\') AS membership, membership_end FROM users WHERE id = ?', [userId]);
-    const membership = user?.membership !== 'free' && user?.membership_end && new Date(user.membership_end) > new Date() ? user.membership : 'free';
-    const limit = image2LimitForMembership(membership);
-    const usedRow = await dbGetAsync('SELECT COALESCE(used_count, 0) AS used FROM image_quota_daily_usage WHERE user_id = ? AND usage_date = ? AND model_id = ?', [userId, usageDate, 'gpt-image-2']);
-    const pendingRow = await dbGetAsync("SELECT COUNT(*) AS count FROM image_quota_reservations WHERE user_id = ? AND usage_date = ? AND model_id = ? AND status = 'reserved'", [userId, usageDate, 'gpt-image-2']);
-    const used = Number(usedRow?.used || 0);
-    const pending = Number(pendingRow?.count || 0);
-    return { limit, used, remaining: Math.max(0, limit - used - pending), resetAt: getShanghaiResetAt() };
-}
 
 function getTodayDateString() {
     return new Date().toISOString().split('T')[0];
@@ -29113,7 +28748,7 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        res.json({ ...snapshot, image2Quota: await getImage2QuotaSnapshot(req.user.userId) });
+        res.json({ ...snapshot, imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 1024 } });
     } catch (error) {
         console.error(' 获取会员状态失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取会员状态失败' });
@@ -29393,10 +29028,11 @@ const MODEL_POINT_COSTS = Object.freeze({
     'gpt-5.6-terra': 5,
     'claude-sonnet-5': 10,
     'gemini-3.6-flash-low': 3,
-    'gpt-image-2': 20
+    ...IMAGE_MODEL_COSTS
 });
 
 function getModelPointCost(modelId = '') {
+    if (Object.hasOwn(IMAGE_MODEL_COSTS, modelId)) return IMAGE_MODEL_COSTS[modelId];
     const model = normalizeIncomingModelId(modelId);
     const definition = ADMIN_MODEL_CATALOG.find(item => item.id === model);
     if (definition) return definition.pointCost;
