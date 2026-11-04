@@ -11,8 +11,10 @@ const { createLunaOfficialFetch } = require('./lib/luna-official-provider');
 const { createProviderTokenStore, meterChatResponse } = require('./lib/provider-token-usage');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
+const { createUserActivity } = require('./lib/user-activity');
 const { fetchWithLatency } = require('./lib/chat-latency');
 const { buildCacheStableMessages } = require('./lib/prompt-prefix');
+const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
@@ -2827,7 +2829,8 @@ function getPendingClientToolCountBySession(sessionId) {
     return count;
 }
 
-const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'scope']);
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'scope',
+    'path', 'revision', 'content', 'total_lines', 'next_line', 'results', 'line', 'scanned_files', 'skipped_files', 'truncated']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
@@ -2885,6 +2888,7 @@ function hasToolDefinition(toolDefinitions = [], toolName = '') {
 }
 
 const FILE_WORKSPACE_TOOL_NAMES = new Set([
+    ...cxAgentTools.names,
     'read_file', 'transform_file', 'edit_file', 'create_artifact', 'sandbox_exec', 'fetch_url', 'insert_image',
     'update_sheet', 'list_files', 'write_file', 'copy_file', 'move_file', 'delete_file', 'process_exec',
     ...LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS.map((tool) => tool.function.name)
@@ -2948,6 +2952,7 @@ function buildChatToolDefinitions({
     fileToolsEnabled = false,
     clientFileExecution = false,
     localAgentEnabled = false,
+    cxAgentEnabled = false,
     nativeClientSettings = false
 } = {}) {
     const definitions = [];
@@ -2978,6 +2983,7 @@ function buildChatToolDefinitions({
             );
             if (localAgentEnabled) definitions.push(...LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS);
             if (localAgentEnabled) definitions.push(PROCESS_EXEC_TOOL_DEFINITION_LOCAL_AGENT);
+            if (cxAgentEnabled) definitions.push(...cxAgentTools.definitions);
         } else {
             definitions.push(
                 READ_FILE_TOOL_DEFINITION,
@@ -3130,6 +3136,7 @@ function parseToolCallArguments(rawArguments) {
 }
 
 function normalizeWorkspaceToolArgs(toolName, args = {}, localMode = false) {
+    if (cxAgentTools.isTool(toolName)) return localMode ? cxAgentTools.normalizeArgs(toolName, args) : null;
     if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
     const allowedKeysByTool = {
         read_file: new Set(['file_id', 'mode']),
@@ -10307,6 +10314,8 @@ const softwareClientStartupReady = authSessionStartupReady
         console.log(' 软件客户端凭据结构就绪');
         return true;
     });
+const userActivity = createUserActivity({ dbRunAsync, dbAllAsync, withMainDbTransaction, startupReady: authSessionStartupReady });
+userActivity.ready.catch(() => console.error('用户操作日志数据库初始化失败'));
 const localAgentStartupReady = authSessionStartupReady
     .then(() => localAgentService.migrate())
     .then(() => {
@@ -11073,6 +11082,7 @@ const authenticateToken = async (req, res, next) => {
         await authSessionStartupReady;
         const user = await authSessionStore.verifyAccessToken(token);
         req.user = user;
+        userActivity.bindRequest(req);
         return next();
     } catch (error) {
         return res.status(401).json({ error: '令牌无效、已过期或会话已撤销' });
@@ -20621,7 +20631,7 @@ const fetchLunaProvider = createLunaOfficialFetch({
     metadata: () => {
         const turn = chatModelQuotaContext.getStore();
         if (turn) turn.lunaReasoningItems ||= new Map();
-        return { requestId: turn?.id, userId: turn?.userId, reasoningItems: turn?.lunaReasoningItems };
+        return { requestId: turn?.id, userId: turn?.userId, sessionId: turn?.sessionId, reasoningItems: turn?.lunaReasoningItems, latency: turn?.latency };
     },
     onMeterError: () => console.error(' 官方 Luna 用量结算失败，保留预留额度')
 });
@@ -20722,7 +20732,7 @@ async function settleChatModelTurn(success, completedModels = null) {
 }
 
 app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => chatModelQuotaContext.run({
-    userId: req.user.userId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false, latency: req.chatLatency
+    userId: req.user.userId, sessionId: req.body?.sessionId, response: res, id: crypto.randomUUID(), reserved: new Set(), used: new Set(), closed: false, latency: req.chatLatency
 }, async () => {
     req.chatLatency?.mark('authenticated');
     console.log(' 收到聊天请求');
@@ -20857,6 +20867,9 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             });
         }
         const clientFileExecution = (rawClientFileExecution === true && !!req.softwareClient) || !!localAgentSession || !!cxRemoteSession;
+        const cxAgentAvailable = rawClientFileExecution === true && !!req.softwareClient && !localAgentSession && !cxRemoteSession
+            && typeof req.body.client_agent_mode === 'boolean';
+        const cxAgentEnabled = cxAgentAvailable && req.body.client_agent_mode === true && workdir_configured === true;
         let clientSkills;
         try {
             clientSkills = clientSkillPolicy.normalizeClientSkills(rawClientSkills,
@@ -21061,6 +21074,14 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         const concurrentLimit = concurrency.limit;
         requestId = `req_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
         req.diagnosticChatRequestId = requestId;
+        req.diagnosticSessionId = sessionId || null;
+        req.recordUserActivity?.('chat_requested', { kind: 'stream', context: {
+            selectedModel: model, reasoningProfile: req.body.reasoningProfile, thinkingMode,
+            internetMode: req.body.internetMode, agentMode: req.body.client_agent_mode,
+            selectedSkills: req.body.client_skills?.selected?.map?.(skill => skill?.name) || req.body.selected_skill_names,
+            loadedSkills: req.body.client_skills?.selected?.filter?.(skill => skill?.success === true)?.map(skill => skill.name),
+            memoryMode: req.body.memoryMode, researchModeName: req.body.researchMode, thinkingBudget: req.body.thinkingBudget
+        } });
         const activeRegistration = await registerActiveRequestForUser({
             requestId,
             userId: req.user.userId,
@@ -21139,6 +21160,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             toolEnvironment: clientFileExecution ? (localAgentSession ? 'local-agent' : 'windows-client') : 'web-sandbox'
         });
         if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
+        if (cxAgentEnabled) systemPrompt += '\n' + cxAgentTools.guidance;
         req.chatLatency?.mark('prompt_base_ready');
         console.log(
             ` 已应用服务端 RAI 提示词: userId=${req.user.userId}, language=${sessionPromptContext.promptLanguage}, identity=${sessionPromptContext.promptModelIdentity}, temporary=${memoryModeOff}, customPromptLength=${customPrompt.length}`
@@ -21265,11 +21287,12 @@ if (clientFileExecution && systemPrompt) {
             imageGenerationRequested,
             memoryToolsEnabled,
             skillToolsEnabled,
-            fileToolsEnabled: Boolean(sessionId),
+            fileToolsEnabled: Boolean(sessionId) || cxAgentAvailable,
             clientFileExecution,
             localAgentEnabled: !!localAgentSession,
+            cxAgentEnabled: cxAgentAvailable,
             nativeClientSettings: !!req.softwareClient && !localAgentSession && !cxRemoteSession
-        }), clientSkills);
+        }), clientSkills, cxAgentAvailable);
         const promptContextTrace = buildPromptContextTrace(normalizedPromptTimeContext);
         const serverToolTrace = [];
         const generatedArtifacts = [];
@@ -21347,6 +21370,8 @@ if (clientFileExecution && systemPrompt) {
             return row;
         };
         const emitTrackedToolStatus = (event = {}) => {
+            req.recordUserActivity?.('tool_status', { kind: 'stream', stage: event.status, control: event.tool,
+                context: { loadedSkills: event.tool === 'read_skill' && event.status === 'complete' ? [event.skill] : [] } });
             const tracked = { type: event.type || 'tool_status', ...event };
             recordServerToolTrace(tracked);
             res.write(`data: ${JSON.stringify(tracked)}\n\n`);
@@ -22474,6 +22499,8 @@ if (clientFileExecution && systemPrompt) {
         finalMessages = buildCacheStableMessages(finalMessages, systemPrompt, systemContent);
         finalMessages = clientSkillPolicy.appendSelected(finalMessages, clientSkills);
         finalMessages = webSelectedSkills.appendSelected(finalMessages, selectedWebSkills);
+        if (selectedWebSkills?.skills?.length) req.recordUserActivity?.('skill_context_ready', { kind: 'stream',
+            context: { loadedSkills: selectedWebSkills.skills.map(skill => skill.name) } });
 
         const isCurrentKimiK25Model = () => (
             finalModel === 'kimi-k2.6'
@@ -24338,7 +24365,8 @@ if (clientFileExecution && systemPrompt) {
                             || (toolName === 'list_skills' && (!Number.isSafeInteger(offset) || offset < 0))
                             || (toolName === 'install_skill' && typeof args?.url !== 'string')) continue;
                         const normalizedArgs = toolName === 'read_skill' ? { name, offset }
-                            : toolName === 'install_skill' ? { url: args.url } : { offset };
+                            : toolName === 'install_skill' ? { url: args.url }
+                            : toolName === 'enable_agent_mode' ? {} : { offset };
                         normalized.push({ ...toolCall,
                             function: { ...toolCall.function, arguments: JSON.stringify(normalizedArgs) }, _args: normalizedArgs });
                         continue;
@@ -24534,6 +24562,8 @@ if (clientFileExecution && systemPrompt) {
                         for (const toolCall of pendingToolCalls) {
                             const toolName = toolCall.function.name;
                             const args = toolCall._args;
+                            req.recordUserActivity?.('tool_requested', { kind: 'stream', control: toolName,
+                                stage: 'dispatch', context: { selectedSkills: toolName === 'read_skill' ? [args?.name] : [] } });
 
                             console.log(` 执行工具: ${toolName}, argKeys=${Object.keys(args || {}).sort().join(',')}`);
                             const isSearchTool = toolName === 'web_search';
@@ -24810,6 +24840,10 @@ if (clientFileExecution && systemPrompt) {
                                         executedToolResults.push({ toolCall, result: { success: false, name: args.name, error: 'invalid_client_skill_result' } });
                                         continue;
                                     }
+                                }
+                                if (toolName === 'enable_agent_mode' && modelResult?.success === true) {
+                                    for (const page of modelResult.client_skills?.selected || [])
+                                        if (page.success === true) clientSkillPages.set(`${page.name}:${page.offset}`, page);
                                 }
                                 executedToolResults.push({ toolCall, result: modelResult });
                                 const ok = localResult && localResult.success !== false;
@@ -26147,6 +26181,7 @@ app.post('/api/agent/tool-result', apiLimiter, authenticateToken, (req, res) => 
         try {
             if (pending.toolName === 'read_skill') resolvedResult = clientSkillPolicy.normalizePage(result);
             else if (pending.toolName === 'list_skills') resolvedResult = clientSkillPolicy.normalizeDiscovery(result);
+            else if (pending.toolName === 'enable_agent_mode') resolvedResult = clientSkillPolicy.normalizeAgentActivation(result);
             else resolvedResult = clientSkillPolicy.normalizeInstall(result);
         } catch (_) { resolvedResult = { success: false, name: pending.args?.name, error: 'invalid_client_skill_result' }; }
     }
@@ -29220,6 +29255,7 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
 app.get('/api/admin/verify', authenticateAdmin, (req, res) => {
     res.json({ success: true, isAdmin: true });
 });
+userActivity.install({ app, authenticateToken, authenticateAdmin });
 
 app.post('/api/admin/logout', authenticateAdmin, async (req, res) => {
     await dbRunAsync(

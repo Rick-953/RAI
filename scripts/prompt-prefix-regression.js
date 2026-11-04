@@ -5,9 +5,12 @@ const history = [{role:'user',content:'prior'}, {role:'assistant',content:'answe
 const baseline = 'immutable canonical prompt';
 const a=buildCacheStableMessages(history,baseline,baseline+'\nUser A, memory 1, files A');
 const b=buildCacheStableMessages(history,baseline,baseline+'\nUser B, memory 2, files B');
-assert.deepEqual(a.slice(0,4),b.slice(0,4));
-assert.equal(a[4].role,'system');assert.equal(a[5].content,'now');
-assert.deepEqual(a.slice(1,4),history.slice(0,3));
+assert.deepEqual(a.slice(0,5),b.slice(0,5));
+assert.equal(a[5].role,'system');assert.equal(a[4].content,'now');
+assert.deepEqual(a.slice(1,5),history);
+const nextHistory = [...history, { role: 'assistant', content: 'final answer' }, { role: 'user', content: 'follow-up' }];
+const next = buildCacheStableMessages(nextHistory, baseline, baseline + '\nChanged memory and workspace');
+assert.deepEqual(next.slice(0, 5), a.slice(0, 5), 'the entire prior user/history prefix survives the next turn, including the latest ctx timestamp');
 assert.deepEqual(history.map(m=>m.role),['user','assistant','tool','user']);
 assert.throws(()=>buildCacheStableMessages(history,baseline,'mutated prefix'));
 assert.deepEqual(buildCacheStableMessages(history,baseline,baseline),[{role:'system',content:baseline},...history]);

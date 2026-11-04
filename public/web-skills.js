@@ -381,7 +381,7 @@
   }
 
   window.RaiWebSkills = Object.freeze({ prepareSend, captureDraft, isDraftCurrent, isSendContextCurrent,
-    bindCreatedSession, consume, sealConsumed, restore, noteDraftChange, reset, syncContext });
+    bindCreatedSession, consume, sealConsumed, restore, noteDraftChange, reset, syncContext, selectedNames: () => [...state.selected] });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
   else initialize();
 })();

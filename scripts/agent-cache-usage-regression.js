@@ -29,3 +29,9 @@ for(const model of ['deepseek-flash','deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-
 assert.equal(requestChatStreamUsage({model:'custom-model',stream:true}).stream_options,undefined,'do not add unsupported parameters to arbitrary providers');
 assert.equal(requestChatStreamUsage({model:'deepseek-flash',stream:false}).stream_options,undefined);
 console.log('PASS: normal chat requests ask for real usage; cumulative snapshots and tool-round totals preserve cache counters');
+const writes = createChatStreamUsage();
+assert.equal(writes.observe('one', { usage: { input_tokens: 4000, output_tokens: 5, input_tokens_details: { cached_tokens: 2000, cache_write_tokens: 1000 } } }).cache_write_tokens, 1000);
+assert.equal(writes.observe('one', { usage: { input_tokens: 4000, output_tokens: 5, input_tokens_details: { cached_tokens: 2000, cache_write_tokens: 1000 } } }).cache_write_tokens, 1000, 'duplicate snapshots cannot double cache writes');
+assert.equal(writes.observe('two', { usage: { input_tokens: 100, output_tokens: 2 } }).cache_write_tokens, undefined, 'unreported writes remain unknown');
+assert.equal(writes.observe('two', { usage: { cache_write_tokens: 0 } }).cache_write_tokens, 1000, 'reported zero completes the sum');
+console.log('PASS: actual cache-write counts aggregate once and remain unknown when a call omits them');

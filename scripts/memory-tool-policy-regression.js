@@ -66,8 +66,10 @@ function testMemoryPolicyPlacement() {
                 const policyMessages = output.filter(message => message.role === 'system' && message.content.includes(policy));
                 assert.equal(policyMessages.length, enabled ? 1 : 0, 'policy must exist exactly once only when enabled');
                 if (enabled) {
-                    assert.ok(output.indexOf(policyMessages[0]) < output.findIndex(message => message.content === 'Current question'),
-                        'trusted system policy must precede the current user');
+                    // System role preserves authority; the runtime tail preserves the entire history prefix.
+                    assert.equal(policyMessages[0].role, 'system', 'memory policy retains its trusted role');
+                    assert.equal(policyMessages[0], baseline ? output.at(-1) : output[0],
+                        'runtime policy follows history when a canonical cache prefix exists');
                 }
                 assert.deepEqual(output.filter(message => message.role !== 'system'), history, 'history must not be mutated');
                 for (const message of history) assert.ok(!output.includes(message), 'output must clone history objects');
