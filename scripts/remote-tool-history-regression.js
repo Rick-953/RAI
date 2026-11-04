@@ -13,7 +13,7 @@ const remoteStart = lines.find(line => line.includes('emitTrackedToolStatus(') &
 const localComplete = lines.find(line => line.includes('emitTrackedToolStatus({ ...uiResult'));
 const skillComplete = lines.find(line => line.includes('emitTrackedToolStatus(') && line.includes('trustedSkill.name') && line.includes("status: 'complete'"));
 assert.ok(remoteComplete && remoteStart && localComplete && skillComplete, 'An early-return tool path bypasses persisted completion');
-const make = vm.runInNewContext(`(res) => {
+const make = vm.runInNewContext(`(res, req) => {
 ${server.slice(begin, end)}
 return {
   tools: serverToolTrace, flow: serverFlowSegments,
@@ -24,7 +24,8 @@ return {
   skillComplete(trustedSkill, toolCall) { ${skillComplete} }
 };
 }`, {}, {timeout: 2000});
-function setup() { const events = []; const state = make({write(frame) { events.push(JSON.parse(frame.slice(6).trim())); }}); return {state, events}; }
+function setup() { const events = [], activity = []; const state = make({write(frame) { events.push(JSON.parse(frame.slice(6).trim())); }},
+  {recordUserActivity(action, fields) { activity.push({action,...fields}); }}); return {state, events, activity}; }
 let assertions = 0;
 function check(actual, expected, detail) { assertions++; assert.deepEqual(actual, expected, detail); }
 for (const result of [{success:true}, {success:false}, {success:true, executed:'unknown'}, {}]) {
@@ -55,7 +56,7 @@ for (const result of [{success:true}, {success:false}, {success:true, executed:'
   check(state.flow[1].status, 'done', 'Targeted flow completion lost');
 }
 {
-  const {state} = setup();
+  const {state, activity} = setup();
   state.emit({tool:'write_file',tool_call_id:'local',status:'running'});
   state.localComplete({type:'tool_status',tool:'write_file',status:'complete',message:'Completed'}, {id:'local'});
   check(state.tools.length, 1, 'Native completion correlation lost');
@@ -63,6 +64,8 @@ for (const result of [{success:true}, {success:false}, {success:true, executed:'
   state.emit({tool:'read_skill',tool_call_id:'skill',status:'running'});
   state.skillComplete({name:'local_workdir'}, {id:'skill'});
   check(state.tools[1].status, 'complete', 'Loaded skill stays running in history');
+  check(activity.at(-1).action,'tool_status','Skill completion must also enter the account timeline');
+  check(activity.at(-1).context.loadedSkills[0],'local_workdir','Account timeline loses the actual loaded skill');
 }
 {
   const {state} = setup();
