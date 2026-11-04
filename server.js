@@ -17,7 +17,7 @@ const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
-const { installCustomApiSyncRoutes, clientMessageFields } = require('./lib/custom-api-sync');
+const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
 const express = require('express');
 const cors = require('cors');
@@ -16115,7 +16115,8 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
     }
 });
 
-installCustomApiSyncRoutes(app, { authenticateToken, apiLimiter, ensureSessionKindColumn, withMainDbTransaction, scheduleConversationIntegritySeal });
+app.put('/api/sessions/:id/client-messages', apiLimiter, authenticateToken,
+    createCustomApiSyncHandler({ ensureSessionKindColumn, withMainDbTransaction, scheduleConversationIntegritySeal }));
 
 app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res) => {
     try {

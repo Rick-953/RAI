@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const express = require('express');
 const sqlite3 = require('sqlite3');
-const { installCustomApiSyncRoutes, clientMessageFields } = require('../lib/custom-api-sync');
+const { createCustomApiSyncHandler, clientMessageFields } = require('../lib/custom-api-sync');
 async function main() {
     const db = new sqlite3.Database(':memory:');
     const run = (sql, args = []) => new Promise((resolve, reject) => db.run(sql, args, function (error) { error ? reject(error) : resolve(this); }));
@@ -20,11 +20,12 @@ async function main() {
         tail = task.catch(() => {}); return task;
     };
     const app = express(); app.use(express.json());
-    installCustomApiSyncRoutes(app, {
-        authenticateToken(req, res, next) { if (!req.headers.authorization) return res.sendStatus(401); req.user = { userId: Number(req.headers.authorization) }; next(); },
-        apiLimiter(req, res, next) { next(); }, ensureSessionKindColumn: async () => {}, withMainDbTransaction: transaction,
+    app.put('/api/sessions/:id/client-messages', (req, res, next) => {
+        if (!req.headers.authorization) return res.sendStatus(401); req.user = { userId: Number(req.headers.authorization) }; next();
+    }, createCustomApiSyncHandler({
+        ensureSessionKindColumn: async () => {}, withMainDbTransaction: transaction,
         scheduleConversationIntegritySeal() { seals++; }
-    });
+    }));
     const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
     const endpoint = `http://127.0.0.1:${server.address().port}/api/sessions/session_client_fixture/client-messages`;
     const sync = async (messages, account = '1', fields = {}) => {
