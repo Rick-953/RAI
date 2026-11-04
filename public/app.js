@@ -5776,7 +5776,8 @@ const i18n = {
     'custom-api-back': '返回普通登录',
     'custom-api-exit': '退出自定义 API',
     "custom-api-title": "自定义 API 模型",
-    "custom-api-desc": "登录 RAI 后可用。Key 仅保存在本浏览器会话，直接请求提供商；模型会加入模型列表。",
+    "custom-api-key-required": "请在设置中重新输入 API Key。",
+    "custom-api-desc": "登录 RAI 后可用。Key 仅保留在当前页面内存，刷新后需重新输入；模型会加入模型列表，请求直接发给提供商。",
     "custom-api-submit": "添加到模型列表",
     "custom-api-name": "显示名称",
     "custom-api-usage": "请求流式用量（提供商不支持时可关闭；不会为获取用量重发请求）",
@@ -6491,7 +6492,8 @@ const i18n = {
     'custom-api-back': 'Back to regular login',
     'custom-api-exit': 'Exit custom API',
     "custom-api-title": "Custom API models",
-    "custom-api-desc": "Sign in with RAI to use your API. Keys stay in this browser session. Requests go directly to your provider; saved models appear in the model list.",
+    "custom-api-key-required": "Re-enter your API key in Settings.",
+    "custom-api-desc": "Sign in with RAI to use your API. Keys stay in page memory and must be re-entered after reload. Requests go directly to your provider; saved models appear in the model list.",
     "custom-api-submit": "Add to model list",
     "custom-api-name": "Display name",
     "custom-api-usage": "Request stream usage (turn off if unsupported; requests are never replayed to obtain usage)",
@@ -24973,6 +24975,10 @@ function offerBrowserPasswordSave(email, password) {
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
 const WEB_CUSTOM_API_ENABLED = true;
 let editingCustomApiId = null;
+const customApiSessionKeys = new Map();
+function customApiPublicConfig(config) {
+  return { id:config.id, name:config.name, url:config.url, model:config.model, includeUsage:config.includeUsage !== false };
+}
 function customApiAccountScope() {
   return appState.token && appState.user?.id && appState.user.id !== 'custom-api' ? API_BASE + '|' + appState.user.id : '';
 }
@@ -24996,8 +25002,9 @@ function readCustomApiSession() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY + ':' + scope) || '[]');
     return (Array.isArray(saved) ? saved : []).filter(item => item && /^byok:[a-z0-9-]{1,80}$/i.test(item.id)
-      && normalizeCustomApiUrl(item.url) && typeof item.key === 'string' && item.key.trim()
-      && typeof item.model === 'string' && /^[A-Za-z0-9_.:/-]{1,160}$/.test(item.model)).slice(0, 50);
+      && normalizeCustomApiUrl(item.url)
+      && typeof item.model === 'string' && /^[A-Za-z0-9_.:/-]{1,160}$/.test(item.model)).slice(0, 50)
+      .map(item => ({ ...customApiPublicConfig(item), key:customApiSessionKeys.get(scope + ':' + item.id) || '' }));
   } catch (_) { return []; }
 }
 function clearCustomApiSession() {
@@ -25009,8 +25016,9 @@ function saveCustomApiSession(config) {
   if (!scope) throw new Error(i18nText('custom-api-login-required', '请先登录 RAI 账号后使用自定义 API。'));
   const configs = readCustomApiSession().filter(item => item.id !== config.id);
   if (configs.length >= 50) throw new Error(i18nText('custom-api-limit', '最多添加 50 个自定义模型。'));
-  configs.push(config);
-  sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(configs));
+  customApiSessionKeys.set(scope + ':' + config.id, config.key);
+  configs.push(customApiPublicConfig(config));
+  sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(configs.map(customApiPublicConfig)));
   loadCustomApiModels();
 }
 function loadCustomApiModels() {
@@ -25037,7 +25045,8 @@ function renderCustomApiList() {
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'settings-inline-save';
     remove.textContent = i18nText('delete', '删除'); remove.addEventListener('click', () => {
       const scope = customApiAccountScope(); if (!scope) return notifyCustomApiUnavailable();
-      sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(readCustomApiSession().filter(item => item.id !== config.id)));
+      sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(readCustomApiSession().filter(item => item.id !== config.id).map(customApiPublicConfig)));
+      customApiSessionKeys.delete(scope + ':' + config.id);
       if (appState.selectedModel === config.id) leaveCustomApiMode();
       loadCustomApiModels();
     });
@@ -25116,6 +25125,7 @@ async function sendCustomApiMessage(messages, verifiedContext = null) {
   if (verifiedContext ? !isUserAuthContextCurrent(verifiedContext) || !customApiAccountScope() : !await requireCustomApiAccount()) return;
   const config = appState.customApiConfig;
   if (!config) return;
+  if (!config.key) { showToast(i18nText('custom-api-key-required', '请在设置中重新输入 API Key。')); return; }
   const context = captureUserAuthContext(), owner = customApiAccountScope(), requestId = crypto.randomUUID(), started = Date.now();
   const controller = new AbortController(); appState.abortController = controller;
   appState.isStreaming = true;

@@ -56,6 +56,7 @@ async function main() {
                 listed: [...document.querySelectorAll('[data-custom-catalog-model]')].some(item => item.dataset.model === config?.id),
                 injected: !!document.querySelector('#customApiList img'), keyInput: document.getElementById('customApiKey').value };
         });
+        assert.equal(await page.evaluate(() => Object.values(sessionStorage).join('').includes('PRIVATE-API-KEY-CANARY')),false,'API credentials never enter browser storage');
         assert.match(saved.id, /^byok:/); assert.equal(saved.userId, 'account-a');
         assert.equal(saved.listed, true); assert.equal(saved.injected, false); assert.equal(saved.keyInput, '');
         await page.evaluate(id => { enterCustomApiApp(appState.customApiConfigs.find(item => item.id === id)); }, saved.id);
@@ -83,8 +84,19 @@ async function main() {
         await page.evaluate(() => sendCustomApiMessage([]));
         assert.equal(providers.length, 1, 'a revoked RAI session blocks a configured custom provider');
         assert.equal(await page.evaluate(() => appState.customApiMode), false);
+        allowAuth = true;
+        await page.reload();
+        await page.waitForFunction(() => typeof loadCustomApiModels === 'function');
+        await page.evaluate(() => {
+            storeUserAccessToken('fixture-account-a'); appState.user = { id:'account-a' }; showApp(); loadCustomApiModels();
+            enterCustomApiApp(appState.customApiConfigs[0]);
+        });
+        assert.equal(await page.evaluate(() => appState.customApiConfig.key), '', 'reload keeps model metadata without retaining credentials');
+        await page.evaluate(() => sendCustomApiMessage([]));
+        assert.equal(providers.length, 1, 'missing page-memory credentials never create a provider request');
+        assert.equal(await page.evaluate(() => Object.values(sessionStorage).join('').includes('PRIVATE-API-KEY-CANARY')), false);
         assert.deepEqual(errors, []);
-        console.log('Custom API account PASS: anonymous/revoked gates, saved model list, RAI identity, account isolation, usage/cost telemetry, key/content privacy and no request replay');
+        console.log('Custom account checks passed; anonymous and revoked gates, saved model list, RAI identity, account isolation, usage/cost telemetry, key/content privacy and no request replay');
     } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
