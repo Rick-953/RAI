@@ -269,9 +269,11 @@ async function main() {
         continuationBlock.indexOf('applyGatewayChatRequestPolicy(continueRequestBody') < continuationBlock.indexOf('await fetchModelProvider(continueApiUrl'),
         'continuation policy must run before the upstream request'
     );
-    assert.match(continuationBlock, /let continueController = createChatAbortController\(\)/);
+    assert.match(continuationBlock, /for \(let continueAttempt = 0;[\s\S]*continueController = createChatAbortController\(\)/,
+        'every model continuation attempt needs a fresh cancellation controller');
     assert.match(continuationBlock, /const continueTimeoutMs = chatRequestBudget\?\.nextAttemptTimeoutMs\(\) \|\| 0/);
-    assert.match(continuationBlock, /setTimeout\(\(\) => continueController\.abort\(\), continueTimeoutMs\)/);
+    assert.match(continuationBlock, /setTimeout\(\(\) => continueController\.abort\(\), chatRequestBudget\.nextAttemptTimeoutMs\(\)\)/,
+        'each retry must use the remaining shared deadline');
     assert.match(continuationBlock, /signal: continueController\.signal/);
     assert.match(continuationBlock, /readBoundedResponseText\(continueResponse\)/);
     assert.doesNotMatch(continuationBlock, /continueResponse\.text\(\)/);
