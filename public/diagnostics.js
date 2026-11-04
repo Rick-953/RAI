@@ -4,7 +4,7 @@
   else root.RaiDiagnostics = factory(root);
 })(typeof window === 'object' ? window : globalThis, function createDiagnostics(env) {
   'use strict';
-  const schema = 'rai.diagnostics.v1', version = '20261104-agent-skills-cache', storageSlot = 'rai_diagnostics_v1';
+  const schema = 'rai.diagnostics.v1', version = '20261104-account-cache-billing', storageSlot = 'rai_diagnostics_v1';
   const cap = 500, responses = new WeakMap();
   const models = new Set(['auto','fast','thinking','research','custom','deepseek-flash','gpt-6.1-sol','gpt-6-luna','claude-sonnet-5','gemini-3.6-flash-low','gemini-3-flash','gemma','qwen3.6-35b-a3b','kimi-k2.6','chatgpt-gpt-oss-120b','nemotron-3-ultra','kolors-free','gpt-image-2','gpt-image-2.5','gpt-image-2.5-flare','gpt-image-2.5-sunburst']);
   const labels = new Set(['http','stream','app','started','headers','completed','cancelled','error','incomplete','other','GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','chat','auth','files','sessions','user','shares','qr-login']);
@@ -97,6 +97,7 @@
     state.reasoningChars += reasoning; if (reasoning && state.firstReasoningMs < 0) state.firstReasoningMs = Math.round(now() - state.start);
     const usage = event.usage;
     if (usage && typeof usage === 'object') {
+      if (env.RaiTokenBilling) state.tokenUsage = env.RaiTokenBilling.normalize(usage, { model: event.model || state.tokenUsage?.model, provider: 'rai' });
       if (event.usage_scope === 'request')
         for (const key of ['inputTokens', 'outputTokens', 'cachedTokens', 'cacheWriteTokens']) delete state[key];
       for (const [key, value] of Object.entries({ inputTokens: usage.prompt_tokens ?? usage.input_tokens, outputTokens: usage.completion_tokens ?? usage.output_tokens,
@@ -109,6 +110,7 @@
     if (!state || state.ended) return; state.ended = true;
     const action = state.cancelled ? 'cancelled' : state.failed ? 'error' : !state.done || (!state.contentChars && state.reasoningChars) ? 'incomplete' : 'completed';
     const fields = { ...state.fields, durationMs: Math.round(now() - state.start) };
+    if (state.tokenUsage) fields.tokenUsage = state.tokenUsage;
     for (const key of numbers) if (Number.isSafeInteger(state[key])) fields[key] = state[key];
     try { env.RaiUserActivity?.diagnostic({ ...fields, category: 'stream', action }); } catch (_) { }
     write('stream', action, fields);

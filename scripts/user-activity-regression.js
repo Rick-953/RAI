@@ -43,6 +43,7 @@ async function main() {
     // Auth store's public token name is shared with native/browser login results.
     if (!session.accessToken) bearer.Authorization = 'Bearer '+session.token;
     const event = { id:crypto.randomUUID(), timeMs:Date.now()-123, kind:'ui', action:'SendButton', sessionId:'owned',
+      tokenUsage:{ provider:'openai_official', model:'gpt-6-luna', cacheTtl:'12h', input_tokens:12000, output_tokens:50, input_tokens_details:{cached_tokens:4000,cache_write_tokens:7000,cache_write_tokens_details:{ttl_30m_tokens:5000,ttl_12h_tokens:2000}}, total_cost:0.25,currency:'USD', text:'PRIVATE_BODY' },
       userId:2, network:{clientIp:'203.0.113.99'}, token:'PRIVATE_SECRET', message:'PRIVATE_BODY',
       context:{ timezone:'Asia/Shanghai', locale:'zh-CN', region:'CN', theme:'dark', selectedModel:'gpt-6-luna', reasoningProfile:'high', selectedSkills:['ponytail'], token:'PRIVATE_SECRET' } };
     assert.equal((await call('/api/user/activity',{ events:[event] })).status,401);
@@ -59,6 +60,10 @@ async function main() {
     const saved = data.events[0];
     assert.equal(saved.userId,1); assert.equal(saved.timeMs,event.timeMs); assert.ok(Number.isSafeInteger(saved.receivedTimeMs));
     assert.equal(saved.sessionVerified,true); assert.equal(saved.context.reasoningProfile,'high');
+    assert.equal(saved.tokenUsage.cacheReadTokens,4000); assert.equal(saved.tokenUsage.cacheWriteTokens,7000);
+    assert.equal(saved.tokenUsage.cacheHitRate,1/3); assert.equal(saved.tokenUsage.estimatedUsd,0.00129);
+    assert.equal(saved.tokenUsage.reportedCost,0.25); assert.equal(saved.tokenUsage.requestedRetentionSeconds,43200);
+    assert.equal(saved.tokenUsage.actualCacheAgeSeconds,null);
     assert.equal(saved.network.clientIp,'127.0.0.1'); assert.ok(!JSON.stringify(data).includes('PRIVATE_'));
     // Untrusted Forwarded headers must not replace a direct socket address.
     const requestId = crypto.randomUUID();

@@ -99,7 +99,8 @@
     for (const key of ['events','contentChars','reasoningChars','toolEvents','firstContentMs','firstReasoningMs','inputTokens','outputTokens','cachedTokens','cacheWriteTokens','durationMs']) if (Number.isSafeInteger(recordValue[key])) metrics[key] = recordValue[key];
     record(recordValue.action === 'completed' || recordValue.action === 'cancelled' ? 'stream' : 'error', recordValue.action, {
       clientRequestId: recordValue.clientRequestId, serverRequestId: recordValue.serverRequestId, chatRequestId: recordValue.chatRequestId,
-      sessionId: recordValue.sessionId, stage: 'stream_end', metrics
+      sessionId: recordValue.sessionId, stage: 'stream_end', metrics,
+      ...(recordValue.tokenUsage ? { tokenUsage: recordValue.tokenUsage } : {})
     }, recordValue.activityOwner);
   }
   env.addEventListener?.('error', event => record('error', 'unhandled_exception', { errorType: label(event.error?.name) || 'Error', stage: 'window' }));

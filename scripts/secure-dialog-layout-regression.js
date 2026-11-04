@@ -20,7 +20,9 @@ for (const id of ['qrLoginButton', 'authPasskeyBtn']) {
   assert.match(html, new RegExp('class="auth-alt-button" id="' + id + '"'), 'all login choices share the plain button style');
 }
 assert.doesNotMatch(html, /id="(?:customApiToggleBtn|customApiEntry)"/, 'temporarily disabled custom-key mode must not expose a login choice');
-assert.match(read('public/app.js'), /const WEB_CUSTOM_API_ENABLED = false;/, 'old custom-key paths must remain guarded while the entry is removed');
+assert.match(read('public/app.js'), /async function requireCustomApiAccount\(/, 'custom-key requests must verify the RAI account');
+assert.doesNotMatch(read('public/app.js'), /appState\.user\s*=\s*\{\s*id:\s*['"]custom-api['"]/, 'custom keys cannot manufacture a RAI account');
+assert.ok(html.indexOf('id="customApiPanel"') > html.indexOf('id="settingsPanel-advanced"'), 'custom-key management belongs to signed-in settings');
 assert.match(styles, /\.auth-alternative-options\s*\{[^}]*gap:\s*10px;/);
 assert.match(styles, /\.auth-alternative-row\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[^}]*gap:\s*10px;/);
 assert.match(styles, /\.auth-alt-button\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*10px;[^}]*box-shadow:\s*none;/);

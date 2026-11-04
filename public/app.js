@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.42';
-const RAI_BUILD_ID = '20261104-agent-skills-cache';
+const RAI_APP_VERSION = '0.13.43';
+const RAI_BUILD_ID = '20261104-account-cache-billing';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5298,7 +5298,7 @@ async function fetchModelAvailability() {
     const currentIds = new Set((catalog || []).map(model => model?.id).filter(Boolean));
     const removedIds = [];
     if (catalog) for (const [id, model] of Object.entries(MODELS)) {
-      if (model.builtin === false && !currentIds.has(id)) { delete MODELS[id]; removedIds.push(id); }
+      if (model.builtin === false && !model.byok && !currentIds.has(id)) { delete MODELS[id]; removedIds.push(id); }
     }
     for (const model of catalog || []) {
       if (!model?.id) continue;
@@ -5769,15 +5769,30 @@ const i18n = {
     'register-link': '立即注册',
     'login-link': '立即登录',
     'custom-api-entry': '我有一个 API Key',
-    'custom-api-title': '使用自定义 API',
-    'custom-api-desc': 'Key 只保存在当前浏览器会话，不会发送到 RAI 服务器。',
     'custom-api-url-label': 'API URL',
     'custom-api-key-label': 'API Key',
     'custom-api-key-placeholder': '粘贴 API Key',
     'custom-model-label': '模型 ID',
-    'custom-api-submit': '进入自定义 API',
     'custom-api-back': '返回普通登录',
     'custom-api-exit': '退出自定义 API',
+    "custom-api-title": "自定义 API 模型",
+    "custom-api-key-required": "请在设置中重新输入 API Key。",
+    "custom-api-desc": "登录 RAI 后可用。Key 仅保留在当前页面内存，刷新后需重新输入；模型会加入模型列表，请求直接发给提供商。",
+    "custom-api-submit": "添加到模型列表",
+    "custom-api-name": "显示名称",
+    "custom-api-usage": "请求流式用量（提供商不支持时可关闭；不会为获取用量重发请求）",
+    "custom-api-metadata": "诊断日志记录模型、用量和缓存计费元数据，不上传 Key 或正文。第三方费用以提供商账单为准。",
+    "custom-api-login-required": "请先登录 RAI 账号后使用自定义 API。",
+    "custom-api-limit": "最多添加 50 个自定义模型。",
+    "custom-api-invalid-url": "请输入有效的 HTTPS API URL。",
+    "custom-api-invalid-model": "请输入有效的模型 ID。",
+    "custom-api-saved": "已保存，可在模型列表中选择。",
+    "custom-api-stream-error": "自定义 API 返回流错误。",
+    "custom-api-incomplete": "自定义 API 连接中断，请重新生成。",
+    "custom-api-empty": "接口返回了空内容。",
+    "custom-api-request-failed": "自定义 API 请求失败：",
+    "custom-api-text-only": "自定义 API 当前支持文字对话，请移除附件或技能，并关闭 Agent／研究模式后再发送。",
+    "custom-api-generating": "请等待当前回答完成，或先停止生成。",
     'search-placeholder': '搜索对话',
     'new-chat': '新对话',
     'temporary-chat': '临时对话',
@@ -6470,15 +6485,30 @@ const i18n = {
     'register-link': 'Sign up',
     'login-link': 'Log in',
     'custom-api-entry': 'I have an API key',
-    'custom-api-title': 'Use a custom API',
-    'custom-api-desc': 'Your key stays in this browser session and is never sent to the RAI server.',
     'custom-api-url-label': 'API URL',
     'custom-api-key-label': 'API key',
     'custom-api-key-placeholder': 'Paste your API key',
     'custom-model-label': 'Model ID',
-    'custom-api-submit': 'Use custom API',
     'custom-api-back': 'Back to regular login',
     'custom-api-exit': 'Exit custom API',
+    "custom-api-title": "Custom API models",
+    "custom-api-key-required": "Re-enter your API key in Settings.",
+    "custom-api-desc": "Sign in with RAI to use your API. Keys stay in page memory and must be re-entered after reload. Requests go directly to your provider; saved models appear in the model list.",
+    "custom-api-submit": "Add to model list",
+    "custom-api-name": "Display name",
+    "custom-api-usage": "Request stream usage (turn off if unsupported; requests are never replayed to obtain usage)",
+    "custom-api-metadata": "Diagnostics record model, token usage and cache billing metadata. Keys and message text are excluded. Third-party charges follow the provider invoice.",
+    "custom-api-login-required": "Sign in with your RAI account to use a custom API.",
+    "custom-api-limit": "You can add up to 50 custom models.",
+    "custom-api-invalid-url": "Enter a valid HTTPS API URL.",
+    "custom-api-invalid-model": "Enter a valid model ID.",
+    "custom-api-saved": "Saved. Select this model from the model list.",
+    "custom-api-stream-error": "The custom API returned a stream error.",
+    "custom-api-incomplete": "The custom API connection ended early. Regenerate to try again.",
+    "custom-api-empty": "The API returned an empty response.",
+    "custom-api-request-failed": "Custom API request failed: ",
+    "custom-api-text-only": "Custom APIs currently support text chat. Remove attachments and skills, and turn off Agent and Research before sending.",
+    "custom-api-generating": "Wait for this answer to finish, or stop generation first.",
     'search-placeholder': 'Search conversations',
     'new-chat': 'New Chat',
     'temporary-chat': 'Temporary Chat',
@@ -16217,11 +16247,6 @@ async function requestStartupRefresh() {
 }
 
 async function resolveStartupAuthentication() {
-  const customSession = readCustomApiSession();
-  if (customSession) {
-    enterCustomApiApp(customSession);
-    return 'custom';
-  }
   let token = await handleRaiAuthCallback();
   if (!token) token = getPersistedUserAccessToken();
   if (token) storeUserAccessToken(token);
@@ -16957,6 +16982,7 @@ function updateSettingsUI() {
 
 // 修复：改进updateModelControls函数，添加null检查
 function updateModelControls() {
+  activateCustomApiModel();
   appState.selectedModel = normalizeSelectedModelId(appState.selectedModel);
   const model = MODELS[appState.selectedModel];
 
@@ -22017,10 +22043,11 @@ async function sendMessage(message = null, options = {}) {
     catch (error) { showToast(error.message || '远程电脑未连接；本次未发送。'); return; }
   }
   if (appState.customApiMode) {
-    if (!WEB_CUSTOM_API_ENABLED) {
-      notifyCustomApiUnavailable();
-      return;
+    if (!await requireCustomApiAccount()) return;
+    if (currentAttachments.length || selectedSkillNames.length || appState.agentMode || isResearchModeEnabled()) {
+      showToast(i18nText('custom-api-text-only', '自定义 API 当前支持文字对话，请移除附件或技能，并关闭 Agent／研究模式后再发送。')); return;
     }
+    if (appState.isStreaming) { showToast(i18nText('custom-api-generating', '请等待当前回答完成，或先停止生成。')); return; }
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
       return;
@@ -22029,7 +22056,7 @@ async function sendMessage(message = null, options = {}) {
     autoResizeInput();
     appState.messages.push({ role: 'user', content: messageText, created_at: new Date().toISOString() });
     renderMessages();
-    return sendCustomApiMessage(buildContextMessagesFromState(appState.messages));
+    return sendCustomApiMessage(buildContextMessagesFromState(appState.messages), captureUserAuthContext());
   }
   closeModelModal();
   if (appState.isStreaming) {
@@ -24728,7 +24755,10 @@ async function verifyToken({ allowRefresh = true } = {}) {
 
 function clearAuthenticatedAppState() {
   window.RaiWebSkills?.reset?.({ clearCatalog: true });
-  if (appState.customApiMode) exitCustomApiMode();
+  exitCustomApiMode();
+  for (const [id, model] of Object.entries(MODELS)) if (model.byok) delete MODELS[id];
+  appState.customApiConfigs = [];
+  const customKey = document.getElementById('customApiKey'); if (customKey) customKey.value = '';
   abortConversationAsyncWork();
   window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);
   window.RAISelectionExplainer?.clearUserWorkspace?.(appState.user?.id);
@@ -24943,237 +24973,217 @@ function offerBrowserPasswordSave(email, password) {
 }
 
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
-// Keep existing session data intact while the Web entry is temporarily closed.
-const WEB_CUSTOM_API_ENABLED = false;
-
+const WEB_CUSTOM_API_ENABLED = true;
+let editingCustomApiId = null;
+const customApiSessionKeys = new Map();
+function customApiPublicConfig(config) {
+  return { id:config.id, name:config.name, url:config.url, model:config.model, includeUsage:config.includeUsage !== false };
+}
+function customApiAccountScope() {
+  return appState.token && appState.user?.id && appState.user.id !== 'custom-api' ? API_BASE + '|' + appState.user.id : '';
+}
 function notifyCustomApiUnavailable() {
-  showToast(isChineseLanguage(appState.language)
-    ? '网页版暂时关闭自带 API Key，请使用 RAI 账号登录。'
-    : 'Bring your own API key is temporarily unavailable on the Web. Sign in with your RAI account.');
+  showToast(i18nText('custom-api-login-required', '请先登录 RAI 账号后使用自定义 API。'));
 }
-
 function normalizeCustomApiUrl(value) {
-  let raw = String(value || '').trim();
-  if (!raw) return '';
-  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
   try {
-    const url = new URL(raw);
-    if (!/^https?:$/.test(url.protocol)) return '';
-    url.hash = '';
-    url.search = '';
+    const url = new URL(String(value || '').trim());
+    if (url.protocol !== 'https:' || url.username || url.password) return '';
+    url.hash = ''; url.search = '';
     let path = url.pathname.replace(/\/+$/, '');
-    if (/\/chat\/completions$/i.test(path)) {
-      url.pathname = path;
-    } else if (/\/v1$/i.test(path)) {
-      url.pathname = `${path}/chat/completions`;
-    } else {
-      url.pathname = `${path}/v1/chat/completions`;
-    }
-    return url.toString().replace(/\/+$/, '');
-  } catch (error) {
-    return '';
-  }
+    if (!/\/chat\/completions$/i.test(path)) path += /\/v1$/i.test(path) ? '/chat/completions' : '/v1/chat/completions';
+    url.pathname = path;
+    return url.toString();
+  } catch (_) { return ''; }
 }
-
 function readCustomApiSession() {
-  if (!WEB_CUSTOM_API_ENABLED) return null;
+  const scope = customApiAccountScope();
+  if (!scope) return [];
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY) || 'null');
-    if (!parsed || typeof parsed !== 'object') return null;
-    const url = normalizeCustomApiUrl(parsed.url);
-    const key = String(parsed.key || '').trim();
-    const model = String(parsed.model || '').trim();
-    if (!url || !key || !model) return null;
-    return { url, key, model };
-  } catch (error) {
-    return null;
-  }
+    const saved = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY + ':' + scope) || '[]');
+    return (Array.isArray(saved) ? saved : []).filter(item => item && /^byok:[a-z0-9-]{1,80}$/i.test(item.id)
+      && normalizeCustomApiUrl(item.url)
+      && typeof item.model === 'string' && /^[A-Za-z0-9_.:/-]{1,160}$/.test(item.model)).slice(0, 50)
+      .map(item => ({ ...customApiPublicConfig(item), key:customApiSessionKeys.get(scope + ':' + item.id) || '' }));
+  } catch (_) { return []; }
 }
-
-function saveCustomApiSession(config) {
-  try {
-    sessionStorage.setItem(CUSTOM_API_SESSION_KEY, JSON.stringify(config));
-  } catch (error) {
-    throw new Error(isChineseLanguage(appState.language) ? '当前浏览器不允许保存会话 Key' : 'This browser does not allow session storage');
-  }
-}
-
 function clearCustomApiSession() {
-  try { sessionStorage.removeItem(CUSTOM_API_SESSION_KEY); } catch (error) { /* ignore */ }
+  const scope = customApiAccountScope();
+  if (scope) sessionStorage.removeItem(CUSTOM_API_SESSION_KEY + ':' + scope);
 }
-
-function setCustomApiFormVisibility(visible) {
-  const standardIds = [
-    'authEmail', 'authLoginMethodStep', 'passwordStep', 'twoFactorStep', 'emailCodeStep',
-    'usernameStep', 'submitStep', 'authAlternativeOptions', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
-  ];
-  standardIds.forEach((id) => {
-    const element = document.getElementById(id);
-    if (!element) return;
-    const target = element.closest('.form-group') || element;
-    target.style.display = visible ? 'none' : '';
-  });
-  const entry = document.getElementById('customApiEntry');
-  if (entry) entry.style.display = visible ? 'none' : '';
-  const footer = document.getElementById('authFooter');
-  if (footer) footer.style.display = visible ? 'none' : '';
-  const panel = document.getElementById('customApiPanel');
-  if (panel) {
-    panel.classList.toggle('auth-step-hidden', !visible);
-    panel.classList.toggle('auth-step-visible', visible);
+function saveCustomApiSession(config) {
+  const scope = customApiAccountScope();
+  if (!scope) throw new Error(i18nText('custom-api-login-required', '请先登录 RAI 账号后使用自定义 API。'));
+  const configs = readCustomApiSession().filter(item => item.id !== config.id);
+  if (configs.length >= 50) throw new Error(i18nText('custom-api-limit', '最多添加 50 个自定义模型。'));
+  customApiSessionKeys.set(scope + ':' + config.id, config.key);
+  configs.push(customApiPublicConfig(config));
+  sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(configs.map(customApiPublicConfig)));
+  loadCustomApiModels();
+}
+function loadCustomApiModels() {
+  for (const [id, model] of Object.entries(MODELS)) if (model.byok) delete MODELS[id];
+  appState.customApiConfigs = readCustomApiSession();
+  for (const config of appState.customApiConfigs) MODELS[config.id] = { name: config.name || config.model,
+    builtin: false, byok: true, supportsThinking: false, canDisableThinking: true, supportsInternet: false };
+  renderCustomModelChoices();
+  renderCustomApiList();
+}
+function renderCustomApiList() {
+  const list = document.getElementById('customApiList');
+  if (!list) return;
+  list.replaceChildren();
+  for (const config of appState.customApiConfigs || []) {
+    const row = document.createElement('div'); row.className = 'setting-item';
+    const label = document.createElement('p'); label.textContent = (config.name || config.model) + ' · ' + config.model;
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'settings-inline-save';
+    edit.textContent = i18nText('edit', '编辑'); edit.addEventListener('click', () => {
+      editingCustomApiId = config.id;
+      for (const [id, value] of Object.entries({ customApiName: config.name || '', customApiUrl: config.url, customApiKey: config.key, customModelId: config.model })) document.getElementById(id).value = value;
+      document.getElementById('customApiUsage').checked = config.includeUsage !== false;
+    });
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'settings-inline-save';
+    remove.textContent = i18nText('delete', '删除'); remove.addEventListener('click', () => {
+      const scope = customApiAccountScope(); if (!scope) return notifyCustomApiUnavailable();
+      sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(readCustomApiSession().filter(item => item.id !== config.id).map(customApiPublicConfig)));
+      customApiSessionKeys.delete(scope + ':' + config.id);
+      if (appState.selectedModel === config.id) leaveCustomApiMode();
+      loadCustomApiModels();
+    });
+    row.append(label, edit, remove); list.append(row);
   }
 }
-
 function toggleCustomApiMode(force) {
-  if (!WEB_CUSTOM_API_ENABLED && force !== false) {
-    notifyCustomApiUnavailable();
-    return;
-  }
-  const visible = typeof force === 'boolean' ? force : !appState.customApiFormVisible;
-  appState.customApiFormVisible = visible;
-  const title = document.getElementById('authTitle');
-  const subtitle = document.getElementById('authSubtitle');
-  if (visible) {
-    hideAuthError();
-    if (title) title.textContent = i18nText('custom-api-title', '使用自定义 API');
-    if (subtitle) subtitle.textContent = i18nText('custom-api-desc', 'Key 只保存在当前浏览器会话，不会发送到 RAI 服务器。');
-  } else {
-    appState.authMode = 'login';
-    appState.authEmailValidated = false;
-    if (title) title.textContent = i18nText('login-title', '欢迎回来');
-    if (subtitle) subtitle.textContent = i18nText('login-subtitle', '登录继续使用 RAI');
-    updateForgotPasswordVisibility();
-    updateAuthMethodUI();
-    updateAuthSubmitButtonText();
-  }
-  setCustomApiFormVisibility(visible);
-  if (visible) document.getElementById('customApiUrl')?.focus();
+  if (!customApiAccountScope()) { if (force !== false) notifyCustomApiUnavailable(); return; }
+  if (force !== false) { openSettings(); switchSettingsSection('advanced'); }
 }
-
 function enterCustomApiApp(config) {
-  if (!WEB_CUSTOM_API_ENABLED) {
-    notifyCustomApiUnavailable();
-    return;
-  }
-  invalidateUserAuthAsyncWork();
-  clearUserAccessToken();
-  appState.customApiMode = true;
-  appState.customApiConfig = config;
-  appState.user = { id: 'custom-api', username: 'Custom API', email: 'custom-api@local' };
-  appState.currentSession = null;
-  appState.currentSessionMemoryMode = 'classic-temp';
-  appState.sessions = [];
-  appState.messages = [];
-  appState.internetMode = false;
-  appState.thinkingMode = false;
-  appState.researchModeEnabled = false;
-  document.body.classList.add('custom-api-mode');
-  showApp();
-  showWelcome();
-  updateToolbarUI();
+  if (!customApiAccountScope() || !readCustomApiSession().some(item => item.id === config?.id)) return notifyCustomApiUnavailable();
+  appState.selectedModel = config.id;
+  activateCustomApiModel();
+  updateSelectedModelText(config.id); updateModelControls(); updateMenuSelection();
 }
-
+function activateCustomApiModel() {
+  const config = (appState.customApiConfigs || []).find(item => item.id === appState.selectedModel);
+  appState.customApiMode = !!config && !!customApiAccountScope();
+  appState.customApiConfig = appState.customApiMode ? config : null;
+}
 function exitCustomApiMode() {
-  clearCustomApiSession();
-  appState.customApiMode = false;
-  appState.customApiConfig = null;
-  appState.currentSessionMemoryMode = 'normal';
+  appState.customApiMode = false; appState.customApiConfig = null;
   document.body.classList.remove('custom-api-mode');
 }
-
 function leaveCustomApiMode() {
-  clearAuthenticatedAppState();
-  const keyInput = document.getElementById('customApiKey');
-  if (keyInput) keyInput.value = '';
-  showAuthScreen();
+  exitCustomApiMode(); appState.selectedModel = 'auto'; appState.modelPromptIdentity = 'smart';
+  updateSelectedModelText('auto'); updateModelControls(); updateMenuSelection();
 }
-
-async function startCustomApiMode() {
-  if (!WEB_CUSTOM_API_ENABLED) {
-    notifyCustomApiUnavailable();
-    return;
+async function requireCustomApiAccount() {
+  const scope = customApiAccountScope();
+  if (!scope) { notifyCustomApiUnavailable(); return false; }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const context = captureUserAuthContext(), controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await RAI_SESSION_FETCH(API_BASE + '/auth/verify', { headers: { Authorization: 'Bearer ' + context.token },
+        cache: 'no-store', signal: controller.signal });
+      if (!isUserAuthContextCurrent(context) || customApiAccountScope() !== scope) return false;
+      if (response.ok) return true;
+      if (![401,403].includes(response.status)) break;
+      if (!attempt && await refreshUserAccessToken({ withState: true }) === 'authenticated' && customApiAccountScope() === scope) continue;
+      if (customApiAccountScope() === scope) { clearAuthenticatedAppState(); showAuthScreen(); }
+      break;
+    } catch (_) { break; } finally { clearTimeout(timeout); }
   }
+  notifyCustomApiUnavailable(); return false;
+}
+async function startCustomApiMode() {
+  if (!await requireCustomApiAccount()) return;
   const errorEl = document.getElementById('customApiError');
   const url = normalizeCustomApiUrl(document.getElementById('customApiUrl')?.value);
   const key = String(document.getElementById('customApiKey')?.value || '').trim();
   const model = String(document.getElementById('customModelId')?.value || '').trim();
-  const showError = (message) => {
-    if (errorEl) { errorEl.textContent = message; errorEl.classList.add('show'); }
-  };
-  if (!url) return showError(isChineseLanguage(appState.language) ? '请输入有效的 API URL' : 'Enter a valid API URL');
-  if (!key) return showError(isChineseLanguage(appState.language) ? '请输入 API Key' : 'Enter an API key');
-  if (!model) return showError(isChineseLanguage(appState.language) ? '请输入模型 ID' : 'Enter a model ID');
-  const config = { url, key, model };
+  const name = String(document.getElementById('customApiName')?.value || model).trim().slice(0, 80);
   try {
-    saveCustomApiSession(config);
-    if (errorEl) errorEl.classList.remove('show');
-    enterCustomApiApp(config);
-  } catch (error) {
-    showError(error.message);
-  }
+    if (!url) throw new Error(i18nText('custom-api-invalid-url', '请输入有效的 HTTPS API URL。'));
+    if (!key) throw new Error(i18nText('custom-api-key-placeholder', '请输入 API Key'));
+    if (!/^[A-Za-z0-9_.:/-]{1,160}$/.test(model)) throw new Error(i18nText('custom-api-invalid-model', '请输入有效的模型 ID。'));
+    const config = { id: editingCustomApiId || 'byok:' + crypto.randomUUID(), url, key, model, name,
+      includeUsage: document.getElementById('customApiUsage').checked };
+    saveCustomApiSession(config); editingCustomApiId = null;
+    document.getElementById('customApiKey').value = '';
+    errorEl.textContent = ''; errorEl.classList.remove('show');
+    showToast(i18nText('custom-api-saved', '已保存，可在模型列表中选择。'));
+  } catch (error) { errorEl.textContent = error.message; errorEl.classList.add('show'); }
 }
-
 window.toggleCustomApiMode = toggleCustomApiMode;
 window.startCustomApiMode = startCustomApiMode;
 window.leaveCustomApiMode = leaveCustomApiMode;
-
 function parseCustomApiPayload(payload) {
   const choice = payload?.choices?.[0] || {};
   return String(choice.delta?.content ?? choice.message?.content ?? choice.text ?? payload?.output_text ?? '');
 }
-
-async function sendCustomApiMessage(messages) {
-  if (!WEB_CUSTOM_API_ENABLED) {
-    notifyCustomApiUnavailable();
-    return;
-  }
-  const config = appState.customApiConfig || readCustomApiSession();
+async function sendCustomApiMessage(messages, verifiedContext = null) {
+  if (verifiedContext ? !isUserAuthContextCurrent(verifiedContext) || !customApiAccountScope() : !await requireCustomApiAccount()) return;
+  const config = appState.customApiConfig;
   if (!config) return;
+  if (!config.key) { showToast(i18nText('custom-api-key-required', '请在设置中重新输入 API Key。')); return; }
+  const context = captureUserAuthContext(), owner = customApiAccountScope(), requestId = crypto.randomUUID(), started = Date.now();
+  const controller = new AbortController(); appState.abortController = controller;
   appState.isStreaming = true;
-  const assistant = { role: 'assistant', content: '', model: config.model, created_at: new Date().toISOString() };
-  appState.messages.push(assistant);
-  renderMessages();
+  let usage = null, outcome = 'completed', status = 0;
+  const assistant = { role: 'assistant', content: '', model: config.id, created_at: new Date().toISOString() };
+  appState.messages.push(assistant); renderMessages();
+  const observe = payload => {
+    if (payload.usage) usage = window.RaiTokenBilling.normalize(payload.usage, { model: config.model,
+      provider: new URL(config.url).hostname === 'api.openai.com' ? 'openai_official' : 'custom_api' });
+    const delta = parseCustomApiPayload(payload);
+    if (delta) assistant.content += delta;
+  };
   try {
-    const response = await fetch(config.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.key}` },
-      body: JSON.stringify({ model: config.model, messages, stream: true })
-    });
-    if (!response.ok) throw new Error(await getApiErrorMessage(response, `HTTP ${response.status}`));
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    if (!response.body || !contentType.includes('text/event-stream')) {
-      const payload = await response.json();
-      assistant.content = parseCustomApiPayload(payload) || String(payload?.content || '');
-      renderMessages();
-      return;
+    const body = { model: config.model, messages, stream: true };
+    if (config.includeUsage !== false) body.stream_options = { include_usage: true };
+    const response = await fetch(config.url, { method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.key }, body: JSON.stringify(body) });
+    status = response.status;
+    if (!isUserAuthContextCurrent(context)) { await response.body?.cancel(); return; }
+    if (!response.ok) throw new Error(await getApiErrorMessage(response, 'HTTP ' + response.status));
+    if (!response.body || !String(response.headers.get('content-type') || '').includes('text/event-stream')) observe(await response.json());
+    else {
+      const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '', terminal = false;
+      const line = value => {
+        if (!value.startsWith('data:')) return;
+        const data = value.slice(5).trim();
+        if (data === '[DONE]') { terminal = true; return; }
+        if (!data) return;
+        let payload; try { payload = JSON.parse(data); } catch (_) { return; }
+        if (payload.error) throw new Error(i18nText('custom-api-stream-error', '自定义 API 返回流错误。'));
+        if (payload.choices?.some(choice => choice.finish_reason)) terminal = true;
+        observe(payload);
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (!isUserAuthContextCurrent(context)) { await reader.cancel(); return; }
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        if (buffer.length > 4 * 1024 * 1024) throw new Error('custom_api_event_too_large');
+        const lines = buffer.split(/\r?\n/); buffer = done ? '' : lines.pop();
+        for (const value of lines) line(value);
+        renderMessages();
+        if (done) break;
+      }
+      if (!terminal) throw new Error(i18nText('custom-api-incomplete', '自定义 API 连接中断，请重新生成。'));
     }
-    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split(/\r?\n/);
-      buffer = done ? '' : (lines.pop() || '');
-      lines.forEach((line) => {
-        if (!line.startsWith('data:')) return;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') return;
-        try {
-          const payload = JSON.parse(data);
-          const delta = parseCustomApiPayload(payload);
-          if (delta) { assistant.content += delta; renderMessages(); }
-        } catch (error) { /* ignore incomplete SSE frames */ }
-      });
-      if (done) break;
-    }
-    if (!assistant.content) assistant.content = isChineseLanguage(appState.language) ? '接口返回了空内容' : 'The API returned an empty response';
+    if (!assistant.content) throw new Error(i18nText('custom-api-empty', '接口返回了空内容。'));
     renderMessages();
   } catch (error) {
-    assistant.content = `${isChineseLanguage(appState.language) ? '自定义 API 请求失败：' : 'Custom API request failed: '}${error.message}`;
-    renderMessages();
+    outcome = controller.signal.aborted ? 'cancelled' : 'error';
+    if (isUserAuthContextCurrent(context)) {
+      if (outcome !== 'cancelled') assistant.content += '\n' + i18nText('custom-api-request-failed', '自定义 API 请求失败：') + error.message;
+      renderMessages();
+    }
   } finally {
-    appState.isStreaming = false;
+    window.RaiUserActivity?.record(outcome === 'error' ? 'error' : 'stream', outcome, { clientRequestId: requestId,
+      stage: 'custom_api', context: { actualModel: config.model, customApiMode: true },
+      metrics: { status, durationMs: Date.now() - started }, ...(usage ? { tokenUsage: usage } : {}) }, owner);
+    if (isUserAuthContextCurrent(context)) { appState.isStreaming = false; appState.abortController = null; updateToolbarUI(); }
   }
 }
 
@@ -26381,6 +26391,7 @@ async function loadUserData(profileInput = null, { authContext = captureUserAuth
 
     //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
+      loadCustomApiModels();
       restoreModelPreference(profile);
       persistDefaultModelPreference();
       if (profile.temperature !== undefined) appState.temperature = parseFloat(profile.temperature) || 0.7;
