@@ -55,6 +55,17 @@ async function main() {
     assert.ok(!JSON.stringify(summary).includes(canary), 'no body, secret, URL or arbitrary label leaks');
     assert.equal(cancelled, undefined);
 
+    const jsonTrace = createChatLatencyTrace({}, { write() {} });
+    const jsonPayload = JSON.stringify({ model:'gpt-6-luna-2026', service_tier:'standard', text:canary,
+      usage:{input_tokens:100,output_tokens:20,input_tokens_details:{cached_tokens:50,cache_write_tokens:25,cache_write_tokens_details:{ttl_30m_tokens:0,ttl_12h_tokens:25}}} });
+    const jsonResponse = await fetchWithLatency(async()=>new Response(jsonPayload), 'fixture',
+      {body:JSON.stringify({model:'gpt-6-luna',prompt_cache_options:{ttl:'12h'}})}, jsonTrace,
+      {provider:'openai_official',model:'gpt-6-luna',streaming:false});
+    assert.equal(await jsonResponse.text(),jsonPayload,'JSON observation preserves original response bytes');
+    const jsonAttempt = jsonTrace.activity().attempts[0];
+    assert.equal(jsonAttempt.tokenUsage.cacheTtl,'12h'); assert.equal(jsonAttempt.tokenUsage.estimatedUsd,0.00001925);
+    assert.equal(jsonAttempt.reportedModel,'gpt-6-luna-2026'); assert.ok(!JSON.stringify(jsonTrace.activity()).includes(canary));
+
     // Cancellation, network failures and caller abort stay identical through observation.
     const cancellation = createChatLatencyTrace({}, { write() {} });
     const cancelResponse = await fetchWithLatency(async () => new Response(new ReadableStream({ cancel(reason) { cancelled = reason; } })), 'private', {}, cancellation, { streaming: true });

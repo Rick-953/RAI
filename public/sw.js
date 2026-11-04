@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.42-20261104-agent-skills-cache';
+const RAI_SW_VERSION = '0.13.43-20261104-account-cache-billing';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,23 +13,24 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261104-agent-skills-cache',
-  'web-skills.js?v=20261104-agent-skills-cache', 'web-skills.css?v=20261104-agent-skills-cache',
-  'third-party-notices.js?v=20261104-agent-skills-cache', 'third-party-notices.css?v=20261104-agent-skills-cache',
+  'locale.js?v=20261104-account-cache-billing',
+  'web-skills.js?v=20261104-account-cache-billing', 'web-skills.css?v=20261104-account-cache-billing',
+  'third-party-notices.js?v=20261104-account-cache-billing', 'third-party-notices.css?v=20261104-account-cache-billing',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261104-agent-skills-cache',
-  'rai-system-prompt.js?v=20261104-agent-skills-cache', 'event-bindings.js?v=20261104-agent-skills-cache',
-  'lib/jsQR.js?v=20261104-agent-skills-cache', 'qr-scanner.js?v=20261104-agent-skills-cache',
-  'secure-sharing.js?v=20261104-agent-skills-cache', 'secure-sharing.css?v=20261104-agent-skills-cache',
-  'diagnostics.js?v=20261104-agent-skills-cache',
-  'user-activity.js?v=20261104-agent-skills-cache',
-  'app.js?v=20261104-agent-skills-cache', 'styles.css?v=20261104-agent-skills-cache',
-  'markdown-tables.js?v=20261104-agent-skills-cache',
-  'cx-remote.js?v=20261104-agent-skills-cache', 'local-agent.css?v=20261104-agent-skills-cache',
-  'crf-ui.js?v=20261104-agent-skills-cache',
-  'selection-explainer.js?v=20261104-agent-skills-cache', 'selection-explainer.css?v=20261104-agent-skills-cache',
-  'site.webmanifest?v=20261104-agent-skills-cache', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261104-agent-skills-cache',
+  '', 'index.html', 'runtime-brand.js?v=20261104-account-cache-billing',
+  'rai-system-prompt.js?v=20261104-account-cache-billing', 'event-bindings.js?v=20261104-account-cache-billing',
+  'lib/jsQR.js?v=20261104-account-cache-billing', 'qr-scanner.js?v=20261104-account-cache-billing',
+  'secure-sharing.js?v=20261104-account-cache-billing', 'secure-sharing.css?v=20261104-account-cache-billing',
+  'diagnostics.js?v=20261104-account-cache-billing',
+  'user-activity.js?v=20261104-account-cache-billing',
+  'token-billing.js?v=20261104-account-cache-billing',
+  'app.js?v=20261104-account-cache-billing', 'styles.css?v=20261104-account-cache-billing',
+  'markdown-tables.js?v=20261104-account-cache-billing',
+  'cx-remote.js?v=20261104-account-cache-billing', 'local-agent.css?v=20261104-account-cache-billing',
+  'crf-ui.js?v=20261104-account-cache-billing',
+  'selection-explainer.js?v=20261104-account-cache-billing', 'selection-explainer.css?v=20261104-account-cache-billing',
+  'site.webmanifest?v=20261104-account-cache-billing', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261104-account-cache-billing',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -39,11 +40,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261104-agent-skills-cache', 'lib/purify.min.js?v=20261104-agent-skills-cache',
-  'lib/katex/katex.min.css?v=20261104-agent-skills-cache', 'lib/katex/katex.min.js?v=20261104-agent-skills-cache',
-  'lib/katex/contrib/auto-render.min.js?v=20261104-agent-skills-cache',
-  'lib/highlight/styles/github-dark.min.css?v=20261104-agent-skills-cache',
-  'lib/highlight/highlight.min.js?v=20261104-agent-skills-cache'
+  'lib/marked.min.js?v=20261104-account-cache-billing', 'lib/purify.min.js?v=20261104-account-cache-billing',
+  'lib/katex/katex.min.css?v=20261104-account-cache-billing', 'lib/katex/katex.min.js?v=20261104-account-cache-billing',
+  'lib/katex/contrib/auto-render.min.js?v=20261104-account-cache-billing',
+  'lib/highlight/styles/github-dark.min.css?v=20261104-account-cache-billing',
+  'lib/highlight/highlight.min.js?v=20261104-account-cache-billing'
 ].map(appPath);
 
 function isAvatarRequest(url) {

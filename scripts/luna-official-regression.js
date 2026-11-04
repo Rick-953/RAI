@@ -88,7 +88,7 @@ async function main() {
         assert.equal(body.store, false);
         if (mode === 'reject') { res.statusCode = 429; return res.end(JSON.stringify({ error: { code: 'insufficient_quota' } })); }
         if (mode === 'slow') { req.on('close', () => {}); return; }
-        const usage = { input_tokens: 100, output_tokens: 20, ...(mode === 'missing-cache' ? {} : { input_tokens_details: { cached_tokens: 50, cache_write_tokens: 25 } }), output_tokens_details: { reasoning_tokens: 4 } };
+        const usage = { input_tokens: 100, output_tokens: 20, ...(mode === 'missing-cache' ? {} : { input_tokens_details: { cached_tokens: 50, cache_write_tokens: 25, cache_write_tokens_details: { ttl_30m_tokens: body.prompt_cache_options.ttl === '12h' ? 0 : 25, ttl_12h_tokens: body.prompt_cache_options.ttl === '12h' ? 25 : 0 } } }), output_tokens_details: { reasoning_tokens: 4 } };
         const output = mode === 'tool' ? [
             { type: 'reasoning', id: 'rs_fixture', encrypted_content: 'opaque-reasoning-fixture', summary: [] },
             { type: 'function_call', id: 'fc_fixture', call_id: 'call_fixture', name: 'web_search', arguments: '{"query":"RAI"}' }
@@ -125,6 +125,15 @@ async function main() {
         assert.equal(observed.find(item => item.url === '/v1/responses').body.prompt_cache_key, promptCacheKey({ userId: 1, sessionId: 'stable-conversation' }));
         assert.equal((await store.summary()).daily.find(row => row.provider === 'openai_official').cache_write_tokens, 25);
         assert.equal((await store.summary()).official.usedOrReserved, 120);
+        let billing = JSON.parse((await get('SELECT billing_json FROM provider_token_usage ORDER BY rowid DESC LIMIT 1')).billing_json);
+        assert.equal(billing.cacheTtl, '30m'); assert.equal(billing.requestedRetentionSeconds, 1800);
+        assert.equal(billing.cacheWrite30mTokens, 25); assert.equal(billing.estimatedUsd, 0.000016125);
+        await (await provider(fallbackUrl, options({ ...baseRequest, prompt_cache_options: { ttl: '12h' } }))).text();
+        billing = JSON.parse((await get('SELECT billing_json FROM provider_token_usage ORDER BY rowid DESC LIMIT 1')).billing_json);
+        assert.equal(billing.cacheTtl, '12h'); assert.equal(billing.requestedRetentionSeconds, 43200);
+        assert.equal(billing.cacheWrite12hTokens, 25); assert.equal(billing.estimatedUsd, 0.00001925);
+        assert.equal(billing.actualCacheAgeSeconds, null);
+        assert.equal((await store.summary()).daily.find(row => row.provider === 'openai_official').cache_write_12h_tokens, 25);
         assert.ok(observed.every(item => item.url !== '/relay/v1/chat/completions'), 'official admission never contacts the relay');
         mode = 'tool';
         const tools = [{ type: 'function', function: { name: 'web_search', parameters: { type: 'object', properties: { query: { type: 'string' } } } } }];
@@ -149,6 +158,9 @@ async function main() {
         const syncPayload = await sync.json();
         assert.equal(syncPayload.choices[0].message.content, 'Official answer.');
         assert.equal(syncPayload.usage.input_tokens_details.cache_write_tokens, 25, 'non-streaming requests retain cache-write counters');
+        await (await provider(fallbackUrl, options({ ...baseRequest, stream: false, prompt_cache_options: { ttl: '12h' } }))).json();
+        billing = JSON.parse((await get('SELECT billing_json FROM provider_token_usage ORDER BY rowid DESC LIMIT 1')).billing_json);
+        assert.equal(billing.cacheTtl, '12h'); assert.equal(billing.estimatedUsd, 0.00001925, 'JSON ledger preserves actual retention and cost');
         mode = 'missing-cache';
         const unreported = events(await (await provider(fallbackUrl, options(baseRequest))).text()).at(-1).usage;
         assert.equal(unreported.prompt_tokens_details, undefined, 'unreported cache cannot become a measured zero');

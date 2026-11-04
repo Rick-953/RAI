@@ -1,3 +1,10 @@
+## 0.13.43 - signed-in custom models and cache billing (2026-11-04)
+
+- Manage custom API models from authenticated Settings; add models to the normal list without replacing the RAI account. Validate the RAI session before provider requests, isolate browser-session credentials by account, and keep keys and chat text away from RAI telemetry.
+- Record input/output, billed cache reads, cache writes by 30-minute/12-hour lifetime, token hit rate, requested OpenAI-only retention and separately sourced provider cost. Third-party cache counters retain their provider meaning. Preserve unknown counters and actual cache age as unknown.
+- Estimate official Standard-tier model costs with a dated rate snapshot and separate ordinary input, output, cache-read and write-lifetime components. Never double-charge cached input or write tokens; third-party rates and unrecognized service tiers remain unknown.
+- Preserve cache billing in provider attempts, SQLite usage records and client activity. Cover anonymous/revoked accounts, model-list integration, account changes, privacy, mixed cache lifetimes and cost arithmetic in executable/browser regressions.
+
 ## 0.13.42 - native Agent tools and prompt cache accounting (2026-11-04)
 
 - Allow capable CX RAI clients to switch Chat into Agent mode with their authorized workspace and mode-specific skills. Preserve consent refusals and user-disabled skills on the client; older clients receive their existing tools.

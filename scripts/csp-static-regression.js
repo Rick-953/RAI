@@ -126,9 +126,9 @@ function verifyDeclarativeBindings(relativePath, source, minimumExpected) {
 // declarative controls while keeping the unified canvas actions in the shared UI.
 // Two Auto-language controls replace the removed custom-key entry (+1 total).
 // Remove the Fast/Thinking shortcut rows and compact the reasoning header;
-// Luna plus the hidden developer nav, version trigger and admin entry use 187 bindings.
-const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 187);
-check(staticIndexBindingCount === 187, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 187)`);
+// Luna plus the hidden developer nav, version trigger and admin entry use 186 bindings after moving custom API management into Settings.
+const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 186);
+check(staticIndexBindingCount === 186, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 186)`);
 verifyDeclarativeBindings('public/app.js', appJs, 70);
 
 // Exercise the production parser itself in a DOM-free VM. App template expressions are
