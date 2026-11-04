@@ -2642,6 +2642,21 @@ window.getRaiLocalAgentContext = () => ({
   language: appState.language,
   authenticated: appState.authState === 'authenticated'
 });
+window.RaiUserActivity?.configure(() => ({
+  token: appState.token, account: String(appState.user?.id || ''), apiBase: API_BASE,
+  sessionId: appState.currentSession?.id || null,
+  environment: {
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, utcOffsetMinutes: -new Date().getTimezoneOffset(),
+    locale: navigator.language, region: new Intl.Locale(navigator.language).region || null, uiLanguage: appState.language,
+    theme: appState.theme, systemTheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    os: navigator.userAgentData?.platform || navigator.platform, appVersion: RAI_APP_VERSION,
+    screenWidth: screen.width, screenHeight: screen.height, viewportWidth: innerWidth, viewportHeight: innerHeight, scale: devicePixelRatio,
+    selectedModel: appState.selectedModel, reasoningProfile: appState.reasoningProfile, thinkingMode: appState.thinkingMode,
+    internetMode: appState.internetMode, researchMode: appState.researchModeEnabled, customApiMode: appState.customApiMode,
+    selectedSkills: window.RaiWebSkills?.selectedNames?.() || [], agentMode: !!window.RaiLocalAgent?.isSelected?.(),
+    features: [appState.internetMode && 'internet', appState.thinkingMode && 'thinking', appState.researchModeEnabled && 'research', appState.customApiMode && 'custom_api'].filter(Boolean)
+  }
+}));
 
 let deferredPwaInstallPrompt = null;
 let pwaInstallSupportInitialized = false;
@@ -5679,6 +5694,7 @@ const i18n = {
     'settings-nav-developer': '开发者选项',
     'settings-admin-entry': '管理员登录',
     'settings-diagnostics-description': '仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。',
+    'settings-server-activity-description': '登录后的操作、账户、IP、系统环境、模型与技能状态、对话及请求编号和错误元数据会记录到服务器，供管理员排障，保留 30 天。不含密码、API Key 或聊天正文。',
     'auth-method-label': '登录方式',
     'cache-title': '本地对话缓存',
     'cache-description': '仅保留已打开对话的原始消息和 RAI 私有图片。',
@@ -6379,6 +6395,7 @@ const i18n = {
     'settings-nav-developer': 'Developer options',
     'settings-admin-entry': 'Admin sign in',
     'settings-diagnostics-description': 'The latest 500 events from this tab: request IDs, timings and stream statistics. No keys, message content, file names or account information. Saved locally and never uploaded automatically.',
+    'settings-server-activity-description': 'While signed in, actions, account, IP addresses, system environment, model and skill state, conversation and request IDs, and error metadata are recorded on the server for administrator troubleshooting and retained for 30 days. Passwords, API keys and chat content are excluded.',
     'auth-method-label': 'Sign-in method',
     'cache-title': 'Local conversation cache',
     'cache-description': 'Store only original messages and private RAI images from conversations you have opened.',
@@ -15556,7 +15573,7 @@ function initEntryAutofocus() {
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
 const RAI_SESSION_FETCH = window.RaiDiagnostics
-  ? window.RaiDiagnostics.wrapFetch(window.fetch.bind(window), () => API_BASE)
+  ? window.RaiDiagnostics.wrapFetch(window.RaiUserActivity ? window.RaiUserActivity.wrapFetch(window.fetch.bind(window)) : window.fetch.bind(window), () => API_BASE)
   : window.fetch.bind(window);
 const RAI_ACCESS_REFRESH_LEEWAY_MS = 60 * 1000;
 let userTokenRefreshEntry = null;
@@ -34740,9 +34757,25 @@ function createAdminPanel() {
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
               <span>会话管理</span>
             </button>
+            <button class="admin-tab" data-tab="activity" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('activity')">用户操作日志</button>
           </div>
 
           <div class="admin-panel-content">
+            <div id="adminActivityTab" class="admin-tab-content">
+              <h3>用户操作日志 · 保留最近 30 天</h3>
+              <p>时间精确到毫秒；客户端时间与服务器接收时间分别显示。包含账户、IP、环境、模型、技能及请求链路。</p>
+              <div class="admin-toolbar">
+                <input id="activityAccount" placeholder="用户名或邮箱" aria-label="用户名或邮箱">
+                <input id="activitySession" placeholder="对话 ID" aria-label="对话 ID">
+                <input id="activityRequest" placeholder="服务器请求 ID" aria-label="服务器请求 ID">
+                <input id="activityFrom" type="datetime-local" step="0.001" aria-label="开始时间">
+                <input id="activityTo" type="datetime-local" step="0.001" aria-label="结束时间">
+                <label><input id="activityErrors" type="checkbox">只看错误</label>
+                <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadAdminActivity()">查询</button>
+              </div>
+              <div id="adminActivityResults" aria-live="polite"></div>
+              <button id="activityMore" hidden data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadAdminActivity(true)">更早的记录</button>
+            </div>
             <div id="adminStatsTab" class="admin-tab-content active">
               <div class="admin-stats-grid" id="adminStatsGrid">
                 <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
@@ -34844,6 +34877,34 @@ function switchAdminTab(tab) {
   else if (tab === 'announcements') loadAdminAnnouncements();
   else if (tab === 'broadcast') renderAdminBroadcastPanel();
   else if (tab === 'sessions') loadAdminSessions();
+  else if (tab === 'activity') loadAdminActivity();
+}
+
+let activityBefore = null;
+async function loadAdminActivity(more = false) {
+  const container = document.getElementById('adminActivityResults');
+  if (!container || !adminState.isLoggedIn) return;
+  const query = new URLSearchParams();
+  for (const [field, key] of [['activityAccount','account'],['activitySession','sessionId'],['activityRequest','requestId'],['activityFrom','from'],['activityTo','to']]) {
+    const value = document.getElementById(field).value.trim();
+    if (value) query.set(key, key === 'from' || key === 'to' ? new Date(value).toISOString() : value);
+  }
+  if (document.getElementById('activityErrors').checked) query.set('errorsOnly','true');
+  if (more && activityBefore) query.set('before', activityBefore);
+  try {
+    const response = await fetch(`${API_BASE}/admin/user-activity?${query}`, { headers: { 'X-Admin-Token': adminState.token } });
+    if (!response.ok) throw new Error('activity_unavailable');
+    const data = await response.json();
+    if (!more) container.replaceChildren();
+    if (!data.events.length && !more) container.textContent = '没有匹配的日志。此版本发布后的操作才会被记录。';
+    for (const event of data.events) {
+      const details = document.createElement('details'), summary = document.createElement('summary'), pre = document.createElement('pre');
+      summary.textContent = `${new Date(event.timeMs).toISOString()} · ${event.username} (${event.userId}) · ${event.source} · ${event.kind}/${event.action} · ${event.control || event.stage || ''} · ${event.sessionId || '无对话'}`;
+      pre.textContent = JSON.stringify(event, null, 2); details.append(summary, pre); container.append(details);
+    }
+    activityBefore = data.nextBefore;
+    document.getElementById('activityMore').hidden = !activityBefore;
+  } catch (_) { if (!more) container.textContent = '日志查询失败，请重试。'; }
 }
 
 // 加载统计数据

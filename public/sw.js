@@ -22,6 +22,7 @@ const RAI_STATIC_ASSETS = [
   'lib/jsQR.js?v=20261104-agent-skills-cache', 'qr-scanner.js?v=20261104-agent-skills-cache',
   'secure-sharing.js?v=20261104-agent-skills-cache', 'secure-sharing.css?v=20261104-agent-skills-cache',
   'diagnostics.js?v=20261104-agent-skills-cache',
+  'user-activity.js?v=20261104-agent-skills-cache',
   'app.js?v=20261104-agent-skills-cache', 'styles.css?v=20261104-agent-skills-cache',
   'markdown-tables.js?v=20261104-agent-skills-cache',
   'cx-remote.js?v=20261104-agent-skills-cache', 'local-agent.css?v=20261104-agent-skills-cache',

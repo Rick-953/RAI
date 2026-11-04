@@ -11,6 +11,7 @@ const { createLunaOfficialFetch } = require('./lib/luna-official-provider');
 const { createProviderTokenStore, meterChatResponse } = require('./lib/provider-token-usage');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
+const { createUserActivity } = require('./lib/user-activity');
 const { fetchWithLatency } = require('./lib/chat-latency');
 const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const cxAgentTools = require('./lib/cx-agent-tools');
@@ -10313,6 +10314,8 @@ const softwareClientStartupReady = authSessionStartupReady
         console.log(' 软件客户端凭据结构就绪');
         return true;
     });
+const userActivity = createUserActivity({ dbRunAsync, dbAllAsync, withMainDbTransaction, startupReady: authSessionStartupReady });
+userActivity.ready.catch(() => console.error('用户操作日志数据库初始化失败'));
 const localAgentStartupReady = authSessionStartupReady
     .then(() => localAgentService.migrate())
     .then(() => {
@@ -11079,6 +11082,7 @@ const authenticateToken = async (req, res, next) => {
         await authSessionStartupReady;
         const user = await authSessionStore.verifyAccessToken(token);
         req.user = user;
+        userActivity.bindRequest(req);
         return next();
     } catch (error) {
         return res.status(401).json({ error: '令牌无效、已过期或会话已撤销' });
@@ -20627,7 +20631,7 @@ const fetchLunaProvider = createLunaOfficialFetch({
     metadata: () => {
         const turn = chatModelQuotaContext.getStore();
         if (turn) turn.lunaReasoningItems ||= new Map();
-        return { requestId: turn?.id, userId: turn?.userId, sessionId: turn?.sessionId, reasoningItems: turn?.lunaReasoningItems };
+        return { requestId: turn?.id, userId: turn?.userId, sessionId: turn?.sessionId, reasoningItems: turn?.lunaReasoningItems, latency: turn?.latency };
     },
     onMeterError: () => console.error(' 官方 Luna 用量结算失败，保留预留额度')
 });
@@ -21070,6 +21074,14 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         const concurrentLimit = concurrency.limit;
         requestId = `req_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
         req.diagnosticChatRequestId = requestId;
+        req.diagnosticSessionId = sessionId || null;
+        req.recordUserActivity?.('chat_requested', { kind: 'stream', context: {
+            selectedModel: model, reasoningProfile: req.body.reasoningProfile, thinkingMode,
+            internetMode: req.body.internetMode, agentMode: req.body.client_agent_mode,
+            selectedSkills: req.body.client_skills?.selected?.map?.(skill => skill?.name) || req.body.selected_skill_names,
+            loadedSkills: req.body.client_skills?.selected?.filter?.(skill => skill?.success === true)?.map(skill => skill.name),
+            memoryMode: req.body.memoryMode, researchModeName: req.body.researchMode, thinkingBudget: req.body.thinkingBudget
+        } });
         const activeRegistration = await registerActiveRequestForUser({
             requestId,
             userId: req.user.userId,
@@ -21358,6 +21370,8 @@ if (clientFileExecution && systemPrompt) {
             return row;
         };
         const emitTrackedToolStatus = (event = {}) => {
+            req.recordUserActivity?.('tool_status', { kind: 'stream', stage: event.status, control: event.tool,
+                context: { loadedSkills: event.tool === 'read_skill' && event.status === 'complete' ? [event.skill] : [] } });
             const tracked = { type: event.type || 'tool_status', ...event };
             recordServerToolTrace(tracked);
             res.write(`data: ${JSON.stringify(tracked)}\n\n`);
@@ -22485,6 +22499,8 @@ if (clientFileExecution && systemPrompt) {
         finalMessages = buildCacheStableMessages(finalMessages, systemPrompt, systemContent);
         finalMessages = clientSkillPolicy.appendSelected(finalMessages, clientSkills);
         finalMessages = webSelectedSkills.appendSelected(finalMessages, selectedWebSkills);
+        if (selectedWebSkills?.skills?.length) req.recordUserActivity?.('skill_context_ready', { kind: 'stream',
+            context: { loadedSkills: selectedWebSkills.skills.map(skill => skill.name) } });
 
         const isCurrentKimiK25Model = () => (
             finalModel === 'kimi-k2.6'
@@ -24546,6 +24562,8 @@ if (clientFileExecution && systemPrompt) {
                         for (const toolCall of pendingToolCalls) {
                             const toolName = toolCall.function.name;
                             const args = toolCall._args;
+                            req.recordUserActivity?.('tool_requested', { kind: 'stream', control: toolName,
+                                stage: 'dispatch', context: { selectedSkills: toolName === 'read_skill' ? [args?.name] : [] } });
 
                             console.log(` 执行工具: ${toolName}, argKeys=${Object.keys(args || {}).sort().join(',')}`);
                             const isSearchTool = toolName === 'web_search';
@@ -29237,6 +29255,7 @@ app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
 app.get('/api/admin/verify', authenticateAdmin, (req, res) => {
     res.json({ success: true, isAdmin: true });
 });
+userActivity.install({ app, authenticateToken, authenticateAdmin });
 
 app.post('/api/admin/logout', authenticateAdmin, async (req, res) => {
     await dbRunAsync(

@@ -78,7 +78,7 @@
     };
   }
   function startStream(response) {
-    return { fields: { ...(responses.get(response) || {}) }, start: now(), events: 0, contentChars: 0, reasoningChars: 0, toolEvents: 0, firstContentMs: -1, firstReasoningMs: -1, done: false, failed: false, ended: false };
+    return { fields: { ...(responses.get(response) || {}), ...(env.RaiUserActivity?.responseContext(response) || {}) }, start: now(), events: 0, contentChars: 0, reasoningChars: 0, toolEvents: 0, firstContentMs: -1, firstReasoningMs: -1, done: false, failed: false, ended: false };
   }
   function observeStream(state, event) {
     if (!state || state.ended || !event || typeof event !== 'object') return;
@@ -110,6 +110,7 @@
     const action = state.cancelled ? 'cancelled' : state.failed ? 'error' : !state.done || (!state.contentChars && state.reasoningChars) ? 'incomplete' : 'completed';
     const fields = { ...state.fields, durationMs: Math.round(now() - state.start) };
     for (const key of numbers) if (Number.isSafeInteger(state[key])) fields[key] = state[key];
+    try { env.RaiUserActivity?.diagnostic({ ...fields, category: 'stream', action }); } catch (_) { }
     write('stream', action, fields);
   }
   function reader(response) {

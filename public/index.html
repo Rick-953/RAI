@@ -1855,6 +1855,7 @@
                 <label class="setting-label" data-i18n="settings-export-diagnostics">导出脱敏诊断日志</label>
                 <p class="setting-description" data-i18n="settings-diagnostics-description">仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
                 <button type="button" class="settings-inline-save settings-diagnostics-button" id="exportDiagnosticsButton" data-i18n="settings-export-diagnostics">导出脱敏诊断日志</button>
+                <p class="setting-description" data-i18n="settings-server-activity-description">登录后的操作、账户、IP、系统环境、模型与技能状态、对话及请求编号和错误元数据会记录到服务器，供管理员排障，保留 30 天。不含密码、API Key 或聊天正文。</p>
               </div>
             </div>
           </section>
@@ -2226,6 +2227,7 @@
   <!-- 外部脚本 -->
   <script defer src="conversation-cache.js?v=20261104-agent-skills-cache"></script>
   <script defer src="pet-quotes.js?v=20261104-agent-skills-cache"></script>
+  <script defer src="user-activity.js?v=20261104-agent-skills-cache"></script>
   <script defer src="diagnostics.js?v=20261104-agent-skills-cache"></script>
   <script defer src="markdown-tables.js?v=20261104-agent-skills-cache"></script>
   <script defer src="app.js?v=20261104-agent-skills-cache"></script>

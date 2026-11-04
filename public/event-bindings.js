@@ -45,7 +45,7 @@
     'leaveCustomApiMode', 'loadMoreFileLibrary', 'loadSessionMessages', 'loginWithPasskey', 'logoutAllSecurityDevices', 'markRaiNotificationsRead',
     'navigateToResponse', 'openAdminPasswordEditor', 'openAvatarPicker', 'openBookmarkDomain',
     'openDesktopMainWindow', 'openDesktopQuickWindow', 'openFlow', 'openGitHubStarTask',
-    'openFileLibrary', 'openMembershipEditor', 'openMembershipPlans', 'openModelModal',
+    'loadAdminActivity', 'openFileLibrary', 'openMembershipEditor', 'openMembershipPlans', 'openModelModal',
     'openNotificationsFromSidebar', 'openPointsEditor', 'openSettings', 'openUserDetailModal',
     'redeemMembership', 'removeAttachment', 'removeQuote', 'renderAdminAnnouncements',
     'replayOnboarding', 'requestPasswordResetCode', 'resendAuthEmailCode',
@@ -209,7 +209,14 @@
       if (typeof action !== 'function') {
         throw new Error(`RAI action is unavailable: ${actionName}`);
       }
-      return action(...argumentsList.map((argument) => resolveArgument(argument, event, element)));
+      if (event.type !== 'input' && event.type !== 'mousemove') globalThis.RaiUserActivity?.record('ui', actionName, { control: actionName, stage: event.type });
+      try {
+        const result = action(...argumentsList.map((argument) => resolveArgument(argument, event, element)));
+        return result;
+      } catch (error) {
+        globalThis.RaiUserActivity?.record('error', actionName, { stage: 'handler', errorType: error?.name || 'Error' });
+        throw error;
+      }
     };
   }
 
