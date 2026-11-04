@@ -17,6 +17,7 @@ const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
+const { installCustomApiSyncRoutes, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
 const express = require('express');
 const cors = require('cors');
@@ -9080,6 +9081,7 @@ db.serialize(() => {
     thinking_mode INTEGER DEFAULT 0,
     internet_mode INTEGER DEFAULT 0,
     process_trace TEXT,
+    client_metadata TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )`);
@@ -9783,6 +9785,10 @@ db.serialize(() => {
             } else if (!err) {
                 console.log(' 已添加process_trace列到messages表');
             }
+        });
+
+        db.run('ALTER TABLE messages ADD COLUMN client_metadata TEXT', (err) => {
+            if (err && !err.message.includes('duplicate column')) console.warn('添加客户端消息元数据失败:', sanitizeReportContext(err));
         });
 
         db.run(`ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`, (err) => {
@@ -10493,7 +10499,7 @@ app.use(cors({
     exposedHeaders: ['X-RAI-Diagnostic-Id', 'X-Request-ID', 'X-Model-Used', 'X-Model-Reason']
 }));
 app.use((req, res, next) => {
-    if (req.path === '/api/chat/stream') {
+    if (req.path === '/api/chat/stream' || /^\/api\/sessions\/[^/]+\/client-messages$/.test(req.path)) {
         return chatJsonParser(req, res, next);
     }
     return jsonParser(req, res, next);
@@ -16109,6 +16115,8 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
     }
 });
 
+installCustomApiSyncRoutes(app, { authenticateToken, apiLimiter, ensureSessionKindColumn, withMainDbTransaction, scheduleConversationIntegritySeal });
+
 app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res) => {
     try {
         await ensureSessionKindColumn();
@@ -16300,10 +16308,10 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
         // 只返回轻量附件元数据；不把历史 Base64 附件正文放进消息列表。
         db.all(
             `SELECT id, session_id, role, content, request_id, reasoning_content, model, attachments,
-                    enable_search, thinking_mode, internet_mode, sources, process_trace, created_at,
+                    enable_search, thinking_mode, internet_mode, sources, process_trace, client_metadata, created_at,
                     CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
                          THEN 1 ELSE 0 END as has_attachments
-             FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
+             FROM messages WHERE session_id = ? ORDER BY json_extract(client_metadata, '$.client_order') ASC, created_at ASC, id ASC`,
             [req.params.id],
             async (err, messages) => {
                 if (err) {
@@ -16319,8 +16327,11 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
                         message.created_at
                     );
                     delete message.attachments;
+                    const clientFields = clientMessageFields(message);
+                    delete message.client_metadata;
                     return {
                         ...message,
+                        ...clientFields,
                         content: message.role === 'user' && attachment_refs.length > 0
                             ? stripInjectedAttachmentPromptContext(message.content)
                             : message.content,
