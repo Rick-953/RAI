@@ -1,3 +1,11 @@
+## 0.13.42 - native Agent tools and prompt cache accounting (2026-11-04)
+
+- Allow capable CX RAI clients to switch Chat into Agent mode with their authorized workspace and mode-specific skills. Preserve consent refusals and user-disabled skills on the client; older clients receive their existing tools.
+- Relay bounded code reads, glob/regex search and revision-checked edits to the native Windows client. Deduplicate skills returned by mode activation within the running turn.
+- Keep dynamic system instructions after conversation history so each new turn preserves more of the previous prompt prefix. Use a stable user/conversation cache key for official Luna Responses requests.
+- Preserve actual cache-read and cache-write usage end to end. Report missing counters as unreported, and calculate cache hit rates only over input with measured cache data. Keep official allowance admission based on input plus output tokens.
+- Cover Chat activation, consent rejection, legacy capability boundaries, source revisions, append-only tool continuations, cache-key isolation and missing-usage semantics in regression tests. Real provider cache hits and billing require production usage verification.
+
 ## 0.13.41 - GPT Image 2.5 with shared points (2026-11-04)
 
 - Replace the old image generation/fallback pipeline with GPT Image 2.5, Flare and Sunburst at 100/200/300 points per image.

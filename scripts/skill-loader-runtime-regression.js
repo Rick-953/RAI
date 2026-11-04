@@ -183,6 +183,46 @@ function createProviderMock() {
         return;
       }
 
+      if (scenario.startsWith('agent-')) {
+        const tools = (body.tools || []).map(tool => tool.function?.name);
+        if (scenario === 'agent-legacy') {
+          assert.ok(!tools.includes('enable_agent_mode') && !tools.includes('edit_code'), 'legacy capability boundary');
+          writeSse(response, [openAiText(FINAL_TEXT)]);
+          return;
+        }
+        assert.ok(tools.includes('enable_agent_mode') && tools.includes('edit_code'), 'Chat can activate code tools');
+        const earlier = observations.filter(item => item.scenario === scenario);
+        if (earlier.length > 1) {
+          assert.deepEqual(body.tools, earlier[0].body.tools, 'mode activation keeps tool prefix stable');
+          const previous = earlier.at(-2).body.messages;
+          assert.deepEqual(body.messages.slice(0, previous.length), previous, 'continuation only appends to request history');
+        }
+        const results = (body.messages || []).filter(item => item.role === 'tool').map(item => JSON.parse(item.content));
+        const call = (name, args = {}) => writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0,
+          id: `agent_${results.length}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
+        if (!results.length) { call('enable_agent_mode'); return; }
+        if (scenario === 'agent-denied') {
+          assert.equal(results[0].error, 'user_denied');
+          assert.ok(!text.includes('AGENT_SKILL_BODY_MARKER'));
+        } else if (results.length === 1) {
+          assert.equal(results[0].agent_mode, true);
+          assert.equal(count(text, 'AGENT_SKILL_BODY_MARKER'), 1);
+          call('read_skill', { name: 'ponytail' }); return;
+        } else if (results.length === 2) {
+          assert.equal(results[1].already_loaded, true, 'activated skill is deduplicated');
+          assert.equal(count(text, 'AGENT_SKILL_BODY_MARKER'), 1);
+          call('read_code', { path: '.gitignore', offset: 1, limit: 20 }); return;
+        } else if (results.length === 3) {
+          assert.equal(results[2].revision, Buffer.alloc(32).toString('base64'), 'revision survives result normalization');
+          assert.equal(results[2].content, '1: old\n');
+          call('edit_code', { path: '.gitignore', revision: results[2].revision, old_text: 'old', new_text: 'new' }); return;
+        } else {
+          assert.equal(results[3].success, true, 'edit result reaches provider');
+        }
+        writeSse(response, [openAiText(FINAL_TEXT)]);
+        return;
+      }
+
       if (scenario.startsWith('client-')) {
         const markerCount = count(text, 'CLIENT_SKILL_BODY_MARKER');
         if (scenario === 'client-unused') {
@@ -394,7 +434,8 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
     body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.1-sol',
       internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: false,
-      client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected } })
+      client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected },
+      ...(scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
   });
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
   let buffer = '', visible = '', pending = 0, done = false;
@@ -412,7 +453,23 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
       if (event.type === 'tool_pending_client') {
         pending++;
         let result;
-        if (scenario.startsWith('settings-')) {
+        if (scenario.startsWith('agent-')) {
+          if (event.tool === 'enable_agent_mode') {
+            assert.deepEqual(event.parameters, {});
+            const content = 'AGENT_SKILL_BODY_MARKER';
+            result = scenario === 'agent-denied' ? { success: false, error: 'user_denied' }
+              : { success: true, agent_mode: true, client_skills: { protocol: 1,
+                catalog: [{ name: 'ponytail', description: 'Minimal coding' }],
+                selected: [{ success: true, name: 'ponytail', content, offset: 0, total_chars: content.length, complete: true, next_offset: null }] } };
+          } else if (event.tool === 'read_code') {
+            assert.deepEqual(event.parameters, { path: '.gitignore', offset: 1, limit: 20 });
+            result = { success: true, path: '.gitignore', revision: Buffer.alloc(32).toString('base64'), content: '1: old\n', total_lines: 1, next_line: null };
+          } else {
+            assert.equal(event.tool, 'edit_code', 'Agent skill read must reuse activation body');
+            assert.equal(event.parameters.revision, Buffer.alloc(32).toString('base64'));
+            result = { success: true, path: '.gitignore', revision: Buffer.alloc(32, 1).toString('base64') };
+          }
+        } else if (scenario.startsWith('settings-')) {
           assert.ok(['settings-list', 'settings-get', 'settings-fallback'].includes(scenario), 'navigation answers must not force a settings operation');
           assert.equal(event.tool, 'cxrai_setting');
           assert.deepEqual(event.parameters, scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' });
@@ -435,7 +492,8 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   }
   assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
   assert.equal(done, true);
-  assert.equal(pending, ['client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+  assert.equal(pending, scenario === 'agent-activate' ? 3
+    : ['agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
 async function runMemoryBatches(baseUrl, token, databasePath, provider) {
@@ -566,6 +624,8 @@ async function main() {
       await runClientChat(baseUrl, token, softwareKey, [{ success: true, name: 'documents', offset: 0, total_chars: 24,
         content: 'CLIENT_SKILL_BODY_MARKER', complete: true, next_offset: null }], 'client-selected');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-read');
+      for (const scenario of ['agent-activate', 'agent-denied', 'agent-legacy'])
+        await runClientChat(baseUrl, token, softwareKey, [], scenario);
     }
     for (const scenario of ['settings-navigation', 'settings-navigation-en', 'settings-list', 'settings-get', 'settings-fallback']) {
       await runClientChat(baseUrl, token, softwareKey, [], scenario);

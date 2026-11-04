@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.41';
-const RAI_BUILD_ID = '20261104-image25-points';
+const RAI_APP_VERSION = '0.13.42';
+const RAI_BUILD_ID = '20261104-agent-skills-cache';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -34861,12 +34861,16 @@ async function loadAdminTokenUsage() {
       `今日已用／预留 ${number(quota.usedOrReserved)}；可安排 ${number(quota.remaining)}；UTC 00:00（北京时间 08:00）重置。`,
       data.averageDailyTokens === null ? '日均 Token：等待完整统计日。历史 Token 未保存，无法追溯精确值。'
         : `最近 ${data.completeDays} 个完整统计日日均 ${number(data.averageDailyTokens)} Token；未完整计量请求 ${number(data.unmeasuredCalls)}。`,
-      '额度涵盖 RAI 已计量请求。组织中其他应用共享同一免费池时，应在服务端配置外部用量预留。'
+      '额度涵盖 RAI 已计量请求。组织中其他应用共享同一免费池时，应在服务端配置外部用量预留。',
+      '缓存读取和写入仅显示上游实际回传的 Token；未回传不记为 0。命中率只计算已回传缓存统计的输入。免费池额度仍按输入＋输出计算，不扣除缓存读取量。'
     ];
     for (const line of lines) { const paragraph = document.createElement('p'); paragraph.textContent = line; container.appendChild(paragraph); }
     const table = document.createElement('table'); table.className = 'admin-table';
-    for (const values of [['UTC 日期', '服务／模型', '输入', '输出', '计量请求'], ...(data.daily || []).slice(0, 60).map(row =>
-      [row.day, `${row.provider} / ${row.model}`, number(row.input_tokens), number(row.output_tokens), `${row.measured_calls}/${row.calls}`])]) {
+    for (const values of [['UTC 日期', '服务／模型', '输入', '输出', '缓存读取', '缓存写入', '已测输入命中率', '计量请求'], ...(data.daily || []).slice(0, 60).map(row =>
+      [row.day, `${row.provider} / ${row.model}`, number(row.input_tokens), number(row.output_tokens),
+        row.cache_measured_calls ? `${number(row.cached_tokens)}（${row.cache_measured_calls}/${row.calls}）` : '未回传',
+        row.cache_write_measured_calls ? `${number(row.cache_write_tokens)}（${row.cache_write_measured_calls}/${row.calls}）` : '未回传',
+        row.cache_measured_input_tokens ? `${(100 * row.cached_tokens / row.cache_measured_input_tokens).toFixed(1)}%` : '—', `${row.measured_calls}/${row.calls}`])]) {
       const row = document.createElement('tr');
       for (const value of values) { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell); }
       table.appendChild(row);
