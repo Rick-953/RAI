@@ -1,3 +1,9 @@
+## 0.13.44 - 2026-11-04
+
+- Native Agent tasks allow up to 9999 tool rounds per request. Waiting for local tools pauses the actual shared model deadline.
+- Interrupted model streams retry up to three times with visible progress, preserving received text and completed tool results. Partial tool arguments are discarded, and cancellation or authorization failures stop retries.
+- Runtime regressions exercise three interruptions before recovery and ten client tool rounds without replaying completed operations.
+
 ## 0.13.43 - signed-in custom models and cache billing (2026-11-04)
 
 - Manage custom API models from authenticated Settings; add models to the normal list without replacing the RAI account. Validate the RAI session before provider requests, isolate browser-session credentials by account, and keep keys and chat text away from RAI telemetry.

@@ -143,6 +143,40 @@ function createProviderMock() {
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
 
+      if (scenario === 'retry-primary') {
+        const attempt = observations.filter(item => item.scenario === scenario).length;
+        if (attempt <= 3) {
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.end(`data: ${JSON.stringify(openAiText(`partial-${attempt} `, null))}\n\n`);
+        } else {
+          assert.equal(attempt, 4, 'initial attempt plus three retries');
+          assert.ok(text.includes('partial-1') && text.includes('partial-3'), 'retry preserves received text');
+          writeSse(response, [openAiText(FINAL_TEXT)]);
+        }
+        return;
+      }
+
+      if (scenario === 'client-rounds-retry') {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (results.length === 5) {
+          const attempts = observations.filter(item => item.scenario === scenario
+            && (item.body.messages || []).filter(message => message.role === 'tool').length === 5).length;
+          if (attempts <= 3) {
+            if (attempts > 1) assert.ok(text.includes('round-partial-1'), 'partial text reaches the continuation');
+            response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            response.end(`data: ${JSON.stringify(openAiText(`round-partial-${attempts} `, null))}\n\n`);
+            return;
+          }
+          assert.equal(attempts, 4, 'tool continuation retries exactly three times');
+          assert.equal(results.length, 5, 'completed tool results survive every retry');
+        }
+        if (results.length < 10) {
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `round_${results.length}`, type: 'function',
+            function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: results.length + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else writeSse(response, [openAiText(FINAL_TEXT)]);
+        return;
+      }
+
       if (scenario.startsWith('client-') || scenario.startsWith('settings-')) {
         assert.match(systemText, /Windows\/UWP/);
         assert.match(systemText, /Windows PowerShell/);
@@ -420,6 +454,7 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
   );
   assert.doesNotMatch(visible, /read_skill|function_calls|<invoke|tool_call_begin|"arguments"/, `${scenario}: tool protocol leaked`);
   assert.ok(events.some((event) => event.type === 'done'), `${scenario}: done event missing`);
+  if (scenario === 'retry-primary') assert.equal(events.filter(event => event.type === 'stream_retry').length, 3);
 }
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
@@ -433,12 +468,13 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
     body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.1-sol',
-      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: false,
+      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: scenario === 'client-rounds-retry',
       client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected },
-      ...(scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
+      ...(scenario === 'client-rounds-retry' ? { client_agent_mode: true }
+        : scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
   });
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
-  let buffer = '', visible = '', pending = 0, done = false;
+  let buffer = '', visible = '', pending = 0, retries = 0, done = false;
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -449,11 +485,16 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
       const event = JSON.parse(line.slice(6));
       assert.notEqual(event.type, 'error', `${scenario}: unexpected stream error ${JSON.stringify(event)}`);
       if (event.type === 'content') visible += event.content || event.delta || '';
+      if (event.type === 'stream_retry') retries++;
       if (event.type === 'done') done = true;
       if (event.type === 'tool_pending_client') {
         pending++;
         let result;
-        if (scenario.startsWith('agent-')) {
+        if (scenario === 'client-rounds-retry') {
+          assert.equal(event.tool, 'read_code');
+          assert.equal(event.parameters.offset, pending, 'completed tools are never replayed');
+          result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
+        } else if (scenario.startsWith('agent-')) {
           if (event.tool === 'enable_agent_mode') {
             assert.deepEqual(event.parameters, {});
             const content = 'AGENT_SKILL_BODY_MARKER';
@@ -492,7 +533,8 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   }
   assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
   assert.equal(done, true);
-  assert.equal(pending, scenario === 'agent-activate' ? 3
+  if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
+  assert.equal(pending, scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
     : ['agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
@@ -619,6 +661,8 @@ async function main() {
       await runChat(baseUrl, token, { scenario: entry[0], model: entry[1] });
     }
     if (!settingsOnly) {
+      await runChat(baseUrl, token, { scenario: 'retry-primary', model: 'gpt-6.1-sol' });
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-rounds-retry');
       await runChat(baseUrl, token, { scenario: 'memory-off', model: 'gpt-6.1-sol', memoryMode: 'off' });
       await runClientChat(baseUrl, token, softwareKey, [], 'client-unused');
       await runClientChat(baseUrl, token, softwareKey, [{ success: true, name: 'documents', offset: 0, total_chars: 24,

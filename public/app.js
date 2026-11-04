@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.43';
-const RAI_BUILD_ID = '20261104-account-cache-billing';
+const RAI_APP_VERSION = '0.13.44';
+const RAI_BUILD_ID = '20261104-agent-stream-retry';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -24030,6 +24030,9 @@ async function sendMessage(message = null, options = {}) {
               addProcessTraceItem('search', isChineseLanguage(appState.language) ? '搜索无结果' : 'No search results');
             }
             scrollToBottom();
+          }
+          else if (parsed.type === 'stream_retry') {
+            updateStepStatus(getGeneratingStep(), 'running', parsed.message || '正在自动重试');
           }
           else if (parsed.type === 'stream_warning') {
             showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
