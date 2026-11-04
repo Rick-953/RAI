@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const sqlite3 = require('sqlite3');
 const { createAuthSessionStore } = require('../lib/auth-session-store');
 const { createUserActivity, normalizeEvent } = require('../lib/user-activity');
@@ -27,6 +28,7 @@ async function main() {
     await run("INSERT INTO sessions VALUES('owned',1),('other',2)");
     const session = await auth.createSession({ userId:1 });
     const app = express(); app.set('trust proxy', false); app.use(express.json()); app.use(requestDiagnostics);
+    app.use(rateLimit({ windowMs:60000, max:1000, validate:{trustProxy:false} }));
     const activity = createUserActivity({ dbRunAsync:run, dbAllAsync:all, withMainDbTransaction:transaction });
     await activity.ready;
     const authenticateToken = async (req,res,next) => { try { req.user = await auth.verifyAccessToken(String(req.headers.authorization || '').replace(/^Bearer /,'')); activity.bindRequest(req); next(); } catch (_) { res.sendStatus(401); } };
@@ -101,6 +103,13 @@ async function main() {
   assert.ok(JSON.parse(sent.at(-1).body).events.some(item => item.action === 'before_crash'));
   const brokenContext = createClient(env); brokenContext.configure(() => { throw new Error('optional_metadata_unavailable'); });
   assert.equal(await brokenContext.wrapFetch(async()=>exact)('/api/chat/stream'),exact,'environment failure cannot break a request');
+  let release;
+  const inFlight = client.wrapFetch(() => new Promise(resolve => { release=resolve; }))('/api/chat/stream');
+  context={...context,token:'token-three',account:'three'};
+  client.record('ui','NewAccountAction'); release(new Response('old account result')); await inFlight;
+  client.diagnostic({ category:'stream',action:'error',activityOwner:'/api|two',sessionId:'owned' });
+  await client.flush();
+  assert.deepEqual(JSON.parse(sent.at(-1).body).events.map(item=>item.action),['NewAccountAction'],'in-flight old account HTTP and stream events must not attach to the next account');
   const latency = createChatLatencyTrace({}, { write(){} });
   const observed = await fetchWithLatency(async()=>new Response('data: {"type":"response.created","response":{"model":"gpt-6-luna-2026"}}\n\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n'), 'fixture',
     { body:JSON.stringify({model:'gpt-6-luna',reasoning:{effort:'none'}}) }, latency, { provider:'openai_official',model:'gpt-6-luna',streaming:true,call:1 });

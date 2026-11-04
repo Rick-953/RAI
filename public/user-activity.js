@@ -25,9 +25,10 @@
     }
     return value;
   }
-  function record(kind, action, fields = {}) {
+  function record(kind, action, fields = {}, expectedOwner = null) {
     try {
       const value = context();
+      if (expectedOwner && owner !== expectedOwner) return;
       if (!owner || !label(action)) return;
       const event = { ...fields, id: env.crypto.randomUUID(), runId, seq: ++seq, timeMs: Date.now(), kind, action,
         sessionId: fields.sessionId ?? value.sessionId ?? null, context: { ...value.environment, ...fields.context },
@@ -77,16 +78,17 @@
         sessionId = value.sessionId;
       } catch (_) { return fetchImpl(resource, init); }
       const started = Date.now();
-      record('http', 'started', { clientRequestId: requestId, sessionId });
+      const requestOwner = owner;
+      record('http', 'started', { clientRequestId: requestId, sessionId }, requestOwner);
       try {
         const response = await fetchImpl(resource, options);
-        const fields = { clientRequestId: requestId, sessionId, serverRequestId: response.headers.get('X-RAI-Diagnostic-Id'),
+        const fields = { clientRequestId: requestId, sessionId, activityOwner: requestOwner, serverRequestId: response.headers.get('X-RAI-Diagnostic-Id'),
           chatRequestId: response.headers.get('X-Request-ID'), metrics: { status: response.status, durationMs: Date.now() - started } };
         responses.set(response, fields);
-        record(response.ok ? 'http' : 'error', 'headers', fields);
+        record(response.ok ? 'http' : 'error', 'headers', fields, requestOwner);
         return response;
       } catch (error) {
-        record('error', error?.name === 'AbortError' ? 'cancelled' : 'error', { clientRequestId: requestId, sessionId, errorType: label(error?.name), metrics: { durationMs: Date.now() - started } });
+        record('error', error?.name === 'AbortError' ? 'cancelled' : 'error', { clientRequestId: requestId, sessionId, errorType: label(error?.name), metrics: { durationMs: Date.now() - started } }, requestOwner);
         throw error;
       }
     };
@@ -98,7 +100,7 @@
     record(recordValue.action === 'completed' || recordValue.action === 'cancelled' ? 'stream' : 'error', recordValue.action, {
       clientRequestId: recordValue.clientRequestId, serverRequestId: recordValue.serverRequestId, chatRequestId: recordValue.chatRequestId,
       sessionId: recordValue.sessionId, stage: 'stream_end', metrics
-    });
+    }, recordValue.activityOwner);
   }
   env.addEventListener?.('error', event => record('error', 'unhandled_exception', { errorType: label(event.error?.name) || 'Error', stage: 'window' }));
   env.addEventListener?.('unhandledrejection', event => record('error', 'unhandled_rejection', { errorType: label(event.reason?.name) || 'Error', stage: 'promise' }));
