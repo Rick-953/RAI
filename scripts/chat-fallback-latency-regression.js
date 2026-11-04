@@ -39,6 +39,11 @@ function testTimingBoundsAndSharedDeadline() {
     assert.strictEqual(budget.nextAttemptTimeoutMs(), 25_000, 'tool continuation must not receive a new 120s timer');
     clock = budget.deadlineAt - 1_999;
     assert.strictEqual(budget.nextAttemptTimeoutMs(), 0, 'do not start an attempt that cannot receive the minimum budget');
+    const beforeLocalTool = budget.remainingMs();
+    clock += 180_000;
+    budget.deadlineAt += 180_000;
+    assert.strictEqual(budget.remainingMs(), beforeLocalTool, 'local tool wait must pause the deadline used by continuations');
+    assert.strictEqual(budget.isExpired(), false, 'a long local tool must not expire the model budget');
 }
 
 function testCircuitBreaker() {

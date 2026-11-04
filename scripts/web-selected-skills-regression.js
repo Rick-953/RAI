@@ -135,6 +135,24 @@ async function runtimeTests() {
     const login = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
     const identity = await login.json(); assert.equal(login.status, 200); assert.ok(identity.token);
     const headers = { Authorization: 'Bearer ' + identity.token, 'Content-Type': 'application/json' };
+    const customId = 'session_client_' + crypto.randomUUID();
+    const customSync = await fetch(base + `/api/sessions/${customId}/client-messages`, { method: 'PUT', headers,
+      body: JSON.stringify({ model: 'custom:fixture', messages: [
+        { client_message_id: 'user-1', role: 'user', content: 'Cloud question', client_order: 0 },
+        { client_message_id: 'reply-1', role: 'assistant', content: 'Cloud answer', reasoning_content: 'Retained thinking', client_order: 2,
+          tool_calls: [{ id: 'call-1', name: 'edit_code', arguments: '{}' }] }
+      ] }) });
+    assert.equal(customSync.status, 200, await customSync.text());
+    const customHistory = await (await fetch(base + `/api/sessions/${customId}/messages`, { headers })).json();
+    assert.equal(customHistory.length, 2); assert.equal(customHistory[1].client_message_id, 'reply-1');
+    assert.equal(customHistory[1].tool_calls[0].name, 'edit_code'); assert.equal(customHistory[1].reasoning_content, 'Retained thinking');
+    assert.ok(customHistory[1].sync_hash); assert.equal(observations.length, 0, 'cloud archival does not invoke or bill a model');
+    const toolSync = await fetch(base + `/api/sessions/${customId}/client-messages`, { method: 'PUT', headers,
+      body: JSON.stringify({ model: 'custom:fixture', messages: [{ client_message_id: 'tool-1', role: 'tool',
+        tool_call_id: 'call-1', content: 'Completed operation', client_order: 1 }] }) });
+    assert.equal(toolSync.status, 200);
+    const orderedHistory = await (await fetch(base + `/api/sessions/${customId}/messages`, { headers })).json();
+    assert.deepEqual(orderedHistory.map(message => message.client_message_id), ['user-1', 'tool-1', 'reply-1'], 'draft insertion time cannot reorder tool results and final response');
     assert.equal((await fetch(base + '/api/skills')).status, 401, 'catalog requires a login');
     const catalogResponse = await fetch(base + '/api/skills', { headers });
     const catalog = await catalogResponse.json();

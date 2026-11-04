@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.43';
-const RAI_BUILD_ID = '20261104-account-cache-billing';
+const RAI_APP_VERSION = '0.13.44';
+const RAI_BUILD_ID = '20261104-agent-stream-retry';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5166,6 +5166,7 @@ function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
   const normalized = Object.hasOwn(LEGACY_MODEL_ALIASES, raw) ? LEGACY_MODEL_ALIASES[raw] : raw;
   if (String(normalized).startsWith('x-ai/grok-4.20')) return 'auto';
+  if (/^(?:custom:|byok:)/.test(normalized)) return normalized;
   if (!normalized || normalized === 'research-mode') return normalized;
   return MODELS[normalized] ? normalized : 'auto';
 }
@@ -5777,6 +5778,8 @@ const i18n = {
     'custom-api-exit': '退出自定义 API',
     "custom-api-title": "自定义 API 模型",
     "custom-api-key-required": "请在设置中重新输入 API Key。",
+    "custom-api-config-required": "此设备尚未配置这个第三方模型，请先在设置中添加或选择可用的自定义 API。",
+    "custom-api-sync-failed": "第三方对话同步失败，内容已保留在本机。请检查网络后重试。",
     "custom-api-desc": "登录 RAI 后可用。Key 仅保留在当前页面内存，刷新后需重新输入；模型会加入模型列表，请求直接发给提供商。",
     "custom-api-submit": "添加到模型列表",
     "custom-api-name": "显示名称",
@@ -6493,6 +6496,8 @@ const i18n = {
     'custom-api-exit': 'Exit custom API',
     "custom-api-title": "Custom API models",
     "custom-api-key-required": "Re-enter your API key in Settings.",
+    "custom-api-config-required": "This device has no configuration for this third-party model. Add or select a custom API in Settings.",
+    "custom-api-sync-failed": "Conversation sync failed. The content is kept on this device. Check your connection and try again.",
     "custom-api-desc": "Sign in with RAI to use your API. Keys stay in page memory and must be re-entered after reload. Requests go directly to your provider; saved models appear in the model list.",
     "custom-api-submit": "Add to model list",
     "custom-api-name": "Display name",
@@ -18828,6 +18833,13 @@ function buildContextMessagesFromState(sourceMessages = appState.messages, optio
         ? appendUserTurnContextHintForPrompt(m.content)
         : m.content
     };
+    if (appState.customApiMode) {
+      if (m.reasoning_content) msgObj.reasoning_content = m.reasoning_content;
+      if (m.tool_call_id) msgObj.tool_call_id = m.tool_call_id;
+      if (m.tool_calls) msgObj.tool_calls = m.tool_calls.map(call => call.function ? call : {
+        id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments }
+      });
+    }
 
     let attachments = m.attachments || m.attachment_refs;
     if (typeof attachments === 'string') {
@@ -18913,6 +18925,7 @@ function createMessageElement(message) {
     console.warn(' 无效的消息对象');
     return null;
   }
+  if (message.role === 'tool' || message.role === 'system' || message.tool_calls?.length) return null;
 
   const div = document.createElement('div');
   div.className = `message ${message.role}`;
@@ -24031,6 +24044,9 @@ async function sendMessage(message = null, options = {}) {
             }
             scrollToBottom();
           }
+          else if (parsed.type === 'stream_retry') {
+            updateStepStatus(getGeneratingStep(), 'running', parsed.message || '正在自动重试');
+          }
           else if (parsed.type === 'stream_warning') {
             showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
           }
@@ -25065,7 +25081,7 @@ function enterCustomApiApp(config) {
 }
 function activateCustomApiModel() {
   const config = (appState.customApiConfigs || []).find(item => item.id === appState.selectedModel);
-  appState.customApiMode = !!config && !!customApiAccountScope();
+  appState.customApiMode = /^(?:custom:|byok:)/.test(appState.selectedModel || '') && !!customApiAccountScope();
   appState.customApiConfig = appState.customApiMode ? config : null;
 }
 function exitCustomApiMode() {
@@ -25124,21 +25140,67 @@ function parseCustomApiPayload(payload) {
 async function sendCustomApiMessage(messages, verifiedContext = null) {
   if (verifiedContext ? !isUserAuthContextCurrent(verifiedContext) || !customApiAccountScope() : !await requireCustomApiAccount()) return;
   const config = appState.customApiConfig;
-  if (!config) return;
+  if (!config) { showToast(i18nText('custom-api-config-required', '此设备尚未配置这个第三方模型，请先在设置中添加或选择可用的自定义 API。')); return; }
   if (!config.key) { showToast(i18nText('custom-api-key-required', '请在设置中重新输入 API Key。')); return; }
   const context = captureUserAuthContext(), owner = customApiAccountScope(), requestId = crypto.randomUUID(), started = Date.now();
+  const temporary = appState.currentSessionMemoryMode === 'classic-temp';
+  if (!temporary && !/^(?:custom:|byok:)/.test(appState.currentSession?.model || '')) {
+    appState.currentSession = { id: 'session_client_' + crypto.randomUUID(), model: config.id,
+      title: String(messages.find(message => message.role === 'user')?.content || '自定义 API 对话').slice(0, 80), session_kind: 'chat' };
+    appState.sessions.unshift(appState.currentSession);
+    renderSessions();
+  }
+  const session = appState.currentSession, conversation = appState.messages;
   const controller = new AbortController(); appState.abortController = controller;
   appState.isStreaming = true;
   let usage = null, outcome = 'completed', status = 0;
   const assistant = { role: 'assistant', content: '', model: config.id, created_at: new Date().toISOString() };
-  appState.messages.push(assistant); renderMessages();
+  conversation.push(assistant); renderMessages();
+  let syncTask = Promise.resolve(), lastSyncAt = 0;
+  const sync = (force = false) => {
+    if (temporary || (!force && Date.now() - lastSyncAt < 2000)) return syncTask;
+    lastSyncAt = Date.now();
+    syncTask = syncTask.catch(() => {}).then(async () => {
+      if (!isUserAuthContextCurrent(context)) return;
+      await window.RAIConversationCache?.putConversation?.(session.id, conversation, null, null);
+      for (let offset = 0; offset < conversation.length; offset += 100) {
+        if (!isUserAuthContextCurrent(context)) return;
+        const batch = conversation.slice(offset, offset + 100);
+        const payload = batch.map((message, index) => {
+          message.client_message_id ||= crypto.randomUUID();
+          return { client_message_id: message.client_message_id, sync_hash: message.sync_hash, client_order: offset + index, role: message.role,
+            content: message.content || '', reasoning_content: message.reasoning_content || '', model: message.model,
+            process_trace: message.process_trace, cx_context: message.cx_context, tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id, is_context_summary: message.is_context_summary,
+            cx_interrupted: message.cx_interrupted === true };
+        });
+        const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(session.id)}/client-messages`, {
+          method: 'PUT', headers: { Authorization: 'Bearer ' + context.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: config.id, title: session.title, messages: payload }) });
+        const data = await response.json();
+        if (!isUserAuthContextCurrent(context)) return;
+        if (!response.ok || !data.success || !Array.isArray(data.messages)) throw new Error('custom_sync_failed');
+        for (const saved of data.messages) {
+          const message = batch.find(item => item.client_message_id === saved.client_message_id);
+          if (message) { message.id = saved.id; message.sync_hash = saved.sync_hash; }
+        }
+      }
+      await window.RAIConversationCache?.putConversation?.(session.id, conversation, null, null);
+    });
+    syncTask.catch(() => {});
+    return syncTask;
+  };
   const observe = payload => {
     if (payload.usage) usage = window.RaiTokenBilling.normalize(payload.usage, { model: config.model,
       provider: new URL(config.url).hostname === 'api.openai.com' ? 'openai_official' : 'custom_api' });
     const delta = parseCustomApiPayload(payload);
     if (delta) assistant.content += delta;
+    const reasoning = payload?.choices?.[0]?.delta?.reasoning_content;
+    if (reasoning) assistant.reasoning_content = (assistant.reasoning_content || '') + reasoning;
+    sync();
   };
   try {
+    await sync(true);
     const body = { model: config.model, messages, stream: true };
     if (config.includeUsage !== false) body.stream_options = { include_usage: true };
     const response = await fetch(config.url, { method: 'POST', signal: controller.signal,
@@ -25180,6 +25242,9 @@ async function sendCustomApiMessage(messages, verifiedContext = null) {
       renderMessages();
     }
   } finally {
+    assistant.cx_interrupted = outcome !== 'completed';
+    try { await sync(true); }
+    catch (_) { if (isUserAuthContextCurrent(context)) showToast(i18nText('custom-api-sync-failed', '第三方对话同步失败，内容已保留在本机。请检查网络后重试。')); }
     window.RaiUserActivity?.record(outcome === 'error' ? 'error' : 'stream', outcome, { clientRequestId: requestId,
       stage: 'custom_api', context: { actualModel: config.model, customApiMode: true },
       metrics: { status, durationMs: Date.now() - started }, ...(usage ? { tokenUsage: usage } : {}) }, owner);
@@ -30871,6 +30936,12 @@ async function loadSession(sessionId, options = {}) {
       title: isChineseLanguage(appState.language) ? '历史对话' : 'Previous chat',
       session_kind: 'chat'
     };
+    if (/^(?:custom:|byok:)/.test(appState.currentSession.model || '')) {
+      appState.selectedModel = appState.currentSession.model;
+      updateSelectedModelText(appState.selectedModel); updateModelControls();
+    } else if (appState.customApiMode && !options.newlyCreated) {
+      leaveCustomApiMode();
+    }
     window.RAISelectionExplainer?.setConversationContext?.(sessionId);
     appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
       ? 'saved-temp'

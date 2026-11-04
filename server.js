@@ -17,6 +17,7 @@ const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
+const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
 const express = require('express');
 const cors = require('cors');
@@ -161,6 +162,7 @@ const {
     createProviderCircuitBreaker,
     isTransientProviderFailure
 } = require('./lib/chat-request-budget');
+const { MAX_STREAM_RETRIES, canRetryStream, buildStreamRetryBody, providerStreamError } = require('./lib/chat-stream-retry');
 const { createLocalAgentService } = require('./lib/local-agent-protocol');
 
 // Static source only: fail closed before accepting requests if a bundled skill drifts.
@@ -9079,6 +9081,7 @@ db.serialize(() => {
     thinking_mode INTEGER DEFAULT 0,
     internet_mode INTEGER DEFAULT 0,
     process_trace TEXT,
+    client_metadata TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )`);
@@ -9782,6 +9785,10 @@ db.serialize(() => {
             } else if (!err) {
                 console.log(' 已添加process_trace列到messages表');
             }
+        });
+
+        db.run('ALTER TABLE messages ADD COLUMN client_metadata TEXT', (err) => {
+            if (err && !err.message.includes('duplicate column')) console.warn('添加客户端消息元数据失败:', sanitizeReportContext(err));
         });
 
         db.run(`ALTER TABLE sessions ADD COLUMN session_kind TEXT DEFAULT 'chat'`, (err) => {
@@ -10492,7 +10499,7 @@ app.use(cors({
     exposedHeaders: ['X-RAI-Diagnostic-Id', 'X-Request-ID', 'X-Model-Used', 'X-Model-Reason']
 }));
 app.use((req, res, next) => {
-    if (req.path === '/api/chat/stream') {
+    if (req.path === '/api/chat/stream' || /^\/api\/sessions\/[^/]+\/client-messages$/.test(req.path)) {
         return chatJsonParser(req, res, next);
     }
     return jsonParser(req, res, next);
@@ -16108,6 +16115,9 @@ app.post('/api/sessions', authenticateToken, async (req, res) => {
     }
 });
 
+app.put('/api/sessions/:id/client-messages', apiLimiter, authenticateToken,
+    createCustomApiSyncHandler({ ensureSessionKindColumn, withMainDbTransaction, scheduleConversationIntegritySeal }));
+
 app.post('/api/sessions/:id/prompt-identity', authenticateToken, async (req, res) => {
     try {
         await ensureSessionKindColumn();
@@ -16299,10 +16309,10 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
         // 只返回轻量附件元数据；不把历史 Base64 附件正文放进消息列表。
         db.all(
             `SELECT id, session_id, role, content, request_id, reasoning_content, model, attachments,
-                    enable_search, thinking_mode, internet_mode, sources, process_trace, created_at,
+                    enable_search, thinking_mode, internet_mode, sources, process_trace, client_metadata, created_at,
                     CASE WHEN attachments IS NOT NULL AND attachments != '' AND attachments != '[]'
                          THEN 1 ELSE 0 END as has_attachments
-             FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC`,
+             FROM messages WHERE session_id = ? ORDER BY json_extract(client_metadata, '$.client_order') ASC, created_at ASC, id ASC`,
             [req.params.id],
             async (err, messages) => {
                 if (err) {
@@ -16318,8 +16328,11 @@ app.get('/api/sessions/:id/messages', authenticateToken, (req, res) => {
                         message.created_at
                     );
                     delete message.attachments;
+                    const clientFields = clientMessageFields(message);
+                    delete message.client_metadata;
                     return {
                         ...message,
+                        ...clientFields,
                         content: message.role === 'user' && attachment_refs.length > 0
                             ? stripInjectedAttachmentPromptContext(message.content)
                             : message.content,
@@ -23760,8 +23773,8 @@ if (clientFileExecution && systemPrompt) {
             console.log(' API连接成功，开始接收流式响应\n');
 
             if (!gptImageModelSelected) writeStreamUsage(streamUsage.begin('primary'));
-            const reader = apiResponse.body.getReader();
-            const decoder = new TextDecoder('utf-8');
+            let reader = apiResponse.body.getReader();
+            let decoder = new TextDecoder('utf-8');
             let buffer = '';
 
             //  流式工具调用：累积 tool_calls 数据
@@ -23769,6 +23782,7 @@ if (clientFileExecution && systemPrompt) {
             let pendingToolCall = null;     // 当前正在累积的工具调用
             let streamFinishReason = null;  // 流结束原因
             let providerDoneSignalReceived = false;
+            let primaryStreamError = null;
             let currentToolCallReasoningContent = '';
             const streamToolProtocolFilter = createToolProtocolFilter({
                 toolNames: runtimeToolDefinitions.map((tool) => tool.function.name)
@@ -23860,6 +23874,35 @@ if (clientFileExecution && systemPrompt) {
                 });
             };
 
+            for (let streamAttempt = 0; ; streamAttempt += 1) {
+            try {
+            if (streamAttempt > 0) {
+                const retryController = createChatAbortController();
+                timeoutId = setTimeout(() => retryController.abort(), chatRequestBudget.nextAttemptTimeoutMs());
+                const retryResponse = await fetchModelProvider(apiUrl, {
+                    method: 'POST', headers: fetchHeaders,
+                    body: JSON.stringify(buildStreamRetryBody(fetchBody, fullContent)), signal: retryController.signal
+                });
+                if (!retryResponse.ok) {
+                    await retryResponse.body?.cancel().catch(() => undefined);
+                    const retryError = new Error('provider_stream_retry_http_failed');
+                    retryError.status = retryResponse.status;
+                    throw retryError;
+                }
+                writeStreamUsage(streamUsage.begin(`primary-retry-${streamAttempt}`));
+                reader = retryResponse.body.getReader();
+                decoder = new TextDecoder('utf-8');
+                buffer = '';
+                rawToolContent = '';
+                accumulatedToolCalls = [];
+                streamFinishReason = null;
+                providerDoneSignalReceived = false;
+                primaryStreamError = null;
+                currentToolCallReasoningContent = '';
+                streamToolProtocolFilter.reset();
+                thinkTagCarry = '';
+                inThinkSection = false;
+            }
             while (true) {
                 const isCancelled = await checkCancellation();
                 if (isCancelled) {
@@ -23895,7 +23938,7 @@ if (clientFileExecution && systemPrompt) {
                         const data = trimmed.slice(6);
                         try {
                             const parsed = JSON.parse(data);
-                            emitStreamUsage('primary', parsed);
+                            emitStreamUsage(streamAttempt ? `primary-retry-${streamAttempt}` : 'primary', parsed);
                             if (
                                 ['response.completed', 'response.done', 'message_stop'].includes(String(parsed?.type || ''))
                                 || String(parsed?.response?.status || '').toLowerCase() === 'completed'
@@ -23903,6 +23946,7 @@ if (clientFileExecution && systemPrompt) {
                                 providerDoneSignalReceived = true;
                             }
                             if (parsed?.error) {
+                                primaryStreamError = providerStreamError(parsed.error);
                                 const errPayload = parsed.error;
                                 const errMessage = typeof errPayload === 'string'
                                     ? errPayload
@@ -24090,18 +24134,24 @@ if (clientFileExecution && systemPrompt) {
                 }
             }
 
-            // 上游在正文/工具调用完整输出后未发终止信号的情况：已拿到可用载荷就按完成处理，
-            // 只对「什么都没收到」的流重试/回退，避免正常回答被误判为中断而整条失败。
-            const primaryHasUsableToolCall = accumulatedToolCalls.some((call) =>
-                call && String(call.function?.name || '').trim() && String(call.function?.arguments || '').trim());
-            const primaryHasUsablePayload = primaryHasUsableToolCall
-                || Boolean(String(fullContent || '').trim())
-                || Boolean(String(reasoningContent || '').trim());
+            if (primaryStreamError) throw primaryStreamError;
             if (!providerDoneSignalReceived) {
                 const incompleteStreamError = new Error('provider_stream_missing_terminal_signal');
                 incompleteStreamError.code = 'provider_stream_missing_terminal_signal';
                 throw incompleteStreamError;
             }
+            break;
+            } catch (streamError) {
+                const cancelled = clientAborted || chatRequestCancelled || await checkCancellation();
+                if (!canRetryStream(streamError, { attempt: streamAttempt, cancelled,
+                    remainingMs: chatRequestBudget.nextAttemptTimeoutMs() })) throw streamError;
+                clearTimeout(timeoutId);
+                await reader.cancel().catch(() => undefined);
+                res.write(`data: ${JSON.stringify({ type: 'stream_retry', message: `生成中断，正在自动重试（${streamAttempt + 1}/${MAX_STREAM_RETRIES}）` })}\n\n`);
+            }
+            }
+            const primaryHasUsableToolCall = accumulatedToolCalls.some((call) =>
+                call && String(call.function?.name || "").trim() && String(call.function?.arguments || "").trim());
             // Some providers finish a thinking stream without ever emitting content
             // (reasoning-only stop). Recover a real answer on the same provider before
             // marking the turn degraded, so the user never sees an empty/truncated reply.
@@ -24537,7 +24587,7 @@ if (clientFileExecution && systemPrompt) {
                 }
                 if (pendingToolCalls.length > 0) {
                     let toolRound = 0;
-                    const maxToolRounds = clientFileExecution ? 8 : 5;
+                    const maxToolRounds = clientFileExecution ? 9999 : 5;
                     const loadedSkillNames = new Set();
                     let conversationMessages = [...finalMessages];
 
@@ -25336,38 +25386,45 @@ if (clientFileExecution && systemPrompt) {
                         let continueStreamFinishReason = null;
                         let continueProviderDoneSignalReceived = false;
                         let continueToolCallReasoningContent = '';
+                        let continueStreamError = null;
                         const continueAccumulatedToolCalls = [];
                         const continueTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
                         if (continueTimeoutMs <= 0) {
                             console.warn(` 工具续传跳过: request_deadline_exhausted=true, round=${toolRound}`);
                             break;
                         }
-                        let continueController = createChatAbortController();
-                        let continueTimeoutId = setTimeout(() => continueController.abort(), continueTimeoutMs);
+                        let continueController;
+                        let continueTimeoutId;
+                        const continueContentStart = fullContent.length;
 
-for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
+                        for (let continueAttempt = 0; continueAttempt <= MAX_STREAM_RETRIES; continueAttempt += 1) {
                             const usageCall = `tool-${toolRound}-${continueAttempt}`;
-                            // 每轮重置续传解析状态（fullContent 增量提取机制保证重试不重复输出）
+                            // 已完成的工具结果保留在 continueRequestBody，仅重发未完成的模型请求。
                             continueAccumulatedToolCalls.length = 0;
                             continueRawToolContent = '';
                             continueStreamFinishReason = null;
                             continueProviderDoneSignalReceived = false;
                             continueToolCallReasoningContent = '';
+                            continueStreamError = null;
                             streamToolProtocolFilter.reset();
+                            thinkTagCarry = '';
+                            inThinkSection = false;
+                            continueController = createChatAbortController();
+                            continueTimeoutId = setTimeout(() => continueController.abort(), chatRequestBudget.nextAttemptTimeoutMs());
                         try {
                             const continueResponse = await fetchModelProvider(continueApiUrl, {
                                 method: 'POST',
                                 headers: continueHeaders,
-                                body: JSON.stringify(continueRequestBody),
+                                body: JSON.stringify(buildStreamRetryBody(continueRequestBody, fullContent.slice(continueContentStart))),
                                 signal: continueController.signal
                             });
 
                             if (!continueResponse.ok) {
                                 const continueErr = await readBoundedResponseText(continueResponse);
                                 console.error(` 续传请求失败: status=${continueResponse.status}, bodyLength=${continueErr.length}`);
-                                if (continueAttempt >= 3) break;
-                                console.warn(` 续传请求失败，重试(${continueAttempt}/3)`);
-                                continue;
+                                const httpError = new Error('provider_continuation_http_failed');
+                                httpError.status = continueResponse.status;
+                                throw httpError;
                             }
 
                             writeStreamUsage(streamUsage.begin(usageCall));
@@ -25402,6 +25459,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
 
                                 try {
                                     const continueParsed = JSON.parse(continueTrimmed.slice(6));
+                                    if (continueParsed.error) { continueStreamError = providerStreamError(continueParsed.error); continue; }
                                     emitStreamUsage(usageCall, continueParsed);
                                     if (
                                         ['response.completed', 'response.done', 'message_stop'].includes(String(continueParsed?.type || ''))
@@ -25557,6 +25615,7 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                             // 只要已经拿到可用载荷就不再当失败重试，避免把成功的一轮工具调用判死。
                             const continueHasUsableToolCall = continueAccumulatedToolCalls.some((call) =>
                                 call && String(call.function?.name || '').trim() && String(call.function?.arguments || '').trim());
+                            if (continueStreamError) throw continueStreamError;
                             if (!continueProviderDoneSignalReceived) {
                                 const incompleteContinueStreamError = new Error('provider_stream_missing_terminal_signal');
                                 incompleteContinueStreamError.code = 'provider_stream_missing_terminal_signal';
@@ -25564,16 +25623,12 @@ for (let continueAttempt = 1; continueAttempt <= 3; continueAttempt += 1) {
                             }
                         } catch (continueRetryErr) {
                             clearTimeout(continueTimeoutId);
-                            if (continueAttempt >= 3) throw continueRetryErr;
                             const retryBudgetMs = chatRequestBudget ? chatRequestBudget.nextAttemptTimeoutMs() : 0;
-                            if (retryBudgetMs <= 0) {
-                                console.warn(' 续传预算已耗尽，放弃重试');
-                                throw continueRetryErr;
-                            }
+                            const cancelled = clientAborted || chatRequestCancelled || await checkCancellation();
+                            if (!canRetryStream(continueRetryErr, { attempt: continueAttempt, cancelled, remainingMs: retryBudgetMs })) throw continueRetryErr;
                             const retryable = String(continueRetryErr?.code || continueRetryErr?.name || '');
-                            console.warn(` 续传中断，重试(${continueAttempt}/3): code=${retryable || 'unknown'}`);
-                            continueController = createChatAbortController(); // 重建（旧 controller 可能已被 abort）
-                            continueTimeoutId = setTimeout(() => continueController.abort(), retryBudgetMs);
+                            console.warn(` 续传中断，重试(${continueAttempt + 1}/${MAX_STREAM_RETRIES}): code=${retryable || 'unknown'}`);
+                            res.write(`data: ${JSON.stringify({ type: 'stream_retry', message: `生成中断，正在自动重试（${continueAttempt + 1}/${MAX_STREAM_RETRIES}）` })}\n\n`);
                             continue;
                         } finally {
                             clearTimeout(continueTimeoutId);

@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const sqlite3 = require('sqlite3');
 const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, createChatModelQuotaService } = require('../lib/chat-model-policy');
 const { estimateContextTokens, enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
@@ -102,11 +103,22 @@ async function main() {
     // A transient refresh failure must not clear a still-valid refresh cookie.
     assert.match(server, /terminalCodes\.has\(error\?\.code\)/);
     assert.match(server, /res\.status\(503\)\.json\(\{ success: false, error: '会话刷新暂时不可用，请重试' \}\)/);
-    // Reasoning is display-only for storage; it must never be replayed back into
-    // upstream history (keeps token usage down and prefix caches stable).
+    // Official history excludes reasoning; custom providers retain their tool protocol.
     const historyBuilder = app.slice(app.indexOf('function buildContextMessagesFromState'), app.indexOf('async function markMessageAsRegeneratedPrevious'));
     assert.ok(historyBuilder.length > 0, 'buildContextMessagesFromState must exist');
-    assert.doesNotMatch(historyBuilder, /reasoning_content/, 'assistant reasoning must not be sent back as history');
+    const historyContext = { appState: { customApiMode: false }, isRegeneratedPreviousReply: () => false };
+    vm.createContext(historyContext); vm.runInContext(historyBuilder, historyContext);
+    const sourceHistory = [{role:'assistant',content:'answer',reasoning_content:'thinking',tool_calls:[{id:'call-1',name:'read_file',arguments:'{}'}]},
+        {role:'tool',content:'result',tool_call_id:'call-1'}];
+    const officialHistory = historyContext.buildContextMessagesFromState(sourceHistory);
+    assert.equal(officialHistory[0].reasoning_content, undefined, 'official model must not receive stored reasoning');
+    assert.equal(officialHistory[0].tool_calls, undefined, 'official model must not receive custom provider tool calls');
+    assert.equal(officialHistory[1].tool_call_id, undefined);
+    historyContext.appState.customApiMode = true;
+    const customHistory = historyContext.buildContextMessagesFromState(sourceHistory);
+    assert.equal(customHistory[0].reasoning_content, 'thinking');
+    assert.equal(customHistory[0].tool_calls[0].function.name, 'read_file');
+    assert.equal(customHistory[1].tool_call_id, 'call-1', 'restored custom tool result must remain paired with its call');
     console.log('chat_model_policy_regression_ok: rolling quota, concurrency, expiry, cancellation, idempotency, research, thinking tiers, 256k compression, vision preservation and provider fallback');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
