@@ -154,7 +154,7 @@ function createProviderMock() {
       }
       if (!body.stream && systemText.includes('Summarize quoted conversation data')) {
         response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ choices: [{ message: { content: 'scenario:client-long-word Word checkpoint saved; continue from the latest completed step without replay.' } }] }));
+        response.end(JSON.stringify({ choices: [{ message: { content: 'scenario:client-long-word Word checkpoint saved; continue from the latest completed step without replay.' } }], usage: { prompt_tokens: 64, completion_tokens: 12, total_tokens: 76 } }));
         return;
       }
       if (scenario === 'client-interjection') {
@@ -762,6 +762,15 @@ async function main() {
         assert.deepEqual(current.messages.slice(0, previous.messages.length), previous.messages, 'unchanged history stays byte-identical between tool continuations');
       }
       assert.equal(requests.length, 46); assert.equal(resets, 1);
+      const summaries = provider.observations.filter(item => !item.body.stream && item.systemText.includes('Summarize quoted conversation data'));
+      assert.ok(summaries.length > 0);
+      assert.ok(summaries.every(item => item.body.model === 'gpt-6-luna' && item.body.reasoning_effort === 'none'), 'compression must use Luna without thinking, independently of DeepSeek availability');
+      const usageDb = await openDatabase(databasePath);
+      try {
+        const read = sql => new Promise((resolve, reject) => usageDb.get(sql, (error, row) => error ? reject(error) : resolve(row)));
+        assert.equal((await read("SELECT COUNT(*) n FROM provider_token_usage WHERE model='gpt-6-luna' AND input_tokens=64 AND output_tokens=12 AND status='completed'")).n, summaries.length, 'internal summaries record their real provider usage');
+        assert.equal((await read("SELECT COUNT(*) n FROM chat_model_turns WHERE model_id='gpt-6-luna'")).n, 0, 'internal summaries do not spend completed-answer quota');
+      } finally { await closeDatabase(usageDb); }
       assert.deepEqual(provider.errors, []);
       console.log('PASS 45 tool rounds, one compaction, 44 preserved request prefixes and no tool replay');
       return;
