@@ -130,6 +130,8 @@ function createProviderMock() {
   const errors = [];
   const observations = [];
   const memoryFixtures = { items: [], ids: [] };
+  let releaseInterjection;
+  const interjectionGate = new Promise(resolve => { releaseInterjection = resolve; });
   const server = http.createServer(async (request, response) => {
     try {
       const body = await readJsonRequest(request);
@@ -142,6 +144,41 @@ function createProviderMock() {
         ? hasObjectKey(body, 'functionResponse')
         : (body.messages || []).some((item) => item.role === 'tool');
       observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
+
+      if (body.model === 'codex-auto-review') {
+        const command = JSON.parse(body.messages[1].content).arguments.command;
+        response.writeHead(command === 'unavailable' ? 503 : 200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ choices: [{ message: { content: command === 'invalid-response' ? 'invalid'
+          : JSON.stringify({ allowed: command !== 'Remove-Item *', reason: 'Fixture review result.' }) } }] }));
+        return;
+      }
+      if (!body.stream && systemText.includes('Summarize quoted conversation data')) {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ choices: [{ message: { content: 'scenario:client-long-word Word checkpoint saved; continue from the latest completed step without replay.' } }] }));
+        return;
+      }
+      if (scenario === 'client-interjection') {
+        if (!text.includes('CORRECT_REPORT_TITLE')) {
+          await interjectionGate;
+          writeSse(response, [openAiText('Initial draft. ')]);
+        } else {
+          assert.ok((body.messages || []).some(message => message.role === 'user' && message.content === 'CORRECT_REPORT_TITLE'));
+          assert.ok(!(body.messages || []).some(message => Array.isArray(message.tool_calls) && !message.tool_calls.length));
+          writeSse(response, [openAiText(FINAL_TEXT)]);
+        }
+        return;
+      }
+      if (scenario === 'client-long-word') {
+        const messages = body.messages || [];
+        const results = messages.filter(message => message.role === 'tool');
+        const completed = results.length ? Number(JSON.parse(results.at(-1).content).content.match(/^CHECKPOINT=(\d+)/)[1]) : 0;
+        const ids = new Set(messages.flatMap(message => (message.tool_calls || []).map(call => call.id)));
+        for (const result of results) assert.ok(ids.has(result.tool_call_id), 'compaction must retain matching tool calls');
+        if (completed < 45) writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
+          function: { name: 'read_code', arguments: JSON.stringify({ path: 'report.docx', offset: completed + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        else writeSse(response, [openAiText(FINAL_TEXT)]);
+        return;
+      }
 
       if (scenario === 'retry-primary') {
         const attempt = observations.filter(item => item.scenario === scenario).length;
@@ -359,7 +396,7 @@ function createProviderMock() {
       response.end(JSON.stringify({ error: 'mock failure' }));
     }
   });
-  return { server, errors, observations, memoryFixtures };
+  return { server, errors, observations, memoryFixtures, releaseInterjection };
 }
 
 function openDatabase(filename) {
@@ -468,13 +505,13 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
     body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.1-sol',
-      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: scenario === 'client-rounds-retry',
+      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: ['client-rounds-retry', 'client-long-word'].includes(scenario),
       client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected },
-      ...(scenario === 'client-rounds-retry' ? { client_agent_mode: true }
+      ...(['client-rounds-retry', 'client-long-word'].includes(scenario) ? { client_agent_mode: true }
         : scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
   });
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
-  let buffer = '', visible = '', pending = 0, retries = 0, done = false;
+  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, done = false;
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -486,14 +523,16 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
       assert.notEqual(event.type, 'error', `${scenario}: unexpected stream error ${JSON.stringify(event)}`);
       if (event.type === 'content') visible += event.content || event.delta || '';
       if (event.type === 'stream_retry') retries++;
+      if (event.type === 'context_compressed') compressed++;
       if (event.type === 'done') done = true;
       if (event.type === 'tool_pending_client') {
         pending++;
         let result;
-        if (scenario === 'client-rounds-retry') {
+        if (scenario === 'client-rounds-retry' || scenario === 'client-long-word') {
           assert.equal(event.tool, 'read_code');
           assert.equal(event.parameters.offset, pending, 'completed tools are never replayed');
           result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
+          if (scenario === 'client-long-word') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(7000);
         } else if (scenario.startsWith('agent-')) {
           if (event.tool === 'enable_agent_mode') {
             assert.deepEqual(event.parameters, {});
@@ -534,8 +573,64 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
   assert.equal(done, true);
   if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
-  assert.equal(pending, scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
+  if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
+  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
     : ['agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+}
+
+async function runCommandReviews(baseUrl, token, databasePath, provider) {
+  const db = await openDatabase(databasePath);
+  const get = sql => new Promise((resolve, reject) => db.get(sql, (error, row) => error ? reject(error) : resolve(row)));
+  const input = { reviewId: 'http_review_1234567890', tool: 'run_command', arguments: { command: 'git status --short' }, task: 'Inspect repository', workspace: 'C:/repo' };
+  const api = async (body, auth = token) => {
+    const response = await fetch(`${baseUrl}/api/agent/command-review`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    const before = (await get('SELECT SUM(points) n FROM users')).n;
+    assert.equal((await api(input, '')).status, 401);
+    assert.equal((await api({ ...input, arguments: {} })).status, 400);
+    const values = await Promise.all(Array.from({ length: 6 }, () => api(input)));
+    assert.ok(values.every(value => value.status === 200 && value.body.allowed && value.body.pointsDeducted === 1));
+    assert.equal((await get('SELECT SUM(points) n FROM users')).n, before - 1);
+    assert.equal(provider.observations.filter(item => item.body.model === 'codex-auto-review').length, 1);
+    assert.equal((await api({ ...input, arguments: { command: 'Get-Date' } })).status, 409);
+    for (const command of ['invalid-response', 'unavailable']) {
+      const failure = await api({ ...input, reviewId: command + '_1234567890', arguments: { command } });
+      assert.ok(failure.status >= 500); assert.equal(failure.body.pointsDeducted, 0);
+    }
+    assert.equal((await get('SELECT SUM(points) n FROM users')).n, before - 1);
+    const denied = await api({ ...input, reviewId: 'denial_http_1234567890', arguments: { command: 'Remove-Item *' } });
+    assert.equal(denied.body.allowed, false); assert.equal(denied.body.pointsDeducted, 1);
+    assert.equal((await get('SELECT COUNT(*) n FROM command_reviews')).n, 2);
+    console.log('PASS authenticated command-review HTTP billing, concurrency, failure and denial');
+  } finally { await closeDatabase(db); }
+}
+
+async function runInterjection(baseUrl, token, softwareKey, databasePath, provider) {
+  const sessionId = 'interjection_' + crypto.randomBytes(8).toString('hex');
+  const db = await openDatabase(databasePath);
+  try {
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title) SELECT ?,id,? FROM users LIMIT 1', [sessionId, 'Interjection fixture']);
+    const response = await fetch(`${baseUrl}/api/chat/stream`, { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
+      body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: 'scenario:client-interjection' }], model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', client_file_execution: true }) });
+    assert.equal(response.status, 200);
+    const requestId = response.headers.get('X-Request-ID'); assert.ok(requestId);
+    const correction = await fetch(`${baseUrl}/api/chat/interject`, { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId, message: 'CORRECT_REPORT_TITLE' }) });
+    assert.equal(correction.status, 200); assert.equal((await correction.json()).persisted, true);
+    provider.releaseInterjection();
+    const raw = await response.text();
+    const events = raw.split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
+    assert.equal(events.filter(event => event.type === 'user_interjection').length, 1);
+    assert.ok(events.some(event => event.type === 'content' && (event.content || event.delta || '').includes(FINAL_TEXT)));
+    assert.ok(events.some(event => event.type === 'done'));
+    const row = await new Promise((resolve, reject) => db.get('SELECT COUNT(*) n FROM messages WHERE session_id=? AND role=? AND content=?', [sessionId, 'user', 'CORRECT_REPORT_TITLE'], (error, value) => error ? reject(error) : resolve(value)));
+    assert.equal(row.n, 1, 'accepted correction persists once even when the initial model response has no tool calls');
+    console.log('PASS live correction with no pending tools, visible echo and exactly-once persistence');
+  } finally { provider.releaseInterjection(); await closeDatabase(db); }
 }
 
 async function runMemoryBatches(baseUrl, token, databasePath, provider) {
@@ -628,6 +723,7 @@ async function main() {
         RAI_GPT_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_GPT_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_FAST_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_FAST_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_CLAUDE_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_CLAUDE_GATEWAY_API_KEY_FILE: gatewayKeyFile,
+        RAI_LUNA_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_LUNA_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_TEST_DEEPSEEK_CHAT_COMPLETIONS_URL: `${providerBase}/deepseek/v1/chat/completions`,
         RAI_TEST_SILICONFLOW_CHAT_COMPLETIONS_URL: `${providerBase}/silicon/v1/chat/completions`,
         GOOGLE_GEMINI_BASE_URL: `${providerBase}/gemini/v1beta/models`,
@@ -653,6 +749,23 @@ async function main() {
     } finally { await closeDatabase(clientDb); }
 
     const settingsOnly = process.argv.includes('--native-settings-only');
+    if (process.argv.includes('--agent-office-only')) {
+      await runCommandReviews(baseUrl, token, databasePath, provider);
+      await runInterjection(baseUrl, token, softwareKey, databasePath, provider);
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-long-word');
+      const requests = provider.observations.filter(item => item.scenario === 'client-long-word' && item.body.stream === true);
+      let resets = 0;
+      for (let index = 1; index < requests.length; index++) {
+        const previous = requests[index - 1].body, current = requests[index].body;
+        assert.deepEqual(current.tools, previous.tools, 'tool schemas remain stable');
+        if (current.messages.length < previous.messages.length) { resets++; continue; }
+        assert.deepEqual(current.messages.slice(0, previous.messages.length), previous.messages, 'unchanged history stays byte-identical between tool continuations');
+      }
+      assert.equal(requests.length, 46); assert.equal(resets, 1);
+      assert.deepEqual(provider.errors, []);
+      console.log('PASS 45 tool rounds, one compaction, 44 preserved request prefixes and no tool replay');
+      return;
+    }
     for (const entry of settingsOnly ? [] : [
       ['sol','gpt-6.1-sol'], ['astra','gpt-6-astra'], ['deepseek','deepseek-v4.1-flash'],
       ['astra','gpt-6-astra'], ['fallback','gpt-6.1-sol'],
