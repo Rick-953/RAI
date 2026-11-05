@@ -170,6 +170,8 @@ function createProviderMock() {
       }
       if (['client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario)) {
         const messages = body.messages || [];
+        assert.ok(messages.filter(message => String(message.content || '').startsWith('[Earlier conversation summary')).length <= 1,
+          'repeated compaction replaces the old summary instead of accumulating protected summaries');
         const results = messages.filter(message => message.role === 'tool');
         const completed = results.length ? Number(JSON.parse(results.at(-1).content).content.match(/^CHECKPOINT=(\d+)/)[1]) : 0;
         const ids = new Set(messages.flatMap(message => (message.tool_calls || []).map(call => call.id)));
@@ -773,6 +775,7 @@ async function main() {
       await runCommandReviews(baseUrl, token, databasePath, provider);
       await runInterjection(baseUrl, token, softwareKey, databasePath, provider);
       await runClientChat(baseUrl, token, softwareKey, [], 'client-large-context');
+      console.log('PASS eight large-result tool steps, bounded repeated compaction and no tool replay');
       const limitSession = 'context-limit-' + crypto.randomUUID();
       const limitDb = await openDatabase(databasePath);
       try {
@@ -784,6 +787,7 @@ async function main() {
         assert.doesNotMatch(row.content, /上游连接中断/);
         assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'context-limit interruption retains completed tool history');
       } finally { await closeDatabase(limitDb); }
+      console.log('PASS actual context-limit warning, saved progress and completed tool history');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-long-word');
       const requests = provider.observations.filter(item => item.scenario === 'client-long-word' && item.body.stream === true);
       let resets = 0;
