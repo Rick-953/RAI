@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.45-20261105-office-approval';
+const RAI_SW_VERSION = '0.13.46-20261105-execution-flow';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,24 +13,24 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261105-office-approval',
-  'web-skills.js?v=20261105-office-approval', 'web-skills.css?v=20261105-office-approval',
-  'third-party-notices.js?v=20261105-office-approval', 'third-party-notices.css?v=20261105-office-approval',
+  'locale.js?v=20261105-execution-flow',
+  'web-skills.js?v=20261105-execution-flow', 'web-skills.css?v=20261105-execution-flow',
+  'third-party-notices.js?v=20261105-execution-flow', 'third-party-notices.css?v=20261105-execution-flow',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261105-office-approval',
-  'rai-system-prompt.js?v=20261105-office-approval', 'event-bindings.js?v=20261105-office-approval',
-  'lib/jsQR.js?v=20261105-office-approval', 'qr-scanner.js?v=20261105-office-approval',
-  'secure-sharing.js?v=20261105-office-approval', 'secure-sharing.css?v=20261105-office-approval',
-  'diagnostics.js?v=20261105-office-approval',
-  'user-activity.js?v=20261105-office-approval',
-  'token-billing.js?v=20261105-office-approval',
-  'app.js?v=20261105-office-approval', 'styles.css?v=20261105-office-approval',
-  'markdown-tables.js?v=20261105-office-approval',
-  'cx-remote.js?v=20261105-office-approval', 'local-agent.css?v=20261105-office-approval',
-  'crf-ui.js?v=20261105-office-approval',
-  'selection-explainer.js?v=20261105-office-approval', 'selection-explainer.css?v=20261105-office-approval',
-  'site.webmanifest?v=20261105-office-approval', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261105-office-approval',
+  '', 'index.html', 'runtime-brand.js?v=20261105-execution-flow',
+  'rai-system-prompt.js?v=20261105-execution-flow', 'event-bindings.js?v=20261105-execution-flow',
+  'lib/jsQR.js?v=20261105-execution-flow', 'qr-scanner.js?v=20261105-execution-flow',
+  'secure-sharing.js?v=20261105-execution-flow', 'secure-sharing.css?v=20261105-execution-flow',
+  'diagnostics.js?v=20261105-execution-flow',
+  'user-activity.js?v=20261105-execution-flow',
+  'token-billing.js?v=20261105-execution-flow',
+  'app.js?v=20261105-execution-flow', 'styles.css?v=20261105-execution-flow',
+  'markdown-tables.js?v=20261105-execution-flow',
+  'cx-remote.js?v=20261105-execution-flow', 'local-agent.css?v=20261105-execution-flow',
+  'crf-ui.js?v=20261105-execution-flow',
+  'selection-explainer.js?v=20261105-execution-flow', 'selection-explainer.css?v=20261105-execution-flow',
+  'site.webmanifest?v=20261105-execution-flow', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261105-execution-flow',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -40,11 +40,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261105-office-approval', 'lib/purify.min.js?v=20261105-office-approval',
-  'lib/katex/katex.min.css?v=20261105-office-approval', 'lib/katex/katex.min.js?v=20261105-office-approval',
-  'lib/katex/contrib/auto-render.min.js?v=20261105-office-approval',
-  'lib/highlight/styles/github-dark.min.css?v=20261105-office-approval',
-  'lib/highlight/highlight.min.js?v=20261105-office-approval'
+  'lib/marked.min.js?v=20261105-execution-flow', 'lib/purify.min.js?v=20261105-execution-flow',
+  'lib/katex/katex.min.css?v=20261105-execution-flow', 'lib/katex/katex.min.js?v=20261105-execution-flow',
+  'lib/katex/contrib/auto-render.min.js?v=20261105-execution-flow',
+  'lib/highlight/styles/github-dark.min.css?v=20261105-execution-flow',
+  'lib/highlight/highlight.min.js?v=20261105-execution-flow'
 ].map(appPath);
 
 function isAvatarRequest(url) {

@@ -16466,11 +16466,14 @@ const CANVAS_OPS_START_TOKEN = '[CANVAS_OPS]';
 const CANVAS_OPS_END_TOKEN = '[/CANVAS_OPS]';
 const TITLE_START_TOKEN = '[TITLE]';
 const TITLE_END_TOKEN = '[/TITLE]';
+const FINAL_ANSWER_TOKEN = '[RAI_FINAL]';
 const STRUCTURED_OUTPUT_TOKENS = [
     CANVAS_OPS_START_TOKEN,
     CANVAS_OPS_END_TOKEN,
     TITLE_START_TOKEN,
-    TITLE_END_TOKEN
+    TITLE_END_TOKEN,
+    FINAL_ANSWER_TOKEN,
+    '[/RAI_FINAL]'
 ];
 
 function cloneFlowDefaultCanvasState() {
@@ -16590,7 +16593,7 @@ function trimStructuredTokenPrefix(text = '') {
     for (const token of STRUCTURED_OUTPUT_TOKENS) {
         const maxPrefixLength = Math.min(token.length - 1, result.length);
         for (let len = maxPrefixLength; len > 0; len -= 1) {
-            if (token.startsWith(result.slice(-len))) {
+            if (token.startsWith(result.slice(-len).toUpperCase())) {
                 result = result.slice(0, -len);
                 break;
             }
@@ -16642,16 +16645,27 @@ function extractLegacyTrailingTitle(text = '') {
 
 function parseStructuredAssistantOutput(rawText = '') {
     const source = String(rawText || '');
+    const markerSource = source.replace(/\[\/?(?:title|rai_final)\]/gi, (marker) => marker.toUpperCase());
     let visibleContent = '';
     let extractedTitle = null;
     let canvasPatchRaw = '';
     let canvasPatch = null;
     let canvasPatchParseError = null;
     let cursor = 0;
+    let finalAnswerOffset = -1;
 
     while (cursor < source.length) {
-        if (source.startsWith(TITLE_START_TOKEN, cursor)) {
-            const titleEnd = source.indexOf(TITLE_END_TOKEN, cursor + TITLE_START_TOKEN.length);
+        if (markerSource.startsWith(FINAL_ANSWER_TOKEN, cursor)) {
+            if (finalAnswerOffset < 0) finalAnswerOffset = visibleContent.length;
+            cursor += FINAL_ANSWER_TOKEN.length;
+            continue;
+        }
+        if (markerSource.startsWith('[/RAI_FINAL]', cursor)) {
+            cursor += '[/RAI_FINAL]'.length;
+            continue;
+        }
+        if (markerSource.startsWith(TITLE_START_TOKEN, cursor)) {
+            const titleEnd = markerSource.indexOf(TITLE_END_TOKEN, cursor + TITLE_START_TOKEN.length);
             if (titleEnd === -1) {
                 break;
             }
@@ -16659,6 +16673,11 @@ function parseStructuredAssistantOutput(rawText = '') {
                 extractedTitle = source.slice(cursor + TITLE_START_TOKEN.length, titleEnd).trim();
             }
             cursor = titleEnd + TITLE_END_TOKEN.length;
+            continue;
+        }
+
+        if (markerSource.startsWith(TITLE_END_TOKEN, cursor)) {
+            cursor += TITLE_END_TOKEN.length;
             continue;
         }
 
@@ -16692,7 +16711,8 @@ function parseStructuredAssistantOutput(rawText = '') {
         extractedTitle,
         canvasPatch,
         canvasPatchRaw,
-        canvasPatchParseError
+        canvasPatchParseError,
+        finalAnswerOffset
     };
 }
 
@@ -16987,8 +17007,10 @@ function removeInternalAssistantSections(text = '') {
     return kept.join('\n');
 }
 
-function sanitizeAssistantVisibleContent(text = '') {
-    let output = String(text || '');
+function sanitizeAssistantVisibleContent(text = '', preserveTrailingWhitespace = false) {
+    let output = trimStructuredTokenPrefix(String(text || '')
+        .replace(/\[TITLE\][\s\S]*?(?:\[\/TITLE\]|$)|\[\/TITLE\]/gi, '')
+        .replace(/\[\/?RAI_FINAL\]/gi, ''));
 
     output = output
         .replace(/\bDeepSek\b/g, 'DeepSeek')
@@ -17011,9 +17033,8 @@ function sanitizeAssistantVisibleContent(text = '') {
         return '';
     }
 
-    return output
-        .replace(/\n{3,}/g, '\n\n')
-        .trimEnd();
+    output = output.replace(/\n{3,}/g, '\n\n');
+    return preserveTrailingWhitespace ? output : output.trimEnd();
 }
 
 function shouldHoldAssistantVisibleContent(rawText = '', visibleText = '') {
@@ -20783,6 +20804,13 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
     console.log(' 收到聊天请求');
 
     let requestId = null;  //  关键修复：在函数开始声明requestId
+    let activeRequestRegistered = false;
+    const releaseActiveRequest = async () => {
+        if (!activeRequestRegistered) return;
+        await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]);
+        activeRequestInterjections.delete(requestId);
+        activeRequestRegistered = false;
+    };
     let liveStreamState = null;
     let chatRequestSucceeded = false;
     let clientAborted = false;
@@ -21142,6 +21170,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
                 active: activeRegistration.active
             });
         }
+        activeRequestRegistered = true;
 
         const chatQuota = await checkAndConsumeChatQuota(req.user.userId);
         if (!chatQuota.allowed) {
@@ -21149,7 +21178,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             const resetText = blocked.resetAt
                 ? new Date(blocked.resetAt).toLocaleString('zh-CN', { hour12: false })
                 : '';
-            await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]).catch(() => null);
+            await releaseActiveRequest();
             return res.status(429).json({
                 error: `${blocked.label || '当前'}额度已用完，请稍后再试${resetText ? `（重置时间 ${resetText}）` : ''}`,
                 code: 'chat_quota_exceeded',
@@ -21242,8 +21271,8 @@ if (clientFileExecution && systemPrompt) {
         //  防御性检查：验证 messages 存在且非空
         if (!Array.isArray(messages) || messages.length === 0) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
+            await releaseActiveRequest();
             res.end(JSON.stringify({ error: '消息不能为空' }));
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
@@ -21289,8 +21318,8 @@ if (clientFileExecution && systemPrompt) {
                 code: 'gpt_gateway_not_configured',
                 error: '该 GPT 模型当前未配置，已安全拒绝请求。'
             })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]).catch(() => null);
             return;
         }
 
@@ -21342,12 +21371,15 @@ if (clientFileExecution && systemPrompt) {
         const serverToolTrace = [];
         const generatedArtifacts = [];
         const serverFlowSegments = [];
+        let serverFinalAnswerOffset = -1;
+        let serverVisibleContentLength = 0;
         let activeServerFlowContent = null;
         const recordServerFlowContent = (content = '') => {
             const text = String(content || '');
             if (!text) return;
+            serverVisibleContentLength += text.length;
             if (!activeServerFlowContent) {
-                activeServerFlowContent = { kind: 'content', text: '' };
+                activeServerFlowContent = { kind: 'content', text: '', content_offset: serverVisibleContentLength - text.length };
                 serverFlowSegments.push(activeServerFlowContent);
             }
             activeServerFlowContent.text += text;
@@ -21393,10 +21425,14 @@ if (clientFileExecution && systemPrompt) {
                 download_url: String(event.download_url || event.downloadPath || '').slice(0, 1000),
                 attachment: event.attachment && typeof event.attachment === 'object' ? event.attachment : null,
                 url: String(event.url || '').slice(0, 500),
-                ts: Number(event.ts) || Date.now()
+                ts: Number(event.ts) || Date.now(),
+                content_offset: serverVisibleContentLength
             };
             const existingIndex = serverToolTrace.findIndex((item) => item.id === row.id);
-            if (existingIndex >= 0) serverToolTrace[existingIndex] = row;
+            if (existingIndex >= 0) {
+                row.content_offset = serverToolTrace[existingIndex].content_offset;
+                serverToolTrace[existingIndex] = row;
+            }
             else serverToolTrace.push(row);
             if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
             const kind = row.tool === 'web_search' || event.type === 'search_status' ? 'search' : 'tool';
@@ -21418,7 +21454,8 @@ if (clientFileExecution && systemPrompt) {
             req.recordUserActivity?.('tool_status', { kind: 'stream', stage: event.status, control: event.tool,
                 context: { loadedSkills: event.tool === 'read_skill' && event.status === 'complete' ? [event.skill] : [] } });
             const tracked = { type: event.type || 'tool_status', ...event };
-            recordServerToolTrace(tracked);
+            const row = recordServerToolTrace(tracked);
+            if (row) tracked.content_offset = row.content_offset;
             res.write(`data: ${JSON.stringify(tracked)}\n\n`);
         };
 
@@ -21532,8 +21569,8 @@ if (clientFileExecution && systemPrompt) {
             await settleChatModelTurn(!clientAborted && !chatRequestCancelled);
             chatRequestSucceeded = true;
             res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             console.log('\n 预设答案处理完成（0成本）\n');
             return;
         }
@@ -21848,6 +21885,7 @@ if (clientFileExecution && systemPrompt) {
                         draftDeltas: agentTraceState.draftDeltas || [],
                         tools: serverToolTrace,
                         flowSegments: serverFlowSegments.slice(-200),
+                        finalAnswerOffset: serverFinalAnswerOffset,
                         savedAt: agentTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -21955,6 +21993,7 @@ if (clientFileExecution && systemPrompt) {
                     await settleChatModelTurn(!clientAborted && !chatRequestCancelled);
                     chatRequestSucceeded = true;
                     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+                    await releaseActiveRequest();
                     res.end();
                     console.log('\n 真并行 Multi-Agent 处理完成\n');
                     return;
@@ -22161,8 +22200,8 @@ if (clientFileExecution && systemPrompt) {
         if (!routing) {
             console.error(` 模型路由配置未找到: ${finalModel}`);
             res.write(`data: ${JSON.stringify({ type: 'error', error: `配置错误: ${finalModel}` })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
@@ -22218,8 +22257,8 @@ if (clientFileExecution && systemPrompt) {
                 }
             });
             res.write(`data: ${JSON.stringify({ type: 'error', error: buildUserFacingApiFailureMessage() })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
         if (!providerConfig.apiKey) {
@@ -22239,8 +22278,8 @@ if (clientFileExecution && systemPrompt) {
                 }
             });
             res.write(`data: ${JSON.stringify({ type: 'error', error: buildUserFacingApiFailureMessage() })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
@@ -22662,16 +22701,16 @@ if (clientFileExecution && systemPrompt) {
         if (!requestBody.model) {
             console.error(' 请求体缺少model字段');
             res.write(`data: ${JSON.stringify({ type: 'error', error: '模型配置错误' })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
         if (!Array.isArray(requestBody.messages) || requestBody.messages.length === 0) {
             console.error(' 请求体消息为空');
             res.write(`data: ${JSON.stringify({ type: 'error', error: '消息不能为空' })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
             return;
         }
 
@@ -22746,10 +22785,24 @@ if (clientFileExecution && systemPrompt) {
                 return '';
             }
 
-            const visibleDelta = nextVisibleContent.startsWith(fullContent)
+            let visibleDelta = nextVisibleContent.startsWith(fullContent)
                 ? nextVisibleContent.slice(fullContent.length)
                 : nextVisibleContent;
-
+            const rawFinalOffset = latestStructuredAssistantOutput.finalAnswerOffset;
+            const finalOffset = rawFinalOffset < 0 ? -1 : sanitizeAssistantVisibleContent(
+                latestStructuredAssistantOutput.visibleContent.slice(0, rawFinalOffset), true).length;
+            if (serverFinalAnswerOffset < 0 && finalOffset >= 0 && nextVisibleContent.slice(finalOffset).trim()) {
+                const prefixLength = Math.max(0, finalOffset - fullContent.length);
+                if (prefixLength > 0) {
+                    const progress = visibleDelta.slice(0, prefixLength);
+                    recordServerFlowContent(progress);
+                    res.write(`data: ${JSON.stringify({ type: 'content', content: progress })}\n\n`);
+                    visibleDelta = visibleDelta.slice(prefixLength);
+                }
+                serverFinalAnswerOffset = finalOffset;
+                activeServerFlowContent = null;
+                res.write(`data: ${JSON.stringify({ type: 'answer_start', content_offset: finalOffset })}\n\n`);
+            }
             fullContent = nextVisibleContent;
 
             if (visibleDelta) {
@@ -22757,7 +22810,7 @@ if (clientFileExecution && systemPrompt) {
                 recordServerFlowContent(visibleDelta);
                 if (liveStreamState) {
                     liveStreamState.model = chatModelQuotaContext.getStore()?.actualModel || actualModel;
-                    liveStreamState.assistantContent += visibleDelta;
+                    liveStreamState.assistantContent = fullContent;
                     liveStreamState.updatedAt = Date.now();
                     persistSessionStreamDraft(liveStreamState, false);
                     broadcastSessionStreamState(liveStreamState, 'session_stream_delta');
@@ -22999,6 +23052,7 @@ if (clientFileExecution && systemPrompt) {
                         trace: researchTraceState.trace,
                         tools: serverToolTrace,
                         flowSegments: serverFlowSegments.slice(-200),
+                        finalAnswerOffset: serverFinalAnswerOffset,
                         savedAt: researchTraceState.savedAt,
                         prompt_context: promptContextTrace?.prompt_context || null
                     });
@@ -23055,6 +23109,7 @@ if (clientFileExecution && systemPrompt) {
                 await settleChatModelTurn(!clientAborted && !chatRequestCancelled);
                 chatRequestSucceeded = true;
                 res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+                await releaseActiveRequest();
                 res.end();
                 console.log(`\n ${normalizedResearchMode === 'deep' ? '深度研究' : '快速研究'}讨论处理完成\n`);
                 return;
@@ -23072,6 +23127,7 @@ if (clientFileExecution && systemPrompt) {
                 enableResearchDebate = false;
                 if (String(fullContent || '').trim()) {
                     res.write(`data: ${JSON.stringify({ type: 'error', error: '研究模式暂时中断', code: 'research_mode_failed' })}\n\n`);
+                    await releaseActiveRequest();
                     res.end();
                     return;
                 }
@@ -23423,7 +23479,7 @@ if (clientFileExecution && systemPrompt) {
             return null;
         };
 
-        const sendFinalApiFailure = (tag, message, context = {}) => {
+        const sendFinalApiFailure = async (tag, message, context = {}) => {
             appendRaiRuntimeReport({
                 level: '报错',
                 tag,
@@ -23438,8 +23494,8 @@ if (clientFileExecution && systemPrompt) {
                 }
             });
             res.write(`data: ${JSON.stringify({ type: 'error', error: buildUserFacingApiFailureMessage() })}\n\n`);
+            await releaseActiveRequest();
             res.end();
-            db.run('DELETE FROM active_requests WHERE id = ?', [requestId]);
         };
 
         try {
@@ -23698,7 +23754,7 @@ if (clientFileExecution && systemPrompt) {
                                     body: JSON.stringify(requestBody)
                                 });
                             } catch (fallbackErr) {
-                                sendFinalApiFailure('gemma_openrouter_fallback_network_failed', fallbackErr.message, {
+                                await sendFinalApiFailure('gemma_openrouter_fallback_network_failed', fallbackErr.message, {
                                     previousStatus: apiResponse.status,
                                     previousBody: errorText
                                 });
@@ -23752,7 +23808,7 @@ if (clientFileExecution && systemPrompt) {
 
                             const fallbackTimeoutMs = chatRequestBudget?.nextAttemptTimeoutMs() || 0;
                             if (fallbackTimeoutMs <= 0) {
-                                sendFinalApiFailure('siliconflow_balance_fallback_deadline', 'request deadline exhausted', { fallbackModel });
+                                await sendFinalApiFailure('siliconflow_balance_fallback_deadline', 'request deadline exhausted', { fallbackModel });
                                 return;
                             }
                             const fallbackController = createChatAbortController();
@@ -23766,7 +23822,7 @@ if (clientFileExecution && systemPrompt) {
                                 });
                             } catch (fallbackErr) {
                                 clearTimeout(fallbackTimeoutId);
-                                sendFinalApiFailure('siliconflow_balance_fallback_network_failed', fallbackErr.message, {
+                                await sendFinalApiFailure('siliconflow_balance_fallback_network_failed', fallbackErr.message, {
                                     fallbackModel
                                 });
                                 return;
@@ -23776,7 +23832,7 @@ if (clientFileExecution && systemPrompt) {
                             if (!apiResponse.ok) {
                                 const fallbackErrorText = await readBoundedResponseText(apiResponse);
                                 console.error(` 备用模型也失败: status=${apiResponse.status}, bodyLength=${fallbackErrorText.length}`);
-                                sendFinalApiFailure('siliconflow_balance_fallback_http_failed', `fallback failed with HTTP ${apiResponse.status}`, {
+                                await sendFinalApiFailure('siliconflow_balance_fallback_http_failed', `fallback failed with HTTP ${apiResponse.status}`, {
                                     fallbackModel,
                                     status: apiResponse.status,
                                     body: fallbackErrorText
@@ -23786,14 +23842,14 @@ if (clientFileExecution && systemPrompt) {
 
                             console.log(` 备用模型连接成功，继续流式输出: ${fallbackModel}`);
                         } else {
-                            sendFinalApiFailure('siliconflow_balance_no_fallback_available', `HTTP ${apiResponse.status}`, {
+                            await sendFinalApiFailure('siliconflow_balance_no_fallback_available', `HTTP ${apiResponse.status}`, {
                                 status: apiResponse.status,
                                 body: errorText
                             });
                             return;
                         }
                     } else {
-                        sendFinalApiFailure('model_api_final_http_failed', `HTTP ${apiResponse.status}`, {
+                        await sendFinalApiFailure('model_api_final_http_failed', `HTTP ${apiResponse.status}`, {
                             status: apiResponse.status,
                             body: errorText
                         });
@@ -23942,6 +23998,7 @@ if (clientFileExecution && systemPrompt) {
                     console.log(` 请求被用户取消: ${requestId}`);
                     chatRequestCancelled = true;
                     res.write(`data: ${JSON.stringify({ type: 'cancelled' })}\n\n`);
+                    await releaseActiveRequest();
                     res.end();
                     await reader.cancel().catch(() => undefined);
                     const cancellationError = new Error('chat_request_cancelled');
@@ -25769,6 +25826,14 @@ if (clientFileExecution && systemPrompt) {
             if (clientAborted || chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
                 console.log(` 聊天请求已中止: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
                 return;
+            } else if (String(fetchError.code || '').startsWith('context_') || fetchError.code === 'current_turn_context_too_large') {
+                if (!String(fullContent || '').trim() && !String(reasoningContent || '').trim()) throw fetchError;
+                streamDegraded = true;
+                console.warn(` 工具续传上下文未就绪，保留已生成内容: code=${fetchError.code}`);
+                res.write(`data: ${JSON.stringify({
+                    type: 'stream_warning', code: fetchError.code,
+                    message: fetchError.message + ' 已保存本次已生成的内容和工具结果。'
+                })}\n\n`);
             } else if ((fetchError.name === 'AbortError' || fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT')
                 && (String(fullContent || '').trim() || String(reasoningContent || '').trim())) {
                 streamDegraded = true;
@@ -25795,13 +25860,13 @@ if (clientFileExecution && systemPrompt) {
                 })}\n\n`);
             } else if (fetchError.name === 'AbortError') {
                 console.error(` API请求超时 (${chatRequestBudget?.totalMs || 0}ms)`);
-                sendFinalApiFailure('model_api_timeout', fetchError.message, {
+                await sendFinalApiFailure('model_api_timeout', fetchError.message, {
                     errorName: fetchError.name
                 });
             } else if (fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT') {
                 console.error(' 连接超时:', sanitizeReportContext(fetchError));
                 console.error('   可能原因: 1) 网络不稳定 2) API服务响应慢 3) 防火墙阻止');
-                sendFinalApiFailure('model_api_connect_timeout', fetchError.message, {
+                await sendFinalApiFailure('model_api_connect_timeout', fetchError.message, {
                     causeCode: fetchError.cause?.code
                 });
             } else if ((String(fullContent || '').trim() || String(reasoningContent || '').trim())
@@ -25832,7 +25897,7 @@ if (clientFileExecution && systemPrompt) {
                 })}\n\n`);
             } else {
                 console.error(' Fetch错误:', sanitizeReportContext(fetchError));
-                sendFinalApiFailure('model_api_fetch_error', fetchError.message, {
+                await sendFinalApiFailure('model_api_fetch_error', fetchError.message, {
                     errorName: fetchError.name,
                     causeCode: fetchError.cause?.code
                 });
@@ -26003,7 +26068,8 @@ if (clientFileExecution && systemPrompt) {
                 .replace(/functions\.\w+:\d+/g, '')
                 .trim();
             const structuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer || contentToSave);
-            contentToSave = sanitizeAssistantVisibleContent(structuredAssistantOutput.visibleContent || contentToSave).trim();
+            // Keep leading text offsets identical to the stream's execution trace.
+            contentToSave = sanitizeAssistantVisibleContent(structuredAssistantOutput.visibleContent || contentToSave).trimEnd();
             if (!contentToSave) {
                 contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
             }
@@ -26024,7 +26090,9 @@ if (clientFileExecution && systemPrompt) {
                 ...(promptContextTrace || {}),
                 version: 3,
                 tools: serverToolTrace,
-                flowSegments: serverFlowSegments.slice(-200)
+                flowSegments: serverFlowSegments.slice(-200),
+                finalAnswerOffset: serverFinalAnswerOffset,
+                interrupted: streamDegraded || req._clientCancelled === true
             });
 
             // 自动续传更新原回复；若原请求尚未落库，则以本次请求保存完整合并文本。
@@ -26158,6 +26226,7 @@ if (clientFileExecution && systemPrompt) {
 
         await settleChatModelTurn(!streamDegraded && !clientAborted && !chatRequestCancelled && Boolean(String(fullContent || '').trim()), [finalModel]);
         chatRequestSucceeded = true;
+        await releaseActiveRequest();
         res.write(`data: ${JSON.stringify({ type: 'done', degraded: streamDegraded, actualModel: chatModelQuotaContext.getStore()?.actualModel || actualModel })}\n\n`);
         res.end();
 
@@ -26165,10 +26234,12 @@ if (clientFileExecution && systemPrompt) {
         console.log('\n 聊天处理完成\n');
 
     } catch (error) {
+        await releaseActiveRequest();
         if (error.code === 'model_chat_quota_exceeded' || String(error.code || '').startsWith('context_') || error.code === 'current_turn_context_too_large') {
             const payload = { type: 'error', error: error.message, code: error.code, quota: error.quota };
             if (!res.headersSent) return res.status(error.status || 413).json(payload);
             res.write(`data: ${JSON.stringify(payload)}\n\n`);
+            await releaseActiveRequest();
             res.end();
             return;
         }
@@ -26184,12 +26255,15 @@ if (clientFileExecution && systemPrompt) {
         try {
             const publicErrorCodes = new Set(['model_vision_unsupported','no_available_model','current_turn_context_too_large','context_compression_unavailable','context_compression_failed','context_compression_insufficient']);
             res.write(`data: ${JSON.stringify({ type: 'error', error: publicErrorCodes.has(error.code) ? error.message : '聊天请求暂时不可用', code: publicErrorCodes.has(error.code) ? error.code : 'chat_request_failed' })}\n\n`);
+            await releaseActiveRequest();
             res.end();
         } catch (writeError) {
             console.error(' 写入响应错误:', sanitizeReportContext(writeError));
         }
     } finally {
         clearInterval(quotaLeaseTimer);
+        // Release the ended request before slower quota and artifact cleanup.
+        await releaseActiveRequest().catch(() => undefined);
         await settleChatModelTurn(false).catch(error => console.error('chat_model_quota_settlement_failed', sanitizeReportContext(error)));
         if (requestId) rejectClientToolPending(requestId, 'request_finished');
         if (chatRequestDeadlineTimer) {
@@ -26217,11 +26291,6 @@ if (clientFileExecution && systemPrompt) {
                     ? 'client_aborted'
                     : (chatRequestCancelled ? 'user_cancelled' : 'request_failed')
             });
-        }
-        //  关键修复：添加null检查
-        if (requestId) {
-            activeRequestInterjections.delete(requestId);
-            await dbRunAsync('DELETE FROM active_requests WHERE id = ?', [requestId]).catch(() => undefined);
         }
     }
 }));

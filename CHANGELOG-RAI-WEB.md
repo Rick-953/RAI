@@ -1,3 +1,12 @@
+## 0.13.46 - 2026-11-05
+
+- Interleave Agent progress reports and correlated tool calls in one ordered, expandable execution process. When the first visible final-answer character arrives, collapse prior work and stream the separate summary and delivery in the same render. Preserve manual expansion, final boundaries, results and interrupted progress across streaming and history reloads.
+- Hide the internal final-answer protocol, including fragmented markers, on both product surfaces. Save content offsets so long, bounded histories retain the correct final answer.
+- Release completed chat concurrency slots before ending the HTTP response, keeping slower quota settlement and artifact cleanup from causing false concurrency-limit errors on the next request.
+- Compact large completed tool exchanges by their actual context size, including turns with fewer than six tool calls. Preserve the current task and latest complete results, reuse the summary on later calls, and report real context-limit failures without mislabeling them as upstream disconnections.
+- Filter standalone, mixed-case and partially streamed title markers from assistant replies on the server and in browser history/rendering, while preserving conversation title extraction.
+- Require Word reports to embed supplied pictures and verify their media and drawing relationships before claiming completion. Keep failed image insertion visible as an unfinished draft.
+
 ## 0.13.45 - 2026-11-05
 
 - Add authenticated command review using api.000339.xyz's codex-auto-review. A valid allow/deny result costs one point; invalid results, unavailable providers and insufficient balance never authorize execution or charge points. Persist review IDs and payload hashes to prevent duplicate charges across retries.

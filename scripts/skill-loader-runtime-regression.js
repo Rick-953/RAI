@@ -154,7 +154,7 @@ function createProviderMock() {
       }
       if (!body.stream && systemText.includes('Summarize quoted conversation data')) {
         response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ choices: [{ message: { content: 'scenario:client-long-word Word checkpoint saved; continue from the latest completed step without replay.' } }], usage: { prompt_tokens: 64, completion_tokens: 12, total_tokens: 76 } }));
+        response.end(JSON.stringify({ choices: [{ message: { content: 'Word checkpoint saved; continue from the latest completed step without replay.' } }], usage: { prompt_tokens: 64, completion_tokens: 12, total_tokens: 76 } }));
         return;
       }
       if (scenario === 'client-interjection') {
@@ -168,13 +168,17 @@ function createProviderMock() {
         }
         return;
       }
-      if (scenario === 'client-long-word') {
+      if (['client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario)) {
         const messages = body.messages || [];
+        assert.ok(messages.filter(message => String(message.content || '').startsWith('[Earlier conversation summary')).length <= 1,
+          'repeated compaction replaces the old summary instead of accumulating protected summaries');
         const results = messages.filter(message => message.role === 'tool');
         const completed = results.length ? Number(JSON.parse(results.at(-1).content).content.match(/^CHECKPOINT=(\d+)/)[1]) : 0;
         const ids = new Set(messages.flatMap(message => (message.tool_calls || []).map(call => call.id)));
         for (const result of results) assert.ok(ids.has(result.tool_call_id), 'compaction must retain matching tool calls');
-        if (completed < 45) writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
+        if (scenario === 'client-context-limit') assert.equal(completed, 0, 'an oversized latest result must be rejected before another provider request');
+        const steps = scenario === 'client-long-word' ? 45 : 8;
+        if (completed < steps) writeSse(response, [openAiText('Report checkpoint in progress. ', null), { choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
           function: { name: 'read_code', arguments: JSON.stringify({ path: 'report.docx', offset: completed + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         else writeSse(response, [openAiText(FINAL_TEXT)]);
         return;
@@ -494,7 +498,8 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
   if (scenario === 'retry-primary') assert.equal(events.filter(event => event.type === 'stream_retry').length, 3);
 }
 
-async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
+async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
+  const officeScenario = ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -505,13 +510,15 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-RAI-Client-Key': softwareKey },
     body: JSON.stringify({ messages: [{ role: 'user', content: `scenario:${scenario} ${userContent}` }], model: 'gpt-6.1-sol',
-      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: ['client-rounds-retry', 'client-long-word'].includes(scenario),
+      internetMode: false, memoryMode: 'off', client_file_execution: true, workdir_configured: officeScenario,
+      ...(sessionId ? { sessionId } : {}),
       client_skills: { protocol: 1, catalog: [{ name: 'documents', description: 'Word' }, { name: 'custom-workflow', description: 'Custom workflow' }], selected },
-      ...(['client-rounds-retry', 'client-long-word'].includes(scenario) ? { client_agent_mode: true }
+      ...(officeScenario ? { client_agent_mode: true }
         : scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
   });
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
-  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, done = false;
+  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, done = false, degraded = false;
+  const warnings = [];
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -524,15 +531,18 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
       if (event.type === 'content') visible += event.content || event.delta || '';
       if (event.type === 'stream_retry') retries++;
       if (event.type === 'context_compressed') compressed++;
-      if (event.type === 'done') done = true;
+      if (event.type === 'stream_warning') warnings.push(event);
+      if (event.type === 'done') { done = true; degraded = event.degraded === true; }
       if (event.type === 'tool_pending_client') {
         pending++;
         let result;
-        if (scenario === 'client-rounds-retry' || scenario === 'client-long-word') {
+        if (officeScenario) {
           assert.equal(event.tool, 'read_code');
           assert.equal(event.parameters.offset, pending, 'completed tools are never replayed');
           result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
           if (scenario === 'client-long-word') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(7000);
+          if (scenario === 'client-large-context') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(80000);
+          if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(300000);
         } else if (scenario.startsWith('agent-')) {
           if (event.tool === 'enable_agent_mode') {
             assert.deepEqual(event.parameters, {});
@@ -570,12 +580,24 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario) {
       }
     }
   }
-  assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
+  if (scenario === 'client-context-limit') {
+    assert.ok(visible.includes('Report checkpoint in progress.'));
+    assert.equal(degraded, true);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].code, 'current_turn_context_too_large');
+    assert.match(warnings[0].message, /上下文预算/);
+    assert.doesNotMatch(warnings[0].message, /上游连接中断/);
+  } else {
+    assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
+    assert.equal(degraded, false, `${scenario}: cannot report an interrupted turn as completed`);
+    assert.deepEqual(warnings, []);
+  }
   assert.equal(done, true);
   if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
   if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
-  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
-    : ['agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+  if (scenario === 'client-large-context') assert.ok(compressed > 0 && compressed < 8, 'large results compact only when needed');
+  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
+    : ['client-context-limit', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
 async function runCommandReviews(baseUrl, token, databasePath, provider) {
@@ -752,6 +774,20 @@ async function main() {
     if (process.argv.includes('--agent-office-only')) {
       await runCommandReviews(baseUrl, token, databasePath, provider);
       await runInterjection(baseUrl, token, softwareKey, databasePath, provider);
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-large-context');
+      console.log('PASS eight large-result tool steps, bounded repeated compaction and no tool replay');
+      const limitSession = 'context-limit-' + crypto.randomUUID();
+      const limitDb = await openDatabase(databasePath);
+      try {
+        const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+        await dbRun(limitDb, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [limitSession,userId,'Context limit fixture','gpt-6.1-sol']);
+        await runClientChat(baseUrl, token, softwareKey, [], 'client-context-limit', limitSession);
+        const row = await new Promise((resolve,reject)=>limitDb.get("SELECT content,process_trace FROM messages WHERE session_id=? AND role='assistant'", [limitSession], (error,value)=>error?reject(error):resolve(value)));
+        assert.match(row.content, /Report checkpoint in progress/);
+        assert.doesNotMatch(row.content, /上游连接中断/);
+        assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'context-limit interruption retains completed tool history');
+      } finally { await closeDatabase(limitDb); }
+      console.log('PASS actual context-limit warning, saved progress and completed tool history');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-long-word');
       const requests = provider.observations.filter(item => item.scenario === 'client-long-word' && item.body.stream === true);
       let resets = 0;
