@@ -48,6 +48,10 @@ async function main(){
   observations.push({url:req.url,host:req.headers.host,body});
   if(req.url==='/v1/responses/input_tokens'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({input_tokens:1024}));return;}
   if(req.url==='/v1/responses'){
+   if(body.stream===false){
+    summaryCalls++;res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Summary preserves facts and pending task.'}]}],usage:{input_tokens:1024,output_tokens:8,input_tokens_details:{cached_tokens:768}}}));return;
+   }
    res.writeHead(200,{'Content-Type':'text/event-stream'});
    res.write('data: '+JSON.stringify({type:'response.output_text.delta',delta:'Runtime answer complete.'})+'\n\n');
    res.write('data: '+JSON.stringify({type:'response.completed',response:{status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Runtime answer complete.'}]}],usage:{input_tokens:1024,output_tokens:8,input_tokens_details:{cached_tokens:768}}}})+'\n\n');
