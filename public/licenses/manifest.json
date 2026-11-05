@@ -3,7 +3,7 @@
   "product": "RAI Web",
   "scopeNote": "Production npm lock dependencies; browser libraries and fonts; all locked Cargo dependencies for the optional RAI Desktop and Local Agent, including build and target-specific crates. Development-only npm tools are excluded. Brand names and logos belong to their respective owners.",
   "inputs": {
-    "package-lock.json": "0ab2c8d91cd02b1c7f1e7af51ade787f80e23f0a2e59c5f5c11313393c414949",
+    "package-lock.json": "c3e92e28831cec345da0ed5b96041b1285c46c2476deb4a42360669a01c07c71",
     "public/lib/vendor-manifest.json": "6a86dcbb79a57b7ffa8a844f7f0188f3c1e5427bd7dfe4445bfb94d870277d8e",
     "src-tauri/Cargo.lock": "d57240d860ee4a350c59356711296a80f3fef7902e4d7f9689ef1bb4882a08b9",
     "rai-agent/Cargo.lock": "677570442506028cafd206f97529159d535c5a7c748659b73f024f3dc70acf5c"
@@ -12539,6 +12539,70 @@
           "name": "OFL.txt",
           "path": "texts/1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9.txt",
           "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+        }
+      ]
+    },
+    {
+      "id": "office-bread",
+      "name": "bread",
+      "version": "3766fe9e270c38ac34a10dd869b731a6f0d51d0e",
+      "license": "MIT",
+      "source": "https://github.com/Bread-Technologies/Bread_Excel_Agent",
+      "scope": "office-skill",
+      "archiveSha256": "fe0e6b4782631ca737e16e5455190d429ea4cd1d640f80ab94f3f3f17886dd33",
+      "notices": [
+        {
+          "name": "bread/LICENSE",
+          "path": "texts/57e4479ec42689eee272166a98f09c38a248ff92e7b1670873633a11c7d7a45a.txt",
+          "sha256": "57e4479ec42689eee272166a98f09c38a248ff92e7b1670873633a11c7d7a45a"
+        }
+      ]
+    },
+    {
+      "id": "office-docx-cli",
+      "name": "docx-cli",
+      "version": "22e3e2f2b4d09a5b1641ffea66b47c4cdf13190e",
+      "license": "MIT",
+      "source": "https://github.com/kklimuk/docx-cli",
+      "scope": "office-skill",
+      "archiveSha256": "53cd3abc231129ba27bcd5fb27129dd069c6407e58a1c265ad12ad31effcbc7a",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/30a9878412ed2bfa4dfe8f018d5de4cdc5c6f714ed3164ae51ab14a15a63aa52.txt",
+          "sha256": "30a9878412ed2bfa4dfe8f018d5de4cdc5c6f714ed3164ae51ab14a15a63aa52"
+        }
+      ]
+    },
+    {
+      "id": "office-hermes-office",
+      "name": "hermes-office",
+      "version": "71736c9f32597bbca9d89cede5aa136e55946b2f",
+      "license": "MIT",
+      "source": "https://github.com/NousResearch/hermes-agent",
+      "scope": "office-skill",
+      "archiveSha256": "fe0e6b4782631ca737e16e5455190d429ea4cd1d640f80ab94f3f3f17886dd33",
+      "notices": [
+        {
+          "name": "hermes/LICENSE",
+          "path": "texts/8aa3c7717d57a68490c31eef4b57b6887e892f0566ff866078ebd76113d357e2.txt",
+          "sha256": "8aa3c7717d57a68490c31eef4b57b6887e892f0566ff866078ebd76113d357e2"
+        }
+      ]
+    },
+    {
+      "id": "office-ppt-master",
+      "name": "ppt-master",
+      "version": "4a68cddaf40dc87891e6b64c6a69ef46adc1110c",
+      "license": "MIT",
+      "source": "https://github.com/hugohe3/ppt-master",
+      "scope": "office-skill",
+      "archiveSha256": "8974eea584bb303bd4a86911cbb5b39e4ce282ec8c52585eb8dab84d600bed96",
+      "notices": [
+        {
+          "name": "LICENSE",
+          "path": "texts/cd9cf27f52d3c336dd42e13f4a1df453da118e25e15520bbe02f91d75531e91b.txt",
+          "sha256": "cd9cf27f52d3c336dd42e13f4a1df453da118e25e15520bbe02f91d75531e91b"
         }
       ]
     },

@@ -1,3 +1,14 @@
+## 0.13.45 - 2026-11-05
+
+- Add authenticated command review using api.000339.xyz's codex-auto-review. A valid allow/deny result costs one point; invalid results, unavailable providers and insufficient balance never authorize execution or charge points. Persist review IDs and payload hashes to prevent duplicate charges across retries.
+- Deliver and persist corrections sent during generation, including when the initial answer has no pending tools. Echo each accepted correction once and continue with it as a user message.
+- Compact completed tool exchanges inside a long Agent turn and reuse compacted history on later requests, preserving the current task and the latest four complete exchanges. Keep original account history and attachment references.
+- Summarize with Luna using no thinking, so long Word tasks do not depend on the DeepSeek account's availability. Record actual summary usage without spending completed-answer quota.
+- Replace minimal Office recipes with the same pinned PPT Master, docx-cli and Hermes/Bread resources shipped by CX RAI. Provision an offline, read-only Office runtime outside the deployed checkout; verify actual editable files, Word revisions/comments, spreadsheet formulas, PDF previews and sandbox isolation in Linux CI.
+- Save a real DOCX checkpoint before refining layout, and ask Agent tasks to report meaningful progress while working. Web tool workflows now share the 9999-round limit.
+- Include complete upstream Office licenses and notices with archive integrity checks.
+- Keep GPT and Luna routing separate when both configured gateways share a URL; preserve the selected model's provider policy.
+
 ## 0.13.44 - 2026-11-04
 
 - Native Agent tasks allow up to 9999 tool rounds per request. Waiting for local tools pauses the actual shared model deadline.

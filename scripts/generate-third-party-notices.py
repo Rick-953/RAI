@@ -21,6 +21,7 @@ import time
 import tomllib
 import urllib.request
 import urllib.error
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'public' / 'licenses'
@@ -280,6 +281,23 @@ def add_cargo() -> None:
         raise ValueError('Failed source collection:\n' + '\n'.join(errors))
 
 
+def add_office_resources() -> None:
+    root = ROOT / 'skills/office-resources'
+    for item in json.loads((root / 'sources.json').read_text(encoding='utf-8'))['archives']:
+        archive = root / item['archive']
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != item['sha256']:
+            raise ValueError(f'Office resource digest mismatch: {archive.name}')
+        with zipfile.ZipFile(archive) as bundle:
+            for component in item['components']:
+                prefix = {'hermes-office': 'hermes/', 'bread': 'bread/'}.get(component['name'], '')
+                legal = [name for name in bundle.namelist() if name.startswith(prefix) and '/' not in name[len(prefix):] and LEGAL.match(name[len(prefix):])]
+                if not legal:
+                    raise ValueError(f'Office license missing: {component["name"]}')
+                components.append({'id': 'office-' + component['name'], 'name': component['name'], 'version': component['commit'],
+                    'license': component['license'], 'source': component['source'], 'scope': 'office-skill',
+                    'archiveSha256': item['sha256'], 'notices': [notice(name, bundle.read(name)) for name in sorted(legal)]})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -288,6 +306,7 @@ def main() -> None:
     add_embedded_runtime_notices()
     add_browser()
     add_cargo()
+    add_office_resources()
     components.sort(key=lambda item: (item['scope'], item['name'].lower(), item['version'], item['id']))
     manifest = {
         'schemaVersion': 1, 'product': 'RAI Web',

@@ -32,11 +32,12 @@ assert.match(sandboxSkill, /command policy/i);
 assert.match(sandboxSkill, /sandbox_command_blocked/);
 assert.match(sandboxSkill, /no direct network/);
 assert.match(sandboxSkill, /persists for 3 hours/);
-for (const [name, maker] of [['documents','make_docx'], ['spreadsheets','make_xlsx'], ['presentations','make_pptx']]) {
+for (const [name, upstream] of [['documents','docx-cli'], ['spreadsheets','hermes-agent'], ['presentations','ppt-master']]) {
   const skill = registry.loadTrustedSkill(name).content;
-  assert.match(skill, /zipfile/);
-  assert.ok(skill.includes(maker));
-  for (const other of ['make_docx','make_xlsx','make_pptx'].filter(x => x !== maker)) assert.ok(!skill.includes(other), name + ' must not bundle unrelated formats');
+  assert.match(skill, /\/skills\/(documents|presentations|spreadsheets)/);
+  assert.match(skill, /read-only/);
+  assert.match(skill, /offline/);
+  assert.ok(skill.includes(upstream));
   assert.ok(Buffer.byteLength(skill) < 6500);
 }
 assert.throws(() => registry.loadTrustedSkill('office'), /unknown skill name/);

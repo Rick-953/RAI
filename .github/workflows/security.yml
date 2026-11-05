@@ -116,6 +116,24 @@ jobs:
           RAI_QR_BROWSER_ENGINE=webkit npm run test:qr-scan-ux-browser
           npm run test:qr-scanner-browser
 
+  office-runtime:
+    name: Office sandbox runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Provision pinned Office runtime
+        run: sudo sh scripts/setup-office-runtime.sh
+      - name: Verify real files, native revisions, rendering and sandbox isolation
+        run: sudo "$(command -v node)" scripts/office-sandbox-smoke.js
+
   isolated-security-smoke:
     name: Isolated runtime security smoke
     runs-on: ubuntu-24.04
@@ -315,13 +333,14 @@ jobs:
   security-gate-summary:
     name: Security gate summary
     if: always()
-    needs: [formal-tests, isolated-security-smoke, dependency-audit, osv-audit, rustsec-audit, rustsec-local-agent, codeql, secret-scan]
+    needs: [formal-tests, office-runtime, isolated-security-smoke, dependency-audit, osv-audit, rustsec-audit, rustsec-local-agent, codeql, secret-scan]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every security gate to succeed
         env:
           FORMAL_TESTS: ${{ needs.formal-tests.result }}
+          OFFICE_RUNTIME: ${{ needs.office-runtime.result }}
           ISOLATED_SECURITY_SMOKE: ${{ needs.isolated-security-smoke.result }}
           DEPENDENCY_AUDIT: ${{ needs.dependency-audit.result }}
           OSV_AUDIT: ${{ needs.osv-audit.result }}
@@ -332,6 +351,7 @@ jobs:
         run: |
           for result in \
             "$FORMAL_TESTS" \
+            "$OFFICE_RUNTIME" \
             "$ISOLATED_SECURITY_SMOKE" \
             "$DEPENDENCY_AUDIT" \
             "$OSV_AUDIT" \
