@@ -25826,6 +25826,14 @@ if (clientFileExecution && systemPrompt) {
             if (clientAborted || chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
                 console.log(` 聊天请求已中止: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
                 return;
+            } else if (String(fetchError.code || '').startsWith('context_') || fetchError.code === 'current_turn_context_too_large') {
+                if (!String(fullContent || '').trim() && !String(reasoningContent || '').trim()) throw fetchError;
+                streamDegraded = true;
+                console.warn(` 工具续传上下文未就绪，保留已生成内容: code=${fetchError.code}`);
+                res.write(`data: ${JSON.stringify({
+                    type: 'stream_warning', code: fetchError.code,
+                    message: fetchError.message + ' 已保存本次已生成的内容和工具结果。'
+                })}\n\n`);
             } else if ((fetchError.name === 'AbortError' || fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT')
                 && (String(fullContent || '').trim() || String(reasoningContent || '').trim())) {
                 streamDegraded = true;

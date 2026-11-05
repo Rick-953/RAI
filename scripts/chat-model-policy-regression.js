@@ -63,6 +63,25 @@ async function main() {
     assert.equal(JSON.stringify(original),snapshot,'must not mutate persisted history');assert.equal(notices,1);assert.ok(chunks>1);
     assert.equal(compressed.messages[0].content,'SYSTEM_INTACT');assert.ok(compressed.messages.some(m=>m.content==='LATEST_QUESTION'));assert.ok(compressed.messages.some(m=>m.tool_call_id==='tool_1'));
     assert.ok(estimateContextTokens(compressed)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    // A few large file/command results can fill the budget before six exchanges exist.
+    for (const [count, resultSize] of [[2,150000],[5,65000],[7,70000]]) {
+        const messages = [{role:'system',content:'STABLE_POLICY'}, {role:'user',content:'Finish report.pptx; keep the original image.'}, {role:'user',content:'[Enabled client skill directory] documents, presentations'}];
+        for (let step=1; step<=count; step++) messages.push(
+            {role:'assistant',content:null,tool_calls:[{id:`large_${step}`,type:'function',function:{name:'read_code',arguments:JSON.stringify({path:'report.pptx',offset:step})}}]},
+            {role:'tool',tool_call_id:`large_${step}`,content:`CHECKPOINT=${step}\n`+'x'.repeat(resultSize)});
+        const body = {model:'gpt-6-luna',max_tokens:8000,messages};
+        const source = JSON.stringify(body); let compressedEvents=0, summarized='';
+        const result = await enforceContextWindow(body, {summarize:async text=>{summarized+=text; return 'Completed older report.pptx steps. Continue from the latest checkpoint; do not replay writes.';},onCompressed:()=>compressedEvents++});
+        assert.equal(JSON.stringify(body),source,'large-turn compaction never edits the original transcript');
+        assert.equal(compressedEvents,1);
+        assert.deepEqual(result.messages.at(-1),messages.at(-1),'the latest complete tool result remains intact');
+        assert.ok(result.messages.some(message=>message.content===messages[1].content),'retain the original task');
+        assert.ok(result.messages.some(message=>message.content===messages[2].content),'consecutive skill metadata belongs to the same current task');
+        assert.ok(summarized.includes('CHECKPOINT=1'),'older results enter the summary rather than disappearing');
+        const ids = new Set(result.messages.flatMap(message=>(message.tool_calls||[]).map(call=>call.id)));
+        for (const message of result.messages.filter(message=>message.role==='tool')) assert.ok(ids.has(message.tool_call_id),'large-turn compaction never orphans a tool result');
+        assert.ok(estimateContextTokens(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    }
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);
