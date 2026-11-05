@@ -33,6 +33,7 @@
     "test:fetch-denylist": "node scripts/fetch-denylist-regression.js",
     "test:remote-tool-history": "node scripts/remote-tool-history-regression.js",
     "test:tool-trace-ui": "node scripts/tool-trace-ui-regression.js",
+    "test:execution-flow-runtime": "node scripts/execution-flow-runtime-regression.js",
     "test:conversation-integrity": "node scripts/conversation-integrity-regression.js",
     "test:office-picker-runtime": "node scripts/office-picker-runtime-regression.js",
     "test:streaming-interjection": "node scripts/streaming-interjection-regression.js",

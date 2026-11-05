@@ -75,14 +75,14 @@ for (const result of [{success:true}, {success:false}, {success:true, executed:'
 }
 {
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  const statusBegin = app.indexOf("      const storedStatus = String(segment.status || 'done');");
+  const statusBegin = app.indexOf("      const missingResult = !live &&");
   const statusEnd = app.indexOf('\n', app.indexOf('      item.dataset.status =', statusBegin));
-  const titleBegin = app.indexOf('      toggle.textContent = missingHistoricalResult', statusEnd);
+  const titleBegin = app.indexOf('      toggle.textContent = missingResult', statusEnd);
   const titleEnd = app.indexOf(';', titleBegin) + 1;
   const detailBegin = app.indexOf("      const storedDetail = String(segment.detail || '');", titleEnd);
-  const detailEnd = app.indexOf('        : storedDetail;', detailBegin) + '        : storedDetail;'.length;
+  const detailEnd = app.indexOf('      toggle.addEventListener', detailBegin);
   assert.ok(statusBegin >= 0 && statusEnd > statusBegin && titleBegin > statusEnd && titleEnd > titleBegin && detailBegin > titleEnd && detailEnd > detailBegin, 'Historical tool status presentation missing');
-  const normalize = vm.runInNewContext('(segment, message, language = "zh-CN") => { const item={dataset:{}},toggle={},detail={},appState={language}; const isChineseLanguage = value => String(value).startsWith("zh"); ' + app.slice(statusBegin,statusEnd) + ' ' + app.slice(titleBegin,titleEnd) + ' ' + app.slice(detailBegin,detailEnd) + ' return {status:item.dataset.status,title:toggle.textContent,detail:detail.textContent}; }', {}, {timeout:2000});
+  const normalize = vm.runInNewContext('(segment, message, language = "zh-CN") => { const live=!!message.is_live_stream,item={dataset:{}},toggle={},detail={},appState={language}; const isChineseLanguage = value => String(value).startsWith("zh"); ' + app.slice(statusBegin,statusEnd) + ' ' + app.slice(titleBegin,titleEnd) + ' ' + app.slice(detailBegin,detailEnd) + ' return {status:item.dataset.status,title:toggle.textContent,detail:detail.textContent}; }', {}, {timeout:2000});
   const originalDetail = '工具调用进行中';
   const historical = normalize({kind:'tool',status:'running',title:originalDetail,detail:originalDetail}, {});
   check(historical.status, 'unknown', 'Missing historical completion pretends to run');

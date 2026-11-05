@@ -80,7 +80,12 @@ async function main(){
   const db=await openDatabase(databasePath);
   try{
    await dbRun(db,'UPDATE users SET points=0,purchased_points=0');
-   async function chat(model,fields={}){const response=await fetch(baseUrl+'/api/chat/stream',{method:'POST',headers,body:JSON.stringify({model,messages:[{role:'user',content:'Say hello.'}],internetMode:false,memoryMode:'off',thinkingMode:true,reasoningProfile:'medium',...fields})});const raw=await response.text();return{status:response.status,raw,events:raw.split(/\r?\n/).filter(x=>x.startsWith('data: ')&&!x.includes('[DONE]')).map(x=>JSON.parse(x.slice(6)))};}
+   async function chat(model,fields={}){
+    const response=await fetch(baseUrl+'/api/chat/stream',{method:'POST',headers,body:JSON.stringify({model,messages:[{role:'user',content:'Say hello.'}],internetMode:false,memoryMode:'off',thinkingMode:true,reasoningProfile:'medium',...fields})});
+    const raw=await response.text(),requestId=response.headers.get('X-Request-ID');
+    if(requestId)assert.equal((await dbGet(db,'SELECT COUNT(*) AS n FROM active_requests WHERE id = ?',[requestId])).n,0,'an ended response must release its concurrency slot: '+model);
+    return{status:response.status,raw,events:raw.split(/\r?\n/).filter(x=>x.startsWith('data: ')&&!x.includes('[DONE]')).map(x=>JSON.parse(x.slice(6)))};
+   }
    const availability=await(await fetch(baseUrl+'/api/model-availability')).json();assert.deepEqual(availability.models.map(x=>x.id),['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);assert.deepEqual(availability.models.find(x=>x.id==='gpt-6-luna').limits,{free:100,pro:200,max:500});assert.equal(availability.contextWindow,272000);
    assert.deepEqual(availability.smartDefaults,{model:'gpt-6-luna',reasoningProfile:'none',thinkingMode:false});
    assert.deepEqual(availability.fastDefaults,{model:'gpt-6-luna',reasoningProfile:'none',thinkingMode:false});

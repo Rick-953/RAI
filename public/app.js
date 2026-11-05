@@ -2414,7 +2414,7 @@ const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
 const RAI_APP_VERSION = '0.13.46';
-const RAI_BUILD_ID = '20261105-title-image';
+const RAI_BUILD_ID = '20261105-execution-flow';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5364,8 +5364,9 @@ function extractTrailingTitleMarker(text = '') {
 
 function stripTrailingTitleMarker(text = '') {
   let output = extractTrailingTitleMarker(text).cleanContent
-    .replace(/\[TITLE\][\s\S]*?(?:\[\/TITLE\]|$)|\[\/TITLE\]/gi, '');
-  for (const marker of ['[TITLE]', '[/TITLE]']) {
+    .replace(/\[TITLE\][\s\S]*?(?:\[\/TITLE\]|$)|\[\/TITLE\]/gi, '')
+    .replace(/\[\/?RAI_FINAL\]/gi, '');
+  for (const marker of ['[TITLE]', '[/TITLE]', '[RAI_FINAL]', '[/RAI_FINAL]']) {
     for (let length = Math.min(marker.length - 1, output.length); length > 0; length -= 1) {
       if (output.slice(-length).toUpperCase() === marker.slice(0, length)) {
         output = output.slice(0, -length);
@@ -17785,6 +17786,111 @@ function armMessageEntranceAnimation(element) {
   return element;
 }
 
+function projectAssistantExecution(segments, finalOffset = -1, complete = false) {
+  const rows = segments.filter((segment) => segment && segment.kind);
+  const text = rows.filter((row) => row.kind === 'content').map((row) => String(row.text || '')).join('');
+  const firstContent = rows.find((row) => row.kind === 'content');
+  const base = Number.isInteger(firstContent?.content_offset) ? firstContent.content_offset : 0;
+  let boundary = Number.isInteger(finalOffset) && finalOffset >= 0 ? Math.max(0, Math.min(text.length, finalOffset - base)) : -1;
+  if (boundary < 0 && complete) {
+    let position = 0;
+    for (const row of rows) {
+      if (row.kind === 'content') position += String(row.text || '').length;
+      else if (row.kind === 'tool' || row.kind === 'search') boundary = position;
+    }
+  }
+  const finalStarted = boundary >= 0 && !!text.slice(boundary).trim();
+  if (!finalStarted && !rows.some((row) => row.kind !== 'content')) {
+    return { process: [], answer: text, finalStarted: false, toolCount: 0 };
+  }
+  const process = [];
+  let position = 0;
+  for (const row of rows) {
+    if (row.kind !== 'content') { process.push(row); continue; }
+    const value = String(row.text || '');
+    const report = finalStarted ? value.slice(0, Math.max(0, boundary - position)) : value;
+    if (report.trim()) process.push({ ...row, text: report });
+    position += value.length;
+  }
+  return { process, answer: finalStarted ? text.slice(boundary) : '', finalStarted,
+    toolCount: process.filter((row) => row.kind === 'tool' || row.kind === 'search').length };
+}
+
+function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [] } = {}) {
+  const projection = projectAssistantExecution(segments, finalOffset, complete);
+  let disclosure = container.querySelector(':scope > .execution-process');
+  let rows = disclosure?.querySelector('.execution-process-rows');
+  if (projection.process.length) {
+    if (!disclosure) {
+      disclosure = document.createElement('details');
+      disclosure.className = 'execution-process';
+      disclosure.open = true;
+      const summary = document.createElement('summary');
+      disclosure.appendChild(summary);
+      rows = document.createElement('div');
+      rows.className = 'execution-process-rows';
+      disclosure.appendChild(rows);
+      container.prepend(disclosure);
+    }
+    disclosure.querySelector('summary').textContent = isChineseLanguage(appState.language)
+      ? `执行过程 · ${projection.toolCount} 次工具调用` : `Execution · ${projection.toolCount} tool calls`;
+    // Collapse once, in the same render as the first final character; later deltas keep the user's choice.
+    if (projection.finalStarted && disclosure.dataset.finalStarted !== '1') {
+      disclosure.open = false;
+      disclosure.dataset.finalStarted = '1';
+    }
+    rows.replaceChildren();
+    for (const segment of projection.process) {
+      if (segment.kind === 'reasoning' && hideReasoning) continue;
+      if (segment.kind === 'content') {
+        const report = document.createElement('div');
+        report.className = 'stream-flow-content';
+        report.innerHTML = sanitizeRenderedHtml(renderMarkdownWithMath(sanitizeAssistantDisplayText(segment.text), live));
+        rows.appendChild(report);
+        continue;
+      }
+      const item = document.createElement('div');
+      item.className = 'stream-flow-event thinking-step';
+      item.classList.add(`stream-flow-${['tool', 'search', 'reasoning'].includes(segment.kind) ? segment.kind : 'tool'}`);
+      const missingResult = !live && ['tool', 'search'].includes(segment.kind) && segment.status === 'running';
+      item.dataset.status = missingResult ? 'unknown' : (segment.status || 'done');
+      item.classList.toggle('expanded', !!segment.expanded);
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'stream-flow-event-toggle';
+      toggle.setAttribute('aria-expanded', segment.expanded ? 'true' : 'false');
+      toggle.textContent = missingResult
+        ? `${String(segment.title || '').replace('工具调用进行中', '工具执行记录')} · ${isChineseLanguage(appState.language) ? '历史状态未保存' : 'Result not recorded'}`
+        : String(segment.title || '');
+      const detail = document.createElement('div');
+      detail.className = 'stream-flow-event-detail';
+      const storedDetail = String(segment.detail || '');
+      detail.textContent = missingResult
+        ? (isChineseLanguage(appState.language)
+          ? `历史记录未保存工具的最终结果，无法确认执行状态。${storedDetail.trim() ? `\n\n当时记录：${storedDetail}` : ''}`
+          : `This history did not save the tool's final result; its execution status cannot be confirmed.${storedDetail.trim() ? `\n\nRecorded at the time: ${storedDetail}` : ''}`)
+        : storedDetail;
+      toggle.addEventListener('click', () => {
+        segment.expanded = item.classList.toggle('expanded');
+        toggle.setAttribute('aria-expanded', segment.expanded ? 'true' : 'false');
+      });
+      item.append(toggle, detail);
+      rows.appendChild(item);
+    }
+  }
+  let answer = container.querySelector(':scope > .execution-answer');
+  if (!answer) {
+    answer = document.createElement('div');
+    answer.className = 'execution-answer stream-flow-content';
+    container.appendChild(answer);
+  }
+  const text = extractAskUserBlocks(sanitizeAssistantDisplayText(projection.answer)).text;
+  let html = renderMarkdownWithMath(live ? stripIncompleteAskUserFence(text) : text, live);
+  if (Array.isArray(sources) && sources.length) html = renderCitations(html, sources);
+  answer.innerHTML = sanitizeRenderedHtml(html);
+  hydrateRenderedImages(container);
+}
+
 function prepareMessageElement(message, { animate = true } = {}) {
   const element = createMessageElement(message);
   if (!element) return null;
@@ -17865,12 +17971,13 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   const finalizedHasReasoningBlock = !!finalizedContent.querySelector('.rai-reasoning-block');
   const preserveLiveFlow = !!(
     existingText?.classList?.contains('stream-flow') &&
+    (finalizedText?.classList?.contains('stream-flow') || (
     !finalizedText?.classList?.contains('stream-flow') &&
     finalizedHasLiveStructure &&
     (
       String(existingText.textContent || '').trim() ||
       existingText.querySelector('img, .streaming-image-container, .stream-flow-event')
-    )
+    )))
   );
   if (existingText?.classList?.contains('stream-flow')) {
     existingTextNodes.forEach((node) => {
@@ -19344,45 +19451,16 @@ function createMessageElement(message) {
   if (hasInterleavedFlow) {
     const flow = document.createElement('div');
     flow.className = 'message-text stream-flow';
-    processTrace.flowSegments.forEach((segment) => {
-      if (!segment || !segment.kind) return;
-      if (segment.kind === 'reasoning' && shouldRenderReasoningTimeline) return;
-      if (segment.kind === 'content') {
-        const block = document.createElement('div');
-        block.className = 'stream-flow-content';
-        block.innerHTML = sanitizeRenderedHtml(renderMarkdownWithMath(String(segment.text || '')));
-        flow.appendChild(block);
-        return;
-      }
-      const item = document.createElement('div');
-      item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
-      const storedStatus = String(segment.status || 'done');
-      const missingHistoricalResult = !message.is_live_stream && ['tool', 'search'].includes(segment.kind) && storedStatus === 'running';
-      item.dataset.status = missingHistoricalResult ? 'unknown' : storedStatus;
-      item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
-      const stepContent = item.querySelector('.thinking-step-content');
-      const toggle = document.createElement('button');
-      toggle.type = 'button';
-      toggle.className = 'stream-flow-event-toggle';
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = missingHistoricalResult
-        ? `${String(segment.title || '工具执行记录').replace('工具调用进行中', '工具执行记录')} · 历史状态未保存`
-        : String(segment.title || '');
-      const detail = document.createElement('div');
-      detail.className = 'stream-flow-event-detail';
-      const storedDetail = String(segment.detail || '');
-      detail.textContent = missingHistoricalResult
-        ? (isChineseLanguage(appState.language)
-          ? `历史记录未保存工具的最终结果，无法确认执行状态。${storedDetail.trim() ? `\n\n当时记录：${storedDetail}` : ''}`
-          : `This history did not save the tool's final result; its execution status cannot be confirmed.${storedDetail.trim() ? `\n\nRecorded at the time: ${storedDetail}` : ''}`)
-        : storedDetail;
-      toggle.addEventListener('click', () => {
-        const expanded = item.classList.toggle('expanded');
-        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      });
-      stepContent.appendChild(toggle);
-      stepContent.appendChild(detail);
-      flow.appendChild(item);
+    let flowSources = message.sources;
+    if (typeof flowSources === 'string') {
+      try { flowSources = JSON.parse(flowSources); } catch { flowSources = []; }
+    }
+    renderAssistantExecutionFlow(flow, processTrace.flowSegments, {
+      finalOffset: processTrace.finalAnswerOffset,
+      complete: !message.is_live_stream && !processTrace.interrupted,
+      live: !!message.is_live_stream,
+      hideReasoning: shouldRenderReasoningTimeline,
+      sources: flowSources
     });
     content.appendChild(flow);
   }
@@ -22411,7 +22489,7 @@ async function sendMessage(message = null, options = {}) {
     const id = String(event.tool_call_id || event.call_id || `${tool}:${event.round || 0}:${event.query || event.skill || event.file_name || event.url || ''}`);
     const status = String(event.status || 'running').toLowerCase();
     const isCurrent = status === 'running' || status === 'pending';
-    if (toolTracePanel) toolTracePanel.hidden = false;
+    if (toolTracePanel) toolTracePanel.hidden = true; // Tool details are shown in the ordered execution process.
     let item = toolTraceItems.get(id);
     if (!item) {
       item = document.createElement('div');
@@ -23249,12 +23327,14 @@ async function sendMessage(message = null, options = {}) {
     const renderingMermaids = new Set();
     const streamFlowSegments = [];
     let activeFlowContent = null;
+    let finalAnswerOffset = -1;
+    let streamComplete = false;
 
     function appendInterleavedContent(text) {
       const chunk = String(text || '');
       if (!chunk) return;
       if (!activeFlowContent) {
-        activeFlowContent = { kind: 'content', text: '' };
+        activeFlowContent = { kind: 'content', text: '', content_offset: fullContent.length - chunk.length };
         streamFlowSegments.push(activeFlowContent);
       }
       activeFlowContent.text += chunk;
@@ -23263,15 +23343,16 @@ async function sendMessage(message = null, options = {}) {
 
     function appendInterleavedEvent(kind, title, detail = '', status = 'done', trace = null) {
       activeFlowContent = null;
-      const last = streamFlowSegments[streamFlowSegments.length - 1];
-      if (last && last.kind === kind && last.title === title) {
-        last.detail = detail || last.detail;
-        last.status = status;
-        last.trace = trace || last.trace;
-        renderInterleavedFlow();
-        return;
+      const callId = trace?.tool_call_id || trace?.call_id;
+      const existing = callId ? streamFlowSegments.find((row) => row.toolCallId === callId)
+        : (kind === 'search' ? streamFlowSegments.findLast((row) => row.kind === 'search' && row.status === 'running') : null);
+      if (existing) {
+        existing.detail = detail || existing.detail;
+        existing.status = status;
+        existing.trace = trace || existing.trace;
+      } else {
+        streamFlowSegments.push({ kind, title, detail, status, trace, toolCallId: callId });
       }
-      streamFlowSegments.push({ kind, title, detail, status, trace });
       renderInterleavedFlow();
     }
 
@@ -23287,41 +23368,11 @@ async function sendMessage(message = null, options = {}) {
 
     function renderInterleavedFlow() {
       if (!streamingEl) return;
-      streamingEl.replaceChildren();
-      streamFlowSegments.forEach((segment) => {
-        if (segment.kind === 'reasoning' && document.getElementById('raiReasoningBlock')) return;
-        if (segment.kind === 'content') {
-          const block = document.createElement('div');
-          block.className = 'stream-flow-content';
-          block.innerHTML = renderMarkdownWithMath(
-            sanitizeAssistantDisplayText(stripTrailingTitleMarker(segment.text)),
-            true
-          );
-          streamingEl.appendChild(block);
-          return;
-        }
-        const item = document.createElement('div');
-        item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
-        item.dataset.status = segment.status || 'done';
-        item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
-        const content = item.querySelector('.thinking-step-content');
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'stream-flow-event-toggle';
-        button.setAttribute('aria-expanded', 'false');
-        button.textContent = segment.title || '';
-        const detail = document.createElement('div');
-        detail.className = 'stream-flow-event-detail';
-        detail.textContent = segment.detail || '';
-        button.addEventListener('click', () => {
-          const expanded = item.classList.toggle('expanded');
-          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        });
-        content.appendChild(button);
-        content.appendChild(detail);
-        streamingEl.appendChild(item);
+      if (timelineDynamicSteps) timelineDynamicSteps.hidden = true;
+      renderAssistantExecutionFlow(streamingEl, streamFlowSegments, {
+        finalOffset: finalAnswerOffset, complete: streamComplete, live: true,
+        hideReasoning: !!document.getElementById('raiReasoningBlock'), sources: currentSources
       });
-      hydrateRenderedImages(streamingEl);
       scrollToBottom();
     }
 
@@ -23668,6 +23719,12 @@ async function sendMessage(message = null, options = {}) {
 
             scrollToBottom();
           }
+          else if (parsed.type === 'answer_start') {
+            if (finalAnswerOffset < 0 && Number.isInteger(parsed.content_offset) && parsed.content_offset >= 0) {
+              finalAnswerOffset = parsed.content_offset;
+              activeFlowContent = null;
+            }
+          }
           else if (parsed.type === 'content') {
             // 隐藏加载状态提示（首次收到内容时）
             if (!isThinkingPhase) {
@@ -23710,7 +23767,7 @@ async function sendMessage(message = null, options = {}) {
 
             // 正文按到达顺序写入交错流，工具/搜索事件会插入其后。
             const rawChunk = parsed.content || '';
-            const cleanChunk = sanitizeAssistantDisplayText(sanitizeToolCallArtifacts(rawChunk));
+            const cleanChunk = rawChunk; // The server filters the cumulative buffer; delta whitespace is significant.
             if (!cleanChunk) {
               continue;
             }
@@ -23979,7 +24036,7 @@ async function sendMessage(message = null, options = {}) {
             upsertToolTraceItem(parsed);
             if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
             recordTimelineStep('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done');
-            appendInterleavedEvent('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done', parsed);
+            appendInterleavedEvent('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), ['failed', 'error', 'denied', 'cancelled'].includes(parsed.status) ? 'failed' : (['running', 'pending', 'calling', 'waiting'].includes(parsed.status) ? 'running' : 'done'), parsed);
             addProcessTraceItem('tool', summarizeToolTrace(parsed));
             scrollToBottom();
           }
@@ -24064,6 +24121,7 @@ async function sendMessage(message = null, options = {}) {
             if (parsed.actualModel) { actualRequestModel = parsed.actualModel; appState.lastModelUsed = actualRequestModel; }
             receivedDoneEvent = true;
             const incomplete = parsed.degraded === true;
+            streamComplete = !incomplete;
             // An upstream stop is terminal, not a successful answer. Do not
             // automatically repeat tools or obscure the interruption in the timeline.
             stopCharRender();
@@ -24220,7 +24278,7 @@ async function sendMessage(message = null, options = {}) {
     }));
     const toolSnapshot = Array.from(toolTraceSnapshots.values()).slice(-200);
     let serializedProcessTrace = null;
-    if (enableProcessTrace || toolSnapshot.length > 0) {
+    if (enableProcessTrace || toolSnapshot.length > 0 || streamFlowSegments.some((row) => row.kind !== 'content')) {
       const processTraceSnapshot = {
         version: 2,
         mode: (currentResearchMode === 'deep' || currentResearchMode === 'fast')
@@ -24233,6 +24291,8 @@ async function sendMessage(message = null, options = {}) {
         trace: processTraceEvents,
         timeline: timelineSequence.slice(-200),
         flowSegments: streamFlowSegments.slice(-200),
+        finalAnswerOffset,
+        interrupted: !streamComplete,
         tools: toolSnapshot
       };
       if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {

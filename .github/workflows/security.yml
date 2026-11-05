@@ -109,6 +109,8 @@ jobs:
           RAI_BROWSER_ENGINE=webkit npm run test:composer-focus-runtime
           npm run test:model-ui-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:model-ui-runtime
+          npm run test:execution-flow-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:execution-flow-runtime
           npm run test:web-ui-completion
           npm run test:ios-standalone-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:ios-standalone-runtime

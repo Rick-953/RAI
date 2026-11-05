@@ -1,5 +1,8 @@
 ## 0.13.46 - 2026-11-05
 
+- Interleave Agent progress reports and correlated tool calls in one ordered, expandable execution process. When the first visible final-answer character arrives, collapse prior work and stream the separate summary and delivery in the same render. Preserve manual expansion, final boundaries, results and interrupted progress across streaming and history reloads.
+- Hide the internal final-answer protocol, including fragmented markers, on both product surfaces. Save content offsets so long, bounded histories retain the correct final answer.
+- Release completed chat concurrency slots before ending the HTTP response, keeping slower quota settlement and artifact cleanup from causing false concurrency-limit errors on the next request.
 - Filter standalone, mixed-case and partially streamed title markers from assistant replies on the server and in browser history/rendering, while preserving conversation title extraction.
 - Require Word reports to embed supplied pictures and verify their media and drawing relationships before claiming completion. Keep failed image insertion visible as an unfinished draft.
 
