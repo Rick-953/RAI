@@ -1,3 +1,8 @@
+## 0.13.46 - 2026-11-05
+
+- Filter standalone, mixed-case and partially streamed title markers from assistant replies on the server and in browser history/rendering, while preserving conversation title extraction.
+- Require Word reports to embed supplied pictures and verify their media and drawing relationships before claiming completion. Keep failed image insertion visible as an unfinished draft.
+
 ## 0.13.45 - 2026-11-05
 
 - Add authenticated command review using api.000339.xyz's codex-auto-review. A valid allow/deny result costs one point; invalid results, unavailable providers and insufficient balance never authorize execution or charge points. Persist review IDs and payload hashes to prevent duplicate charges across retries.

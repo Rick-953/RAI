@@ -346,7 +346,7 @@ function removeInternalAssistantDisplaySections(text = '') {
 }
 
 function sanitizeAssistantDisplayText(text = '') {
-  let output = String(text || '');
+  let output = stripTrailingTitleMarker(text);
   output = output
     .replace(/\bDeepSek\b/g, 'DeepSeek')
     .replace(/\bDeepsek\b/g, 'DeepSeek')
@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.45';
-const RAI_BUILD_ID = '20261105-office-approval';
+const RAI_APP_VERSION = '0.13.46';
+const RAI_BUILD_ID = '20261105-title-image';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5363,7 +5363,17 @@ function extractTrailingTitleMarker(text = '') {
 }
 
 function stripTrailingTitleMarker(text = '') {
-  return extractTrailingTitleMarker(text).cleanContent;
+  let output = extractTrailingTitleMarker(text).cleanContent
+    .replace(/\[TITLE\][\s\S]*?(?:\[\/TITLE\]|$)|\[\/TITLE\]/gi, '');
+  for (const marker of ['[TITLE]', '[/TITLE]']) {
+    for (let length = Math.min(marker.length - 1, output.length); length > 0; length -= 1) {
+      if (output.slice(-length).toUpperCase() === marker.slice(0, length)) {
+        output = output.slice(0, -length);
+        break;
+      }
+    }
+  }
+  return output;
 }
 
 function isDefaultConversationTitle(title = '') {

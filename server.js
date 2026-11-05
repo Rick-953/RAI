@@ -16590,7 +16590,7 @@ function trimStructuredTokenPrefix(text = '') {
     for (const token of STRUCTURED_OUTPUT_TOKENS) {
         const maxPrefixLength = Math.min(token.length - 1, result.length);
         for (let len = maxPrefixLength; len > 0; len -= 1) {
-            if (token.startsWith(result.slice(-len))) {
+            if (token.startsWith(result.slice(-len).toUpperCase())) {
                 result = result.slice(0, -len);
                 break;
             }
@@ -16642,6 +16642,7 @@ function extractLegacyTrailingTitle(text = '') {
 
 function parseStructuredAssistantOutput(rawText = '') {
     const source = String(rawText || '');
+    const markerSource = source.replace(/\[\/?title\]/gi, (marker) => marker.toUpperCase());
     let visibleContent = '';
     let extractedTitle = null;
     let canvasPatchRaw = '';
@@ -16650,8 +16651,8 @@ function parseStructuredAssistantOutput(rawText = '') {
     let cursor = 0;
 
     while (cursor < source.length) {
-        if (source.startsWith(TITLE_START_TOKEN, cursor)) {
-            const titleEnd = source.indexOf(TITLE_END_TOKEN, cursor + TITLE_START_TOKEN.length);
+        if (markerSource.startsWith(TITLE_START_TOKEN, cursor)) {
+            const titleEnd = markerSource.indexOf(TITLE_END_TOKEN, cursor + TITLE_START_TOKEN.length);
             if (titleEnd === -1) {
                 break;
             }
@@ -16659,6 +16660,11 @@ function parseStructuredAssistantOutput(rawText = '') {
                 extractedTitle = source.slice(cursor + TITLE_START_TOKEN.length, titleEnd).trim();
             }
             cursor = titleEnd + TITLE_END_TOKEN.length;
+            continue;
+        }
+
+        if (markerSource.startsWith(TITLE_END_TOKEN, cursor)) {
+            cursor += TITLE_END_TOKEN.length;
             continue;
         }
 
@@ -16988,7 +16994,8 @@ function removeInternalAssistantSections(text = '') {
 }
 
 function sanitizeAssistantVisibleContent(text = '') {
-    let output = String(text || '');
+    let output = trimStructuredTokenPrefix(String(text || '')
+        .replace(/\[TITLE\][\s\S]*?(?:\[\/TITLE\]|$)|\[\/TITLE\]/gi, ''));
 
     output = output
         .replace(/\bDeepSek\b/g, 'DeepSeek')
