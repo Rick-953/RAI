@@ -1,4 +1,5 @@
 skills/** text eol=lf
+skills/office-resources/*.zip -text
 
 # Vendored artifacts must remain byte-identical to authenticated upstream archives.
 public/lib/** -text
