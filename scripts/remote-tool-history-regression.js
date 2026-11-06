@@ -35,15 +35,16 @@ for (const result of [{success:true}, {success:false}, {success:true, executed:'
   state.remoteStart('write_file', call, {authorizationProtocol:'web-v2'});
   state.content('After authorization');
   state.remoteComplete(result, 'write_file', call);
-  const expected = result.success === true && result.executed !== 'unknown' ? 'complete' : 'failed';
+  const expected = result.executed === 'unknown' ? 'unknown' : (result.success === true ? 'complete' : 'failed');
   check(state.tools.length, 1, 'Remote completion must update the same tool call');
   check(state.tools[0].status, expected, 'Remote history lies about execution status');
   check(state.flow.filter(s => s.kind === 'tool').length, 1, 'Remote history retains a stale duplicate running card');
-  check(state.flow[1].status, expected === 'complete' ? 'done' : 'failed', 'Historical flow card did not complete');
+  check(state.flow[1].status, expected === 'complete' ? 'done' : expected, 'Historical flow card lost its execution status');
   check(state.flow[2].text, 'After authorization', 'Updating a card loses surrounding narrative');
   check(events.length, 2, 'Completion SSE event lost');
   check(events[1].status, expected, 'Live and stored tool status diverge');
-  if (expected === 'failed') check(events[1].message.includes('执行完成'), false, 'Unknown execution claims completion');
+  if (expected !== 'complete') check(events[1].message.includes('执行完成'), false, 'Unconfirmed execution claims completion');
+  if (expected === 'unknown') check(events[1].message.includes('可能已执行'), true, 'Unknown execution must remain explicit');
 }
 {
   const {state} = setup();
@@ -99,6 +100,7 @@ for (const result of [{success:true}, {success:false}, {success:true, executed:'
   check(complete.status, 'done', 'Recorded successful history lost');
   check(complete.detail, '  Successfully completed  ', 'Recorded final result modified');
   check(normalize({kind:'tool',status:'failed',detail:'Failed: denied'}, {}).detail, 'Failed: denied', 'Recorded failure was concealed');
+  check(normalize({kind:'tool',status:'unknown',detail:'Execution may have completed'}, {}).status, 'unknown', 'Unconfirmed execution was presented as successful');
   check(normalize({kind:'tool',status:'running',detail:'<script>bad</script>'}, {}).detail.endsWith('当时记录：<script>bad</script>'), true, 'Historical evidence was changed instead of rendered as text');
 }
 console.log(`PASS: ${assertions} production remote/local tool history assertions`);
