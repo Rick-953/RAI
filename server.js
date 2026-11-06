@@ -20792,6 +20792,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
     };
     let liveStreamState = null;
     let chatRequestSucceeded = false;
+    let persistedInterruptedAnswer = false;
     let clientAborted = false;
     let chatRequestCancelled = false;
     let chatRequestBudget = null;
@@ -21416,7 +21417,7 @@ if (clientFileExecution && systemPrompt) {
             if (serverToolTrace.length > 200) serverToolTrace.splice(0, serverToolTrace.length - 200);
             const kind = row.tool === 'web_search' || event.type === 'search_status' ? 'search' : 'tool';
             const flowStatus = ['running', 'pending', 'calling', 'waiting'].includes(row.status)
-                ? 'running' : (['failed', 'error', 'denied', 'cancelled', 'unknown'].includes(row.status) ? 'failed' : 'done');
+                ? 'running' : (row.status === 'unknown' ? 'unknown' : (['failed', 'error', 'denied', 'cancelled'].includes(row.status) ? 'failed' : 'done'));
             const previousFlow = serverFlowSegments.find((segment) => segment.toolCallId === row.id);
             if (previousFlow) {
                 previousFlow.title = row.summary || row.tool;
@@ -21435,7 +21436,7 @@ if (clientFileExecution && systemPrompt) {
             const tracked = { type: event.type || 'tool_status', ...event };
             const row = recordServerToolTrace(tracked);
             if (row) tracked.content_offset = row.content_offset;
-            res.write(`data: ${JSON.stringify(tracked)}\n\n`);
+            if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(tracked)}\n\n`);
         };
 
         if (sessionId) {
@@ -24683,6 +24684,7 @@ if (clientFileExecution && systemPrompt) {
 
                         const executedToolResults = [];
                         for (const toolCall of pendingToolCalls) {
+                            if (clientAborted || chatRequestCancelled) break;
                             const toolName = toolCall.function.name;
                             const args = toolCall._args;
                             req.recordUserActivity?.('tool_requested', { kind: 'stream', control: toolName,
@@ -24922,6 +24924,7 @@ if (clientFileExecution && systemPrompt) {
                                 }, 25000);
                                 const toolResErrorHandler = (err) => {
                                     console.warn(` 客户端工具等待期间 SSE 流错误: requestId=${requestId}, err=${err?.code || err?.message}`);
+                                    handleClientAbort();
                                     rejectClientToolPending(requestId, 'stream_error');
                                 };
                                 res.once('error', toolResErrorHandler);
@@ -24970,14 +24973,15 @@ if (clientFileExecution && systemPrompt) {
                                 }
                                 executedToolResults.push({ toolCall, result: modelResult });
                                 const ok = localResult && localResult.success !== false;
+                                const unknown = localResult?.executed === 'unknown' || ['client_aborted', 'stream_error'].includes(localResult?.error);
                                 const uiResult = {
             type: 'tool_status',
             tool: toolName,
-            status: ok ? 'complete' : 'failed',
+            status: unknown ? 'unknown' : (ok ? 'complete' : 'failed'),
             file_name: String(localResult?.file_name || '').slice(0, 240),
             download_url: String(localResult?.download_url || '').slice(0, 1000),
             download_available: Boolean(localResult?.download_available || localResult?.download_url),
-            message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（15分钟，含授权和回传）' : '本地执行未完成')
+            message: unknown ? '执行结果未确认，操作可能已执行；请核对电脑状态，勿重复执行' : (ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（15分钟，含授权和回传）' : '本地执行未完成'))
         };
         emitTrackedToolStatus({ ...uiResult, tool_call_id: toolCall.id });
                                 continue;
@@ -25319,6 +25323,7 @@ if (clientFileExecution && systemPrompt) {
                             }
                         }
 
+                        if (clientAborted) break;
                         if (executedToolResults.length === 0 && !deliveredInterjection && !activeRequestInterjections.get(requestId)?.length) {
                             console.warn(` 本轮没有可执行的工具结果，结束工具循环`);
                             break;
@@ -25809,7 +25814,11 @@ if (clientFileExecution && systemPrompt) {
         } catch (fetchError) {
 
             clearTimeout(timeoutId);
-            if (clientAborted || chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
+            if (clientAborted) {
+                // The client may have received completed tool events before the connection closed.
+                streamDegraded = true;
+                console.log(` 客户端连接中断，保存已完成的工作: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
+            } else if (chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
                 console.log(` 聊天请求已中止: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
                 return;
             } else if (fetchError.code === 'provider_continuation_http_failed') {
@@ -25897,7 +25906,8 @@ if (clientFileExecution && systemPrompt) {
             if (!streamDegraded) return;
         }
 
-        if (!String(fullContent || '').trim() && String(reasoningContent || '').trim()) {
+        if (clientAborted) streamDegraded = true;
+        if (!clientAborted && !String(fullContent || '').trim() && String(reasoningContent || '').trim()) {
             streamDegraded = true;
             res.write(`data: ${JSON.stringify({ type: 'stream_warning', code: 'reasoning_without_answer',
                 message: '思考已保存，但上游未生成正文。请重新生成；不会自动重放已执行的工具。' })}\n\n`);
@@ -25906,7 +25916,7 @@ if (clientFileExecution && systemPrompt) {
         audit('chat_completed', { requestId, model: finalModel, success: !streamDegraded,
             visibleChars: fullContent.length, contextLength: reasoningContent.length }, req);
 
-        if (agentRuntime.enabled) {
+        if (agentRuntime.enabled && !clientAborted) {
             if (agentRuntime.selectedAgents.includes('synthesizer')) {
                 emitAgentEvent(res, {
                     type: 'agent_status',
@@ -26017,6 +26027,7 @@ if (clientFileExecution && systemPrompt) {
 
             // 1. 保存用户消息（包含附件信息）
             const lastUserMsg = messages[messages.length - 1];
+            let userMessageToSave = null;
             if (shouldSkipUserSave) {
                 console.log(' 重新生成请求: 跳过重复保存用户消息');
             } else if (lastUserMsg && lastUserMsg.role === 'user') {
@@ -26033,24 +26044,11 @@ if (clientFileExecution && systemPrompt) {
 
                 // 使用毫秒级时间戳确保用户消息严格早于AI消息
                 const userMsgTimestamp = new Date().toISOString();
-                await new Promise((resolve, reject) => {
-                    db.run(
-                        'INSERT INTO messages (session_id, role, content, attachments, created_at) VALUES (?, ?, ?, ?, ?)',
-                        [sessionId, 'user', userContent, attachmentsJson, userMsgTimestamp],
-                        (err) => {
-                            if (err) {
-                                console.error(' 保存用户消息失败:', sanitizeReportContext(err));
-                                reject(err);
-                            } else {
-                                console.log(` 用户消息已保存 (${userContent.length}字符${attachmentsJson ? ', 含附件' : ''})`);
-                                resolve();
-                            }
-                        }
-                    );
-                });
+                userMessageToSave = [sessionId, 'user', userContent, attachmentsJson, userMsgTimestamp];
             }
 
             // 2. 提取并处理标题 / 画布Patch (如果存在)
+            const unknownClientOperation = serverToolTrace.some(tool => tool.status === 'unknown');
             let contentToSave = fullContent || (reasoningContent
                 ? (streamDegraded ? '上游连接中断，正文尚未生成。请点击重新生成。' : '(纯思考内容)')
                 : '(生成中断)');
@@ -26064,6 +26062,13 @@ if (clientFileExecution && systemPrompt) {
             contentToSave = sanitizeAssistantVisibleContent(structuredAssistantOutput.visibleContent || contentToSave).trimEnd();
             if (!contentToSave) {
                 contentToSave = reasoningContent ? '(纯思考内容)' : '(生成中断)';
+            }
+            if (clientAborted) {
+                const notice = unknownClientOperation
+                    ? '本地操作执行状态未知；请核对电脑状态，勿重复执行。'
+                    : '回答未完成，请先核对已执行的操作，再决定是否重新生成。';
+                contentToSave += '\n\n' + notice;
+                recordServerFlowContent('\n\n' + notice);
             }
             if (isContinuationRequest && normalizedContinuationPrefix) {
                 contentToSave = mergeContinuationTextForStorage(normalizedContinuationPrefix, contentToSave).trim();
@@ -26088,48 +26093,54 @@ if (clientFileExecution && systemPrompt) {
             });
 
             // 自动续传更新原回复；若原请求尚未落库，则以本次请求保存完整合并文本。
-            const previousAssistant = isContinuationRequest
-                ? await dbGetAsync(
-                    `SELECT m.id, m.content, m.reasoning_content
-                     FROM messages m
-                     JOIN sessions s ON s.id = m.session_id
-                     WHERE m.request_id = ? AND m.role = 'assistant'
-                       AND m.session_id = ? AND s.user_id = ?
-                     ORDER BY m.id DESC LIMIT 1`,
-                    [normalizedContinuationRequestId, sessionId, req.user.userId]
-                )
-                : null;
-            if (previousAssistant?.id) {
-                contentToSave = mergeContinuationTextForStorage(previousAssistant.content, contentToSave).trim();
-                const mergedReasoning = mergeContinuationTextForStorage(previousAssistant.reasoning_content, reasoningContent).trim();
-                await dbRunAsync(
-                    `UPDATE messages
-                     SET content = ?, reasoning_content = ?, model = ?, enable_search = ?, thinking_mode = ?,
-                         internet_mode = ?, sources = COALESCE(?, sources), attachments = COALESCE(?, attachments), process_trace = COALESCE(?, process_trace)
-                     WHERE id = ?`,
-                    [
-                        contentToSave,
-                        mergedReasoning || null,
-                        persistedModelId,
-                        internetMode ? 1 : 0,
-                        thinkingMode ? 1 : 0,
-                        internetMode ? 1 : 0,
-                        sourcesJson,
-                        assistantAttachmentsJson,
-                        assistantProcessTraceJson,
-                        previousAssistant.id
-                    ]
-                );
-                console.log(
-                    ` 自动续传已合并到原AI回复: ${formatPrivateLogFingerprint(normalizedContinuationRequestId, 'request')}, attempt=${normalizedContinuationAttempt}`
-                );
-            } else {
-                const aiMsgTimestamp = new Date().toISOString();
-                await dbRunAsync(
-                    'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, persistedModelId, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
-                );
-            }
+            await withMainDbTransaction(async (tx) => {
+                if (userMessageToSave) {
+                    await tx.run('INSERT INTO messages (session_id, role, content, attachments, created_at) VALUES (?, ?, ?, ?, ?)', userMessageToSave);
+                }
+                const previousAssistant = isContinuationRequest
+                    ? await tx.get(
+                        `SELECT m.id, m.content, m.reasoning_content
+                         FROM messages m
+                         JOIN sessions s ON s.id = m.session_id
+                         WHERE m.request_id = ? AND m.role = 'assistant'
+                           AND m.session_id = ? AND s.user_id = ?
+                         ORDER BY m.id DESC LIMIT 1`,
+                        [normalizedContinuationRequestId, sessionId, req.user.userId]
+                    )
+                    : null;
+                if (previousAssistant?.id) {
+                    contentToSave = mergeContinuationTextForStorage(previousAssistant.content, contentToSave).trim();
+                    const mergedReasoning = mergeContinuationTextForStorage(previousAssistant.reasoning_content, reasoningContent).trim();
+                    await tx.run(
+                        `UPDATE messages
+                         SET content = ?, reasoning_content = ?, model = ?, enable_search = ?, thinking_mode = ?,
+                             internet_mode = ?, sources = COALESCE(?, sources), attachments = COALESCE(?, attachments), process_trace = COALESCE(?, process_trace)
+                         WHERE id = ?`,
+                        [
+                            contentToSave,
+                            mergedReasoning || null,
+                            persistedModelId,
+                            internetMode ? 1 : 0,
+                            thinkingMode ? 1 : 0,
+                            internetMode ? 1 : 0,
+                            sourcesJson,
+                            assistantAttachmentsJson,
+                            assistantProcessTraceJson,
+                            previousAssistant.id
+                        ]
+                    );
+                    console.log(
+                        ` 自动续传已合并到原AI回复: ${formatPrivateLogFingerprint(normalizedContinuationRequestId, 'request')}, attempt=${normalizedContinuationAttempt}`
+                    );
+                } else {
+                    const aiMsgTimestamp = new Date().toISOString();
+                    await tx.run(
+                        'INSERT INTO messages (session_id, role, content, request_id, attachments, reasoning_content, model, enable_search, thinking_mode, internet_mode, sources, process_trace, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, persistedModelId, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
+                    );
+                }
+            });
+            if (clientAborted) persistedInterruptedAnswer = true;
             console.log(` AI回复已保存:`);
             console.log(`   - 内容: ${formatPrivateLogFingerprint(contentToSave, 'content')}`);
             console.log(`   - 思考: ${formatPrivateLogFingerprint(reasoningContent, 'reasoning')}`);
@@ -26190,10 +26201,10 @@ if (clientFileExecution && systemPrompt) {
                 liveStreamState.assistantContent = contentToSave;
                 liveStreamState.reasoningContent = reasoningContent || '';
                 liveStreamState.model = persistedModelId;
-                liveStreamState.status = 'done';
+                liveStreamState.status = clientAborted ? 'failed' : 'done';
                 liveStreamState.updatedAt = Date.now();
                 await persistSessionStreamDraft(liveStreamState, true);
-                broadcastSessionStreamState(liveStreamState, 'session_stream_done');
+                broadcastSessionStreamState(liveStreamState, clientAborted ? 'session_stream_failed' : 'session_stream_done');
                 cleanupSessionStreamState(sessionId, requestId);
             }
             scheduleConversationIntegritySeal(sessionId, req.user.userId);
@@ -26201,13 +26212,13 @@ if (clientFileExecution && systemPrompt) {
 
         // This is deliberately outside the persisted-session branch. A temporary
         // chat has no database row, but must not end after reasoning with no body.
-        writeIncompleteAnswer(res, {
+        if (!clientAborted) writeIncompleteAnswer(res, {
             degraded: streamDegraded,
             visibleContent: fullContent,
             persistedContent: persistedIncompleteAnswer
         });
 
-        if (agentRuntime.enabled) {
+        if (agentRuntime.enabled && !clientAborted) {
             emitAgentEvent(res, {
                 type: 'agent_status',
                 role: 'master',
@@ -26217,10 +26228,12 @@ if (clientFileExecution && systemPrompt) {
         }
 
         await settleChatModelTurn(!streamDegraded && !clientAborted && !chatRequestCancelled && Boolean(String(fullContent || '').trim()), [finalModel]);
-        chatRequestSucceeded = true;
+        chatRequestSucceeded = !clientAborted;
         await releaseActiveRequest();
-        res.write(`data: ${JSON.stringify({ type: 'done', degraded: streamDegraded, actualModel: chatModelQuotaContext.getStore()?.actualModel || actualModel })}\n\n`);
-        res.end();
+        if (!clientAborted) {
+            res.write(`data: ${JSON.stringify({ type: 'done', degraded: streamDegraded, actualModel: chatModelQuotaContext.getStore()?.actualModel || actualModel })}\n\n`);
+            res.end();
+        }
 
         if (requestId) rejectClientToolPending(requestId, 'request_finished');
         console.log('\n 聊天处理完成\n');
@@ -26275,7 +26288,7 @@ if (clientFileExecution && systemPrompt) {
         }
         req.off('aborted', handleClientAbort);
         res.off('close', handleClientAbort);
-        if (requestId && (!chatRequestSucceeded || clientAborted || chatRequestCancelled)) {
+        if (requestId && !persistedInterruptedAnswer && (!chatRequestSucceeded || clientAborted || chatRequestCancelled)) {
             await cleanupFailedChatGeneratedImagesBestEffort({
                 userId: req.user.userId,
                 requestId,

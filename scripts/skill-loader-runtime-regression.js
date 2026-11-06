@@ -159,6 +159,24 @@ function createProviderMock() {
         response.end(JSON.stringify({ choices: [{ message: { content: 'Word checkpoint saved; continue from the latest completed step without replay.' } }], usage: { prompt_tokens: 64, completion_tokens: 12, total_tokens: 76 } }));
         return;
       }
+      if (scenario.startsWith('disconnect-')) {
+        if (!hasToolResult) {
+          if (scenario.includes('-native-')) {
+            const calls = [{ index: 0, id: 'disconnect_tool', type: 'function',
+              function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }];
+            if (scenario.endsWith('-unknown')) calls.push({ index: 1, id: 'must_not_run', type: 'function',
+              function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 2, limit: 1 }) } });
+            writeSse(response, [{ choices: [{ delta: { tool_calls: calls }, finish_reason: 'tool_calls' }] }]);
+          } else writeSse(response, [openAiToolCalls(['mermaid'])]);
+        } else {
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.flushHeaders();
+          if (scenario.endsWith('-partial')) {
+            response.write(`data: ${JSON.stringify(openAiText('Partial answer preserved after network interruption. This sentence confirms completed work. ', null))}\n\n`);
+          }
+        }
+        return;
+      }
       if (scenario === 'client-interjection') {
         if (!text.includes('CORRECT_REPORT_TITLE')) {
           await interjectionGate;
@@ -692,6 +710,93 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
     : ['client-context-limit', 'client-pretruncated', 'client-paginated', 'client-sandbox-warnings', 'client-file-id', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback', 'settings-pending'].includes(scenario) ? 1 : 0);
 }
 
+async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, provider, scenario) {
+  const sessionId = 'disconnect-' + crypto.randomUUID();
+  const db = await openDatabase(databasePath);
+  const native = scenario.includes('-native-');
+  const partial = scenario.endsWith('-partial');
+  const unknown = scenario.endsWith('-unknown');
+  try {
+    const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Disconnect fixture', 'gpt-6.1-sol']);
+    const controller = new AbortController();
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: 'POST', signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(native ? { 'X-RAI-Client-Key': softwareKey } : {}) },
+      body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: `scenario:${scenario}` }], model: 'gpt-6.1-sol',
+        internetMode: false, memoryMode: 'off', ...(native ? { client_file_execution: true, client_agent_mode: true, workdir_configured: true } : {}) })
+    });
+    assert.equal(response.status, 200);
+    const requestId = response.headers.get('X-Request-ID');
+    assert.ok(requestId);
+    let buffer = '', posted = 0, sawCompletedTool = false, sawPartial = false, pendingEvent = null;
+    const decoder = new TextDecoder();
+    try {
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let end;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
+          if (!line.startsWith('data: {')) continue;
+          const event = JSON.parse(line.slice(6));
+          assert.notEqual(event.type, 'error', JSON.stringify(event));
+          if (event.type === 'tool_pending_client') {
+            posted++;
+            if (unknown) { pendingEvent = event; controller.abort(); break; }
+            const submitted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id,
+                result: { success: true, executed: true, path: 'fixture.txt', content: 'fixture result' } }) });
+            assert.equal(submitted.status, 200);
+          }
+          if (event.type === 'tool_status' && event.status === 'complete') sawCompletedTool = true;
+          if (event.type === 'content' && String(event.content || '').includes('Partial answer preserved')) sawPartial = true;
+          if (sawCompletedTool && (!partial || sawPartial)) { controller.abort(); break; }
+        }
+        if (controller.signal.aborted) break;
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+    }
+    assert.equal(sawCompletedTool, !unknown, 'only confirmed tool results are marked complete');
+    assert.equal(sawPartial, partial);
+    assert.equal(posted, native ? 1 : 0);
+    let messages = [];
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const reloaded = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(reloaded.status, 200);
+      messages = await reloaded.json();
+      if (messages.some(message => message.role === 'assistant' && message.request_id === requestId)) break;
+      await delay(500);
+    }
+    assert.equal(messages.filter(message => message.role === 'user' && message.content === `scenario:${scenario}`).length, 1);
+    const replies = messages.filter(message => message.role === 'assistant' && message.request_id === requestId);
+    assert.equal(replies.length, 1, `${scenario}: interrupted reply must survive a session reload`);
+    if (partial) assert.match(replies[0].content, /Partial answer preserved/);
+    else assert.match(replies[0].content, /中断|未完成/);
+    const trace = JSON.parse(replies[0].process_trace);
+    assert.equal(trace.interrupted, true);
+    assert.match(trace.flowSegments.filter(segment => segment.kind === 'content').map(segment => segment.text).join(''),
+      /核对/, 'the interruption warning remains visible in the interleaved history');
+    const relevantTools = trace.tools.filter(tool => tool.tool === (native ? 'read_code' : 'read_skill'));
+    assert.equal(relevantTools.length, 1, 'no later tool starts after disconnection');
+    assert.equal(relevantTools[0].status, unknown ? 'unknown' : 'complete');
+    if (unknown) {
+      assert.match(relevantTools[0].detail, /可能已执行.*核对/);
+      assert.match(replies[0].content, /状态未知.*核对/);
+      assert.ok(trace.flowSegments.some(segment => segment.kind === 'tool' && segment.status === 'unknown' && /可能已执行.*核对/.test(segment.detail)));
+      const late = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: pendingEvent.request_id, tool_call_id: pendingEvent.tool_call_id,
+          result: { success: true, executed: true, path: 'fixture.txt', content: 'completed before disconnect' } }) });
+      assert.ok([404, 410].includes(late.status), 'a late result cannot restart the ended request');
+    }
+    assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && !item.hasToolResult).length, 1,
+      'disconnect must not replay the completed tool');
+  } finally { await closeDatabase(db); }
+}
+
 async function runSearchUpstreamChat(baseUrl, token, scenario, sessionId) {
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -928,6 +1033,13 @@ async function main() {
       console.log('PASS HTTP 402 after a completed tool preserves progress, history and status without tool replay');
       return;
     }
+
+    for (const scenario of ['disconnect-web-partial', 'disconnect-native-empty', 'disconnect-native-unknown']) {
+      await runInterruptedChat(baseUrl, token, softwareKey, databasePath, provider, scenario);
+    }
+    assert.deepEqual(provider.errors, []);
+    console.log('PASS disconnected streams retain the user, partial answer and completed tool trace after reload');
+    if (process.argv.includes('--disconnect-only')) return;
 
     const settingsOnly = process.argv.includes('--native-settings-only');
     if (process.argv.includes('--agent-office-only')) {
