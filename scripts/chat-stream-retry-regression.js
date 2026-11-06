@@ -7,7 +7,7 @@ const pending = { messages: [{ role: 'user', content: 'edit' },
 for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
     assert.equal(canRetryStream({ code: 'provider_stream_missing_terminal_signal' }, { attempt, cancelled: false, remainingMs: 5000 }), attempt < 3);
 }
-for (const status of [400, 401, 403, 404]) assert.equal(canRetryStream({ status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);
+for (const status of [400, 401, 402, 403, 404]) assert.equal(canRetryStream({ status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);
 for (const status of [408, 429, 500, 502, 503, 504]) assert.equal(canRetryStream({ status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), true);
 assert.equal(canRetryStream({ name: 'AbortError' }, { attempt: 0, cancelled: true, remainingMs: 5000 }), false);
 assert.equal(canRetryStream({ name: 'AbortError' }, { attempt: 0, cancelled: false, remainingMs: 0 }), false);

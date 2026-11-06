@@ -130,6 +130,7 @@ function createProviderMock() {
   const errors = [];
   const observations = [];
   const memoryFixtures = { items: [], ids: [] };
+  let primaryPort = 0;
   let releaseInterjection;
   const interjectionGate = new Promise(resolve => { releaseInterjection = resolve; });
   const server = http.createServer(async (request, response) => {
@@ -139,11 +140,12 @@ function createProviderMock() {
       const scenarioMatch = text.match(/scenario:([a-z-]+)/);
       const scenario = scenarioMatch?.[1] || '';
       const isGemini = request.url.includes('/gemini/');
+      const isPrimary = request.socket.localPort === primaryPort;
       const systemText = isGemini ? allText(body.systemInstruction) : allText((body.messages || []).filter((item) => item.role === 'system'));
       const hasToolResult = isGemini
         ? hasObjectKey(body, 'functionResponse')
         : (body.messages || []).some((item) => item.role === 'tool');
-      observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
+      observations.push({ scenario, url: request.url, body, systemText, hasToolResult, isPrimary });
 
       if (body.model === 'codex-auto-review') {
         const command = JSON.parse(body.messages[1].content).arguments.command;
@@ -223,6 +225,40 @@ function createProviderMock() {
           writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `round_${results.length}`, type: 'function',
             function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: results.length + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         } else writeSse(response, [openAiText(FINAL_TEXT)]);
+        return;
+      }
+
+      if (['search-upstream-rejected', 'search-upstream-recovered'].includes(scenario)) {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (!results.length) {
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'search_fixture', type: 'function',
+            function: { name: 'web_search', arguments: JSON.stringify({ query: 'fixture search', max_results: 6 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          assert.equal(results.length, 1);
+          assert.match(results[0].content, /Fixture result 6/);
+          if (scenario === 'search-upstream-recovered' && !isPrimary) {
+            assert.equal(body.model, 'gpt-6.1-sol', 'the backup must keep the selected model');
+            writeSse(response, [openAiText(FINAL_TEXT)]);
+          } else {
+            response.writeHead(402, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ error: 'PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK' }));
+          }
+        }
+        return;
+      }
+
+      if (['client-upstream-rejected', 'client-upstream-rejected-partial'].includes(scenario)) {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (results.length) {
+          assert.equal(results.length, 1, 'the completed tool result remains in the continuation');
+          response.writeHead(402, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ error: 'PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK' }));
+        } else {
+          const events = scenario.endsWith('-partial') ? [openAiText('Report checkpoint in progress. ', null)] : [];
+          events.push({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'rejected_tool', type: 'function',
+            function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] });
+          writeSse(response, events);
+        }
         return;
       }
 
@@ -408,7 +444,7 @@ function createProviderMock() {
       response.end(JSON.stringify({ error: 'mock failure' }));
     }
   });
-  return { server, errors, observations, memoryFixtures, releaseInterjection };
+  return { server, errors, observations, memoryFixtures, releaseInterjection, setPrimaryPort: port => { primaryPort = port; } };
 }
 
 function openDatabase(filename) {
@@ -507,7 +543,8 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
 }
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
-  const officeScenario = ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario);
+  const rejectedScenario = ['client-upstream-rejected', 'client-upstream-rejected-partial'].includes(scenario);
+  const officeScenario = rejectedScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -591,7 +628,16 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       }
     }
   }
-  if (scenario === 'client-context-limit') {
+  if (rejectedScenario) {
+    assert.equal(degraded, true);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].code, 'provider_continuation_http_failed');
+    assert.match(visible, /上游模型服务拒绝了后续请求（HTTP 402）/);
+    assert.match(visible, /已执行的工具不会自动重放/);
+    assert.doesNotMatch(visible, /上游连接中断|PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK/);
+    assert.equal(retries, 0, 'HTTP 402 is terminal and is not retried by the continuation loop');
+    if (scenario.endsWith('-partial')) assert.match(visible, /Report checkpoint in progress/);
+  } else if (scenario === 'client-context-limit') {
     assert.ok(visible.includes(FINAL_TEXT));
     assert.equal(degraded, false);
     assert.deepEqual(warnings, []);
@@ -605,8 +651,35 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
   if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
   if (scenario === 'client-large-context') assert.ok(compressed > 0 && compressed < 8, 'large results compact only when needed');
-  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
+  assert.equal(pending, rejectedScenario ? 1 : scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
     : ['client-context-limit', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+}
+
+async function runSearchUpstreamChat(baseUrl, token, scenario, sessionId) {
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: `scenario:${scenario} Search for a fixture.` }],
+      model: 'gpt-6.1-sol', internetMode: true, memoryMode: 'off' })
+  });
+  assert.equal(response.status, 200);
+  const raw = await response.text();
+  const events = raw.split(/\r?\n/).filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
+    .map(line => JSON.parse(line.slice(6)));
+  const visible = events.filter(event => event.type === 'content').map(event => event.content || '').join('');
+  assert.equal(events.filter(event => event.type === 'search_status' && event.status === 'searching').length, 1, 'search executes only once');
+  assert.ok(events.some(event => event.type === 'search_status' && event.resultCount === 6), raw);
+  assert.ok(events.some(event => event.type === 'sources' && event.sources?.length === 6), raw);
+  assert.doesNotMatch(raw, /PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK/);
+  if (scenario === 'search-upstream-recovered') {
+    assert.match(visible, new RegExp(FINAL_TEXT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.ok(events.some(event => event.type === 'done' && !event.degraded));
+    assert.ok(!events.some(event => event.type === 'stream_warning'));
+  } else {
+    assert.match(visible, /上游模型服务拒绝了后续请求（HTTP 402）/);
+    assert.ok(events.some(event => event.type === 'done' && event.degraded));
+    assert.ok(events.some(event => event.type === 'stream_warning' && event.code === 'provider_continuation_http_failed'));
+    assert.ok(!events.some(event => event.type === 'stream_retry'));
+  }
 }
 
 async function runCommandReviews(baseUrl, token, databasePath, provider) {
@@ -726,18 +799,23 @@ async function runMemoryBatches(baseUrl, token, databasePath, provider) {
 }
 
 async function main() {
+  const upstreamHttpOnly = process.argv.includes('--upstream-http-only');
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-skill-runtime-'));
   const databasePath = path.join(tempRoot, 'ai_data.db');
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const provider = createProviderMock();
   const providerBase = await listen(provider.server);
+  const primaryServer = upstreamHttpOnly ? http.createServer(provider.server.listeners('request')[0]) : null;
+  const primaryBase = primaryServer ? await listen(primaryServer) : '';
+  if (primaryServer) provider.setPrimaryPort(primaryServer.address().port);
   const gatewayKeyFile = path.join(tempRoot, 'gateway-key');
   fs.writeFileSync(gatewayKeyFile, randomSecret(), { mode: 0o600 });
   const logs = { value: '' };
   let child = null;
   try {
-    child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+    const serverArgs = upstreamHttpOnly ? ['--require', path.join(ROOT, 'scripts/mock-tavily-for-runtime-test.js'), path.join(ROOT, 'server.js')] : [path.join(ROOT, 'server.js')];
+    child = spawn(process.execPath, serverArgs, {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -749,9 +827,10 @@ async function main() {
         PUBLIC_BASE_URL: baseUrl, CORS_ORIGINS: baseUrl, RAI_DEFAULT_DOMAIN_NOTICE_ENABLED: 'false',
         RAI_CHAT_QUOTA_PER_MINUTE: '100', RAI_CHAT_QUOTA_PER_5H: '100', RAI_CHAT_QUOTA_PER_WEEK: '100',
         RAI_DOCUMENT_PARSER_ENABLED: 'false', ZTX6D_FORCE_DISABLED: 'true', RAI_ZTX6D_FORCE_DISABLED: 'true', AGENT_HARD_DISABLE: '1',
-        TAVILY_API_KEY: '', DEEPSEEK_API_KEY: randomSecret(), SILICONFLOW_API_KEY: randomSecret(),
+        TAVILY_API_KEY: upstreamHttpOnly ? randomSecret() : '', DEEPSEEK_API_KEY: randomSecret(), SILICONFLOW_API_KEY: randomSecret(),
         GOOGLE_GEMINI_API_KEY: randomSecret(), OPENROUTER_API_KEY: randomSecret(),
         RAI_GPT_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_GPT_GATEWAY_API_KEY_FILE: gatewayKeyFile,
+        ...(upstreamHttpOnly ? { RAI_GPT_PRIMARY_BASE_URL: `${primaryBase}/v1`, RAI_GPT_PRIMARY_API_KEY_FILE: gatewayKeyFile } : {}),
         RAI_FAST_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_FAST_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_CLAUDE_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_CLAUDE_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_LUNA_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_LUNA_GATEWAY_API_KEY_FILE: gatewayKeyFile,
@@ -778,6 +857,40 @@ async function main() {
       const created = await auth.create({ name: 'Isolated skill client', platform: 'windows' });
       softwareKey = created.rawKey;
     } finally { await closeDatabase(clientDb); }
+
+    if (upstreamHttpOnly) {
+      const db = await openDatabase(databasePath);
+      try {
+        const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+        for (const scenario of ['client-upstream-rejected', 'client-upstream-rejected-partial']) {
+          const sessionId = 'http-rejected-' + crypto.randomUUID();
+          await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'HTTP error fixture', 'gpt-6.1-sol']);
+          await runClientChat(baseUrl, token, softwareKey, [], scenario, sessionId);
+          const row = await new Promise((resolve, reject) => db.get("SELECT content,process_trace FROM messages WHERE session_id=? AND role='assistant'", [sessionId], (error, value) => error ? reject(error) : resolve(value)));
+          assert.match(row.content, /HTTP 402/);
+          assert.doesNotMatch(row.content, /上游连接中断|PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK/);
+          assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'completed tool history survives the upstream rejection');
+          assert.equal(JSON.parse(row.process_trace).interrupted, true);
+          assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && !item.hasToolResult).length, 1, 'no completed tool is replayed');
+        }
+        for (const scenario of ['search-upstream-recovered', 'search-upstream-rejected']) {
+          const sessionId = 'search-http-' + crypto.randomUUID();
+          await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Search fixture', 'gpt-6.1-sol']);
+          await runSearchUpstreamChat(baseUrl, token, scenario, sessionId);
+          const row = await new Promise((resolve, reject) => db.get("SELECT content,process_trace,sources FROM messages WHERE session_id=? AND role='assistant'", [sessionId], (error, value) => error ? reject(error) : resolve(value)));
+          assert.equal(JSON.parse(row.sources).length, 6, 'search sources remain in the saved reply');
+          assert.equal(JSON.parse(row.process_trace).tools.filter(item => item.tool === 'web_search' && item.status === 'complete').length, 1);
+          if (scenario === 'search-upstream-rejected') assert.match(row.content, /HTTP 402/);
+          const requests = provider.observations.filter(item => item.scenario === scenario);
+          assert.equal(requests.filter(item => item.body.stream === true && !item.hasToolResult).length, 1, 'search is not requested again');
+          assert.ok(requests.some(item => item.hasToolResult && item.isPrimary));
+          assert.ok(requests.some(item => item.hasToolResult && !item.isPrimary && item.url === '/v1/chat/completions' && item.body.model === 'gpt-6.1-sol'));
+        }
+      } finally { await closeDatabase(db); }
+      assert.deepEqual(provider.errors, []);
+      console.log('PASS HTTP 402 after a completed tool preserves progress, history and status without tool replay');
+      return;
+    }
 
     const settingsOnly = process.argv.includes('--native-settings-only');
     if (process.argv.includes('--agent-office-only')) {
@@ -858,6 +971,7 @@ async function main() {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {
     await stopChild(child);
+    await closeServer(primaryServer);
     await closeServer(provider.server);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

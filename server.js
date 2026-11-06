@@ -2741,7 +2741,7 @@ const LOCAL_AGENT_BROWSER_TOOL_DEFINITIONS = [
 
 // ==================== 客户端文件工具挂起管理（UWP 本地执行） ====================
 
-const PENDING_CLIENT_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
+const PENDING_CLIENT_TOOL_TIMEOUT_MS = 15 * 60 * 1000;
 const clientToolPending = new Map(); // requestId -> { userId, sessionId, toolCall, toolName, args, resolve, timer, createdAt, resolved }
 
 function createClientToolPending({
@@ -2780,7 +2780,7 @@ function createClientToolPending({
         appendRaiRuntimeReport({
             level: '报错',
             tag: 'client_tool_timeout',
-            message: '客户端文件工具执行超时（5分钟）',
+            message: '客户端文件工具执行超时（15分钟，含授权和回传）',
             context: { requestId, sessionId, toolName }
         });
         entry.resolve({ success: false, error: 'client_tool_timeout' });
@@ -24967,7 +24967,7 @@ if (clientFileExecution && systemPrompt) {
             file_name: String(localResult?.file_name || '').slice(0, 240),
             download_url: String(localResult?.download_url || '').slice(0, 1000),
             download_available: Boolean(localResult?.download_available || localResult?.download_url),
-            message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（5分钟）' : '本地执行未完成')
+            message: ok ? '本地执行完成' : (localResult?.error === 'client_tool_timeout' ? '本地执行超时（15分钟，含授权和回传）' : '本地执行未完成')
         };
         emitTrackedToolStatus({ ...uiResult, tool_call_id: toolCall.id });
                                 continue;
@@ -25489,6 +25489,7 @@ if (clientFileExecution && systemPrompt) {
                                 const continueErr = await readBoundedResponseText(continueResponse);
                                 console.error(` 续传请求失败: status=${continueResponse.status}, bodyLength=${continueErr.length}`);
                                 const httpError = new Error('provider_continuation_http_failed');
+                                httpError.code = 'provider_continuation_http_failed';
                                 httpError.status = continueResponse.status;
                                 throw httpError;
                             }
@@ -25797,6 +25798,12 @@ if (clientFileExecution && systemPrompt) {
             if (clientAborted || chatRequestCancelled || fetchError.code === 'chat_request_cancelled') {
                 console.log(` 聊天请求已中止: ${formatPrivateLogFingerprint(requestId || '', 'request')}`);
                 return;
+            } else if (fetchError.code === 'provider_continuation_http_failed') {
+                streamDegraded = true;
+                const failure = fetchError.status >= 500 ? '处理后续请求失败' : '拒绝了后续请求';
+                const message = `上游模型服务${failure}（HTTP ${fetchError.status}），回答未完成。已执行的工具不会自动重放；重新生成前请核对已执行操作。`;
+                res.write(`data: ${JSON.stringify({ type: 'stream_warning', code: fetchError.code, message })}\n\n`);
+                emitStructuredAssistantChunk(`${String(fullContent || '').trim() ? '\n\n' : ''}${message}`);
             } else if (String(fetchError.code || '').startsWith('context_') || fetchError.code === 'current_turn_context_too_large') {
                 if (!String(fullContent || '').trim() && !String(reasoningContent || '').trim()) throw fetchError;
                 streamDegraded = true;
