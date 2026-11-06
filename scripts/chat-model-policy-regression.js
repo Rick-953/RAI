@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const sqlite3 = require('sqlite3');
 const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, createChatModelQuotaService } = require('../lib/chat-model-policy');
-const { estimateContextTokens, enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
+const { estimateContextTokens, enforceContextWindow, truncateToolResult, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 async function main() {
@@ -107,6 +107,29 @@ async function main() {
     assert.deepEqual(clippedParallel.messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),['first','second']);
     assert.equal(parallelEvents[0].truncatedToolResults,2);
     for (const message of clippedParallel.messages.filter(m=>m.role==='tool')) assert.equal(JSON.parse(message.content).executed,true);
+    const status = {success:false,executed:false,retryable:false,exit_code:1,error:'PERMISSION_DENIED: '+'e'.repeat(480),permission_decision:'denied',
+        message:'m'.repeat(450),output:'o'.repeat(450),stdout:'s'.repeat(450),stderr:'t'.repeat(450),text:'q'.repeat(450),content:'c'.repeat(450)};
+    const statusResult = JSON.parse(truncateToolResult(JSON.stringify(status),2048));
+    for (const key of ['success','executed','retryable','exit_code','error','permission_decision']) assert.equal(statusResult[key],status[key],`${key} survives truncation`);
+    const structured = {success:true,results:Array.from({length:1000},(_,line)=>({line,content:'x'.repeat(100)}))};
+    const structuredResult = JSON.parse(truncateToolResult(JSON.stringify(structured),2048));
+    assert.ok(Array.isArray(structuredResult.results));assert.ok(structuredResult.results.length>0 && structuredResult.results.length<structured.results.length);
+    assert.equal(structuredResult.results[0].line,0);assert.equal(structuredResult.results.at(-1).line,999);assert.equal(structuredResult.context_truncated,true);
+    const nested = {success:false,result:{success:false,error:'access_denied',permission_decision:'denied',executed:false,output:'x'.repeat(10000)}};
+    const nestedResult = JSON.parse(truncateToolResult(JSON.stringify(nested),2048));
+    assert.equal(typeof nestedResult.result,'object');assert.equal(nestedResult.result.error,'access_denied');
+    assert.equal(nestedResult.result.permission_decision,'denied');assert.equal(nestedResult.result.executed,false);
+    const competing = {success:true,result:{success:false,error:'ACCESS_DENIED',permission_decision:'denied',executed:false,output:'x'.repeat(3000)},stdout:'y'.repeat(3000)};
+    const competingResult = JSON.parse(truncateToolResult(JSON.stringify(competing),2048));
+    assert.equal(competingResult.result.success,false);assert.equal(competingResult.result.error,'ACCESS_DENIED');
+    assert.equal(competingResult.result.permission_decision,'denied');assert.equal(competingResult.result.executed,false);
+    const normalizerSource = fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
+    const normalizerStart = normalizerSource.indexOf('const CLIENT_TOOL_RESULT_ALLOWED_KEYS =');
+    const normalizerEnd = normalizerSource.indexOf('\nfunction hasToolDefinition(',normalizerStart);
+    assert.ok(normalizerStart>=0 && normalizerEnd>normalizerStart);
+    const normalizeClientToolResult = vm.runInNewContext(`${normalizerSource.slice(normalizerStart,normalizerEnd)}\nnormalizeClientToolResult`,{truncateToolResult});
+    const statusOnly = normalizeClientToolResult({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',path:'x'.repeat(5000)},2048);
+    for (const [key,expected] of Object.entries({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',context_truncated:true})) assert.equal(statusOnly[key],expected);
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);

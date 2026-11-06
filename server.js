@@ -2851,7 +2851,14 @@ function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     const normalized = normalize(result);
     if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) return {};
     const serialized = truncateToolResult(JSON.stringify(normalized), limit);
-    return serialized ? JSON.parse(serialized) : { context_truncated: true, context_truncation_notice: 'Tool result could not fit the size limit. Do not repeat an operation whose outcome is unknown.' };
+    if (serialized) return JSON.parse(serialized);
+    const status = { context_truncated: true, context_truncation_notice: 'Only the available status is retained. Do not repeat completed operations.' };
+    for (const key of ['success', 'executed', 'retryable', 'exit_code', 'error', 'permission_decision', 'truncated']) {
+        const value = normalized[key];
+        if (key === 'error' && typeof value === 'string' && value.length > 256) status[key] = value.slice(0, 256) + '...';
+        else if (value === null || typeof value === 'boolean' || typeof value === 'number' || (typeof value === 'string' && value.length <= 256)) status[key] = value;
+    }
+    return status;
 }
 
 function hasToolDefinition(toolDefinitions = [], toolName = '') {
@@ -20660,6 +20667,8 @@ const fetchLunaProvider = createLunaOfficialFetch({
 });
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
+    const truncationNotified = turn?.toolTruncationNotified === true;
+    if (turn) turn.toolTruncationNotified = false;
     let parsedBody = null;
     try { parsedBody = JSON.parse(options.body || '{}'); } catch (_) { /* non-model request */ }
     if (!Array.isArray(parsedBody?.messages)) return fetch(url, { ...options, redirect: 'error' });
@@ -20709,6 +20718,7 @@ async function fetchModelProvider(url, options = {}) {
             },
             onDiagnostic: event => { turn?.latency?.mark('context_compression_skipped'); console.warn(' 上下文软压缩跳过:', { code: event.code, estimated: true }); },
             onCompressed: event => {
+                if (event.truncatedToolResults && truncationNotified) return;
                 if (turn?.response && !turn.response.writableEnded) turn.response.write(`data: ${JSON.stringify(event)}\n\n`);
             }
         });
@@ -25343,7 +25353,11 @@ if (clientFileExecution && systemPrompt) {
                             content: JSON.stringify(result)
                         }));
                         const truncatedToolResults = executedToolResults.filter(({ result }) => result?.context_truncated === true).length;
-                        if (truncatedToolResults && !res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'context_compressed', truncatedToolResults, message: TOOL_TRUNCATION_MESSAGE })}\n\n`);
+                        if (truncatedToolResults && !res.writableEnded) {
+                            res.write(`data: ${JSON.stringify({ type: 'context_compressed', truncatedToolResults, message: TOOL_TRUNCATION_MESSAGE })}\n\n`);
+                            const turn = chatModelQuotaContext.getStore();
+                            if (turn) turn.toolTruncationNotified = true;
+                        }
                         if (executedToolResults.length) conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
 
                         // Include interjections typed during this round tool execution before the continuation call.

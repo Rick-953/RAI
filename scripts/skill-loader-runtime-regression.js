@@ -170,7 +170,7 @@ function createProviderMock() {
         }
         return;
       }
-      if (['client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario)) {
+      if (['client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario)) {
         const messages = body.messages || [];
         assert.ok(messages.filter(message => String(message.content || '').startsWith('[Earlier conversation summary')).length <= 1,
           'repeated compaction replaces the old summary instead of accumulating protected summaries');
@@ -187,7 +187,7 @@ function createProviderMock() {
           assert.match(result.content, /output omitted/);
           assert.match(result.content, /END_CHECKPOINT$/);
         }
-        const steps = scenario === 'client-long-word' ? 45 : scenario === 'client-context-limit' ? 1 : 8;
+        const steps = scenario === 'client-long-word' ? 45 : ['client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario) ? 1 : 8;
         if (completed < steps) writeSse(response, [openAiText('Report checkpoint in progress. ', null), { choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
           function: { name: 'read_code', arguments: JSON.stringify({ path: 'report.docx', offset: completed + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         else writeSse(response, [openAiText(FINAL_TEXT)]);
@@ -544,7 +544,7 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
   const rejectedScenario = ['client-upstream-rejected', 'client-upstream-rejected-partial'].includes(scenario);
-  const officeScenario = rejectedScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario);
+  const officeScenario = rejectedScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -591,6 +591,11 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
           if (scenario === 'client-long-word') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(7000);
           if (scenario === 'client-large-context') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(80000);
           if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(2200000) + 'END_CHECKPOINT';
+          if (scenario === 'client-pretruncated' || scenario === 'client-paginated') {
+            result.content = `CHECKPOINT=${pending}\nsmall result`;
+            if (scenario === 'client-pretruncated') result.context_truncated = true;
+            else result.truncated = true;
+          }
         } else if (scenario.startsWith('agent-')) {
           if (event.tool === 'enable_agent_mode') {
             assert.deepEqual(event.parameters, {});
@@ -641,7 +646,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
     assert.ok(visible.includes(FINAL_TEXT));
     assert.equal(degraded, false);
     assert.deepEqual(warnings, []);
-    assert.ok(truncated > 0, 'the user is told that the model received only a tool output excerpt');
+    assert.equal(truncated, 1, 'normalization and model-budget truncation produce one notice');
   } else {
     assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
     assert.equal(degraded, false, `${scenario}: cannot report an interrupted turn as completed`);
@@ -651,8 +656,10 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
   if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
   if (scenario === 'client-large-context') assert.ok(compressed > 0 && compressed < 8, 'large results compact only when needed');
+  if (scenario === 'client-pretruncated') assert.equal(truncated, 1, 'a result truncated by the client is reported once');
+  if (scenario === 'client-paginated') assert.equal(truncated, 0, 'the ordinary pagination flag is not a context truncation');
   assert.equal(pending, rejectedScenario ? 1 : scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
-    : ['client-context-limit', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+    : ['client-context-limit', 'client-pretruncated', 'client-paginated', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
 async function runSearchUpstreamChat(baseUrl, token, scenario, sessionId) {
@@ -910,6 +917,9 @@ async function main() {
         assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'completed tool history is retained');
       } finally { await closeDatabase(limitDb); }
       console.log('PASS oversized client result is reported, bounded and continued without repeating tools');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-pretruncated');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-paginated');
+      console.log('PASS client truncation notice and ordinary pagination remain distinct');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-long-word');
       const requests = provider.observations.filter(item => item.scenario === 'client-long-word' && item.body.stream === true);
       let resets = 0;
