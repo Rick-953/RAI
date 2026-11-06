@@ -16,11 +16,6 @@ function extractFunction(source, name, nextMarker) {
     return source.slice(start, end).trim();
 }
 
-const mergeServer = vm.runInNewContext(`(${extractFunction(
-    server,
-    'mergeContinuationTextForStorage',
-    '/**'
-)})`);
 const notices = [];
 const language = { language: 'zh' };
 const showCompressionNotice = vm.runInNewContext(`(${extractFunction(app, 'showContextCompressionNotice', '// 流式AI回复')})`, {
@@ -33,11 +28,6 @@ showCompressionNotice({ truncatedToolResults: 1, message: '工具输出已截取
 assert.match(notices[0], /截取/);assert.doesNotMatch(notices[1], /截取/);assert.match(notices[2], /shortened/);
 assert.equal((app.match(/showContextCompressionNotice\(parsed\);/g) || []).length, 2,
     'both chat entry points must show context notices');
-
-assert.equal(mergeServer('alpha beta', 'beta gamma'), 'alpha beta gamma');
-assert.equal(mergeServer('complete', 'complete'), 'complete');
-assert.equal(mergeServer('prefix', 'prefix plus'), 'prefix plus');
-assert.equal(mergeServer('one', 'two'), 'one\n\ntwo');
 
 assert.match(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_available/);
 assert.doesNotMatch(server, /CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set\(\[[^\]]*download_url/);
@@ -65,12 +55,9 @@ assert.doesNotMatch(server, /if \(!continueProviderDoneSignalReceived && !contin
     'tool continuation must also require an explicit upstream terminal signal');
 
 assert.match(server, /continuationOfRequestId = ''/);
-assert.match(server, /const isContinuationRequest = Boolean\(normalizedContinuationRequestId && normalizedContinuationAttempt > 0\)/);
-assert.match(server, /const shouldSkipUserSave = isContinuationRequest/);
-assert.match(server, /if \(isContinuationRequest && normalizedContinuationPrefix\)/);
-assert.match(server, /SELECT m\.id, m\.content, m\.reasoning_content[\s\S]*WHERE m\.request_id = \?/);
-assert.match(server, /UPDATE messages[\s\S]*content = \?, reasoning_content = \?/);
-assert.match(server, /formatPrivateLogFingerprint\(normalizedContinuationRequestId, 'request'\)/);
+assert.match(server, /code: 'automatic_continuation_unsupported'/);
+assert.match(server, /const shouldSkipUserSave = skipUserSave === true/);
+assert.doesNotMatch(server, /mergeContinuationTextForStorage/);
 assert.match(server, /formatPrivateLogFingerprint\(contentToSave, 'content'\)/);
 assert.match(server, /const skillToolsEnabled = true;/,
   'read_skill must remain enabled in temporary and low-latency conversations');
@@ -114,7 +101,7 @@ assert.ok(terminalSite > server.indexOf('scheduleConversationIntegritySeal(sessi
 assert.match(app, /const incomplete = parsed.degraded === true \|\| receivedStreamWarning \|\| receivedExplicitError;/,
     'the client must not mark a degraded reply complete');
 assert.match(app, /updateStepStatus\(getGeneratingStep\(\), incomplete \? 'failed' : 'done'/);
-assert.match(server, /res\.write\(`data: \${JSON\.stringify\(\{ type: 'done', degraded: streamDegraded, actualModel:[^\n]+ \}\)}/,
-    'done must distinguish a degraded stream from a complete answer');
+assert.match(server, /chatRequestCancelled \? \{ type: 'cancelled' \} : \{ type: 'done', degraded: streamDegraded/,
+    'stopped and degraded streams must have distinct terminal states');
 
 console.log('stream-completion-recovery-regression ok');

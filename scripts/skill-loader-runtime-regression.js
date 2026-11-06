@@ -159,7 +159,7 @@ function createProviderMock() {
         response.end(JSON.stringify({ choices: [{ message: { content: 'Word checkpoint saved; continue from the latest completed step without replay.' } }], usage: { prompt_tokens: 64, completion_tokens: 12, total_tokens: 76 } }));
         return;
       }
-      if (scenario.startsWith('disconnect-')) {
+      if (scenario.startsWith('disconnect-') || scenario === 'stop-native-unknown') {
         if (!hasToolResult) {
           if (scenario.includes('-native-')) {
             const calls = [{ index: 0, id: 'disconnect_tool', type: 'function',
@@ -174,6 +174,16 @@ function createProviderMock() {
           if (scenario.endsWith('-partial')) {
             response.write(`data: ${JSON.stringify(openAiText('Partial answer preserved after network interruption. This sentence confirms completed work. ', null))}\n\n`);
           }
+        }
+        return;
+      }
+      if (scenario === 'stop-web-stream' || scenario === 'stop-native-stream') {
+        if (scenario === 'stop-native-stream' && !hasToolResult) {
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'stop_stream_tool', type: 'function',
+            function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.write(`data: ${JSON.stringify(openAiText('Partial answer before stopping. ', null))}\n\n`);
         }
         return;
       }
@@ -716,6 +726,7 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
   const native = scenario.includes('-native-');
   const partial = scenario.endsWith('-partial');
   const unknown = scenario.endsWith('-unknown');
+  const explicitStop = scenario.startsWith('stop-');
   try {
     const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
     await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Disconnect fixture', 'gpt-6.1-sol']);
@@ -729,8 +740,9 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
     assert.equal(response.status, 200);
     const requestId = response.headers.get('X-Request-ID');
     assert.ok(requestId);
-    let buffer = '', posted = 0, sawCompletedTool = false, sawPartial = false, pendingEvent = null;
+    let buffer = '', posted = 0, sawCompletedTool = false, sawPartial = false, pendingEvent = null, sawCancelled = false, sawUnknown = false;
     const decoder = new TextDecoder();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
       for await (const chunk of response.body) {
         buffer += decoder.decode(chunk, { stream: true });
@@ -742,7 +754,15 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
           assert.notEqual(event.type, 'error', JSON.stringify(event));
           if (event.type === 'tool_pending_client') {
             posted++;
-            if (unknown) { pendingEvent = event; controller.abort(); break; }
+            if (unknown) {
+              pendingEvent = event;
+              if (!explicitStop || posted > 1) { controller.abort(); break; }
+              const stopped = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requestId }) });
+              assert.equal(stopped.status, 200);
+              continue;
+            }
             const submitted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id,
@@ -750,6 +770,8 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
             assert.equal(submitted.status, 200);
           }
           if (event.type === 'tool_status' && event.status === 'complete') sawCompletedTool = true;
+          if (event.type === 'tool_status' && event.status === 'unknown') sawUnknown = true;
+          if (event.type === 'cancelled') sawCancelled = true;
           if (event.type === 'content' && String(event.content || '').includes('Partial answer preserved')) sawPartial = true;
           if (sawCompletedTool && (!partial || sawPartial)) { controller.abort(); break; }
         }
@@ -757,6 +779,10 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
       }
     } catch (error) {
       if (!controller.signal.aborted) throw error;
+    } finally { clearTimeout(timeout); }
+    if (explicitStop) {
+      assert.equal(sawCancelled, true, 'explicit stop must finish the SSE with cancelled');
+      assert.equal(sawUnknown, true, 'a pending local operation is unknown after explicit stop');
     }
     assert.equal(sawCompletedTool, !unknown, 'only confirmed tool results are marked complete');
     assert.equal(sawPartial, partial);
@@ -773,8 +799,35 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
     assert.equal(messages.filter(message => message.role === 'user' && message.content === `scenario:${scenario}`).length, 1);
     const replies = messages.filter(message => message.role === 'assistant' && message.request_id === requestId);
     assert.equal(replies.length, 1, `${scenario}: interrupted reply must survive a session reload`);
+    if (scenario === 'disconnect-web-partial') {
+      const getRow = (sql, params) => new Promise((resolve, reject) => db.get(sql, params,
+        (error, row) => error ? reject(error) : resolve(row)));
+      const releaseDeadline = Date.now() + 8000;
+      while (await getRow('SELECT id FROM active_requests WHERE id = ?', [requestId])) {
+        assert.ok(Date.now() < releaseDeadline, 'interrupted request must release its quota');
+        await delay(100);
+      }
+      const readQuota = async () => (await getRow(
+        'SELECT COALESCE(SUM(usage_count), 0) AS used FROM user_chat_usage WHERE user_id = ?', [userId])).used;
+      const quotaBefore = await readQuota();
+      const providerCallsBefore = provider.observations.length;
+      for (const [rootId, attempt, prefix] of [[requestId, 1, 'Partial answer'], [null, 1, ''], ['invalid-request-id', 2, ''], ['', 0, 'Partial answer']]) {
+        const continuation = await fetch(`${baseUrl}/api/chat/stream`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', skipUserSave: true,
+            messages: [{ role: 'user', content: `scenario:${scenario}` }],
+            continuationOfRequestId: rootId, continuationAttempt: attempt, continuationPrefix: prefix })
+        });
+        assert.equal(continuation.status, 409, 'old automatic continuation must be rejected before model execution');
+        const body = await continuation.json();
+        assert.equal(body.code, 'automatic_continuation_unsupported');
+        assert.match(body.error, /刷新.*核对/);
+      }
+      assert.equal(await readQuota(), quotaBefore, 'rejected continuations must not consume chat quota');
+      assert.equal(provider.observations.length, providerCallsBefore, 'rejected continuations must not call the model');
+    }
     if (partial) assert.match(replies[0].content, /Partial answer preserved/);
-    else assert.match(replies[0].content, /中断|未完成/);
+    else assert.match(replies[0].content, /中断|未完成|已停止/);
     const trace = JSON.parse(replies[0].process_trace);
     assert.equal(trace.interrupted, true);
     assert.match(trace.flowSegments.filter(segment => segment.kind === 'content').map(segment => segment.text).join(''),
@@ -794,6 +847,93 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
     }
     assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && !item.hasToolResult).length, 1,
       'disconnect must not replay the completed tool');
+    if (explicitStop) assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && item.hasToolResult).length, 0,
+      'explicit stop must not request a continuation');
+  } finally { await closeDatabase(db); }
+}
+
+async function runNormalAndRegeneratedChat(baseUrl, token, databasePath) {
+  const sessionId = 'manual-regeneration-' + crypto.randomUUID();
+  const db = await openDatabase(databasePath);
+  try {
+    const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Regeneration fixture', 'gpt-6.1-sol']);
+    for (const skipUserSave of [false, true]) {
+      const response = await fetch(`${baseUrl}/api/chat/stream`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', skipUserSave,
+          continuationOfRequestId: '', continuationAttempt: 0, messages: [{ role: 'user', content: 'scenario:sol' }] })
+      });
+      assert.equal(response.status, 200, 'normal and manually regenerated messages must remain available');
+      const events = (await response.text()).split(/\r?\n/).filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
+      assert.ok(events.some(event => event.type === 'done' && !event.degraded));
+    }
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+    const messages = await response.json();
+    assert.equal(messages.filter(message => message.role === 'user').length, 1, 'regeneration must not duplicate the user message');
+    assert.equal(messages.filter(message => message.role === 'assistant').length, 2);
+  } finally { await closeDatabase(db); }
+}
+
+async function runStoppedStream(baseUrl, token, softwareKey, databasePath, provider, scenario) {
+  const sessionId = 'stop-' + crypto.randomUUID();
+  const db = await openDatabase(databasePath);
+  const native = scenario === 'stop-native-stream';
+  try {
+    const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Stop fixture', 'gpt-6.1-sol']);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${baseUrl}/api/chat/stream`, { method: 'POST', signal: controller.signal,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(native ? { 'X-RAI-Client-Key': softwareKey } : {}) },
+        body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: `scenario:${scenario}` }], model: 'gpt-6.1-sol',
+          internetMode: false, memoryMode: 'off', ...(native ? { client_file_execution: true, client_agent_mode: true, workdir_configured: true } : {}) }) });
+      assert.equal(response.status, 200);
+      const requestId = response.headers.get('X-Request-ID');
+      let buffer = '', pendingCount = 0, stopped = false, cancelled = false;
+      const decoder = new TextDecoder();
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let end;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
+          if (!line.startsWith('data: {')) continue;
+          const event = JSON.parse(line.slice(6));
+          assert.notEqual(event.type, 'error', JSON.stringify(event));
+          if (event.type === 'tool_pending_client') {
+            assert.equal(++pendingCount, 1, 'the completed tool must not be dispatched again');
+            const submitted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id,
+                result: { success: true, executed: true, path: 'fixture.txt', content: 'fixture result' } }) });
+            assert.equal(submitted.status, 200);
+          }
+          if (!stopped && event.type === 'content' && String(event.content || '').includes('Partial answer before stopping.')) {
+            const result = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId }) });
+            assert.equal(result.status, 200);
+            stopped = true;
+          }
+          if (event.type === 'cancelled') cancelled = true;
+        }
+      }
+      assert.equal(stopped, true, 'the partial model output must arrive before stopping');
+      assert.equal(cancelled, true, 'stopping must interrupt a stalled upstream stream');
+      assert.equal(pendingCount, native ? 1 : 0);
+      const reloaded = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(reloaded.status, 200);
+      const messages = await reloaded.json();
+      const reply = messages.find(message => message.role === 'assistant' && message.request_id === requestId);
+      assert.ok(reply, 'stopped output must survive a session reload');
+      assert.match(reply.content, /Partial answer before stopping/);
+      assert.match(reply.content, /已停止/);
+      const trace = JSON.parse(reply.process_trace);
+      assert.equal(trace.interrupted, true);
+      if (native) assert.equal(trace.tools.filter(tool => tool.tool === 'read_code' && tool.status === 'complete').length, 1);
+      assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true).length, native ? 2 : 1,
+        'stop must not replay the model or the completed tool');
+    } finally { clearTimeout(timeout); }
   } finally { await closeDatabase(db); }
 }
 
@@ -1034,11 +1174,15 @@ async function main() {
       return;
     }
 
-    for (const scenario of ['disconnect-web-partial', 'disconnect-native-empty', 'disconnect-native-unknown']) {
+    for (const scenario of ['disconnect-web-partial', 'disconnect-native-empty', 'disconnect-native-unknown', 'stop-native-unknown']) {
       await runInterruptedChat(baseUrl, token, softwareKey, databasePath, provider, scenario);
     }
+    for (const scenario of ['stop-web-stream', 'stop-native-stream']) {
+      await runStoppedStream(baseUrl, token, softwareKey, databasePath, provider, scenario);
+    }
+    await runNormalAndRegeneratedChat(baseUrl, token, databasePath);
     assert.deepEqual(provider.errors, []);
-    console.log('PASS disconnected streams retain the user, partial answer and completed tool trace after reload');
+    console.log('PASS interrupted streams retain progress, reject old automatic continuations and allow manual regeneration');
     if (process.argv.includes('--disconnect-only')) return;
 
     const settingsOnly = process.argv.includes('--native-settings-only');
