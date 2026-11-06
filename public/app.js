@@ -20437,37 +20437,6 @@ async function triggerAIResponse(messages, options = {}) {
   return await streamAIResponse(messages, aiMsg, { ...options, requestId });
 }
 
-const CHAT_STREAM_CONTINUATION_LIMIT = 2;
-
-function mergeContinuationText(previous = '', next = '') {
-  const left = String(previous || '');
-  const right = String(next || '');
-  if (!right) return left;
-  if (!left) return right;
-  if (right === left || left.endsWith(right)) return left;
-  if (right.startsWith(left)) return right;
-
-  const maxOverlap = Math.min(left.length, right.length, 12000);
-  for (let length = maxOverlap; length > 0; length -= 1) {
-    if (left.slice(-length) === right.slice(0, length)) {
-      return left + right.slice(length);
-    }
-  }
-  const separator = /\s$/.test(left) || /^\s/.test(right) ? '' : '\n\n';
-  return `${left}${separator}${right}`;
-}
-
-function buildChatContinuationMessages(messages, partialContent) {
-  const instruction = isChineseLanguage(appState.language)
-    ? '上一条回答的传输意外中断。请只从中断处继续完成，不要重复已经输出的内容，也不要解释中断原因。'
-    : 'The previous answer stream was interrupted. Continue only from the cutoff, without repeating existing text or explaining the interruption.';
-  return [
-    ...(Array.isArray(messages) ? messages : []),
-    { role: 'assistant', content: String(partialContent || '') },
-    { role: 'user', content: instruction }
-  ];
-}
-
 function showContextCompressionNotice(event) {
   if (event.truncatedToolResults > 0) {
     showToast(isChineseLanguage(appState.language) ? (event.message || '工具输出过长，发送给模型的内容已截取。') : 'Tool output was shortened for the model; completed operations will not be repeated automatically.');
@@ -20476,120 +20445,12 @@ function showContextCompressionNotice(event) {
   }
 }
 
-async function recoverIncompleteChatStream({
-  basePayload,
-  messages,
-  partialContent = '',
-  partialReasoning = '',
-  continuationOfRequestId = ''
-} = {}) {
-  let content = String(partialContent || '');
-  let reasoning = String(partialReasoning || '');
-  let sources = [];
-  let model = '';
-  const rootRequestId = String(continuationOfRequestId || '');
-  let requestId = rootRequestId;
-  let errorMessage = '';
-
-  for (let attempt = 1; attempt <= CHAT_STREAM_CONTINUATION_LIMIT; attempt += 1) {
-    const response = await fetch(`${API_BASE}/chat/stream`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${appState.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        ...(basePayload || {}),
-        messages: buildChatContinuationMessages(messages, content),
-        skipUserSave: true,
-        continuationOfRequestId: rootRequestId || null,
-        continuationPrefix: content,
-        continuationAttempt: attempt
-      })
-    });
-    if (!response.ok) {
-      errorMessage = await getApiErrorMessage(response, `HTTP ${response.status}`);
-      continue;
-    }
-    requestId = String(response.headers.get('X-Request-ID') || requestId || '').trim();
-    if (!response.body) {
-      errorMessage = isChineseLanguage(appState.language) ? '续传响应体为空' : 'Continuation response body is empty';
-      continue;
-    }
-
-    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let attemptContent = '';
-    let attemptReasoning = '';
-    let receivedDone = false;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (value) buffer += decoder.decode(value, { stream: !done });
-        if (done) buffer += decoder.decode();
-        const lines = buffer.split(/\r?\n/);
-        buffer = done ? '' : (lines.pop() || '');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          const raw = trimmed.slice(6);
-          if (!raw || raw === '[DONE]') continue;
-          let event;
-          try {
-            event = JSON.parse(raw);
-          } catch (_) {
-            continue;
-          }
-          if (event.type === 'done') {
-            if (event.actualModel) model = event.actualModel;
-            receivedDone = true;
-          } else if (event.type === 'content' && event.content) {
-            attemptContent += sanitizeAssistantDisplayText(event.content);
-          } else if (event.type === 'reasoning' && event.content) {
-            attemptReasoning += String(event.content);
-          } else if (event.type === 'sources' && Array.isArray(event.sources)) {
-            sources = mergeAndReindexSources(sources, event.sources);
-          } else if (event.type === 'context_compressed') {
-            showContextCompressionNotice(event);
-          } else if (event.type === 'model_info' && event.model) {
-            model = event.actualModel || event.model;
-          } else if (event.type === 'error') {
-            errorMessage = String(event.error || 'continuation_failed');
-          } else if (event.choices?.[0]?.delta?.content) {
-            attemptContent += sanitizeAssistantDisplayText(event.choices[0].delta.content);
-          }
-        }
-        if (done) break;
-      }
-    } catch (error) {
-      errorMessage = String(error?.message || 'continuation_stream_interrupted');
-    }
-
-    content = mergeContinuationText(content, attemptContent);
-    reasoning = mergeContinuationText(reasoning, attemptReasoning);
-    if (receivedDone) {
-      return { completed: true, content, reasoning, sources, model, requestId, attempts: attempt };
-    }
-  }
-
-  return {
-    completed: false,
-    content,
-    reasoning,
-    sources,
-    model,
-    requestId,
-    attempts: CHAT_STREAM_CONTINUATION_LIMIT,
-    error: errorMessage || 'missing_done_event'
-  };
-}
-
 // 流式AI回复（优化版：增量更新DOM，不重新渲染整个消息列表）
 async function streamAIResponse(messages, aiMsg, options = {}) {
   appState.isStreaming = true;
   let streamSucceeded = false;
   let savedAssistantMessage = null;
+  const toolTraceSnapshots = new Map();
 
   const sessionId = appState.currentSession?.id;
   const generation = appState.sessionNavigationGeneration;
@@ -20841,14 +20702,15 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     let receivedDoneEvent = false;
     let receivedTerminalFailure = false;
     let receivedCancelled = false;
+    let streamFailureMessage = '';
 
     while (true) {
       let chunk;
       try {
         chunk = await reader.read();
       } catch (error) {
-        receivedTerminalFailure = true;
-        console.warn('流式读取中断，准备自动续传:', error?.message || error);
+        if (!receivedDoneEvent) receivedTerminalFailure = true;
+        console.warn('流式读取中断:', error?.message || error);
         break;
       }
       const { done, value } = chunk;
@@ -20873,6 +20735,13 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           if (parsed.type === 'done') {
             if (parsed.actualModel) { finalModel = parsed.actualModel; aiMsg.model = finalModel; }
             receivedDoneEvent = true;
+            receivedTerminalFailure ||= parsed.degraded === true;
+            continue;
+          }
+
+          if (parsed.type === 'stream_warning') {
+            receivedTerminalFailure = true;
+            streamFailureMessage = String(parsed.message || '');
             continue;
           }
 
@@ -20884,6 +20753,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
           if (parsed.type === 'error') {
             receivedTerminalFailure = true;
+            streamFailureMessage = String(parsed.message || parsed.error || '');
             continue;
           }
 
@@ -20908,6 +20778,12 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           if (parsed.type === 'tool_status') {
             if (parsed.attachment) appendGeneratedArtifact(parsed.attachment);
             if (parsed.tool === 'generate_image') updateInlineImageGenerationStatus(parsed);
+            const tool = String(parsed.tool || parsed.name || 'tool');
+            const id = String(parsed.tool_call_id || parsed.call_id || `${tool}:${parsed.round || 0}:${parsed.query || parsed.skill || parsed.file_name || parsed.url || ''}`);
+            toolTraceSnapshots.set(id, {
+              id, tool, status: String(parsed.status || 'running'),
+              detail: String(parsed.detail || parsed.output || parsed.message || '').slice(0, 12000)
+            });
             continue;
           }
 
@@ -20976,29 +20852,10 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
       if (done) break;
     }
 
-    if (!receivedDoneEvent && !receivedCancelled) {
-      const recovered = await recoverIncompleteChatStream({
-        basePayload: streamPayload,
-        messages,
-        partialContent: fullContent,
-        partialReasoning: reasoningContent,
-        continuationOfRequestId: requestId
-      });
-      fullContent = recovered.content;
-      reasoningContent = recovered.reasoning;
-      if (recovered.sources.length > 0) sources = mergeAndReindexSources(sources || [], recovered.sources);
-      if (recovered.model) finalModel = recovered.model;
-      if (recovered.requestId) requestId = recovered.requestId;
-      aiMsg.content = fullContent;
-      aiMsg.reasoning_content = reasoningContent || null;
-      aiMsg.sources = sources;
-      aiMsg.model = finalModel;
-      throttledUpdate(fullContent);
-      receivedDoneEvent = recovered.completed;
-    }
-
-    if (!receivedDoneEvent) {
-      throw new Error(receivedTerminalFailure ? 'chat_stream_failed' : 'chat_stream_missing_done');
+    if (!receivedDoneEvent || receivedTerminalFailure || receivedCancelled) {
+      throw new Error(streamFailureMessage || (isChineseLanguage(appState.language)
+        ? '回答未完成，请先核对已执行的操作，再决定是否重新生成。'
+        : 'The answer is incomplete. Check completed actions before deciding whether to retry.'));
     }
 
     // 只有服务端明确发送 done 才算完整完成。
@@ -21007,14 +20864,20 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
   } catch (error) {
     console.error(' 流式请求失败:', error);
-    if (!String(aiMsg.content || '').trim()) {
-      aiMsg.content = isChineseLanguage(appState.language) ? '生成失败，请重试' : 'Generation failed, please retry';
-    } else {
-      showToast(isChineseLanguage(appState.language)
-        ? '回答续传仍未完成，已保留现有内容'
-        : 'The continuation was still incomplete; existing content was kept');
-    }
+    const notice = isChineseLanguage(appState.language)
+      ? '回答未完成，请先核对已执行的操作，再决定是否重新生成。'
+      : 'The answer is incomplete. Check completed actions before deciding whether to retry.';
+    const detail = String(error?.message || '');
+    const explanation = detail && detail !== notice && !String(aiMsg.content || '').includes(detail) ? `${detail}\n${notice}` : notice;
+    aiMsg.content = String(aiMsg.content || '').trim() ? `${aiMsg.content}\n\n${explanation}` : explanation;
+    showToast(explanation);
   } finally {
+    if (toolTraceSnapshots.size > 0) {
+      aiMsg.process_trace = JSON.stringify({
+        version: 2, mode: 'single', interrupted: !streamSucceeded,
+        tools: Array.from(toolTraceSnapshots.values()).slice(-200)
+      });
+    }
     appState.isStreaming = false;
     clearChatFlowActivityNotice();
     restoreInternetSearchDefault();
@@ -23636,8 +23499,8 @@ async function sendMessage(message = null, options = {}) {
     let receivedDoneEvent = false;
     let receivedCancelled = false;
     let receivedExplicitError = false;
+    let receivedStreamWarning = false;
     let streamFailureMessage = '';
-    let streamReadError = null;
 
     try {
       while (true) {
@@ -23840,7 +23703,6 @@ async function sendMessage(message = null, options = {}) {
           else if (parsed.type === 'sources') {
             if (parsed.sources && Array.isArray(parsed.sources)) {
               currentSources = mergeAndReindexSources(currentSources, parsed.sources);
-              aiMsg.sources = currentSources;
               console.log(` 收到 ${currentSources.length} 个搜索来源`);
               addProcessTraceItem('search', isChineseLanguage(appState.language)
                 ? `来源更新: ${currentSources.length} 条`
@@ -24131,12 +23993,13 @@ async function sendMessage(message = null, options = {}) {
             showContextCompressionNotice(parsed);
           }
           else if (parsed.type === 'stream_warning') {
-            showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
+            receivedStreamWarning = true;
+            streamFailureMessage = String(parsed.message || '');
           }
           else if (parsed.type === 'done') {
             if (parsed.actualModel) { actualRequestModel = parsed.actualModel; appState.lastModelUsed = actualRequestModel; }
             receivedDoneEvent = true;
-            const incomplete = parsed.degraded === true;
+            const incomplete = parsed.degraded === true || receivedStreamWarning || receivedExplicitError;
             streamComplete = !incomplete;
             // An upstream stop is terminal, not a successful answer. Do not
             // automatically repeat tools or obscure the interruption in the timeline.
@@ -24188,64 +24051,37 @@ async function sendMessage(message = null, options = {}) {
       if (done) break;
     }
     } catch (error) {
-      streamReadError = error;
-      console.warn('聊天流读取中断，准备自动续传:', error?.message || error);
+      console.warn('聊天流读取中断:', error?.message || error);
     }
 
-    if (!receivedDoneEvent && !receivedCancelled && !receivedExplicitError) {
-      updateStepStatus(getGeneratingStep(), 'running', isChineseLanguage(appState.language) ? '连接中断，正在自动续传...' : 'Connection interrupted, continuing automatically...');
-      addProcessTraceItem('info', isChineseLanguage(appState.language) ? '未收到完成事件，开始自动续传' : 'Completion event missing; starting continuation');
-      const recovered = await recoverIncompleteChatStream({
-        basePayload: chatRequestPayload,
-        messages,
-        partialContent: fullContent,
-        partialReasoning: reasoningContent,
-        continuationOfRequestId: streamRequestId
+    if (!receivedCancelled && (!receivedDoneEvent || !streamComplete)) {
+      // A disconnected client cannot tell whether a tool ran before its status arrived.
+      const notice = isChineseLanguage(appState.language)
+        ? '回答未完成，请先核对已执行的操作，再决定是否重新生成。'
+        : 'The answer is incomplete. Check completed actions before deciding whether to retry.';
+      const message = streamFailureMessage ? `${streamFailureMessage}\n${notice}` : notice;
+      stopCharRender();
+      updateStepStatus(getGeneratingStep(), 'failed', isChineseLanguage(appState.language) ? '回答未完成' : 'Answer incomplete');
+      updateStepStatus(stepProcessTrace, 'failed', isChineseLanguage(appState.language) ? '过程中断' : 'Trace interrupted');
+      timelineSequence.forEach((row) => {
+        if (row.kind === 'generating' && row.status === 'running') {
+          row.status = 'failed';
+          row.detail = isChineseLanguage(appState.language) ? '未完成' : 'Incomplete';
+        }
       });
-      fullContent = recovered.content;
-      reasoningContent = recovered.reasoning;
-      if (recovered.sources.length > 0) {
-        currentSources = mergeAndReindexSources(currentSources, recovered.sources);
-      }
-      if (recovered.model) { actualRequestModel = recovered.model; appState.lastModelUsed = recovered.model; }
-      if (recovered.requestId) {
-        streamRequestId = recovered.requestId;
-        appState.currentRequestId = streamRequestId;
-        aiMsgDiv.dataset.raiMessageKey = `request:${streamRequestId}:assistant`;
-      }
-      receivedDoneEvent = recovered.completed;
-      if (fullContent) {
-        displayedContent = sanitizeAssistantDisplayText(stripTrailingTitleMarker(fullContent));
-        charRenderQueue = [];
-        if (streamFlowSegments.length > 0) renderInterleavedFlow();
-        else renderStreamingContent();
-      }
-      if (receivedDoneEvent) {
-        stopCharRender();
-        updateStepStatus(getGeneratingStep(), 'done', isChineseLanguage(appState.language) ? '续传完成' : 'Continuation completed');
-        updateStepStatus(stepProcessTrace, 'done', isChineseLanguage(appState.language)
-          ? `过程完成 · 自动续传 ${recovered.attempts} 次`
-          : `Done · ${recovered.attempts} automatic continuation attempt(s)`);
-        addProcessTraceItem('info', isChineseLanguage(appState.language) ? '自动续传完成' : 'Automatic continuation completed');
+      addProcessTraceItem('info', message);
+      if (!String(fullContent || '').trim()) {
+        if (selectedSkillDraft && !toolTraceSnapshots.size && !currentSources.length && !streamFlowSegments.length && !String(reasoningContent || '').trim()) {
+          throw new Error(message);
+        }
+        fullContent = message;
+        appendInterleavedContent(message);
       } else {
-        streamFailureMessage = recovered.error || streamFailureMessage || streamReadError?.message || 'missing_done_event';
+        const explanation = streamFailureMessage && !fullContent.includes(streamFailureMessage) ? message : notice;
+        fullContent += `\n\n${explanation}`;
+        appendInterleavedContent(`\n\n${explanation}`);
+        showToast(message);
       }
-    }
-
-    if (receivedExplicitError) {
-      throw new Error(streamFailureMessage || (isChineseLanguage(appState.language)
-        ? '工具调用或生成失败'
-        : 'Tool call or generation failed'));
-    }
-    if (!receivedDoneEvent && !receivedCancelled && !String(fullContent || '').trim()) {
-      throw new Error(streamFailureMessage || streamReadError?.message || (isChineseLanguage(appState.language)
-        ? '模型输出未完成'
-        : 'Model output did not complete'));
-    }
-    if (!receivedDoneEvent && !receivedCancelled) {
-      showToast(isChineseLanguage(appState.language)
-        ? '自动续传仍未收到完成信号，已保留当前内容'
-        : 'Continuation still lacked a completion signal; current content was kept');
     }
 
     // 确保停止AI头像闪烁
