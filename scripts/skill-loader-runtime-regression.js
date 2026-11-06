@@ -757,6 +757,10 @@ async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, pro
             if (unknown) {
               pendingEvent = event;
               if (!explicitStop || posted > 1) { controller.abort(); break; }
+              const invalidStop = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requestId: { unexpected: true } }) });
+              assert.equal(invalidStop.status, 400, 'stop must reject a non-string request ID');
               const stopped = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ requestId }) });

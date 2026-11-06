@@ -20776,7 +20776,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
     };
     let liveStreamState = null;
     let chatRequestSucceeded = false;
-    let persistedInterruptedAnswer = false;
+    let persistedChatAnswer = false;
     let clientAborted = false;
     let chatRequestCancelled = false;
     let chatRequestBudget = null;
@@ -20809,6 +20809,8 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
         }
         if (requestId) rejectClientToolPending(requestId, 'client_cancelled');
     };
+    const chatCancellation = new AbortController();
+    chatCancellation.signal.addEventListener('abort', handleChatCancellation, { once: true });
 
     const handleClientAbort = () => {
         if (chatRequestSucceeded || res.writableEnded) return;
@@ -21142,7 +21144,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             });
         }
         activeRequestRegistered = true;
-        activeChatCancellations.set(requestId, handleChatCancellation);
+        activeChatCancellations.set(requestId, chatCancellation);
 
         const chatQuota = await checkAndConsumeChatQuota(req.user.userId);
         if (!chatQuota.allowed) {
@@ -26096,7 +26098,7 @@ if (clientFileExecution && systemPrompt) {
                     [sessionId, 'assistant', contentToSave, requestId, assistantAttachmentsJson, reasoningContent || null, persistedModelId, internetMode ? 1 : 0, thinkingMode ? 1 : 0, internetMode ? 1 : 0, sourcesJson, assistantProcessTraceJson, aiMsgTimestamp]
                 );
             });
-            if (clientAborted || chatRequestCancelled) persistedInterruptedAnswer = true;
+            persistedChatAnswer = true;
             console.log(` AI回复已保存:`);
             console.log(`   - 内容: ${formatPrivateLogFingerprint(contentToSave, 'content')}`);
             console.log(`   - 思考: ${formatPrivateLogFingerprint(reasoningContent, 'reasoning')}`);
@@ -26244,7 +26246,7 @@ if (clientFileExecution && systemPrompt) {
         }
         req.off('aborted', handleClientAbort);
         res.off('close', handleClientAbort);
-        if (requestId && !persistedInterruptedAnswer && (!chatRequestSucceeded || clientAborted || chatRequestCancelled)) {
+        if (requestId && !persistedChatAnswer && (!chatRequestSucceeded || clientAborted || chatRequestCancelled)) {
             await cleanupFailedChatGeneratedImagesBestEffort({
                 userId: req.user.userId,
                 requestId,
@@ -26316,8 +26318,8 @@ app.post('/api/agent/tool-result', apiLimiter, authenticateToken, (req, res) => 
 app.post('/api/chat/stop', authenticateToken, (req, res) => {
     const { requestId } = req.body;
 
-    if (!requestId) {
-        return res.status(400).json({ error: '缺少requestId' });
+    if (typeof requestId !== 'string' || !requestId) {
+        return res.status(400).json({ error: '请求标识无效' });
     }
 
     db.get(
@@ -26340,7 +26342,7 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
                         return res.status(500).json({ error: '停止失败' });
                     }
                     console.log(' 停止请求:', requestId);
-                    activeChatCancellations.get(requestId)?.();
+                    activeChatCancellations.get(requestId)?.abort();
                     rejectClientToolPending(requestId, 'client_cancelled');
                     res.json({ success: true, message: '已发送停止信号' });
                 }
