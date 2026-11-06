@@ -20468,6 +20468,14 @@ function buildChatContinuationMessages(messages, partialContent) {
   ];
 }
 
+function showContextCompressionNotice(event) {
+  if (event.truncatedToolResults > 0) {
+    showToast(isChineseLanguage(appState.language) ? (event.message || '工具输出过长，发送给模型的内容已截取。') : 'Tool output was shortened for the model; completed operations will not be repeated automatically.');
+  } else {
+    showToast(isChineseLanguage(appState.language) ? '上下文已自动压缩，原始历史仍然保留（256k）' : 'Context compressed automatically; original history retained (256k)');
+  }
+}
+
 async function recoverIncompleteChatStream({
   basePayload,
   messages,
@@ -20543,7 +20551,7 @@ async function recoverIncompleteChatStream({
           } else if (event.type === 'sources' && Array.isArray(event.sources)) {
             sources = mergeAndReindexSources(sources, event.sources);
           } else if (event.type === 'context_compressed') {
-            showToast(isChineseLanguage(appState.language) ? '上下文已自动压缩，原始历史仍然保留（256k）' : 'Context compressed automatically; original history retained (256k)');
+            showContextCompressionNotice(event);
           } else if (event.type === 'model_info' && event.model) {
             model = event.actualModel || event.model;
           } else if (event.type === 'error') {
@@ -20856,6 +20864,11 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
         try {
           const parsed = JSON.parse(data);
+
+          if (parsed.type === 'context_compressed') {
+            showContextCompressionNotice(parsed);
+            continue;
+          }
 
           if (parsed.type === 'done') {
             if (parsed.actualModel) { finalModel = parsed.actualModel; aiMsg.model = finalModel; }
@@ -24113,6 +24126,9 @@ async function sendMessage(message = null, options = {}) {
           }
           else if (parsed.type === 'stream_retry') {
             updateStepStatus(getGeneratingStep(), 'running', parsed.message || '正在自动重试');
+          }
+          else if (parsed.type === 'context_compressed') {
+            showContextCompressionNotice(parsed);
           }
           else if (parsed.type === 'stream_warning') {
             showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');

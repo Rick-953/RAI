@@ -26,6 +26,18 @@ const mergeServer = vm.runInNewContext(`(${extractFunction(
     'mergeContinuationTextForStorage',
     '/**'
 )})`);
+const notices = [];
+const language = { language: 'zh' };
+const showCompressionNotice = vm.runInNewContext(`(${extractFunction(app, 'showContextCompressionNotice', 'async function recoverIncompleteChatStream')})`, {
+    appState: language, isChineseLanguage: value => value === 'zh', showToast: value => notices.push(value)
+});
+showCompressionNotice({ truncatedToolResults: 1, message: '工具输出已截取' });
+showCompressionNotice({});
+language.language = 'en';
+showCompressionNotice({ truncatedToolResults: 1, message: '工具输出已截取' });
+assert.match(notices[0], /截取/);assert.doesNotMatch(notices[1], /截取/);assert.match(notices[2], /shortened/);
+assert.equal((app.match(/showContextCompressionNotice\((?:parsed|event)\);/g) || []).length, 3,
+    'main chat, alternate chat and continuation must all show context notices');
 
 for (const merge of [mergeClient, mergeServer]) {
     assert.equal(merge('alpha beta', 'beta gamma'), 'alpha beta gamma');

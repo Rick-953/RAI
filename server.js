@@ -2,7 +2,7 @@ const { MESSAGE: FILE_NAME_TOO_LONG_MESSAGE, validateUploadFilename, isFileNameT
 const { normalizeAdminModelDefinition, validateReasoningProfile } = require('./lib/admin-model-catalog');
 const { registerChatModel, removeChatModel } = require('./lib/chat-model-policy');
 const { applyChatReasoningPolicy, officialDeepSeekBody } = require('./lib/chat-reasoning-policy');
-const { enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel } = require('./lib/context-window');
+const { enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel, TOOL_TRUNCATION_MESSAGE, truncateToolResult } = require('./lib/context-window');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
@@ -2832,57 +2832,26 @@ function getPendingClientToolCountBySession(sessionId) {
 }
 
 const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'scope',
-    'path', 'revision', 'content', 'total_lines', 'next_line', 'results', 'line', 'scanned_files', 'skipped_files', 'truncated']);
+    'path', 'revision', 'content', 'total_lines', 'next_line', 'results', 'line', 'scanned_files', 'skipped_files', 'truncated', 'context_truncated', 'context_truncation_notice']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
-    let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
+    const limit = Math.max(2048, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
     const normalize = (value) => {
-        if (remaining <= 0) return undefined;
-        if (typeof value === 'string') {
-            const bytes = Buffer.byteLength(value, 'utf8');
-            if (bytes <= remaining) {
-                remaining -= bytes;
-                return value;
-            }
-            let truncated = value;
-            while (truncated.length > 0 && Buffer.byteLength(truncated, 'utf8') > remaining) {
-                truncated = truncated.slice(0, -1);
-            }
-            if (!truncated) return undefined;
-            remaining -= Buffer.byteLength(truncated, 'utf8');
-            return truncated;
-        }
-        if (Array.isArray(value)) {
-            const next = [];
-            for (const item of value) {
-                const normalized = normalize(item);
-                if (normalized === undefined) break;
-                next.push(normalized);
-            }
-            return next;
-        }
+        if (Array.isArray(value)) return value.map(normalize);
         if (value && typeof value === 'object') {
             const next = {};
             for (const [key, item] of Object.entries(value)) {
                 if (!CLIENT_TOOL_RESULT_ALLOWED_KEYS.has(key)) continue;
-                const keyBytes = Buffer.byteLength(String(key), 'utf8');
-                if (keyBytes > remaining) break;
-                remaining -= keyBytes;
-                const normalized = normalize(item);
-                if (normalized === undefined) continue;
-                next[key] = normalized;
+                next[key] = normalize(item);
             }
             return next;
         }
-        if (value === null || value === undefined) return value;
-        const text = String(value);
-        const bytes = Buffer.byteLength(text, 'utf8');
-        if (bytes > remaining) return undefined;
-        remaining -= bytes;
         return value;
     };
     const normalized = normalize(result);
-    return normalized && typeof normalized === 'object' && !Array.isArray(normalized) ? normalized : {};
+    if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) return {};
+    const serialized = truncateToolResult(JSON.stringify(normalized), limit);
+    return serialized ? JSON.parse(serialized) : { context_truncated: true, context_truncation_notice: 'Tool result could not fit the size limit. Do not repeat an operation whose outcome is unknown.' };
 }
 
 function hasToolDefinition(toolDefinitions = [], toolName = '') {
@@ -10499,7 +10468,7 @@ app.use(cors({
     exposedHeaders: ['X-RAI-Diagnostic-Id', 'X-Request-ID', 'X-Model-Used', 'X-Model-Reason']
 }));
 app.use((req, res, next) => {
-    if (req.path === '/api/chat/stream' || /^\/api\/sessions\/[^/]+\/client-messages$/.test(req.path)) {
+    if (req.path === '/api/chat/stream' || req.path === '/api/agent/tool-result' || req.path === '/api/agent/tool-results' || /^\/api\/sessions\/[^/]+\/client-messages$/.test(req.path)) {
         return chatJsonParser(req, res, next);
     }
     return jsonParser(req, res, next);
@@ -25373,6 +25342,8 @@ if (clientFileExecution && systemPrompt) {
                             tool_call_id: toolCall.id,
                             content: JSON.stringify(result)
                         }));
+                        const truncatedToolResults = executedToolResults.filter(({ result }) => result?.context_truncated === true).length;
+                        if (truncatedToolResults && !res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'context_compressed', truncatedToolResults, message: TOOL_TRUNCATION_MESSAGE })}\n\n`);
                         if (executedToolResults.length) conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
 
                         // Include interjections typed during this round tool execution before the continuation call.

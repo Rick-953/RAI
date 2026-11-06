@@ -176,8 +176,16 @@ function createProviderMock() {
         const completed = results.length ? Number(JSON.parse(results.at(-1).content).content.match(/^CHECKPOINT=(\d+)/)[1]) : 0;
         const ids = new Set(messages.flatMap(message => (message.tool_calls || []).map(call => call.id)));
         for (const result of results) assert.ok(ids.has(result.tool_call_id), 'compaction must retain matching tool calls');
-        if (scenario === 'client-context-limit') assert.equal(completed, 0, 'an oversized latest result must be rejected before another provider request');
-        const steps = scenario === 'client-long-word' ? 45 : 8;
+        if (scenario === 'client-context-limit' && completed) {
+          const result = JSON.parse(results.at(-1).content);
+          assert.equal(result.success, true);
+          assert.equal(result.revision, Buffer.alloc(32).toString('base64'));
+          assert.equal(result.context_truncated, true);
+          assert.match(result.context_truncation_notice, /do not repeat/i);
+          assert.match(result.content, /output omitted/);
+          assert.match(result.content, /END_CHECKPOINT$/);
+        }
+        const steps = scenario === 'client-long-word' ? 45 : scenario === 'client-context-limit' ? 1 : 8;
         if (completed < steps) writeSse(response, [openAiText('Report checkpoint in progress. ', null), { choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
           function: { name: 'read_code', arguments: JSON.stringify({ path: 'report.docx', offset: completed + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         else writeSse(response, [openAiText(FINAL_TEXT)]);
@@ -517,7 +525,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
         : scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
   });
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
-  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, done = false, degraded = false;
+  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, truncated = 0, done = false, degraded = false;
   const warnings = [];
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
@@ -530,7 +538,10 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       assert.notEqual(event.type, 'error', `${scenario}: unexpected stream error ${JSON.stringify(event)}`);
       if (event.type === 'content') visible += event.content || event.delta || '';
       if (event.type === 'stream_retry') retries++;
-      if (event.type === 'context_compressed') compressed++;
+      if (event.type === 'context_compressed') {
+        compressed++;
+        if (event.truncatedToolResults > 0) { truncated++; assert.match(event.message, /截取/); }
+      }
       if (event.type === 'stream_warning') warnings.push(event);
       if (event.type === 'done') { done = true; degraded = event.degraded === true; }
       if (event.type === 'tool_pending_client') {
@@ -542,7 +553,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
           result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
           if (scenario === 'client-long-word') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(7000);
           if (scenario === 'client-large-context') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(80000);
-          if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(300000);
+          if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(2200000) + 'END_CHECKPOINT';
         } else if (scenario.startsWith('agent-')) {
           if (event.tool === 'enable_agent_mode') {
             assert.deepEqual(event.parameters, {});
@@ -581,12 +592,10 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
     }
   }
   if (scenario === 'client-context-limit') {
-    assert.ok(visible.includes('Report checkpoint in progress.'));
-    assert.equal(degraded, true);
-    assert.equal(warnings.length, 1);
-    assert.equal(warnings[0].code, 'current_turn_context_too_large');
-    assert.match(warnings[0].message, /上下文预算/);
-    assert.doesNotMatch(warnings[0].message, /上游连接中断/);
+    assert.ok(visible.includes(FINAL_TEXT));
+    assert.equal(degraded, false);
+    assert.deepEqual(warnings, []);
+    assert.ok(truncated > 0, 'the user is told that the model received only a tool output excerpt');
   } else {
     assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
     assert.equal(degraded, false, `${scenario}: cannot report an interrupted turn as completed`);
@@ -783,11 +792,11 @@ async function main() {
         await dbRun(limitDb, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [limitSession,userId,'Context limit fixture','gpt-6.1-sol']);
         await runClientChat(baseUrl, token, softwareKey, [], 'client-context-limit', limitSession);
         const row = await new Promise((resolve,reject)=>limitDb.get("SELECT content,process_trace FROM messages WHERE session_id=? AND role='assistant'", [limitSession], (error,value)=>error?reject(error):resolve(value)));
-        assert.match(row.content, /Report checkpoint in progress/);
+        assert.match(row.content, /Runtime skill loop passed/);
         assert.doesNotMatch(row.content, /上游连接中断/);
-        assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'context-limit interruption retains completed tool history');
+        assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'completed tool history is retained');
       } finally { await closeDatabase(limitDb); }
-      console.log('PASS actual context-limit warning, saved progress and completed tool history');
+      console.log('PASS oversized client result is reported, bounded and continued without repeating tools');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-long-word');
       const requests = provider.observations.filter(item => item.scenario === 'client-long-word' && item.body.stream === true);
       let resets = 0;

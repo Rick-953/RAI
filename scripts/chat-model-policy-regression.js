@@ -82,6 +82,31 @@ async function main() {
         for (const message of result.messages.filter(message=>message.role==='tool')) assert.ok(ids.has(message.tool_call_id),'large-turn compaction never orphans a tool result');
         assert.ok(estimateContextTokens(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
     }
+    const oversized = {model:'gpt-6-luna',max_tokens:8000,messages:[
+        {role:'user',content:'Complete the task without repeating the command.'},
+        {role:'assistant',content:null,tool_calls:[{id:'large_current',type:'function',function:{name:'sandbox_exec',arguments:'{}'}}]},
+        {role:'tool',tool_call_id:'large_current',content:JSON.stringify({content:'START\n'+'中😀'.repeat(160000)+'\nEND',success:true,executed:true,exit_code:0,path:'report.docx',revision:'original-revision'})}
+    ]};
+    const beforeOversized = JSON.stringify(oversized); const truncationEvents = [];
+    const clipped = await enforceContextWindow(oversized,{onCompressed:event=>truncationEvents.push(event)});
+    assert.equal(JSON.stringify(oversized),beforeOversized,'truncation only changes the model request');
+    assert.equal(clipped.messages.at(-1).tool_call_id,'large_current');
+    const clippedResult = JSON.parse(clipped.messages.at(-1).content);
+    assert.equal(clippedResult.success,true);assert.equal(clippedResult.executed,true);assert.equal(clippedResult.exit_code,0);
+    assert.equal(clippedResult.path,'report.docx');assert.equal(clippedResult.revision,'original-revision');
+    assert.equal(clippedResult.context_truncated,true);assert.match(clippedResult.context_truncation_notice,/do not repeat/i);
+    assert.match(clippedResult.content,/^START/);assert.match(clippedResult.content,/END$/);assert.match(clippedResult.content,/output omitted/);
+    assert.doesNotMatch(clippedResult.content,/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    assert.equal(truncationEvents.length,1);assert.equal(truncationEvents[0].truncatedToolResults,1);assert.match(truncationEvents[0].message,/截取/);
+    assert.ok(estimateContextTokens(clipped)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    const parallel = {model:'gpt-6-luna',messages:[{role:'user',content:'Run both commands.'},
+        {role:'assistant',content:null,tool_calls:['first','second'].map(id=>({id,type:'function',function:{name:'sandbox_exec',arguments:'{}'}}))},
+        ...['first','second'].map(id=>({role:'tool',tool_call_id:id,content:JSON.stringify({success:true,executed:true,output:id+'x'.repeat(500000)})}))]};
+    const parallelEvents = [];
+    const clippedParallel = await enforceContextWindow(parallel,{onCompressed:event=>parallelEvents.push(event)});
+    assert.deepEqual(clippedParallel.messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),['first','second']);
+    assert.equal(parallelEvents[0].truncatedToolResults,2);
+    for (const message of clippedParallel.messages.filter(m=>m.role==='tool')) assert.equal(JSON.parse(message.content).executed,true);
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);
