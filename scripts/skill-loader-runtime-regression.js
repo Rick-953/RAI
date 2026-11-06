@@ -470,7 +470,7 @@ function createProviderMock() {
       if (systemText.includes('CLIENT_OVERRIDE_MUST_NOT_BE_TRUSTED')) {
         errors.push(`${scenario}: client systemPrompt overrode the canonical prompt`);
       }
-      if (scenario === 'sol' || scenario === 'luna' || scenario === 'astra' || scenario === 'fallback') {
+      if (scenario === 'sol' || scenario === 'luna' || scenario === 'astra' || scenario === 'fallback' || scenario === 'manual-regeneration') {
         writeSse(response, [openAiToolCalls(['mermaid'])]);
       } else if (scenario === 'kimi') {
         writeSse(response, [openAiText('<|tool_calls_section_begin|><|tool_call_begin|>functions.read_skill:0<|tool_call_argument_begin|>{"name":"mermaid"}<|tool_call_end|><|tool_calls_section_end|>')]);
@@ -866,7 +866,7 @@ async function runNormalAndRegeneratedChat(baseUrl, token, databasePath) {
       const response = await fetch(`${baseUrl}/api/chat/stream`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', skipUserSave,
-          continuationOfRequestId: '', continuationAttempt: 0, messages: [{ role: 'user', content: 'scenario:sol' }] })
+          continuationOfRequestId: '', continuationAttempt: 0, messages: [{ role: 'user', content: 'scenario:manual-regeneration' }] })
       });
       assert.equal(response.status, 200, 'normal and manually regenerated messages must remain available');
       const events = (await response.text()).split(/\r?\n/).filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
