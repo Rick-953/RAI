@@ -128,8 +128,13 @@ async function main() {
     const normalizerEnd = normalizerSource.indexOf('\nfunction hasToolDefinition(',normalizerStart);
     assert.ok(normalizerStart>=0 && normalizerEnd>normalizerStart);
     const normalizeClientToolResult = vm.runInNewContext(`${normalizerSource.slice(normalizerStart,normalizerEnd)}\nnormalizeClientToolResult`,{truncateToolResult});
-    const statusOnly = normalizeClientToolResult({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',path:'x'.repeat(5000)},2048);
-    for (const [key,expected] of Object.entries({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',context_truncated:true})) assert.equal(statusOnly[key],expected);
+    const statusOnly = normalizeClientToolResult({success:false,executed:false,retryable:false,pending:true,exit_code:1,error:'access_denied',permission_decision:'denied',file_id:'report.txt',path:'x'.repeat(5000)},2048);
+    for (const [key,expected] of Object.entries({success:false,executed:false,retryable:false,pending:true,exit_code:1,error:'access_denied',permission_decision:'denied',file_id:'report.txt',context_truncated:true})) assert.equal(statusOnly[key],expected);
+    const nativeNested = normalizeClientToolResult({success:true,results:[{path:'src/app.cs',line:7,text:'match'}],pending:true,file_id:'report.txt',warnings:['file_id 不存在：missing.txt']});
+    assert.equal(nativeNested.results[0].path,'src/app.cs');assert.equal(nativeNested.results[0].line,7);assert.equal(nativeNested.results[0].text,'match');
+    assert.equal(nativeNested.pending,true);assert.equal(nativeNested.file_id,'report.txt');assert.equal(nativeNested.warnings[0],'file_id 不存在：missing.txt');
+    const fileResult = JSON.parse(truncateToolResult(JSON.stringify({success:true,file_id:'report.txt',content:'x'.repeat(5000),pending:true}),2048));
+    assert.equal(fileResult.file_id,'report.txt');assert.equal(fileResult.pending,true);
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);

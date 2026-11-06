@@ -2831,7 +2831,7 @@ function getPendingClientToolCountBySession(sessionId) {
     return count;
 }
 
-const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'scope',
+const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_id', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'pending', 'warnings', 'scope',
     'path', 'revision', 'content', 'total_lines', 'next_line', 'results', 'line', 'scanned_files', 'skipped_files', 'truncated', 'context_truncated', 'context_truncation_notice']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
@@ -2853,7 +2853,7 @@ function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
     const serialized = truncateToolResult(JSON.stringify(normalized), limit);
     if (serialized) return JSON.parse(serialized);
     const status = { context_truncated: true, context_truncation_notice: 'Only the available status is retained. Do not repeat completed operations.' };
-    for (const key of ['success', 'executed', 'retryable', 'exit_code', 'error', 'permission_decision', 'truncated']) {
+    for (const key of ['success', 'executed', 'retryable', 'pending', 'exit_code', 'error', 'permission_decision', 'truncated', 'file_id']) {
         const value = normalized[key];
         if (key === 'error' && typeof value === 'string' && value.length > 256) status[key] = value.slice(0, 256) + '...';
         else if (value === null || typeof value === 'boolean' || typeof value === 'number' || (typeof value === 'string' && value.length <= 256)) status[key] = value;

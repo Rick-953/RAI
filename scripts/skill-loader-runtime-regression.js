@@ -207,6 +207,23 @@ function createProviderMock() {
         return;
       }
 
+      if (['client-sandbox-warnings', 'client-file-id'].includes(scenario)) {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (!results.length) {
+          const name = scenario === 'client-sandbox-warnings' ? 'sandbox_exec' : 'read_file';
+          const args = name === 'sandbox_exec' ? { script: 'Write-Output fixture', file_ids: ['missing.txt'] } : { file_id: 'report.txt', mode: 'text' };
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'native_fixture', type: 'function',
+            function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          assert.equal(results.length, 1);
+          const result = JSON.parse(results[0].content);
+          if (scenario === 'client-sandbox-warnings') assert.deepEqual(result.warnings, ['file_id 不存在：missing.txt']);
+          else { assert.equal(result.file_id, 'report.txt'); assert.equal(result.context_truncated, true); }
+          writeSse(response, [openAiText(FINAL_TEXT)]);
+        }
+        return;
+      }
+
       if (scenario === 'client-rounds-retry') {
         const results = (body.messages || []).filter(item => item.role === 'tool');
         if (results.length === 5) {
@@ -289,14 +306,19 @@ function createProviderMock() {
       if (scenario.startsWith('settings-')) {
         const definition = (body.tools || []).find((tool) => tool.function?.name === 'cxrai_setting');
         if (!definition) errors.push(`${scenario}: native settings definition missing`);
-        if (!hasToolResult && ['settings-list', 'settings-get'].includes(scenario)) {
-          const args = scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' };
+        if (!hasToolResult && ['settings-list', 'settings-get', 'settings-pending'].includes(scenario)) {
+          const args = scenario === 'settings-get' ? { action: 'get', name: 'theme' }
+            : scenario === 'settings-pending' ? { action: 'set', name: 'clear_cache', value: '' } : { action: 'list' };
           writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `native_${scenario}`,
             type: 'function', function: { name: 'cxrai_setting', arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
           return;
         }
         if (hasToolResult && !text.includes('SYNTHETIC_NATIVE_SETTINGS_RESULT')) {
           errors.push(`${scenario}: synthetic settings result missing from continuation`);
+        }
+        if (hasToolResult && scenario === 'settings-pending') {
+          const result = JSON.parse(body.messages.find(message => message.role === 'tool').content);
+          assert.equal(result.pending, true, 'a pending choice must not be reported as a completed operation');
         }
         writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]native preferences[/TITLE]`)]);
         return;
@@ -544,7 +566,7 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
   const rejectedScenario = ['client-upstream-rejected', 'client-upstream-rejected-partial'].includes(scenario);
-  const officeScenario = rejectedScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario);
+  const officeScenario = rejectedScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated', 'client-sandbox-warnings', 'client-file-id'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -584,7 +606,13 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       if (event.type === 'tool_pending_client') {
         pending++;
         let result;
-        if (officeScenario) {
+        if (scenario === 'client-sandbox-warnings') {
+          assert.equal(event.tool, 'sandbox_exec');
+          result = { success: true, exit_code: 0, stdout: 'fixture', stderr: '', output: 'fixture', warnings: ['file_id 不存在：missing.txt'] };
+        } else if (scenario === 'client-file-id') {
+          assert.equal(event.tool, 'read_file');
+          result = { success: true, file_id: 'report.txt', content: 'fixture', output: 'fixture', context_truncated: true };
+        } else if (officeScenario) {
           assert.equal(event.tool, 'read_code');
           assert.equal(event.parameters.offset, pending, 'completed tools are never replayed');
           result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
@@ -613,13 +641,15 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
             result = { success: true, path: '.gitignore', revision: Buffer.alloc(32, 1).toString('base64') };
           }
         } else if (scenario.startsWith('settings-')) {
-          assert.ok(['settings-list', 'settings-get', 'settings-fallback'].includes(scenario), 'navigation answers must not force a settings operation');
+          assert.ok(['settings-list', 'settings-get', 'settings-fallback', 'settings-pending'].includes(scenario), 'navigation answers must not force a settings operation');
           assert.equal(event.tool, 'cxrai_setting');
-          assert.deepEqual(event.parameters, scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' });
+          assert.deepEqual(event.parameters, scenario === 'settings-get' ? { action: 'get', name: 'theme' }
+            : scenario === 'settings-pending' ? { action: 'set', name: 'clear_cache', value: '' } : { action: 'list' });
           // Match SettingsToolService's output envelope, including its readable summary.
           result = { success: true, action: event.parameters.action, name: event.parameters.name,
             items: [{ name: 'theme', type: 'string', value: 'system' }], value: 'system',
             output: 'SYNTHETIC_NATIVE_SETTINGS_RESULT: theme=system; notifications=true' };
+          if (scenario === 'settings-pending') result.pending = true;
         } else {
           assert.equal(event.tool, 'read_skill');
           assert.equal(scenario, 'client-read', 'selected/unused must not request another client read');
@@ -659,7 +689,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   if (scenario === 'client-pretruncated') assert.equal(truncated, 1, 'a result truncated by the client is reported once');
   if (scenario === 'client-paginated') assert.equal(truncated, 0, 'the ordinary pagination flag is not a context truncation');
   assert.equal(pending, rejectedScenario ? 1 : scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
-    : ['client-context-limit', 'client-pretruncated', 'client-paginated', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+    : ['client-context-limit', 'client-pretruncated', 'client-paginated', 'client-sandbox-warnings', 'client-file-id', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback', 'settings-pending'].includes(scenario) ? 1 : 0);
 }
 
 async function runSearchUpstreamChat(baseUrl, token, scenario, sessionId) {
@@ -901,6 +931,10 @@ async function main() {
 
     const settingsOnly = process.argv.includes('--native-settings-only');
     if (process.argv.includes('--agent-office-only')) {
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-sandbox-warnings');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-file-id');
+      await runClientChat(baseUrl, token, softwareKey, [], 'settings-pending');
+      console.log('PASS native warning, file identity and pending status survive the tool-result endpoint and reach the model');
       await runCommandReviews(baseUrl, token, databasePath, provider);
       await runInterjection(baseUrl, token, softwareKey, databasePath, provider);
       await runClientChat(baseUrl, token, softwareKey, [], 'client-large-context');
