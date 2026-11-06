@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const {
     createChatRequestBudget,
     createProviderCircuitBreaker,
@@ -79,10 +80,57 @@ function testServerIntegrationContract() {
     assert.doesNotMatch(server, /continueTimeoutId = setTimeout\(\(\) => continueController\.abort\(\), 120000\)/);
 }
 
+function testClientToolDeadline() {
+    const server = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
+    const start = server.indexOf('const PENDING_CLIENT_TOOL_TIMEOUT_MS');
+    const end = server.indexOf('const CLIENT_TOOL_RESULT_ALLOWED_KEYS', start);
+    assert.ok(start >= 0 && end > start, 'client tool pending functions are present');
+    let clock = 0;
+    const timers = new Set();
+    const sandbox = {
+        Date: { now: () => clock },
+        setTimeout: (fn, ms) => { const timer = { fn, due: clock + ms }; timers.add(timer); return timer; },
+        clearTimeout: timer => timers.delete(timer),
+        appendRaiRuntimeReport: () => {}, console: { warn: () => {} }
+    };
+    vm.runInNewContext(server.slice(start, end) + '\nthis.pendingApi = { createClientToolPending, resolveClientToolPending, claimClientToolPending, releaseClientToolPendingClaim, rejectClientToolPending };', sandbox);
+    const { createClientToolPending, resolveClientToolPending, claimClientToolPending, releaseClientToolPendingClaim, rejectClientToolPending } = sandbox.pendingApi;
+    const advance = ms => {
+        clock += ms;
+        for (const timer of [...timers]) if (timer.due <= clock) { timers.delete(timer); timer.fn(); }
+    };
+    const results = [];
+    const startPending = requestId => createClientToolPending({ requestId, userId: 1, sessionId: 'session', toolCall: {}, toolName: 'sandbox_exec', resolve: result => results.push(result) });
+
+    startPending('long');
+    advance(600_000);
+    assert.equal(results.length, 0, 'a ten-minute tool and authorization must not expire at five minutes');
+    assert.equal(resolveClientToolPending('long', { success: true }), true);
+    assert.equal(results[0].success, true);
+
+    startPending('claim');
+    advance(300_100);
+    assert.ok(claimClientToolPending('claim'));
+    releaseClientToolPendingClaim('claim');
+    advance(599_899);
+    assert.equal(results.length, 1, 'releasing a result claim preserves the original deadline');
+    advance(1);
+    assert.equal(results[1].error, 'client_tool_timeout');
+    assert.equal(resolveClientToolPending('claim', { success: true }), false, 'late results cannot resolve twice');
+
+    startPending('cancel');
+    assert.equal(rejectClientToolPending('cancel', 'client_cancelled'), true);
+    advance(900_000);
+    assert.equal(results.length, 3, 'cancellation clears the timer');
+    assert.equal(results[2].error, 'client_cancelled');
+    assert.match(server, /本地执行超时（15分钟，含授权和回传）/);
+}
+
 function main() {
     testTimingBoundsAndSharedDeadline();
     testCircuitBreaker();
     testServerIntegrationContract();
+    testClientToolDeadline();
     console.log('chat-fallback-latency-regression ok shared_deadline bounded_attempts transient_circuit');
 }
 

@@ -130,6 +130,7 @@ function createProviderMock() {
   const errors = [];
   const observations = [];
   const memoryFixtures = { items: [], ids: [] };
+  let primaryPort = 0;
   let releaseInterjection;
   const interjectionGate = new Promise(resolve => { releaseInterjection = resolve; });
   const server = http.createServer(async (request, response) => {
@@ -139,11 +140,12 @@ function createProviderMock() {
       const scenarioMatch = text.match(/scenario:([a-z-]+)/);
       const scenario = scenarioMatch?.[1] || '';
       const isGemini = request.url.includes('/gemini/');
+      const isPrimary = request.socket.localPort === primaryPort;
       const systemText = isGemini ? allText(body.systemInstruction) : allText((body.messages || []).filter((item) => item.role === 'system'));
       const hasToolResult = isGemini
         ? hasObjectKey(body, 'functionResponse')
         : (body.messages || []).some((item) => item.role === 'tool');
-      observations.push({ scenario, url: request.url, body, systemText, hasToolResult });
+      observations.push({ scenario, url: request.url, body, systemText, hasToolResult, isPrimary });
 
       if (body.model === 'codex-auto-review') {
         const command = JSON.parse(body.messages[1].content).arguments.command;
@@ -157,6 +159,34 @@ function createProviderMock() {
         response.end(JSON.stringify({ choices: [{ message: { content: 'Word checkpoint saved; continue from the latest completed step without replay.' } }], usage: { prompt_tokens: 64, completion_tokens: 12, total_tokens: 76 } }));
         return;
       }
+      if (scenario.startsWith('disconnect-') || scenario === 'stop-native-unknown') {
+        if (!hasToolResult) {
+          if (scenario.includes('-native-')) {
+            const calls = [{ index: 0, id: 'disconnect_tool', type: 'function',
+              function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }];
+            if (scenario.endsWith('-unknown')) calls.push({ index: 1, id: 'must_not_run', type: 'function',
+              function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 2, limit: 1 }) } });
+            writeSse(response, [{ choices: [{ delta: { tool_calls: calls }, finish_reason: 'tool_calls' }] }]);
+          } else writeSse(response, [openAiToolCalls(['mermaid'])]);
+        } else {
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.flushHeaders();
+          if (scenario.endsWith('-partial')) {
+            response.write(`data: ${JSON.stringify(openAiText('Partial answer preserved after network interruption. This sentence confirms completed work. ', null))}\n\n`);
+          }
+        }
+        return;
+      }
+      if (scenario === 'stop-web-stream' || scenario === 'stop-native-stream') {
+        if (scenario === 'stop-native-stream' && !hasToolResult) {
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'stop_stream_tool', type: 'function',
+            function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.write(`data: ${JSON.stringify(openAiText('Partial answer before stopping. ', null))}\n\n`);
+        }
+        return;
+      }
       if (scenario === 'client-interjection') {
         if (!text.includes('CORRECT_REPORT_TITLE')) {
           await interjectionGate;
@@ -168,7 +198,7 @@ function createProviderMock() {
         }
         return;
       }
-      if (['client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario)) {
+      if (['client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario)) {
         const messages = body.messages || [];
         assert.ok(messages.filter(message => String(message.content || '').startsWith('[Earlier conversation summary')).length <= 1,
           'repeated compaction replaces the old summary instead of accumulating protected summaries');
@@ -176,8 +206,16 @@ function createProviderMock() {
         const completed = results.length ? Number(JSON.parse(results.at(-1).content).content.match(/^CHECKPOINT=(\d+)/)[1]) : 0;
         const ids = new Set(messages.flatMap(message => (message.tool_calls || []).map(call => call.id)));
         for (const result of results) assert.ok(ids.has(result.tool_call_id), 'compaction must retain matching tool calls');
-        if (scenario === 'client-context-limit') assert.equal(completed, 0, 'an oversized latest result must be rejected before another provider request');
-        const steps = scenario === 'client-long-word' ? 45 : 8;
+        if (scenario === 'client-context-limit' && completed) {
+          const result = JSON.parse(results.at(-1).content);
+          assert.equal(result.success, true);
+          assert.equal(result.revision, Buffer.alloc(32).toString('base64'));
+          assert.equal(result.context_truncated, true);
+          assert.match(result.context_truncation_notice, /do not repeat/i);
+          assert.match(result.content, /output omitted/);
+          assert.match(result.content, /END_CHECKPOINT$/);
+        }
+        const steps = scenario === 'client-long-word' ? 45 : ['client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario) ? 1 : 8;
         if (completed < steps) writeSse(response, [openAiText('Report checkpoint in progress. ', null), { choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
           function: { name: 'read_code', arguments: JSON.stringify({ path: 'report.docx', offset: completed + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         else writeSse(response, [openAiText(FINAL_TEXT)]);
@@ -192,6 +230,23 @@ function createProviderMock() {
         } else {
           assert.equal(attempt, 4, 'initial attempt plus three retries');
           assert.ok(text.includes('partial-1') && text.includes('partial-3'), 'retry preserves received text');
+          writeSse(response, [openAiText(FINAL_TEXT)]);
+        }
+        return;
+      }
+
+      if (['client-sandbox-warnings', 'client-file-id'].includes(scenario)) {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (!results.length) {
+          const name = scenario === 'client-sandbox-warnings' ? 'sandbox_exec' : 'read_file';
+          const args = name === 'sandbox_exec' ? { script: 'Write-Output fixture', file_ids: ['missing.txt'] } : { file_id: 'report.txt', mode: 'text' };
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'native_fixture', type: 'function',
+            function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          assert.equal(results.length, 1);
+          const result = JSON.parse(results[0].content);
+          if (scenario === 'client-sandbox-warnings') assert.deepEqual(result.warnings, ['file_id 不存在：missing.txt']);
+          else { assert.equal(result.file_id, 'report.txt'); assert.equal(result.context_truncated, true); }
           writeSse(response, [openAiText(FINAL_TEXT)]);
         }
         return;
@@ -215,6 +270,40 @@ function createProviderMock() {
           writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `round_${results.length}`, type: 'function',
             function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: results.length + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         } else writeSse(response, [openAiText(FINAL_TEXT)]);
+        return;
+      }
+
+      if (['search-upstream-rejected', 'search-upstream-recovered'].includes(scenario)) {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (!results.length) {
+          writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'search_fixture', type: 'function',
+            function: { name: 'web_search', arguments: JSON.stringify({ query: 'fixture search', max_results: 6 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        } else {
+          assert.equal(results.length, 1);
+          assert.match(results[0].content, /Fixture result 6/);
+          if (scenario === 'search-upstream-recovered' && !isPrimary) {
+            assert.equal(body.model, 'gpt-6.1-sol', 'the backup must keep the selected model');
+            writeSse(response, [openAiText(FINAL_TEXT)]);
+          } else {
+            response.writeHead(402, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ error: 'PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK' }));
+          }
+        }
+        return;
+      }
+
+      if (['client-upstream-rejected', 'client-upstream-rejected-partial'].includes(scenario)) {
+        const results = (body.messages || []).filter(item => item.role === 'tool');
+        if (results.length) {
+          assert.equal(results.length, 1, 'the completed tool result remains in the continuation');
+          response.writeHead(402, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ error: 'PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK' }));
+        } else {
+          const events = scenario.endsWith('-partial') ? [openAiText('Report checkpoint in progress. ', null)] : [];
+          events.push({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'rejected_tool', type: 'function',
+            function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] });
+          writeSse(response, events);
+        }
         return;
       }
 
@@ -245,14 +334,19 @@ function createProviderMock() {
       if (scenario.startsWith('settings-')) {
         const definition = (body.tools || []).find((tool) => tool.function?.name === 'cxrai_setting');
         if (!definition) errors.push(`${scenario}: native settings definition missing`);
-        if (!hasToolResult && ['settings-list', 'settings-get'].includes(scenario)) {
-          const args = scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' };
+        if (!hasToolResult && ['settings-list', 'settings-get', 'settings-pending'].includes(scenario)) {
+          const args = scenario === 'settings-get' ? { action: 'get', name: 'theme' }
+            : scenario === 'settings-pending' ? { action: 'set', name: 'clear_cache', value: '' } : { action: 'list' };
           writeSse(response, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: `native_${scenario}`,
             type: 'function', function: { name: 'cxrai_setting', arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }]);
           return;
         }
         if (hasToolResult && !text.includes('SYNTHETIC_NATIVE_SETTINGS_RESULT')) {
           errors.push(`${scenario}: synthetic settings result missing from continuation`);
+        }
+        if (hasToolResult && scenario === 'settings-pending') {
+          const result = JSON.parse(body.messages.find(message => message.role === 'tool').content);
+          assert.equal(result.pending, true, 'a pending choice must not be reported as a completed operation');
         }
         writeSse(response, [openAiText(`${FINAL_TEXT} [TITLE]native preferences[/TITLE]`)]);
         return;
@@ -376,7 +470,7 @@ function createProviderMock() {
       if (systemText.includes('CLIENT_OVERRIDE_MUST_NOT_BE_TRUSTED')) {
         errors.push(`${scenario}: client systemPrompt overrode the canonical prompt`);
       }
-      if (scenario === 'sol' || scenario === 'luna' || scenario === 'astra' || scenario === 'fallback') {
+      if (scenario === 'sol' || scenario === 'luna' || scenario === 'astra' || scenario === 'fallback' || scenario === 'manual-regeneration') {
         writeSse(response, [openAiToolCalls(['mermaid'])]);
       } else if (scenario === 'kimi') {
         writeSse(response, [openAiText('<|tool_calls_section_begin|><|tool_call_begin|>functions.read_skill:0<|tool_call_argument_begin|>{"name":"mermaid"}<|tool_call_end|><|tool_calls_section_end|>')]);
@@ -400,7 +494,7 @@ function createProviderMock() {
       response.end(JSON.stringify({ error: 'mock failure' }));
     }
   });
-  return { server, errors, observations, memoryFixtures, releaseInterjection };
+  return { server, errors, observations, memoryFixtures, releaseInterjection, setPrimaryPort: port => { primaryPort = port; } };
 }
 
 function openDatabase(filename) {
@@ -499,7 +593,8 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
 }
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
-  const officeScenario = ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit'].includes(scenario);
+  const rejectedScenario = ['client-upstream-rejected', 'client-upstream-rejected-partial'].includes(scenario);
+  const officeScenario = rejectedScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated', 'client-sandbox-warnings', 'client-file-id'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -517,7 +612,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
         : scenario.startsWith('agent-') && scenario !== 'agent-legacy' ? { client_agent_mode: false } : {}) })
   });
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
-  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, done = false, degraded = false;
+  let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, truncated = 0, done = false, degraded = false;
   const warnings = [];
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
@@ -530,19 +625,33 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       assert.notEqual(event.type, 'error', `${scenario}: unexpected stream error ${JSON.stringify(event)}`);
       if (event.type === 'content') visible += event.content || event.delta || '';
       if (event.type === 'stream_retry') retries++;
-      if (event.type === 'context_compressed') compressed++;
+      if (event.type === 'context_compressed') {
+        compressed++;
+        if (event.truncatedToolResults > 0) { truncated++; assert.match(event.message, /截取/); }
+      }
       if (event.type === 'stream_warning') warnings.push(event);
       if (event.type === 'done') { done = true; degraded = event.degraded === true; }
       if (event.type === 'tool_pending_client') {
         pending++;
         let result;
-        if (officeScenario) {
+        if (scenario === 'client-sandbox-warnings') {
+          assert.equal(event.tool, 'sandbox_exec');
+          result = { success: true, exit_code: 0, stdout: 'fixture', stderr: '', output: 'fixture', warnings: ['file_id 不存在：missing.txt'] };
+        } else if (scenario === 'client-file-id') {
+          assert.equal(event.tool, 'read_file');
+          result = { success: true, file_id: 'report.txt', content: 'fixture', output: 'fixture', context_truncated: true };
+        } else if (officeScenario) {
           assert.equal(event.tool, 'read_code');
           assert.equal(event.parameters.offset, pending, 'completed tools are never replayed');
           result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
           if (scenario === 'client-long-word') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(7000);
           if (scenario === 'client-large-context') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(80000);
-          if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(300000);
+          if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(2200000) + 'END_CHECKPOINT';
+          if (scenario === 'client-pretruncated' || scenario === 'client-paginated') {
+            result.content = `CHECKPOINT=${pending}\nsmall result`;
+            if (scenario === 'client-pretruncated') result.context_truncated = true;
+            else result.truncated = true;
+          }
         } else if (scenario.startsWith('agent-')) {
           if (event.tool === 'enable_agent_mode') {
             assert.deepEqual(event.parameters, {});
@@ -560,13 +669,15 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
             result = { success: true, path: '.gitignore', revision: Buffer.alloc(32, 1).toString('base64') };
           }
         } else if (scenario.startsWith('settings-')) {
-          assert.ok(['settings-list', 'settings-get', 'settings-fallback'].includes(scenario), 'navigation answers must not force a settings operation');
+          assert.ok(['settings-list', 'settings-get', 'settings-fallback', 'settings-pending'].includes(scenario), 'navigation answers must not force a settings operation');
           assert.equal(event.tool, 'cxrai_setting');
-          assert.deepEqual(event.parameters, scenario === 'settings-get' ? { action: 'get', name: 'theme' } : { action: 'list' });
+          assert.deepEqual(event.parameters, scenario === 'settings-get' ? { action: 'get', name: 'theme' }
+            : scenario === 'settings-pending' ? { action: 'set', name: 'clear_cache', value: '' } : { action: 'list' });
           // Match SettingsToolService's output envelope, including its readable summary.
           result = { success: true, action: event.parameters.action, name: event.parameters.name,
             items: [{ name: 'theme', type: 'string', value: 'system' }], value: 'system',
             output: 'SYNTHETIC_NATIVE_SETTINGS_RESULT: theme=system; notifications=true' };
+          if (scenario === 'settings-pending') result.pending = true;
         } else {
           assert.equal(event.tool, 'read_skill');
           assert.equal(scenario, 'client-read', 'selected/unused must not request another client read');
@@ -580,13 +691,20 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       }
     }
   }
-  if (scenario === 'client-context-limit') {
-    assert.ok(visible.includes('Report checkpoint in progress.'));
+  if (rejectedScenario) {
     assert.equal(degraded, true);
     assert.equal(warnings.length, 1);
-    assert.equal(warnings[0].code, 'current_turn_context_too_large');
-    assert.match(warnings[0].message, /上下文预算/);
-    assert.doesNotMatch(warnings[0].message, /上游连接中断/);
+    assert.equal(warnings[0].code, 'provider_continuation_http_failed');
+    assert.match(visible, /上游模型服务拒绝了后续请求（HTTP 402）/);
+    assert.match(visible, /已执行的工具不会自动重放/);
+    assert.doesNotMatch(visible, /上游连接中断|PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK/);
+    assert.equal(retries, 0, 'HTTP 402 is terminal and is not retried by the continuation loop');
+    if (scenario.endsWith('-partial')) assert.match(visible, /Report checkpoint in progress/);
+  } else if (scenario === 'client-context-limit') {
+    assert.ok(visible.includes(FINAL_TEXT));
+    assert.equal(degraded, false);
+    assert.deepEqual(warnings, []);
+    assert.equal(truncated, 1, 'normalization and model-budget truncation produce one notice');
   } else {
     assert.ok(visible.includes(FINAL_TEXT), `${scenario}: final response missing ${visible}`);
     assert.equal(degraded, false, `${scenario}: cannot report an interrupted turn as completed`);
@@ -596,8 +714,258 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
   if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
   if (scenario === 'client-large-context') assert.ok(compressed > 0 && compressed < 8, 'large results compact only when needed');
-  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
-    : ['client-context-limit', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
+  if (scenario === 'client-pretruncated') assert.equal(truncated, 1, 'a result truncated by the client is reported once');
+  if (scenario === 'client-paginated') assert.equal(truncated, 0, 'the ordinary pagination flag is not a context truncation');
+  assert.equal(pending, rejectedScenario ? 1 : scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
+    : ['client-context-limit', 'client-pretruncated', 'client-paginated', 'client-sandbox-warnings', 'client-file-id', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback', 'settings-pending'].includes(scenario) ? 1 : 0);
+}
+
+async function runInterruptedChat(baseUrl, token, softwareKey, databasePath, provider, scenario) {
+  const sessionId = 'disconnect-' + crypto.randomUUID();
+  const db = await openDatabase(databasePath);
+  const native = scenario.includes('-native-');
+  const partial = scenario.endsWith('-partial');
+  const unknown = scenario.endsWith('-unknown');
+  const explicitStop = scenario.startsWith('stop-');
+  try {
+    const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Disconnect fixture', 'gpt-6.1-sol']);
+    const controller = new AbortController();
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: 'POST', signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(native ? { 'X-RAI-Client-Key': softwareKey } : {}) },
+      body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: `scenario:${scenario}` }], model: 'gpt-6.1-sol',
+        internetMode: false, memoryMode: 'off', ...(native ? { client_file_execution: true, client_agent_mode: true, workdir_configured: true } : {}) })
+    });
+    assert.equal(response.status, 200);
+    const requestId = response.headers.get('X-Request-ID');
+    assert.ok(requestId);
+    let buffer = '', posted = 0, sawCompletedTool = false, sawPartial = false, pendingEvent = null, sawCancelled = false, sawUnknown = false;
+    const decoder = new TextDecoder();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let end;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
+          if (!line.startsWith('data: {')) continue;
+          const event = JSON.parse(line.slice(6));
+          assert.notEqual(event.type, 'error', JSON.stringify(event));
+          if (event.type === 'tool_pending_client') {
+            posted++;
+            if (unknown) {
+              pendingEvent = event;
+              if (!explicitStop || posted > 1) { controller.abort(); break; }
+              const invalidStop = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requestId: { unexpected: true } }) });
+              assert.equal(invalidStop.status, 400, 'stop must reject a non-string request ID');
+              const stopped = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requestId }) });
+              assert.equal(stopped.status, 200);
+              continue;
+            }
+            const submitted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id,
+                result: { success: true, executed: true, path: 'fixture.txt', content: 'fixture result' } }) });
+            assert.equal(submitted.status, 200);
+          }
+          if (event.type === 'tool_status' && event.status === 'complete') sawCompletedTool = true;
+          if (event.type === 'tool_status' && event.status === 'unknown') sawUnknown = true;
+          if (event.type === 'cancelled') sawCancelled = true;
+          if (event.type === 'content' && String(event.content || '').includes('Partial answer preserved')) sawPartial = true;
+          if (sawCompletedTool && (!partial || sawPartial)) { controller.abort(); break; }
+        }
+        if (controller.signal.aborted) break;
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+    } finally { clearTimeout(timeout); }
+    if (explicitStop) {
+      assert.equal(sawCancelled, true, 'explicit stop must finish the SSE with cancelled');
+      assert.equal(sawUnknown, true, 'a pending local operation is unknown after explicit stop');
+    }
+    assert.equal(sawCompletedTool, !unknown, 'only confirmed tool results are marked complete');
+    assert.equal(sawPartial, partial);
+    assert.equal(posted, native ? 1 : 0);
+    let messages = [];
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const reloaded = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(reloaded.status, 200);
+      messages = await reloaded.json();
+      if (messages.some(message => message.role === 'assistant' && message.request_id === requestId)) break;
+      await delay(500);
+    }
+    assert.equal(messages.filter(message => message.role === 'user' && message.content === `scenario:${scenario}`).length, 1);
+    const replies = messages.filter(message => message.role === 'assistant' && message.request_id === requestId);
+    assert.equal(replies.length, 1, `${scenario}: interrupted reply must survive a session reload`);
+    if (scenario === 'disconnect-web-partial') {
+      const getRow = (sql, params) => new Promise((resolve, reject) => db.get(sql, params,
+        (error, row) => error ? reject(error) : resolve(row)));
+      const releaseDeadline = Date.now() + 8000;
+      while (await getRow('SELECT id FROM active_requests WHERE id = ?', [requestId])) {
+        assert.ok(Date.now() < releaseDeadline, 'interrupted request must release its quota');
+        await delay(100);
+      }
+      const readQuota = async () => (await getRow(
+        'SELECT COALESCE(SUM(usage_count), 0) AS used FROM user_chat_usage WHERE user_id = ?', [userId])).used;
+      const quotaBefore = await readQuota();
+      const providerCallsBefore = provider.observations.length;
+      for (const [rootId, attempt, prefix] of [[requestId, 1, 'Partial answer'], [null, 1, ''], ['invalid-request-id', 2, ''], ['', 0, 'Partial answer']]) {
+        const continuation = await fetch(`${baseUrl}/api/chat/stream`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', skipUserSave: true,
+            messages: [{ role: 'user', content: `scenario:${scenario}` }],
+            continuationOfRequestId: rootId, continuationAttempt: attempt, continuationPrefix: prefix })
+        });
+        assert.equal(continuation.status, 409, 'old automatic continuation must be rejected before model execution');
+        const body = await continuation.json();
+        assert.equal(body.code, 'automatic_continuation_unsupported');
+        assert.match(body.error, /刷新.*核对/);
+      }
+      assert.equal(await readQuota(), quotaBefore, 'rejected continuations must not consume chat quota');
+      assert.equal(provider.observations.length, providerCallsBefore, 'rejected continuations must not call the model');
+    }
+    if (partial) assert.match(replies[0].content, /Partial answer preserved/);
+    else assert.match(replies[0].content, /中断|未完成|已停止/);
+    const trace = JSON.parse(replies[0].process_trace);
+    assert.equal(trace.interrupted, true);
+    assert.match(trace.flowSegments.filter(segment => segment.kind === 'content').map(segment => segment.text).join(''),
+      /核对/, 'the interruption warning remains visible in the interleaved history');
+    const relevantTools = trace.tools.filter(tool => tool.tool === (native ? 'read_code' : 'read_skill'));
+    assert.equal(relevantTools.length, 1, 'no later tool starts after disconnection');
+    assert.equal(relevantTools[0].status, unknown ? 'unknown' : 'complete');
+    if (unknown) {
+      assert.match(relevantTools[0].detail, /可能已执行.*核对/);
+      assert.match(replies[0].content, /状态未知.*核对/);
+      assert.ok(trace.flowSegments.some(segment => segment.kind === 'tool' && segment.status === 'unknown' && /可能已执行.*核对/.test(segment.detail)));
+      const late = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: pendingEvent.request_id, tool_call_id: pendingEvent.tool_call_id,
+          result: { success: true, executed: true, path: 'fixture.txt', content: 'completed before disconnect' } }) });
+      assert.ok([404, 410].includes(late.status), 'a late result cannot restart the ended request');
+    }
+    assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && !item.hasToolResult).length, 1,
+      'disconnect must not replay the completed tool');
+    if (explicitStop) assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && item.hasToolResult).length, 0,
+      'explicit stop must not request a continuation');
+  } finally { await closeDatabase(db); }
+}
+
+async function runNormalAndRegeneratedChat(baseUrl, token, databasePath) {
+  const sessionId = 'manual-regeneration-' + crypto.randomUUID();
+  const db = await openDatabase(databasePath);
+  try {
+    const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Regeneration fixture', 'gpt-6.1-sol']);
+    for (const skipUserSave of [false, true]) {
+      const response = await fetch(`${baseUrl}/api/chat/stream`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, model: 'gpt-6.1-sol', internetMode: false, memoryMode: 'off', skipUserSave,
+          continuationOfRequestId: '', continuationAttempt: 0, messages: [{ role: 'user', content: 'scenario:manual-regeneration' }] })
+      });
+      assert.equal(response.status, 200, 'normal and manually regenerated messages must remain available');
+      const events = (await response.text()).split(/\r?\n/).filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
+      assert.ok(events.some(event => event.type === 'done' && !event.degraded));
+    }
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+    const messages = await response.json();
+    assert.equal(messages.filter(message => message.role === 'user').length, 1, 'regeneration must not duplicate the user message');
+    assert.equal(messages.filter(message => message.role === 'assistant').length, 2);
+  } finally { await closeDatabase(db); }
+}
+
+async function runStoppedStream(baseUrl, token, softwareKey, databasePath, provider, scenario) {
+  const sessionId = 'stop-' + crypto.randomUUID();
+  const db = await openDatabase(databasePath);
+  const native = scenario === 'stop-native-stream';
+  try {
+    const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+    await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Stop fixture', 'gpt-6.1-sol']);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${baseUrl}/api/chat/stream`, { method: 'POST', signal: controller.signal,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(native ? { 'X-RAI-Client-Key': softwareKey } : {}) },
+        body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: `scenario:${scenario}` }], model: 'gpt-6.1-sol',
+          internetMode: false, memoryMode: 'off', ...(native ? { client_file_execution: true, client_agent_mode: true, workdir_configured: true } : {}) }) });
+      assert.equal(response.status, 200);
+      const requestId = response.headers.get('X-Request-ID');
+      let buffer = '', pendingCount = 0, stopped = false, cancelled = false;
+      const decoder = new TextDecoder();
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let end;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
+          if (!line.startsWith('data: {')) continue;
+          const event = JSON.parse(line.slice(6));
+          assert.notEqual(event.type, 'error', JSON.stringify(event));
+          if (event.type === 'tool_pending_client') {
+            assert.equal(++pendingCount, 1, 'the completed tool must not be dispatched again');
+            const submitted = await fetch(`${baseUrl}/api/agent/tool-result`, { method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ request_id: event.request_id, tool_call_id: event.tool_call_id,
+                result: { success: true, executed: true, path: 'fixture.txt', content: 'fixture result' } }) });
+            assert.equal(submitted.status, 200);
+          }
+          if (!stopped && event.type === 'content' && String(event.content || '').includes('Partial answer before stopping.')) {
+            const result = await fetch(`${baseUrl}/api/chat/stop`, { method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId }) });
+            assert.equal(result.status, 200);
+            stopped = true;
+          }
+          if (event.type === 'cancelled') cancelled = true;
+        }
+      }
+      assert.equal(stopped, true, 'the partial model output must arrive before stopping');
+      assert.equal(cancelled, true, 'stopping must interrupt a stalled upstream stream');
+      assert.equal(pendingCount, native ? 1 : 0);
+      const reloaded = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(reloaded.status, 200);
+      const messages = await reloaded.json();
+      const reply = messages.find(message => message.role === 'assistant' && message.request_id === requestId);
+      assert.ok(reply, 'stopped output must survive a session reload');
+      assert.match(reply.content, /Partial answer before stopping/);
+      assert.match(reply.content, /已停止/);
+      const trace = JSON.parse(reply.process_trace);
+      assert.equal(trace.interrupted, true);
+      if (native) assert.equal(trace.tools.filter(tool => tool.tool === 'read_code' && tool.status === 'complete').length, 1);
+      assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true).length, native ? 2 : 1,
+        'stop must not replay the model or the completed tool');
+    } finally { clearTimeout(timeout); }
+  } finally { await closeDatabase(db); }
+}
+
+async function runSearchUpstreamChat(baseUrl, token, scenario, sessionId) {
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, messages: [{ role: 'user', content: `scenario:${scenario} Search for a fixture.` }],
+      model: 'gpt-6.1-sol', internetMode: true, memoryMode: 'off' })
+  });
+  assert.equal(response.status, 200);
+  const raw = await response.text();
+  const events = raw.split(/\r?\n/).filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
+    .map(line => JSON.parse(line.slice(6)));
+  const visible = events.filter(event => event.type === 'content').map(event => event.content || '').join('');
+  assert.equal(events.filter(event => event.type === 'search_status' && event.status === 'searching').length, 1, 'search executes only once');
+  assert.ok(events.some(event => event.type === 'search_status' && event.resultCount === 6), raw);
+  assert.ok(events.some(event => event.type === 'sources' && event.sources?.length === 6), raw);
+  assert.doesNotMatch(raw, /PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK/);
+  if (scenario === 'search-upstream-recovered') {
+    assert.match(visible, new RegExp(FINAL_TEXT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.ok(events.some(event => event.type === 'done' && !event.degraded));
+    assert.ok(!events.some(event => event.type === 'stream_warning'));
+  } else {
+    assert.match(visible, /上游模型服务拒绝了后续请求（HTTP 402）/);
+    assert.ok(events.some(event => event.type === 'done' && event.degraded));
+    assert.ok(events.some(event => event.type === 'stream_warning' && event.code === 'provider_continuation_http_failed'));
+    assert.ok(!events.some(event => event.type === 'stream_retry'));
+  }
 }
 
 async function runCommandReviews(baseUrl, token, databasePath, provider) {
@@ -717,18 +1085,23 @@ async function runMemoryBatches(baseUrl, token, databasePath, provider) {
 }
 
 async function main() {
+  const upstreamHttpOnly = process.argv.includes('--upstream-http-only');
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-skill-runtime-'));
   const databasePath = path.join(tempRoot, 'ai_data.db');
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const provider = createProviderMock();
   const providerBase = await listen(provider.server);
+  const primaryServer = upstreamHttpOnly ? http.createServer(provider.server.listeners('request')[0]) : null;
+  const primaryBase = primaryServer ? await listen(primaryServer) : '';
+  if (primaryServer) provider.setPrimaryPort(primaryServer.address().port);
   const gatewayKeyFile = path.join(tempRoot, 'gateway-key');
   fs.writeFileSync(gatewayKeyFile, randomSecret(), { mode: 0o600 });
   const logs = { value: '' };
   let child = null;
   try {
-    child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+    const serverArgs = upstreamHttpOnly ? ['--require', path.join(ROOT, 'scripts/mock-tavily-for-runtime-test.js'), path.join(ROOT, 'server.js')] : [path.join(ROOT, 'server.js')];
+    child = spawn(process.execPath, serverArgs, {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -740,9 +1113,10 @@ async function main() {
         PUBLIC_BASE_URL: baseUrl, CORS_ORIGINS: baseUrl, RAI_DEFAULT_DOMAIN_NOTICE_ENABLED: 'false',
         RAI_CHAT_QUOTA_PER_MINUTE: '100', RAI_CHAT_QUOTA_PER_5H: '100', RAI_CHAT_QUOTA_PER_WEEK: '100',
         RAI_DOCUMENT_PARSER_ENABLED: 'false', ZTX6D_FORCE_DISABLED: 'true', RAI_ZTX6D_FORCE_DISABLED: 'true', AGENT_HARD_DISABLE: '1',
-        TAVILY_API_KEY: '', DEEPSEEK_API_KEY: randomSecret(), SILICONFLOW_API_KEY: randomSecret(),
+        TAVILY_API_KEY: upstreamHttpOnly ? randomSecret() : '', DEEPSEEK_API_KEY: randomSecret(), SILICONFLOW_API_KEY: randomSecret(),
         GOOGLE_GEMINI_API_KEY: randomSecret(), OPENROUTER_API_KEY: randomSecret(),
         RAI_GPT_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_GPT_GATEWAY_API_KEY_FILE: gatewayKeyFile,
+        ...(upstreamHttpOnly ? { RAI_GPT_PRIMARY_BASE_URL: `${primaryBase}/v1`, RAI_GPT_PRIMARY_API_KEY_FILE: gatewayKeyFile } : {}),
         RAI_FAST_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_FAST_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_CLAUDE_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_CLAUDE_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_LUNA_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_LUNA_GATEWAY_API_KEY_FILE: gatewayKeyFile,
@@ -770,8 +1144,57 @@ async function main() {
       softwareKey = created.rawKey;
     } finally { await closeDatabase(clientDb); }
 
+    if (upstreamHttpOnly) {
+      const db = await openDatabase(databasePath);
+      try {
+        const userId = Number(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub);
+        for (const scenario of ['client-upstream-rejected', 'client-upstream-rejected-partial']) {
+          const sessionId = 'http-rejected-' + crypto.randomUUID();
+          await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'HTTP error fixture', 'gpt-6.1-sol']);
+          await runClientChat(baseUrl, token, softwareKey, [], scenario, sessionId);
+          const row = await new Promise((resolve, reject) => db.get("SELECT content,process_trace FROM messages WHERE session_id=? AND role='assistant'", [sessionId], (error, value) => error ? reject(error) : resolve(value)));
+          assert.match(row.content, /HTTP 402/);
+          assert.doesNotMatch(row.content, /上游连接中断|PRIVATE_PROVIDER_ERROR_MUST_NOT_LEAK/);
+          assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'completed tool history survives the upstream rejection');
+          assert.equal(JSON.parse(row.process_trace).interrupted, true);
+          assert.equal(provider.observations.filter(item => item.scenario === scenario && item.body.stream === true && !item.hasToolResult).length, 1, 'no completed tool is replayed');
+        }
+        for (const scenario of ['search-upstream-recovered', 'search-upstream-rejected']) {
+          const sessionId = 'search-http-' + crypto.randomUUID();
+          await dbRun(db, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [sessionId, userId, 'Search fixture', 'gpt-6.1-sol']);
+          await runSearchUpstreamChat(baseUrl, token, scenario, sessionId);
+          const row = await new Promise((resolve, reject) => db.get("SELECT content,process_trace,sources FROM messages WHERE session_id=? AND role='assistant'", [sessionId], (error, value) => error ? reject(error) : resolve(value)));
+          assert.equal(JSON.parse(row.sources).length, 6, 'search sources remain in the saved reply');
+          assert.equal(JSON.parse(row.process_trace).tools.filter(item => item.tool === 'web_search' && item.status === 'complete').length, 1);
+          if (scenario === 'search-upstream-rejected') assert.match(row.content, /HTTP 402/);
+          const requests = provider.observations.filter(item => item.scenario === scenario);
+          assert.equal(requests.filter(item => item.body.stream === true && !item.hasToolResult).length, 1, 'search is not requested again');
+          assert.ok(requests.some(item => item.hasToolResult && item.isPrimary));
+          assert.ok(requests.some(item => item.hasToolResult && !item.isPrimary && item.url === '/v1/chat/completions' && item.body.model === 'gpt-6.1-sol'));
+        }
+      } finally { await closeDatabase(db); }
+      assert.deepEqual(provider.errors, []);
+      console.log('PASS HTTP 402 after a completed tool preserves progress, history and status without tool replay');
+      return;
+    }
+
+    for (const scenario of ['disconnect-web-partial', 'disconnect-native-empty', 'disconnect-native-unknown', 'stop-native-unknown']) {
+      await runInterruptedChat(baseUrl, token, softwareKey, databasePath, provider, scenario);
+    }
+    for (const scenario of ['stop-web-stream', 'stop-native-stream']) {
+      await runStoppedStream(baseUrl, token, softwareKey, databasePath, provider, scenario);
+    }
+    await runNormalAndRegeneratedChat(baseUrl, token, databasePath);
+    assert.deepEqual(provider.errors, []);
+    console.log('PASS interrupted streams retain progress, reject old automatic continuations and allow manual regeneration');
+    if (process.argv.includes('--disconnect-only')) return;
+
     const settingsOnly = process.argv.includes('--native-settings-only');
     if (process.argv.includes('--agent-office-only')) {
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-sandbox-warnings');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-file-id');
+      await runClientChat(baseUrl, token, softwareKey, [], 'settings-pending');
+      console.log('PASS native warning, file identity and pending status survive the tool-result endpoint and reach the model');
       await runCommandReviews(baseUrl, token, databasePath, provider);
       await runInterjection(baseUrl, token, softwareKey, databasePath, provider);
       await runClientChat(baseUrl, token, softwareKey, [], 'client-large-context');
@@ -783,11 +1206,14 @@ async function main() {
         await dbRun(limitDb, 'INSERT INTO sessions (id,user_id,title,model) VALUES (?,?,?,?)', [limitSession,userId,'Context limit fixture','gpt-6.1-sol']);
         await runClientChat(baseUrl, token, softwareKey, [], 'client-context-limit', limitSession);
         const row = await new Promise((resolve,reject)=>limitDb.get("SELECT content,process_trace FROM messages WHERE session_id=? AND role='assistant'", [limitSession], (error,value)=>error?reject(error):resolve(value)));
-        assert.match(row.content, /Report checkpoint in progress/);
+        assert.match(row.content, /Runtime skill loop passed/);
         assert.doesNotMatch(row.content, /上游连接中断/);
-        assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'context-limit interruption retains completed tool history');
+        assert.ok(JSON.parse(row.process_trace).tools.length > 0, 'completed tool history is retained');
       } finally { await closeDatabase(limitDb); }
-      console.log('PASS actual context-limit warning, saved progress and completed tool history');
+      console.log('PASS oversized client result is reported, bounded and continued without repeating tools');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-pretruncated');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-paginated');
+      console.log('PASS client truncation notice and ordinary pagination remain distinct');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-long-word');
       const requests = provider.observations.filter(item => item.scenario === 'client-long-word' && item.body.stream === true);
       let resets = 0;
@@ -849,6 +1275,7 @@ async function main() {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {
     await stopChild(child);
+    await closeServer(primaryServer);
     await closeServer(provider.server);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

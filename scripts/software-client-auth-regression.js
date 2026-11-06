@@ -162,14 +162,26 @@ async function testCliBoundary() {
             await closeDatabase(rawDb);
         }
 
+        const leadingDashKeyId = '-123456789abcdef';
+        const revokeSetupDb = await openDatabase(dbPath);
+        try {
+            await runAsync(revokeSetupDb, 'UPDATE software_clients SET key_id = ? WHERE key_id = ?', [leadingDashKeyId, keyId]);
+        } finally {
+            await closeDatabase(revokeSetupDb);
+        }
         const revokeResult = spawnSync(
             process.execPath,
-            [cliPath, 'revoke', keyId, '--db', dbPath],
+            [cliPath, 'revoke', leadingDashKeyId, '--db', dbPath],
             { encoding: 'utf8' }
         );
         assert.equal(revokeResult.status, 0, revokeResult.stderr);
         assert.equal(revokeResult.stdout.includes(rawKey), false, 'revoke output must not contain the raw key');
         assert.equal(JSON.parse(revokeResult.stdout).active, false);
+        assert.equal(JSON.parse(revokeResult.stdout).keyId, leadingDashKeyId);
+
+        const unknownOptionResult = spawnSync(process.execPath, [cliPath, 'list', '--unknown-option'], { encoding: 'utf8' });
+        assert.notEqual(unknownOptionResult.status, 0, 'unknown dash-prefixed options must remain rejected');
+        assert.match(unknownOptionResult.stderr, /unknown_option:--unknown-option/);
 
         const validationDb = await openDatabase(dbPath);
         try {

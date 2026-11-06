@@ -383,6 +383,10 @@ async function main() {
             'failed chat cleanup must stage by request without requiring a session');
         assert.match(chatRoute, /!chatRequestSucceeded \|\| clientAborted \|\| chatRequestCancelled/,
             'failed chat cleanup must distinguish successful requests from aborts and cancellation');
+        assert.match(chatRoute, /INSERT INTO messages \(session_id, role, content, request_id[\s\S]{0,800}\}\);\s*persistedChatAnswer = true;/,
+            'a committed reply must be marked as persisted before any later disconnect');
+        assert.match(chatRoute, /if \(requestId && !persistedChatAnswer && \(!chatRequestSucceeded \|\| clientAborted \|\| chatRequestCancelled\)\)/,
+            'request cleanup must retain images referenced by a committed reply');
         assert.ok((chatRoute.match(/chatRequestSucceeded = true/g) || []).length >= 4,
             'all successful chat completion paths must opt out of failed-request cleanup');
         assert.throws(

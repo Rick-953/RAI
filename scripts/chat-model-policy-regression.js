@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const sqlite3 = require('sqlite3');
 const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, createChatModelQuotaService } = require('../lib/chat-model-policy');
-const { estimateContextTokens, enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
+const { estimateContextTokens, enforceContextWindow, truncateToolResult, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 async function main() {
@@ -82,6 +82,59 @@ async function main() {
         for (const message of result.messages.filter(message=>message.role==='tool')) assert.ok(ids.has(message.tool_call_id),'large-turn compaction never orphans a tool result');
         assert.ok(estimateContextTokens(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
     }
+    const oversized = {model:'gpt-6-luna',max_tokens:8000,messages:[
+        {role:'user',content:'Complete the task without repeating the command.'},
+        {role:'assistant',content:null,tool_calls:[{id:'large_current',type:'function',function:{name:'sandbox_exec',arguments:'{}'}}]},
+        {role:'tool',tool_call_id:'large_current',content:JSON.stringify({content:'START\n'+'中😀'.repeat(160000)+'\nEND',success:true,executed:true,exit_code:0,path:'report.docx',revision:'original-revision'})}
+    ]};
+    const beforeOversized = JSON.stringify(oversized); const truncationEvents = [];
+    const clipped = await enforceContextWindow(oversized,{onCompressed:event=>truncationEvents.push(event)});
+    assert.equal(JSON.stringify(oversized),beforeOversized,'truncation only changes the model request');
+    assert.equal(clipped.messages.at(-1).tool_call_id,'large_current');
+    const clippedResult = JSON.parse(clipped.messages.at(-1).content);
+    assert.equal(clippedResult.success,true);assert.equal(clippedResult.executed,true);assert.equal(clippedResult.exit_code,0);
+    assert.equal(clippedResult.path,'report.docx');assert.equal(clippedResult.revision,'original-revision');
+    assert.equal(clippedResult.context_truncated,true);assert.match(clippedResult.context_truncation_notice,/do not repeat/i);
+    assert.match(clippedResult.content,/^START/);assert.match(clippedResult.content,/END$/);assert.match(clippedResult.content,/output omitted/);
+    assert.doesNotMatch(clippedResult.content,/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    assert.equal(truncationEvents.length,1);assert.equal(truncationEvents[0].truncatedToolResults,1);assert.match(truncationEvents[0].message,/截取/);
+    assert.ok(estimateContextTokens(clipped)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    const parallel = {model:'gpt-6-luna',messages:[{role:'user',content:'Run both commands.'},
+        {role:'assistant',content:null,tool_calls:['first','second'].map(id=>({id,type:'function',function:{name:'sandbox_exec',arguments:'{}'}}))},
+        ...['first','second'].map(id=>({role:'tool',tool_call_id:id,content:JSON.stringify({success:true,executed:true,output:id+'x'.repeat(500000)})}))]};
+    const parallelEvents = [];
+    const clippedParallel = await enforceContextWindow(parallel,{onCompressed:event=>parallelEvents.push(event)});
+    assert.deepEqual(clippedParallel.messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),['first','second']);
+    assert.equal(parallelEvents[0].truncatedToolResults,2);
+    for (const message of clippedParallel.messages.filter(m=>m.role==='tool')) assert.equal(JSON.parse(message.content).executed,true);
+    const status = {success:false,executed:false,retryable:false,exit_code:1,error:'PERMISSION_DENIED: '+'e'.repeat(480),permission_decision:'denied',
+        message:'m'.repeat(450),output:'o'.repeat(450),stdout:'s'.repeat(450),stderr:'t'.repeat(450),text:'q'.repeat(450),content:'c'.repeat(450)};
+    const statusResult = JSON.parse(truncateToolResult(JSON.stringify(status),2048));
+    for (const key of ['success','executed','retryable','exit_code','error','permission_decision']) assert.equal(statusResult[key],status[key],`${key} survives truncation`);
+    const structured = {success:true,results:Array.from({length:1000},(_,line)=>({line,content:'x'.repeat(100)}))};
+    const structuredResult = JSON.parse(truncateToolResult(JSON.stringify(structured),2048));
+    assert.ok(Array.isArray(structuredResult.results));assert.ok(structuredResult.results.length>0 && structuredResult.results.length<structured.results.length);
+    assert.equal(structuredResult.results[0].line,0);assert.equal(structuredResult.results.at(-1).line,999);assert.equal(structuredResult.context_truncated,true);
+    const nested = {success:false,result:{success:false,error:'access_denied',permission_decision:'denied',executed:false,output:'x'.repeat(10000)}};
+    const nestedResult = JSON.parse(truncateToolResult(JSON.stringify(nested),2048));
+    assert.equal(typeof nestedResult.result,'object');assert.equal(nestedResult.result.error,'access_denied');
+    assert.equal(nestedResult.result.permission_decision,'denied');assert.equal(nestedResult.result.executed,false);
+    const competing = {success:true,result:{success:false,error:'ACCESS_DENIED',permission_decision:'denied',executed:false,output:'x'.repeat(3000)},stdout:'y'.repeat(3000)};
+    const competingResult = JSON.parse(truncateToolResult(JSON.stringify(competing),2048));
+    assert.equal(competingResult.result.success,false);assert.equal(competingResult.result.error,'ACCESS_DENIED');
+    assert.equal(competingResult.result.permission_decision,'denied');assert.equal(competingResult.result.executed,false);
+    const normalizerSource = fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
+    const normalizerStart = normalizerSource.indexOf('const CLIENT_TOOL_RESULT_ALLOWED_KEYS =');
+    const normalizerEnd = normalizerSource.indexOf('\nfunction hasToolDefinition(',normalizerStart);
+    assert.ok(normalizerStart>=0 && normalizerEnd>normalizerStart);
+    const normalizeClientToolResult = vm.runInNewContext(`${normalizerSource.slice(normalizerStart,normalizerEnd)}\nnormalizeClientToolResult`,{truncateToolResult});
+    const statusOnly = normalizeClientToolResult({success:false,executed:false,retryable:false,pending:true,exit_code:1,error:'access_denied',permission_decision:'denied',file_id:'report.txt',path:'x'.repeat(5000)},2048);
+    for (const [key,expected] of Object.entries({success:false,executed:false,retryable:false,pending:true,exit_code:1,error:'access_denied',permission_decision:'denied',file_id:'report.txt',context_truncated:true})) assert.equal(statusOnly[key],expected);
+    const nativeNested = normalizeClientToolResult({success:true,results:[{path:'src/app.cs',line:7,text:'match'}],pending:true,file_id:'report.txt',warnings:['file_id 不存在：missing.txt']});
+    assert.equal(nativeNested.results[0].path,'src/app.cs');assert.equal(nativeNested.results[0].line,7);assert.equal(nativeNested.results[0].text,'match');
+    assert.equal(nativeNested.pending,true);assert.equal(nativeNested.file_id,'report.txt');assert.equal(nativeNested.warnings[0],'file_id 不存在：missing.txt');
+    const fileResult = JSON.parse(truncateToolResult(JSON.stringify({success:true,file_id:'report.txt',content:'x'.repeat(5000),pending:true}),2048));
+    assert.equal(fileResult.file_id,'report.txt');assert.equal(fileResult.pending,true);
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);

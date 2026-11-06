@@ -1,3 +1,11 @@
+## 0.13.47 - 2026-11-06
+
+- Bound oversized tool results to fit the model context, preserve execution status and structured data, and notify users when the model receives only an excerpt. Keep completed tools from being repeated during continuation.
+- Report the actual HTTP status when an upstream model rejects a continuation after search or tool execution. Preserve partial answers, sources and tool activity, and mark the reply unfinished.
+- Persist interrupted session messages and tool activity atomically. When a native result has not arrived before disconnection, record its execution status as unknown and ask the user to check it.
+- Stop automatically opening a new browser chat request after an interrupted stream, and reject legacy automatic continuation requests without rerunning tools. Manual regeneration remains available. Allow up to 15 minutes for a native tool request, including authorization and result delivery.
+- Stop an active upstream request promptly, preserve the stopped reply and tool status, and prevent dispatching later tools in the same round.
+
 ## 0.13.46 - 2026-11-05
 
 - Interleave Agent progress reports and correlated tool calls in one ordered, expandable execution process. When the first visible final-answer character arrives, collapse prior work and stream the separate summary and delivery in the same render. Preserve manual expansion, final boundaries, results and interrupted progress across streaming and history reloads.

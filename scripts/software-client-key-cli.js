@@ -37,7 +37,13 @@ function parseArgs(argv) {
             index += 1;
             continue;
         }
-        if (arg.startsWith('-')) throw new Error(`unknown_option:${arg}`);
+        if (arg.startsWith('-')) {
+            if (command === 'revoke' && positional.length === 0 && /^[A-Za-z0-9_-]{16}$/.test(arg)) {
+                positional.push(arg);
+                continue;
+            }
+            throw new Error(`unknown_option:${arg}`);
+        }
         positional.push(arg);
     }
     return { command, options, positional };

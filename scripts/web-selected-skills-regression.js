@@ -259,6 +259,22 @@ async function browserTests() {
         let catalogRequests = 0, createdSessions = 0;
         const catalogBody = { success: true, maxSelected: 3, skills: policy.getCatalog({ sandboxEnabled: true }) };
         const answerBody = 'data: {"type":"content","content":"Browser fixture answer."}\n\ndata: {"type":"done"}\n\n';
+        const toolEvent = { type: 'tool_status', tool: 'edit_file', tool_call_id: 'fixture-tool', status: 'complete', detail: 'file updated once' };
+        const contentEvent = { type: 'content', content: 'Partial answer' };
+        const warningEvent = { type: 'stream_warning', message: 'Upstream HTTP 402' };
+        const sourcesEvent = { type: 'sources', sources: [{ title: 'Fixture source', url: 'https://example.com/source' }] };
+        const sse = events => events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('');
+        const streamFixtures = {
+          'tool-eof': sse([toolEvent, sourcesEvent, contentEvent]),
+          'tool-empty-eof': sse([toolEvent]),
+          'unknown-eof': sse([contentEvent]),
+          'warning-eof': sse([toolEvent, warningEvent, contentEvent]),
+          'warning-done': sse([toolEvent, sourcesEvent, warningEvent, contentEvent, { type: 'done', degraded: true }]),
+          'error-eof': sse([toolEvent, contentEvent, { type: 'error', error: 'fixture tool failure' }]),
+          'degraded-done': sse([toolEvent, contentEvent, { type: 'done', degraded: true }]),
+          'normal-done': sse([contentEvent, { type: 'done' }]),
+          'after-done-read-error': sse([contentEvent, { type: 'done' }])
+        };
         await page.route('**/api/**', async route => {
           const pathname = new URL(route.request().url()).pathname;
           if (pathname.endsWith('/skills')) {
@@ -273,7 +289,7 @@ async function browserTests() {
             if (typeof chatMode === 'number') return route.fulfill({ status: chatMode, json: { error: 'fixture rejection' } });
             const body = chatMode === 'empty' ? 'data: {"type":"done"}\n\n'
               : chatMode === 'stream-error' ? 'data: {"type":"error","error":"fixture failure"}\n\n'
-                : chatMode === 'no-done' ? ': interrupted\n\n' : answerBody;
+                : chatMode === 'no-done' ? ': interrupted\n\n' : (streamFixtures[chatMode] || answerBody);
             return route.fulfill({ contentType: 'text/event-stream', body });
           }
           if (pathname === '/api/sessions' && route.request().method() === 'POST') {
@@ -295,7 +311,6 @@ async function browserTests() {
           window.RaiLocalAgent = { isSelected: () => false, getChatCapability: () => null, prepareChat: async () => {} };
           window.webSkillsOriginalPromptIdentity = ensureCurrentSessionPromptIdentity;
           ensureCurrentSessionPromptIdentity = async () => {};
-          recoverIncompleteChatStream = async () => ({ content: '', reasoning: '', sources: [], completed: false, error: 'fixture failed recovery' });
           loadSessions = async () => {};
           setLanguage(language);
           window.RaiWebSkills.syncContext();
@@ -325,6 +340,58 @@ async function browserTests() {
             showApp(); renderMessages();
           }, { language: fixture.language, token: accessToken() });
         };
+        for (const alternate of [false, true]) {
+          for (const scenario of Object.keys(streamFixtures)) {
+            await resetFixture();
+            chatMode = scenario;
+            const beforeStream = payloads.length;
+            const result = await page.evaluate(async ({ alternate, scenario }) => {
+              let outcome = null;
+              const diagnostics = window.RaiDiagnostics;
+              if (scenario === 'after-done-read-error') {
+                window.RaiDiagnostics = { ...diagnostics, reader(response) {
+                  const reader = response.body.getReader();
+                  let received = false;
+                  return { async read() {
+                    if (received) throw new Error('fixture read after done');
+                    received = true;
+                    return reader.read();
+                  } };
+                } };
+              }
+              try {
+                if (alternate) outcome = await triggerAIResponse([{ role: 'user', content: 'fixture request' }]);
+                else await sendMessage('fixture request');
+              } finally {
+                window.RaiDiagnostics = diagnostics;
+              }
+              const message = appState.messages.findLast(item => item.role === 'assistant');
+              return { outcome, message, text: document.getElementById('messagesList').innerText };
+            }, { alternate, scenario });
+            assert.equal(payloads.length, beforeStream + 1, `${scenario}: ${alternate ? 'alternate' : 'main'} sends only once`);
+            assert.ok(result.message, `${scenario}: response is retained`);
+            if (scenario !== 'tool-empty-eof') assert.match(result.message.content, /Partial answer/);
+            else assert.match(result.message.content, /incomplete|未完成/i);
+            if (scenario.startsWith('tool-') || scenario.startsWith('warning-') || scenario === 'degraded-done' || scenario === 'error-eof') {
+              const trace = JSON.parse(result.message.process_trace);
+              assert.equal(trace.interrupted, true, `${scenario}: trace remains incomplete`);
+              assert.ok(trace.tools.some(row => row.tool === 'edit_file' && row.detail === 'file updated once'), `${scenario}: tool result remains visible`);
+              assert.match(result.text, /edit.file|文件|file updated once/i);
+            }
+            if (scenario === 'tool-eof' || scenario === 'warning-done') {
+              assert.equal(result.message.sources.length, 1, `${scenario}: search source retained`);
+            }
+            if (scenario.startsWith('warning-')) {
+              assert.match(result.message.content, /Upstream HTTP 402/, `${scenario}: upstream failure remains in the response`);
+            }
+            const completed = scenario === 'normal-done' || scenario === 'after-done-read-error';
+            if (!completed) assert.match(result.message.content, /incomplete|未完成/i);
+            else assert.doesNotMatch(result.message.content, /incomplete|未完成/i);
+            if (alternate) assert.equal(result.outcome.success, completed, `${scenario}: completion state is accurate`);
+          }
+        }
+        await resetFixture();
+        payloads.length = 0;
         await input.fill('A draft @mer');
         await page.locator('#web-skill-option-mermaid').waitFor({ state: 'visible' });
         const bounds = await page.locator('#inputContainer').boundingBox();
