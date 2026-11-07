@@ -298,6 +298,22 @@ def add_office_resources() -> None:
                     'archiveSha256': item['sha256'], 'notices': [notice(name, bundle.read(name)) for name in sorted(legal)]})
 
 
+def add_deepseek_tokenizer() -> None:
+    root = ROOT / 'resources/tokenizers/deepseek-v4'
+    checksums = {
+        'tokenizer.json': '8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf',
+        'tokenizer_config.json': '6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547',
+    }
+    for name, checksum in checksums.items():
+        if hashlib.sha256((root / name).read_bytes()).hexdigest() != checksum:
+            raise ValueError(f'DeepSeek V4 tokenizer digest mismatch: {name}')
+    components.append({'id': 'deepseek-v4-tokenizer', 'name': 'DeepSeek V4 tokenizer',
+        'version': '60d8d70770c6776ff598c94bb586a859a38244f1', 'license': 'MIT', 'scope': 'tokenizer',
+        'source': 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/tree/60d8d70770c6776ff598c94bb586a859a38244f1',
+        'tokenizerSha256': checksums['tokenizer.json'], 'configSha256': checksums['tokenizer_config.json'],
+        'notices': [notice('DeepSeek MIT license', (root / 'LICENSE').read_bytes())]})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -307,6 +323,7 @@ def main() -> None:
     add_browser()
     add_cargo()
     add_office_resources()
+    add_deepseek_tokenizer()
     components.sort(key=lambda item: (item['scope'], item['name'].lower(), item['version'], item['id']))
     manifest = {
         'schemaVersion': 1, 'product': 'RAI Web',

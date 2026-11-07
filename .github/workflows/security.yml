@@ -386,6 +386,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           release_paths=(
             .env.example LICENSE README.md README.zh-CN.md docs
+            resources/tokenizers/deepseek-v4
             agent lib workers public scripts skills server.js user-session-token.js package.json package-lock.json
           )
           for release_path in "${release_paths[@]}"; do
@@ -428,6 +429,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           release_paths=(
             .env.example LICENSE README.md README.zh-CN.md docs
+            resources/tokenizers/deepseek-v4
             agent lib workers public scripts skills server.js user-session-token.js package.json package-lock.json
           )
           for release_path in "${release_paths[@]}"; do

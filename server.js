@@ -2,12 +2,13 @@ const { MESSAGE: FILE_NAME_TOO_LONG_MESSAGE, validateUploadFilename, isFileNameT
 const { normalizeAdminModelDefinition, validateReasoningProfile } = require('./lib/admin-model-catalog');
 const { registerChatModel, removeChatModel } = require('./lib/chat-model-policy');
 const { applyChatReasoningPolicy, officialDeepSeekBody } = require('./lib/chat-reasoning-policy');
-const { enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel } = require('./lib/context-window');
+const { enforceContextWindow, estimateContextTokens, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel, TOOL_TRUNCATION_MESSAGE, toolResultForContext, truncateToolResult } = require('./lib/context-window');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
 const { createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
-const { createLunaOfficialFetch } = require('./lib/luna-official-provider');
+const { createLunaOfficialFetch, toResponsesBody } = require('./lib/luna-official-provider');
+const { estimateDeepSeekInputTokens } = require('./lib/deepseek-tokenizer');
 const { createProviderTokenStore, meterChatResponse } = require('./lib/provider-token-usage');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
@@ -2832,57 +2833,33 @@ function getPendingClientToolCountBySession(sessionId) {
 }
 
 const CLIENT_TOOL_RESULT_ALLOWED_KEYS = new Set(['success', 'output', 'stdout', 'stderr', 'exit_code', 'error', 'message', 'result', 'text', 'files', 'file_name', 'mime_type', 'size', 'expires_at', 'download_available', 'permission_decision', 'executed', 'retryable', 'scope',
-    'path', 'revision', 'content', 'total_lines', 'next_line', 'results', 'line', 'scanned_files', 'skipped_files', 'truncated']);
+    'path', 'revision', 'content', 'total_lines', 'next_line', 'results', 'line', 'scanned_files', 'skipped_files', 'truncated', 'context_truncated', 'context_truncation_notice']);
 
 function normalizeClientToolResult(result, maxBytes = 2 * 1024 * 1024) {
-    let remaining = Math.max(0, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
+    const limit = Math.max(2048, Math.min(Number(maxBytes) || (2 * 1024 * 1024), 2 * 1024 * 1024));
     const normalize = (value) => {
-        if (remaining <= 0) return undefined;
-        if (typeof value === 'string') {
-            const bytes = Buffer.byteLength(value, 'utf8');
-            if (bytes <= remaining) {
-                remaining -= bytes;
-                return value;
-            }
-            let truncated = value;
-            while (truncated.length > 0 && Buffer.byteLength(truncated, 'utf8') > remaining) {
-                truncated = truncated.slice(0, -1);
-            }
-            if (!truncated) return undefined;
-            remaining -= Buffer.byteLength(truncated, 'utf8');
-            return truncated;
-        }
-        if (Array.isArray(value)) {
-            const next = [];
-            for (const item of value) {
-                const normalized = normalize(item);
-                if (normalized === undefined) break;
-                next.push(normalized);
-            }
-            return next;
-        }
+        if (Array.isArray(value)) return value.map(normalize);
         if (value && typeof value === 'object') {
             const next = {};
             for (const [key, item] of Object.entries(value)) {
                 if (!CLIENT_TOOL_RESULT_ALLOWED_KEYS.has(key)) continue;
-                const keyBytes = Buffer.byteLength(String(key), 'utf8');
-                if (keyBytes > remaining) break;
-                remaining -= keyBytes;
-                const normalized = normalize(item);
-                if (normalized === undefined) continue;
-                next[key] = normalized;
+                next[key] = normalize(item);
             }
             return next;
         }
-        if (value === null || value === undefined) return value;
-        const text = String(value);
-        const bytes = Buffer.byteLength(text, 'utf8');
-        if (bytes > remaining) return undefined;
-        remaining -= bytes;
         return value;
     };
     const normalized = normalize(result);
-    return normalized && typeof normalized === 'object' && !Array.isArray(normalized) ? normalized : {};
+    if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) return {};
+    const serialized = truncateToolResult(JSON.stringify(normalized), limit);
+    if (serialized) return JSON.parse(serialized);
+    const status = { context_truncated: true, context_truncation_notice: 'Only the available status is retained. Do not repeat completed operations.' };
+    for (const key of ['success', 'executed', 'retryable', 'exit_code', 'error', 'permission_decision', 'truncated']) {
+        const value = normalized[key];
+        if (key === 'error' && typeof value === 'string' && value.length > 256) status[key] = value.slice(0, 256) + '...';
+        else if (value === null || typeof value === 'boolean' || typeof value === 'number' || (typeof value === 'string' && value.length <= 256)) status[key] = value;
+    }
+    return status;
 }
 
 function hasToolDefinition(toolDefinitions = [], toolName = '') {
@@ -10499,7 +10476,7 @@ app.use(cors({
     exposedHeaders: ['X-RAI-Diagnostic-Id', 'X-Request-ID', 'X-Model-Used', 'X-Model-Reason']
 }));
 app.use((req, res, next) => {
-    if (req.path === '/api/chat/stream' || /^\/api\/sessions\/[^/]+\/client-messages$/.test(req.path)) {
+    if (req.path === '/api/chat/stream' || req.path === '/api/agent/tool-result' || req.path === '/api/agent/tool-results' || /^\/api\/sessions\/[^/]+\/client-messages$/.test(req.path)) {
         return chatJsonParser(req, res, next);
     }
     return jsonParser(req, res, next);
@@ -20691,6 +20668,8 @@ const fetchLunaProvider = createLunaOfficialFetch({
 });
 async function fetchModelProvider(url, options = {}) {
     const turn = chatModelQuotaContext.getStore();
+    const truncationNotified = turn?.toolTruncationNotified === true;
+    if (turn) turn.toolTruncationNotified = false;
     let parsedBody = null;
     try { parsedBody = JSON.parse(options.body || '{}'); } catch (_) { /* non-model request */ }
     if (!Array.isArray(parsedBody?.messages)) return fetch(url, { ...options, redirect: 'error' });
@@ -20711,6 +20690,41 @@ async function fetchModelProvider(url, options = {}) {
         const contextHash = crypto.createHash('sha256').update(options.body).digest('hex');
         const compressedBody = contextState?.hash === contextHash ? contextState.body : await enforceContextWindow(body, {
             policy: contextPolicyForModel(body.model, ADMIN_MODEL_CATALOG.find(item => item.id === body.model)),
+            estimateInputTokens: lunaProviderRequest && OPENAI_LUNA_API_KEY ? candidate => {
+                try {
+                    const payload = toResponsesBody(candidate, turn?.lunaReasoningItems);
+                    return estimateContextTokens({ messages: payload.input, tools: payload.tools });
+                } catch (_) { return estimateContextTokens(candidate); }
+            } : undefined,
+            countTokens: async countBody => {
+                if (String(countBody.model).startsWith('deepseek')) {
+                    try { return estimateDeepSeekInputTokens(countBody); } catch (_) { return null; }
+                }
+                if (!gptProviderRequest && !lunaProviderRequest) return null;
+                const counter = lunaProviderRequest
+                    ? (OPENAI_LUNA_API_KEY ? { base: OPENAI_LUNA_BASE_URL, key: OPENAI_LUNA_API_KEY }
+                        : { base: LUNA_GATEWAY_BASE_URL, key: LUNA_GATEWAY_API_KEY })
+                    : (GPT_PRIMARY_API_KEY ? { base: GPT_PRIMARY_BASE_URL, key: GPT_PRIMARY_API_KEY }
+                        : { base: GPT_GATEWAY_BASE_URL, key: GPT_GATEWAY_API_KEY });
+                if (!counter.key) return null;
+                try {
+                    const payload = toResponsesBody(countBody, turn?.lunaReasoningItems);
+                    payload.model = countBody.model;
+                    delete payload.stream; delete payload.store; delete payload.max_output_tokens;
+                    const response = await fetch(counter.base + '/responses/input_tokens', {
+                        method: 'POST', redirect: 'error',
+                        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + counter.key },
+                        body: JSON.stringify(payload),
+                        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000)
+                    });
+                    if (!response.ok) { await response.body?.cancel(); return null; }
+                    const counted = JSON.parse(await readBoundedResponseText(response, 16384));
+                    return Number.isSafeInteger(counted.input_tokens) && counted.input_tokens >= 0 ? counted.input_tokens : null;
+                } catch (error) {
+                    if (options.signal?.aborted) throw error;
+                    return null;
+                }
+            },
             summarize: async transcript => {
                 const provider = API_PROVIDERS.rai_luna_gateway;
                 const controller = new AbortController();
@@ -20740,6 +20754,7 @@ async function fetchModelProvider(url, options = {}) {
             },
             onDiagnostic: event => { turn?.latency?.mark('context_compression_skipped'); console.warn(' 上下文软压缩跳过:', { code: event.code, estimated: true }); },
             onCompressed: event => {
+                if (event.truncatedToolResults && truncationNotified) return;
                 if (turn?.response && !turn.response.writableEnded) turn.response.write(`data: ${JSON.stringify(event)}\n\n`);
             }
         });
@@ -25371,8 +25386,14 @@ if (clientFileExecution && systemPrompt) {
                         const toolResultMessages = executedToolResults.map(({ toolCall, result }) => ({
                             role: 'tool',
                             tool_call_id: toolCall.id,
-                            content: JSON.stringify(result)
+                            content: JSON.stringify(toolResultForContext(result))
                         }));
+                        const truncatedToolResults = executedToolResults.filter(({ result }) => result?.context_truncated === true).length;
+                        if (truncatedToolResults && !res.writableEnded) {
+                            res.write(`data: ${JSON.stringify({ type: 'context_compressed', truncatedToolResults, message: TOOL_TRUNCATION_MESSAGE })}\n\n`);
+                            const turn = chatModelQuotaContext.getStore();
+                            if (turn) turn.toolTruncationNotified = true;
+                        }
                         if (executedToolResults.length) conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
 
                         // Include interjections typed during this round tool execution before the continuation call.

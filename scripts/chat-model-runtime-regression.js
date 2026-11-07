@@ -44,9 +44,13 @@ async function main(){
  const adminPassword=randomSecret();
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'rai-model-runtime-')),databasePath=path.join(temp,'isolated.sqlite');let child,logs='',observations=[];
  let mode='answer',summaryCalls=0; const provider=http.createServer(async(req,res)=>{
-  let raw='';for await(const part of req)raw+=part;let body;try{body=JSON.parse(raw);}catch(_){res.writeHead(400);res.end();return;}
+  const chunks=[];for await(const part of req)chunks.push(part);let body;try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch(_){res.writeHead(400);res.end();return;}
   observations.push({url:req.url,host:req.headers.host,body});
-  if(req.url==='/v1/responses/input_tokens'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({input_tokens:1024}));return;}
+  if(req.url==='/v1/responses/input_tokens'){
+   const input=JSON.stringify(body.input);
+   const inputTokens=body.model==='gpt-6.1-sol'&&input.includes('Old fact')?Math.ceil(input.length*1.6):1024;
+   res.setHeader('Content-Type','application/json');res.end(JSON.stringify({input_tokens:inputTokens}));return;
+  }
   if(req.url==='/v1/responses'){
    if(body.stream===false){
     summaryCalls++;res.setHeader('Content-Type','application/json');
@@ -138,6 +142,13 @@ async function main(){
    const mixedBody=observations.filter(x=>x.body.model===dsModel&&x.body.stream).at(-1).body;
    assert.equal(mixedBody.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(c=>c.type==='image_url').length,2,'both uploaded images reach provider');
    assert.ok(JSON.stringify(mixedBody.messages).includes('MULTI_FILE_FIXTURE_NOTE'),'uploaded text context reaches the same request');
+   const deepSeekText='中文测试。\n'.repeat(25000),beforeDeepSeek=observations.length;
+   const deepSeekCounted=await chat('deepseek-v4.1-flash',{messages:[{role:'user',content:deepSeekText}],reasoningProfile:'auto'});
+   assert.ok(deepSeekCounted.events.some(x=>x.type==='done'&&!x.degraded),deepSeekCounted.raw.slice(-3000));
+   assert.ok(!deepSeekCounted.events.some(x=>x.type==='context_compressed'),'byte-heavy DeepSeek input below 400k vocabulary tokens keeps its prefix');
+   assert.ok(observations.slice(beforeDeepSeek).every(x=>!x.url.endsWith('/responses/input_tokens')),'DeepSeek uses its local V4 vocabulary instead of a GPT counter');
+   const deepSeekMessages=observations.slice(beforeDeepSeek).find(x=>x.body.stream).body.messages;
+   assert.ok(deepSeekMessages.some(x=>typeof x.content==='string'&&x.content.includes(deepSeekText)),'DeepSeek receives the complete original input beside the existing time hint');
    const history=Array.from({length:18},(_,i)=>({role:i%2?'assistant':'user',content:'Old fact '+i+' '+ '中'.repeat(9000)}));history.push({role:'user',content:'LATEST_USER_QUESTION'});
    const compressed=await chat('gpt-6.1-sol',{messages:history,reasoningProfile:'auto'});assert.ok(compressed.events.some(x=>x.type==='context_compressed'),compressed.raw.slice(-4000)+'\n'+logs.slice(-18000));assert.ok(compressed.events.some(x=>x.type==='done'&&!x.degraded),compressed.raw.slice(-3000));assert.ok(summaryCalls>0);const last=observations.filter(x=>x.body.model==='gpt-6.1-sol').at(-1).body;assert.ok(last.messages.some(x=>x.content==='LATEST_USER_QUESTION'));assert.equal(Object.hasOwn(last,'reasoning_effort'),false,'Adaptive survives compression and provider wrapper');assert.equal((await dbGet(db,"SELECT count(*) AS n FROM chat_model_turns WHERE model_id='gpt-6.1-sol' AND status='completed'")).n,2);
    // Actual provider ID is terminal metadata and SQLite history, not the selection alias.

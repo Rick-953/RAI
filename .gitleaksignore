@@ -1,2 +1,9 @@
 # Historical false positive: an executable regression result label, not a credential.
 37e582674d6ae6fcf68b2ffa62977c6eecf34263:scripts/custom-api-account-runtime-regression.js:generic-api-key:87
+# Pinned public DeepSeek V4 tokenizer/config SHA-256 digests, verified by the tokenizer regression.
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/tree/60d8d70770c6776ff598c94bb586a859a38244f1
+d76c064c46f665c5e557754aaaa15f4f784d5fd1:public/licenses/manifest.json:generic-api-key:17550
+d76c064c46f665c5e557754aaaa15f4f784d5fd1:scripts/generate-third-party-notices.py:generic-api-key:304
+d76c064c46f665c5e557754aaaa15f4f784d5fd1:scripts/generate-third-party-notices.py:generic-api-key:305
+900a5bbc5d153511b879779cc35c47b0d4923fb5:scripts/deepseek-tokenizer-regression.js:generic-api-key:10
+900a5bbc5d153511b879779cc35c47b0d4923fb5:scripts/deepseek-tokenizer-regression.js:generic-api-key:11
