@@ -32,15 +32,20 @@ assert.match(sandboxSkill, /command policy/i);
 assert.match(sandboxSkill, /sandbox_command_blocked/);
 assert.match(sandboxSkill, /no direct network/);
 assert.match(sandboxSkill, /persists for 3 hours/);
-for (const [name, maker] of [['documents','make_docx'], ['spreadsheets','make_xlsx'], ['presentations','make_pptx']]) {
+for (const [name, upstream] of [['documents','docx-cli'], ['spreadsheets','hermes-agent'], ['presentations','ppt-master']]) {
   const skill = registry.loadTrustedSkill(name).content;
-  assert.match(skill, /zipfile/);
-  assert.ok(skill.includes(maker));
-  for (const other of ['make_docx','make_xlsx','make_pptx'].filter(x => x !== maker)) assert.ok(!skill.includes(other), name + ' must not bundle unrelated formats');
+  assert.match(skill, /\/skills\/(documents|presentations|spreadsheets)/);
+  assert.match(skill, /read-only/);
+  assert.match(skill, /offline/);
+  assert.ok(skill.includes(upstream));
   assert.ok(Buffer.byteLength(skill) < 6500);
 }
 assert.throws(() => registry.loadTrustedSkill('office'), /unknown skill name/);
 assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Adaptive handedness/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Explicit skills: type @/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /API-key button is temporarily removed/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /Diagnostics: Settings > Advanced/);
+assert.match(registry.loadTrustedSkill('rai-web-ui').content, /working folder is not a command sandbox/);
 assert.match(registry.loadTrustedSkill('cx-rai-ui').content, /Windows Phone/);
 const productSkill = registry.loadTrustedSkill('rai-product').content;
 assert.match(productSkill, /CX RAI was originally developed by Lao Cha/);

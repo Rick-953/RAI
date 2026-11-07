@@ -3,6 +3,8 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
+const proxyaddr = require('proxy-addr');
 
 const ROOT = path.join(__dirname, '..');
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -34,11 +36,19 @@ function workflowJob(name) {
   return securityWorkflow.match(new RegExp(`^  ${escaped}:[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|(?![\\s\\S]))`, 'm'))?.[0] || '';
 }
 
-assert.equal(packageJson.overrides?.undici, '6.28.1', 'undici must include the GHSA-3wwx-pv8p-q78v fix');
+assert.equal(packageJson.overrides?.undici, '6.29.1', 'undici must include the GHSA-3wwx-pv8p-q78v fix');
 assert.equal(packageJson.overrides?.tar, '7.5.22', 'node-tar must stay on the audited patched release');
-assert.equal(packageJson.overrides?.['body-parser'], '1.20.6', 'body-parser must stay on the audited patched release');
+assert.equal(packageJson.overrides?.['body-parser'], '2.4.0', 'Express 5 requires the audited body-parser 2 release, not a forced 1.x override');
+for (const [name, exactVersion] of [['express', '5.3.0'], ['ipaddr.js', '2.5.0'], ['@tauri-apps/cli', '2.12.4'], ['playwright', '1.64.1']]) {
+  assert.equal(packageJson.dependencies[name] || packageJson.devDependencies[name], exactVersion, `${name} must stay on its reviewed release`);
+  assert.equal(packageLock.packages[`node_modules/${name}`]?.version, exactVersion, `${name} lock must match the reviewed release`);
+  const installed = JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', name, 'package.json'), 'utf8'));
+  assert.equal(installed.version, exactVersion, `${name} installed runtime must match the lock`);
+}
+assert.equal(packageJson.dependencies['@simplewebauthn/server'], '14.0.3');
+assert.match(serverSource, /app\.set\('query parser', 'extended'\)/, 'Express 5 must preserve the reviewed Express 4 query contract');
 
-for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6'], ['undici', '6.28.1']]) {
+for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '2.4.0'], ['undici', '6.29.1']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
@@ -46,7 +56,7 @@ for (const [name, exactVersion] of [['tar', '7.5.22'], ['body-parser', '1.20.6']
   }
 }
 
-for (const [name, exactVersion] of [['multer', '2.4.0'], ['busboy', '1.6.0']]) {
+for (const [name, exactVersion] of [['multer', '2.5.0'], ['busboy', '1.6.0'], ['proxy-addr', '2.0.8']]) {
   const locked = lockedVersions(name);
   assert.ok(locked.length > 0, `${name} must be present in package-lock.json`);
   for (const entry of locked) {
@@ -57,9 +67,37 @@ assert.match(busboyMultipartSource, /const MAX_HEADER_PAIRS = 2000;/, 'Busboy mu
 assert.match(busboyMultipartSource, /const MAX_HEADER_SIZE = 16 \* 1024;/, 'Busboy multipart part headers must have a 16 KiB byte bound');
 assert.doesNotMatch(serverSource, /headerPairs\s*:/, 'Multer must not claim that Busboy honors an unsupported headerPairs option');
 
+
+// GHSA-jqcg-44mw-7w3h: an IPv6 trust subnet must not trust every IPv4 client.
+for (const subnet of ['::ffff:10.0.0.0/8', '::/1']) {
+  const trust = proxyaddr.compile(subnet);
+  assert.equal(trust('203.0.113.9', 0), false, `${subnet} must not trust an arbitrary IPv4 client`);
+  const request = { socket: { remoteAddress: '203.0.113.9' }, headers: { 'x-forwarded-for': '127.0.0.1' } };
+  assert.equal(proxyaddr(request, trust), '203.0.113.9', 'untrusted client must not spoof req.ip through X-Forwarded-For');
+}
+const mappedTrust = proxyaddr.compile('::ffff:10.0.0.0/104');
+assert.equal(mappedTrust('10.1.2.3', 0), true, 'correct mapped trust subnet must continue to work');
+assert.equal(mappedTrust('203.0.113.9', 0), false);
+
+// GHSA-238p-pmpm-9mq7: exercise the shipped browser bundle in an isolated realm.
+const katexSource = fs.readFileSync(path.join(ROOT, 'public', 'lib', 'katex', 'katex.min.js'), 'utf8');
+vm.runInNewContext(katexSource + `
+  const renderer = module.exports;
+  const formula = String.raw\`\\href{https://attacker.invalid/}{link}\`;
+  assert.match(renderer.renderToString('x^2 + 1'), /class="katex"/);
+  assert.match(renderer.renderToString(formula, { trust: true }), /href="https:\\/\\/attacker\\.invalid\\/"/);
+  assert.doesNotMatch(renderer.renderToString(formula, Object.create({ trust: true })), /href=/,
+    'inherited trust must not enable external links');
+  Object.prototype.trust = true;
+  try {
+    assert.doesNotMatch(renderer.renderToString(formula), /href=/, 'prototype pollution must not bypass trust defaults');
+    assert.doesNotMatch(renderer.renderToString(formula, { trust: false }), /href=/);
+  } finally { delete Object.prototype.trust; }
+`, { module: { exports: {} }, exports: {}, assert }, { timeout: 2000 });
+
 const expectedVendors = new Map([
-  ['dompurify', '3.4.13'],
-  ['katex', '0.16.47']
+  ['dompurify', '3.4.17'],
+  ['katex', '0.18.2']
 ]);
 for (const [name, expectedVersion] of expectedVendors) {
   const component = vendorManifest.components?.find((entry) => entry.name === name);
@@ -105,7 +143,8 @@ assert.match(rebuildJob, /^    needs:\s*security-gate-summary$/m, 'independent r
 for (const [label, job] of [['primary build', packageJob], ['independent rebuild', rebuildJob]]) {
   assert.match(job, /git archive --format=tar --prefix=/, `${label} must build from the checked-out Git object`);
   assert.match(job, /\.env\.example LICENSE README\.md README\.zh-CN\.md docs/, `${label} must use the documented release allowlist`);
-  assert.match(job, /agent lib workers public scripts server\.js user-session-token\.js package\.json package-lock\.json/, `${label} must include the complete Web runtime allowlist`);
+  assert.match(job, /release_paths=\([\s\S]*?agent lib workers public scripts skills server\.js user-session-token\.js package\.json package-lock\.json[\s\S]*?\)/, `${label} must include the complete Web runtime and trusted skills allowlist`);
+  assert.match(job, /release_paths=\([\s\S]*?resources\/tokenizers\/deepseek-v4[\s\S]*?\)/, `${label} must include the tokenizer vocabulary required by the Web runtime`);
   assert.match(job, /git ls-files --error-unmatch "\$release_path"/, `${label} must fail closed when an allowlisted path is absent`);
   assert.doesNotMatch(job, /RAI文档\.txt|更新运维\.txt|docs\/readme/, `${label} must not reference retired release paths`);
   assert.match(job, /\| gzip -n >/, `${label} must suppress gzip timestamps`);
@@ -137,6 +176,19 @@ for (const action of actionUses) {
   assert.ok(separator > 0, `action must include a revision: ${action}`);
   assert.match(action.slice(separator + 1), /^[0-9a-f]{40}$/, `action must be pinned to a full commit SHA: ${action}`);
 }
+// Mixed revisions can initialize a database that a different CodeQL binary cannot read.
+for (const [family, expectedActions] of [
+  ['github/codeql-action/', ['init', 'analyze', 'upload-sarif']],
+  ['google/osv-scanner-action/', ['osv-scanner-action', 'osv-reporter-action']]
+]) {
+  const related = actionUses.filter(action => action.startsWith(family));
+  for (const action of expectedActions) {
+    assert.ok(related.some(use => use.startsWith(`${family}${action}@`)), `${family}${action} must remain enabled`);
+  }
+  assert.equal(new Set(related.map(action => action.split('@').pop())).size, 1, `${family} actions must use one coherent revision`);
+}
+const notices = fs.readFileSync(path.join(ROOT, 'public', 'lib', 'THIRD_PARTY_NOTICES.md'), 'utf8');
+assert.match(notices, /\| DOMPurify \| 3\.4\.17 \|/, 'DOMPurify license notices must match the audited bundle');
 assert.match(securityWorkflow, /^defaults:\s*\n\s{2}run:\s*\n\s{4}(?:#[^\n]*\n\s{4})*shell:\s*bash$/m, 'workflow pipelines must use explicit bash with pipefail');
 assert.match(securityWorkflow, /^\s{2}NODE_VERSION:\s*24\.16\.0$/m, 'CI must exercise the production Node release');
 assert.match(securityWorkflow, /^\s{2}NPM_VERSION:\s*11\.13\.0$/m, 'CI must exercise the production npm release');

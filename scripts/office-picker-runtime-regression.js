@@ -83,6 +83,6 @@ assert.match(app, /function uploadFileWithProgress[\s\S]*xhr\.open\('POST', `\$\
 const dragDropStart = app.indexOf("function initDragAndDrop()");
 const dragDropSource = app.slice(dragDropStart, dragDropStart + 2600);
 assert.ok(dragDropStart >= 0, 'missing initDragAndDrop');
-assert.match(dragDropSource, /processUploadedFile\(files\[0\]\)/);
+assert.match(dragDropSource, /processUploadedFiles\(files\)/);
 
 console.log('office-picker-runtime-regression ok (formal and beta sandbox-gated, picker/drop/process gated)');

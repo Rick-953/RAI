@@ -9,7 +9,7 @@ const path = require('path');
 const sqlite3 = require('sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8').replace(/\r\n/g, '\n');
 const app = read('public/app.js');
 const index = read('public/index.html');
 const styles = read('public/styles.css');
@@ -188,14 +188,14 @@ function testInternetDefaults() {
 }
 
 function testMenuHitAreasAndGeometry() {
-  assert.match(index, /<div class="more-menu-item" role="button" tabindex="0"\s+data-rai-click="handleFileUploadFromMenu\(\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
+  assert.match(index, /<button type="button" class="more-menu-item attachment-upload-btn" id="attachmentUploadBtn"\s+data-rai-click="handleFileUploadFromMenu\(event\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(index, /<div class="research-mode-header" role="button" tabindex="0"\s+data-rai-click="toggleResearchModeFromMenu\(event\)" data-rai-keydown="handleComposerMenuItemKeydown\(event\)">/);
   assert.match(app, /function\s+handleComposerMenuItemKeydown\(event\)[\s\S]*?event\.key\s*!==\s*'Enter'[\s\S]*?event\.key\s*!==\s*' '[\s\S]*?event\.currentTarget\.click\(\)/);
   assert.match(app, /event\.key === 'Tab'[\s\S]*?leavingBackward = event\.shiftKey && currentIndex === 0[\s\S]*?leavingForward = !event\.shiftKey && currentIndex === focusableItems\.length - 1[\s\S]*?closeMoreMenu\(\)[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)/);
   assert.match(app, /focusableItems = Array\.from[\s\S]*?!item\.closest\('\[aria-hidden="true"\]'\)/);
   assert.match(app, /querySelectorAll\('#modelDropdownMenu \.model-menu-item, \.model-select-custom'\)/);
   assert.match(index, /id="moreBtn"[^>]*data-i18n-aria-label="more-tools"[^>]*aria-controls="moreMenu"[^>]*aria-expanded="false"/);
-  assert.match(app, /function\s+handleFileUploadFromMenu\(\)[\s\S]*?closeMoreMenu\(\)[\s\S]*?handleFileUpload\(\)/);
+  assert.match(app, /function\s+handleFileUploadFromMenu\(event = null\)[\s\S]*?handleFileUpload\(\)[\s\S]*?closeMoreMenu\(\)/);
   assert.match(app, /function\s+handleComposerMenuEscape\(event\)[\s\S]*?event\.key !== 'Escape'[\s\S]*?closeModelModal\(\{ restoreFocus: true \}\)[\s\S]*?closeMoreMenu\(\)/);
   assert.match(app, /function\s+focusFirstComposerMenuItem\(menu\)[\s\S]*?firstItem\.focus/);
   assert.match(app, /function\s+closeModelModal\(\{ restoreFocus = false \} = \{\}\)[\s\S]*?trigger\.focus/);
@@ -248,21 +248,21 @@ function testNeutralFocus() {
 function testReasoningSwitchAvailability() {
   assert.match(index, /id="thinkingToggle"/);
   const updateToolbar = extractNamedFunction(app, 'updateToolbarUI');
-  const fastModel = app.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
+  const fastModel = app.match(/['"]deepseek-v4\.1-flash['"]:\s*\{([\s\S]*?)\n\s*\},/);
   assert.ok(fastModel, 'missing DeepSeek Flash model metadata');
-  assert.match(fastModel[1], /supportsThinking:\s*true/, 'Fast must expose DeepSeek reasoning support');
-  const serverFastModel = server.match(/'deepseek-flash':\s*\{([\s\S]*?)\n\s*\},/);
+  assert.match(fastModel[1], /['"]?supportsThinking['"]?:\s*true/, 'Fast must expose DeepSeek reasoning support');
+  const serverFastModel = server.match(/['"]deepseek-v4\.1-flash['"]:\s*\{([\s\S]*?)\n\s*\},/);
   assert.ok(serverFastModel, 'missing server DeepSeek Flash routing metadata');
-  assert.match(serverFastModel[1], /supportsThinking:\s*true/, 'server Fast metadata must expose DeepSeek reasoning support');
+  assert.match(serverFastModel[1], /['"]?supportsThinking['"]?:\s*true/, 'server Fast metadata must expose DeepSeek reasoning support');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]*?identity === 'fast'[\s\S]*?return 'fast-auto'/, 'Fast mode must route through the fast-auto virtual id');
   assert.match(app, /function getRequestModelIdForCurrentMode\(\)[\s\S]*?identity === 'think'[\s\S]*?return 'think-auto'/, 'Think mode must route through the think-auto virtual id');
-  assert.match(app, /"auto":\s*\{[\s\S]*?supportsThinking:\s*true/, 'Smart mode must expose reasoning support');
+  assert.match(app, /"auto":\s*\{[\s\S]*?"?supportsThinking"?:\s*true/, 'Smart mode must expose reasoning support');
   assert.match(server, /routing\.provider\s*===\s*'deepseek'[\s\S]*?applyDeepSeekV4ModeParams\(requestBody,\s*!!thinkingMode,\s*normalizedReasoningProfile\)/, 'DeepSeek routes must forward thinking mode');
   assert.doesNotMatch(app, /selectedModel\s*===\s*'deepseek-flash'\s*&&\s*!appState\.thinkingMode/, 'Fast identity must survive when reasoning is enabled');
   assert.match(updateToolbar, /if \(!supportsThinking\)\s*\{[\s\S]*?appState\.thinkingMode\s*=\s*false;[\s\S]*?appState\.thinkingBudgetOpen\s*=\s*false;/);
   assert.match(updateToolbar, /thinkingToggle\.classList\.toggle\('disabled',\s*!supportsThinking\)/);
   assert.match(updateToolbar, /const showReasoningItem\s*=\s*supportsThinking;/, 'unsupported models must hide the reasoning row');
-  assert.match(updateToolbar, /const showReasoningProfile\s*=\s*supportsReasoningProfile\s*&&\s*appState\.thinkingMode;/, 'only the reasoning slider may collapse');
+  assert.match(updateToolbar, /const showReasoningProfile\s*=\s*supportsReasoningProfile\s*&&\s*\(appState\.thinkingMode\s*\|\|\s*appState\.reasoningChoicesExpanded\);/, 'supported reasoning choices open when thinking is enabled or after deliberate hover');
   assert.match(updateToolbar, /thinkingHeader\.setAttribute\('aria-disabled',\s*supportsThinking \? 'false' : 'true'\)/);
 }
 
@@ -356,7 +356,8 @@ function testMessageBadgeVisibilityAndDesktopLogout() {
   const createMessage = app.slice(createMessageStart, createMessageEnd);
   assert.match(createMessage, /modelBadge\.className\s*=\s*'meta-badge model-meta-badge'/);
   assert.match(createMessage, /modelBadge\.hidden\s*=\s*!appState\.showModelBadge/);
-  assert.match(createMessage, /message-model-custom-edition[\s\S]*?'定制版'[\s\S]*?'Custom Edition'/);
+  assert.match(createMessage, /message\.actual_model \|\| message\.actualModel \|\| message\.model/);
+  assert.doesNotMatch(createMessage, /message-model-custom-edition/);
   assert.match(createMessage, /internetBadge\.className\s*=\s*'meta-badge internet-meta-badge'/);
   assert.match(createMessage, /internetBadge\.hidden\s*=\s*!appState\.showInternetBadge/);
   assert.match(createMessage, /thinkingBadge\.className\s*=\s*'meta-badge'/, 'thinking badge must stay independent');
@@ -402,7 +403,7 @@ function testMessageBadgeVisibilityAndDesktopLogout() {
 }
 
 function testPasskeySecurityRewardsAndRoutingNotices() {
-  assert.equal(packageJson.dependencies?.['@simplewebauthn/server'], '13.3.2');
+  assert.equal(packageJson.dependencies?.['@simplewebauthn/server'], '14.0.3');
   assert.match(envExample, /^RAI_PASSKEY_RP_NAME=RAI$/m);
   assert.match(envExample, /^RAI_PASSKEY_ALLOW_LOCALHOST=false$/m);
 
@@ -558,14 +559,8 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.ok(allModelsStart >= 0 && allModelsEnd > allModelsStart, 'missing focused all-models section');
   const allModels = index.slice(allModelsStart, allModelsEnd);
   const visibleModelIds = [...allModels.matchAll(/data-model="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(visibleModelIds, ['gpt-5.6-luna', 'claude-sonnet-5', 'gemini-3.6-flash-low', 'deepseek-flash', 'nemotron-3-ultra', 'kolors-free', 'gpt-image-2']);
-  assert.match(allModels, />GPT 5\.6</);
-  assert.match(allModels, />Claude Sonnet 5</);
-  assert.match(allModels, />Gemini 3\.6</);
-  assert.match(allModels, />DeepSeek v4</);
-  assert.match(allModels, />Nemotron 3 Ultra</);
-  assert.match(allModels, />Free</);
-  assert.match(allModels, /对话模型[\s\S]*?图像生成/);
+  assert.deepEqual(visibleModelIds, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
+  for(const label of ['DeepSeek V4.1 Flash','GPT 6.1 Sol','GPT 6 Luna','GPT 6 Astra']) assert.ok(allModels.includes('>'+label+'<'));
   assert.doesNotMatch(allModels, /model-menu-description|>\s*(?:gpt-|deepseek-|nemotron-)/,
     'the user-facing model list must not expose implementation IDs');
 
@@ -575,45 +570,43 @@ function testFocusedModelUiReasoningAndSwipe() {
     'the mobile composer must open the shared model menu');
   assert.doesNotMatch(index, /chatflow-model-menu|chatflow-send-btn/,
     'the retired standalone ChatFlow composer must not return after conversation fusion');
-  assert.match(app, /admin-model-switch-meta">\$\{escapeHtml\(model\.group \|\| '模型'\)\}/,
-    'admin model rows must show a product group instead of the implementation ID');
+  assert.match(app, /admin-model-switch-meta">\$\{escapeHtml\(model\.id\)\} · \$\{escapeHtml\(model\.provider \|\| ''\)\}/,
+    'admin configuration rows must identify the model and provider with escaped text');
 
-  for (const mode of ['smart', 'fast', 'think', 'research']) {
+  for (const mode of ['smart', 'research']) {
     assert.match(index, new RegExp(`class="model-menu-item model-mode-item"[^>]*data-mode="${mode}"`));
   }
+  assert.doesNotMatch(index, /class="model-menu-item model-mode-item"[^>]*data-mode="(?:fast|think)"/,
+    'the model menu must not restore retired Fast and Thinking shortcuts');
   assert.match(app, /if \(normalized === 'smart'\)[\s\S]{0,220}model: 'auto'/);
   assert.match(app, /if \(normalized === 'think'\)[\s\S]{0,220}model: 'auto'[\s\S]{0,100}thinkingMode: true/);
   assert.match(app, /mode: 'fast',[\s\S]{0,80}model: 'auto'[\s\S]{0,80}thinkingMode: false/);
-  assert.match(server, /const AUTO_MODEL_PREFERENCE = \['deepseek-flash', 'gpt-5\.6-luna', 'kimi-k2\.6', 'nemotron-3-ultra'\]/,
-    'Smart Model text requests must prefer DeepSeek V4 Flash (admin-configurable) with the requested ordered fallback chain');
-  assert.match(server, /const AUTO_MULTIMODAL_MODEL_PREFERENCE = \['gpt-5\.6-luna', 'kimi-k2\.6', 'qwen3\.6-35b-a3b'\]/,
-    'Smart Model multimodal requests must keep Luna first and avoid text-only fallbacks');
-  assert.match(server, /'gpt-5\.6-luna':\s*\{[\s\S]{0,180}provider:\s*'rai_gpt_gateway'[\s\S]{0,180}model:\s*'gpt-5\.6-luna'/,
-    'the public GPT 5.6 selection must call the Luna upstream model');
-  assert.match(server, /'gpt-5\.6-luna': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Luna failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
-  assert.match(server, /'claude-sonnet-5':\s*\{[\s\S]{0,180}provider:\s*'rai_claude_gateway'[\s\S]{0,180}model:\s*'claude-sonnet-5'/,
-    'the Claude product route must use UMAPIS Claude Sonnet 5');
-  assert.match(server, /'gemini-3\.6-flash-low':\s*\{[\s\S]{0,180}provider:\s*'rai_fast_gateway'[\s\S]{0,180}model:\s*'gemini-3\.6-flash-low'/,
-    'the Gemini product route must use the independent Fast gateway');
-  assert.match(server, /'kimi-k2\.6':\s*\{[\s\S]{0,180}provider:\s*'siliconflow'[\s\S]{0,180}model:\s*'Pro\/moonshotai\/Kimi-K2\.6'/,
-    'the Smart Model preference must resolve to the SiliconFlow Kimi K2.6 route');
-  assert.match(server, /'nemotron-3-ultra':\s*\{[\s\S]{0,180}provider:\s*'openrouter'[\s\S]{0,180}model:\s*'nvidia\/nemotron-3-ultra-550b-a55b:free'/,
-    'Nemotron 3 Ultra must keep the configured OpenRouter route (reachability is resolved at runtime, not by this contract)');
-  assert.match(server, /'deepseek-flash':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-flash'/,
-    'DeepSeek V4 Flash must use the official DeepSeek route');
-  assert.match(server, /'deepseek-pro':\s*\{[\s\S]{0,180}provider:\s*'deepseek'[\s\S]{0,180}model:\s*'deepseek-v4-pro'/,
-    'DeepSeek Pro must use the official DeepSeek route');
-  assert.match(server, /'claude-sonnet-5': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Claude failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
-  assert.match(server, /'gemini-3\.6-flash-low': \['deepseek-pro', 'deepseek-flash', 'kimi-k2\.6'\]/,
-    'Gemini failures must follow DeepSeek Pro → DeepSeek Flash → Kimi');
-  assert.match(server, /智能模型默认使用 \$\{researchModelLabel\(finalModel\)\}/,
-    'Smart Model routing notices must use a user-facing model label');
-  assert.match(server, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
-    'saved Terra preferences must normalize to the stable public GPT 5.6 ID');
-  assert.match(app, /'gpt-5\.6-terra': 'gpt-5\.6-luna'/,
-    'stale clients must normalize Terra to the stable public GPT 5.6 ID');
+  for(const id of ['gpt-6.1-sol','gpt-6-astra']) {
+    const route = server.slice(server.indexOf("    '" + id + "': {", server.indexOf('const MODEL_ROUTING = {')));
+    assert.match(route.slice(0,350), /provider: 'rai_gpt_gateway'/);
+    assert.ok(route.slice(0,350).includes("model: '"+id+"'"));
+    assert.match(route.slice(0,350), /multimodal: true/);
+  }
+  assert.match(server, /async function resolveVisibleAutoModel\(\) \{ return resolveConfiguredDefault\('smart'\); \}/);
+  const configuredDefault = extractNamedFunction(server, 'resolveConfiguredDefault');
+  assert.match(configuredDefault, /getAdminRuntimeSettings\(\)/);
+  assert.match(configuredDefault, /settings\[prefix \+ '_default_model'\]/);
+  assert.match(configuredDefault, /!\(await isPublicModelDisabled\(id\)\) && isRuntimeConfiguredModel\(id\)/,
+    'administrator defaults must still require an enabled and configured model');
+  assert.doesNotMatch(server, /normalizedReasoningProfile = score >=/);
+  assert.match(server, /reasoningProfile = 'auto'/, 'Thinking delegates default effort to the model');
+  assert.match(app, /REASONING_PROFILE_ORDER = \['auto', 'low', 'medium', 'high', 'xhigh', 'max'\]/);
+  assert.match(server, /const prefix = model === 'fast-auto'[\s\S]{0,250}\? 'fast' : model === 'think-auto' \? 'thinking' : 'smart'/,
+    'legacy mode IDs must resolve through their administrator-configured defaults');
+  assert.match(server, /const defaults = await resolveModeDefaults\(prefix\)/);
+  assert.match(server, /const fetchGptProvider = createGptPrimaryFetch/);
+  assert.match(server, /fallbackFetch: fetchGptFastProvider/);
+  assert.match(server, /officialUrl: DEEPSEEK_CHAT_COMPLETIONS_URL/);
+  assert.doesNotMatch(server.match(/const MODEL_ROUTING = \{[\s\S]*?\n\};/)?.[0] || '', /'deepseek-pro':\s*\{/);
+  assert.match(server, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
+    'saved Terra preferences must normalize to the active DeepSeek ID');
+  assert.match(app, /'gpt-5\.6-terra': 'deepseek-v4.1-flash'/,
+    'stale clients must normalize Terra to the active DeepSeek ID');
 
   assert.match(styles, /\.settings-about-card\s*\{[\s\S]{0,700}background-image:\s*url\(['"]images\/onboarding-saturn\.png['"]\)/,
     'the About RAI card must use the bundled Saturn background');
@@ -628,11 +621,15 @@ function testFocusedModelUiReasoningAndSwipe() {
   assert.doesNotMatch(activeProductSources, /north-mini-code|cohere\/north-mini-code|Mimo Code|role-mimo|\bmimo\b/i,
     'Mimo Code must not remain in active product, route, fallback, test, style, or README surfaces');
 
-  assert.match(index, /reasoning-low">低<\/span>[\s\S]{0,120}reasoning-medium">中<\/span>[\s\S]{0,120}reasoning-high">高<\/span>[\s\S]{0,120}reasoning-mixed">自动<\/span>/);
+  assert.match(index, /id="reasoningProfileChoices" role="group" aria-label="Thinking level"/,
+    'thinking choices must use the capability-driven group rather than fixed unsupported levels');
+  const updateReasoningControl = extractNamedFunction(app, 'updateReasoningProfileControl');
+  assert.match(updateReasoningControl, /capability\.profiles/,
+    'thinking levels must be built from the selected model capabilities');
   assert.match(styles, /\.reasoning-profile-labels span:nth-child\(1\)[\s\S]{0,80}left:\s*0/);
-  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(2\)[\s\S]{0,80}left:\s*33\.3333%/);
-  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(3\)[\s\S]{0,80}left:\s*66\.6667%/);
-  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(4\)[\s\S]{0,120}left:\s*100%/);
+  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(2\)[\s\S]{0,80}left:\s*25%/);
+  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(3\)[\s\S]{0,80}left:\s*50%/);
+  assert.match(styles, /\.reasoning-profile-labels span:nth-child\(5\)[\s\S]{0,120}left:\s*100%/);
   assert.match(styles, /\.reasoning-profile-labels span[\s\S]{0,180}transform:\s*translateX\(-50%\)/,
     'each label must be centered directly below its range stop');
 
@@ -785,14 +782,14 @@ async function testMessageRenderingStability() {
     'model changes must originate from the currently open model menu');
   assert.match(trustedModelSelection, /requestedModel !== targetModel/,
     'the clicked model row must match the requested model exactly');
-  assert.match(trustedModelSelection, /Number\(event\.detail \|\| 0\) > 0 && Date\.now\(\) - Number\(appState\.modelMenuOpenedAt \|\| 0\) < 160/,
+  assert.match(trustedModelSelection, /appState\.modelMenuOpenedByEvent === event\) return false;/,
     'the opening click must not fall through onto a model row');
   assert.match(selectModelFromMenuTrusted, /if \(!isTrustedModelMenuSelection\(model, event\)\) return;/,
     'untrusted or stale model-menu events must not mutate the composer model');
   assert.match(modelMenuKeyboard, /model-menu-item\[data-model\]:not\(\[data-mode\]\)[\s\S]{0,500}selectModelFromMenu\(model, displayName, null, event\)/,
     'trusted Enter or Space activation must select an explicit model without creating an untrusted synthetic click');
   const modelSelectionBindings = [...index.matchAll(/data-rai-click="selectModelFromMenu\([^\n]+event\)"/g)];
-  assert.equal(modelSelectionBindings.length, 7,
+  assert.equal(modelSelectionBindings.length, 4,
     'every visible conversation and image model row must pass its real click event');
 
   const primaryCompletionStart = sendMessage.lastIndexOf('const aiMsg = {');
@@ -1064,7 +1061,8 @@ async function testMessageRenderingStability() {
 
 function testVersionContract() {
   const expectedVersion = packageJson.version;
-  const expectedBuild = '20260929-pwa-r8';
+  const expectedBuild = /const RAI_BUILD_ID = '([^']+)'/.exec(app)?.[1];
+  assert.ok(expectedBuild, 'app.js must declare RAI_BUILD_ID');
   assert.equal(packageJson.version, expectedVersion);
   assert.equal(packageLock.version, expectedVersion, 'package-lock top-level version is stale');
   assert.equal(packageLock.packages?.['']?.version, expectedVersion, 'package-lock root package version is stale');
@@ -1091,10 +1089,13 @@ function testVersionContract() {
     'think mode must route through the think-auto virtual id');
   assert.match(app, /function resolveSendRequestConfig\([\s\S]{0,700}oneShotModelId = oneShotMode === 'fast'[\s\S]{0,160}'fast-auto'/,
     'one-shot fast sends must map to fast-auto');
-  assert.match(app, /modelSelectField\('smart_default_model', '智能模型首选模型'/,
-    'admin model routing panel must expose smart preferred model');
-  assert.match(app, /modelSelectField\('vision_fallback_model', '视觉备用路由模型'/,
-    'admin model routing panel must expose vision fallback model');
+  for (const mode of ['smart', 'fast', 'thinking']) {
+    assert.match(app, new RegExp(`modelSelectField\\('${mode}_default_model'`),
+      'administrators must be able to configure each mode model');
+    assert.match(app, new RegExp(`profileSelectField\\('${mode}_reasoning_profile'`),
+      'administrators must be able to configure each mode thinking level');
+  }
+  assert.doesNotMatch(app, /modelSelectField\('vision_fallback_model'/, 'native vision must not offer retired-model routing');
   assert.match(app, /function getModelDisplayMeta\(modelId\)[\s\S]{0,400}identity === 'fast'[\s\S]{0,120}model-fast/,
     'fast identity must keep the Fast label after routing through auto');
   assert.match(styles, /@media \(min-width: 1025px\)[\s\S]{0,400}transition: width var\(--menu-motion-duration\)/,
@@ -1107,21 +1108,17 @@ function testVersionContract() {
     'closing ChatFlow must enter the parallel closing state');
   assert.match(server, /function isSupportedAdminModelSettingValue\(value\)[\s\S]{0,300}imageOnly !== true/,
     'image-only models must be rejected as preferred model settings');
-  assert.match(server, /async function resolveVisibleFastModel\(\)[\s\S]{0,500}fast_default_model/,
-    'fast route must consult admin settings');
-  assert.match(server, /async function resolveVisibleThinkingModel\(\)\s*\{\s*return resolveVisibleAutoModel\(\);\s*\}/,
-    'thinking must inherit the Smart Flash route rather than stale Pro admin preferences');
-  assert.match(server, /async function resolveVisibleAutoModel\(\)[\s\S]{0,160}const preferred = 'deepseek-flash'/,
-    'Smart mode must prefer DeepSeek Flash');
-  assert.match(server, /async function resolveVisionFallbackModel\(\)[\s\S]{0,400}vision_fallback_model/,
-    'vision fallback must consult admin settings');
-  assert.match(server, /else if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/,
-    'server must route fast-auto and think-auto virtual ids');
+  assert.match(server, /async function resolveVisibleFastModel\(\) \{ return resolveConfiguredDefault\('fast'\); \}/);
+  assert.match(server, /async function resolveVisibleThinkingModel\(\) \{ return resolveConfiguredDefault\('thinking'\); \}/);
+  assert.match(server, /if \(model === 'auto' \|\| model === 'fast-auto' \|\| model === 'think-auto'\)/);
   assert.match(styles, /\.session-title-wrap\s*\{[\s\S]{0,300}flex:\s*1 1 auto[\s\S]{0,120}min-width:\s*0/,
     'conversation titles must share a flexible column before the fixed menu column');
   assert.match(styles, /\.session-time\s*\{[\s\S]{0,260}flex:\s*0 0 48px[\s\S]{0,180}text-align:\s*right/,
     'conversation timestamps must use a fixed right-aligned column');
-  assert.match(app, /function resetModelToSmart\(\)[\s\S]{0,400}selectedModel = 'auto'/);
+  assert.match(extractNamedFunction(app, 'resetModelToSmart'), /restoreModelPreference\(\)/,
+    'new conversations must restore the last account model preference');
+  assert.doesNotMatch(extractNamedFunction(app, 'resetModelToSmart'), /selectedModel\s*=\s*'auto'/,
+    'new conversations must not replace a saved model with the smart default');
   assert.match(app, /fetch\(`\$\{API_BASE\}\/sessions\/manifest`/);
   assert.match(server, /app\.get\('\/api\/sessions\/manifest'/);
   assert.match(server, /messages_revision INTEGER NOT NULL DEFAULT 0/);
@@ -1243,7 +1240,7 @@ function testVersionContract() {
   assert.match(handleNewChatClick, /appState\.currentSession = null[\s\S]{0,260}showWelcome\(\)/,
     'the new-conversation command must stay on an unsaved local home until first send');
   const sendMessage = extractNamedFunction(app, 'sendMessage');
-  assert.match(sendMessage, /immediateConversationTitle\s*=\s*deriveImmediateConversationTitleFromUserMessage[\s\S]{0,1800}createNewSession\(\{[\s\S]{0,160}initialTitle:\s*immediateConversationTitle/,
+  assert.match(sendMessage, /immediateConversationTitle\s*=\s*deriveImmediateConversationTitleFromUserMessage[\s\S]{0,3200}createNewSession\(\{[\s\S]{0,160}initialTitle:\s*immediateConversationTitle/,
     'the first user question must be the session title at creation time, before model summarization');
   assert.match(sendMessage, /createNewSession\(\{[\s\S]{0,180}preserveComposerMode:\s*true/,
     'first-send session creation must preserve the selected composer mode');
@@ -1308,7 +1305,7 @@ function testVersionContract() {
     'uploaded images must use a captured session context and render from a Blob URL');
   assert.match(app, /async function hydratePrivateGeneratedImage[\s\S]{0,1800}const context = captureConversationCacheContext\(\)[\s\S]{0,900}Authorization: `Bearer \$\{context\.token\}`[\s\S]{0,900}cache\?\.putAsset\?/,
     'generated images must use a captured session context before persisting a private Blob');
-  assert.match(app, /const isImage = att\.type === 'image' && \(att\.data \|\| att\.filePath\)[\s\S]{0,1000}hydratePrivateAttachmentImage\(img, att\)/,
+  assert.match(extractNamedFunction(app, 'createAttachmentListItem'), /const isImage = att\.type === 'image' && \(att\.data \|\| att\.filePath \|\| att\.localThumbnail\)[\s\S]{0,1000}hydratePrivateAttachmentImage\(img, att\)/,
     'stored image attachments must use the authenticated image preview path');
   assert.match(server, /const PROVISIONED_TEST_ACCOUNT_EMAIL = '1@1\.com'/);
   assert.match(server, /function isProvisionedTestAccount\(user, normalizedEmail\)[\s\S]*?normalizeEmailForAuth\(normalizedEmail\) === PROVISIONED_TEST_ACCOUNT_EMAIL[\s\S]*?normalizeEmailForAuth\(user\?\.email\) === PROVISIONED_TEST_ACCOUNT_EMAIL/);
@@ -1329,12 +1326,14 @@ function testDownloadClientsAndTimeline() {
     'RAI Connect must be a details element');
   assert.doesNotMatch(index, /<details[^>]+id="settingsRaiConnectInstall"[^>]*\sopen(?:\s|=|>)/,
     'RAI Connect must be collapsed by default');
-  assert.match(index, /settings-connect-summary[\s\S]*local-agent-install-compact-desc/,
+  assert.match(index, /settings-connect-summary[\s\S]*cx-remote-install-desc/,
     'RAI Connect summary must render as a compact horizontal bar');
   assert.match(app, /date: '2026-09-24'[\s\S]*date: '2026-09-21'[\s\S]*date: '2026-09-14'[\s\S]*date: '2026-09-08'[\s\S]*date: '2026-08-19'/,
     'About timeline must include recent GitHub milestones in descending order');
-  assert.match(app, /GitHub main \/ beta 提交记录[\s\S]*2026-09-24/,
+  assert.match(app, /'settings-update-timeline-source': '来源：RAI Web 公开 GitHub 提交与更新记录，核对至 2026-10-30/,
     'About timeline source must state the GitHub sync horizon');
+  assert.ok(index.includes('href="https://github.com/Rick-953/RAI/blob/main/CHANGELOG-RAI-WEB.md"'),
+    'About timeline must link to the public source changelog');
   assert.match(index, /id="settingsHandednessSwitch"[\s\S]*settingsToggleHandedness\(\)/,
     'Adaptive handedness must expose a settings switch');
   assert.match(eventBindings, /settingsToggleHandedness/,
@@ -1369,14 +1368,18 @@ function testDownloadClientsAndTimeline() {
     'The mobile model selector must stay centered in both handedness modes');
   assert.match(styles, /html\.hand-left \.mobile-center-controls,\s*html\.hand-right \.mobile-center-controls\s*\{[^}]*left:\s*50%/,
     'Handedness modes must override the legacy model-selector offset and keep it centered');
-  assert.match(app, /function positionChatIndexFloatingTooltip\(tooltip, rect\)[\s\S]*appState\.handedness === 'right'[\s\S]*rect\.right \+ 16/,
-    'Chat index tooltips must flip to the open side of the navigator');
-  assert.match(app, /appState\.handedness === 'right'[\s\S]*Math\.max\(0, -deltaX\)/,
-    'Right-hand mode must support opening the sidebar from the right edge');
+  const tooltipPosition = extractNamedFunction(app, 'positionChatIndexFloatingTooltip');
+  assert.match(tooltipPosition, /tooltip\.getBoundingClientRect\(\)/, 'preview bounds must use actual measured size');
+  assert.match(tooltipPosition, /Math\.max\(viewportLeft \+ margin, Math\.min/);
+  assert.match(tooltipPosition, /viewportBottom - margin - size\.height/);
+  assert.doesNotMatch(tooltipPosition, /appState\.handedness/);
+  assert.match(app, /sidebarGestureFromRight = opensFromRight/);
   assert.match(styles, /html\.hand-right \.sidebar[\s\S]*translateX\(100%\)/,
     'Right-hand mode must position the mobile sidebar on the right');
-  assert.match(styles, /html\.hand-left \.input-toolbar > \.send-btn[\s\S]*order: -1/,
-    'Left-hand mode must move the send button to the left side of the composer');
+  assert.doesNotMatch(styles, /html\.hand-left \.input-toolbar > \.send-btn/,
+    'Send stays on the right even when mobile handedness is enabled');
+  assert.doesNotMatch(extractNamedFunction(app, 'applyHandednessLayout'), /style\.order\s*=/,
+    'Synced handedness must not reorder send/stop buttons');
   assert.match(styles, /\.settings-platform-download \+ \.settings-platform-download\s*\{[^}]*padding-left:\s*0;[^}]*border-left:\s*0/,
     'Download client columns must not use a vertical divider');
   assert.match(styles, /\.settings-install-card\s*\{[^}]*border-radius:\s*12px/,
@@ -1414,6 +1417,7 @@ function testHandednessPromptContext() {
     'navigator',
     'isChineseLanguage',
     `${extractNamedFunction(app, 'normalizeHandedness')};
+     function getClientPlatform() { return window.matchMedia().matches ? 'ios' : 'windows'; }
      ${extractNamedFunction(app, 'isHandednessMobileLayout')};
      ${extractNamedFunction(app, 'getUserTimeContext')};
      ${extractNamedFunction(app, 'getShortUserTimeHint')};

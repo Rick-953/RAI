@@ -11,39 +11,43 @@
   <meta name="apple-mobile-web-app-title" content="RAI">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>RAI</title>
+  <script src="locale.js?v=20261107-stream-reasons"></script>
   <script src="runtime-config.js"></script>
-  <script src="runtime-brand.js?v=20260929-pwa-r8"></script>
+  <script src="runtime-brand.js?v=20261107-stream-reasons"></script>
 
   <link rel="icon"
     href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="planetGrad" x1="0%%" y1="0%%" x2="100%%" y2="100%%"><stop offset="0%%" style="stop-color:%23f5d547;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23e6a824;stop-opacity:1"/></linearGradient><linearGradient id="ringGrad" x1="0%%" y1="100%%" x2="100%%" y2="0%%"><stop offset="0%%" style="stop-color:%23f9e79f;stop-opacity:1"/><stop offset="100%%" style="stop-color:%23fef5e7;stop-opacity:1"/></linearGradient></defs><circle cx="32" cy="32" r="14" fill="url(%23planetGrad)"/><path d="M 10 42 C 10 35, 54 20, 54 28 C 54 32, 40 40, 32 40" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/><path d="M 54 28 C 54 36, 10 50, 10 42" fill="none" stroke="url(%23ringGrad)" stroke-width="4" stroke-linecap="round" opacity="0.9"/><circle cx="26" cy="26" r="4" fill="white" opacity="0.2"/></svg>'
     type="image/svg+xml">
-  <link rel="manifest" href="site.webmanifest?v=20260929-pwa-r8">
+  <link rel="manifest" href="site.webmanifest?v=20261107-stream-reasons">
   <link rel="apple-touch-icon" href="icons/rai-app-icon-512.png">
 
   <!-- Marked.js for Markdown Rendering -->
-  <script defer src="lib/marked.min.js?v=20260929-pwa-r8"></script>
-  <script defer src="lib/purify.min.js?v=20260929-pwa-r8"></script>
+  <script defer src="lib/marked.min.js?v=20261107-stream-reasons"></script>
+  <script defer src="lib/purify.min.js?v=20261107-stream-reasons"></script>
 
   <!-- KaTeX for Math Rendering -->
-  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20260929-pwa-r8">
-  <script defer src="lib/katex/katex.min.js?v=20260929-pwa-r8"></script>
-  <script defer src="lib/katex/contrib/auto-render.min.js?v=20260929-pwa-r8"></script>
+  <link rel="stylesheet" href="lib/katex/katex.min.css?v=20261107-stream-reasons">
+  <script defer src="lib/katex/katex.min.js?v=20261107-stream-reasons"></script>
+  <script defer src="lib/katex/contrib/auto-render.min.js?v=20261107-stream-reasons"></script>
 
   <!-- Mermaid.js 图表渲染 -->
 
   <!-- CSP-safe declarative event binding; no inline script handlers are permitted. -->
-  <script defer src="rai-system-prompt.js?v=20260929-pwa-r8"></script>
-  <script defer src="event-bindings.js?v=20260929-pwa-r8"></script>
+  <script defer src="rai-system-prompt.js?v=20261107-stream-reasons"></script>
+  <script defer src="event-bindings.js?v=20261107-stream-reasons"></script>
 
   <!-- Highlight.js 代码语法高亮 -->
-  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20260929-pwa-r8">
-  <script defer src="lib/highlight/highlight.min.js?v=20260929-pwa-r8"></script>
+  <link rel="stylesheet" href="lib/highlight/styles/github-dark.min.css?v=20261107-stream-reasons">
+  <script defer src="lib/highlight/highlight.min.js?v=20261107-stream-reasons"></script>
 
   <!-- 外部样式表 -->
-  <link rel="stylesheet" href="styles.css?v=20260929-pwa-r8">
-  <link rel="stylesheet" href="selection-explainer.css?v=20260929-pwa-r8">
-  <link rel="stylesheet" href="local-agent.css?v=20260929-pwa-r8">
-  <link rel="stylesheet" href="secure-sharing.css?v=20260929-pwa-r8">
+  <link rel="stylesheet" href="styles.css?v=20261107-stream-reasons">
+  <link rel="stylesheet" href="selection-explainer.css?v=20261107-stream-reasons">
+  <link rel="stylesheet" href="local-agent.css?v=20261107-stream-reasons">
+  <link rel="stylesheet" href="secure-sharing.css?v=20261107-stream-reasons">
+  <link rel="stylesheet" href="web-skills.css?v=20261107-stream-reasons">
+  <link rel="stylesheet" href="third-party-notices.css?v=20261107-stream-reasons">
+  <script src="third-party-notices.js?v=20261107-stream-reasons" defer></script>
 </head>
 
 <body>
@@ -70,7 +74,7 @@
           </div>
 
           <div class="auth-step-hidden" id="authLoginMethodStep">
-            <div class="auth-method-toggle" role="group" aria-label="登录方式">
+            <div class="auth-method-toggle" role="group" data-i18n-aria-label="auth-method-label" aria-label="登录方式">
               <button type="button" class="auth-method-btn active" id="authPasswordMethodBtn"
                 data-rai-click="setAuthLoginMethod('password')" data-i18n="auth-password-login">密码登录</button>
               <button type="button" class="auth-method-btn" id="authEmailCodeMethodBtn"
@@ -138,10 +142,6 @@
               </div>
               <p class="auth-passkey-hint" id="authPasskeyHint" hidden></p>
             </div>
-            <div class="auth-custom-api-entry" id="customApiEntry">
-              <button type="button" class="auth-alt-button" id="customApiToggleBtn"
-                data-rai-click="toggleCustomApiMode()" data-i18n="custom-api-entry">我有一个 API Key</button>
-            </div>
           </div>
 
           <div class="auth-sso-container" id="ztx6dSsoContainer" style="display: none;">
@@ -150,27 +150,7 @@
               data-i18n="auth-rpass-login" data-i18n-title="auth-coming-soon" title="待上线">rPass 登录</button>
           </div>
 
-          <div class="custom-api-panel auth-step-hidden" id="customApiPanel">
-            <div class="form-group">
-              <label class="form-label" for="customApiUrl" data-i18n="custom-api-url-label">API URL</label>
-              <input type="url" class="form-input" id="customApiUrl" value="https://api.openai.com/v1"
-                placeholder="https://api.example.com/v1" autocomplete="url">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="customApiKey" data-i18n="custom-api-key-label">API Key</label>
-              <input type="password" class="form-input" id="customApiKey" data-i18n-placeholder="custom-api-key-placeholder"
-                placeholder="sk-..." autocomplete="off">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="customModelId" data-i18n="custom-model-label">模型 ID</label>
-              <input type="text" class="form-input" id="customModelId" placeholder="gpt-4o-mini" autocomplete="off">
-            </div>
-            <div class="error-message" id="customApiError"></div>
-            <button type="button" class="auth-btn custom-api-submit" id="customApiSubmitBtn"
-              data-rai-click="startCustomApiMode()" data-i18n="custom-api-submit">进入自定义 API</button>
-            <button type="button" class="auth-custom-api-back" data-rai-click="toggleCustomApiMode(false)"
-              data-i18n="custom-api-back">返回普通登录</button>
-          </div>
+
         </div>
 
         <!-- 登录/注册切换 和 语言切换 - 放到表单下方 -->
@@ -180,6 +160,7 @@
             <a class="auth-link" data-rai-click="switchAuthMode()" id="authSwitchLink" data-i18n="register-link">立即注册</a>
           </div>
           <div class="auth-lang-row" id="authLangRow" role="group" aria-label="Language">
+            <button type="button" class="auth-lang-text-btn" data-lang="auto" data-rai-click="setLanguage('auto')" data-i18n="language-auto" data-i18n-title="language-auto-hint" title="跟随浏览器语言">自动</button>
             <button type="button" class="auth-lang-text-btn" data-lang="zh-CN" data-rai-click="setLanguage('zh-CN')" title="简体中文" aria-label="简体中文">简体</button>
             <button type="button" class="auth-lang-text-btn" data-lang="zh-TW" data-rai-click="setLanguage('zh-TW')" title="繁體中文" aria-label="繁體中文">繁體</button>
             <button type="button" class="auth-lang-text-btn" data-lang="en" data-rai-click="setLanguage('en')" title="English" aria-label="English">EN</button>
@@ -212,7 +193,7 @@
               <span class="onboarding-feature-mark">01</span>
               <div class="onboarding-feature-copy">
                 <strong data-i18n="onb-feat-models-title">多模型协作</strong>
-                <span data-i18n="onb-feat-models">多模型自由切换（DeepSeek / Kimi / GPT / Claude / Gemma）</span>
+                <span data-i18n="onb-feat-models">在可用模型之间切换，按任务选择思考强度</span>
               </div>
             </div>
             <div class="onboarding-feature-item">
@@ -319,6 +300,13 @@
             <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
           </svg>
         </button>
+        <button type="button" class="control-btn mobile-qr-scan-btn" id="mobileQrScanButton"
+          data-i18n-title="scan-login-qr" data-i18n-aria-label="scan-login-qr" title="扫码授权登录" aria-label="扫码授权登录">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4"/>
+            <path d="M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z"/>
+          </svg>
+        </button>
         <button class="control-btn temp-chat-top-btn mobile-temp-chat-btn" data-rai-click="handleTemporaryChatClick()"
           data-i18n-title="temporary-chat" data-i18n-aria-label="temporary-chat" title="临时对话" aria-label="临时对话">
           <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
@@ -384,7 +372,7 @@
             </svg>
             <div class="logo-text-col">
               <div class="logo">RAI</div>
-                <div class="logo-subtitle">by Rick · v0.13.18</div>
+                <div class="logo-subtitle">by Rick · v0.13.49</div>
             </div>
           </div>
           <div class="sidebar-header-controls">
@@ -445,7 +433,7 @@
           <svg class="material-symbols-outlined" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
             <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6Zm1 7V3.5L18.5 9H15ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V9Z" />
           </svg>
-          <span>文件</span>
+          <span data-i18n="sidebar-files">文件</span>
         </button>
 
           <!-- 文件夹分组 -->
@@ -455,7 +443,7 @@
                 height="24" fill="currentColor">
                 <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
               </svg>
-              <span class="sidebar-group-title">文件夹</span>
+              <span class="sidebar-group-title" data-i18n="sidebar-folders">文件夹</span>
               <svg class="material-symbols-outlined group-toggle-icon" id="conversationFoldersToggleIcon"
                 xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" />
@@ -467,7 +455,7 @@
                   height="24" fill="currentColor">
                   <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                 </svg>
-                <span>新建文件夹</span>
+                <span data-i18n="sidebar-new-folder">新建文件夹</span>
               </button>
               <div class="spaces-list conversation-folders-list" id="conversationFoldersList"></div>
             </div>
@@ -537,7 +525,7 @@
           <header class="file-library-header">
             <div>
               <h1 id="fileLibraryTitle">文件</h1>
-              <p id="fileLibrarySummary">0 个文件</p>
+              <p id="fileLibrarySummary">文件</p>
             </div>
             <div class="file-library-header-actions">
               <button class="file-library-upload" type="button" data-rai-click="uploadFilesToLibrary()">
@@ -556,9 +544,9 @@
           <div class="file-library-storage">
             <div class="file-library-storage-copy">
               <span id="fileLibraryStorageLabel">存储空间</span>
-              <strong id="fileLibraryStorageValue">0 MB / 100 MB</strong>
+              <strong id="fileLibraryStorageValue">—</strong>
             </div>
-            <div class="file-library-storage-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="file-library-storage-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
               <span id="fileLibraryStorageBar"></span>
             </div>
           </div>
@@ -697,24 +685,7 @@
                       <span class="more-menu-item-text" data-i18n="reasoning-mode">推理模式</span>
                       <div class="more-menu-item-toggle" id="thinkingToggle"></div>
                     </div>
-                    <div class="reasoning-profile-slider-wrap">
-                      <input
-                        id="reasoningProfileSlider"
-                        class="reasoning-profile-slider"
-                        type="range"
-                        min="0"
-                        max="3"
-                        step="1"
-                        value="0"
-                        data-rai-input="setReasoningProfileFromSlider(this.value)"
-                      >
-                      <div class="reasoning-profile-labels">
-                        <span data-i18n="reasoning-low">低</span>
-                        <span data-i18n="reasoning-medium">中</span>
-                        <span data-i18n="reasoning-high">高</span>
-                        <span data-i18n="reasoning-mixed">自动</span>
-                      </div>
-                    </div>
+                    <div class="reasoning-profile-slider-wrap" id="reasoningProfileChoices" role="group" aria-label="Thinking level"></div>
                   </div>
 
                   <!-- 研究模式 -->
@@ -771,23 +742,23 @@
                         <path d="M4 4h16c1.1 0 2 .9 2 2v11c0 1.1-.9 2-2 2h-6v2h-4v-2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm0 2v11h16V6H4Zm2 2 3 3-3 3 1.4 1.4L11.8 11 7.4 6.6 6 8Zm6 6h6v2h-6v-2Z" />
                       </svg>
                     </div>
-                    <span class="more-menu-item-text" data-i18n="local-agent-menu">本地 Agent</span>
+                    <span class="more-menu-item-text" data-i18n="cx-remote-menu">连接 CX RAI</span>
                     <div class="more-menu-item-toggle" id="localAgentToggle"></div>
                   </div>
 
                   <div class="more-menu-divider"></div>
 
                   <!-- 添加附件 -->
-                  <div class="more-menu-item" role="button" tabindex="0"
-                    data-rai-click="handleFileUploadFromMenu()" data-rai-keydown="handleComposerMenuItemKeydown(event)">
-                    <div class="more-menu-item-icon">
+                  <button type="button" class="more-menu-item attachment-upload-btn" id="attachmentUploadBtn"
+                    data-rai-click="handleFileUploadFromMenu(event)" data-rai-keydown="handleComposerMenuItemKeydown(event)">
+                    <span class="more-menu-item-icon" aria-hidden="true">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                         <path
                           d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" />
                       </svg>
-                    </div>
+                    </span>
                     <span class="more-menu-item-text" data-i18n="add-attachment">添加附件</span>
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -844,28 +815,6 @@
                     </div>
                   </div>
 
-                  <div class="model-menu-item model-mode-item" data-mode="fast" data-model="deepseek-flash"
-                    data-rai-click="selectRaiModeFromMenu('fast', event)">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24px" height="24px" fill="currentColor" aria-hidden="true">
-                      <path d="M20.38 8.57l-1.23 1.85A8 8 0 0 1 18.93 18H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44ZM10.59 15.41a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83Z" />
-                    </svg>
-                    <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-fast">快速</div>
-                    </div>
-                  </div>
-
-                  <div class="model-menu-item model-mode-item" data-mode="think" data-model="deepseek-pro"
-                    data-rai-click="selectRaiModeFromMenu('think', event)">
-                    <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" height="24px"
-                      viewBox="0 -960 960 960" width="24px" fill="currentColor">
-                      <path
-                        d="M480-80q-26 0-47-12.5T400-126q-33 0-56.5-23.5T320-206v-142q-59-39-94.5-103T190-590q0-121 84.5-205.5T480-880q121 0 205.5 84.5T770-590q0 77-35.5 140T640-348v142q0 33-23.5 56.5T560-126q-12 21-33 33.5T480-80Zm-80-126h160v-36H400v36Zm0-76h160v-38H400v38Zm-8-118h58v-108l-88-88 42-42 76 76 76-76 42 42-88 88v108h58q54-26 88-76.5T690-590q0-88-61-149t-149-61q-88 0-149 61t-61 149q0 63 34 113.5t88 76.5Zm88-162Zm0-38Z" />
-                    </svg>
-                    <div class="model-menu-content">
-                      <div class="model-menu-title" data-i18n="model-expert">思考</div>
-                    </div>
-                  </div>
-
                   <div class="model-menu-item model-mode-item" data-mode="research" data-model="research-mode"
                     data-rai-click="selectRaiModeFromMenu('research', event)">
                     <svg class="model-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor">
@@ -900,49 +849,12 @@
 
                     <div class="model-menu-section-label">对话模型</div>
 
-                    <div class="model-menu-item" data-model="gpt-5.6-luna"
-                      data-rai-click="selectModelFromMenu('gpt-5.6-luna', 'GPT 5.6', null, event)">
-                      <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">GPT 5.6</span><span class="model-badge">多模态</span></div>
-                      </div>
-                    </div>
-                    <div class="model-menu-item" data-model="claude-sonnet-5"
-                      data-rai-click="selectModelFromMenu('claude-sonnet-5', 'Claude Sonnet 5', null, event)">
-                      <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">Claude Sonnet 5</span><span class="model-badge">多模态</span></div>
-                      </div>
-                    </div>
-                    <div class="model-menu-item" data-model="gemini-3.6-flash-low"
-                      data-rai-click="selectModelFromMenu('gemini-3.6-flash-low', 'Gemini 3.6', null, event)">
-                      <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">Gemini 3.6</span><span class="model-badge">多模态</span></div>
-                      </div>
-                    </div>
-                    <div class="model-menu-item" data-model="deepseek-flash"
-                      data-rai-click="selectModelFromMenu('deepseek-flash', 'DeepSeek v4', null, event)">
-                      <div class="model-menu-content">
-                        <div class="model-menu-title">DeepSeek v4</div>
-                      </div>
-                    </div>
-                    <div class="model-menu-item" data-model="nemotron-3-ultra"
-                      data-rai-click="selectModelFromMenu('nemotron-3-ultra', 'Nemotron 3 Ultra', null, event)">
-                      <div class="model-menu-content">
-                        <div class="model-menu-title"><span class="model-menu-name">Nemotron 3 Ultra</span><span class="model-badge limited-free">Free</span></div>
-                      </div>
-                    </div>
-
-                    <div class="model-menu-section-label">图像生成</div>
-                    <div class="model-menu-item" data-model="kolors-free"
-                      data-rai-click="selectModelFromMenu('kolors-free', 'Kolors Free', null, event)">
-                      <div class="model-menu-content"><div class="model-menu-title">Kolors Free <span class="model-badge limited-free">Free</span></div></div>
-                    </div>
-                    <div class="model-menu-item" data-model="gpt-image-2"
-                      data-rai-click="selectModelFromMenu('gpt-image-2', 'GPT Image 2', null, event)">
-                      <div class="model-menu-content"><div class="model-menu-title">GPT Image 2</div></div>
-          </div>
-
+                    <div class="model-menu-item" data-model="deepseek-v4.1-flash" data-rai-click="selectModelFromMenu('deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">DeepSeek V4.1 Flash</span></div></div></div>
+<div class="model-menu-item" data-model="gpt-6.1-sol" data-rai-click="selectModelFromMenu('gpt-6.1-sol', 'GPT 6.1 Sol', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6.1 Sol</span></div></div></div>
+<div class="model-menu-item" data-model="gpt-6-luna" data-rai-click="selectModelFromMenu('gpt-6-luna', 'GPT 6 Luna', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Luna</span></div></div></div>
+<div class="model-menu-item" data-model="gpt-6-astra" data-rai-click="selectModelFromMenu('gpt-6-astra', 'GPT 6 Astra', null, event)"><div class="model-menu-content"><div class="model-menu-title"><span class="model-menu-name">GPT 6 Astra</span></div></div></div>
+                  </div>
                 </div>
-              </div>
               </div>
 
               <button type="button" class="send-btn" id="sendBtn" data-rai-click="handleSendButtonClick(event)">
@@ -966,11 +878,11 @@
   </div>
   </div>
 
-  <div class="chatflow-divider" id="chatflowDivider" role="separator" aria-label="调整聊天和画布大小"
+  <div class="chatflow-divider" id="chatflowDivider" role="separator" aria-label="调整聊天和画布大小" data-i18n-aria-label="chatflow-resize-label"
     aria-orientation="vertical" hidden></div>
 
   <!-- 会话画布：消息和输入继续由普通对话区域提供 -->
-  <section class="chatflow-workspace" id="chatFlowWorkspace" aria-label="对话画布" hidden>
+  <section class="chatflow-workspace" id="chatFlowWorkspace" aria-label="对话画布" data-i18n-aria-label="chatflow-workspace-label" hidden>
     <header class="chatflow-header">
       <div class="chatflow-header-main">
         <h3 class="chatflow-title" id="chatflowTitle" data-i18n="chatflow-title-default">对话画布</h3>
@@ -1183,7 +1095,7 @@
           <div class="settings-mobile-home-title" data-i18n="settings">设置</div>
           <button type="button" class="settings-mobile-info-btn" data-rai-click="switchSettingsSection('about')"
             data-i18n-aria-label="settings-nav-about" aria-label="关于">
-            <img class="settings-info-icon" src="icons/settings/about.svg?v=20260929-pwa-r8" alt="" aria-hidden="true">
+            <img class="settings-info-icon" src="icons/settings/about.svg?v=20261107-stream-reasons" alt="" aria-hidden="true">
           </button>
         </div>
 
@@ -1249,7 +1161,7 @@
           <div class="settings-nav-group">
             <button type="button" class="settings-nav-item active" data-settings-section="general"
               data-rai-click="switchSettingsSection('general')">
-              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20260929-pwa-r8" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/general.svg?v=20261107-stream-reasons" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-general">自定义</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="capabilities"
@@ -1264,7 +1176,7 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="personalization"
               data-rai-click="switchSettingsSection('personalization')">
-              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20260929-pwa-r8" alt="" aria-hidden="true">
+              <img class="settings-nav-icon" src="icons/settings/custom.svg?v=20261107-stream-reasons" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-personalization">个性化</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="memory"
@@ -1289,6 +1201,11 @@
               data-rai-click="switchSettingsSection('advanced')">
               <img class="settings-nav-icon" src="icons/settings/advanced.svg" alt="" aria-hidden="true">
               <span data-i18n="settings-nav-advanced">高级</span>
+            </button>
+            <button type="button" class="settings-nav-item is-hidden" id="settingsDeveloperNav" hidden
+              data-settings-section="developer" data-rai-click="switchSettingsSection('developer')">
+              <img class="settings-nav-icon" src="icons/settings/advanced.svg" alt="" aria-hidden="true">
+              <span data-i18n="settings-nav-developer">开发者选项</span>
             </button>
             <button type="button" class="settings-nav-item" data-settings-section="about"
               data-rai-click="switchSettingsSection('about')">
@@ -1329,6 +1246,8 @@
                   <p class="setting-description" data-i18n="language-desc">选择界面语言</p>
                 </div>
                 <div class="settings-segmented" role="group" aria-label="Language">
+                  <button type="button" class="settings-choice-btn" data-language-option="auto"
+                    data-rai-click="setLanguage('auto')">跟随浏览器</button>
                   <button type="button" class="settings-choice-btn" data-language-option="zh-CN"
                     data-rai-click="setLanguage('zh-CN')">简体中文</button>
                   <button type="button" class="settings-choice-btn" data-language-option="zh-TW"
@@ -1374,16 +1293,16 @@
               </div>
               <div class="settings-setting-row settings-setting-row-stacked">
                 <div class="settings-setting-copy">
-                  <div class="setting-label">本地对话缓存</div>
-                  <p class="setting-description">仅保留已打开对话的原始消息和 RAI 私有图片。</p>
+                  <div class="setting-label" data-i18n="cache-title">本地对话缓存</div>
+                  <p class="setting-description" data-i18n="cache-description">仅保留已打开对话的原始消息和 RAI 私有图片。</p>
                 </div>
                 <label class="settings-toggle-row" for="conversationCacheEnabled">
                   <input id="conversationCacheEnabled" type="checkbox" checked>
-                  <span>启用</span>
+                  <span data-i18n="cache-enable">启用</span>
                 </label>
                 <div class="settings-inline-actions">
                   <span class="setting-description" id="conversationCacheUsage">0 MiB / 250 MiB</span>
-                  <button type="button" class="settings-inline-save" id="clearConversationCacheBtn">清除</button>
+                  <button type="button" class="settings-inline-save" id="clearConversationCacheBtn" data-i18n="cache-clear">清除</button>
                 </div>
               </div>
               <div class="settings-setting-row settings-setting-row-stacked">
@@ -1557,7 +1476,7 @@
                   <span><span data-i18n="remaining-points-label">剩余点数</span>: <strong
                       id="settingsPointsDisplay">0</strong></span>
                 </div>
-                <div class="settings-created-at" id="settingsImage2Quota">Image 2: -</div>
+                <div class="settings-created-at" id="settingsImagePricing">生图：每张 100–300 点 · 仅 1K 及以下</div>
                 <button id="settingsCheckinBtn" data-rai-click="userCheckin()" class="settings-checkin-btn"
                   data-i18n="checkin-bonus">
                   签到 +20
@@ -1755,12 +1674,27 @@
                 </button>
               </div>
               <div class="memory-add-row settings-memory-add-row">
-                <input type="text" class="setting-input memory-add-input" id="memoryAddInput" maxlength="360"
-                  data-i18n-placeholder="memory-add-placeholder" placeholder="添加一条你希望 RAI 长期记住的信息">
+                <textarea class="setting-input memory-add-input" id="memoryAddInput" maxlength="181000" rows="4"
+                  data-i18n-placeholder="memory-add-placeholder" placeholder="每行一条记忆，一次最多 500 条，每条 2–360 字"></textarea>
                 <button type="button" class="settings-inline-save" data-rai-click="addManualMemory()"
                   data-i18n="memory-add-btn">添加记忆</button>
               </div>
+              <div class="memory-batch-actions">
+                <button type="button" class="settings-inline-save secondary" data-rai-click="selectFirstMemoryBatch()" data-i18n="memory-select-batch">选择前 500 条</button>
+                <button type="button" class="settings-inline-save secondary" id="deleteSelectedMemoriesButton" disabled data-rai-click="deleteSelectedUserMemories()" data-i18n="memory-delete-selected">移除所选</button>
+                <button type="button" class="settings-inline-save secondary" data-rai-click="showMemoryBackups()" data-i18n="memory-backups">备份记录</button>
+              </div>
               <div class="memory-list" id="settingsMemoryList"></div>
+              <dialog id="memoryBackupDialog" class="memory-backup-dialog">
+                <h3 data-i18n="memory-backups">备份记录</h3>
+                <p data-i18n="memory-backups-desc">每次修改前自动保留完整版本；一次批量操作对应一个备份。</p>
+                <select id="memoryBackupSelect" class="setting-input" aria-label="Memory backup version" data-rai-change="readSelectedMemoryBackup()"></select>
+                <pre id="memoryBackupPreview" class="memory-backup-preview" tabindex="0"></pre>
+                <div class="memory-batch-actions">
+                  <button type="button" class="settings-inline-save" data-rai-click="exportSelectedMemoryBackup()" data-i18n="memory-export-backup">导出此备份</button>
+                  <button type="button" class="settings-inline-save secondary" data-rai-click="closeMemoryBackups()" data-i18n="memory-close-backups">关闭</button>
+                </div>
+              </dialog>
               <div class="settings-danger-zone settings-memory-danger">
                 <div>
                   <h4 data-i18n="memory-clear-btn">清空记忆</h4>
@@ -1846,6 +1780,21 @@
                 data-settings-save-action data-label-key="save-settings" data-i18n="save-settings">保存设置</button>
             </div>
 
+
+            <div class="setting-item" id="customApiPanel">
+              <h3 data-i18n="custom-api-title">自定义 API 模型</h3>
+              <p class="setting-description" data-i18n="custom-api-desc">登录 RAI 后可用。Key 仅保留在当前页面内存，刷新后需重新输入；模型会加入模型列表，请求直接发给提供商。</p>
+              <div id="customApiList"></div>
+              <div class="form-group"><label for="customApiName" data-i18n="custom-api-name">显示名称</label><input class="form-input" id="customApiName" maxlength="80" autocomplete="off"></div>
+              <div class="form-group"><label for="customApiUrl" data-i18n="custom-api-url-label">API URL</label><input class="form-input" type="url" id="customApiUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
+              <div class="form-group"><label for="customApiKey" data-i18n="custom-api-key-label">API Key</label><input class="form-input" type="password" id="customApiKey" autocomplete="off"></div>
+              <div class="form-group"><label for="customModelId" data-i18n="custom-model-label">模型 ID</label><input class="form-input" id="customModelId" maxlength="160" autocomplete="off"></div>
+              <label><input type="checkbox" id="customApiUsage" checked><span data-i18n="custom-api-usage">请求流式用量（提供商不支持时可关闭；不会为获取用量重发请求）</span></label>
+              <p class="setting-description" data-i18n="custom-api-metadata">诊断日志记录模型、用量和缓存计费元数据，不上传 Key 或正文。第三方费用以提供商账单为准。</p>
+              <div class="error-message" id="customApiError" role="status"></div>
+              <button type="button" class="settings-inline-save" id="customApiSubmitBtn" data-rai-click="startCustomApiMode()" data-i18n="custom-api-submit">添加到模型列表</button>
+            </div>
+
             <div class="advanced-options-content expanded" id="advancedOptionsContent">
               <div class="setting-item">
                 <label class="setting-label">Temperature</label>
@@ -1896,6 +1845,23 @@
                   <span class="slider-value" id="presenceValue">0.0</span>
                 </div>
               </div>
+
+              <div class="setting-item settings-diagnostics-item">
+                <label class="setting-label" data-i18n="settings-export-diagnostics">导出脱敏诊断日志</label>
+                <p class="setting-description" data-i18n="settings-diagnostics-description">仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
+                <button type="button" class="settings-inline-save settings-diagnostics-button" id="exportDiagnosticsButton" data-i18n="settings-export-diagnostics">导出脱敏诊断日志</button>
+                <p class="setting-description" data-i18n="settings-server-activity-description">登录后的操作、账户、IP、系统环境、模型与技能状态、对话及请求编号和错误元数据会记录到服务器，供管理员排障，保留 30 天。不含密码、API Key 或聊天正文。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-panel" id="settingsPanel-developer" data-settings-panel="developer" hidden>
+            <div class="settings-section-intro">
+              <h3 data-i18n="settings-nav-developer">开发者选项</h3>
+            </div>
+            <div class="setting-item">
+              <button type="button" class="settings-inline-save" id="settingsAdminEntry"
+                data-rai-click="openDeveloperAdmin()" data-i18n="settings-admin-entry">管理员登录</button>
             </div>
           </section>
 
@@ -1924,6 +1890,8 @@
               <div>
                 <h3 data-i18n="settings-about-title">关于RAI</h3>
                 <p data-i18n="settings-about-desc">您的专属 AI 助理，由 Rick 创作。欢迎随时找我聊天、讨论。</p>
+                <button type="button" class="settings-inline-save secondary" id="settingsDeveloperVersion"
+                  data-rai-click="handleDeveloperVersionTap()">RAI 0.13.49</button>
               </div>
             </div>
             <div class="settings-about-links" aria-label="RAI links and author">
@@ -1940,16 +1908,24 @@
                 <span>RAI welcome guide</span>
               </button>
             </div>
-            <div class="settings-about-links">
-              <button type="button" class="settings-about-link settings-about-action" id="exportDiagnosticsButton">导出脱敏诊断日志</button>
-            </div>
-            <p class="settings-description">仅当前标签页最近500条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。</p>
             <div class="settings-about-timeline" aria-label="RAI update timeline">
               <div class="settings-about-timeline-title" data-i18n="settings-update-timeline-title">RAI 的成长故事</div>
               <p class="settings-about-timeline-intro" data-i18n="settings-update-timeline-intro">从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。</p>
               <div class="settings-timeline-list" id="settingsTimelineList"></div>
               <p class="settings-about-timeline-source" data-i18n="settings-update-timeline-source">来源：本机历史版本目录、运维记录、历史 release manifest、GitHub README。</p>
+              <a class="settings-about-link" href="https://github.com/Rick-953/RAI/blob/main/CHANGELOG-RAI-WEB.md" target="_blank" rel="noopener noreferrer" data-i18n="settings-github-changelog">查看 GitHub 更新记录</a>
             </div>
+            <details class="third-party-notices" data-third-party-notices>
+              <summary data-third-party-text="title">开源软件与许可</summary>
+              <div class="third-party-content">
+                <p class="third-party-description" data-third-party-text="description">RAI Web、桌面外壳和本地 Agent 使用的项目。展开项目可查看保留的版权声明及完整许可原文。</p>
+                <p class="third-party-scope" data-third-party-text="scope"></p>
+                <a class="third-party-full-link" href="third-party-notices.html" target="_blank" rel="noopener noreferrer" data-third-party-text="full">打开完整许可查看器</a>
+                <input class="third-party-search" type="search" data-third-party-search aria-label="搜索项目或许可证">
+                <p class="third-party-status" role="status" data-third-party-status></p>
+                <div class="third-party-list" data-third-party-list></div>
+              </div>
+            </details>
           </section>
           <section class="settings-panel" id="settingsPanel-app" data-settings-panel="app">
             <div class="settings-section-intro">
@@ -1966,7 +1942,7 @@
                     <div class="settings-platform-copy">
                       <div class="settings-platform-title-row">
                         <h4 id="settingsPwaDownloadTitle" data-i18n="settings-pwa-title">网页版应用</h4>
-                        <span class="settings-platform-badge" data-i18n="settings-pwa-badge">推荐</span>
+                        <span class="settings-platform-badge" id="pwaInstallRecommended" data-i18n="settings-pwa-badge">推荐</span>
                       </div>
                       <p data-i18n="settings-pwa-desc">安装后从桌面或主屏幕独立打开。</p>
                     </div>
@@ -1990,7 +1966,7 @@
                   </div>
                   <div class="settings-install-status" id="windowsDownloadStatus" data-i18n="settings-install-detecting">检测安装方式...</div>
                   <div class="settings-windows-actions">
-                    <a class="settings-install-download" id="windowsSetupDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="settings-windows-setup">下载安装程序</a>
+                    <a class="settings-install-download" id="windowsSetupDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank" rel="noopener noreferrer"><span id="windowsSetupDownloadLabel" data-i18n="settings-windows-setup">下载安装程序</span><span class="settings-platform-badge settings-download-recommended" id="windowsSetupRecommended" data-i18n="settings-pwa-badge" hidden>推荐</span></a>
                     <a class="settings-install-download settings-install-download-secondary settings-windows-mobile-download"
                       id="windowsMobilePackageDownload" href="https://github.com/Master-Tea/CX-RAI/releases/latest" target="_blank"
                       rel="noopener noreferrer" data-i18n="settings-windows-mobile-package" hidden>Windows 10 Mobile（UWP）</a>
@@ -2013,49 +1989,22 @@
                   <img src="icons/settings/capabilities.svg" alt="">
                 </span>
                 <span class="settings-connect-summary-copy">
-                  <strong id="settingsRaiConnectInstallTitle" data-i18n="local-agent-install-title">RAI Connect 与本地 Agent</strong>
-                  <span data-i18n="local-agent-install-compact-desc">可选：连接浏览器与本地电脑能力</span>
+                  <strong id="settingsRaiConnectInstallTitle" data-i18n="cx-remote-install-title">手机 Web 连接 CX RAI</strong>
+                  <span data-i18n="cx-remote-install-desc">同账号在线电脑，本机授权可撤销</span>
                 </span>
                 <span class="settings-connect-summary-badge" data-i18n="local-agent-install-optional">进阶</span>
                 <span class="settings-connect-summary-chevron" aria-hidden="true"></span>
               </summary>
               <div class="settings-connect-install-body">
-                <div class="settings-connect-install-header">
-                  <div>
-                    <p data-i18n="local-agent-install-desc">让 RAI 在你确认后操作本机文件、终端和单独选择的浏览器标签页。</p>
-                  </div>
-                  <a href="https://github.com/Rick-953/RAI/releases/latest" target="_blank" rel="noopener noreferrer"
-                    data-i18n="local-agent-release-link">发布页</a>
-                </div>
-                <div class="settings-connect-command-list">
-                  <div class="settings-connect-command">
-                    <h5>macOS / Linux</h5>
-                    <div class="settings-connect-command-row">
-                      <code>curl --fail --location --proto '=https' --tlsv1.2 https://github.com/Rick-953/RAI/releases/latest/download/install.sh | sh</code>
-                      <button type="button" data-local-agent-copy="unix" data-i18n="local-agent-copy-command">复制命令</button>
-                    </div>
-                  </div>
-                  <div class="settings-connect-command">
-                    <h5>Windows PowerShell</h5>
-                    <div class="settings-connect-command-row">
-                      <code>irm https://github.com/Rick-953/RAI/releases/latest/download/install.ps1 | iex</code>
-                      <button type="button" data-local-agent-copy="windows" data-i18n="local-agent-copy-command">复制命令</button>
-                    </div>
-                  </div>
-                </div>
+                <p data-i18n="cx-guide-intro">手机或其他设备通过同账号 RAI Web 请求在线 CX RAI 操作 Windows 电脑；无需浏览器扩展。</p>
                 <ol class="settings-connect-steps">
-                  <li data-i18n="local-agent-install-step-command">在终端运行与你系统对应的命令；安装器会校验文件、安装本地 Agent，并打印扩展目录。</li>
-                  <li data-i18n="local-agent-install-step-browser">打开 chrome://extensions 或 edge://extensions，开启“开发者模式”，点击“加载已解压的扩展”。</li>
-                  <li data-i18n="local-agent-install-step-directory">选择安装器最后打印的 extension 目录。浏览器不允许安装器跳过这次人工确认。</li>
-                  <li data-i18n="local-agent-install-step-pair">返回 RAI 的“设置 > 能力 > RAI Local Agent”，点击“绑定此设备”。</li>
-                  <li data-i18n="local-agent-install-step-chat">打开已有对话，或在新对话发送第一条消息，然后点击“连接当前对话”。每个对话单独授权。</li>
-                  <li data-i18n="local-agent-install-step-use">向 RAI 描述要完成的本地任务；命令、高风险操作和提权会在 RAI Connect 侧边栏或系统窗口中等待你确认。</li>
+                  <li data-i18n="cx-guide-enable">电脑安装最新 CX RAI，登录同账号，在设置中明确开启 Web 连接并选择工作目录。默认关闭。</li>
+                  <li data-i18n="cx-guide-connect">Web 打开一个保存的对话，在 + 菜单选择「连接 CX RAI」，选择在线电脑并核对安全码。</li>
+                  <li data-i18n="cx-guide-approve">连接获准后，在 Web 查看完整操作参数，选择仅本次允许、持续授权或拒绝。旧版电脑可能仍需在本机确认。</li>
+                  <li data-i18n="cx-guide-scope">持续授权仅适用于当前网页登录、电脑、对话和原工作目录。可主动撤销；断开连接不等于撤销授权。</li>
+                  <li data-i18n="cx-guide-offline">电脑需要在线。关闭开关、注销、授权到期或撤销后不可继续执行；结果不明的任务不会自动重试。</li>
                 </ol>
-                <div class="settings-connect-install-links">
-                  <a href="https://github.com/Rick-953/RAI/releases/latest/download/rai-connect-extension.zip"
-                    target="_blank" rel="noopener noreferrer" data-i18n="local-agent-extension-download">单独下载扩展压缩包</a>
-                  <span data-i18n="local-agent-extension-store-note">当前为 GitHub 侧载版，尚未上架 Chrome 或 Edge 扩展商店。</span>
-                </div>
+                <p data-i18n="cx-guide-warning">全信任文件和 PowerShell 命令可影响整台电脑，并非工作目录沙箱。只批准理解且信任的操作；这不是实时远程桌面或屏幕镜像。</p>
               </div>
             </details>
           </section>
@@ -2074,11 +2023,10 @@
         <label data-i18n="selectModel">选择模型</label>
         <select id="regenerateModelSelect">
           <option value="auto" data-i18n="smartMode">最佳</option>
-          <option value="gpt-5.6-luna">GPT 5.6</option>
-          <option value="claude-sonnet-5">Claude Sonnet 5</option>
-          <option value="gemini-3.6-flash-low">Gemini 3.6</option>
-          <option value="deepseek-flash">DeepSeek v4</option>
-          <option value="nemotron-3-ultra">Nemotron 3 Ultra</option>
+          <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
+          <option value="gpt-6-luna">GPT 6 Luna</option>
+          <option value="gpt-6-astra">GPT 6 Astra</option>
+          <option value="deepseek-v4.1-flash">DeepSeek V4.1 Flash</option>
         </select>
       </div>
 
@@ -2105,7 +2053,7 @@
     </div>
   </div>
 
-  <input type="file" id="fileInput"
+  <input type="file" id="fileInput" multiple
     accept="image/*,video/*,audio/*,.txt,.md,.json,.xml,.csv,.log,.yaml,.yml,.ini,.conf,.js,.ts,.jsx,.tsx,.py,.java,.c,.cpp,.h,.hpp,.css,.scss,.less,.html,.vue,.svelte,.swift,.kt,.go,.rs,.rb,.php,.sh,.bash,.zsh,.sql"
     style="display: none;" data-rai-change="handleFileSelected(event)">
   <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="display: none;"
@@ -2272,16 +2220,20 @@
   </div>
 
   <!-- 外部脚本 -->
-  <script defer src="conversation-cache.js?v=20260929-pwa-r8"></script>
-  <script defer src="pet-quotes.js?v=20260929-pwa-r8"></script>
-  <script defer src="diagnostics.js?v=20260929-pwa-r8"></script>
-  <script defer src="app.js?v=20260929-pwa-r8"></script>
-  <script defer src="local-agent.js?v=20260929-pwa-r8"></script>
-  <script defer src="crf-ui.js?v=20260929-pwa-r8"></script>
-  <script defer src="selection-explainer.js?v=20260929-pwa-r8"></script>
-  <script defer src="lib/jsQR.js?v=20260929-pwa-r8"></script>
-  <script defer src="qr-scanner.js?v=20260929-pwa-r8"></script>
-  <script src="secure-sharing.js?v=20260929-pwa-r8" defer></script>
+  <script defer src="conversation-cache.js?v=20261107-stream-reasons"></script>
+  <script defer src="pet-quotes.js?v=20261107-stream-reasons"></script>
+  <script defer src="token-billing.js?v=20261107-stream-reasons"></script>
+  <script defer src="user-activity.js?v=20261107-stream-reasons"></script>
+  <script defer src="diagnostics.js?v=20261107-stream-reasons"></script>
+  <script defer src="markdown-tables.js?v=20261107-stream-reasons"></script>
+  <script defer src="app.js?v=20261107-stream-reasons"></script>
+  <script defer src="web-skills.js?v=20261107-stream-reasons"></script>
+  <script defer src="cx-remote.js?v=20261107-stream-reasons"></script>
+  <script defer src="crf-ui.js?v=20261107-stream-reasons"></script>
+  <script defer src="selection-explainer.js?v=20261107-stream-reasons"></script>
+  <script defer src="lib/jsQR.js?v=20261107-stream-reasons"></script>
+  <script defer src="qr-scanner.js?v=20261107-stream-reasons"></script>
+  <script src="secure-sharing.js?v=20261107-stream-reasons" defer></script>
 </body>
 
 </html>

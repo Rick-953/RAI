@@ -1,1 +1,8 @@
 skills/** text eol=lf
+skills/office-resources/*.zip -text
+
+# Vendored artifacts must remain byte-identical to authenticated upstream archives.
+public/lib/** -text
+
+# Preserve upstream license bytes and intentional whitespace used by notice hashes.
+public/licenses/texts/*.txt -text -whitespace

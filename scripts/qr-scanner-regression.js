@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const QRCode = require('qrcode');
 const jsQR = require('../public/lib/jsQR.js');
-const { parseLoginQr, CameraScanner } = require('../public/qr-scanner.js');
+const { parseLoginQr, CameraScanner, needsCameraGesture } = require('../public/qr-scanner.js');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const id = 'A'.repeat(43), token = 'B'.repeat(43);
 const payload = `https://rai.test/qr-login.html#${id}.${token}`;
@@ -51,13 +51,17 @@ function harness() {
   const requests = [], pending = [], dialogs = [], toasts = [], timers = new Set(), globalEvents = {}, docEvents = {};
   const appState = { token: 'account-one', authEpoch: 0 }; let persisted = appState.token;
   class Element {
-    constructor(tag) { this.tag = tag; this.children = []; this.handlers = {}; this.open = false; }
+    constructor(tag) { this.tag = tag; this.children = []; this.handlers = {}; this.open = false; this.dataset = {}; this.style = {}; this.isConnected = true; }
     setAttribute() {} append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+    removeEventListener(n, fn) { this.handlers[n] = (this.handlers[n] || []).filter(h => h !== fn); }
+    focus() {}
+    getBoundingClientRect() { return { height: 540 }; }
     addEventListener(n, fn) { (this.handlers[n] ||= []).push(fn); }
     fire(n) { for (const fn of this.handlers[n] || []) fn({ preventDefault() {} }); }
     showModal() { this.open = true; dialogs.push(this); }
     close() { if (!this.open) return; this.open = false; queueMicrotask(() => this.fire('close')); }
-    remove() {} querySelectorAll() { return this.children.filter(c => c.tag === 'button'); }
+    remove() { this.isConnected = false; } querySelectorAll() { return this.children.filter(c => c.tag === 'button'); }
   }
   const context = {
     window: {}, appState, API_BASE: '/api', URL, Image: class {},
@@ -104,7 +108,44 @@ async function approvalTests() {
   h = harness(); await h.scan(); await h.claim(); h.dialogs[0].fire('cancel'); await tick();
   assert.equal(JSON.parse(h.requests[1].body).approve, false, 'Escape explicitly rejects'); h.pending.shift()({ success: true }); await tick();
 }
+
+function gestureTests() {
+  const iphone = version => ({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS ' + version + '_0 like Mac OS X)', standalone: true });
+  assert.equal(needsCameraGesture(iphone(18)), true);
+  assert.equal(needsCameraGesture({ ...iphone(18), standalone: false }, () => ({ matches: false })), false);
+  assert.equal(needsCameraGesture(iphone(27)), false);
+  assert.equal(needsCameraGesture({ userAgent: 'Desktop Safari', platform: 'MacIntel', maxTouchPoints: 5 }, () => ({ matches: true })), true);
+  assert.equal(needsCameraGesture({ userAgent: 'Chrome', platform: 'Win32', standalone: true }), false);
+  console.log('QR gesture detection PASS: iOS 18 installed PWA vs Safari, iOS 27 and desktop-mode iPad');
+}
+async function timeoutTests() {
+  let resolveMedia, timeout, cleared = 0, stops = 0, error;
+  const video = { srcObject: null, pause() {}, play: async () => {}, readyState: 0 };
+  const camera = new CameraScanner({ video, canvas: {}, decode: jsQR, onResult: () => false,
+    getUserMedia: () => new Promise(resolve => { resolveMedia = resolve; }), onError: e => { error = e; },
+    armTimeout: fn => { timeout = fn; return fn; }, clearTimeoutHandle: () => { cleared++; } });
+  const pending = camera.start(); timeout();
+  assert.equal(error.name, 'TimeoutError');
+  resolveMedia({ getTracks: () => [{ stop: () => { stops++; } }] }); await pending;
+  assert.equal(stops, 1, 'permission granted after timeout is stopped without playing'); assert.equal(video.srcObject, null);
+  assert.ok(cleared > 0);
+  let active = true, played = 0;
+  camera.isActive = () => active;
+  video.play = async () => { played++; };
+  const closed = camera.start(); active = false;
+  resolveMedia({ getTracks: () => [{ stop: () => { stops++; } }] }); await closed;
+  assert.equal(played, 0, 'native close/unmount guard runs before stream adoption even before close event');
+  assert.equal(stops, 2); assert.equal(video.srcObject, null); active = true;
+  let rejectPlay;
+  video.play = () => new Promise((_, reject) => { rejectPlay = reject; });
+  camera.getUserMedia = async () => ({ getTracks: () => [{ stop() { throw new Error('broken track'); } }, { stop: () => { stops++; } }] });
+  const playing = camera.start(); await tick(); timeout();
+  assert.equal(stops, 3, 'playback timeout tears down every track even if one stop throws');
+  assert.equal(video.srcObject, null); rejectPlay(new Error('detached')); await playing;
+  console.log('QR camera timeout PASS: hung permissions/playback, late streams and robust all-track cleanup');
+}
+
 (async () => {
-  parserTests(); decodingTests(); await cameraTests(); await approvalTests();
+  gestureTests(); await timeoutTests(); parserTests(); decodingTests(); await cameraTests(); await approvalTests();
   console.log('QR scanner PASS: exact trusted origin/path/shape, actual jsQR image decoding, denied/late/superseded camera, mandatory single confirmation, account/visibility fences and explicit rejection');
 })().catch(error => { console.error(error); process.exitCode = 1; });

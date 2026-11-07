@@ -36,10 +36,14 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), path=require(
   });
   await p.goto(base);await p.locator('#authFooter').waitFor({state:'visible'});
   const geometry=[];
-  for(const width of [1280,390,320]) for(const lang of ['zh-CN','zh-TW','en']) {
-   await p.setViewportSize({width,height:800});await p.evaluate(l=>setLanguage(l),lang);
-   const measured=await p.evaluate(()=>{const a=document.querySelector('#authSwitch').getBoundingClientRect(),b=document.querySelector('#authLangRow').getBoundingClientRect();return {width:innerWidth,lang:appState.language,height:a.height,gap:b.x-a.right,dy:Math.abs(a.y+a.height/2-b.y-b.height/2),overflow:document.documentElement.scrollWidth>innerWidth};});
-   assert.equal(measured.overflow,false);assert.equal(measured.height,18);assert.equal(measured.dy,0);assert.ok(measured.gap>=8);geometry.push(measured);
+  for(const mode of ['login','register']) for(const width of [1280,390,320]) for(const lang of ['zh-CN','zh-TW','en']) {
+   await p.setViewportSize({width,height:800});await p.evaluate(({lang,mode})=>{if(appState.authMode!==mode)switchAuthMode();setLanguage(lang);},{lang,mode});
+   const measured=await p.evaluate(()=>{const a=document.querySelector('#authSwitch').getBoundingClientRect(),b=document.querySelector('#authLangRow').getBoundingClientRect(),f=document.querySelector('#authFooter').getBoundingClientRect();return {width:innerWidth,lang:appState.language,mode:appState.authMode,height:a.height,gap:b.x-a.right,dy:Math.abs(a.y+a.height/2-b.y-b.height/2),rowGap:b.top-a.bottom,inside:a.left>=f.left&&a.right<=f.right+1&&b.left>=f.left&&b.right<=f.right+1,overflow:document.documentElement.scrollWidth>innerWidth};});
+   assert.equal(measured.overflow,false);assert.equal(measured.height,18);assert.equal(measured.inside,true);
+   if(measured.rowGap>=0) assert.ok(measured.rowGap>=8,'wrapped locale group keeps a clear gap below the unsplit sign-up prompt');
+   else {assert.equal(measured.dy,0);assert.ok(measured.gap>=8);}
+   assert.equal(await p.locator('#authLangRow button').count(),4,'Auto and every explicit language remain reachable');geometry.push(measured);
+   if(width===320) await snapshot(p,`footer-${mode}-${lang}-320`);
   }
   await snapshot(p,'footer-320');
   auth=true; await p.addInitScript(()=>{Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{throw new Error('NotAllowedError');}}});});
@@ -75,17 +79,20 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), path=require(
   await p.evaluate(async()=>{
     const r=await fetch(API_BASE+'/chat/stream',{method:'POST',body:'PRIVATE-REQUEST-CANARY',headers:{Authorization:'Bearer PRIVATE-TOKEN-CANARY'}});
     const reader=RaiDiagnostics.reader(r);while(!(await reader.read()).done) { /* local fixture bytes only */ }
-    openSettings();switchSettingsSection('about');
+    openSettings();switchSettingsSection('advanced');
   });
-  const downloadReady=p.waitForEvent('download');
-  await p.locator('#exportDiagnosticsButton').click();const download=await downloadReady;
+  assert.equal(await p.locator('#settingsPanel-about #exportDiagnosticsButton').count(),0);
+  const [download]=await Promise.all([
+    p.waitForEvent('download'),
+    p.locator('#settingsPanel-advanced #exportDiagnosticsButton').click()
+  ]);
   const exported=fs.readFileSync(await download.path(),'utf8'),report=JSON.parse(exported);
   assert.equal(report.schema,'rai.diagnostics.v1');assert.ok(report.events.length>0);
   for(const canary of ['PRIVATE-REASONING-CANARY','PRIVATE-CONTENT-CANARY','PRIVATE-REQUEST-CANARY','PRIVATE-TOKEN-CANARY','test@example.invalid']) assert.ok(!exported.includes(canary));
   const summary=report.events.find(e=>e.category==='stream'&&e.chatRequestId==='req_1790650000000_0123456789abcdef');
   assert.ok(summary);assert.equal(summary.action,'completed');assert.equal(summary.model,'deepseek-flash');
   assert.equal(summary.serverRequestId,'01234567-89ab-4def-8123-456789abcdef');
-  assert.deepEqual(errors,[]);console.log('Diagnostics browser export PASS: real About button downloads valid local-only JSON, safe HTTP/SSE correlation, no request/response/token canaries');
+  assert.deepEqual(errors,[]);console.log('Diagnostics browser export PASS: real Advanced button downloads valid local-only JSON, safe HTTP/SSE correlation, no request/response/token canaries');
   console.log(JSON.stringify({geometry,scanner:'permission denial, real image decode, device/ip/location, single confirm, desktop/mobile overflow PASS',errors},null,2));
  } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

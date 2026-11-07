@@ -124,8 +124,11 @@ function verifyDeclarativeBindings(relativePath, source, minimumExpected) {
 
 // ChatFlow now reuses the normal conversation composer, removing its duplicated
 // declarative controls while keeping the unified canvas actions in the shared UI.
-const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 183);
-check(staticIndexBindingCount === 183, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 183)`);
+// Two Auto-language controls replace the removed custom-key entry (+1 total).
+// Remove the Fast/Thinking shortcut rows and compact the reasoning header;
+// Luna plus the hidden developer nav, version trigger and admin entry use 186 bindings after moving custom API management into Settings.
+const staticIndexBindingCount = verifyDeclarativeBindings('public/index.html', indexHtml, 186);
+check(staticIndexBindingCount === 186, `public/index.html binding baseline changed unexpectedly (${staticIndexBindingCount} != 186)`);
 verifyDeclarativeBindings('public/app.js', appJs, 70);
 
 // Exercise the production parser itself in a DOM-free VM. App template expressions are
@@ -205,3 +208,4 @@ if (failures.length > 0) {
 
 console.log(`csp-static-regression ok (scripts=${localScriptSources.length}, static-bindings=${countMatches(indexHtml, /data-rai-(?:click|input|change|keydown|keyup|submit|compositionstart|compositionend|mouseenter|mouseleave)=/g)})`);
 console.log("csp-style-note: style-src retains unsafe-inline temporarily for legacy CSSOM/SVG compatibility; script-src is strict");
+

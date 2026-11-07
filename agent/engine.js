@@ -11,17 +11,15 @@ function nowMs() {
 }
 
 function normalizeUsage(usage) {
-  if (!usage || typeof usage !== 'object') {
-    return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  }
-  return {
-    prompt_tokens: Number(usage.prompt_tokens || 0),
-    completion_tokens: Number(usage.completion_tokens || 0),
-    total_tokens: Number(
-      usage.total_tokens ||
-      (Number(usage.prompt_tokens || 0) + Number(usage.completion_tokens || 0))
-    )
-  };
+  const safe = value => Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0;
+  if (!usage || typeof usage !== 'object') return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  const prompt = safe(usage.prompt_tokens ?? usage.input_tokens);
+  const completion = safe(usage.completion_tokens ?? usage.output_tokens);
+  const normalized = { prompt_tokens: prompt, completion_tokens: completion, total_tokens: safe(usage.total_tokens ?? (prompt + completion)) };
+  const cached = usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens;
+  if (cached != null && Number.isFinite(Number(cached)) && Number(cached) >= 0 && Number(cached) <= prompt)
+    normalized.prompt_cache_hit_tokens = Number(cached);
+  return normalized;
 }
 
 function mergeUsage(total, current) {
@@ -29,6 +27,10 @@ function mergeUsage(total, current) {
   total.prompt_tokens += normalized.prompt_tokens;
   total.completion_tokens += normalized.completion_tokens;
   total.total_tokens += normalized.total_tokens;
+  if (normalized.prompt_cache_hit_tokens != null) {
+    total.prompt_cache_hit_tokens = (total.prompt_cache_hit_tokens || 0) + normalized.prompt_cache_hit_tokens;
+    total.cache_measured_prompt_tokens = (total.cache_measured_prompt_tokens || 0) + normalized.prompt_tokens;
+  }
 }
 
 function normalizeHistory(messages = [], max = 6) {

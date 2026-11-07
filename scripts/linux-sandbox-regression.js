@@ -49,7 +49,7 @@ assert.match(source, /'--cpu=15'/);
 assert.match(source, /'--nproc=96'/);
 assert.match(source, /'--nofile=64'/);
 assert.match(source, /'--fsize=16777216'/);
-assert.match(source, /'--data=268435456'/);
+assert.match(source, /'--data=1073741824'/);
 assert.match(source, /'--stack=8388608'/);
 assert.match(source, /auditSandboxScript/);
 assert.match(source, /sandbox_command_blocked/);

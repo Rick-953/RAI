@@ -1,0 +1,280 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const sqlite3 = require('sqlite3');
+const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, createChatModelQuotaService } = require('../lib/chat-model-policy');
+const { estimateContextTokens, enforceContextWindow, toolResultForContext, truncateToolResult, CONTEXT_POLICIES, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
+const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
+const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
+const { toResponsesBody } = require('../lib/luna-official-provider');
+async function main() {
+    assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
+    assert.deepEqual(require('../lib/chat-model-policy').CHAT_MODEL_CATALOG.map(x => x.thinkingProfiles), [['auto','high','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max']]);
+    assert.deepEqual(Object.values(CHAT_MODEL_LIMITS).map(x => [x['gpt-6-astra'],x['gpt-6.1-sol'],x['gpt-6-luna']]), [[3,50,100],[50,100,200],[80,200,500]]);
+    const db = await new Promise((resolve,reject) => { const connection = new sqlite3.Database(':memory:', e => e ? reject(e) : resolve(connection)); });
+    const run = (sql, params=[]) => new Promise((resolve,reject) => db.run(sql, params, function(e){e?reject(e):resolve({changes:this.changes})}));
+    const get = (sql, params=[]) => new Promise((resolve,reject) => db.get(sql, params, (e,row)=>e?reject(e):resolve(row)));
+    const all = (sql, params=[]) => new Promise((resolve,reject) => db.all(sql, params, (e,rows)=>e?reject(e):resolve(rows)));
+    let tail = Promise.resolve(), clock = Date.UTC(2026,9,8);
+    const withTransaction = operation => { const current=tail.then(async()=>{await run('BEGIN IMMEDIATE');try{const result=await operation({run,get,all});await run('COMMIT');return result;}catch(e){await run('ROLLBACK');throw e;}});tail=current.catch(()=>{});return current; };
+    const quota = createChatModelQuotaService({withTransaction,now:()=>clock});
+    await run('CREATE TABLE users(id INTEGER PRIMARY KEY, membership TEXT, membership_end TEXT)');
+    await run("INSERT INTO users VALUES (1,'free',NULL),(2,'pro',?),(3,'max',?),(4,'max',?)", [new Date(clock+1e9).toISOString(),new Date(clock+1e9).toISOString(),new Date(clock-1).toISOString()]);
+    assert.equal(activeTier({membership:'max',membership_end:new Date(clock-1).toISOString()},clock),'free');
+    assert.equal(await quota.reserve(1,'ds','deepseek-v4.1-flash'), null);
+    let reservation = await quota.reserve(1,'cancel','gpt-6-astra');assert.equal(reservation.remaining,2);
+    await quota.settle(1,'cancel',[]);assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE status='completed'")).n,0);
+    const concurrent = await Promise.allSettled(Array.from({length:6},(_,i)=>quota.reserve(1,'parallel-'+i,'gpt-6-astra')));
+    assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,3,'concurrent reservations cannot overrun cap');
+    assert.equal(concurrent.filter(r=>r.status==='rejected' && r.reason.code==='model_chat_quota_exceeded').length,3);
+    await quota.settle(1,'parallel-0',['gpt-6-astra']);await quota.settle(1,'parallel-0',['gpt-6-astra']);
+    assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE status='completed'")).n,1,'completion idempotency');
+    clock+=16*60*1000;await quota.reserve(1,'after-crash','gpt-6-astra');await quota.settle(1,'after-crash',[]);
+    clock+=CHAT_MODEL_WINDOW_MS;const reset=await quota.reserve(1,'after-window','gpt-6-astra');assert.equal(reset.remaining,2,'exact rolling boundary releases completed turn');await quota.settle(1,'after-window',[]);
+    for(const [user,tier] of [[2,'pro'],[3,'max'],[4,'free']]){
+        const row=await quota.reserve(user,'membership','gpt-6.1-sol');assert.equal(row.limit,CHAT_MODEL_LIMITS[tier]['gpt-6.1-sol']);await quota.settle(user,'membership',[]);
+    }
+    // At most one count per GPT used in a successful research turn, regardless of tool loops.
+    for(const id of ['gpt-6.1-sol','gpt-6-astra']){await quota.reserve(2,'research',id);await quota.reserve(2,'research',id);}
+    await quota.settle(2,'research',['gpt-6.1-sol','gpt-6-astra','gpt-6-astra']);
+    assert.equal((await get("SELECT count(*) AS n FROM chat_model_turns WHERE request_id='research' AND status='completed'")).n,2);
+    await new Promise((resolve,reject)=>db.close(e=>e?reject(e):resolve()));
+    for(const id of CHAT_MODEL_IDS){
+        for(const profile of ['low','medium','high','max']){
+            const body=applyChatReasoningPolicy({model:id},{thinkingMode:true,profile});
+            assert.equal(body.reasoning_effort,profile);
+        }
+        const adaptive=applyChatReasoningPolicy({model:id,reasoning_effort:'high'},{thinkingMode:true,profile:'auto'});
+        assert.equal(Object.hasOwn(adaptive,'reasoning_effort'),false,'Adaptive delegates effort to provider/model');
+        if(id.startsWith('deepseek'))assert.equal(adaptive.thinking.type,'enabled');
+        const defaultThinking=applyChatReasoningPolicy({model:id},{thinkingMode:true});
+        assert.equal(Object.hasOwn(defaultThinking,'reasoning_effort'),false,'Thinking defaults to Adaptive');
+        const off=applyChatReasoningPolicy({model:id},{thinkingMode:false,profile:'high'});
+        assert.equal(off.reasoning_effort,id.startsWith('gpt')?'low':undefined);
+        if(id.startsWith('deepseek'))assert.equal(off.thinking.type,'disabled');
+    }
+    let softSkipped=0; const softBody={model:'gpt-6.1-sol',max_tokens:2000,messages:[{role:'user',content:'x'.repeat(258000)}]};
+    const softResult=await enforceContextWindow(softBody,{summarize:async()=>{throw Object.assign(new Error('test'),{code:'context_compression_failed'});},onDiagnostic:event=>{assert.equal(event.estimated,true);softSkipped++;}});
+    assert.equal(softResult,softBody,'compression threshold is soft while hard output/context reserve remains available');assert.equal(softSkipped,1);
+    let counts = 0;
+    const smallBody = {messages:[{role:'user',content:'small prompt'}]};
+    assert.equal(await enforceContextWindow(smallBody,{countTokens:async()=>{counts++;return 10;}}),smallBody);
+    assert.equal(counts,0,'ordinary requests do not need a provider counting round trip');
+    const byteHeavyBody = {model:'gpt-6-luna',messages:[{role:'user',content:'中'.repeat(180000)}]};
+    assert.equal(await enforceContextWindow(byteHeavyBody,{countTokens:async()=>{counts++;return 40745;}}),byteHeavyBody,
+        'a conservative byte upper bound must not trigger early compression when provider tokens fit');
+    assert.equal(counts,1);
+    let unavailableCounts = 0;
+    await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>{unavailableCounts++;return null;},summarize:async()=>''}),e=>e.code==='current_turn_context_too_large',
+        'unavailable token counting preserves the existing conservative boundary');
+    assert.equal(unavailableCounts,1,'a failed count is not retried for later candidates in the same compression');
+    const original = { model:'gpt-6-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
+    for (const policy of Object.values(CONTEXT_POLICIES)) {
+        const thresholdBody = {...original,max_tokens:2000};
+        const thresholdInput = policy.compressionThreshold;
+        assert.equal(await enforceContextWindow(thresholdBody,{policy,countTokens:async()=>thresholdInput - 1}),thresholdBody,
+            'provider-counted input below the configured threshold leaves the prefix intact');
+        let triggered = 0;
+        await enforceContextWindow(thresholdBody,{policy,countTokens:async candidate=>candidate===thresholdBody?thresholdInput:Math.ceil(estimateContextTokens(candidate)/3),summarize:async()=> 'Previous goals and completed work.',onCompressed:event=>{
+            triggered++; assert.equal(event.beforeTokens,thresholdInput); assert.equal(event.tokenMeasurement,'provider_count');
+            assert.equal(event.beforeTotalEstimatedTokens,thresholdInput+2000+CONTEXT_SAFETY_TOKENS);
+        }});
+        assert.equal(triggered,1,'the configured GPT/DeepSeek threshold still triggers compression');
+    }
+    const maximumInput = CONTEXT_WINDOW_TOKENS - 8000 - CONTEXT_SAFETY_TOKENS;
+    assert.equal(await enforceContextWindow(byteHeavyBody,{countTokens:async()=>maximumInput}),byteHeavyBody,
+        'the maximum includes the explicit output and safety reserves');
+    let reserveTriggered = 0;
+    await enforceContextWindow(original,{countTokens:async candidate=>candidate===original?maximumInput+1:Math.ceil(estimateContextTokens(candidate)/3),summarize:async()=> 'Previous goals and completed work.',onCompressed:()=>reserveTriggered++});
+    assert.equal(reserveTriggered,1,'a large requested output triggers compression before the soft input threshold if required by the hard limit');
+    await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>maximumInput + 1}),e=>e.code==='current_turn_context_too_large');
+    const countChinese = candidate => candidate.messages.reduce((sum,message)=>sum+String(message.content||'').length,0)+100;
+    const chineseBody = latest => ({model:'gpt-6-luna',max_tokens:8000,messages:[
+        {role:'user',content:'中'.repeat(110000)},{role:'assistant',content:'ok'},...latest]});
+    const latestChineseUser = {role:'user',content:'中'.repeat(150000)};
+    const latestChineseTool = {role:'tool',tool_call_id:'chinese_tool',content:JSON.stringify({success:true,executed:true,exit_code:0,content:'中'.repeat(150000)})};
+    for (const latest of [[latestChineseUser],[{role:'user',content:'Finish the successful operation.'},
+        {role:'assistant',content:null,tool_calls:[{id:'chinese_tool',type:'function',function:{name:'read_file',arguments:'{}'}}]},latestChineseTool]]) {
+        const candidate = chineseBody(latest), before = JSON.stringify(candidate), events = [];
+        let summaries = 0;
+        const result = await enforceContextWindow(candidate,{countTokens:async value=>countChinese(value),summarize:async()=>{summaries++;return 'Old facts.';},onCompressed:event=>events.push(event)});
+        assert.ok(summaries>0,'byte-heavy old Chinese text is summarized while the current text fits its token budget');
+        assert.deepEqual(result.messages.at(-1),latest.at(-1),'current Chinese user/tool text remains byte-identical');
+        assert.equal(JSON.stringify(candidate),before,'candidate counting never mutates original history');
+        assert.equal(events.length,1);assert.equal(events[0].truncatedToolResults,undefined,'a fitting tool result is not truncated because of its UTF-8 size');
+        assert.equal(events[0].afterTokens,countChinese(result));assert.equal(events[0].afterTokenMeasurement,'provider_count');
+        assert.ok(events[0].afterUtf8UpperBound>maximumInput,'after diagnostics distinguish a measured token count from the byte upper bound');
+        assert.ok(countChinese(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    }
+    const chineseCurrent = chineseBody([latestChineseUser]);
+    await assert.rejects(enforceContextWindow(chineseCurrent,{countTokens:async candidate=>candidate.messages.some(message=>String(message.content).startsWith('[Earlier conversation summary'))?maximumInput+1:countChinese(candidate),summarize:async()=> 'Old facts.'}),
+        error=>error.code==='context_compression_insufficient','the final measured context still obeys the hard input/output reserve');
+    const aborted = Object.assign(new Error('fixture cancellation'),{name:'AbortError'});
+    for (const phase of ['initial','candidate','final']) {
+        await assert.rejects(enforceContextWindow(chineseCurrent,{countTokens:async candidate=>{
+            const isFinal = candidate.messages.some(message=>String(message.content).startsWith('[Earlier conversation summary'));
+            if (phase==='initial'&&candidate===chineseCurrent || phase==='candidate'&&candidate!==chineseCurrent&&!isFinal || phase==='final'&&isFinal) throw aborted;
+            return countChinese(candidate);
+        },summarize:async()=> 'Old facts.'}),error=>error===aborted,'count cancellation propagates during '+phase+' measurement');
+    }
+    const retainedItems = new Map(), retainedBody = {model:'gpt-6-luna',max_tokens:8000,messages:[{role:'user',content:'Finish the report.'}]};
+    for (let index=0;index<100;index++) {
+        const call_id='retained_'+index;
+        retainedBody.messages.push({role:'assistant',content:null,tool_calls:[{id:call_id,type:'function',function:{name:'read_file',arguments:'{}'}}]},
+            {role:'tool',tool_call_id:call_id,content:'ok'});
+        retainedItems.set(call_id,[{type:'message',role:'assistant',content:[{type:'output_text',text:'\u200b'.repeat(3000)}]},
+            {type:'function_call',call_id,name:'read_file',arguments:'{}'}]);
+    }
+    const responsesEstimate = candidate => {const payload=toResponsesBody(candidate,retainedItems);return estimateContextTokens({messages:payload.input,tools:payload.tools});};
+    const responsesCount = candidate => JSON.stringify(toResponsesBody(candidate,retainedItems).input).length;
+    assert.ok(estimateContextTokens(retainedBody)<258000,'plain Chat messages alone hide the retained Responses payload');
+    let retainedCounts=0, retainedSummaries=0;
+    const retainedSnapshot=JSON.stringify(retainedBody);
+    const boundedRetained = await enforceContextWindow(retainedBody,{estimateInputTokens:responsesEstimate,countTokens:async candidate=>{retainedCounts++;return responsesCount(candidate);},
+        summarize:async()=>{retainedSummaries++;return 'Earlier file operations completed; do not replay them.';}});
+    assert.ok(retainedCounts>0&&retainedSummaries>0,'the actual Responses input triggers bounded compaction');
+    assert.equal(JSON.stringify(retainedBody),retainedSnapshot);
+    assert.deepEqual(boundedRetained.messages.at(-1),retainedBody.messages.at(-1));
+    assert.ok(responsesCount(boundedRetained)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS,'hidden retained output obeys the total model budget');
+    const snapshot=JSON.stringify(original);let notices=0, chunks=0;
+    const compressed=await enforceContextWindow(original,{summarize:async text=>{chunks++;assert.ok(text.length<=24000);return 'Facts and pending task summary.';},onCompressed:()=>notices++});
+    assert.equal(JSON.stringify(original),snapshot,'must not mutate persisted history');assert.equal(notices,1);assert.ok(chunks>1);
+    assert.equal(compressed.messages[0].content,'SYSTEM_INTACT');assert.ok(compressed.messages.some(m=>m.content==='LATEST_QUESTION'));assert.ok(compressed.messages.some(m=>m.tool_call_id==='tool_1'));
+    assert.ok(estimateContextTokens(compressed)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    // A few large file/command results can fill the budget before six exchanges exist.
+    for (const [count, resultSize] of [[2,150000],[5,65000],[7,70000]]) {
+        const messages = [{role:'system',content:'STABLE_POLICY'}, {role:'user',content:'Finish report.pptx; keep the original image.'}, {role:'user',content:'[Enabled client skill directory] documents, presentations'}];
+        for (let step=1; step<=count; step++) messages.push(
+            {role:'assistant',content:null,tool_calls:[{id:`large_${step}`,type:'function',function:{name:'read_code',arguments:JSON.stringify({path:'report.pptx',offset:step})}}]},
+            {role:'tool',tool_call_id:`large_${step}`,content:`CHECKPOINT=${step}\n`+'x'.repeat(resultSize)});
+        const body = {model:'gpt-6-luna',max_tokens:8000,messages};
+        const source = JSON.stringify(body); let compressedEvents=0, summarized='';
+        const result = await enforceContextWindow(body, {summarize:async text=>{summarized+=text; return 'Completed older report.pptx steps. Continue from the latest checkpoint; do not replay writes.';},onCompressed:()=>compressedEvents++});
+        assert.equal(JSON.stringify(body),source,'large-turn compaction never edits the original transcript');
+        assert.equal(compressedEvents,1);
+        assert.deepEqual(result.messages.at(-1),messages.at(-1),'the latest complete tool result remains intact');
+        assert.ok(result.messages.some(message=>message.content===messages[1].content),'retain the original task');
+        assert.ok(result.messages.some(message=>message.content===messages[2].content),'consecutive skill metadata belongs to the same current task');
+        assert.ok(summarized.includes('CHECKPOINT=1'),'older results enter the summary rather than disappearing');
+        const ids = new Set(result.messages.flatMap(message=>(message.tool_calls||[]).map(call=>call.id)));
+        for (const message of result.messages.filter(message=>message.role==='tool')) assert.ok(ids.has(message.tool_call_id),'large-turn compaction never orphans a tool result');
+        assert.ok(estimateContextTokens(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    }
+    const fileOutput = {success:true,path:'workflow.md',content:'complete workflow',output:'complete workflow'};
+    assert.deepEqual(toolResultForContext(fileOutput),{success:true,path:'workflow.md',content:'complete workflow'});
+    assert.equal(fileOutput.output,'complete workflow','model-only deduplication leaves the original result intact');
+    const commandOutput = {success:true,exit_code:0,stdout:'workflow\n',stderr:'warning\n',output:'workflow\n\n[stderr]\nwarning'};
+    assert.deepEqual(toolResultForContext(commandOutput),{success:true,exit_code:0,stdout:'workflow\n',stderr:'warning\n'});
+    const distinctOutput = {...commandOutput,output:'additional details'};
+    assert.equal(toolResultForContext(distinctOutput),distinctOutput,'distinct output is not removed');
+    const oversized = {model:'gpt-6-luna',max_tokens:8000,messages:[
+        {role:'user',content:'Complete the task without repeating the command.'},
+        {role:'assistant',content:null,tool_calls:[{id:'large_current',type:'function',function:{name:'sandbox_exec',arguments:'{}'}}]},
+        {role:'tool',tool_call_id:'large_current',content:JSON.stringify({content:'START\n'+'中😀'.repeat(160000)+'\nEND',success:true,executed:true,exit_code:0,path:'report.docx',revision:'original-revision'})}
+    ]};
+    const beforeOversized = JSON.stringify(oversized); const truncationEvents = [];
+    const clipped = await enforceContextWindow(oversized,{onCompressed:event=>truncationEvents.push(event)});
+    assert.equal(JSON.stringify(oversized),beforeOversized,'truncation only changes the model request');
+    assert.equal(clipped.messages.at(-1).tool_call_id,'large_current');
+    const clippedResult = JSON.parse(clipped.messages.at(-1).content);
+    assert.equal(clippedResult.success,true);assert.equal(clippedResult.executed,true);assert.equal(clippedResult.exit_code,0);
+    assert.equal(clippedResult.path,'report.docx');assert.equal(clippedResult.revision,'original-revision');
+    assert.equal(clippedResult.context_truncated,true);assert.match(clippedResult.context_truncation_notice,/do not repeat/i);
+    assert.match(clippedResult.content,/^START/);assert.match(clippedResult.content,/END$/);assert.match(clippedResult.content,/output omitted/);
+    assert.doesNotMatch(clippedResult.content,/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    assert.equal(truncationEvents.length,1);assert.equal(truncationEvents[0].truncatedToolResults,1);assert.match(truncationEvents[0].message,/截取/);
+    assert.ok(estimateContextTokens(clipped)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    const parallel = {model:'gpt-6-luna',messages:[{role:'user',content:'Run both commands.'},
+        {role:'assistant',content:null,tool_calls:['first','second'].map(id=>({id,type:'function',function:{name:'sandbox_exec',arguments:'{}'}}))},
+        ...['first','second'].map(id=>({role:'tool',tool_call_id:id,content:JSON.stringify({success:true,executed:true,output:id+'x'.repeat(500000)})}))]};
+    const parallelEvents = [];
+    const clippedParallel = await enforceContextWindow(parallel,{onCompressed:event=>parallelEvents.push(event)});
+    assert.deepEqual(clippedParallel.messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),['first','second']);
+    assert.equal(parallelEvents[0].truncatedToolResults,2);
+    for (const message of clippedParallel.messages.filter(m=>m.role==='tool')) assert.equal(JSON.parse(message.content).executed,true);
+    const status = {success:false,executed:false,retryable:false,exit_code:1,error:'PERMISSION_DENIED: '+'e'.repeat(480),permission_decision:'denied',
+        message:'m'.repeat(450),output:'o'.repeat(450),stdout:'s'.repeat(450),stderr:'t'.repeat(450),text:'q'.repeat(450),content:'c'.repeat(450)};
+    const statusResult = JSON.parse(truncateToolResult(JSON.stringify(status),2048));
+    for (const key of ['success','executed','retryable','exit_code','error','permission_decision']) assert.equal(statusResult[key],status[key],`${key} survives truncation`);
+    const structured = {success:true,results:Array.from({length:1000},(_,line)=>({line,content:'x'.repeat(100)}))};
+    const structuredResult = JSON.parse(truncateToolResult(JSON.stringify(structured),2048));
+    assert.ok(Array.isArray(structuredResult.results));assert.ok(structuredResult.results.length>0 && structuredResult.results.length<structured.results.length);
+    assert.equal(structuredResult.results[0].line,0);assert.equal(structuredResult.results.at(-1).line,999);assert.equal(structuredResult.context_truncated,true);
+    const nested = {success:false,result:{success:false,error:'access_denied',permission_decision:'denied',executed:false,output:'x'.repeat(10000)}};
+    const nestedResult = JSON.parse(truncateToolResult(JSON.stringify(nested),2048));
+    assert.equal(typeof nestedResult.result,'object');assert.equal(nestedResult.result.error,'access_denied');
+    assert.equal(nestedResult.result.permission_decision,'denied');assert.equal(nestedResult.result.executed,false);
+    const competing = {success:true,result:{success:false,error:'ACCESS_DENIED',permission_decision:'denied',executed:false,output:'x'.repeat(3000)},stdout:'y'.repeat(3000)};
+    const competingResult = JSON.parse(truncateToolResult(JSON.stringify(competing),2048));
+    assert.equal(competingResult.result.success,false);assert.equal(competingResult.result.error,'ACCESS_DENIED');
+    assert.equal(competingResult.result.permission_decision,'denied');assert.equal(competingResult.result.executed,false);
+    const normalizerSource = fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
+    const normalizerStart = normalizerSource.indexOf('const CLIENT_TOOL_RESULT_ALLOWED_KEYS =');
+    const normalizerEnd = normalizerSource.indexOf('\nfunction hasToolDefinition(',normalizerStart);
+    assert.ok(normalizerStart>=0 && normalizerEnd>normalizerStart);
+    const normalizeClientToolResult = vm.runInNewContext(`${normalizerSource.slice(normalizerStart,normalizerEnd)}\nnormalizeClientToolResult`,{truncateToolResult});
+    const statusOnly = normalizeClientToolResult({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',path:'x'.repeat(5000)},2048);
+    for (const [key,expected] of Object.entries({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',context_truncated:true})) assert.equal(statusOnly[key],expected);
+    await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
+    await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
+    const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);
+    const officialVisionEstimate=estimateContextTokens({messages:[{role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,'+'x'.repeat(100000)}]}]});
+    assert.ok(officialVisionEstimate>=16384&&officialVisionEstimate<20000,'Responses images keep the media reserve without counting Base64 as prose');
+    let calls=[];
+    const provider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',fetchImpl:async(url,options)=>{calls.push({url,options});return calls.length===1?new Response('down',{status:503}):new Response('{}',{status:200});}});
+    const response=await provider('https://fast.test/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer private-test'},body:JSON.stringify({model:'deepseek-v4.1-flash',thinking:{type:'enabled'},reasoning_effort:'low'})});
+    assert.equal(response.status,200);assert.equal(calls.length,2);assert.equal(calls[1].url,'https://official.test/v1/chat/completions');assert.equal(new Headers(calls[1].options.headers).get('Authorization'),'Bearer official-test');assert.equal(JSON.parse(calls[1].options.body).model,'deepseek-flash');assert.equal(JSON.parse(calls[1].options.body).reasoning_effort,'high');
+    calls=[];const cancel=new AbortController();cancel.abort();await assert.rejects(provider('https://fast.test/v1/chat/completions',{signal:cancel.signal,body:JSON.stringify({model:'deepseek-v4.1-flash'})}));assert.equal(calls.length,0);
+    // HTTP headers / keepalive are not a model response. Sol timeout goes DIRECTLY official.
+    let timeoutCalls=[];
+    const timeoutProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'sol-test',primaryModels:['gpt-6.1-sol'],officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async(url,options)=>{
+        timeoutCalls.push({url,options});
+        return url.includes('fast.test') ? new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode(': keepalive\n\n'));}}),{headers:{'Content-Type':'text/event-stream'}}) : new Response('data: {"choices":[{"delta":{"content":"official answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    }});
+    const timeoutResponse=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:false,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,reasoning_effort:'low',messages:[{role:'user',content:'tiny prompt'}]})});
+    assert.equal(timeoutCalls.length,2);assert.equal(timeoutResponse.raiOfficialFallback,true);assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'disabled');assert.match(await timeoutResponse.text(),/official answer/);
+    timeoutCalls=[];
+    const adaptiveFallback=await timeoutProvider('https://fast.test/v1/chat/completions',{raiThinkingMode:true,body:JSON.stringify({model:'gpt-6.1-sol',stream:true,messages:[{role:'user',content:'tiny adaptive prompt'}]})});
+    assert.equal(adaptiveFallback.raiOfficialFallback,true);
+    assert.equal(JSON.parse(timeoutCalls[1].options.body).thinking.type,'enabled');
+    assert.equal(Object.hasOwn(JSON.parse(timeoutCalls[1].options.body),'reasoning_effort'),false,'Adaptive fallback remains model-managed');
+    let deliveredCalls=0;
+    const deliveredProvider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',primaryTimeoutMs:25,fetchImpl:async()=>{deliveredCalls++;return new Response('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\ndata: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');}});
+    const delivered=await deliveredProvider('https://fast.test/v1/chat/completions',{body:JSON.stringify({model:'deepseek-v4.1-flash',stream:true})});
+    assert.match(await delivered.text(),/thinking/);assert.equal(deliveredCalls,1,'effective reasoning delta must prevent fallback/replay');
+    const server=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
+    for(const id of CHAT_MODEL_IDS){assert.ok(html.includes('data-model="'+id+'"'));assert.ok(app.includes("'"+id+"': {"));}
+    for(const id of ['claude-sonnet-5','gemini-3.6-flash-low','nemotron-3-ultra','gpt-image-2','kolors-free'])assert.ok(!html.includes('data-model="'+id+'"'));
+    assert.match(server,/await settleChatModelTurn\(!streamDegraded/);assert.match(server,/chatModelQuotaContext.run/);assert.match(server,/const ADMIN_MODEL_CATALOG = \[\.\.\.CHAT_MODEL_CATALOG\]/);assert.match(app,/3, 50, 80/);assert.match(app,/50, 100, 200/);
+    // First effective token (content or reasoning) deadline is 20s by default, and
+    // long thinking must not be mistaken for a stalled provider.
+    assert.match(server, /RAI_CHAT_FIRST_TOKEN_TIMEOUT_MS\) \|\| '20000'/);
+    assert.match(server, /CHAT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS/);
+    assert.match(server, /20 秒内无首字或服务失败/);
+    // Reasoning-only streams are recovered into a real answer instead of being marked truncated.
+    assert.match(server, /reasoning-only recovery failed/);
+    assert.match(server, /Return only the final user-facing answer as normal assistant content/);
+    // A transient refresh failure must not clear a still-valid refresh cookie.
+    assert.match(server, /terminalCodes\.has\(error\?\.code\)/);
+    assert.match(server, /res\.status\(503\)\.json\(\{ success: false, error: '会话刷新暂时不可用，请重试' \}\)/);
+    // Official history excludes reasoning; custom providers retain their tool protocol.
+    const historyBuilder = app.slice(app.indexOf('function buildContextMessagesFromState'), app.indexOf('async function markMessageAsRegeneratedPrevious'));
+    assert.ok(historyBuilder.length > 0, 'buildContextMessagesFromState must exist');
+    const historyContext = { appState: { customApiMode: false }, isRegeneratedPreviousReply: () => false };
+    vm.createContext(historyContext); vm.runInContext(historyBuilder, historyContext);
+    const sourceHistory = [{role:'assistant',content:'answer',reasoning_content:'thinking',tool_calls:[{id:'call-1',name:'read_file',arguments:'{}'}]},
+        {role:'tool',content:'result',tool_call_id:'call-1'}];
+    const officialHistory = historyContext.buildContextMessagesFromState(sourceHistory);
+    assert.equal(officialHistory[0].reasoning_content, undefined, 'official model must not receive stored reasoning');
+    assert.equal(officialHistory[0].tool_calls, undefined, 'official model must not receive custom provider tool calls');
+    assert.equal(officialHistory[1].tool_call_id, undefined);
+    historyContext.appState.customApiMode = true;
+    const customHistory = historyContext.buildContextMessagesFromState(sourceHistory);
+    assert.equal(customHistory[0].reasoning_content, 'thinking');
+    assert.equal(customHistory[0].tool_calls[0].function.name, 'read_file');
+    assert.equal(customHistory[1].tool_call_id, 'call-1', 'restored custom tool result must remain paired with its call');
+    console.log('chat_model_policy_regression_ok: rolling quota, concurrency, expiry, cancellation, idempotency, research, thinking tiers, 256k compression, vision preservation and provider fallback');
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});

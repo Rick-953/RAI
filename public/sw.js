@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.18-20260929-pwa-r8';
+const RAI_SW_VERSION = '0.13.49-20261107-stream-reasons';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,17 +13,24 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  '', 'index.html', 'runtime-brand.js?v=20260929-pwa-r8',
-  'rai-system-prompt.js?v=20260929-pwa-r8', 'event-bindings.js?v=20260929-pwa-r8',
-  'lib/jsQR.js?v=20260929-pwa-r8', 'qr-scanner.js?v=20260929-pwa-r8',
-  'secure-sharing.js?v=20260929-pwa-r8', 'secure-sharing.css?v=20260929-pwa-r8',
-  'diagnostics.js?v=20260929-pwa-r8',
-  'app.js?v=20260929-pwa-r8', 'styles.css?v=20260929-pwa-r8',
-  'local-agent.js?v=20260929-pwa-r8', 'local-agent.css?v=20260929-pwa-r8',
-  'crf-ui.js?v=20260929-pwa-r8',
-  'selection-explainer.js?v=20260929-pwa-r8', 'selection-explainer.css?v=20260929-pwa-r8',
-  'site.webmanifest?v=20260929-pwa-r8', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20260929-pwa-r8',
+  'locale.js?v=20261107-stream-reasons',
+  'web-skills.js?v=20261107-stream-reasons', 'web-skills.css?v=20261107-stream-reasons',
+  'third-party-notices.js?v=20261107-stream-reasons', 'third-party-notices.css?v=20261107-stream-reasons',
+  'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
+  '', 'index.html', 'runtime-brand.js?v=20261107-stream-reasons',
+  'rai-system-prompt.js?v=20261107-stream-reasons', 'event-bindings.js?v=20261107-stream-reasons',
+  'lib/jsQR.js?v=20261107-stream-reasons', 'qr-scanner.js?v=20261107-stream-reasons',
+  'secure-sharing.js?v=20261107-stream-reasons', 'secure-sharing.css?v=20261107-stream-reasons',
+  'diagnostics.js?v=20261107-stream-reasons',
+  'user-activity.js?v=20261107-stream-reasons',
+  'token-billing.js?v=20261107-stream-reasons',
+  'app.js?v=20261107-stream-reasons', 'styles.css?v=20261107-stream-reasons',
+  'markdown-tables.js?v=20261107-stream-reasons',
+  'cx-remote.js?v=20261107-stream-reasons', 'local-agent.css?v=20261107-stream-reasons',
+  'crf-ui.js?v=20261107-stream-reasons',
+  'selection-explainer.js?v=20261107-stream-reasons', 'selection-explainer.css?v=20261107-stream-reasons',
+  'site.webmanifest?v=20261107-stream-reasons', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261107-stream-reasons',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -33,11 +40,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20260929-pwa-r8', 'lib/purify.min.js?v=20260929-pwa-r8',
-  'lib/katex/katex.min.css?v=20260929-pwa-r8', 'lib/katex/katex.min.js?v=20260929-pwa-r8',
-  'lib/katex/contrib/auto-render.min.js?v=20260929-pwa-r8',
-  'lib/highlight/styles/github-dark.min.css?v=20260929-pwa-r8',
-  'lib/highlight/highlight.min.js?v=20260929-pwa-r8'
+  'lib/marked.min.js?v=20261107-stream-reasons', 'lib/purify.min.js?v=20261107-stream-reasons',
+  'lib/katex/katex.min.css?v=20261107-stream-reasons', 'lib/katex/katex.min.js?v=20261107-stream-reasons',
+  'lib/katex/contrib/auto-render.min.js?v=20261107-stream-reasons',
+  'lib/highlight/styles/github-dark.min.css?v=20261107-stream-reasons',
+  'lib/highlight/highlight.min.js?v=20261107-stream-reasons'
 ].map(appPath);
 
 function isAvatarRequest(url) {
@@ -131,6 +138,11 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname === appPath('runtime-config.js')) return;
   // Standalone login/share pages must never replace the cached application shell.
   if (url.pathname === appPath('share.html') || url.pathname === appPath('qr-login.html')) return;
+  // A standalone legal document must not replace the offline chat shell.
+  if (url.pathname === appPath('third-party-notices.html')) {
+    event.respondWith(fetch(request).catch(() => caches.match(request)));
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(

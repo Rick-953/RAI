@@ -12,6 +12,8 @@ const DEFAULT_DOMAIN_NOTICE_ENABLED = RAI_RUNTIME_CONFIG.defaultDomainNoticeEnab
 const DEFAULT_DOMAIN_NOTICE_URL = String(RAI_RUNTIME_CONFIG.defaultDomainNoticeUrl || 'https://rai.rick.sarl/').trim() || 'https://rai.rick.sarl/';
 const DOCUMENT_SANDBOX_ENABLED = RAI_RUNTIME_CONFIG.documentSandboxEnabled === true;
 const USER_PASSWORD_MIN_LENGTH = 8;
+const UI_MAX_CHAT_ATTACHMENTS = 9;
+const LONG_PASTE_TEXT_THRESHOLD = 4000;
 
 const UI_UPLOAD_EXTENSION_GROUPS = Object.freeze({
   image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'heic', 'heif'],
@@ -344,7 +346,7 @@ function removeInternalAssistantDisplaySections(text = '') {
 }
 
 function sanitizeAssistantDisplayText(text = '') {
-  let output = String(text || '');
+  let output = stripTrailingTitleMarker(text);
   output = output
     .replace(/\bDeepSek\b/g, 'DeepSeek')
     .replace(/\bDeepsek\b/g, 'DeepSeek')
@@ -762,6 +764,7 @@ function looksLikeMarkdownTableSeparator(line) {
 }
 
 function normalizeMarkdownTables(text) {
+  if (window.RaiMarkdownTables) return window.RaiMarkdownTables.normalize(text);
   const source = String(text || '').replace(/\r\n?/g, '\n');
   const lines = source.split('\n');
   const output = [];
@@ -2410,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.18';
-const RAI_BUILD_ID = '20260929-pwa-r8';
+const RAI_APP_VERSION = '0.13.49';
+const RAI_BUILD_ID = '20261107-stream-reasons';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -2487,7 +2490,7 @@ const appState = {
   modelPromptIdentity: 'smart', // 区分模式入口与手动模型选择，仅用于系统提示词中的展示名
   lastNonResearchModel: 'auto',
   profileDefaultModel: 'auto',  // 用户云端保存的默认模型（Pro/MAX记忆）
-  thinkingMode: false,  // 默认关闭推理模式
+  thinkingMode: false,
   reasoningProfile: 'low',
   internetMode: true,  // 默认开启联网
   agentMode: false,  // 兼容旧字段；深度研究由 researchMode 驱动
@@ -2495,8 +2498,8 @@ const appState = {
   qualityProfile: 'high',
   researchModeEnabled: false,
   researchMode: 'fast',
-  researchAgentModels: ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'],
-  researchMasterModel: 'deepseek-pro',
+  researchAgentModels: ['deepseek-v4.1-flash'],
+  researchMasterModel: 'deepseek-v4.1-flash',
   researchMaxRounds: 50,
   sendHoldSuppressClick: false,
   sendHoldPicker: null,
@@ -2565,12 +2568,13 @@ const appState = {
   ztx6dBindUrl: '/auth/ztx6d/bind/start',
   activeModelMenuAnchorId: 'modelSelectCustom',
   modelMenuOpenedAt: 0,
+  modelMenuOpenedByEvent: null,
   sendStarting: false,
   theme: 'dark',
   themePreference: 'dark',
   fontPreference: 'system',
   systemThemeListenerBound: false,
-  language: 'zh-CN',
+  language: window.RAILocale?.getLanguage() || 'en',
   languageToggleChinese: 'zh-CN',
   lastModelUsed: '',  // 记录最后使用的实际模型
   lastRoutingReason: '',  // 记录路由选择原因
@@ -2594,6 +2598,7 @@ const appState = {
   scrollBottomThreshold: 160,
   pendingScrollTimer: null,
   mobileComposerFocusTimer: null,
+  mobileComposerFocusGeneration: 0,
   entryAutofocusTimer: null,
   entryAutofocusBound: false,
   pendingMobileComposerFocus: false,
@@ -2632,10 +2637,26 @@ const appState = {
 
 window.getRaiLocalAgentContext = () => ({
   token: appState.token,
+  userId: appState.user?.id || '',
   conversationId: appState.currentSession?.id || '',
   language: appState.language,
   authenticated: appState.authState === 'authenticated'
 });
+window.RaiUserActivity?.configure(() => ({
+  token: appState.token, account: String(appState.user?.id || ''), apiBase: API_BASE,
+  sessionId: appState.currentSession?.id || null,
+  environment: {
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, utcOffsetMinutes: -new Date().getTimezoneOffset(),
+    locale: navigator.language, region: new Intl.Locale(navigator.language).region || null, uiLanguage: appState.language,
+    theme: appState.theme, systemTheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    os: navigator.userAgentData?.platform || navigator.platform, appVersion: RAI_APP_VERSION,
+    screenWidth: screen.width, screenHeight: screen.height, viewportWidth: innerWidth, viewportHeight: innerHeight, scale: devicePixelRatio,
+    selectedModel: appState.selectedModel, reasoningProfile: appState.reasoningProfile, thinkingMode: appState.thinkingMode,
+    internetMode: appState.internetMode, researchMode: appState.researchModeEnabled, customApiMode: appState.customApiMode,
+    selectedSkills: window.RaiWebSkills?.selectedNames?.() || [], agentMode: !!window.RaiLocalAgent?.isSelected?.(),
+    features: [appState.internetMode && 'internet', appState.thinkingMode && 'thinking', appState.researchModeEnabled && 'research', appState.customApiMode && 'custom_api'].filter(Boolean)
+  }
+}));
 
 let deferredPwaInstallPrompt = null;
 let pwaInstallSupportInitialized = false;
@@ -4781,6 +4802,7 @@ function getClientPlatform() {
 }
 
 function renderWindowsDownloads(release = windowsDownloadsRelease) {
+  release = release || {};
   const status = document.getElementById('windowsDownloadStatus');
   const setupLink = document.getElementById('windowsSetupDownload');
   const mobileLink = document.getElementById('windowsMobilePackageDownload');
@@ -4789,7 +4811,13 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
 
   const clientPlatform = getClientPlatform();
   const isWindowsMobile = clientPlatform === 'windows-mobile';
-  setupLink.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
+  const recommendWindows = clientPlatform === 'windows';
+  const installerBadge = document.getElementById('windowsSetupRecommended');
+  const pwaBadge = document.getElementById('pwaInstallRecommended');
+  if (installerBadge) installerBadge.hidden = !recommendWindows;
+  if (pwaBadge) pwaBadge.hidden = recommendWindows;
+  const setupLabel = document.getElementById('windowsSetupDownloadLabel');
+  if (setupLabel) setupLabel.textContent = i18nText('settings-windows-setup', isChineseLanguage(appState.language) ? '下载安装程序' : 'Download installer');
   if (note) {
     note.textContent = isWindowsMobile
       ? i18nText('settings-windows-mobile-note', isChineseLanguage(appState.language)
@@ -4802,7 +4830,7 @@ function renderWindowsDownloads(release = windowsDownloadsRelease) {
   const setupValid = isTrustedWindowsReleaseAsset(release?.setup, ['.exe']);
   const mobilePackage = release?.arm?.package || release?.package;
   const mobilePackageValid = isTrustedWindowsReleaseAsset(mobilePackage, ['.appxbundle', '.msixbundle', '.appx', '.msix']);
-  const tag = String(release.tag || '').trim();
+  const tag = String(release?.tag || '').trim();
   const isFallback = release.source === 'fallback';
 
   if (isWindowsMobile) {
@@ -4977,173 +5005,83 @@ const feedbackModalState = {
 
 const MODELS = {
   "auto": {
-    name: "最佳 Auto",
-    displayName: { "zh-CN": "最佳", "en": "Auto" },
-    provider: "auto",
-    supportsThinking: true
+    "name": "最佳 Auto",
+    "displayName": {
+      "zh-CN": "最佳",
+      "en": "Auto"
+    },
+    "provider": "auto",
+    "supportsThinking": true,
+    "supportsVision": true,
+    "supportsTools": true,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000
   },
-  'deepseek-flash': {
-    name: 'DeepSeek v4',
-    provider: 'deepseek',
-    supportsThinking: true,
-    contextWindow: 1000000
+  'deepseek-v4.1-flash': {
+    "name": "DeepSeek V4.1 Flash",
+    "provider": "deepseek",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "canDisableThinking": true,
+    "thinkingProfiles": ["auto", "high", "max"],
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 1000000,
+    "compressionThreshold": 400000,
+    "maxTokens": 8000
   },
-  'deepseek-pro': {
-    name: 'DeepSeek Pro',
-    provider: 'deepseek',
-    supportsThinking: true,
-    maxTokens: 128000
+  'gpt-6.1-sol': {
+    "name": "GPT 6.1 Sol",
+    "provider": "rai_gpt_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "canDisableThinking": false,
+    "thinkingProfiles": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000,
+    "maxTokens": 8000
   },
-  'gpt-5.6-sol': {
-    name: 'GPT-5.6 Sol',
-    provider: 'rai_openai_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
+  'gpt-6-luna': {
+    "name": "GPT 6 Luna",
+    "provider": "rai_luna_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "canDisableThinking": true,
+    "thinkingProfiles": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000,
+    "maxTokens": 8000
   },
-  'gpt-5.6-terra': {
-    name: 'GPT 5.6',
-    provider: 'rai_openai_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'gpt-5.6-luna': {
-    name: 'GPT 5.6',
-    provider: 'rai_openai_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'claude-sonnet-5': {
-    name: 'Claude Sonnet 5',
-    provider: 'rai_claude_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'gemini-3.6-flash-low': {
-    name: 'Gemini 3.6',
-    provider: 'rai_fast_gateway',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    supportsVision: true,
-    supportsTools: true,
-    multimodal: true
-  },
-  'gpt-image-2': {
-    name: 'GPT Image 2',
-    provider: 'rai_openai_gateway',
-    supportsThinking: false,
-    supportsVision: true,
-    supportsTools: false,
-    imageGeneration: true
-  },
-  'kolors-free': {
-    name: 'Kolors Free',
-    provider: 'siliconflow',
-    supportsThinking: false,
-    supportsVision: true,
-    supportsTools: false,
-    imageGeneration: true
-  },
-  'qwen3.6-35b-a3b': {
-    name: 'Qwen 3.6',
-    provider: 'siliconflow',
-    supportsThinking: false,
-    supportsVision: true,
-    supportsTools: false,
-    contextWindow: 128000
-  },
-  // Kimi K2.6 - 月之暗面高性能模型
-  'kimi-k2.6': {
-    name: 'Kimi K2.6',
-    provider: 'siliconflow',
-    supportsThinking: true,
-    supportsVision: true,
-    supportsTools: true,
-    supportsPrefix: true,
-    contextWindow: 256000
-  },
-  // 兼容旧配置：kimi-k2 自动视作 kimi-k2.6
-  'kimi-k2': {
-    name: 'Kimi K2.6',
-    provider: 'siliconflow',
-    supportsThinking: true
-  },
-  'chatgpt-gpt-oss-120b': {
-    name: 'ChatGPT',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true
-  },
-  'nemotron-3-ultra': {
-    name: 'Nemotron 3 Ultra',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true
-  },
-  'claude-haiku': {
-    name: 'Claude 3 Haiku',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsVision: true
-  },
-  'anthropic/claude-sonnet-4.6': {
-    name: 'Claude Sonnet 4.6',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsVision: true
-  },
-  'anthropic/claude-3-haiku': {
-    name: 'Claude 3 Haiku',
-    provider: 'openrouter',
-    supportsThinking: false,
-    supportsVision: true
-  },
-  'gemma': {
-    name: 'Gemma',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true,
-    supportsVision: false,
-    contextWindow: 256000
-  },
-  'openrouter-free': {
-    name: 'OpenRouter Free',
-    provider: 'openrouter',
-    supportsThinking: true,
-    supportsReasoningProfile: true,
-    isFree: true
-  },
-  // Google Gemini 3 Flash - 最智能的速度优化模型（多模态）
-  'gemini-3-flash': {
-    name: 'Gemini 3 Flash',
-    provider: 'google_gemini',
-    supportsThinking: true,
-    multimodal: true  // 支持图片/视频等多模态输入
-  },
-  'lmstudio-local': {
-    name: 'LMStudio Local',
-    provider: 'lmstudio',
-    supportsThinking: false
+  'gpt-6-astra': {
+    "name": "GPT 6 Astra",
+    "provider": "rai_gpt_gateway",
+    "supportsThinking": true,
+    "supportsReasoningProfile": true,
+    "canDisableThinking": false,
+    "thinkingProfiles": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "supportsVision": true,
+    "supportsTools": true,
+    "multimodal": true,
+    "contextWindow": 272000,
+    "compressionThreshold": 258000,
+    "maxTokens": 8000
   }
 };
 
 const LEGACY_MODEL_ALIASES = {
-  // Keep the stable public GPT 5.6 selection while its upstream route uses Terra.
-  'gpt-5.6-terra': 'gpt-5.6-luna',
+  // Keep the stable public GPT 6 selection while its upstream route uses Terra.
+  'gpt-5.6': 'gpt-6.1-sol',
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-6-sol': 'gpt-6.1-sol',
+  'gpt-5.6-terra': 'deepseek-v4.1-flash',
+  'gpt-5.6-luna': 'gpt-6-luna',
   'claude-opus-5': 'claude-sonnet-5',
   'qwen3-vl': 'qwen3.6-35b-a3b',
   'qwen3.6-35b-a3b': 'qwen3.6-35b-a3b',
@@ -5156,12 +5094,14 @@ const LEGACY_MODEL_ALIASES = {
   'qwen2.5-7b': 'auto',
   'grok-4.2': 'auto',
   'gpt-5.5': 'auto',
-  'deepseek-chat': 'deepseek-pro',
-  'deepseek-reasoner': 'deepseek-pro',
-  'deepseek-v3': 'deepseek-pro',
-  'deepseek-v3.2-speciale': 'deepseek-pro',
-  'deepseek-v4-pro': 'deepseek-pro',
-  'deepseek-v4-flash': 'deepseek-flash',
+  'deepseek-flash': 'deepseek-v4.1-flash',
+  'deepseek-chat': 'deepseek-v4.1-flash',
+  'deepseek-reasoner': 'deepseek-v4.1-flash',
+  'deepseek-v3': 'deepseek-v4.1-flash',
+  'deepseek-v3.2-speciale': 'deepseek-v4.1-flash',
+  'deepseek-v4-pro': 'deepseek-v4.1-flash',
+  'deepseek-pro': 'deepseek-v4.1-flash',
+  'deepseek-v4-flash': 'deepseek-v4.1-flash',
   'kimi-k2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.5': 'kimi-k2.6',
   'Pro/moonshotai/Kimi-K2.6': 'kimi-k2.6',
@@ -5177,13 +5117,56 @@ const LEGACY_MODEL_ALIASES = {
 const ALWAYS_VISIBLE_MODEL_IDS = ['auto'];
 const modelVisibilityState = {
   loaded: false,
-  disabled: new Set()
+  disabled: new Set(),
+  smartDefaults: { model: 'gpt-6-luna', reasoningProfile: 'none', thinkingMode: false },
+  fastDefaults: { model: 'gpt-6-luna', reasoningProfile: 'none', thinkingMode: false }
 };
+
+function currentThinkingCapability() {
+  const selected = normalizeSelectedModelId(appState.selectedModel);
+  const actual = selected === 'auto'
+    ? (appState.thinkingMode ? modelVisibilityState.smartDefaults.model : modelVisibilityState.fastDefaults.model)
+    : selected;
+  const model = MODELS[actual] || MODELS[selected] || {};
+  const supportsThinking = model.supportsThinking === true;
+  const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
+    ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile)) : REASONING_PROFILE_ORDER;
+  return { supportsThinking, canDisableThinking: selected === 'auto' || (model.canDisableThinking !== false && actual !== 'gpt-6.1-sol'), profiles };
+}
+
+function modelPreferenceStorageKey() {
+  return 'rai_model_preference:' + String(appState.user?.id || 'guest');
+}
+
+function readModelPreference() {
+  try { return JSON.parse(localStorage.getItem(modelPreferenceStorageKey()) || 'null'); } catch (_) { return null; }
+}
+
+function restoreModelPreference(profile = null) {
+  const saved = readModelPreference();
+  const cloudModel = profile?.default_model;
+  const preferred = saved?.model || cloudModel || 'auto';
+  appState.selectedModel = normalizeSelectedModelId(preferred) || 'auto';
+  appState.modelPromptIdentity = appState.selectedModel === 'auto' ? 'smart' : 'manual';
+  appState.profileDefaultModel = appState.selectedModel;
+  const defaults = modelVisibilityState.smartDefaults;
+  appState.thinkingMode = saved && typeof saved.thinkingMode === 'boolean' ? saved.thinkingMode
+    : ((profile?.reasoning_profile || (cloudModel && cloudModel !== 'auto')) && profile.thinking_mode !== undefined ? !!profile.thinking_mode : defaults.thinkingMode !== false);
+  if (!currentThinkingCapability().canDisableThinking) appState.thinkingMode = true;
+  appState.reasoningProfile = normalizeReasoningProfileForModel(
+    saved?.reasoningProfile || profile?.reasoning_profile || defaults.reasoningProfile || 'low',
+    appState.selectedModel
+  );
+  if (saved && (saved.reasoningProfile !== appState.reasoningProfile || saved.thinkingMode !== appState.thinkingMode)) {
+    persistDefaultModelPreference(appState.selectedModel);
+  }
+}
 
 function normalizeSelectedModelId(modelId) {
   const raw = String(modelId || '').trim();
-  const normalized = LEGACY_MODEL_ALIASES[raw] || raw;
+  const normalized = Object.hasOwn(LEGACY_MODEL_ALIASES, raw) ? LEGACY_MODEL_ALIASES[raw] : raw;
   if (String(normalized).startsWith('x-ai/grok-4.20')) return 'auto';
+  if (/^(?:custom:|byok:)/.test(normalized)) return normalized;
   if (!normalized || normalized === 'research-mode') return normalized;
   return MODELS[normalized] ? normalized : 'auto';
 }
@@ -5205,7 +5188,7 @@ function getModelPromptIdentity(promptLanguage = getSessionPromptLanguage()) {
   const modelId = identity.startsWith('model:')
     ? normalizeSelectedModelId(identity.slice('model:'.length))
     : (identity === 'research'
-    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')
+    ? normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash')
     : normalizeSelectedModelId(appState.selectedModel || 'auto'));
   return MODELS[modelId]?.name || (english ? 'Smart model' : '智能模型');
 }
@@ -5214,7 +5197,7 @@ function getPromptModelIdentityForSession() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (['smart', 'fast', 'think'].includes(identity)) return identity;
   if (identity === 'research') {
-    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro')}`;
+    return `model:${normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash')}`;
   }
   return `model:${normalizeSelectedModelId(appState.selectedModel || 'auto')}`;
 }
@@ -5290,14 +5273,52 @@ function applyModelVisibilityToDom() {
   updateMenuSelection();
 }
 
+function renderCustomModelChoices() {
+  const section = document.getElementById('allModelsSection');
+  if (!section) return;
+  section.querySelectorAll('[data-custom-catalog-model]').forEach(element => element.remove());
+  for (const [id, model] of Object.entries(MODELS)) {
+    if (model.builtin !== false) continue;
+    const item = document.createElement('button');
+    item.type = 'button'; item.className = 'model-menu-item';
+    item.dataset.model = id; item.dataset.customCatalogModel = 'true';
+    const label = document.createElement('span');
+    label.className = 'model-menu-title'; label.textContent = model.name || id;
+    item.append(label);
+    item.addEventListener('click', event => selectModelFromMenu(id, model.name || id, '', event));
+    section.append(item);
+  }
+}
+
 async function fetchModelAvailability() {
   try {
     const res = await fetch(`${API_BASE}/model-availability`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    const catalog = Array.isArray(data.models) ? data.models : null;
+    const currentIds = new Set((catalog || []).map(model => model?.id).filter(Boolean));
+    const removedIds = [];
+    if (catalog) for (const [id, model] of Object.entries(MODELS)) {
+      if (model.builtin === false && !model.byok && !currentIds.has(id)) { delete MODELS[id]; removedIds.push(id); }
+    }
+    for (const model of catalog || []) {
+      if (!model?.id) continue;
+      MODELS[model.id] = { ...(MODELS[model.id] || {}), ...model,
+        supportsVision: model.vision === true, multimodal: model.vision === true,
+        supportsReasoningProfile: model.supportsThinking === true };
+    }
+    if (data.smartDefaults) modelVisibilityState.smartDefaults = { ...modelVisibilityState.smartDefaults, ...data.smartDefaults };
+    if (data.fastDefaults) modelVisibilityState.fastDefaults = { ...modelVisibilityState.fastDefaults, ...data.fastDefaults };
+    if (removedIds.includes(appState.selectedModel) || removedIds.includes(appState.profileDefaultModel)) {
+      appState.selectedModel = 'auto'; appState.profileDefaultModel = 'auto'; appState.modelPromptIdentity = 'smart';
+      persistDefaultModelPreference('auto'); updateSelectedModelText('auto');
+    }
     modelVisibilityState.disabled = new Set((data.disabledModels || []).map(normalizeSelectedModelId).filter(Boolean));
     modelVisibilityState.loaded = true;
+    renderCustomModelChoices();
+    if (!appState.currentSession && !appState.isStreaming && !readModelPreference()) restoreModelPreference();
     applyModelVisibilityToDom();
+    updateModelControls();
   } catch (error) {
     console.warn(' 获取模型开关失败:', error.message || error);
   }
@@ -5342,7 +5363,18 @@ function extractTrailingTitleMarker(text = '') {
 }
 
 function stripTrailingTitleMarker(text = '') {
-  return extractTrailingTitleMarker(text).cleanContent;
+  let output = extractTrailingTitleMarker(text).cleanContent
+    .replace(/\[TITLE\][\s\S]*?(?:\[\/TITLE\]|$)|\[\/TITLE\]/gi, '')
+    .replace(/\[\/?RAI_FINAL\]/gi, '');
+  for (const marker of ['[TITLE]', '[/TITLE]', '[RAI_FINAL]', '[/RAI_FINAL]']) {
+    for (let length = Math.min(marker.length - 1, output.length); length > 0; length -= 1) {
+      if (output.slice(-length).toUpperCase() === marker.slice(0, length)) {
+        output = output.slice(0, -length);
+        break;
+      }
+    }
+  }
+  return output;
 }
 
 function isDefaultConversationTitle(title = '') {
@@ -5369,12 +5401,26 @@ function isMembershipLockedModel(modelId) {
 }
 
 function normalizeReasoningProfile(value) {
-  const v = String(value || '').toLowerCase();
-  if (v === 'medium' || v === 'high' || v === 'mixed') return v;
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'mixed') return 'max';
+  if (v === 'auto' || v === 'medium' || v === 'high' || v === 'xhigh' || v === 'max') return v;
   return 'low';
 }
 
-const REASONING_PROFILE_ORDER = ['low', 'medium', 'high', 'mixed'];
+const REASONING_PROFILE_ORDER = ['auto', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+function normalizeReasoningProfileForModel(value, modelId = appState.selectedModel) {
+  const normalized = normalizeReasoningProfile(value);
+  const selected = normalizeSelectedModelId(modelId);
+  const actual = selected === 'auto'
+    ? (appState.thinkingMode ? modelVisibilityState.smartDefaults.model : modelVisibilityState.fastDefaults.model)
+    : selected;
+  const model = MODELS[actual] || MODELS[selected] || {};
+  const profiles = Array.isArray(model.thinkingProfiles) && model.thinkingProfiles.length
+    ? model.thinkingProfiles.filter(profile => REASONING_PROFILE_ORDER.includes(profile))
+    : REASONING_PROFILE_ORDER;
+  return profiles.includes(normalized) ? normalized : profiles[0] || 'auto';
+}
 
 function reasoningProfileToIndex(profile) {
   const normalized = normalizeReasoningProfile(profile);
@@ -5385,14 +5431,14 @@ function reasoningProfileToIndex(profile) {
 function reasoningIndexToProfile(index) {
   const num = Number(index);
   if (!Number.isFinite(num)) return 'low';
-  const clamped = Math.max(0, Math.min(3, Math.round(num)));
+  const clamped = Math.max(0, Math.min(REASONING_PROFILE_ORDER.length - 1, Math.round(num)));
   return REASONING_PROFILE_ORDER[clamped] || 'low';
 }
 
 function updateReasoningProfileSliderVisual(sliderEl) {
   if (!sliderEl) return;
   const min = Number(sliderEl.min || 0);
-  const max = Number(sliderEl.max || 3);
+  const max = Number(sliderEl.max || 4);
   const current = Number(sliderEl.value || 0);
   const range = max - min || 1;
   const progress = ((current - min) / range) * 100;
@@ -5405,8 +5451,13 @@ function setReasoningProfileFromSlider(indexValue) {
 }
 
 function setReasoningProfile(profile) {
-  appState.reasoningProfile = normalizeReasoningProfile(profile);
+  const capability = currentThinkingCapability();
+  const normalized = normalizeReasoningProfile(profile);
+  appState.reasoningProfile = capability.profiles.includes(normalized) ? normalized : capability.profiles[0] || 'low';
+  appState.thinkingMode = true;
+  persistDefaultModelPreference();
   updateReasoningProfileControl();
+  updateToolbarUI();
 }
 
 function updateReasoningProfileControl() {
@@ -5423,9 +5474,41 @@ function updateReasoningProfileControl() {
     if (slider.value !== targetIndex) {
       slider.value = targetIndex;
     }
+    slider.setAttribute('aria-valuetext', i18nText('reasoning-' + normalized, normalized));
     updateReasoningProfileSliderVisual(slider);
   }
+  const choices = document.getElementById('reasoningProfileChoices');
+  if (choices) {
+    const capability = currentThinkingCapability();
+    choices.replaceChildren(...capability.profiles.map(profile => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.profile = profile;
+      button.textContent = i18nText('reasoning-' + profile, profile);
+      button.className = 'reasoning-profile-choice';
+      button.setAttribute('aria-pressed', profile === normalized ? 'true' : 'false');
+      button.addEventListener('click', event => { event.stopPropagation(); setReasoningProfile(profile); });
+      return button;
+    }));
+  }
 }
+
+let reasoningHoverTimer = null;
+document.addEventListener('pointerover', event => {
+  const header = event.target.closest?.('.reasoning-profile-header');
+  if (!header || !document.getElementById('moreMenu')?.classList.contains('active')) return;
+  if (header.contains(event.relatedTarget)) return;
+  clearTimeout(reasoningHoverTimer);
+  reasoningHoverTimer = setTimeout(() => {
+    if (!header.matches(':hover') || !document.getElementById('moreMenu')?.classList.contains('active')) return;
+    appState.reasoningChoicesExpanded = true;
+    updateToolbarUI();
+    scheduleComposerMenuReposition(8);
+  }, 650);
+});
+document.addEventListener('pointerout', event => {
+  const header = event.target.closest?.('.reasoning-profile-header');
+  if (header && !header.contains(event.relatedTarget)) clearTimeout(reasoningHoverTimer);
+});
 
 const RAI_ROUTING_NOTICE_COOLDOWN_KEY = 'rai_routing_notice_cooldowns_v1';
 const RAI_ROUTING_NOTICE_COOLDOWN_MS = 10 * 60 * 1000;
@@ -5615,6 +5698,30 @@ function buildEffectiveSystemPrompt(customPrompt = appState.systemPrompt, option
 // 多语言支持
 const i18n = {
   'zh-CN': {
+    'language-auto': '自动',
+    'language-auto-hint': '跟随浏览器语言',
+    'canvas-toggle-title': '打开或关闭 ChatFlow 画布',
+    'canvas-close-title': '关闭画布',
+    'settings-export-diagnostics': '导出脱敏诊断日志',
+    'settings-nav-developer': '开发者选项',
+    'settings-admin-entry': '管理员登录',
+    'settings-diagnostics-description': '仅当前标签页最近 500 条事件、请求编号、耗时和流式统计；不含密钥、正文、文件名或账号信息。保存到本地，不会自动上传。',
+    'settings-server-activity-description': '登录后的操作、账户、IP、系统环境、模型与技能状态、对话及请求编号和错误元数据会记录到服务器，供管理员排障，保留 30 天。不含密码、API Key 或聊天正文。',
+    'auth-method-label': '登录方式',
+    'cache-title': '本地对话缓存',
+    'cache-description': '仅保留已打开对话的原始消息和 RAI 私有图片。',
+    'cache-enable': '启用',
+    'cache-clear': '清除',
+    'sidebar-files': '文件',
+    'sidebar-folders': '文件夹',
+    'sidebar-new-folder': '新建文件夹',
+    'cx-guide-intro': '手机或其他设备通过同账号 RAI Web 请求在线 CX RAI 操作 Windows 电脑；无需浏览器扩展。',
+    'cx-guide-enable': '电脑安装最新 CX RAI，登录同账号，在设置中明确开启 Web 连接并选择工作目录。默认关闭。',
+    'cx-guide-connect': 'Web 打开一个保存的对话，在 + 菜单选择「连接 CX RAI」，选择在线电脑并核对安全码。',
+    'cx-guide-approve': '连接获准后，在 Web 查看完整操作参数，选择仅本次允许、持续授权或拒绝。旧版电脑可能仍需在本机确认。',
+    'cx-guide-scope': '持续授权仅适用于当前网页登录、电脑、对话和原工作目录。可主动撤销；断开连接不等于撤销授权。',
+    'cx-guide-offline': '电脑需要在线。关闭开关、注销、授权到期或撤销后不可继续执行；结果不明的任务不会自动重试。',
+    'cx-guide-warning': '全信任文件和 PowerShell 命令可影响整台电脑，并非工作目录沙箱。只批准理解且信任的操作；这不是实时远程桌面或屏幕镜像。',
     'login-title': '欢迎回来',
     'login-subtitle': '登录继续使用 RAI',
     'register-title': '创建账号',
@@ -5674,15 +5781,32 @@ const i18n = {
     'register-link': '立即注册',
     'login-link': '立即登录',
     'custom-api-entry': '我有一个 API Key',
-    'custom-api-title': '使用自定义 API',
-    'custom-api-desc': 'Key 只保存在当前浏览器会话，不会发送到 RAI 服务器。',
     'custom-api-url-label': 'API URL',
     'custom-api-key-label': 'API Key',
     'custom-api-key-placeholder': '粘贴 API Key',
     'custom-model-label': '模型 ID',
-    'custom-api-submit': '进入自定义 API',
     'custom-api-back': '返回普通登录',
     'custom-api-exit': '退出自定义 API',
+    "custom-api-title": "自定义 API 模型",
+    "custom-api-key-required": "请在设置中重新输入 API Key。",
+    "custom-api-config-required": "此设备尚未配置这个第三方模型，请先在设置中添加或选择可用的自定义 API。",
+    "custom-api-sync-failed": "第三方对话同步失败，内容已保留在本机。请检查网络后重试。",
+    "custom-api-desc": "登录 RAI 后可用。Key 仅保留在当前页面内存，刷新后需重新输入；模型会加入模型列表，请求直接发给提供商。",
+    "custom-api-submit": "添加到模型列表",
+    "custom-api-name": "显示名称",
+    "custom-api-usage": "请求流式用量（提供商不支持时可关闭；不会为获取用量重发请求）",
+    "custom-api-metadata": "诊断日志记录模型、用量和缓存计费元数据，不上传 Key 或正文。第三方费用以提供商账单为准。",
+    "custom-api-login-required": "请先登录 RAI 账号后使用自定义 API。",
+    "custom-api-limit": "最多添加 50 个自定义模型。",
+    "custom-api-invalid-url": "请输入有效的 HTTPS API URL。",
+    "custom-api-invalid-model": "请输入有效的模型 ID。",
+    "custom-api-saved": "已保存，可在模型列表中选择。",
+    "custom-api-stream-error": "自定义 API 返回流错误。",
+    "custom-api-incomplete": "自定义 API 连接中断，请重新生成。",
+    "custom-api-empty": "接口返回了空内容。",
+    "custom-api-request-failed": "自定义 API 请求失败：",
+    "custom-api-text-only": "自定义 API 当前支持文字对话，请移除附件或技能，并关闭 Agent／研究模式后再发送。",
+    "custom-api-generating": "请等待当前回答完成，或先停止生成。",
     'search-placeholder': '搜索对话',
     'new-chat': '新对话',
     'temporary-chat': '临时对话',
@@ -5738,8 +5862,14 @@ const i18n = {
     'memory-settings-desc': '普通对话会使用长期记忆和最近 10 条对话标题；临时对话完全隔离。',
     'memory-enabled-label': '长期记忆',
     'memory-enabled-desc': '开启后，RAI 会自动记住稳定的个人信息和偏好。',
-    'memory-add-placeholder': '添加一条你希望 RAI 长期记住的信息',
+    'memory-add-placeholder': '每行一条记忆，一次最多 500 条，每条 2–360 字',
     'memory-add-btn': '添加记忆',
+    'memory-select-batch': '选择前 500 条',
+    'memory-delete-selected': '移除所选',
+    'memory-backups': '备份记录',
+    'memory-backups-desc': '每次修改前自动保留完整版本；一次批量操作对应一个备份。',
+    'memory-export-backup': '导出此备份',
+    'memory-close-backups': '关闭',
     'memory-history-note': '开启记忆后，RAI 会先读取最近 10 条对话标题作为滚动短期记忆。',
 	    'memory-clear-btn': '清空记忆',
 	    'memory-empty': '暂无长期记忆',
@@ -5940,7 +6070,8 @@ const i18n = {
     'settings-windows-all-releases': '查看所有版本',
     'settings-update-timeline-title': 'RAI 的成长故事',
     'settings-update-timeline-intro': '从第一行代码到今天，RAI 一直在被悉心打磨。下面这条时间线，记录了它如何从一个简单的对话助理，慢慢长成你现在熟悉的样子——更聪明、更好看、也更懂你。',
-    'settings-update-timeline-source': '来源：GitHub main / beta 提交记录、版本记录与 release manifest，已同步至 2026-09-24。',
+    'settings-update-timeline-source': '来源：RAI Web 公开 GitHub 提交与更新记录，核对至 2026-10-30。历史条目反映当时能力，当前使用说明以本版本为准。',
+    'settings-github-changelog': '查看 GitHub 更新记录',
     'settings-timeline-details-open': '查看完整更新',
     'settings-timeline-details-close': '收起完整更新',
     'settings-replay-onboarding': '重新观看欢迎引导',
@@ -5966,7 +6097,7 @@ const i18n = {
     'onb-welcome-desc': '多模型、深度研究、联网搜索，一切尽在指尖。',
     'onb-features-title': '强大的 AI 能力',
     'onb-feat-models-title': '多模型协作',
-    'onb-feat-models': '多模型自由切换（DeepSeek / Kimi / GPT / Claude / Gemma）',
+    'onb-feat-models': '在可用模型之间切换，按任务选择思考强度',
     'onb-feat-research-title': '研究模式',
     'onb-feat-research': '快速 / 深度研究模式，支持多模型互评综合回答',
     'onb-feat-search-title': '实时信息',
@@ -5979,7 +6110,7 @@ const i18n = {
     'onb-usage-input-title': '输入框',
     'onb-usage-input-desc': '在底部输入问题，Enter 发送，Shift+Enter 换行。可拖拽上传文件。',
     'onb-usage-model-title': '模型切换',
-    'onb-usage-model-desc': '点击顶部模型选择器，可切换快速、思考、研究或全部模型。',
+    'onb-usage-model-desc': '点击输入区的模型名称切换模型；在 + 菜单调整思考、搜索和研究模式。',
     'onb-usage-sidebar-title': '侧边栏',
     'onb-usage-sidebar-desc': '左侧边栏可管理对话历史、搜索对话、切换主题和语言、进入设置。',
     'onb-skip': '跳过',
@@ -6041,6 +6172,8 @@ const i18n = {
     'canvas-added': '已添加到画布',
     'node-edit-save': '保存',
     'chatflow-title-default': '新 ChatFlow',
+    'chatflow-resize-label': '调整聊天和画布大小',
+    'chatflow-workspace-label': '对话画布',
     'chatflow-session': 'ChatFlow 会话',
     'chatflow-patch-ready': 'AI 画布建议已准备',
     'chatflow-patch-apply': '应用',
@@ -6240,6 +6373,9 @@ const i18n = {
     'password-confirm-mismatch-error': '两次输入的新密码不一致',
     'password-same-as-current-error': '新密码不能与当前密码相同',
     // 模型选择相关
+    'cx-remote-menu': '连接 CX RAI',
+    'cx-remote-install-title': '手机 Web 连接 CX RAI',
+    'cx-remote-install-desc': '同账号在线电脑，本机授权可撤销',
     'model-smart': '智能模型',
     'model-fast': '快速',
     'model-expert': '思考',
@@ -6254,10 +6390,11 @@ const i18n = {
     'more-tools': '更多工具',
     'reasoning-mode': '推理模式',
     'reasoning-profile': '推理强度',
+    'reasoning-auto': '自适应',
     'reasoning-low': '低',
     'reasoning-medium': '中',
     'reasoning-high': '高',
-    'reasoning-mixed': '自动',
+    'reasoning-max': '最大',
     'research-mode': '研究',
     'research-fast': '快速研究',
     'research-deep': '深度研究',
@@ -6265,6 +6402,7 @@ const i18n = {
     'research-master-model': '主控模型',
     'research-agent-min-one': '至少保留 1 个子 agent 模型',
     'research-agent-max-four': '最多选择 4 个研究模型，请取消一个不需要的',
+    'research-mode-unavailable': '研究模式暂不可用：所有研究模型均已停用',
     'agent-mode': '深度研究',
     'add-attachment': '添加附件',
     'rpass-pending': 'rPass 登录待上线',
@@ -6278,6 +6416,30 @@ const i18n = {
     'regenerate': '重新生成'
   },
   'en': {
+    'language-auto': 'Auto',
+    'language-auto-hint': 'Use your browser language',
+    'canvas-toggle-title': 'Open or close the ChatFlow canvas',
+    'canvas-close-title': 'Close canvas',
+    'settings-export-diagnostics': 'Export sanitized diagnostics',
+    'settings-nav-developer': 'Developer options',
+    'settings-admin-entry': 'Admin sign in',
+    'settings-diagnostics-description': 'The latest 500 events from this tab: request IDs, timings and stream statistics. No keys, message content, file names or account information. Saved locally and never uploaded automatically.',
+    'settings-server-activity-description': 'While signed in, actions, account, IP addresses, system environment, model and skill state, conversation and request IDs, and error metadata are recorded on the server for administrator troubleshooting and retained for 30 days. Passwords, API keys and chat content are excluded.',
+    'auth-method-label': 'Sign-in method',
+    'cache-title': 'Local conversation cache',
+    'cache-description': 'Store only original messages and private RAI images from conversations you have opened.',
+    'cache-enable': 'Enable',
+    'cache-clear': 'Clear',
+    'sidebar-files': 'Files',
+    'sidebar-folders': 'Folders',
+    'sidebar-new-folder': 'New folder',
+    'cx-guide-intro': 'Use RAI Web on your phone or another device to request work on an online CX RAI Windows PC signed into the same account. No browser extension is required.',
+    'cx-guide-enable': 'Install the latest CX RAI on the PC, sign into the same account, explicitly enable Web connections in Settings and choose a working folder. Connections are off by default.',
+    'cx-guide-connect': 'Open a saved conversation on the Web. Choose Connect CX RAI from the + menu, select the online PC and check the connection code.',
+    'cx-guide-approve': 'Once connected, inspect the full action arguments on the Web and approve once, grant ongoing consent or reject. Older clients may still require approval on the PC.',
+    'cx-guide-scope': 'Ongoing consent is scoped to this Web login, PC, conversation and original working folder, and can be revoked. Disconnecting does not revoke consent.',
+    'cx-guide-offline': 'Keep the PC online. Disabling connections, signing out, expiry or revocation stops further execution. Tasks with an unknown outcome are not retried automatically.',
+    'cx-guide-warning': 'Full-trust file and PowerShell commands can affect the whole computer; they are not sandboxed to the working folder. Approve only actions you understand and trust. This is not live remote desktop or screen mirroring.',
     'login-title': 'Welcome Back',
     'login-subtitle': 'Log in to continue using RAI',
     'register-title': 'Create Account',
@@ -6337,15 +6499,32 @@ const i18n = {
     'register-link': 'Sign up',
     'login-link': 'Log in',
     'custom-api-entry': 'I have an API key',
-    'custom-api-title': 'Use a custom API',
-    'custom-api-desc': 'Your key stays in this browser session and is never sent to the RAI server.',
     'custom-api-url-label': 'API URL',
     'custom-api-key-label': 'API key',
     'custom-api-key-placeholder': 'Paste your API key',
     'custom-model-label': 'Model ID',
-    'custom-api-submit': 'Use custom API',
     'custom-api-back': 'Back to regular login',
     'custom-api-exit': 'Exit custom API',
+    "custom-api-title": "Custom API models",
+    "custom-api-key-required": "Re-enter your API key in Settings.",
+    "custom-api-config-required": "This device has no configuration for this third-party model. Add or select a custom API in Settings.",
+    "custom-api-sync-failed": "Conversation sync failed. The content is kept on this device. Check your connection and try again.",
+    "custom-api-desc": "Sign in with RAI to use your API. Keys stay in page memory and must be re-entered after reload. Requests go directly to your provider; saved models appear in the model list.",
+    "custom-api-submit": "Add to model list",
+    "custom-api-name": "Display name",
+    "custom-api-usage": "Request stream usage (turn off if unsupported; requests are never replayed to obtain usage)",
+    "custom-api-metadata": "Diagnostics record model, token usage and cache billing metadata. Keys and message text are excluded. Third-party charges follow the provider invoice.",
+    "custom-api-login-required": "Sign in with your RAI account to use a custom API.",
+    "custom-api-limit": "You can add up to 50 custom models.",
+    "custom-api-invalid-url": "Enter a valid HTTPS API URL.",
+    "custom-api-invalid-model": "Enter a valid model ID.",
+    "custom-api-saved": "Saved. Select this model from the model list.",
+    "custom-api-stream-error": "The custom API returned a stream error.",
+    "custom-api-incomplete": "The custom API connection ended early. Regenerate to try again.",
+    "custom-api-empty": "The API returned an empty response.",
+    "custom-api-request-failed": "Custom API request failed: ",
+    "custom-api-text-only": "Custom APIs currently support text chat. Remove attachments and skills, and turn off Agent and Research before sending.",
+    "custom-api-generating": "Wait for this answer to finish, or stop generation first.",
     'search-placeholder': 'Search conversations',
     'new-chat': 'New Chat',
     'temporary-chat': 'Temporary Chat',
@@ -6401,8 +6580,14 @@ const i18n = {
     'memory-settings-desc': 'Normal chats use long-term memory and the latest 10 conversation titles. Temporary chats are fully isolated.',
     'memory-enabled-label': 'Long-term memory',
     'memory-enabled-desc': 'When enabled, RAI automatically remembers stable personal facts and preferences.',
-    'memory-add-placeholder': 'Add something you want RAI to remember long term',
+    'memory-add-placeholder': 'One memory per line; up to 500, 2–360 characters each',
     'memory-add-btn': 'Add memory',
+    'memory-select-batch': 'Select first 500',
+    'memory-delete-selected': 'Remove selected',
+    'memory-backups': 'Backups',
+    'memory-backups-desc': 'A complete previous version is saved before every edit, one backup per batch.',
+    'memory-export-backup': 'Export this backup',
+    'memory-close-backups': 'Close',
     'memory-history-note': 'When memory is on, RAI also uses the latest 10 conversation titles as rolling short-term context.',
 	    'memory-clear-btn': 'Clear memories',
 	    'memory-empty': 'No long-term memories yet',
@@ -6484,7 +6669,7 @@ const i18n = {
     'settings-nav-capabilities': 'Capabilities',
     'settings-nav-personalization': 'Personalization',
     'settings-nav-memory': 'Memory',
-    'settings-nav-language': 'Language / 中文',
+    'settings-nav-language': 'Language',
     'settings-nav-subscription': 'Membership',
     'settings-nav-account': 'Account',
     'settings-nav-security': 'Security',
@@ -6603,7 +6788,8 @@ const i18n = {
     'settings-windows-all-releases': 'View all releases',
     'settings-update-timeline-title': 'The RAI Story',
     'settings-update-timeline-intro': 'From the very first line of code to today, RAI has been shaped with care. This timeline tells how it grew from a simple chat helper into the assistant you know now — smarter, more polished, and more attuned to you.',
-    'settings-update-timeline-source': 'Sources: GitHub main / beta commits, version records, and release manifests, synced through 2026-09-24.',
+    'settings-update-timeline-source': 'Sources: public RAI Web GitHub commits and change notes, checked through October 30, 2026. Historical entries describe the product at that time; current instructions apply to this version.',
+    'settings-github-changelog': 'Read the GitHub changelog',
     'settings-timeline-details-open': 'View full update',
     'settings-timeline-details-close': 'Collapse full update',
     'settings-replay-onboarding': 'Replay welcome guide',
@@ -6629,7 +6815,7 @@ const i18n = {
     'onb-welcome-desc': 'Multi-model chat, deep research, and web search are ready when you are.',
     'onb-features-title': 'Powerful AI capability',
     'onb-feat-models-title': 'Model collaboration',
-    'onb-feat-models': 'Switch freely across DeepSeek, Kimi, GPT, Claude, and Gemma',
+    'onb-feat-models': 'Switch between available models and choose reasoning effort for the task',
     'onb-feat-research-title': 'Research mode',
     'onb-feat-research': 'Fast and Deep Research modes with multi-model review',
     'onb-feat-search-title': 'Live context',
@@ -6642,7 +6828,7 @@ const i18n = {
     'onb-usage-input-title': 'Composer',
     'onb-usage-input-desc': 'Type at the bottom, press Enter to send, Shift+Enter for a new line. Drag files in to upload.',
     'onb-usage-model-title': 'Model switcher',
-    'onb-usage-model-desc': 'Use the top model picker for Fast, Think, Research, or all models.',
+    'onb-usage-model-desc': 'Choose a model beside the composer. Use the + menu to adjust reasoning, web search and research.',
     'onb-usage-sidebar-title': 'Sidebar',
     'onb-usage-sidebar-desc': 'Manage chat history, search conversations, switch theme and language, and open settings.',
     'onb-skip': 'Skip',
@@ -6704,6 +6890,8 @@ const i18n = {
     'canvas-added': 'Added to canvas',
     'node-edit-save': 'Save',
     'chatflow-title-default': 'New ChatFlow',
+    'chatflow-resize-label': 'Resize chat and canvas',
+    'chatflow-workspace-label': 'Chat canvas',
     'chatflow-session': 'ChatFlow session',
     'chatflow-patch-ready': 'AI canvas suggestion is ready',
     'chatflow-patch-apply': 'Apply',
@@ -6903,6 +7091,9 @@ const i18n = {
     'password-confirm-mismatch-error': 'The new passwords do not match',
     'password-same-as-current-error': 'New password must be different from current password',
     // Model selection
+    'cx-remote-menu': 'Connect CX RAI',
+    'cx-remote-install-title': 'Connect Web to CX RAI',
+    'cx-remote-install-desc': 'Same-account online PC, revocable local consent',
     'model-smart': 'Smart Model',
     'model-fast': 'Fast',
     'model-expert': 'Think',
@@ -6917,10 +7108,11 @@ const i18n = {
     'more-tools': 'More tools',
     'reasoning-mode': 'Reasoning Mode',
     'reasoning-profile': 'Reasoning Strength',
+    'reasoning-auto': 'Adaptive',
     'reasoning-low': 'Low',
     'reasoning-medium': 'Medium',
     'reasoning-high': 'High',
-    'reasoning-mixed': 'Auto',
+    'reasoning-max': 'Max',
     'research-mode': 'Research',
     'research-fast': 'Fast Research',
     'research-deep': 'Deep Research',
@@ -6928,6 +7120,7 @@ const i18n = {
     'research-master-model': 'Master model',
     'research-agent-min-one': 'Keep at least 1 sub-agent model',
     'research-agent-max-four': 'Choose up to 4 research models. Remove one you do not need.',
+    'research-mode-unavailable': 'Research mode is unavailable: every research model is disabled',
     'agent-mode': 'Deep Research',
     'add-attachment': 'Add Attachment',
     'rpass-pending': 'rPass login is coming soon',
@@ -7048,7 +7241,7 @@ Object.assign(i18n['zh-TW'], {
   'system-theme': '跟隨系統',
   'settings-update-timeline-title': 'RAI 的成長故事',
   'settings-update-timeline-intro': '從第一行程式碼到今天，RAI 一直被悉心打磨。下面這條時間線，記錄了它如何從一個簡單的對話助理，慢慢長成你現在熟悉的樣子——更聰明、更好看、也更懂你。',
-  'settings-update-timeline-source': '來源：GitHub main / beta 提交記錄、版本記錄與 release manifest，已同步至 2026-09-24。',
+  'settings-update-timeline-source': '來源：RAI Web 公開 GitHub 提交與更新記錄，核對至 2026-10-30。歷史條目反映當時能力，當前使用說明以本版本為準。',
   'settings-timeline-details-open': '查看完整更新',
   'settings-timeline-details-close': '收起完整更新',
   'settings-replay-onboarding': '重新觀看歡迎引導',
@@ -7820,6 +8013,7 @@ const fileLibraryState = {
   nextOffset: null,
   query: '',
   loading: false,
+  status: { kind: '' },
   controller: null,
   searchTimer: null,
   contextKey: ''
@@ -7856,16 +8050,23 @@ function localizeFileLibraryPage() {
 }
 
 function renderFileLibraryStorage(storage = fileLibraryState.storage) {
-  if (!storage) return;
-  const used = Math.max(0, Number(storage.usedBytes || 0));
-  const limit = Math.max(1, Number(storage.limitBytes || 1));
-  const percent = Math.min(100, Math.max(0, (used / limit) * 100));
   const label = document.getElementById('fileLibraryStorageLabel');
   const value = document.getElementById('fileLibraryStorageValue');
   const bar = document.getElementById('fileLibraryStorageBar');
   const track = bar?.parentElement;
   const summary = document.getElementById('fileLibrarySummary');
   const isZh = isChineseLanguage(appState.language);
+  if (!storage) {
+    if (label) label.textContent = isZh ? '存储空间' : 'Storage';
+    if (value) value.textContent = '—';
+    if (bar) bar.style.width = '0%';
+    if (track) track.removeAttribute('aria-valuenow');
+    if (summary) summary.textContent = isZh ? '文件' : 'Files';
+    return;
+  }
+  const used = Math.max(0, Number(storage.usedBytes || 0));
+  const limit = Math.max(1, Number(storage.limitBytes || 1));
+  const percent = Math.min(100, Math.max(0, (used / limit) * 100));
   if (label) label.textContent = `${fileLibraryTierLabel(storage.tier)} ${isZh ? '存储空间' : 'storage'}`;
   if (value) value.textContent = `${formatFileSize(used)} / ${formatFileSize(limit)}`;
   if (bar) bar.style.width = `${percent.toFixed(2)}%`;
@@ -7876,12 +8077,22 @@ function renderFileLibraryStorage(storage = fileLibraryState.storage) {
   }
 }
 
-function setFileLibraryStatus(message = '', { error = false } = {}) {
+function setFileLibraryStatus(kind = '', details = {}) {
+  fileLibraryState.status = { ...details, kind };
+  renderFileLibraryStatus();
+}
+
+function renderFileLibraryStatus() {
   const status = document.getElementById('fileLibraryStatus');
   if (!status) return;
+  const current = fileLibraryState.status;
+  const isZh = isChineseLanguage(appState.language);
+  const message = current.kind === 'loading' ? (isZh ? '正在加载...' : 'Loading...')
+    : current.kind === 'uploading' ? `${isZh ? '正在上传' : 'Uploading'} ${current.index}/${current.total}`
+    : current.kind === 'error' ? localizeServerError(current.error, isZh ? '文件库加载失败' : 'Could not load files') : '';
   status.hidden = !message;
   status.textContent = message;
-  status.classList.toggle('error', error);
+  status.classList.toggle('error', current.kind === 'error');
 }
 
 function formatFileLibraryDate(value) {
@@ -7896,8 +8107,10 @@ function formatFileLibraryDate(value) {
 
 function useFileLibraryItemInChat(file = {}) {
   if (!file.filePath) return false;
-  if (currentAttachment?.localThumbnail) URL.revokeObjectURL(currentAttachment.localThumbnail);
-  currentAttachment = {
+  if (currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS) { showAttachmentLimit(); return false; }
+  if (currentAttachments.some(attachment => String(attachment.fileId || '') === String(file.id || ''))) return true;
+  window.RaiWebSkills?.noteDraftChange?.();
+  currentAttachments.push({
     type: file.type || 'document',
     fileName: file.fileName || file.originalName || '',
     originalName: file.originalName || file.fileName || '',
@@ -7906,7 +8119,7 @@ function useFileLibraryItemInChat(file = {}) {
     fileId: file.id || null,
     filePath: file.filePath,
     localThumbnail: null
-  };
+  });
   updateAttachmentUI();
   closeFileLibrary();
   showToast(isChineseLanguage(appState.language) ? '已添加到当前对话' : 'Added to the current chat');
@@ -7928,12 +8141,14 @@ async function deleteFileLibraryItem(file = {}) {
     if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
     fileLibraryState.files = fileLibraryState.files.filter((entry) => entry.id !== file.id);
     fileLibraryState.storage = data.storage || fileLibraryState.storage;
-    if (String(currentAttachment?.fileId || '') === String(file.id || '')) removeAttachment();
+    for (let i = currentAttachments.length - 1; i >= 0; i--) {
+      if (String(currentAttachments[i].fileId || '') === String(file.id || '')) removeAttachment(i);
+    }
     renderFileLibrary();
     showToast(isChineseLanguage(appState.language) ? '文件已删除' : 'File deleted');
     return true;
   } catch (error) {
-    showToast(error?.message || (isChineseLanguage(appState.language) ? '删除文件失败' : 'Could not delete file'));
+    showToast(localizeServerError(error?.message, isChineseLanguage(appState.language) ? '删除文件失败' : 'Could not delete file'));
     return false;
   }
 }
@@ -7978,7 +8193,7 @@ function renderFileLibrary() {
   const loadMore = document.getElementById('fileLibraryLoadMore');
   if (!grid) return;
   grid.innerHTML = '';
-  if (fileLibraryState.files.length === 0 && !fileLibraryState.loading) {
+  if (fileLibraryState.files.length === 0 && !fileLibraryState.loading && fileLibraryState.storage) {
     const empty = document.createElement('div');
     empty.className = 'file-library-empty';
     empty.innerHTML = `${getSvgIcon('description', 'material-symbols-outlined', 32)}<strong>${isChineseLanguage(appState.language) ? '还没有文件' : 'No files yet'}</strong>`;
@@ -8008,7 +8223,7 @@ async function loadFileLibrary({ append = false } = {}) {
   fileLibraryState.controller = controller;
   fileLibraryState.loading = true;
   const offset = append ? Number(fileLibraryState.nextOffset || 0) : 0;
-  setFileLibraryStatus(isChineseLanguage(appState.language) ? '正在加载...' : 'Loading...');
+  setFileLibraryStatus('loading');
   renderFileLibrary();
   try {
     const params = new URLSearchParams({ limit: '100', offset: String(offset) });
@@ -8034,7 +8249,7 @@ async function loadFileLibrary({ append = false } = {}) {
     return true;
   } catch (error) {
     if (error?.name !== 'AbortError') {
-      setFileLibraryStatus(error?.message || (isChineseLanguage(appState.language) ? '文件库加载失败' : 'Could not load files'), { error: true });
+      setFileLibraryStatus('error', { error: error?.message });
     }
     return false;
   } finally {
@@ -8087,7 +8302,7 @@ function uploadFilesToLibrary() {
     const files = Array.from(input.files || []).slice(0, 20);
     let uploaded = 0;
     for (let index = 0; index < files.length; index += 1) {
-      setFileLibraryStatus(`${isChineseLanguage(appState.language) ? '正在上传' : 'Uploading'} ${index + 1}/${files.length}`);
+      setFileLibraryStatus('uploading', { index: index + 1, total: files.length });
       if (await processUploadedFile(files[index], { attachToComposer: false })) uploaded += 1;
     }
     if (uploaded > 0) await loadFileLibrary();
@@ -8180,17 +8395,18 @@ function getAttachmentTypeLabel(type) {
 }
 
 function createAttachmentListItem(att = {}) {
-  const isImage = att.type === 'image' && (att.data || att.filePath);
+  const isImage = att.type === 'image' && (att.data || att.filePath || att.localThumbnail);
   const sizeLabel = Number(att.size) > 0 ? formatFileSize(Number(att.size)) : '';
   const itemDiv = document.createElement('div');
   itemDiv.className = `message-attachment-item ${isImage ? 'image-attachment' : 'media-attachment'}`;
+  itemDiv.title = att.fileName || att.originalName || '';
 
   if (isImage) {
     const img = document.createElement('img');
     img.alt = att.fileName || '图片';
     img.loading = 'lazy';
-    if (att.data) {
-      img.src = att.data;
+    if (att.data || att.localThumbnail) {
+      img.src = att.data || att.localThumbnail;
     } else {
       img.classList.add('protected-attachment-image');
       img.addEventListener('error', () => itemDiv.classList.add('attachment-preview-error'), { once: true });
@@ -8223,7 +8439,7 @@ function createAttachmentListItem(att = {}) {
     <span class="media-icon">${getSvgIcon(fileLibraryIconName(att), 'material-symbols-outlined', 24)}</span>
     <div class="media-info">
       <div class="media-type">${escapeHtml(getAttachmentTypeLabel(att.type))}${sizeLabel ? ` · ${escapeHtml(sizeLabel)}` : ''}</div>
-      <div class="media-name">${escapeHtml(att.fileName || att.originalName || '')}</div>
+      <div class="media-name" title="${escapeHtml(att.fileName || att.originalName || '')}">${escapeHtml(att.fileName || att.originalName || '')}</div>
       ${canAccessFile ? `<div class="attachment-file-actions">
         <button type="button" class="attachment-preview-btn">${isChineseLanguage(appState.language) ? '预览' : 'Preview'}</button>
         <button type="button" class="attachment-download-btn">${isChineseLanguage(appState.language) ? '下载' : 'Download'}</button>
@@ -8243,8 +8459,124 @@ function createAttachmentListItem(att = {}) {
 
 const RAI_UPDATE_TIMELINE = [
   {
+    date: '2026-11-04', version: 'v0.13.41 · CX RAI 1.8.46',
+    zh: { summary: '替换 GPT Image 2.5 生图，按张扣点，修复 Windows 启动和关闭残留。', details: ['三个图片型号每张消耗 100/200/300 点，点数不足会停止并向当前 AI 返回原因。', '生成图片提供准确名称与文件名，最长边限制 1024 像素。', 'Web 与 Windows 使用内置官方生图技能；失败或取消退还点数。', 'Windows 修复登录跳转异常、已登录启动闪退、扫码后导航及主窗口关闭残留；安装器增加桌面快捷方式。'] },
+    en: { summary: 'GPT Image 2.5 with per-image points; Windows startup and resident-window fixes.', details: ['Three image models cost 100/200/300 points each; insufficient funds stop generation and tell the current AI why.', 'Every image has an exact name and filename; maximum edge is 1024 pixels.', 'Web and Windows share an official image skill; failed or cancelled generations are refunded.', 'Windows repairs authenticated startup, login navigation and resident taskbar ownership, and adds a desktop shortcut.'] }
+  },
+  {
+    date: '2026-11-03', version: 'v0.13.40',
+    zh: { summary: '默认 Luna、关闭思考，优先使用官方额度。', details: ['未保存模型偏好时默认使用 GPT 6 Luna，关闭思考。', 'Luna 在额度内优先使用 OpenAI 官方服务，余量不足时切回原线路。', '联网搜索继续使用 RAI 原有服务。', '管理员可查看输入、输出和完整统计日的平均 Token 用量。'] },
+    en: { summary: 'Luna by default, thinking off, official allowance first.', details: ['Without a saved model preference, start with GPT 6 Luna and thinking disabled.', 'Prefer official OpenAI Luna while the full request fits the daily allowance; otherwise use the existing route.', 'Search continues through the existing RAI service.', 'Administrators can inspect input, output and averages over complete measured days.'] }
+  },
+  {
+    date: '2026-11-02', version: 'v0.13.39 · CX RAI 1.8.40',
+    zh: { summary: '直连优先与有效首字切站，可配置模型和思考等级，修复表格与附件显示。', details: ['智能默认 Sol / low，并记住上次模型与思考选择；Luna 使用独立线路并支持关闭思考。', 'GPT 优先直连，6 秒无有效首字先停止旧连接再切站；开启思考时计入思考首字。普通问题不再等待提前搜索。', '管理员可配置智能、快速与思考模式的模型和等级，并管理模型列表、能力与额度。', '仅展示模型支持的思考等级；打开思考默认自适应，不支持关闭时明确提示。', '修复缺列或压成单行的表格；附件卡片在用户气泡上方，图片可预览，长文件名提示改名。', 'GPT 在估算 258k 开始压缩、272k 上限；DeepSeek 为 400k / 1m，保留完整轮次与附件引用。'] },
+    en: { summary: 'Direct streaming, configurable models and reasoning, repaired tables and attachment cards.', details: ['Smart starts at Sol / low and retains the last model and reasoning choice. Luna uses an independent route with thinking off support.', 'GPT prefers the direct route and cancels the previous connection before switching after 6 seconds without a useful delta. Reasoning counts when enabled; ordinary questions skip speculative search.', 'Administrators manage Smart, fast and thinking model/effort pairs, model capabilities and completed-answer allowances.', 'Show supported reasoning levels only, start enabled thinking in Adaptive mode and explain unsupported off selections.', 'Repair malformed tables and place previewable attachment cards above user bubbles. Prompt for renaming overlong filenames.', 'Estimated compression starts at 258k / 272k hard budget for GPT and 400k / 1m for DeepSeek, preserving full turns and attachment references.'] }
+  },
+  {
+    date: '2026-11-02', version: 'v0.13.37',
+    zh: { summary: '快速模型直连 DeepSeek 官方，分享对话可导入并继续。', details: ['移除 GPT Luna，旧选择迁移到 DeepSeek，保留 Sol 与 Astra。', '分享链接无需登录即可只读预览；登录后可选择保存自己的副本并继续。', '主提示词补充温和语气，分享副本与原对话独立。'] },
+    en: { summary: 'Official DeepSeek fast routing and importable conversation shares.', details: ['Remove GPT Luna and migrate saved selections to DeepSeek while retaining Sol and Astra.', 'Read shared snapshots without signing in, then choose to import and continue after login.', 'Use a gentle tone and keep imported copies independent from their source.'] }
+  },
+  {
+    date: '2026-11-02', version: 'v0.13.36',
+    zh: { summary: '记忆支持每批 500 条操作，并自动保留修改前版本。', details: ['可一次添加或移除最多 500 条长期记忆，总存量支持分页读取。', '新增、更新、删除和清空前自动备份，可查看旧版本并导出 JSON。', '记忆规则按需读取；CX 本地工具使用 Windows 提示词，区分 PowerShell 与 cmd。'] },
+    en: { summary: 'Batch up to 500 memories with automatic previous versions.', details: ['Add or remove up to 500 memories per batch, with paged access to the complete collection.', 'Save a complete snapshot before additions, updates, deletions and clearing; inspect or export a previous version.', 'Load memory guidance on demand and use Windows-specific CX tool instructions that distinguish PowerShell from cmd.'] }
+  },
+  {
+    date: '2026-10-31', version: 'v0.13.35',
+    zh: { summary: '每条消息支持 9 个混合附件，长文本粘贴自动保存为 TXT。', details: ['图片、文件和粘贴文本共享 9 个附件名额，支持连续粘贴和多选。', '超过 4000 字符的粘贴文本自动转为 UTF-8 TXT，保留已有草稿和原始文本。', '看图直接使用已提供的图片；同一附件的文件引用用于实际编辑，避免答完后强制浏览空目录并重复回答。'] },
+    en: { summary: 'Nine mixed attachments per message and automatic TXT attachments for long pastes.', details: ['Images, files and pasted text share nine slots across batches and multi-selection.', 'Pastes over 4,000 characters become UTF-8 TXT files while preserving the existing draft and original text.', 'Use the supplied image for visual analysis; its file reference supports actual editing without a forced empty-directory round after the answer.'] }
+  },
+  {
+    date: '2026-10-30', version: 'v0.13.34',
+    zh: { summary: '统一 Web 与连接扩展版本，提前核验正式发行。', details: ['浏览器扩展、Web、锁文件和缓存构建同步版本，保留既有扩展身份。', '在 PR 和构建开始前验证真实版本与发行通道，提前拒绝版本或标签不一致；不再用过期固定版本充当发行测试。', '保留旧标签与失败记录，以新版本完成门禁、合并、打包及正式部署。'] },
+    en: { summary: 'Align Web and connection-extension versions and validate releases early.', details: ['Synchronize extension, Web, lockfile and cache versions while keeping the existing extension identity.', 'Validate the real version and release channel before PR builds; reject version or tag mismatches instead of testing an obsolete fixed version.', 'Keep previous tags and failure records intact and complete gates, merge, packaging and formal deployment with a new version.'] }
+  },
+  {
+    date: '2026-10-30', version: 'v0.13.33',
+    zh: { summary: '升级登录与 Web 基础依赖，补齐兼容性和安全门禁。', details: ['升级通行密钥验证库与 Express，保留既有查询参数语义。', '新增请求体大小、表单参数数量、异步错误与原型隔离回归；保留通行密钥重放、并发、签名与来源验证。', '清除已不在依赖图中的 RustSec 例外，对剩余 Linux 桌面依赖逐条记录限期复核，不宣称尚未修复的上游问题已经解决。'] },
+    en: { summary: 'Refresh authentication and Web dependencies with compatibility and security gates.', details: ['Upgrade Passkey verification and Express while preserving existing query parsing semantics.', 'Exercise body and form bounds, asynchronous errors and prototype isolation alongside Passkey replay, concurrency, signature and origin checks.', 'Remove obsolete RustSec exceptions and individually time-bound the remaining Linux desktop dependency reviews without claiming upstream issues are fixed.'] }
+  },
+  {
+    date: '2026-10-30', version: 'v0.13.32',
+    zh: { summary: '跟随浏览器的双语体验，普通 Web 对话支持显式选择技能。', details: ['首次打开按浏览器偏好选择简体中文或英文；可手动切换，也可恢复自动。', '输入 @ 或打开加号菜单中的「技能」，最多为当前请求选择三项内置指导；不写入普通历史，也不扩大工具权限。不支持的模式会明确提示。', '补齐分享、扫码确认、注册、文件库与远程电脑说明的英文文案，并保留既有的手动语言选择。', '暂时关闭网页版自带 API Key 入口与旧会话自动进入，不删除已存的会话配置。', '补全近期版本记录；Windows 下载继续指向公开的最新正式版。'] },
+    en: { summary: 'Browser-aware bilingual experiences and explicit skill selection in normal Web chat.', details: ['New visits follow browser preferences for Simplified Chinese or English. Choose a language manually or return to automatic selection.', 'Type @ or open Skills in the plus menu to select up to three built-in guides for this request. Guidance stays out of ordinary history and grants no tool permissions; unsupported modes give explicit feedback.', 'Complete English sharing, QR confirmation, registration, file-library and remote-PC guidance while preserving existing language choices.', 'Temporarily close Web bring-your-own-key entry and automatic custom-API session restoration without deleting saved session configuration.', 'Bring recent release notes up to date and keep Windows downloads linked to the latest public release.'] }
+  },
+  {
+    date: '2026-10-27', version: 'v0.13.31',
+    zh: { summary: '与 CX RAI 对齐的按需技能服务。', details: ['原生客户端传入有界技能目录，详细指导只在需要时读取。', '用户显式选择的技能资料只用于当前请求，不保存为普通对话历史，也不扩大工具权限。', '2026-10-28 补齐原生设置工具注册与路由。'] },
+    en: { summary: 'On-demand skill services shared with CX RAI.', details: ['Native clients provide a bounded skill catalog; detailed guidance is read only when needed.', 'Explicitly selected skill references apply to the current request, stay out of ordinary chat history and do not grant additional tool permissions.', 'Native settings tool registration and routing were completed on October 28.'] }
+  },
+  {
+    date: '2026-10-13', version: 'v0.13.30',
+    zh: { summary: '历史工具卡片明确区分已知结果与当时记录。', details: ['旧会话缺少最终执行结果时明确说明无法确认，避免把历史进度误显示成正在执行。', '保留已有成功、失败与实时状态，诊断内容继续以纯文本呈现。'] },
+    en: { summary: 'Tool history distinguishes verified outcomes from recorded progress.', details: ['When an older conversation has no final tool result, say so instead of making past progress look live.', 'Preserve known success, failure and live states; render diagnostics as plain text.'] }
+  },
+  {
+    date: '2026-10-13', version: 'v0.13.29',
+    zh: { summary: '恢复远程电脑状态时重新核验连接。', details: ['断开或重新打开会话后，不把保存的电脑选择当成有效连接。', '迟到的授权事件不能跨账号覆盖当前状态。'] },
+    en: { summary: 'Revalidate remote-PC state when reconnecting.', details: ['A saved PC selection is not treated as an active connection after disconnecting or reopening a conversation.', 'Late consent events cannot overwrite state across account switches.'] }
+  },
+  {
+    date: '2026-10-12', version: 'v0.13.28',
+    zh: { summary: '保存工具完成结果，恢复会话时展示执行历史。', details: ['远程工具最终状态与回答一起保存。', '历史卡片与实时卡片使用一致的状态表达，不重放已执行操作。'] },
+    en: { summary: 'Persist completed tool results with conversation history.', details: ['Save remote-tool outcomes alongside the answer.', 'History and live cards use consistent status labels without replaying completed actions.'] }
+  },
+  {
+    date: '2026-10-12', version: 'v0.13.27',
+    zh: { summary: '扫码入口自动启动相机。', details: ['进入扫码流程时请求相机，保留明确的授权与失败提示。'] },
+    en: { summary: 'Start the camera when opening the QR scanner.', details: ['Request camera access on entry while keeping explicit permission and failure feedback.'] }
+  },
+  {
+    date: '2026-10-11', version: 'v0.13.26',
+    zh: { summary: '修复首次打开误显登录页；远程电脑支持网页逐次或持续授权。', details: ['首次打开与后台续期共用扫码会话和去重逻辑，网络暂时失败不会误清登录状态，迟到响应不能覆盖新账号。','CX RAI 1.8.11+ 在电脑首次明确启用后，可在当前对话查看完整操作参数，选择仅本次、持续授权或拒绝，无需回电脑逐次确认。', '持续授权仅适用于此网页登录有效期间的同一电脑、对话及原工作目录，可撤销；断开连接不等于撤销授权。', '设备及授权元数据可跨服务重启恢复；不持久化本地路径、操作正文或设备密钥明文。', '撤销与启动竞争、旧版授权兼容、任务重放和结果不明防重试均有回归覆盖。候选客户端仍需安装后实机验收。'] },
+    en: { summary: 'Reliable cold-start sign-in and Web-side remote-PC authorization.', details: ['Startup and background renewal share the accepted QR session and single-flight refresh. Temporary failures preserve recoverable sign-in; stale responses cannot replace a newer account.','After explicit opt-in on CX RAI 1.8.11+, inspect full action arguments and approve once, allow continuously, or reject in the current chat without returning to the PC.', 'Continuous consent is limited to this Web login, PC, conversation and original directory. Disconnecting is not revocation.', 'Device and scoped consent metadata survive server restarts; paths, tool payloads and plaintext device keys are never persisted.', 'Regression coverage includes revocation races, legacy consent, replay prevention and unknown-result retry blocking. Installed-device acceptance of the candidate client remains open.'] }
+  },
+  {
+    date: '2026-10-10', version: 'v0.13.25',
+    zh: { summary: '修复切模型后的菜单/研究点击，整理诊断入口，增强远程电脑连接。', details: ['隐藏的模型面板不再拦截更多菜单；快速独立点击不再被时间阈值丢弃。', '脱敏诊断导出移到设置 → 高级。', '远程电脑显示设备名及绿黄红连接状态，断线不再回退云端文件操作。', '新增新版 CX helper 心跳与原对话目录协议；仍需电脑本机逐次确认。研究讨论/自定义 API 与远程工具组合会明确提示不支持。'] },
+    en: { summary: 'Reliable composer menus and research selection, Advanced diagnostics, and safer remote-PC sessions.', details: ['Hidden model panels no longer intercept composer controls; fast independent taps are accepted.', 'Sanitized diagnostic export is now in Settings → Advanced.', 'Remote sessions show a named colored status and never silently fall back to cloud file operations.', 'New CX helper heartbeat and original-conversation directory protocol; each PC action still needs local approval. Unsupported research/custom-API remote combinations are reported explicitly.'] }
+  },
+  {
+    date: '2026-10-10', version: 'v0.13.24',
+    zh: { summary: '修复工具调用期间插话不显示，菜单不再误关。', details: ['多轮工具调用时插话立即出现在对话中，并作为用户消息进入上下文。', '插话不再因带附件被静默丢弃。', '更多菜单与模型下拉按菜单矩形判定点击，圆角穿透不再误关。'] },
+    en: { summary: 'Interjections appear during tool-calling runs; menus no longer close on edge clicks.', details: ['Interjections render immediately and join the tool-call context as user turns.', 'Interjections are not dropped when attachments are present.', 'Menu close uses the menu box so rounded-corner pass-through cannot close it.'] }
+  },
+  {
+    date: '2026-10-10', version: 'v0.13.23',
+    zh: { summary: '首字超时改为 20 秒并按有效首 token 计算；补齐流式正文；修复冷启动登录页。', details: ['供应商 20 秒内没有首个有效 token（正文或思考）才切换官方 DeepSeek；思考时间长不再被误判。', '上游只输出思考、未输出正文时，会在同供应商补答一次再落库，正常显示正文。', '修复冷启动偶发显示登录页：暂时性刷新失败不再清除会话，客户端自动重试。'] },
+    en: { summary: '20s first-token deadline, streaming answer recovery, and reliable cold-start auth.', details: ['Fall back to official DeepSeek only when no effective first token (content or reasoning) arrives within 20 seconds; long thinking is never treated as a stall.', 'If an upstream returns reasoning with no content, retry once on the same provider so the answer streams normally.', 'Transient refresh failures no longer clear the session; the client retries on startup so the login frame does not flash.'] }
+  },
+  {
+    date: '2026-10-09', version: 'v0.13.22',
+    zh: { summary: '修复输入框点击和最大思考档，精简模型列表。', details: ['点击或轻触输入框内除按钮、菜单等控件外的空白区域，直接聚焦并输入。', '工具栏与模型按钮周围空白也可输入；发送/停止仍在右侧。', '添加附件整行可点击；支持多文件、多图片与追加批次上传，同一问题一起发送。', '移动端回复正文可上下滑动，流式输出不再把正在查看历史的用户拉回底部。', '统一桌面、手机和网页应用的聚焦逻辑，移除 Android 重复延迟聚焦。', '打开思考默认自适应，由模型决定思考长度；也可手动选择低、中、高、最大（Max）。', '模型列表仅显示名称，后台视觉、思考和上下文压缩能力不变。'] },
+    en: { summary: 'Fix composer focus and maximum reasoning; simplify model names.', details: ['Click or tap blank composer space to type immediately.', 'Toolbar/model-control gaps focus input; send/stop stay on the right.', 'The whole attachment row opens a multi-file picker; images and files can be appended to one question.', 'Mobile reply swipes scroll history without streaming updates snapping readers to the bottom.', 'One synchronous focus path for desktop, mobile and PWA; remove the delayed Android duplicate.', 'Thinking starts in Adaptive mode with model-managed effort; Low, Medium, High and Max remain manual choices.', 'Model lists show names only without changing vision, reasoning or context capabilities.'] }
+  },
+  {
+    date: '2026-10-09', version: 'v0.13.21',
+    zh: { summary: '修复发送按钮位置，恢复智能模型名称，整理下载推荐标。', details: ['发送和停止按钮固定在输入工具栏右侧；不受适人握持影响。', '智能模型名称恢复，模型路由、思考档位与额度规则不变。', 'Windows 安装器推荐标嵌入下载按钮；Mac/手机推荐网页版应用，刷新和语言切换不会丢失标签。', '左右侧栏均可反向滑回；回答标签显示真实请求模型 ID，回退和历史记录保留实际模型。'] },
+    en: { summary: 'Fix composer alignment, restore Smart Model and tidy download recommendations.', details: ['Keep send/stop on the right regardless of handedness.', 'Restore Smart Model without changing routing, reasoning or quotas.', 'Compact inline recommendations survive locale switches and download refreshes.', 'Both sidebar edges close with the reverse swipe; reply badges display actual upstream IDs and persist fallback provenance.'] }
+  },
+  {
+    date: '2026-10-09', version: 'v0.13.20 · CX RAI 1.8.7',
+    zh: { summary: '手机 Web 连接在线 CX RAI 电脑；模型、额度与 256k 自动上下文压缩已统一。', details: [
+      '更多 → 连接 CX RAI；电脑设置 → 通用主动开启，同账号、安全码和每次操作的电脑授权。无需手机扩展。',
+      '文件、产物和 PowerShell 在已授权电脑执行，Web 接收结果继续回答。关闭、离线、登出或到期撤销，不重放任务。',
+      '四个视觉模型：DeepSeek V4.1 Flash、GPT 6.1 Sol、GPT 6 Luna、GPT 6 Astra；低/中/高/max，统一 256k 自动压缩。',
+      '滚动 24h 成功答完计次，两端共享；默认 Sol、快速 Fast DeepSeek、思考 Sol 自适应，10 秒无响应切官方 DeepSeek。',
+      '电脑不启用适人握持，侧栏双向滑动，索引预览夹在屏幕内；Windows 推荐安装器，Mac/手机推荐网页应用。'
+    ] },
+    en: { summary: 'Connect mobile Web to an online CX RAI PC, with unified models, quotas and 256k context.', details: [
+      'More → Connect CX RAI. Opt in on the PC, use the same account, verify the code and approve every action locally. No phone extension.',
+      'Run files and PowerShell on the approved PC; return results to chat. Disconnect, offline, logout or expiry revoke access without replay.',
+      'Four vision models, low/medium/high/max, 256k automatic compression and account-wide rolling completed-turn quotas.',
+      'Default Sol, Fast DeepSeek and adaptive thinking Sol, with official DeepSeek fallback after 10 seconds without a response.'
+    ] }
+  },
+  {
     date: '2026-09-24',
-    version: 'v0.13.18 · 正式版',
+    version: 'v0.13.19 · 正式版', versionEn: 'v0.13.19 · Stable',
     zh: {
       summary: '正式版汇总：客户端下载、CX RAI、适人握持、流式稳定性与移动端布局全面升级。',
       details: [
@@ -8892,16 +9224,16 @@ const RAI_UPDATE_TIMELINE = [
     date: '2026-07-31',
     version: 'v0.11.64',
     zh: {
-      summary: '智能模型首选切换为 GPT 5.6 Luna，并启用有序备用路由。',
+      summary: '智能模型首选切换为 GPT 6 Luna，并启用有序备用路由。',
       details: [
-        '智能文本请求优先使用 GPT 5.6 Luna；连接或上游失败时依次尝试 Kimi K2.6、Nemotron 3 Ultra 与 DeepSeek V4 Flash。',
+        '智能文本请求优先使用 GPT 6 Luna；连接或上游失败时依次尝试 Kimi K2.6、Nemotron 3 Ultra 与 DeepSeek V4 Flash。',
         'Gemini 3.6 使用 Fast 独立路由，Claude Sonnet 5 使用 UMAPIS 独立路由，避免共享凭据与单点故障。'
       ]
     },
     en: {
-      summary: 'Smart Model now prefers GPT 5.6 Luna with an ordered fallback route.',
+      summary: 'Smart Model now prefers GPT 6 Luna with an ordered fallback route.',
       details: [
-        'Smart text requests prefer GPT 5.6 Luna, then fall back through Kimi K2.6, Nemotron 3 Ultra, and DeepSeek V4 Flash after connectivity or upstream failures.',
+        'Smart text requests prefer GPT 6 Luna, then fall back through Kimi K2.6, Nemotron 3 Ultra, and DeepSeek V4 Flash after connectivity or upstream failures.',
         'Gemini 3.6 uses its dedicated Fast route, while Claude Sonnet 5 uses a separate UMAPIS route to isolate credentials and failures.'
       ]
     }
@@ -9202,8 +9534,8 @@ const RAI_UPDATE_TIMELINE = [
     zh: {
       summary: '精简模型界面，修复 GPT Image 2 专用网关并改善移动交互。',
       details: [
-        '模型选择器只保留 GPT 5.6、DeepSeek v4 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
-        '智能模式使用 DeepSeek Pro / GPT 5.6 Terra，快速模式使用 DeepSeek Flash / GPT 5.6 Luna，思考模式在智能链上开启多档 Thinking。',
+        '模型选择器只保留 GPT 6、DeepSeek V4.1 Flash 和 Nemotron 3 Ultra，移除模型 ID 与已退役代码模型的活跃路由。',
+        '智能模式使用 DeepSeek Pro / GPT 6 Terra，快速模式使用 DeepSeek Flash / GPT 6 Luna，思考模式在智能链上开启多档 Thinking。',
         'GPT Image 2 改用独立 0600 密钥文件和 chat/completions 图像协议，仍保留 SiliconFlow 故障回退。',
         '移动端从主界面任意横向起点右滑即可打开侧边栏；推理档位改为低、中、高、自动四个等距锚点。'
       ]
@@ -9211,8 +9543,8 @@ const RAI_UPDATE_TIMELINE = [
     en: {
       summary: 'Focuses the model UI, repairs the dedicated GPT Image 2 gateway, and improves mobile controls.',
       details: [
-        'The visible picker now contains only GPT 5.6, DeepSeek v4, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
-        'Smart uses DeepSeek Pro with GPT 5.6 Terra fallback, Fast uses DeepSeek Flash with GPT 5.6 Luna fallback, and Think enables multi-level reasoning on the Smart chain.',
+        'The visible picker now contains only GPT 6, DeepSeek V4.1 Flash, and Nemotron 3 Ultra, with model IDs and the retired code-model route removed.',
+        'Smart uses DeepSeek Pro with GPT 6 Terra fallback, Fast uses DeepSeek Flash with GPT 6 Luna fallback, and Think enables multi-level reasoning on the Smart chain.',
         'GPT Image 2 now uses a separate 0600 key file and its chat-completions image protocol while retaining the SiliconFlow outage fallback.',
         'A right swipe from any non-interactive point in the mobile main view opens the sidebar, and the Low, Medium, High, and Auto reasoning labels align directly below four equal stops.'
       ]
@@ -11326,7 +11658,7 @@ const RAI_UPDATE_TIMELINE = [
   },
   {
     date: '2025-12-10',
-    version: 'v0.6 多模态',
+    version: 'v0.6 多模态', versionEn: 'v0.6 Multimodal',
     zh: {
       summary: '多模态能力归档。',
       details: [
@@ -11448,14 +11780,17 @@ const RAI_UPDATE_TIMELINE = [
 
 const SUPPORTED_LANGUAGES = ['zh-CN', 'zh-TW', 'en'];
 const LANGUAGE_OPTION_LABELS = {
+  'auto': { 'zh-CN': '跟随浏览器', 'zh-TW': '跟隨瀏覽器', 'en': 'Browser language' },
   'zh-CN': { 'zh-CN': '简体中文', 'zh-TW': '简体中文', 'en': 'Simplified Chinese' },
   'zh-TW': { 'zh-CN': '繁體中文', 'zh-TW': '繁體中文', 'en': 'Traditional Chinese' },
   'en': { 'zh-CN': 'English', 'zh-TW': 'English', 'en': 'English' }
 };
 
 function normalizeLanguage(lang) {
-  if (lang === 'zh-HK' || lang === 'zh-MO') return 'zh-TW';
-  return SUPPORTED_LANGUAGES.includes(lang) ? lang : 'zh-CN';
+  if (window.RAILocale) return window.RAILocale.normalize(lang) || 'en';
+  const tag = String(lang || '').replace(/_/g, '-').toLowerCase();
+  if (/^zh(?:-|$)/.test(tag)) return /(?:^|-)(?:tw|hk|mo|hant)(?:-|$)/.test(tag) ? 'zh-TW' : 'zh-CN';
+  return 'en';
 }
 
 function isChineseLanguage(lang = appState.language) {
@@ -11816,7 +12151,7 @@ function renderSettingsTimeline() {
 
     const version = document.createElement('div');
     version.className = 'settings-timeline-version';
-    version.textContent = entry.version;
+    version.textContent = appState.language === 'en' ? (entry.versionEn || entry.version) : entry.version;
 
     const summary = document.createElement('p');
     summary.textContent = content.summary || '';
@@ -13303,22 +13638,15 @@ function normalizeResearchMode(value) {
 }
 
 const RESEARCH_MODEL_OPTIONS = [
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-  { id: 'gpt-5.6-luna', label: 'GPT 5.6' },
-  { id: 'gemma', label: 'Gemma' },
-  { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6' },
-  { id: 'kimi-k2.6', label: 'Kimi K2.6' },
-  { id: 'chatgpt-gpt-oss-120b', label: 'ChatGPT' },
-  { id: 'deepseek-pro', label: 'DeepSeek Pro' },
-  { id: 'deepseek-flash', label: 'DeepSeek v4' },
-  { id: 'nemotron-3-ultra', label: 'Nemotron 3 Ultra' },
-  { id: 'gemini-3-flash', label: 'Gemini 3 Flash' }
+  { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
+  { id: 'gpt-6.1-sol', label: 'GPT 6.1 Sol' },
+  { id: 'gpt-6-astra', label: 'GPT 6 Astra' }
 ];
 
 function normalizeResearchModelId(modelId) {
   const normalized = normalizeSelectedModelId(modelId);
-  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-pro';
-  if (normalized === 'deepseek-v4-flash') return 'deepseek-flash';
+  if (normalized === 'deepseek-v3' || normalized === 'deepseek-v3.2-speciale' || normalized === 'deepseek-v4-pro') return 'deepseek-v4.1-flash';
+  if (normalized === 'deepseek-v4-flash') return 'deepseek-v4.1-flash';
   return normalized;
 }
 
@@ -13333,18 +13661,31 @@ function normalizeResearchAgentModels(input) {
     if (!allowed.has(modelId) || selected.includes(modelId)) return;
     selected.push(modelId);
   });
-  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-pro'];
+  return selected.length > 0 ? selected.slice(0, 4) : ['gemma', 'qwen3.6-35b-a3b', 'chatgpt-gpt-oss-120b', 'deepseek-v4.1-flash'];
 }
 
 function normalizeResearchMasterModel(input) {
   const modelId = normalizeResearchModelId(input);
-  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-pro';
+  return RESEARCH_MODEL_OPTIONS.some(option => option.id === modelId) ? modelId : 'deepseek-v4.1-flash';
 }
 
 
 
 function isResearchModeEnabled() {
   return appState.researchModeEnabled === true;
+}
+
+// Research mode fans out to one or more sub-agent models. If an administrator has
+// disabled every research-capable model, the mode cannot run: report it explicitly
+// instead of letting the tap look like a no-op.
+function hasRunnableResearchModels() {
+  return RESEARCH_MODEL_OPTIONS.some((option) => !isModelDisabledByAdmin(option.id));
+}
+
+function rejectUnsupportedResearchMode() {
+  showToast(i18nText('research-mode-unavailable', isChineseLanguage(appState.language)
+    ? '研究模式暂不可用：所有研究模型均已停用'
+    : 'Research mode is unavailable: every research model is disabled'));
 }
 
 function rememberCurrentNonResearchModel() {
@@ -13373,6 +13714,10 @@ function setResearchModeFromSlider(indexValue) {
 function setResearchMode(mode, options = {}) {
   const normalized = normalizeResearchMode(mode);
   if (options.enable !== false) {
+    if (!isResearchModeEnabled() && !hasRunnableResearchModels()) {
+      rejectUnsupportedResearchMode();
+      return;
+    }
     if (!isResearchModeEnabled()) rememberCurrentNonResearchModel();
     appState.researchModeEnabled = true;
   }
@@ -13381,7 +13726,7 @@ function setResearchMode(mode, options = {}) {
 
   if (isResearchModeEnabled() && normalized === 'deep') {
     appState.thinkingMode = true;
-    appState.reasoningProfile = 'high';
+    appState.reasoningProfile = 'auto';
   } else if (isResearchModeEnabled() && normalized === 'fast') {
     appState.thinkingMode = false;
     appState.reasoningProfile = 'low';
@@ -13399,6 +13744,10 @@ function setResearchMode(mode, options = {}) {
 function toggleResearchModeFromMenu(event) {
   event?.stopPropagation?.();
   const nextEnabled = !isResearchModeEnabled();
+  if (nextEnabled && !hasRunnableResearchModels()) {
+    rejectUnsupportedResearchMode();
+    return;
+  }
   if (nextEnabled) rememberCurrentNonResearchModel();
   appState.researchModeEnabled = nextEnabled;
   appState.agentMode = false;
@@ -13407,7 +13756,7 @@ function toggleResearchModeFromMenu(event) {
     const normalized = normalizeResearchMode(appState.researchMode);
     if (normalized === 'deep') {
       appState.thinkingMode = true;
-      appState.reasoningProfile = 'high';
+      appState.reasoningProfile = 'auto';
     } else {
       appState.thinkingMode = false;
       appState.reasoningProfile = 'low';
@@ -13494,7 +13843,7 @@ function renderResearchModelControls() {
     masterSelect.innerHTML = RESEARCH_MODEL_OPTIONS.map((option) => `
       <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
     `).join('');
-    masterSelect.value = appState.researchMasterModel || currentValue || 'deepseek-pro';
+    masterSelect.value = normalizeResearchMasterModel(appState.researchMasterModel || currentValue || 'deepseek-v4.1-flash');
   }
 }
 
@@ -13533,19 +13882,17 @@ function setResearchMasterModel(modelId, event) {
 function getRequestModelIdForCurrentMode() {
   const identity = String(appState.modelPromptIdentity || '').trim().toLowerCase();
   if (identity === 'fast') return 'fast-auto';
-  if (identity === 'think') return 'think-auto';
+  if (identity === 'think' && appState.thinkingMode) return 'think-auto';
   const selected = normalizeSelectedModelId(appState.selectedModel);
   return selected;
 }
 
 function getRequestReasoningProfileForCurrentMode() {
-  if (getEffectiveResearchMode() === 'deep' && appState.thinkingMode) {
-    return 'mixed';
-  }
+  if (!appState.thinkingMode && currentThinkingCapability().canDisableThinking) return 'none';
   if (getEffectiveResearchMode() === 'fast') {
     return 'low';
   }
-  return normalizeReasoningProfile(appState.reasoningProfile);
+  return normalizeReasoningProfileForModel(appState.reasoningProfile);
 }
 
 function normalizeRaiMode(mode = '') {
@@ -13563,17 +13910,17 @@ function getModeRequestConfig(mode = '') {
     return {
       mode: 'smart',
       model: 'auto',
-      thinkingMode: false,
-      reasoningProfile: 'low',
+      thinkingMode: modelVisibilityState.smartDefaults.thinkingMode !== false,
+      reasoningProfile: normalizeReasoningProfile(modelVisibilityState.smartDefaults.reasoningProfile || 'low'),
       researchMode: 'off'
     };
   }
   if (normalized === 'research') {
     return {
       mode: 'research',
-      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-pro'),
+      model: normalizeResearchMasterModel(appState.researchMasterModel || 'deepseek-v4.1-flash'),
       thinkingMode: normalizeResearchMode(appState.researchMode) === 'deep',
-      reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'mixed' : 'low',
+      reasoningProfile: normalizeResearchMode(appState.researchMode) === 'deep' ? 'auto' : 'low',
       researchMode: normalizeResearchMode(appState.researchMode || 'fast')
     };
   }
@@ -13582,7 +13929,7 @@ function getModeRequestConfig(mode = '') {
       mode: 'think',
       model: 'auto',
       thinkingMode: true,
-      reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile === 'low' ? 'medium' : appState.reasoningProfile),
+      reasoningProfile: 'auto',
       researchMode: 'off'
     };
   }
@@ -13602,7 +13949,13 @@ function selectRaiModeFromMenu(mode, event) {
 
   if (config.mode === 'research') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    appState.modelPromptIdentity = 'research';
+    // Only claim the research identity if the mode actually turned on (setResearchMode
+    // refuses when no research model is available); otherwise keep the current routing.
+    if (isResearchModeEnabled()) {
+      appState.modelPromptIdentity = 'research';
+    } else if (restoreMenuFocus) {
+      return;
+    }
   } else {
     appState.researchModeEnabled = false;
     appState.selectedModel = config.model;
@@ -13705,6 +14058,7 @@ const SETTINGS_SECTION_TITLE_KEYS = {
   personalization: 'settings-nav-personalization',
   memory: 'settings-nav-memory',
   advanced: 'settings-nav-advanced',
+  developer: 'settings-nav-developer',
   desktop: 'settings-nav-desktop',
   notifications: 'settings-nav-notifications',
   about: 'settings-nav-about',
@@ -13797,7 +14151,9 @@ function updateSettingsOptionButtons() {
   });
 
   document.querySelectorAll('[data-language-option]').forEach((button) => {
-    button.classList.toggle('active', button.getAttribute('data-language-option') === appState.language);
+    const active = button.getAttribute('data-language-option') === (window.RAILocale?.getPreference() || appState.language);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 
   document.querySelectorAll('[data-selection-explain-delete-mode]').forEach((button) => {
@@ -13904,6 +14260,7 @@ function updateSettingsNavigationUI() {
 
 function switchSettingsSection(section = 'general', options = {}) {
   section = normalizeSettingsSection(section);
+  if (section === 'developer' && !developerOptionsEnabled()) return;
   if (section === 'desktop' && !RAI_IS_TAURI_DESKTOP) return;
   const nextPanel = document.querySelector(`[data-settings-panel="${section}"]`);
   if (!nextPanel) return;
@@ -14137,6 +14494,7 @@ function buildSettingsSearchEntries() {
   document.querySelectorAll('[data-settings-panel]').forEach((panel) => {
     const section = panel.getAttribute('data-settings-panel');
     if (!section) return;
+    if (section === 'developer' && !developerOptionsEnabled()) return;
     const navButton = document.querySelector(`.settings-nav-item[data-settings-section="${section}"]`);
     const sectionTitle = String(navButton?.textContent || getSettingsSectionTitle(section)).replace(/\s+/g, ' ').trim();
     const targetMap = new Map();
@@ -14287,16 +14645,7 @@ function restoreInternetSearchDefault() {
 }
 
 function settingsToggleThinkingMode() {
-  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  if (!currentModel?.supportsThinking) {
-    appState.thinkingMode = false;
-    updateToolbarUI();
-    updateSettingsCapabilitiesUI();
-    showToast(isChineseLanguage(appState.language) ? '当前模型不支持思考模式' : 'Current model does not support thinking mode');
-    return;
-  }
-  appState.thinkingMode = !appState.thinkingMode;
-  updateToolbarUI();
+  toggleThinkingFromMenu();
   updateSettingsCapabilitiesUI();
 }
 
@@ -14322,18 +14671,19 @@ function normalizeHandedness(value) {
 }
 
 function isHandednessMobileLayout() {
-  return window.matchMedia('(max-width: 768px)').matches;
+  return ['ios', 'android', 'windows-mobile'].includes(getClientPlatform());
 }
 
 function updateSettingsHandednessUI() {
   const switchButton = document.getElementById('settingsHandednessSwitch');
   const toggle = document.getElementById('settingsHandednessToggle');
-  if (switchButton) switchButton.setAttribute('aria-pressed', appState.handednessEnabled ? 'true' : 'false');
-  if (toggle) toggle.classList.toggle('active', !!appState.handednessEnabled);
+  const allowed = isHandednessMobileLayout();
+  if (switchButton) { switchButton.setAttribute('aria-pressed', allowed && appState.handednessEnabled ? 'true' : 'false'); switchButton.disabled = !allowed; switchButton.title = allowed ? '' : (isChineseLanguage(appState.language) ? '电脑端暂不启用，不影响同账号其他设备' : 'Disabled on computers; other devices retain their setting'); }
+  if (toggle) toggle.classList.toggle('active', allowed && !!appState.handednessEnabled);
 }
 
 function applyHandednessLayout() {
-  const enabled = appState.handednessEnabled === true;
+  const enabled = appState.handednessEnabled === true && isHandednessMobileLayout();
   const handedness = normalizeHandedness(appState.handedness);
   const root = document.documentElement;
   const switchToken = Number(appState.handednessSwitchToken || 0) + 1;
@@ -14343,16 +14693,11 @@ function applyHandednessLayout() {
   root.classList.toggle('handedness-enabled', enabled);
   root.classList.toggle('hand-left', enabled && handedness === 'left');
   root.classList.toggle('hand-right', enabled && handedness === 'right');
-  const moveSendLeft = enabled && handedness === 'left';
+  // Send and stop stay on the right regardless of synced handedness.
   [document.getElementById('sendBtn'), document.getElementById('stopBtn')].forEach((button) => {
     if (!button) return;
-    if (moveSendLeft) {
-      button.style.order = '-1';
-      button.style.marginRight = '4px';
-    } else {
-      button.style.removeProperty('order');
-      button.style.removeProperty('margin-right');
-    }
+    button.style.removeProperty('order');
+    button.style.removeProperty('margin-right');
   });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (appState.handednessSwitchToken === switchToken) {
@@ -14397,6 +14742,7 @@ function initHandednessTracking() {
 }
 
 function settingsToggleHandedness() {
+  if (!isHandednessMobileLayout()) return;
   appState.handednessEnabled = !appState.handednessEnabled;
   persistLocalSettingsPatch({
     handednessEnabled: appState.handednessEnabled,
@@ -14652,19 +14998,30 @@ function toggleLanguage() {
 
 function updateAuthLanguageButtons() {
   document.querySelectorAll('.auth-lang-text-btn[data-lang]').forEach((button) => {
-    const active = normalizeLanguage(button.dataset.lang) === normalizeLanguage(appState.language);
+    const active = button.dataset.lang === (window.RAILocale?.getPreference() || appState.language);
     button.classList.toggle('active-lang', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 }
 
-function setLanguage(lang) {
+function setLanguage(lang, options = {}) {
+  if (options.persist !== false && lang !== 'auto' && isChineseLanguage(normalizeLanguage(lang))) {
+    try { localStorage.setItem('rai_language_chinese_variant', normalizeLanguage(lang)); } catch (_) { /* Session-only preference. */ }
+  }
+  if (options.persist !== false && window.RAILocale) {
+    lang = window.RAILocale.setPreference(lang);
+    if (appState.localeListenerBound) return;
+  }
   lang = normalizeLanguage(lang);
   appState.language = lang;
-  localStorage.setItem('rai_language', lang);
+  if (options.persist !== false && !window.RAILocale) {
+    try { localStorage.setItem('rai_language', lang); } catch (_) { /* Session-only preference. */ }
+  }
   if (isChineseLanguage(lang)) {
     appState.languageToggleChinese = lang;
-    localStorage.setItem('rai_language_chinese_variant', lang);
+    if (options.persist !== false) {
+      try { localStorage.setItem('rai_language_chinese_variant', lang); } catch (_) { /* Session-only preference. */ }
+    }
   }
 
   // 更新HTML lang属性
@@ -14735,6 +15092,9 @@ function setLanguage(lang) {
   updateUserIdentityUI();
   updateSettingsNavigationUI();
   updatePwaInstallUI();
+  localizeFileLibraryPage();
+  renderFileLibrary();
+  renderFileLibraryStatus();
   if (windowsDownloadsRelease) renderWindowsDownloads();
   updateNotificationButton();
   renderNotificationsPanel();
@@ -14763,10 +15123,14 @@ function initThemeAndLanguage() {
 
   applyFontPreference(localStorage.getItem('rai_font_preference') || readLocalSettingsObject().fontPreference || 'system');
 
-  // 加载保存的语言
-  const savedLanguage = normalizeLanguage(localStorage.getItem('rai_language') || 'zh-CN');
+  // Browser detection is not an explicit preference; keep automatic mode automatic.
+  const savedLanguage = window.RAILocale?.getLanguage() || normalizeLanguage(navigator.language);
   appState.languageToggleChinese = normalizeLanguage(localStorage.getItem('rai_language_chinese_variant') || (isChineseLanguage(savedLanguage) ? savedLanguage : 'zh-CN'));
-  setLanguage(savedLanguage);
+  if (window.RAILocale && !appState.localeListenerBound) {
+    window.RAILocale.subscribe((language) => setLanguage(language, { persist: false }));
+    appState.localeListenerBound = true;
+  }
+  setLanguage(savedLanguage, { persist: false });
 
   const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: light)');
   if (systemThemeQuery && !appState.systemThemeListenerBound) {
@@ -14858,24 +15222,22 @@ function expandInput() {
 
 
 function handleInputContainerClick(event) {
-  // 点击输入容器时聚焦输入框
   const target = event.target;
+  if (!(target instanceof Element) || event.defaultPrevented) return;
+  if (event.type === 'pointerdown' && (event.button !== 0 || event.isPrimary === false)) return;
 
-  // 如果点击的是工具栏按钮或下拉菜单，不处理
-  if (target.closest('.toolbar-btn') ||
-    target.closest('.model-dropdown') ||
-    target.closest('.model-selector') ||
-    target.closest('.thinking-budget-modal') ||
-    target.closest('.send-btn') ||
-    target.closest('.stop-btn')) {
-    return;
-  }
+  // Ignore actual controls, not their layout wrappers: empty toolbar/model gaps
+  // belong to the composer too. Never steal focus from menus, sliders or previews.
+  if (target.closest('button, a, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="menuitem"], [role="slider"], [data-rai-click], .more-menu, .model-dropdown-menu, .thinking-budget-modal, .quote-preview-content, .attachment-item, .attachment-preview')) return;
 
-  // 点击容器时，如果输入框未聚焦，强制聚焦
   const input = document.getElementById('messageInput');
-  if (input && document.activeElement !== input) {
-    input.focus();
-  }
+  if (!input || input.disabled || input.readOnly) return;
+
+  // Focus synchronously during the user gesture so touch keyboards can open.
+  // Cancel only blank-surface pointer defaults; native text selection and button
+  // clicks remain untouched. A click fallback also supports older WebViews.
+  if (event.type === 'pointerdown') event.preventDefault();
+  if (document.activeElement !== input) input.focus({ preventScroll: true });
 }
 
 function handleActionCard(action) {
@@ -15021,10 +15383,11 @@ function getClipboardFiles(event) {
 
 async function handleMessageInputPaste(event) {
   const files = getClipboardFiles(event);
-  if (!files.length) return;
+  const text = event.clipboardData?.getData('text/plain') || '';
+  const longTextPaste = !files.length && text.length > LONG_PASTE_TEXT_THRESHOLD;
+  if (!files.length && !longTextPaste) return;
 
-  const hasText = Boolean(event.clipboardData?.getData('text/plain'));
-  if (!hasText) {
+  if (longTextPaste || !text) {
     event.preventDefault();
   }
 
@@ -15033,14 +15396,13 @@ async function handleMessageInputPaste(event) {
     return;
   }
 
-  await processUploadedFile(files[0]);
-  if (files.length > 1) {
-    showToast(isChineseLanguage(appState.language)
-      ? `已上传第 1 个文件；当前对话一次只能携带 1 个附件`
-      : 'Uploaded the first file. One attachment can be sent at a time.');
-  } else {
-    showToast(isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachment added from clipboard');
+  if (longTextPaste) {
+    files.push(new File([text], `pasted-text-${Date.now()}.txt`, { type: 'text/plain;charset=utf-8' }));
   }
+  const uploaded = await processUploadedFiles(files);
+  if (uploaded) showToast(longTextPaste
+    ? (isChineseLanguage(appState.language) ? '长文本已添加为 TXT 附件' : 'Long text added as a TXT attachment')
+    : (isChineseLanguage(appState.language) ? '已从剪贴板添加附件' : 'Attachments added from clipboard'));
 }
 
 function initPasteAttachmentUpload() {
@@ -15067,39 +15429,49 @@ function focusMessageInputForNewChat(force = false) {
 
   const shouldForceFocus = force || appState.pendingMobileComposerFocus;
   appState.pendingMobileComposerFocus = shouldForceFocus;
+  const generation = (appState.mobileComposerFocusGeneration || 0) + 1;
+  appState.mobileComposerFocusGeneration = generation;
+  const expected = {
+    value: input.value, start: input.selectionStart, end: input.selectionEnd,
+    direction: input.selectionDirection, activeElement: document.activeElement
+  };
+  const stillCurrent = () => appState.mobileComposerFocusGeneration === generation
+    && window.innerWidth <= 768 && input.isConnected && !input.disabled
+    && input.getClientRects().length > 0 && input.value === expected.value
+    && input.selectionStart === expected.start && input.selectionEnd === expected.end
+    && input.selectionDirection === expected.direction
+    && (document.activeElement === expected.activeElement || document.activeElement === input);
 
   if (appState.mobileComposerFocusTimer) {
     clearTimeout(appState.mobileComposerFocusTimer);
   }
 
   const runFocus = () => {
-    if (window.innerWidth > 768) return;
-
-    if (window.expandInput && !appState.inputExpanded) {
-      window.expandInput();
-    }
+    if (!stillCurrent() || document.activeElement === input) return;
+    if (window.expandInput && !appState.inputExpanded) window.expandInput();
 
     requestAnimationFrame(() => {
+      // An old home/new-chat timer must yield to a newer edit, caret, or control.
+      if (!stillCurrent() || document.activeElement === input) return;
       try {
         input.focus({ preventScroll: true });
       } catch (error) {
         input.focus();
       }
-
+      if (document.activeElement !== input) return;
       const end = input.value.length;
-      if (typeof input.setSelectionRange === 'function') {
-        try {
-          input.setSelectionRange(end, end);
-        } catch (error) {
-          console.debug('Skip mobile selection restore:', error);
-        }
+      try { input.setSelectionRange?.(end, end); } catch (error) {
+        console.debug('Skip mobile selection restore:', error);
       }
-
+      expected.activeElement = input;
+      expected.start = input.selectionStart; expected.end = input.selectionEnd;
+      expected.direction = input.selectionDirection;
       window.mobileKeyboardHandler?.keepChatAnchored?.(true);
     });
   };
 
   appState.mobileComposerFocusTimer = window.setTimeout(() => {
+    if (appState.mobileComposerFocusGeneration !== generation) return;
     runFocus();
     window.setTimeout(runFocus, 180);
     appState.mobileComposerFocusTimer = null;
@@ -15113,7 +15485,22 @@ function maybeAutoFocusMobileHomeInput() {
   if (!welcomeScreen || welcomeScreen.classList.contains('hidden') || welcomeScreen.style.display === 'none') return;
   appState.mobileHomeAutoFocusUsed = true;
   appState.pendingMobileComposerFocus = true;
-  window.setTimeout(() => focusMessageInputForNewChat(true), 260);
+  const input = document.getElementById('messageInput');
+  const expected = {
+    value: input?.value, start: input?.selectionStart, end: input?.selectionEnd,
+    direction: input?.selectionDirection, activeElement: document.activeElement,
+    generation: appState.mobileComposerFocusGeneration
+  };
+  window.setTimeout(() => {
+    if (appState.mobileComposerFocusGeneration !== expected.generation) return;
+    if (!input || input.value !== expected.value || input.selectionStart !== expected.start
+      || input.selectionEnd !== expected.end || input.selectionDirection !== expected.direction
+      || document.activeElement !== expected.activeElement) {
+      appState.pendingMobileComposerFocus = false;
+      return;
+    }
+    focusMessageInputForNewChat(true);
+  }, 260);
 }
 
 function isVisibleElement(element) {
@@ -15188,7 +15575,9 @@ function focusEntryTextInput(reason = 'entry', options = {}) {
     if (!isAuthTarget && (appState.settingsOpen || hasBlockingTextEntryOverlay())) return;
 
     const activeElement = document.activeElement;
-    if (isTextEntryElement(activeElement) && activeElement !== target) return;
+    // A delayed entry callback must not collapse a selection the user has
+    // already made in this input, or move focus from another text field.
+    if (isTextEntryElement(activeElement)) return;
 
     try {
       target.focus({ preventScroll: true });
@@ -15230,7 +15619,7 @@ function initEntryAutofocus() {
 const RAI_TOKEN_KEY = 'rai_token';
 const LEGACY_RAUTH_TOKEN_KEY = 'rauth_token';
 const RAI_SESSION_FETCH = window.RaiDiagnostics
-  ? window.RaiDiagnostics.wrapFetch(window.fetch.bind(window), () => API_BASE)
+  ? window.RaiDiagnostics.wrapFetch(window.RaiUserActivity ? window.RaiUserActivity.wrapFetch(window.fetch.bind(window)) : window.fetch.bind(window), () => API_BASE)
   : window.fetch.bind(window);
 const RAI_ACCESS_REFRESH_LEEWAY_MS = 60 * 1000;
 let userTokenRefreshEntry = null;
@@ -15277,6 +15666,7 @@ function trackUserAuthRequest(controller) {
 }
 
 function invalidateUserAuthAsyncWork() {
+  removeAttachment();
   appState.authEpoch = Number(appState.authEpoch || 0) + 1;
   userTokenRefreshEntry?.controller?.abort?.();
   userTokenRefreshEntry = null;
@@ -15312,7 +15702,6 @@ function scheduleUserAccessTokenRefresh(expiresAt = 0, { retryDelayMs = 0 } = {}
   if (userTokenRefreshTimer) clearTimeout(userTokenRefreshTimer);
   userTokenRefreshTimer = null;
   if (!appState.token) return;
-
   const expiryMs = getUserAccessTokenExpiryMs(appState.token, expiresAt);
   if (!expiryMs) return;
   const delay = retryDelayMs > 0
@@ -15322,16 +15711,16 @@ function scheduleUserAccessTokenRefresh(expiresAt = 0, { retryDelayMs = 0 } = {}
   userTokenRefreshTimer = setTimeout(async () => {
     userTokenRefreshTimer = null;
     if (!appState.token || appState.token !== scheduledToken) return;
-    const refreshed = await refreshUserAccessToken();
-    if (refreshed || appState.token !== scheduledToken) return;
-
-    if (getUserAccessTokenExpiryMs(scheduledToken) > Date.now()) {
-      const remainingMs = getUserAccessTokenExpiryMs(scheduledToken) - Date.now();
-      scheduleUserAccessTokenRefresh(0, { retryDelayMs: Math.min(30000, remainingMs) });
+    const state = await refreshUserAccessToken({ withState: true });
+    if (state === 'authenticated' || appState.token !== scheduledToken) return;
+    if (state === 'anonymous') {
+      clearAuthenticatedAppState();
+      showAuthScreen();
       return;
     }
-    clearAuthenticatedAppState();
-    showAuthScreen();
+    // Expired access plus a network outage is not a revoked login. Preserve the
+    // HttpOnly-cookie selector and retry, even after access-token expiration.
+    scheduleUserAccessTokenRefresh(0, { retryDelayMs: 30000 });
   }, delay);
 }
 
@@ -15366,11 +15755,22 @@ function getPersistedUserAccessToken() {
   }
 }
 
+function isSameUserLoginSession(leftToken, rightToken) {
+  const left = decodeUserAccessTokenPayload(leftToken), right = decodeUserAccessTokenPayload(rightToken);
+  return Boolean(left?.sub && right?.sub && left?.sid && right?.sid && String(left.sub) === String(right.sub) && left.sid === right.sid);
+}
+
+function hasOtherStoredUserSession(token) {
+  const stored = getPersistedUserAccessToken();
+  return Boolean(stored && stored !== token && !isSameUserLoginSession(token, stored));
+}
+
 function adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh) {
   const candidate = getPersistedUserAccessToken();
   if (
     !candidate
     || candidate === tokenBeforeRefresh
+    || !isSameUserLoginSession(tokenBeforeRefresh, candidate)
     || getUserAccessTokenExpiryMs(candidate) <= Date.now() + RAI_ACCESS_REFRESH_LEEWAY_MS
   ) {
     return false;
@@ -15389,58 +15789,72 @@ function getUserRefreshScopeHeaders(token) {
 
 async function performUserAccessTokenRefresh(context, controller) {
   const timeout = setTimeout(() => controller.abort(), 12000);
+  context.refreshOutcome = 'checking';
+  const storedBeforeRefresh = getPersistedUserAccessToken();
   try {
-    const response = await RAI_SESSION_FETCH(`${API_BASE}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json',
-        'X-RAI-Refresh': '1',
-        ...getUserRefreshScopeHeaders(context.token)
-      },
+    const response = await RAI_SESSION_FETCH(API_BASE + '/auth/refresh', {
+      method: 'POST', credentials: 'include', cache: 'no-store',
+      headers: { Accept: 'application/json', 'X-RAI-Refresh': '1', ...getUserRefreshScopeHeaders(context.token) },
       signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data?.success || !data?.token) return false;
+    // Late failures are as stale as late successes: neither can replace a newer
+    // account or a concurrent successful renewal with the login screen.
     if (!isUserAuthContextCurrent(context)) return false;
-    storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
-    return true;
-  } catch (error) {
+    // localStorage changes before its storage event is delivered. Only a same-
+    // login rotation can be adopted; another account/login must use the storage
+    // handler's cleanup, and an old request must not erase its newly saved token.
+    if (getPersistedUserAccessToken() !== storedBeforeRefresh || hasOtherStoredUserSession(context.token)) {
+      return adoptAccessTokenRotatedByAnotherTab(context.token);
+    }
+    if (response.ok && data?.success && data?.token) {
+      context.refreshOutcome = 'authenticated';
+      storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
+      return true;
+    }
+    if (response.status === 401 || response.status === 403) {
+      if (adoptAccessTokenRotatedByAnotherTab(context.token)) return true;
+      context.refreshOutcome = 'anonymous';
+    }
     return false;
-  } finally {
-    clearTimeout(timeout);
-  }
+  } catch (_) {
+    return false;
+  } finally { clearTimeout(timeout); }
 }
 
-async function refreshUserAccessToken() {
+async function refreshUserAccessToken({ withState = false } = {}) {
   const context = captureUserAuthContext();
   const tokenBeforeRefresh = appState.token || getPersistedUserAccessToken();
-  if (userTokenRefreshEntry && isUserAuthContextCurrent(userTokenRefreshEntry.context)) {
-    return userTokenRefreshEntry.promise;
-  }
+  const outcome = async entry => {
+    const refreshed = await entry.promise;
+    if (!withState) return refreshed; // Preserve the protected-fetch boolean API.
+    if (refreshed) return 'authenticated';
+    return isUserAuthContextCurrent(entry.context) && entry.context.refreshOutcome === 'anonymous' ? 'anonymous' : 'checking';
+  };
+  if (userTokenRefreshEntry && isUserAuthContextCurrent(userTokenRefreshEntry.context)) return outcome(userTokenRefreshEntry);
   const controller = new AbortController();
   const entry = { context, controller, promise: null };
   entry.promise = (async () => {
     if (navigator.locks?.request) {
       try {
-        return await navigator.locks.request('rai-auth-refresh', { mode: 'exclusive' }, async () => {
+        return await navigator.locks.request('rai-auth-refresh', { mode: 'exclusive', signal: controller.signal }, async () => {
           if (!isUserAuthContextCurrent(context)) return false;
           if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
+          if (hasOtherStoredUserSession(context.token)) return false;
           return performUserAccessTokenRefresh(context, controller);
         });
-      } catch (error) {
-        // Fall through for browsers that expose but disable the Web Locks API.
+      } catch (_) {
+        // Exposed-but-disabled Web Locks may fall back; cancellation must not.
+        if (controller.signal.aborted) return false;
       }
     }
     if (!isUserAuthContextCurrent(context)) return false;
     if (adoptAccessTokenRotatedByAnotherTab(tokenBeforeRefresh)) return true;
+    if (hasOtherStoredUserSession(context.token)) return false;
     return performUserAccessTokenRefresh(context, controller);
-  })().finally(() => {
-    if (userTokenRefreshEntry === entry) userTokenRefreshEntry = null;
-  });
+  })().finally(() => { if (userTokenRefreshEntry === entry) userTokenRefreshEntry = null; });
   userTokenRefreshEntry = entry;
-  return entry.promise;
+  return outcome(entry);
 }
 
 function getFetchAuthorizationToken(resource, init) {
@@ -15559,7 +15973,10 @@ window.addEventListener('storage', (event) => {
         ''
       );
       const accountChanged = !!currentSubject && !!nextSubject && currentSubject !== nextSubject;
-      if (accountChanged) {
+      const currentSid = decodeUserAccessTokenPayload(appState.token)?.sid;
+      const nextSid = decodeUserAccessTokenPayload(nextToken)?.sid;
+      const loginChanged = !!currentSid && !!nextSid && currentSid !== nextSid;
+      if (accountChanged || loginChanged) {
         invalidateUserAuthAsyncWork();
         abortConversationAsyncWork();
         window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);
@@ -15712,7 +16129,7 @@ async function syncTauriAuthStateFromStorage() {
     storeUserAccessToken(storedToken);
     const valid = await verifyToken();
     if (!valid) {
-      showAuthScreen();
+      if (!appState.token) showAuthScreen();
       return false;
     }
     await fetchUserMembership({ applyPolicy: true });
@@ -15840,36 +16257,12 @@ async function bindZtx6dAccount() {
 }
 
 async function requestStartupRefresh() {
-  const context = captureUserAuthContext();
-  const controller = new AbortController();
-  const untrack = trackUserAuthRequest(controller);
-  const timeout = setTimeout(() => controller.abort(), 12000);
-  try {
-    const response = await RAI_SESSION_FETCH(`${API_BASE}/auth/refresh`, {
-      method: 'POST', credentials: 'include', cache: 'no-store', signal: controller.signal,
-      headers: { Accept: 'application/json', 'X-RAI-Refresh': '1' }
-    });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && data?.success && data?.token) {
-      if (!isUserAuthContextCurrent(context)) return 'checking';
-      storeUserAccessToken(data.token, { expiresAt: data.tokenExpiresAt });
-      return 'authenticated';
-    }
-    return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
-  } catch (_) {
-    return 'checking';
-  } finally {
-    clearTimeout(timeout);
-    untrack();
-  }
+  // Boot, timers, protected fetches and tabs share one rotation path, including
+  // the accepted QR login's scoped HttpOnly cookie selector.
+  return refreshUserAccessToken({ withState: true });
 }
 
 async function resolveStartupAuthentication() {
-  const customSession = readCustomApiSession();
-  if (customSession) {
-    enterCustomApiApp(customSession);
-    return 'custom';
-  }
   let token = await handleRaiAuthCallback();
   if (!token) token = getPersistedUserAccessToken();
   if (token) storeUserAccessToken(token);
@@ -15877,6 +16270,7 @@ async function resolveStartupAuthentication() {
     const context = captureUserAuthContext();
     const controller = new AbortController();
     const untrack = trackUserAuthRequest(controller);
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
         headers: { Authorization: `Bearer ${context.token}` }, credentials: 'include', cache: 'no-store', signal: controller.signal
@@ -15895,25 +16289,36 @@ async function resolveStartupAuthentication() {
     } catch (_) {
       return 'checking';
     } finally {
+      clearTimeout(timeout);
       untrack();
     }
   }
   const refreshState = await requestStartupRefresh();
   if (refreshState !== 'authenticated') return refreshState;
+  const context = captureUserAuthContext();
+  const controller = new AbortController();
+  const untrack = trackUserAuthRequest(controller);
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
-      headers: { Authorization: `Bearer ${appState.token}` }, credentials: 'include', cache: 'no-store'
+      headers: { Authorization: `Bearer ${context.token}` }, credentials: 'include', cache: 'no-store', signal: controller.signal
     });
     const profile = await response.json().catch(() => ({}));
-    if (response.ok && profile?.id) {
+    if (response.ok && isProfileBoundToAuthContext(profile, context)) {
       showApp();
-      await loadUserData(profile);
-      maybeShowOnboardingAfterAuth();
-      return 'authenticated';
+      if (await loadUserData(profile, { authContext: context })) {
+        maybeShowOnboardingAfterAuth();
+        return 'authenticated';
+      }
+      return 'checking';
     }
+    if (!isUserAuthContextCurrent(context)) return 'checking';
     return response.status === 401 || response.status === 403 ? 'anonymous' : 'checking';
   } catch (_) {
     return 'checking';
+  } finally {
+    clearTimeout(timeout);
+    untrack();
   }
 }
 
@@ -15921,10 +16326,25 @@ let startupAuthRetryPromise = null;
 function retryStartupAuthentication() {
   if (appState.authState !== 'checking' || startupAuthRetryPromise) return startupAuthRetryPromise;
   startupAuthRetryPromise = resolveStartupAuthentication().then((state) => {
-    if (state === 'anonymous') showAuthScreen();
+    if (state === 'anonymous' && appState.authState === 'checking') showAuthScreen();
     return state;
   }).finally(() => { startupAuthRetryPromise = null; });
   return startupAuthRetryPromise;
+}
+
+let startupAuthRetryTimer = null;
+function scheduleStartupAuthRetries(attempt = 0) {
+  if (appState.authState !== 'checking') return;
+  // Keep a single bounded-backoff retry while identity is unknown. A longer
+  // outage must recover by itself, not strand the page until manual reload.
+  const delayMs = Math.min(30000, 600 * Math.pow(2, Math.min(attempt, 6)));
+  clearTimeout(startupAuthRetryTimer);
+  startupAuthRetryTimer = setTimeout(async () => {
+    startupAuthRetryTimer = null;
+    if (appState.authState !== 'checking') return;
+    const state = await retryStartupAuthentication();
+    if (state === 'checking') scheduleStartupAuthRetries(Math.min(attempt + 1, 6));
+  }, delayMs);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -15937,11 +16357,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 绑定输入容器点击和触摸事件（移动端支持）
   const inputContainer = document.getElementById('inputContainer');
   if (inputContainer) {
+    inputContainer.addEventListener('pointerdown', handleInputContainerClick);
     inputContainer.addEventListener('click', handleInputContainerClick);
   }
 
   // 初始化主题和语言
   initThemeAndLanguage();
+  restoreModelPreference();
   initEntryAutofocus();
   initTauriDesktopAuthSync();
   syncDesktopSettingsVisibility();
@@ -15958,10 +16380,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.dataset.raiAuthState = 'checking';
   showWelcome();
   const startupState = await resolveStartupAuthentication();
-  if (startupState === 'anonymous') showAuthScreen();
+  if (startupState === 'anonymous' && appState.authState === 'checking') showAuthScreen();
   if (startupState === 'checking') {
     window.addEventListener('online', retryStartupAuthentication);
     window.addEventListener('focus', retryStartupAuthentication);
+    // A transient first-load failure (store not ready, momentary network blip)
+    // must self-heal instead of leaving the login frame up until a manual reload.
+    scheduleStartupAuthRetries();
   }
 
   loadSettings();
@@ -16295,11 +16720,23 @@ document.addEventListener('keydown', handleComposerMenuEscape);
 
 
 // 点击外部关闭更多菜单
+function isPointInsideElement(element, event) {
+  if (!element || !event) return false;
+  const rect = element.getBoundingClientRect();
+  if (!rect.width || !rect.height) return false;
+  const x = event.clientX;
+  const y = event.clientY;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  // Rounded corners and inner overlays can let a click pass through to the page
+  // behind the menu. Treat any pointer inside the menu box as belonging to it.
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
 document.addEventListener('click', function (e) {
   const menu = document.getElementById('moreMenu');
   const moreBtn = document.getElementById('moreBtn');
   if (menu && menu.classList.contains('active')) {
-    if (!menu.contains(e.target) && !moreBtn?.contains(e.target)) {
+    if (!menu.contains(e.target) && !moreBtn?.contains(e.target) && !isPointInsideElement(menu, e)) {
       closeMoreMenu();
     }
   }
@@ -16322,16 +16759,26 @@ function toggleInternetFromMenu(event) {
 
 // 从菜单切换推理模式
 function toggleThinkingFromMenu(event) {
-  event.stopPropagation(); // 防止关闭菜单
-  const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  if (!currentModel?.supportsThinking) {
+  event?.stopPropagation?.();
+  const capability = currentThinkingCapability();
+  if (!capability.supportsThinking) {
     appState.thinkingMode = false;
     updateToolbarUI();
     preserveMobileInputFocus();
     scheduleComposerMenuReposition(8);
     return;
   }
-  appState.thinkingMode = !appState.thinkingMode;
+  if (appState.thinkingMode && !capability.canDisableThinking) {
+    showToast(isChineseLanguage(appState.language)
+      ? `${MODELS[appState.selectedModel]?.name || '该模型'}不支持关闭思考，可选择较低档位以缩短等待。`
+      : `${MODELS[appState.selectedModel]?.name || 'This model'} requires thinking. Choose a lower supported level for a shorter wait.`);
+    appState.thinkingMode = true;
+  } else {
+    appState.thinkingMode = !appState.thinkingMode;
+    if (appState.thinkingMode) appState.reasoningProfile = 'auto';
+  }
+  appState.reasoningChoicesExpanded = appState.thinkingMode;
+  persistDefaultModelPreference();
   updateToolbarUI();
   scheduleComposerMenuReposition(8);
 
@@ -16344,9 +16791,10 @@ function toggleThinkingFromMenu(event) {
 
 
 // 从菜单触发文件上传
-function handleFileUploadFromMenu() {
-  closeMoreMenu();
+function handleFileUploadFromMenu(event = null) {
+  event?.stopPropagation?.();
   handleFileUpload();
+  closeMoreMenu();
 }
 
 // 原有的切换函数（向后兼容）
@@ -16414,14 +16862,16 @@ function updateToolbarUI() {
   const reasoningSelect = document.getElementById('reasoningProfileSelect');
   const reasoningSlider = document.getElementById('reasoningProfileSlider');
   const currentModel = MODELS[normalizeSelectedModelId(appState.selectedModel)];
-  const supportsThinking = !!currentModel?.supportsThinking;
-  const supportsReasoningProfile = supportsThinking && currentModel?.supportsReasoningProfile !== false;
+  const capability = currentThinkingCapability();
+  const supportsThinking = capability.supportsThinking;
+  const supportsReasoningProfile = supportsThinking && capability.profiles.length > 0;
   appState.agentMode = false;
 
   if (!supportsThinking) {
     appState.thinkingMode = false;
     appState.thinkingBudgetOpen = false;
   }
+  if (supportsThinking && !capability.canDisableThinking) appState.thinkingMode = true;
 
   if (internetToggle) {
     internetToggle.classList.toggle('active', appState.internetMode);
@@ -16460,7 +16910,7 @@ function updateToolbarUI() {
   }
 
   const showReasoningItem = supportsThinking;
-  const showReasoningProfile = supportsReasoningProfile && appState.thinkingMode;
+  const showReasoningProfile = supportsReasoningProfile && (appState.thinkingMode || appState.reasoningChoicesExpanded);
   if (reasoningProfileItem) {
     setAnimatedMenuItemVisibility(reasoningProfileItem, showReasoningItem);
   }
@@ -16548,6 +16998,7 @@ function updateSettingsUI() {
 
 // 修复：改进updateModelControls函数，添加null检查
 function updateModelControls() {
+  activateCustomApiModel();
   appState.selectedModel = normalizeSelectedModelId(appState.selectedModel);
   const model = MODELS[appState.selectedModel];
 
@@ -16645,6 +17096,7 @@ function openModelModal(anchorOrId = null, event = null) {
     menu.classList.add('active');
     menu.setAttribute('aria-hidden', 'false');
     appState.modelMenuOpenedAt = Date.now();
+    appState.modelMenuOpenedByEvent = event || null;
     appState.activeModelMenuAnchorId = selector.id;
     syncModelMenuTriggerState(selector);
     updateMenuSelection();
@@ -16663,6 +17115,7 @@ function closeModelModal({ restoreFocus = false } = {}) {
   menu.classList.remove('active', 'closing');
   menu.setAttribute('aria-hidden', 'true');
   appState.modelMenuOpenedAt = 0;
+  appState.modelMenuOpenedByEvent = null;
   if (restoreFocus && isComposerMenuAnchorVisible(trigger)) {
     requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
   }
@@ -16772,14 +17225,6 @@ function getModelDisplayMeta(modelId) {
   if (normalized === 'auto') {
     return { i18nKey: 'model-smart', fallback: 'Smart Model' };
   }
-  if (normalized === 'deepseek-pro') {
-    return appState.thinkingMode
-      ? { i18nKey: 'model-expert', fallback: 'Think' }
-      : { i18nKey: null, fallback: MODELS[normalized]?.name || 'DeepSeek Pro' };
-  }
-  if (normalized === 'deepseek-flash') {
-    return { i18nKey: 'model-fast', fallback: 'Fast Mode' };
-  }
   return { i18nKey: null, fallback: MODELS[normalized]?.name || normalized };
 }
 
@@ -16800,16 +17245,17 @@ function updateSelectedModelText(modelId = appState.selectedModel) {
 }
 
 function persistDefaultModelPreference(modelId = appState.selectedModel) {
-  // Kept as a compatibility no-op for older event paths. Manual choices are
-  // intentionally scoped to the active composer and never become an account default.
-  appState.profileDefaultModel = 'auto';
+  appState.profileDefaultModel = normalizeSelectedModelId(modelId) || 'auto';
+  appState.reasoningProfile = normalizeReasoningProfileForModel(appState.reasoningProfile, appState.profileDefaultModel);
+  try {
+    localStorage.setItem(modelPreferenceStorageKey(), JSON.stringify({ model: appState.profileDefaultModel,
+      reasoningProfile: appState.reasoningProfile, thinkingMode: appState.thinkingMode }));
+  } catch (_) {}
 }
 
 function resetModelToSmart() {
-  appState.selectedModel = 'auto';
-  appState.modelPromptIdentity = 'smart';
-  appState.profileDefaultModel = 'auto';
-  updateSelectedModelText('auto');
+  restoreModelPreference();
+  updateSelectedModelText(appState.selectedModel);
   updateModelControls();
   updateMenuSelection();
 }
@@ -16838,8 +17284,11 @@ function isTrustedModelMenuSelection(model, event) {
     target.getClientRects().length === 0
   ) return false;
 
-  // Ignore a rapid second click that lands in the just-opened floating menu.
-  if (Number(event.detail || 0) > 0 && Date.now() - Number(appState.modelMenuOpenedAt || 0) < 160) return false;
+  // The single physical gesture that opened the floating menu must never also
+  // activate a menu row that happens to render under the pointer. Suppress only
+  // that exact originating event; every later, independent click is legitimate.
+  // This replaces a wall-clock heuristic that silently dropped fast real taps.
+  if (event && appState.modelMenuOpenedByEvent === event) return false;
   event.stopPropagation();
   return true;
 }
@@ -16849,7 +17298,11 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
   const restoreMenuFocus = document.getElementById('modelDropdownMenu')?.contains(document.activeElement) === true;
   if (model === 'research-mode') {
     setResearchMode(appState.researchMode || 'fast', { enable: true });
-    appState.modelPromptIdentity = 'research';
+    // Only switch to the research identity when the mode actually turned on; otherwise
+    // setResearchMode already reported why research is unavailable and we keep routing.
+    if (isResearchModeEnabled()) {
+      appState.modelPromptIdentity = 'research';
+    }
     closeModelModal({ restoreFocus: restoreMenuFocus });
     if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
@@ -16866,14 +17319,19 @@ function selectModelFromMenu(model, displayName, i18nKey, event) {
     return;
   }
   if (isMembershipLockedModel(model)) {
-    console.warn(' 该模型仅 MAX 会员可用');
+    // Do not fail silently: surface why the tap did nothing and keep the composer usable.
+    showToast(i18nText('model-desc-max-only', '仅 MAX 可用'));
+    closeModelModal({ restoreFocus: restoreMenuFocus });
+    if (!restoreMenuFocus) preserveMobileInputFocus();
     return;
   }
   appState.researchModeEnabled = false;
   appState.selectedModel = normalizeSelectedModelId(model);
   appState.modelPromptIdentity = 'manual';
   appState.lastNonResearchModel = appState.selectedModel;
-  appState.thinkingMode = false;
+  const capability = currentThinkingCapability();
+  appState.thinkingMode = capability.canDisableThinking ? appState.thinkingMode : true;
+  appState.reasoningProfile = normalizeReasoningProfileForModel(appState.reasoningProfile);
   updateSelectedModelText(appState.selectedModel);
 
   updateResearchModeControl();
@@ -16893,7 +17351,7 @@ document.addEventListener('click', (e) => {
     .some((selector) => selector.contains(e.target));
 
   if (menu) {
-    if (!menu.contains(e.target) && !isClickInsideTrigger) {
+    if (!menu.contains(e.target) && !isClickInsideTrigger && !isPointInsideElement(menu, e)) {
       closeModelModal();
     }
   }
@@ -16914,6 +17372,7 @@ function openSettings() {
     settingsModal.classList.remove('closing');
     settingsModal.classList.add('active');
     appState.settingsOpen = true;
+    updateDeveloperOptionsUI();
     updateSettingsUI();
     updateNewChatModeSettingsUI();
     updateTabTitleModeSettingsUI();
@@ -17172,7 +17631,8 @@ async function saveSettings(options = {}) {
         },
         body: JSON.stringify({
           theme: appState.themePreference || appState.theme,
-          default_model: 'auto',
+          default_model: appState.profileDefaultModel || appState.selectedModel || 'auto',
+          reasoning_profile: appState.reasoningProfile,
           temperature,
           top_p: topP,
           max_tokens: maxTokens,
@@ -17275,7 +17735,7 @@ function getMessageRenderSnapshot(message) {
     role: message.role || '',
     content: message.content || '',
     reasoningContent: message.reasoning_content || null,
-    model: message.model || null,
+    model: message.actual_model || message.actualModel || message.model || null,
     internetMode: message.internet_mode === true || Number(message.internet_mode) === 1,
     enableSearch: message.enable_search === true || Number(message.enable_search) === 1,
     sources: normalizeMessageRenderField(message.sources),
@@ -17324,6 +17784,116 @@ function armMessageEntranceAnimation(element) {
   element.addEventListener('animationend', clear, { once: true });
   setTimeout(clear, 600);
   return element;
+}
+
+function projectAssistantExecution(segments, finalOffset = -1, complete = false) {
+  const rows = segments.filter((segment) => segment && segment.kind);
+  const text = rows.filter((row) => row.kind === 'content').map((row) => String(row.text || '')).join('');
+  const firstContent = rows.find((row) => row.kind === 'content');
+  const base = Number.isInteger(firstContent?.content_offset) ? firstContent.content_offset : 0;
+  let boundary = Number.isInteger(finalOffset) && finalOffset >= 0 ? Math.max(0, Math.min(text.length, finalOffset - base)) : -1;
+  if (boundary < 0 && complete) {
+    let position = 0;
+    for (const row of rows) {
+      if (row.kind === 'content') position += String(row.text || '').length;
+      else if (row.kind === 'tool' || row.kind === 'search') boundary = position;
+    }
+  }
+  const finalStarted = boundary >= 0 && !!text.slice(boundary).trim();
+  if (!finalStarted && !rows.some((row) => row.kind !== 'content')) {
+    return { process: [], answer: text, finalStarted: false, toolCount: 0 };
+  }
+  const process = [];
+  let position = 0;
+  for (const row of rows) {
+    if (row.kind !== 'content') { process.push(row); continue; }
+    const value = String(row.text || '');
+    const report = finalStarted ? value.slice(0, Math.max(0, boundary - position)) : value;
+    if (report.trim()) process.push({ ...row, text: report });
+    position += value.length;
+  }
+  return { process, answer: finalStarted ? text.slice(boundary) : '', finalStarted,
+    toolCount: process.filter((row) => row.kind === 'tool' || row.kind === 'search').length };
+}
+
+function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [] } = {}) {
+  const projection = projectAssistantExecution(segments, finalOffset, complete);
+  let disclosure = container.querySelector(':scope > .execution-process');
+  let rows = disclosure?.querySelector('.execution-process-rows') || container.querySelector(':scope > .execution-live-rows');
+  if (projection.process.length) {
+    if (!rows) {
+      rows = document.createElement('div');
+      rows.className = 'execution-live-rows';
+      container.prepend(rows);
+    }
+    if (projection.finalStarted && !disclosure) {
+      disclosure = document.createElement('details');
+      disclosure.className = 'execution-process';
+      const summary = document.createElement('summary');
+      disclosure.appendChild(summary);
+      rows.className = 'execution-process-rows';
+      disclosure.appendChild(rows);
+      container.prepend(disclosure);
+    }
+    if (disclosure) {
+      disclosure.querySelector('summary').textContent = isChineseLanguage(appState.language)
+        ? `执行过程 · ${projection.toolCount} 次工具调用` : `Execution · ${projection.toolCount} tool calls`;
+    }
+    // Collapse once, in the same render as the first final character; later deltas keep the user's choice.
+    if (projection.finalStarted && disclosure.dataset.finalStarted !== '1') {
+      disclosure.open = false;
+      disclosure.dataset.finalStarted = '1';
+    }
+    rows.replaceChildren();
+    for (const segment of projection.process) {
+      if (segment.kind === 'reasoning' && hideReasoning) continue;
+      if (segment.kind === 'content') {
+        const report = document.createElement('div');
+        report.className = 'stream-flow-content';
+        report.innerHTML = sanitizeRenderedHtml(renderMarkdownWithMath(sanitizeAssistantDisplayText(segment.text), live));
+        rows.appendChild(report);
+        continue;
+      }
+      const item = document.createElement('div');
+      item.className = 'stream-flow-event thinking-step';
+      item.classList.add(`stream-flow-${['tool', 'search', 'reasoning'].includes(segment.kind) ? segment.kind : 'tool'}`);
+      const missingResult = !live && ['tool', 'search'].includes(segment.kind) && segment.status === 'running';
+      item.dataset.status = missingResult ? 'unknown' : (segment.status || 'done');
+      item.classList.toggle('expanded', !!segment.expanded);
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'stream-flow-event-toggle';
+      toggle.setAttribute('aria-expanded', segment.expanded ? 'true' : 'false');
+      toggle.textContent = missingResult
+        ? `${String(segment.title || '').replace('工具调用进行中', '工具执行记录')} · ${isChineseLanguage(appState.language) ? '历史状态未保存' : 'Result not recorded'}`
+        : String(segment.title || '');
+      const detail = document.createElement('div');
+      detail.className = 'stream-flow-event-detail';
+      const storedDetail = String(segment.detail || '');
+      detail.textContent = missingResult
+        ? (isChineseLanguage(appState.language)
+          ? `历史记录未保存工具的最终结果，无法确认执行状态。${storedDetail.trim() ? `\n\n当时记录：${storedDetail}` : ''}`
+          : `This history did not save the tool's final result; its execution status cannot be confirmed.${storedDetail.trim() ? `\n\nRecorded at the time: ${storedDetail}` : ''}`)
+        : storedDetail;
+      toggle.addEventListener('click', () => {
+        segment.expanded = item.classList.toggle('expanded');
+        toggle.setAttribute('aria-expanded', segment.expanded ? 'true' : 'false');
+      });
+      item.append(toggle, detail);
+      rows.appendChild(item);
+    }
+  }
+  let answer = container.querySelector(':scope > .execution-answer');
+  if (!answer) {
+    answer = document.createElement('div');
+    answer.className = 'execution-answer stream-flow-content';
+    container.appendChild(answer);
+  }
+  const text = extractAskUserBlocks(sanitizeAssistantDisplayText(projection.answer)).text;
+  let html = renderMarkdownWithMath(live ? stripIncompleteAskUserFence(text) : text, live);
+  if (Array.isArray(sources) && sources.length) html = renderCitations(html, sources);
+  answer.innerHTML = sanitizeRenderedHtml(html);
+  hydrateRenderedImages(container);
 }
 
 function prepareMessageElement(message, { animate = true } = {}) {
@@ -17406,12 +17976,13 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   const finalizedHasReasoningBlock = !!finalizedContent.querySelector('.rai-reasoning-block');
   const preserveLiveFlow = !!(
     existingText?.classList?.contains('stream-flow') &&
+    (finalizedText?.classList?.contains('stream-flow') || (
     !finalizedText?.classList?.contains('stream-flow') &&
     finalizedHasLiveStructure &&
     (
       String(existingText.textContent || '').trim() ||
       existingText.querySelector('img, .streaming-image-container, .stream-flow-event')
-    )
+    )))
   );
   if (existingText?.classList?.contains('stream-flow')) {
     existingTextNodes.forEach((node) => {
@@ -17490,6 +18061,7 @@ function bindAssistantStreamRequestId(response, message, element, { sessionId, g
 
 // 修复：改进renderMessages，防止事件处理中的undefined错误
 function renderMessages(options = {}) {
+  window.RaiWebSkills?.syncContext?.();
   const container = document.getElementById('messagesList');
   const welcome = document.getElementById('welcomeScreen');
   const preserveScroll = options.preserveScroll === true;
@@ -18283,7 +18855,7 @@ function formatResearchAgentLabel(role = '') {
     gpt55: 'ChatGPT',
     chatgpt: 'ChatGPT',
     deepseek: 'DeepSeek Pro',
-    deepseek_flash: 'DeepSeek v4',
+    deepseek_flash: 'DeepSeek V4.1 Flash',
     nemotron: 'Nemotron 3 Ultra'
   };
   return labelMap[String(role || '').toLowerCase()] || formatAgentRole(role || 'agent');
@@ -18383,6 +18955,13 @@ function buildContextMessagesFromState(sourceMessages = appState.messages, optio
         ? appendUserTurnContextHintForPrompt(m.content)
         : m.content
     };
+    if (appState.customApiMode) {
+      if (m.reasoning_content) msgObj.reasoning_content = m.reasoning_content;
+      if (m.tool_call_id) msgObj.tool_call_id = m.tool_call_id;
+      if (m.tool_calls) msgObj.tool_calls = m.tool_calls.map(call => call.function ? call : {
+        id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments }
+      });
+    }
 
     let attachments = m.attachments || m.attachment_refs;
     if (typeof attachments === 'string') {
@@ -18468,6 +19047,7 @@ function createMessageElement(message) {
     console.warn(' 无效的消息对象');
     return null;
   }
+  if (message.role === 'tool' || message.role === 'system' || message.tool_calls?.length) return null;
 
   const div = document.createElement('div');
   div.className = `message ${message.role}`;
@@ -18876,36 +19456,16 @@ function createMessageElement(message) {
   if (hasInterleavedFlow) {
     const flow = document.createElement('div');
     flow.className = 'message-text stream-flow';
-    processTrace.flowSegments.forEach((segment) => {
-      if (!segment || !segment.kind) return;
-      if (segment.kind === 'reasoning' && shouldRenderReasoningTimeline) return;
-      if (segment.kind === 'content') {
-        const block = document.createElement('div');
-        block.className = 'stream-flow-content';
-        block.innerHTML = sanitizeRenderedHtml(renderMarkdownWithMath(String(segment.text || '')));
-        flow.appendChild(block);
-        return;
-      }
-      const item = document.createElement('div');
-      item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
-      item.dataset.status = String(segment.status || 'done');
-      item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
-      const stepContent = item.querySelector('.thinking-step-content');
-      const toggle = document.createElement('button');
-      toggle.type = 'button';
-      toggle.className = 'stream-flow-event-toggle';
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = String(segment.title || '');
-      const detail = document.createElement('div');
-      detail.className = 'stream-flow-event-detail';
-      detail.textContent = String(segment.detail || '');
-      toggle.addEventListener('click', () => {
-        const expanded = item.classList.toggle('expanded');
-        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      });
-      stepContent.appendChild(toggle);
-      stepContent.appendChild(detail);
-      flow.appendChild(item);
+    let flowSources = message.sources;
+    if (typeof flowSources === 'string') {
+      try { flowSources = JSON.parse(flowSources); } catch { flowSources = []; }
+    }
+    renderAssistantExecutionFlow(flow, processTrace.flowSegments, {
+      finalOffset: processTrace.finalAnswerOffset,
+      complete: !message.is_live_stream && !processTrace.interrupted,
+      live: !!message.is_live_stream,
+      hideReasoning: shouldRenderReasoningTimeline,
+      sources: flowSources
     });
     content.appendChild(flow);
   }
@@ -18942,8 +19502,7 @@ function createMessageElement(message) {
     content.appendChild(textDiv);
   }
 
-  // 用户上传和 AI 生成的附件都使用同一张可下载卡片。
-  // 卡片必须位于回答正文之后，避免工具完成事件抢到答案上方。
+  // User attachments precede the bubble; generated assistant artifacts follow its answer.
   if ((message.role === 'user' || message.role === 'assistant') && (message.attachments || message.attachment_refs || message.has_attachments)) {
     let attachments = message.attachments || message.attachment_refs;
     if (typeof attachments === 'string') {
@@ -18961,7 +19520,10 @@ function createMessageElement(message) {
         if (!att || !att.type) return;
         attachmentsDiv.appendChild(createAttachmentListItem(att));
       });
-      if (attachmentsDiv.children.length > 0) content.appendChild(attachmentsDiv);
+      if (attachmentsDiv.children.length > 0) {
+        if (message.role === 'user') content.prepend(attachmentsDiv);
+        else content.appendChild(attachmentsDiv);
+      }
     }
   }
 
@@ -18992,11 +19554,8 @@ function createMessageElement(message) {
       modelBadge.hidden = !appState.showModelBadge;
 
       // 新老模型标识都保持可读，退役模型不再回到可选菜单。
-      const modelName = getHistoricalModelDisplayName(message.model);
-      const customEditionLabel = [
-        modelName,
-        i18nText('message-model-custom-edition', isChineseLanguage(appState.language) ? '定制版' : 'Custom Edition')
-      ].filter(Boolean).join(' ');
+      // Show provenance, not the user's selection label or a marketing suffix.
+      const customEditionLabel = String(message.actual_model || message.actualModel || message.model || '').trim();
 
       modelBadge.innerHTML = `
             ${getSvgIcon('smart_toy', 'material-symbols-outlined', 24)}
@@ -19654,6 +20213,7 @@ function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
 
 // 引用消息
 function quoteMessage(message) {
+  window.RaiWebSkills?.noteDraftChange?.();
   appState.currentQuote = {
     role: message.role,
     content: message.content || ''
@@ -19671,6 +20231,7 @@ function quoteMessage(message) {
 
 // 移除引用
 function removeQuote() {
+  window.RaiWebSkills?.noteDraftChange?.();
   appState.currentQuote = null;
   updateQuoteUI();
 }
@@ -19978,6 +20539,7 @@ async function recoverIncompleteChatStream({
             continue;
           }
           if (event.type === 'done') {
+            if (event.actualModel) model = event.actualModel;
             receivedDone = true;
           } else if (event.type === 'content' && event.content) {
             attemptContent += sanitizeAssistantDisplayText(event.content);
@@ -19985,8 +20547,10 @@ async function recoverIncompleteChatStream({
             attemptReasoning += String(event.content);
           } else if (event.type === 'sources' && Array.isArray(event.sources)) {
             sources = mergeAndReindexSources(sources, event.sources);
+          } else if (event.type === 'context_compressed') {
+            showToast(isChineseLanguage(appState.language) ? '上下文已自动压缩，原始历史仍然保留（256k）' : 'Context compressed automatically; original history retained (256k)');
           } else if (event.type === 'model_info' && event.model) {
-            model = event.model;
+            model = event.actualModel || event.model;
           } else if (event.type === 'error') {
             errorMessage = String(event.error || 'continuation_failed');
           } else if (event.choices?.[0]?.delta?.content) {
@@ -20269,7 +20833,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     let fullContent = '';
     let reasoningContent = '';
     let sources = null;
-    let finalModel = appState.selectedModel;
+    let finalModel = null;
     let sseBuffer = '';
     let receivedDoneEvent = false;
     let receivedTerminalFailure = false;
@@ -20299,6 +20863,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
           const parsed = JSON.parse(data);
 
           if (parsed.type === 'done') {
+            if (parsed.actualModel) { finalModel = parsed.actualModel; aiMsg.model = finalModel; }
             receivedDoneEvent = true;
             continue;
           }
@@ -20326,7 +20891,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
 
           if (parsed.type === 'model_info') {
             if (parsed.model) {
-              finalModel = parsed.model;
+              finalModel = parsed.actualModel || parsed.model;
               aiMsg.model = finalModel;
             }
             continue;
@@ -21071,7 +21636,7 @@ function showConversationFolderNameCard({ folder = null, onCreated = null } = {}
       const response = await sessionApi(`/conversation-folders/${encodeURIComponent(folder.id)}`, { method: 'DELETE' });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        return showToast(isZh ? `删除失败：${data.error || '无法删除该文件夹'}` : (data.error || 'Could not delete folder'));
+        return showToast(isZh ? `删除失败：${data.error || '无法删除该文件夹'}` : localizeServerError(data.error, 'Could not delete folder'));
       }
       localStorage.removeItem(`rai.sidebar.folder.${folder.id}.open`);
       close();
@@ -21090,7 +21655,7 @@ function showConversationFolderNameCard({ folder = null, onCreated = null } = {}
       const reason = String(data.error || '');
       const message = response.status === 409
         ? (isZh ? `保存失败：已经有名为“${name}”的文件夹` : `Could not save: a folder named “${name}” already exists`)
-        : (isZh ? `保存失败：${reason || '无法保存该文件夹'}` : (reason || 'Could not save folder'));
+        : (isZh ? `保存失败：${reason || '无法保存该文件夹'}` : localizeServerError(reason, 'Could not save folder'));
       showToast(message);
       return showFolderError(message);
     }
@@ -21429,9 +21994,28 @@ function setupSessionsLoaderObserver() {
 
 // 修复：改进sendMessage，添加更多的错误处理
 // 支持多模态：图片、音频、视频附件
+function appendVisibleInterjection(interjection) {
+  const content = String(interjection?.content || '').trim();
+  if (!content) return;
+  const last = appState.messages[appState.messages.length - 1];
+  if (last && last.role === 'user' && String(last.content || '').trim() === content) return;
+  appState.messages.push({
+    role: 'user',
+    content,
+    created_at: interjection?.createdAt || new Date().toISOString(),
+    interjection: true
+  });
+  if (typeof renderMessages === 'function') renderMessages();
+  if (typeof scrollToBottom === 'function') scrollToBottom();
+}
+
 async function submitStreamingInterjection(messageText) {
   const content = String(messageText || '').trim();
-  if (!content || !appState.currentRequestId || !appState.currentSession) return false;
+  if (!content) return false;
+  if (!appState.currentRequestId || !appState.currentSession) {
+    showToast(isChineseLanguage(appState.language) ? '当前没有进行中的回答，请直接发送' : 'No answer is in progress; send normally');
+    return false;
+  }
 
   const input = document.getElementById('messageInput');
   if (input) {
@@ -21450,6 +22034,8 @@ async function submitStreamingInterjection(messageText) {
       appState.activeResearch.render();
     }
     scrollToBottom();
+  } else {
+    appendVisibleInterjection(interjection);
   }
 
   try {
@@ -21528,8 +22114,8 @@ async function sendMessage(message = null, options = {}) {
   const providedMessage = message !== null && message !== undefined ? String(message).trim() : '';
   const messageText = providedMessage || input.value.trim();
   const immediateTitleSource = messageText
-    || currentAttachment?.originalName
-    || currentAttachment?.fileName
+    || currentAttachments[0]?.originalName
+    || currentAttachments[0]?.fileName
     || message;
   const immediateConversationTitle = deriveImmediateConversationTitleFromUserMessage(immediateTitleSource);
 
@@ -21539,7 +22125,7 @@ async function sendMessage(message = null, options = {}) {
     sendWaitingForAttachmentUpload = true;
     showToast(isChineseLanguage(appState.language) ? '正在等待附件上传完成…' : 'Waiting for the attachment upload to finish…');
     try {
-      await pendingAttachmentUpload;
+      while (pendingAttachmentUpload) await pendingAttachmentUpload;
     } catch (uploadWaitError) {
       console.warn('附件上传未完成，继续按当前状态发送:', uploadWaitError?.message || uploadWaitError);
     } finally {
@@ -21548,8 +22134,26 @@ async function sendMessage(message = null, options = {}) {
   }
 
   // 允许只发送附件（无文字内容）
-  if (!messageText && !currentAttachment) return;
+  if (!messageText && currentAttachments.length === 0) return;
+  const selectedSkillNames = window.RaiWebSkills ? window.RaiWebSkills.prepareSend(resolveSendRequestConfig(options)) : [];
+  if (selectedSkillNames === null) return;
+  const selectedSkillDraft = window.RaiWebSkills?.captureDraft?.();
+  if (window.RaiLocalAgent?.isSelected?.()) {
+    if (resolveSendRequestConfig(options).researchMode !== 'off' || appState.agentMode === true || appState.customApiMode) {
+      showToast(isChineseLanguage(appState.language)
+        ? '远程电脑暂不支持研究讨论或自定义 API。请切回普通对话执行电脑任务，或明确断开电脑后再使用这些模式；本次未发送。'
+        : 'Remote PC tools are unavailable in Research or Custom API mode. Use normal chat for PC tasks, or explicitly disconnect first. Nothing was sent.');
+      return;
+    }
+    try { await window.RaiLocalAgent.prepareChat(); }
+    catch (error) { showToast(error.message || '远程电脑未连接；本次未发送。'); return; }
+  }
   if (appState.customApiMode) {
+    if (!await requireCustomApiAccount()) return;
+    if (currentAttachments.length || selectedSkillNames.length || appState.agentMode || isResearchModeEnabled()) {
+      showToast(i18nText('custom-api-text-only', '自定义 API 当前支持文字对话，请移除附件或技能，并关闭 Agent／研究模式后再发送。')); return;
+    }
+    if (appState.isStreaming) { showToast(i18nText('custom-api-generating', '请等待当前回答完成，或先停止生成。')); return; }
     if (!messageText) {
       showToast(isChineseLanguage(appState.language) ? '自定义 API 模式暂不支持仅发送附件' : 'Attachments-only messages are unavailable in custom API mode');
       return;
@@ -21558,13 +22162,18 @@ async function sendMessage(message = null, options = {}) {
     autoResizeInput();
     appState.messages.push({ role: 'user', content: messageText, created_at: new Date().toISOString() });
     renderMessages();
-    return sendCustomApiMessage(buildContextMessagesFromState(appState.messages));
+    return sendCustomApiMessage(buildContextMessagesFromState(appState.messages), captureUserAuthContext());
   }
   closeModelModal();
   if (appState.isStreaming) {
-    if (messageText && !currentAttachment) {
-      await submitStreamingInterjection(messageText);
+    if (!messageText) {
+      showToast(isChineseLanguage(appState.language) ? '回答生成中，插话需要输入文字' : 'Type text to interject while generating');
+      return;
     }
+    if (currentAttachments.length > 0) {
+      showToast(isChineseLanguage(appState.language) ? '回答生成中，插话暂不支持附件；已只发送文字' : 'While generating, interjections send text only; attachments were skipped');
+    }
+    await submitStreamingInterjection(messageText);
     return;
   }
 
@@ -21576,6 +22185,7 @@ async function sendMessage(message = null, options = {}) {
         focus: false,
         preserveComposerMode: true,
         preserveInternetMode: true,
+        webSkillDraft: selectedSkillDraft,
         initialTitle: immediateConversationTitle,
         preserveCanvasDraft: chatFlowState.isOpen
       });
@@ -21589,11 +22199,12 @@ async function sendMessage(message = null, options = {}) {
     ? await ensureCanvasFlowForSend()
     : null;
 
+  if (selectedSkillDraft && !window.RaiWebSkills.consume(selectedSkillDraft)) return;
   input.value = '';
   autoResizeInput();
 
   //  处理引用内容
-  let finalMessageContent = messageText || message || '请分析这个文件';
+  let finalMessageContent = messageText || message || (isChineseLanguage(appState.language) ? '请分析这个文件' : 'Please analyze this file.');
   if (appState.currentQuote) {
     const quoteLabel = appState.currentQuote.role === 'user'
       ? (isChineseLanguage(appState.language) ? '引用用户' : 'Quoting User')
@@ -21618,23 +22229,18 @@ async function sendMessage(message = null, options = {}) {
     created_at: new Date().toISOString()
   };
 
-  // 如果有附件，添加到消息中（元数据模式，不塞大 Base64）
-  if (currentAttachment) {
-    userMsg.attachments = [{
-      type: currentAttachment.type,
-      fileName: currentAttachment.fileName,
-      originalName: currentAttachment.originalName || currentAttachment.fileName,
-      mimeType: currentAttachment.mimeType || '',
-      size: currentAttachment.size || 0,
-      fileId: currentAttachment.fileId || null,
-      filePath: currentAttachment.filePath || null
-    }];
-    console.log(' 消息包含附件', {
-      attachmentType: currentAttachment.type,
-      filenameLength: String(currentAttachment.fileName || '').length,
-      bytes: Number(currentAttachment.size) || 0,
-      metadataMode: true
-    });
+  // Send every attached file as owned metadata; never inline large Base64 or local blob URLs.
+  if (currentAttachments.length) {
+    userMsg.attachments = currentAttachments.map(attachment => ({
+      type: attachment.type,
+      fileName: attachment.fileName,
+      originalName: attachment.originalName || attachment.fileName,
+      mimeType: attachment.mimeType || '',
+      size: attachment.size || 0,
+      fileId: attachment.fileId || null,
+      filePath: attachment.filePath || null
+    }));
+    console.log(' 消息包含附件', { count: userMsg.attachments.length, metadataMode: true });
   }
 
   appState.messages.push(userMsg);
@@ -21658,13 +22264,16 @@ async function sendMessage(message = null, options = {}) {
   }
 
   // 清除当前附件
-  const hadAttachment = !!currentAttachment;
-  currentAttachment = null;
+  const hadAttachment = currentAttachments.length > 0;
+  removeAttachment();
+  window.RaiWebSkills?.sealConsumed?.(selectedSkillDraft);
   updateAttachmentUI();  // 更新UI显示
 
   const sendBtn = document.getElementById('sendBtn');
   const stopBtn = document.getElementById('stopBtn');
   const requestConfig = resolveSendRequestConfig(options);
+  let actualRequestModel = null; // Per-turn provenance; never inherit another conversation's model.
+  appState.lastModelUsed = '';
 
   if (sendBtn) {
     sendBtn.style.display = 'flex';
@@ -21885,7 +22494,7 @@ async function sendMessage(message = null, options = {}) {
     const id = String(event.tool_call_id || event.call_id || `${tool}:${event.round || 0}:${event.query || event.skill || event.file_name || event.url || ''}`);
     const status = String(event.status || 'running').toLowerCase();
     const isCurrent = status === 'running' || status === 'pending';
-    if (toolTracePanel) toolTracePanel.hidden = false;
+    if (toolTracePanel) toolTracePanel.hidden = true; // Tool details are shown in the ordered execution process.
     let item = toolTraceItems.get(id);
     if (!item) {
       item = document.createElement('div');
@@ -22511,25 +23120,12 @@ async function sendMessage(message = null, options = {}) {
     processTraceList.scrollTop = processTraceList.scrollHeight;
   }
 
-  function appendFrameworkRequirements(promptText) {
-    const text = String(promptText || '').trim();
-    if (!text) return;
-    const lines = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean);
-
-    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '开始展示框架要求' : 'Framework requirements begin');
-    lines.forEach(line => addProcessTraceItem('framework', line));
-    addProcessTraceItem('framework', isChineseLanguage(appState.language) ? '框架要求展示完成' : 'Framework requirements end');
-  }
-
   let agentSelectedRoles = [];
   let agentRetryCount = 0;
   const formatAgentRole = (role) => {
     const roleMap = isChineseLanguage(appState.language)
-      ? { master: '主控', judge: '主控质量复核', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '启发式质量复核', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek v4', nemotron: 'Nemotron 3 Ultra' }
-      : { master: 'Master', judge: 'Master Quality Review', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Heuristic Quality Review', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek v4', nemotron: 'Nemotron 3 Ultra' };
+      ? { master: '主控', judge: '主控质量复核', planner: '规划', researcher: '检索', synthesizer: '生成', verifier: '启发式质量复核', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek V4.1 Flash', nemotron: 'Nemotron 3 Ultra' }
+      : { master: 'Master', judge: 'Master Quality Review', planner: 'Planner', researcher: 'Researcher', synthesizer: 'Synthesizer', verifier: 'Heuristic Quality Review', gemma: 'Gemma', qwen: 'Qwen 3.6', kimi: 'Kimi K2.6', gpt55: 'ChatGPT', chatgpt: 'ChatGPT', deepseek: 'DeepSeek Pro', deepseek_flash: 'DeepSeek V4.1 Flash', nemotron: 'Nemotron 3 Ultra' };
     return roleMap[role] || role;
   };
 
@@ -22593,15 +23189,13 @@ async function sendMessage(message = null, options = {}) {
 
   try {
     await ensureCurrentSessionPromptIdentity();
-  } catch (error) {
-    showToast(error.message || (isChineseLanguage(appState.language) ? '无法锁定会话模型提示词' : 'Could not lock the session model prompt'));
-    return;
-  }
-  const selectedDomainMode = appState.pendingDomainMode || null;
-  appState.pendingDomainMode = null;
-
-  try {
+    if (selectedSkillDraft && !window.RaiWebSkills.isSendContextCurrent(selectedSkillDraft)) {
+      throw new Error(isChineseLanguage(appState.language) ? '对话已切换，本条消息未发送。' : 'The conversation changed. This message was not sent.');
+    }
+    const selectedDomainMode = appState.pendingDomainMode || null;
+    appState.pendingDomainMode = null;
     const chatRequestPayload = {
+      selected_skill_names: selectedSkillNames,
       sessionId: appState.currentSession?.id || null,
       flowId: canvasFlowId,
       messages,
@@ -22636,6 +23230,14 @@ async function sendMessage(message = null, options = {}) {
       useRag: appState.useRag,
       ragTopK: appState.ragTopK
     };
+    // Let the local-agent bridge reject/resolve remote routing before we decide the
+    // capability. This runs inside the existing try/catch, so a rejection (offline or
+    // pending-authorization remote) surfaces through the normal chat error path instead
+    // of silently falling back to a server-side file operation.
+    await window.RaiLocalAgent?.prepareChat?.();
+    if (selectedSkillDraft && !window.RaiWebSkills.isSendContextCurrent(selectedSkillDraft)) {
+      throw new Error(isChineseLanguage(appState.language) ? '对话已切换，本条消息未发送。' : 'The conversation changed. This message was not sent.');
+    }
     const localAgentCapability = window.RaiLocalAgent?.getChatCapability?.();
     if (localAgentCapability) chatRequestPayload.local_agent = localAgentCapability;
     const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -22655,6 +23257,7 @@ async function sendMessage(message = null, options = {}) {
     }
 
     if (modelUsed) {
+      actualRequestModel = modelUsed;
       appState.lastModelUsed = modelUsed;
       appState.lastRoutingReason = routingReason || '';
       console.log(` 实际使用模型: ${modelUsed}`);
@@ -22710,7 +23313,6 @@ async function sendMessage(message = null, options = {}) {
 
     if (enableProcessTrace) {
       addProcessTraceItem('info', isChineseLanguage(appState.language) ? '开始流式请求' : 'Streaming request started');
-      appendFrameworkRequirements(effectiveSystemPrompt);
       addProcessTraceItem('info', isChineseLanguage(appState.language)
         ? `模型: ${modelUsed || requestConfig.model}`
         : `Model: ${modelUsed || requestConfig.model}`);
@@ -22730,12 +23332,14 @@ async function sendMessage(message = null, options = {}) {
     const renderingMermaids = new Set();
     const streamFlowSegments = [];
     let activeFlowContent = null;
+    let finalAnswerOffset = -1;
+    let streamComplete = false;
 
     function appendInterleavedContent(text) {
       const chunk = String(text || '');
       if (!chunk) return;
       if (!activeFlowContent) {
-        activeFlowContent = { kind: 'content', text: '' };
+        activeFlowContent = { kind: 'content', text: '', content_offset: fullContent.length - chunk.length };
         streamFlowSegments.push(activeFlowContent);
       }
       activeFlowContent.text += chunk;
@@ -22744,15 +23348,16 @@ async function sendMessage(message = null, options = {}) {
 
     function appendInterleavedEvent(kind, title, detail = '', status = 'done', trace = null) {
       activeFlowContent = null;
-      const last = streamFlowSegments[streamFlowSegments.length - 1];
-      if (last && last.kind === kind && last.title === title) {
-        last.detail = detail || last.detail;
-        last.status = status;
-        last.trace = trace || last.trace;
-        renderInterleavedFlow();
-        return;
+      const callId = trace?.tool_call_id || trace?.call_id;
+      const existing = callId ? streamFlowSegments.find((row) => row.toolCallId === callId)
+        : (kind === 'search' ? streamFlowSegments.findLast((row) => row.kind === 'search' && row.status === 'running') : null);
+      if (existing) {
+        existing.detail = detail || existing.detail;
+        existing.status = status;
+        existing.trace = trace || existing.trace;
+      } else {
+        streamFlowSegments.push({ kind, title, detail, status, trace, toolCallId: callId });
       }
-      streamFlowSegments.push({ kind, title, detail, status, trace });
       renderInterleavedFlow();
     }
 
@@ -22768,41 +23373,11 @@ async function sendMessage(message = null, options = {}) {
 
     function renderInterleavedFlow() {
       if (!streamingEl) return;
-      streamingEl.replaceChildren();
-      streamFlowSegments.forEach((segment) => {
-        if (segment.kind === 'reasoning' && document.getElementById('raiReasoningBlock')) return;
-        if (segment.kind === 'content') {
-          const block = document.createElement('div');
-          block.className = 'stream-flow-content';
-          block.innerHTML = renderMarkdownWithMath(
-            sanitizeAssistantDisplayText(stripTrailingTitleMarker(segment.text)),
-            true
-          );
-          streamingEl.appendChild(block);
-          return;
-        }
-        const item = document.createElement('div');
-        item.className = `stream-flow-event thinking-step stream-flow-${segment.kind}`;
-        item.dataset.status = segment.status || 'done';
-        item.innerHTML = '<div class="thinking-step-node"></div><div class="thinking-step-content"></div>';
-        const content = item.querySelector('.thinking-step-content');
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'stream-flow-event-toggle';
-        button.setAttribute('aria-expanded', 'false');
-        button.textContent = segment.title || '';
-        const detail = document.createElement('div');
-        detail.className = 'stream-flow-event-detail';
-        detail.textContent = segment.detail || '';
-        button.addEventListener('click', () => {
-          const expanded = item.classList.toggle('expanded');
-          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        });
-        content.appendChild(button);
-        content.appendChild(detail);
-        streamingEl.appendChild(item);
+      if (timelineDynamicSteps) timelineDynamicSteps.hidden = true;
+      renderAssistantExecutionFlow(streamingEl, streamFlowSegments, {
+        finalOffset: finalAnswerOffset, complete: streamComplete, live: true,
+        hideReasoning: !!document.getElementById('raiReasoningBlock'), sources: currentSources
       });
-      hydrateRenderedImages(streamingEl);
       scrollToBottom();
     }
 
@@ -23149,6 +23724,12 @@ async function sendMessage(message = null, options = {}) {
 
             scrollToBottom();
           }
+          else if (parsed.type === 'answer_start') {
+            if (finalAnswerOffset < 0 && Number.isInteger(parsed.content_offset) && parsed.content_offset >= 0) {
+              finalAnswerOffset = parsed.content_offset;
+              activeFlowContent = null;
+            }
+          }
           else if (parsed.type === 'content') {
             // 隐藏加载状态提示（首次收到内容时）
             if (!isThinkingPhase) {
@@ -23191,7 +23772,7 @@ async function sendMessage(message = null, options = {}) {
 
             // 正文按到达顺序写入交错流，工具/搜索事件会插入其后。
             const rawChunk = parsed.content || '';
-            const cleanChunk = sanitizeAssistantDisplayText(sanitizeToolCallArtifacts(rawChunk));
+            const cleanChunk = rawChunk; // The server filters the cumulative buffer; delta whitespace is significant.
             if (!cleanChunk) {
               continue;
             }
@@ -23227,7 +23808,8 @@ async function sendMessage(message = null, options = {}) {
           }
           // 新增：处理模型信息（显示实际使用的模型）
           else if (parsed.type === 'model_info') {
-            appState.lastModelUsed = parsed.model;
+            actualRequestModel = parsed.actualModel || parsed.model || actualRequestModel;
+            appState.lastModelUsed = actualRequestModel;
             appState.lastRoutingReason = parsed.reason || '';
             console.log(` 实际使用模型: ${parsed.model} (${parsed.actualModel})`);
             console.log(`   路由原因: ${parsed.reason || '用户选择'}`);
@@ -23398,6 +23980,10 @@ async function sendMessage(message = null, options = {}) {
               }
             }
           }
+          else if (parsed.type === 'user_interjection') {
+            appendVisibleInterjection({ content: parsed.content, createdAt: parsed.createdAt });
+            addProcessTraceItem('agent', isChineseLanguage(appState.language) ? '你的新消息已交给模型继续处理' : 'Your new message was passed to the model');
+          }
           else if (parsed.type === 'agent_interjection') {
             addProcessTraceItem('agent', parsed.detail || (isChineseLanguage(appState.language) ? '用户插话已进入讨论上下文' : 'User message added to discussion context'));
             if (stepProcessTrace) {
@@ -23455,7 +24041,7 @@ async function sendMessage(message = null, options = {}) {
             upsertToolTraceItem(parsed);
             if (parsed.tool === 'generate_image') updateImageGenerationStatus(parsed);
             recordTimelineStep('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done');
-            appendInterleavedEvent('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), parsed.status === 'failed' ? 'failed' : 'done', parsed);
+            appendInterleavedEvent('tool', formatToolTraceLabel(parsed.tool), summarizeToolTrace(parsed), ['failed', 'error', 'denied', 'cancelled'].includes(parsed.status) ? 'failed' : (['running', 'pending', 'calling', 'waiting'].includes(parsed.status) ? 'running' : 'done'), parsed);
             addProcessTraceItem('tool', summarizeToolTrace(parsed));
             scrollToBottom();
           }
@@ -23530,12 +24116,17 @@ async function sendMessage(message = null, options = {}) {
             }
             scrollToBottom();
           }
+          else if (parsed.type === 'stream_retry') {
+            updateStepStatus(getGeneratingStep(), 'running', parsed.message || '正在自动重试');
+          }
           else if (parsed.type === 'stream_warning') {
             showToast(parsed.message || '连接中断，已保留生成记录，请重新生成完整回答');
           }
           else if (parsed.type === 'done') {
+            if (parsed.actualModel) { actualRequestModel = parsed.actualModel; appState.lastModelUsed = actualRequestModel; }
             receivedDoneEvent = true;
             const incomplete = parsed.degraded === true;
+            streamComplete = !incomplete;
             // An upstream stop is terminal, not a successful answer. Do not
             // automatically repeat tools or obscure the interruption in the timeline.
             stopCharRender();
@@ -23605,7 +24196,7 @@ async function sendMessage(message = null, options = {}) {
       if (recovered.sources.length > 0) {
         currentSources = mergeAndReindexSources(currentSources, recovered.sources);
       }
-      if (recovered.model) appState.lastModelUsed = recovered.model;
+      if (recovered.model) { actualRequestModel = recovered.model; appState.lastModelUsed = recovered.model; }
       if (recovered.requestId) {
         streamRequestId = recovered.requestId;
         appState.currentRequestId = streamRequestId;
@@ -23663,6 +24254,9 @@ async function sendMessage(message = null, options = {}) {
       if (streamFlowSegments.length > 0) renderInterleavedFlow();
       else renderStreamingContent();
     }
+    if (selectedSkillDraft && !cleanContent && !generatedArtifactAttachments.length && !receivedCancelled) {
+      throw new Error(isChineseLanguage(appState.language) ? '模型未返回内容，请重试。' : 'The model returned no answer. Please try again.');
+    }
 
     const taskSnapshot = Array.from(agentRunState.tasks.values()).map(t => ({
       stepId: t.stepId,
@@ -23689,7 +24283,7 @@ async function sendMessage(message = null, options = {}) {
     }));
     const toolSnapshot = Array.from(toolTraceSnapshots.values()).slice(-200);
     let serializedProcessTrace = null;
-    if (enableProcessTrace || toolSnapshot.length > 0) {
+    if (enableProcessTrace || toolSnapshot.length > 0 || streamFlowSegments.some((row) => row.kind !== 'content')) {
       const processTraceSnapshot = {
         version: 2,
         mode: (currentResearchMode === 'deep' || currentResearchMode === 'fast')
@@ -23702,6 +24296,8 @@ async function sendMessage(message = null, options = {}) {
         trace: processTraceEvents,
         timeline: timelineSequence.slice(-200),
         flowSegments: streamFlowSegments.slice(-200),
+        finalAnswerOffset,
+        interrupted: !streamComplete,
         tools: toolSnapshot
       };
       if (appState.agentMode && processTraceSnapshot.drafts.length > 0) {
@@ -23715,7 +24311,7 @@ async function sendMessage(message = null, options = {}) {
       content: cleanContent,
       request_id: streamRequestId || null,
       reasoning_content: finalReasoningContent || null,
-      model: appState.lastModelUsed || requestConfig.model,
+      model: actualRequestModel,
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
       process_trace: serializedProcessTrace,
@@ -23744,6 +24340,14 @@ async function sendMessage(message = null, options = {}) {
   } catch (error) {
     console.error(' 发送消息错误:', error);
     if (aiMsgDiv?.isConnected) aiMsgDiv.remove();
+    if (!String(fullContent || '').trim() && !generatedArtifactAttachments.length
+      && window.RaiWebSkills?.restore?.(selectedSkillDraft)) {
+      // Roll back only this unsaved optimistic echo, never a reconciled/server-persisted row.
+      const optimisticIndex = appState.messages.indexOf(userMsg);
+      if (optimisticIndex >= 0 && !userMsg.id) appState.messages.splice(optimisticIndex, 1);
+      chatFlowState.messages = appState.messages;
+      renderMessages({ preserveScroll: true });
+    }
     const message = error?.message || (isChineseLanguage(appState.language)
       ? '发送失败,请检查网络连接'
       : 'Send failed, check network');
@@ -23795,8 +24399,7 @@ function getSendHoldModes() {
 
 function getSendHoldModeFromCurrentState() {
   if (isResearchModeEnabled()) return 'research';
-  if (appState.selectedModel === 'deepseek-pro' && appState.thinkingMode) return 'think';
-  if (appState.selectedModel === 'deepseek-flash') return 'fast';
+  if (appState.selectedModel === 'deepseek-v4.1-flash') return 'fast';
   return 'smart';
 }
 
@@ -24103,17 +24706,7 @@ function toggleInternet() {
 
 // 切换推理模式
 function toggleThinking() {
-  const modelConfig = MODELS[appState.selectedModel];
-  if (!modelConfig || !modelConfig.supportsThinking) {
-    const msg = isChineseLanguage(appState.language)
-      ? '当前模型不支持推理模式'
-      : 'Current model does not support thinking mode';
-    alert(msg);
-    return;
-  }
-
-  appState.thinkingMode = !appState.thinkingMode;
-  updateToolbarUI();
+  toggleThinkingFromMenu();
 
   const thinkingBtn = document.getElementById('thinkingBtn');
   const tooltipText = isChineseLanguage(appState.language) ? '推理' : 'Reasoning';
@@ -24123,51 +24716,10 @@ function toggleThinking() {
 }
 
 // 修复：改进handleFileSelected - 添加完整的错误处理
-function handleFileSelected(event) {
-  if (!event || !event.target) {
-    console.error(' 事件对象无效');
-    return;
-  }
-
-  const files = event.target.files;
-  if (!files || files.length === 0) {
-    console.warn(' 未选择文件');
-    return;
-  }
-
-  const file = files[0];
-  console.log(` 选中文件: type=${file.type || 'unknown'}, bytes=${file.size}`);
-
-  // 文件类型验证
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'text/plain'];
-  if (!allowedTypes.includes(file.type)) {
-    const msg = isChineseLanguage(appState.language)
-      ? `不支持的文件类型: ${file.type}\n支持的类型: 图片(JPG, PNG, GIF, WebP), 文本文件`
-      : `Unsupported file type: ${file.type}\nSupported: Images (JPG, PNG, GIF, WebP), Text`;
-    alert(msg);
-    return;
-  }
-
-  // 文件大小验证 (最大10MB)
-  const maxSize = 10 * 1024 * 1024;
-  if (file.size > maxSize) {
-    const msg = isChineseLanguage(appState.language)
-      ? `文件过大: ${(file.size / 1024 / 1024).toFixed(2)} MB\n最大支持: 10 MB`
-      : `File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB\nMax size: 10 MB`;
-    alert(msg);
-    return;
-  }
-
-  // TODO: 实现文件上传到服务器的逻辑
-  // 这里应该将文件上传到后端，并获取URL或ID
-  // 然后可以在发送消息时附加文件信息
-  console.log(' 文件已准备，等待上传实现');
-
-  // 临时提示用户
-  const msg = isChineseLanguage(appState.language)
-    ? `文件 "${file.name}" 已选择\n注意: 文件上传功能尚未完全实现`
-    : `File "${file.name}" selected\nNote: File upload not fully implemented yet`;
-  alert(msg);
+async function handleFileSelected(event) {
+  const files = Array.from(event?.target?.files || []);
+  if (event?.target) event.target.value = '';
+  if (files.length) await processUploadedFiles(files);
 }
 
 // 修复：改进showModelRoutingInfo
@@ -24251,6 +24803,7 @@ async function verifyToken({ allowRefresh = true } = {}) {
     const context = captureUserAuthContext();
     const controller = new AbortController();
     const untrack = trackUserAuthRequest(controller);
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const response = await RAI_SESSION_FETCH(`${API_BASE}/user/profile`, {
         headers: { Authorization: `Bearer ${context.token}` },
@@ -24271,13 +24824,17 @@ async function verifyToken({ allowRefresh = true } = {}) {
       console.warn(' 当前 access token 验证未完成:', error?.message || error);
       return false;
     } finally {
+      clearTimeout(timeout);
       untrack();
     }
 
     if (!refreshAttempted) {
       refreshAttempted = true;
-      if (await refreshUserAccessToken()) continue;
+      const state = await refreshUserAccessToken({ withState: true });
+      if (state === 'authenticated') continue;
+      if (state === 'checking') return false;
     }
+    if (!isUserAuthContextCurrent(context)) return false;
     break;
   }
 
@@ -24288,7 +24845,11 @@ async function verifyToken({ allowRefresh = true } = {}) {
 }
 
 function clearAuthenticatedAppState() {
-  if (appState.customApiMode) exitCustomApiMode();
+  window.RaiWebSkills?.reset?.({ clearCatalog: true });
+  exitCustomApiMode();
+  for (const [id, model] of Object.entries(MODELS)) if (model.byok) delete MODELS[id];
+  appState.customApiConfigs = [];
+  const customKey = document.getElementById('customApiKey'); if (customKey) customKey.value = '';
   abortConversationAsyncWork();
   window.RAIConversationCache?.clearCurrentAccount?.().catch(() => null);
   window.RAISelectionExplainer?.clearUserWorkspace?.(appState.user?.id);
@@ -24503,212 +25064,266 @@ function offerBrowserPasswordSave(email, password) {
 }
 
 const CUSTOM_API_SESSION_KEY = 'rai_custom_api_session';
-
+const WEB_CUSTOM_API_ENABLED = true;
+let editingCustomApiId = null;
+const customApiSessionKeys = new Map();
+function customApiPublicConfig(config) {
+  return { id:config.id, name:config.name, url:config.url, model:config.model, includeUsage:config.includeUsage !== false };
+}
+function customApiAccountScope() {
+  return appState.token && appState.user?.id && appState.user.id !== 'custom-api' ? API_BASE + '|' + appState.user.id : '';
+}
+function notifyCustomApiUnavailable() {
+  showToast(i18nText('custom-api-login-required', '请先登录 RAI 账号后使用自定义 API。'));
+}
 function normalizeCustomApiUrl(value) {
-  let raw = String(value || '').trim();
-  if (!raw) return '';
-  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
   try {
-    const url = new URL(raw);
-    if (!/^https?:$/.test(url.protocol)) return '';
-    url.hash = '';
-    url.search = '';
+    const url = new URL(String(value || '').trim());
+    if (url.protocol !== 'https:' || url.username || url.password) return '';
+    url.hash = ''; url.search = '';
     let path = url.pathname.replace(/\/+$/, '');
-    if (/\/chat\/completions$/i.test(path)) {
-      url.pathname = path;
-    } else if (/\/v1$/i.test(path)) {
-      url.pathname = `${path}/chat/completions`;
-    } else {
-      url.pathname = `${path}/v1/chat/completions`;
-    }
-    return url.toString().replace(/\/+$/, '');
-  } catch (error) {
-    return '';
-  }
+    if (!/\/chat\/completions$/i.test(path)) path += /\/v1$/i.test(path) ? '/chat/completions' : '/v1/chat/completions';
+    url.pathname = path;
+    return url.toString();
+  } catch (_) { return ''; }
 }
-
 function readCustomApiSession() {
+  const scope = customApiAccountScope();
+  if (!scope) return [];
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY) || 'null');
-    if (!parsed || typeof parsed !== 'object') return null;
-    const url = normalizeCustomApiUrl(parsed.url);
-    const key = String(parsed.key || '').trim();
-    const model = String(parsed.model || '').trim();
-    if (!url || !key || !model) return null;
-    return { url, key, model };
-  } catch (error) {
-    return null;
-  }
+    const saved = JSON.parse(sessionStorage.getItem(CUSTOM_API_SESSION_KEY + ':' + scope) || '[]');
+    return (Array.isArray(saved) ? saved : []).filter(item => item && /^byok:[a-z0-9-]{1,80}$/i.test(item.id)
+      && normalizeCustomApiUrl(item.url)
+      && typeof item.model === 'string' && /^[A-Za-z0-9_.:/-]{1,160}$/.test(item.model)).slice(0, 50)
+      .map(item => ({ ...customApiPublicConfig(item), key:customApiSessionKeys.get(scope + ':' + item.id) || '' }));
+  } catch (_) { return []; }
 }
-
-function saveCustomApiSession(config) {
-  try {
-    sessionStorage.setItem(CUSTOM_API_SESSION_KEY, JSON.stringify(config));
-  } catch (error) {
-    throw new Error(isChineseLanguage(appState.language) ? '当前浏览器不允许保存会话 Key' : 'This browser does not allow session storage');
-  }
-}
-
 function clearCustomApiSession() {
-  try { sessionStorage.removeItem(CUSTOM_API_SESSION_KEY); } catch (error) { /* ignore */ }
+  const scope = customApiAccountScope();
+  if (scope) sessionStorage.removeItem(CUSTOM_API_SESSION_KEY + ':' + scope);
 }
-
-function setCustomApiFormVisibility(visible) {
-  const standardIds = [
-    'authEmail', 'authLoginMethodStep', 'passwordStep', 'twoFactorStep', 'emailCodeStep',
-    'usernameStep', 'submitStep', 'authAlternativeOptions', 'authPasskeyEntry', 'ztx6dSsoContainer', 'authSwitch', 'authLangRow'
-  ];
-  standardIds.forEach((id) => {
-    const element = document.getElementById(id);
-    if (!element) return;
-    const target = element.closest('.form-group') || element;
-    target.style.display = visible ? 'none' : '';
-  });
-  const entry = document.getElementById('customApiEntry');
-  if (entry) entry.style.display = visible ? 'none' : '';
-  const footer = document.getElementById('authFooter');
-  if (footer) footer.style.display = visible ? 'none' : '';
-  const panel = document.getElementById('customApiPanel');
-  if (panel) {
-    panel.classList.toggle('auth-step-hidden', !visible);
-    panel.classList.toggle('auth-step-visible', visible);
+function saveCustomApiSession(config) {
+  const scope = customApiAccountScope();
+  if (!scope) throw new Error(i18nText('custom-api-login-required', '请先登录 RAI 账号后使用自定义 API。'));
+  const configs = readCustomApiSession().filter(item => item.id !== config.id);
+  if (configs.length >= 50) throw new Error(i18nText('custom-api-limit', '最多添加 50 个自定义模型。'));
+  customApiSessionKeys.set(scope + ':' + config.id, config.key);
+  configs.push(customApiPublicConfig(config));
+  sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(configs.map(customApiPublicConfig)));
+  loadCustomApiModels();
+}
+function loadCustomApiModels() {
+  for (const [id, model] of Object.entries(MODELS)) if (model.byok) delete MODELS[id];
+  appState.customApiConfigs = readCustomApiSession();
+  for (const config of appState.customApiConfigs) MODELS[config.id] = { name: config.name || config.model,
+    builtin: false, byok: true, supportsThinking: false, canDisableThinking: true, supportsInternet: false };
+  renderCustomModelChoices();
+  renderCustomApiList();
+}
+function renderCustomApiList() {
+  const list = document.getElementById('customApiList');
+  if (!list) return;
+  list.replaceChildren();
+  for (const config of appState.customApiConfigs || []) {
+    const row = document.createElement('div'); row.className = 'setting-item';
+    const label = document.createElement('p'); label.textContent = (config.name || config.model) + ' · ' + config.model;
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'settings-inline-save';
+    edit.textContent = i18nText('edit', '编辑'); edit.addEventListener('click', () => {
+      editingCustomApiId = config.id;
+      for (const [id, value] of Object.entries({ customApiName: config.name || '', customApiUrl: config.url, customApiKey: config.key, customModelId: config.model })) document.getElementById(id).value = value;
+      document.getElementById('customApiUsage').checked = config.includeUsage !== false;
+    });
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'settings-inline-save';
+    remove.textContent = i18nText('delete', '删除'); remove.addEventListener('click', () => {
+      const scope = customApiAccountScope(); if (!scope) return notifyCustomApiUnavailable();
+      sessionStorage.setItem(CUSTOM_API_SESSION_KEY + ':' + scope, JSON.stringify(readCustomApiSession().filter(item => item.id !== config.id).map(customApiPublicConfig)));
+      customApiSessionKeys.delete(scope + ':' + config.id);
+      if (appState.selectedModel === config.id) leaveCustomApiMode();
+      loadCustomApiModels();
+    });
+    row.append(label, edit, remove); list.append(row);
   }
 }
-
 function toggleCustomApiMode(force) {
-  const visible = typeof force === 'boolean' ? force : !appState.customApiFormVisible;
-  appState.customApiFormVisible = visible;
-  const title = document.getElementById('authTitle');
-  const subtitle = document.getElementById('authSubtitle');
-  if (visible) {
-    hideAuthError();
-    if (title) title.textContent = i18nText('custom-api-title', '使用自定义 API');
-    if (subtitle) subtitle.textContent = i18nText('custom-api-desc', 'Key 只保存在当前浏览器会话，不会发送到 RAI 服务器。');
-  } else {
-    appState.authMode = 'login';
-    appState.authEmailValidated = false;
-    if (title) title.textContent = i18nText('login-title', '欢迎回来');
-    if (subtitle) subtitle.textContent = i18nText('login-subtitle', '登录继续使用 RAI');
-    updateForgotPasswordVisibility();
-    updateAuthMethodUI();
-    updateAuthSubmitButtonText();
-  }
-  setCustomApiFormVisibility(visible);
-  if (visible) document.getElementById('customApiUrl')?.focus();
+  if (!customApiAccountScope()) { if (force !== false) notifyCustomApiUnavailable(); return; }
+  if (force !== false) { openSettings(); switchSettingsSection('advanced'); }
 }
-
 function enterCustomApiApp(config) {
-  invalidateUserAuthAsyncWork();
-  clearUserAccessToken();
-  appState.customApiMode = true;
-  appState.customApiConfig = config;
-  appState.user = { id: 'custom-api', username: 'Custom API', email: 'custom-api@local' };
-  appState.currentSession = null;
-  appState.currentSessionMemoryMode = 'classic-temp';
-  appState.sessions = [];
-  appState.messages = [];
-  appState.internetMode = false;
-  appState.thinkingMode = false;
-  appState.researchModeEnabled = false;
-  document.body.classList.add('custom-api-mode');
-  showApp();
-  showWelcome();
-  updateToolbarUI();
+  if (!customApiAccountScope() || !readCustomApiSession().some(item => item.id === config?.id)) return notifyCustomApiUnavailable();
+  appState.selectedModel = config.id;
+  activateCustomApiModel();
+  updateSelectedModelText(config.id); updateModelControls(); updateMenuSelection();
 }
-
+function activateCustomApiModel() {
+  const config = (appState.customApiConfigs || []).find(item => item.id === appState.selectedModel);
+  appState.customApiMode = /^(?:custom:|byok:)/.test(appState.selectedModel || '') && !!customApiAccountScope();
+  appState.customApiConfig = appState.customApiMode ? config : null;
+}
 function exitCustomApiMode() {
-  clearCustomApiSession();
-  appState.customApiMode = false;
-  appState.customApiConfig = null;
-  appState.currentSessionMemoryMode = 'normal';
+  appState.customApiMode = false; appState.customApiConfig = null;
   document.body.classList.remove('custom-api-mode');
 }
-
 function leaveCustomApiMode() {
-  clearAuthenticatedAppState();
-  const keyInput = document.getElementById('customApiKey');
-  if (keyInput) keyInput.value = '';
-  showAuthScreen();
+  exitCustomApiMode(); appState.selectedModel = 'auto'; appState.modelPromptIdentity = 'smart';
+  updateSelectedModelText('auto'); updateModelControls(); updateMenuSelection();
 }
-
+async function requireCustomApiAccount() {
+  const scope = customApiAccountScope();
+  if (!scope) { notifyCustomApiUnavailable(); return false; }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const context = captureUserAuthContext(), controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await RAI_SESSION_FETCH(API_BASE + '/auth/verify', { headers: { Authorization: 'Bearer ' + context.token },
+        cache: 'no-store', signal: controller.signal });
+      if (!isUserAuthContextCurrent(context) || customApiAccountScope() !== scope) return false;
+      if (response.ok) return true;
+      if (![401,403].includes(response.status)) break;
+      if (!attempt && await refreshUserAccessToken({ withState: true }) === 'authenticated' && customApiAccountScope() === scope) continue;
+      if (customApiAccountScope() === scope) { clearAuthenticatedAppState(); showAuthScreen(); }
+      break;
+    } catch (_) { break; } finally { clearTimeout(timeout); }
+  }
+  notifyCustomApiUnavailable(); return false;
+}
 async function startCustomApiMode() {
+  if (!await requireCustomApiAccount()) return;
   const errorEl = document.getElementById('customApiError');
   const url = normalizeCustomApiUrl(document.getElementById('customApiUrl')?.value);
   const key = String(document.getElementById('customApiKey')?.value || '').trim();
   const model = String(document.getElementById('customModelId')?.value || '').trim();
-  const showError = (message) => {
-    if (errorEl) { errorEl.textContent = message; errorEl.classList.add('show'); }
-  };
-  if (!url) return showError(isChineseLanguage(appState.language) ? '请输入有效的 API URL' : 'Enter a valid API URL');
-  if (!key) return showError(isChineseLanguage(appState.language) ? '请输入 API Key' : 'Enter an API key');
-  if (!model) return showError(isChineseLanguage(appState.language) ? '请输入模型 ID' : 'Enter a model ID');
-  const config = { url, key, model };
+  const name = String(document.getElementById('customApiName')?.value || model).trim().slice(0, 80);
   try {
-    saveCustomApiSession(config);
-    if (errorEl) errorEl.classList.remove('show');
-    enterCustomApiApp(config);
-  } catch (error) {
-    showError(error.message);
-  }
+    if (!url) throw new Error(i18nText('custom-api-invalid-url', '请输入有效的 HTTPS API URL。'));
+    if (!key) throw new Error(i18nText('custom-api-key-placeholder', '请输入 API Key'));
+    if (!/^[A-Za-z0-9_.:/-]{1,160}$/.test(model)) throw new Error(i18nText('custom-api-invalid-model', '请输入有效的模型 ID。'));
+    const config = { id: editingCustomApiId || 'byok:' + crypto.randomUUID(), url, key, model, name,
+      includeUsage: document.getElementById('customApiUsage').checked };
+    saveCustomApiSession(config); editingCustomApiId = null;
+    document.getElementById('customApiKey').value = '';
+    errorEl.textContent = ''; errorEl.classList.remove('show');
+    showToast(i18nText('custom-api-saved', '已保存，可在模型列表中选择。'));
+  } catch (error) { errorEl.textContent = error.message; errorEl.classList.add('show'); }
 }
-
 window.toggleCustomApiMode = toggleCustomApiMode;
 window.startCustomApiMode = startCustomApiMode;
 window.leaveCustomApiMode = leaveCustomApiMode;
-
 function parseCustomApiPayload(payload) {
   const choice = payload?.choices?.[0] || {};
   return String(choice.delta?.content ?? choice.message?.content ?? choice.text ?? payload?.output_text ?? '');
 }
-
-async function sendCustomApiMessage(messages) {
-  const config = appState.customApiConfig || readCustomApiSession();
-  if (!config) return;
+async function sendCustomApiMessage(messages, verifiedContext = null) {
+  if (verifiedContext ? !isUserAuthContextCurrent(verifiedContext) || !customApiAccountScope() : !await requireCustomApiAccount()) return;
+  const config = appState.customApiConfig;
+  if (!config) { showToast(i18nText('custom-api-config-required', '此设备尚未配置这个第三方模型，请先在设置中添加或选择可用的自定义 API。')); return; }
+  if (!config.key) { showToast(i18nText('custom-api-key-required', '请在设置中重新输入 API Key。')); return; }
+  const context = captureUserAuthContext(), owner = customApiAccountScope(), requestId = crypto.randomUUID(), started = Date.now();
+  const temporary = appState.currentSessionMemoryMode === 'classic-temp';
+  if (!temporary && !/^(?:custom:|byok:)/.test(appState.currentSession?.model || '')) {
+    appState.currentSession = { id: 'session_client_' + crypto.randomUUID(), model: config.id,
+      title: String(messages.find(message => message.role === 'user')?.content || '自定义 API 对话').slice(0, 80), session_kind: 'chat' };
+    appState.sessions.unshift(appState.currentSession);
+    renderSessions();
+  }
+  const session = appState.currentSession, conversation = appState.messages;
+  const controller = new AbortController(); appState.abortController = controller;
   appState.isStreaming = true;
-  const assistant = { role: 'assistant', content: '', model: config.model, created_at: new Date().toISOString() };
-  appState.messages.push(assistant);
-  renderMessages();
-  try {
-    const response = await fetch(config.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.key}` },
-      body: JSON.stringify({ model: config.model, messages, stream: true })
+  let usage = null, outcome = 'completed', status = 0;
+  const assistant = { role: 'assistant', content: '', model: config.id, created_at: new Date().toISOString() };
+  conversation.push(assistant); renderMessages();
+  let syncTask = Promise.resolve(), lastSyncAt = 0;
+  const sync = (force = false) => {
+    if (temporary || (!force && Date.now() - lastSyncAt < 2000)) return syncTask;
+    lastSyncAt = Date.now();
+    syncTask = syncTask.catch(() => {}).then(async () => {
+      if (!isUserAuthContextCurrent(context)) return;
+      await window.RAIConversationCache?.putConversation?.(session.id, conversation, null, null);
+      for (let offset = 0; offset < conversation.length; offset += 100) {
+        if (!isUserAuthContextCurrent(context)) return;
+        const batch = conversation.slice(offset, offset + 100);
+        const payload = batch.map((message, index) => {
+          message.client_message_id ||= crypto.randomUUID();
+          return { client_message_id: message.client_message_id, sync_hash: message.sync_hash, client_order: offset + index, role: message.role,
+            content: message.content || '', reasoning_content: message.reasoning_content || '', model: message.model,
+            process_trace: message.process_trace, cx_context: message.cx_context, tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id, is_context_summary: message.is_context_summary,
+            cx_interrupted: message.cx_interrupted === true };
+        });
+        const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(session.id)}/client-messages`, {
+          method: 'PUT', headers: { Authorization: 'Bearer ' + context.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: config.id, title: session.title, messages: payload }) });
+        const data = await response.json();
+        if (!isUserAuthContextCurrent(context)) return;
+        if (!response.ok || !data.success || !Array.isArray(data.messages)) throw new Error('custom_sync_failed');
+        for (const saved of data.messages) {
+          const message = batch.find(item => item.client_message_id === saved.client_message_id);
+          if (message) { message.id = saved.id; message.sync_hash = saved.sync_hash; }
+        }
+      }
+      await window.RAIConversationCache?.putConversation?.(session.id, conversation, null, null);
     });
-    if (!response.ok) throw new Error(await getApiErrorMessage(response, `HTTP ${response.status}`));
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    if (!response.body || !contentType.includes('text/event-stream')) {
-      const payload = await response.json();
-      assistant.content = parseCustomApiPayload(payload) || String(payload?.content || '');
-      renderMessages();
-      return;
+    syncTask.catch(() => {});
+    return syncTask;
+  };
+  const observe = payload => {
+    if (payload.usage) usage = window.RaiTokenBilling.normalize(payload.usage, { model: config.model,
+      provider: new URL(config.url).hostname === 'api.openai.com' ? 'openai_official' : 'custom_api' });
+    const delta = parseCustomApiPayload(payload);
+    if (delta) assistant.content += delta;
+    const reasoning = payload?.choices?.[0]?.delta?.reasoning_content;
+    if (reasoning) assistant.reasoning_content = (assistant.reasoning_content || '') + reasoning;
+    sync();
+  };
+  try {
+    await sync(true);
+    const body = { model: config.model, messages, stream: true };
+    if (config.includeUsage !== false) body.stream_options = { include_usage: true };
+    const response = await fetch(config.url, { method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.key }, body: JSON.stringify(body) });
+    status = response.status;
+    if (!isUserAuthContextCurrent(context)) { await response.body?.cancel(); return; }
+    if (!response.ok) throw new Error(await getApiErrorMessage(response, 'HTTP ' + response.status));
+    if (!response.body || !String(response.headers.get('content-type') || '').includes('text/event-stream')) observe(await response.json());
+    else {
+      const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '', terminal = false;
+      const line = value => {
+        if (!value.startsWith('data:')) return;
+        const data = value.slice(5).trim();
+        if (data === '[DONE]') { terminal = true; return; }
+        if (!data) return;
+        let payload; try { payload = JSON.parse(data); } catch (_) { return; }
+        if (payload.error) throw new Error(i18nText('custom-api-stream-error', '自定义 API 返回流错误。'));
+        if (payload.choices?.some(choice => choice.finish_reason)) terminal = true;
+        observe(payload);
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (!isUserAuthContextCurrent(context)) { await reader.cancel(); return; }
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        if (buffer.length > 4 * 1024 * 1024) throw new Error('custom_api_event_too_large');
+        const lines = buffer.split(/\r?\n/); buffer = done ? '' : lines.pop();
+        for (const value of lines) line(value);
+        renderMessages();
+        if (done) break;
+      }
+      if (!terminal) throw new Error(i18nText('custom-api-incomplete', '自定义 API 连接中断，请重新生成。'));
     }
-    const reader = window.RaiDiagnostics ? window.RaiDiagnostics.reader(response) : response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split(/\r?\n/);
-      buffer = done ? '' : (lines.pop() || '');
-      lines.forEach((line) => {
-        if (!line.startsWith('data:')) return;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') return;
-        try {
-          const payload = JSON.parse(data);
-          const delta = parseCustomApiPayload(payload);
-          if (delta) { assistant.content += delta; renderMessages(); }
-        } catch (error) { /* ignore incomplete SSE frames */ }
-      });
-      if (done) break;
-    }
-    if (!assistant.content) assistant.content = isChineseLanguage(appState.language) ? '接口返回了空内容' : 'The API returned an empty response';
+    if (!assistant.content) throw new Error(i18nText('custom-api-empty', '接口返回了空内容。'));
     renderMessages();
   } catch (error) {
-    assistant.content = `${isChineseLanguage(appState.language) ? '自定义 API 请求失败：' : 'Custom API request failed: '}${error.message}`;
-    renderMessages();
+    outcome = controller.signal.aborted ? 'cancelled' : 'error';
+    if (isUserAuthContextCurrent(context)) {
+      if (outcome !== 'cancelled') assistant.content += '\n' + i18nText('custom-api-request-failed', '自定义 API 请求失败：') + error.message;
+      renderMessages();
+    }
   } finally {
-    appState.isStreaming = false;
+    assistant.cx_interrupted = outcome !== 'completed';
+    try { await sync(true); }
+    catch (_) { if (isUserAuthContextCurrent(context)) showToast(i18nText('custom-api-sync-failed', '第三方对话同步失败，内容已保留在本机。请检查网络后重试。')); }
+    window.RaiUserActivity?.record(outcome === 'error' ? 'error' : 'stream', outcome, { clientRequestId: requestId,
+      stage: 'custom_api', context: { actualModel: config.model, customApiMode: true },
+      metrics: { status, durationMs: Date.now() - started }, ...(usage ? { tokenUsage: usage } : {}) }, owner);
+    if (isUserAuthContextCurrent(context)) { appState.isStreaming = false; appState.abortController = null; updateToolbarUI(); }
   }
 }
 
@@ -25916,7 +26531,9 @@ async function loadUserData(profileInput = null, { authContext = captureUserAuth
 
     //  修复：检查profile对象的所有必需字段
     if (profile && typeof profile === 'object') {
-      resetModelToSmart();
+      loadCustomApiModels();
+      restoreModelPreference(profile);
+      persistDefaultModelPreference();
       if (profile.temperature !== undefined) appState.temperature = parseFloat(profile.temperature) || 0.7;
       if (profile.top_p !== undefined) appState.topP = parseFloat(profile.top_p) || 0.9;
       if (profile.max_tokens !== undefined) appState.maxTokens = parseInt(profile.max_tokens, 10) || 2000;
@@ -25934,7 +26551,7 @@ async function loadUserData(profileInput = null, { authContext = captureUserAuth
 	        appState.shortTermMemoryTitles = profile.short_memory_titles;
 	      }
       // 读取用户偏好；若模型不支持会在 updateModelControls 里自动关闭
-      if (profile.thinking_mode !== undefined) {
+      if (!readModelPreference() && profile.reasoning_profile && profile.thinking_mode !== undefined) {
         appState.thinkingMode = (profile.thinking_mode === 1 || profile.thinking_mode === true);
       }
       if (profile.tab_title_mode !== undefined) {
@@ -27858,7 +28475,7 @@ function createCanvasNode(message, x, y, sourceReference = null) {
   // 清理 Markdown 标记
   const messageContent = typeof message?.content === 'string' ? message.content : String(message?.content || '');
   const cleanContent = messageContent
-    .replace(/```[\s\S]*?```/g, '[代码块]')
+    .replace(/```[\s\S]*?```/g, isChineseLanguage(appState.language) ? '[代码块]' : '[Code block]')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
     .replace(/#{1,6}\s/g, '')
@@ -27892,7 +28509,7 @@ function createTextNode(text, x, y) {
 
   // 清理和截取内容
   const cleanContent = text
-    .replace(/```[\s\S]*?```/g, '[代码块]')
+    .replace(/```[\s\S]*?```/g, isChineseLanguage(appState.language) ? '[代码块]' : '[Code block]')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
     .replace(/#{1,6}\s/g, '')
@@ -28599,7 +29216,7 @@ async function aiDecomposeSelected() {
           role: 'user',
           content: `请将以下内容拆解成3-5个要点，每个要点用一行表示，不需要编号：\n\n${node.fullContent || node.content}`
         }],
-	        model: 'deepseek-pro',
+	        model: 'deepseek-v4.1-flash',
 	        reasoningProfile: normalizeReasoningProfile(appState.reasoningProfile),
 	        promptTimeContext: getUserTimeContext(),
 	        memoryMode: 'off',
@@ -28626,7 +29243,7 @@ async function aiDecomposeSelected() {
         height: 80
       };
       chatFlowState.nodes.push(childNode);
-      createEdge(nodeId, childNode.id, '拆解');
+      createEdge(nodeId, childNode.id, isChineseLanguage(appState.language) ? '拆解' : 'Breakdown');
     });
 
     renderCanvasNodes();
@@ -29042,7 +29659,7 @@ function addAnnotationToNode(targetNodeId) {
 
   chatFlowState.nodes.push(sticky);
   // 创建连线表示关联
-  createEdge(targetNodeId, stickyId, '注释');
+  createEdge(targetNodeId, stickyId, isChineseLanguage(appState.language) ? '注释' : 'Annotation');
   renderCanvasNodes();
   saveFlowState();
 }
@@ -29428,6 +30045,7 @@ function isNearBottom(threshold = null) {
 }
 
 function performScrollToBottom() {
+  if (appState.chatTouchScrolling) return;
   const container = getChatScrollElement();
   if (!container) return;
 
@@ -29440,6 +30058,7 @@ function performScrollToBottom() {
 }
 
 function scrollToBottom(force = false) {
+  if (appState.chatTouchScrolling) return;
   const container = getChatScrollElement();
   if (!container) return;
   if (appState.scrollFollowMode === 'pausedByUser' && !force) return;
@@ -29463,6 +30082,28 @@ let chatScrollListenerInitialized = false;
 
 function initChatScrollListener() {
   if (chatScrollListenerInitialized) return;
+
+  // Pause follow-on-output at vertical touch intent, before native scrolling.
+  // Otherwise a pending/streaming scroll-to-bottom can continuously undo the
+  // user's gesture while the programmatic-scroll guard ignores scroll events.
+  const chat = getChatScrollElement();
+  let start = null;
+  chat?.addEventListener('touchstart', event => {
+    if (event.touches.length !== 1 || event.target.closest('button, input, textarea, select, .input-area')) { start = null; return; }
+    const touch = event.touches[0]; start = {x:touch.clientX, y:touch.clientY};
+  }, {passive:true});
+  chat?.addEventListener('touchmove', event => {
+    if (!start || event.touches.length !== 1) return;
+    const touch = event.touches[0], dx = Math.abs(touch.clientX - start.x), dy = Math.abs(touch.clientY - start.y);
+    if (dy < 10 || dy <= dx) return;
+    appState.chatTouchScrolling = true;
+    appState.isProgrammaticScroll = false;
+    cancelPendingAutoScroll();
+    setScrollFollowMode('pausedByUser');
+  }, {passive:true});
+  const finishTouch = () => { start = null; appState.chatTouchScrolling = false; };
+  chat?.addEventListener('touchend', finishTouch, {passive:true});
+  chat?.addEventListener('touchcancel', finishTouch, {passive:true});
 
   chatScrollListenerInitialized = true;
   ensureScrollResumeButton();
@@ -29758,13 +30399,17 @@ function applyMemoryUpdateEvent(data = {}) {
   }
   if (Array.isArray(data.memories)) {
     appState.userMemories = data.memories;
-    appState.userMemoriesLoaded = true;
+    appState.userMemoriesLoaded = !data.hasMore;
   }
   if (Array.isArray(data.shortTermMemory)) {
     appState.shortTermMemoryTitles = data.shortTermMemory;
   }
   renderMemorySettings();
 }
+
+const selectedMemoryIds = new Set();
+let memoryMutationPending = false;
+let selectedMemoryBackup = null;
 
 function renderMemorySettings() {
   const toggle = document.getElementById('memoryEnabledToggle');
@@ -29775,6 +30420,10 @@ function renderMemorySettings() {
   const list = document.getElementById('settingsMemoryList');
   if (!list) return;
   const memories = Array.isArray(appState.userMemories) ? appState.userMemories : [];
+  const visibleIds = new Set(memories.map(memory => Number(memory.id)));
+  for (const id of selectedMemoryIds) if (!visibleIds.has(id)) selectedMemoryIds.delete(id);
+  const deleteSelected = document.getElementById('deleteSelectedMemoriesButton');
+  if (deleteSelected) deleteSelected.disabled = !selectedMemoryIds.size || memoryMutationPending;
   const shortTermTitles = Array.isArray(appState.shortTermMemoryTitles) ? appState.shortTermMemoryTitles : [];
   if (!appState.userMemoriesLoaded) {
     list.innerHTML = `<div class="memory-empty">${escapeHtml(isChineseLanguage(appState.language) ? '正在加载记忆...' : 'Loading memories...')}</div>`;
@@ -29800,6 +30449,8 @@ function renderMemorySettings() {
   }
   list.innerHTML = `${shortTermHtml}${memories.map((memory) => `
     <div class="memory-item" data-memory-id="${escapeHtml(memory.id)}">
+      <input type="checkbox" ${selectedMemoryIds.has(Number(memory.id)) ? 'checked' : ''} aria-label="${escapeHtml(isChineseLanguage(appState.language) ? '选择记忆' : 'Select memory')}"
+        data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-change="selectMemoryForBatch(${Number(memory.id) || 0}, this.checked)">
       <div class="memory-item-main">
         <div class="memory-item-content">${escapeHtml(memory.content || '')}</div>
         <div class="memory-item-meta">${escapeHtml(i18nText('memory-long-term-title', isChineseLanguage(appState.language) ? '长期记忆' : 'Long-term memory'))} · ${escapeHtml(memory.category || 'other')}</div>
@@ -29818,16 +30469,24 @@ async function loadUserMemories({ force = false } = {}) {
     return;
   }
   try {
-    const response = await fetch(`${API_BASE}/user/memories`, {
-      headers: { 'Authorization': `Bearer ${appState.token}` },
-      cache: 'no-store'
-    });
-    const data = await response.json();
-    if (!response.ok || !data?.success) {
-      throw new Error(data?.error || `HTTP ${response.status}`);
-    }
+    let offset = 0;
+    let data;
+    const memories = [];
+    const token = appState.token;
+    do {
+      const response = await fetch(`${API_BASE}/user/memories?offset=${offset}`, {
+        headers: { 'Authorization': `Bearer ${token}` }, cache: 'no-store'
+      });
+      data = await response.json();
+      if (!response.ok || !data?.success) throw new Error(data?.error || `HTTP ${response.status}`);
+      if (token !== appState.token) return;
+      memories.push(...(Array.isArray(data.memories) ? data.memories : []));
+      if (!data.hasMore) break;
+      if (!Number.isSafeInteger(data.nextOffset) || data.nextOffset <= offset) throw new Error('invalid_memory_offset');
+      offset = data.nextOffset;
+    } while (data.hasMore);
     appState.longMemoryEnabled = !!data.enabled;
-    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
+    appState.userMemories = memories;
     appState.shortTermMemoryTitles = Array.isArray(data.shortTermMemory) ? data.shortTermMemory : [];
     appState.userMemoriesLoaded = true;
     renderMemorySettings();
@@ -29843,7 +30502,8 @@ async function loadUserMemories({ force = false } = {}) {
 function buildCurrentConfigPayloadForMemory() {
   return {
     theme: appState.themePreference || appState.theme,
-    default_model: 'auto',
+    default_model: appState.profileDefaultModel || appState.selectedModel || 'auto',
+    reasoning_profile: appState.reasoningProfile,
     temperature: appState.temperature,
     top_p: appState.topP,
     max_tokens: appState.maxTokens,
@@ -29889,6 +30549,7 @@ async function toggleLongMemorySetting() {
       appState.shortTermMemoryTitles = Array.isArray(data.memory.shortTermMemory) ? data.memory.shortTermMemory : [];
       appState.userMemoriesLoaded = true;
     }
+    await loadUserMemories({ force: true });
     const titleCount = appState.longMemoryEnabled ? appState.shortTermMemoryTitles.length : 0;
     const enabledMessage = i18nText('memory-enabled-with-titles', isChineseLanguage(appState.language)
       ? '记忆已开启，已读取最近 {count} 条对话标题'
@@ -29913,26 +30574,27 @@ async function addManualMemory() {
     input?.focus();
     return;
   }
+  const memories = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (memories.length > 500 || memories.some(line => line.length < 2 || line.length > 360)) {
+    showToast(isChineseLanguage(appState.language) ? '每批最多 500 条，每条记忆须为 2–360 字；本批未提交。' : 'Up to 500 memories per batch, 2–360 characters each. Nothing submitted.');
+    return;
+  }
+  if (memoryMutationPending) return;
+  memoryMutationPending = true;
   try {
-    const response = await fetch(`${API_BASE}/user/memories`, {
+    const response = await fetch(`${API_BASE}/user/memories/batch`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${appState.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ category: 'other', content })
+      headers: { 'Authorization': `Bearer ${appState.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memories: memories.map(text => ({ category: 'other', content: text })) })
     });
     const data = await response.json();
-    if (!response.ok || !data?.success) {
-      throw new Error(data?.error || `HTTP ${response.status}`);
-    }
-    appState.userMemories = Array.isArray(data.memories) ? data.memories : [];
-    appState.userMemoriesLoaded = true;
-    if (input) input.value = '';
-    renderMemorySettings();
+    if (!response.ok || !data?.success) throw new Error(data?.error || `HTTP ${response.status}`);
+    if (input && input.value.trim() === content) input.value = '';
+    await loadUserMemories({ force: true });
+    showToast(isChineseLanguage(appState.language) ? `已保存 ${data.savedCount} 条记忆，修改前备份 #${data.backupVersionId}` : `Saved ${data.savedCount} memories; previous version #${data.backupVersionId}`);
   } catch (error) {
-    showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '保存失败，请重试' : 'Save failed, please try again'));
-  }
+    showToast(error.message || i18nText('settings-save-failed', 'Save failed'));
+  } finally { memoryMutationPending = false; renderMemorySettings(); }
 }
 
 async function deleteUserMemory(memoryId) {
@@ -29952,6 +30614,98 @@ async function deleteUserMemory(memoryId) {
   } catch (error) {
     showToast(error.message || i18nText('settings-save-failed', isChineseLanguage(appState.language) ? '操作失败，请重试' : 'Operation failed, please try again'));
   }
+}
+
+function selectMemoryForBatch(id, checked) {
+  if (checked && selectedMemoryIds.size >= 500 && !selectedMemoryIds.has(id)) {
+    showToast(isChineseLanguage(appState.language) ? '单次最多选择 500 条记忆' : 'Select at most 500 memories per batch');
+  } else if (checked) selectedMemoryIds.add(id);
+  else selectedMemoryIds.delete(id);
+  renderMemorySettings();
+}
+
+function selectFirstMemoryBatch() {
+  selectedMemoryIds.clear();
+  for (const memory of (appState.userMemories || []).slice(0, 500)) selectedMemoryIds.add(Number(memory.id));
+  renderMemorySettings();
+}
+
+async function deleteSelectedUserMemories() {
+  const ids = [...selectedMemoryIds];
+  if (!ids.length || ids.length > 500 || memoryMutationPending) return;
+  if (!confirm(isChineseLanguage(appState.language) ? `移除所选 ${ids.length} 条记忆？修改前会自动备份。` : `Remove ${ids.length} selected memories? A backup is saved first.`)) return;
+  memoryMutationPending = true;
+  try {
+    const response = await fetch(`${API_BASE}/user/memories/batch-delete`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${appState.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memory_ids: ids })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    selectedMemoryIds.clear();
+    await loadUserMemories({ force: true });
+    showToast(isChineseLanguage(appState.language) ? `已移除 ${data.deletedCount} 条记忆，修改前备份 #${data.backupVersionId}` : `Removed ${data.deletedCount} memories; previous version #${data.backupVersionId}`);
+  } catch (error) { showToast(error.message); }
+  finally { memoryMutationPending = false; renderMemorySettings(); }
+}
+
+async function showMemoryBackups() {
+  selectedMemoryBackup = null;
+  const preview = document.getElementById('memoryBackupPreview');
+  const select = document.getElementById('memoryBackupSelect');
+  preview.textContent = '';
+  select.replaceChildren();
+  try {
+    const token = appState.token;
+    let offset = 0, versions;
+    do {
+      const response = await fetch(`${API_BASE}/user/memories/versions?offset=${offset}`, { headers: { 'Authorization': `Bearer ${token}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+      if (token !== appState.token) return;
+      versions = data.versions || [];
+      for (const version of versions) {
+        const option = document.createElement('option');
+        option.value = version.id;
+        option.textContent = `#${version.id} · ${version.created_at} UTC · ${version.operation} · ${version.memory_count}`;
+        select.append(option);
+      }
+      offset += versions.length;
+    } while (versions.length === 50);
+    document.getElementById('memoryBackupDialog').showModal();
+    if (select.options.length) await readSelectedMemoryBackup();
+    else preview.textContent = isChineseLanguage(appState.language) ? '尚无备份，首次修改记忆时会自动创建。' : 'No backups yet. The first edit creates one automatically.';
+  } catch (error) { showToast(error.message); }
+}
+
+async function readSelectedMemoryBackup() {
+  const id = Number(document.getElementById('memoryBackupSelect').value);
+  selectedMemoryBackup = null;
+  document.getElementById('memoryBackupPreview').textContent = '';
+  if (!Number.isSafeInteger(id) || id <= 0) return;
+  try {
+    const response = await fetch(`${API_BASE}/user/memories/versions/${id}`, { headers: { 'Authorization': `Bearer ${appState.token}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    if (Number(document.getElementById('memoryBackupSelect').value) !== id) return;
+    selectedMemoryBackup = data.version;
+    document.getElementById('memoryBackupPreview').textContent = data.version.memories.map(memory => `#${memory.id} [${memory.category}] ${memory.content}`).join('\n\n') || (isChineseLanguage(appState.language) ? '修改前没有记忆。' : 'No memories before this edit.');
+  } catch (error) { showToast(error.message); }
+}
+
+function closeMemoryBackups() {
+  document.getElementById('memoryBackupDialog').close();
+  document.getElementById('memoryBackupPreview').textContent = '';
+  selectedMemoryBackup = null;
+}
+
+function exportSelectedMemoryBackup() {
+  if (!selectedMemoryBackup) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(selectedMemoryBackup, null, 2)], { type: 'application/json' }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = `rai-memory-backup-${selectedMemoryBackup.id}.json`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function clearAllUserMemories() {
@@ -30072,6 +30826,7 @@ async function handleTemporaryChatClick() {
 }
 
 async function handleNewChatClick() {
+  removeAttachment();
   closeFileLibrary();
   closeModelModal();
   abortConversationSessionRefresh(appState.currentSession?.id);
@@ -30128,11 +30883,14 @@ async function createNewSession(options = {}) {
     const data = await response.json();
 
     if (data.success) {
+      if (options.webSkillDraft && !window.RaiWebSkills.isDraftCurrent(options.webSkillDraft)) return false;
       await loadSessions();
+      if (options.webSkillDraft && !window.RaiWebSkills.isDraftCurrent(options.webSkillDraft)) return false;
       await loadSession(data.sessionId, {
         preserveInternetMode,
         newlyCreated: true,
-        preserveCanvasDraft: options.preserveCanvasDraft === true
+        preserveCanvasDraft: options.preserveCanvasDraft === true,
+        webSkillDraft: options.webSkillDraft
       });
       appState.currentSessionMemoryMode = isSavedTemporary ? 'saved-temp' : 'normal';
       if (appState.currentSession) {
@@ -30253,11 +31011,18 @@ async function loadSession(sessionId, options = {}) {
       title: isChineseLanguage(appState.language) ? '历史对话' : 'Previous chat',
       session_kind: 'chat'
     };
+    if (/^(?:custom:|byok:)/.test(appState.currentSession.model || '')) {
+      appState.selectedModel = appState.currentSession.model;
+      updateSelectedModelText(appState.selectedModel); updateModelControls();
+    } else if (appState.customApiMode && !options.newlyCreated) {
+      leaveCustomApiMode();
+    }
     window.RAISelectionExplainer?.setConversationContext?.(sessionId);
     appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
       ? 'saved-temp'
       : 'normal';
     const newlyCreated = options.newlyCreated === true;
+    if (newlyCreated) window.RaiWebSkills?.bindCreatedSession?.(options.webSkillDraft);
     const cached = newlyCreated
       ? null
       : await window.RAIConversationCache?.getConversation?.(sessionId);
@@ -30451,7 +31216,7 @@ function upsertLiveSessionStream(event) {
 
   liveAssistant.content = assistantContent;
   liveAssistant.reasoning_content = event.reasoningContent || null;
-  liveAssistant.model = event.model || liveAssistant.model || appState.selectedModel;
+  liveAssistant.model = event.actualModel || event.model || liveAssistant.model || null;
   liveAssistant.stream_draft_status = event.status || 'running';
   liveAssistant.created_at = liveAssistant.created_at || updatedAt;
   scheduleLiveStreamRender(streamSessionId, streamGeneration);
@@ -30740,7 +31505,7 @@ function initSwipeGestures() {
   const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
   const getSidebarWidth = () => sidebar.getBoundingClientRect().width || sidebar.offsetWidth || window.innerWidth * 0.85;
   const isGestureBlockedTarget = (target) => Boolean(target?.closest(
-    '.input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
+    '.message-text pre, .message-text .table-wrapper, .rai-reasoning-content, .input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
   ));
 
   const setOverlayProgress = (progress, dragging = false) => {
@@ -30760,7 +31525,7 @@ function initSwipeGestures() {
   const setSidebarProgress = (progress, dragging = false) => {
     const width = getSidebarWidth();
     const normalized = Math.max(0, Math.min(progress, 1));
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const opensFromRight = appState.sidebarGestureFromRight === true;
     const translateX = opensFromRight
       ? (1 - normalized) * width
       : (normalized - 1) * width;
@@ -30782,7 +31547,8 @@ function initSwipeGestures() {
   };
 
   const handleTouchStart = (e) => {
-    if (!isMobileViewport() || !e.touches?.length) return;
+    resetSwipeState();
+    if (!isMobileViewport() || e.touches?.length !== 1) return;
 
     const touch = e.touches[0];
     const target = e.target;
@@ -30802,6 +31568,7 @@ function initSwipeGestures() {
     appState.isSwiping = false;
     appState.sidebarGestureMode = canOpen ? 'opening' : 'closing';
     appState.sidebarGestureLocked = false;
+    appState.sidebarGestureFromRight = sidebar.classList.contains('swipe-from-right');
 
     if (canClose) {
       overlay.classList.add('active');
@@ -30811,7 +31578,7 @@ function initSwipeGestures() {
   const handleTouchMove = (e) => {
     if (!appState.sidebarGestureMode || !e.touches?.length) return;
 
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    let opensFromRight = appState.sidebarGestureFromRight === true;
     const touch = e.touches[0];
     const deltaX = touch.clientX - appState.touchStartX;
     const deltaY = Math.abs(touch.clientY - appState.touchStartY);
@@ -30827,6 +31594,11 @@ function initSwipeGestures() {
         return;
       }
 
+      if (appState.sidebarGestureMode === 'opening' && Math.abs(deltaX) >= gestureCommitDistance) {
+        opensFromRight = deltaX < 0;
+        appState.sidebarGestureFromRight = opensFromRight;
+        sidebar.classList.toggle('swipe-from-right', opensFromRight);
+      }
       const movingWrongWay = appState.sidebarGestureMode === 'opening'
         ? (opensFromRight ? deltaX >= 0 : deltaX <= 0)
         : (opensFromRight ? deltaX <= 0 : deltaX >= 0);
@@ -30849,9 +31621,7 @@ function initSwipeGestures() {
     const width = getSidebarWidth();
     const rawProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : (opensFromRight
-        ? 1 - (Math.max(0, deltaX) / width)
-        : 1 + (Math.min(0, deltaX) / width));
+      : 1 - (opensFromRight ? Math.max(0, deltaX) : Math.max(0, -deltaX)) / width;
 
     setSidebarProgress(rawProgress, true);
     e.preventDefault();
@@ -30867,12 +31637,10 @@ function initSwipeGestures() {
 
     const width = getSidebarWidth();
     const deltaX = appState.touchMoveX - appState.touchStartX;
-    const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
+    const opensFromRight = appState.sidebarGestureFromRight === true;
     const finalProgress = appState.sidebarGestureMode === 'opening'
       ? (opensFromRight ? Math.max(0, -deltaX) : Math.max(0, deltaX)) / width
-      : (opensFromRight
-        ? 1 - (Math.max(0, deltaX) / width)
-        : 1 + (Math.min(0, deltaX) / width));
+      : 1 - (opensFromRight ? Math.max(0, deltaX) : Math.max(0, -deltaX)) / width;
     const shouldOpen = appState.sidebarGestureMode === 'opening'
       ? finalProgress > 0.24
       : finalProgress > 0.5;
@@ -30892,13 +31660,16 @@ function initSwipeGestures() {
     }
   };
 
-  [mainContent, mobileHeader, sidebar, overlay].forEach((element) => {
-    if (!element) return;
-    element.addEventListener('touchstart', handleTouchStart, { passive: true });
-    element.addEventListener('touchmove', handleTouchMove, { passive: false });
-    element.addEventListener('touchend', handleTouchEnd, { passive: true });
-    element.addEventListener('touchcancel', handleTouchEnd, { passive: true });
-  });
+  // One capture-phase gesture owner: sidebar descendants may stop bubbling,
+  // and nested gesture surfaces must not reset/finish the same touch twice.
+  document.addEventListener('touchstart', handleTouchStart, { passive: true, capture: true });
+  document.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+  document.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
+  document.addEventListener('touchcancel', () => {
+    const wasOpen = appState.sidebarOpen;
+    resetSwipeState();
+    if (wasOpen) openSidebar(); else closeSidebar();
+  }, { passive: true, capture: true });
 }
 
 function selectModel(value, displayName) {
@@ -31183,7 +31954,6 @@ class MobileKeyboardHandler {
     this.setupControlFocusGuard();
     this.setupComposerObserver();
 
-    if (this.isAndroid) this.applyAndroidFixes();
     if (this.isIOS) this.applyIOSFixes();
     if (this.isIOS && this.isStandalone) {
       window.setTimeout(() => this.healStandaloneViewport(), 350);
@@ -31439,28 +32209,26 @@ class MobileKeyboardHandler {
     const selectionStart = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
     const selectionEnd = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
 
+    const selectionDirection = input.selectionDirection;
+    const value = input.value;
+    const focusedElement = document.activeElement;
+
     requestAnimationFrame(() => {
+      // A later gesture or edit wins over this deferred menu-focus restoration.
+      // In particular, never restore an old end-of-text caret over a new selection.
+      if (!input.isConnected || input.disabled || input.getClientRects().length === 0
+        || input.value !== value || input.selectionStart !== selectionStart
+        || input.selectionEnd !== selectionEnd || input.selectionDirection !== selectionDirection
+        || (document.activeElement !== focusedElement && document.activeElement !== input)) return;
       input.focus({ preventScroll: true });
       if (typeof input.setSelectionRange === 'function') {
         try {
-          input.setSelectionRange(selectionStart, selectionEnd);
+          input.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
         } catch (error) {
           this.log('Selection restore skipped', error);
         }
       }
     });
-  }
-
-  applyAndroidFixes() {
-    const container = document.getElementById('inputContainer');
-    if (container) {
-      container.addEventListener('click', (e) => {
-        const input = document.getElementById('messageInput');
-        if (input && e.target !== input && !e.target.closest('button')) {
-          setTimeout(() => input.focus({ preventScroll: true }), 10);
-        }
-      });
-    }
   }
 
   // Reconcile after WebKit's delayed viewport update without toggling display.
@@ -31496,11 +32264,11 @@ class MobileKeyboardHandler {
 }
 
 // ==================== 文件上传处理 (多模态支持) ====================
-let currentAttachment = null;
+let currentAttachments = [];
 // 正在上传中的附件任务：发送消息时必须等待它结束，否则 LLM 会漏掉刚选中的文件。
 let pendingAttachmentUpload = null;
 let sendWaitingForAttachmentUpload = false;
-let attachmentUploadSequence = 0;
+let attachmentComposerGeneration = 0;
 const MAX_INPUT_CHARS = 100000; // 约等于 25000 tokens，用于自动转换
 
 // HEIC/HEIF 在多数模型网关与浏览器里都无法直接识别：在浏览器能解码时先转成 JPEG。
@@ -31733,7 +32501,8 @@ async function checkAndConvertLongInput() {
     // 创建 txt 文件并通过上传接口发送
     const blob = new Blob([content], { type: 'text/plain' });
     const file = new File([blob], `long_input_${Date.now()}.txt`, { type: 'text/plain' });
-    await processUploadedFile(file);
+    const uploaded = await processUploadedFiles([file]);
+    if (!uploaded || input.value !== content) return true;
 
     // 清空输入框，显示提示
     input.value = isChineseLanguage(appState.language)
@@ -31751,16 +32520,41 @@ async function checkAndConvertLongInput() {
 }
 
 function handleFileUpload() {
-  const input = document.createElement('input');
-  input.type = 'file';
+  const input = document.getElementById('fileInput');
+  if (!input) return;
+  input.multiple = true;
   input.accept = getUiUploadPickerAccept();
-
-  input.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    await processUploadedFile(file);
-  }, { once: true });
+  input.value = '';
   input.click();
+}
+
+// One queue covers selection, drop, paste and subsequent batches. Sending waits
+// for the entire queue, not only the last file or its network transfer.
+function showAttachmentLimit() {
+  showToast(isChineseLanguage(appState.language) ? `每条问题最多添加 ${UI_MAX_CHAT_ATTACHMENTS} 个附件，请分批提问` : `Up to ${UI_MAX_CHAT_ATTACHMENTS} attachments per question; please split larger batches`);
+}
+
+function processUploadedFiles(fileList, options = {}) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return Promise.resolve(0);
+  const attachToComposer = options.attachToComposer !== false;
+  const context = captureUserAuthContext();
+  const generation = attachmentComposerGeneration;
+  const previous = attachToComposer ? pendingAttachmentUpload : null;
+  const task = (async () => {
+    if (previous) await previous.catch(() => {});
+    let uploaded = 0;
+    for (const file of files) {
+      if (!isUserAuthContextCurrent(context) || (attachToComposer && generation !== attachmentComposerGeneration)) break;
+      if (attachToComposer && currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS) { showAttachmentLimit(); break; }
+      if (await processUploadedFile(file, { ...options, composerGeneration: generation })) uploaded++;
+    }
+    return uploaded;
+  })();
+  if (attachToComposer) pendingAttachmentUpload = task;
+  return task.finally(() => {
+    if (attachToComposer && pendingAttachmentUpload === task) pendingAttachmentUpload = null;
+  });
 }
 
 let uploadProgressGeneration = 0;
@@ -31863,7 +32657,9 @@ async function createUploadSession(file, context) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.success || !/^upl_[a-f0-9]{32}$/.test(String(data.uploadId || ''))) {
-    throw new Error(data.error || (isChineseLanguage(appState.language) ? '无法创建上传任务' : 'Could not create upload'));
+    const error = new Error(data.error || (isChineseLanguage(appState.language) ? '无法创建上传任务' : 'Could not create upload'));
+    error.code = data.code;
+    throw error;
   }
   return data;
 }
@@ -31920,6 +32716,7 @@ function uploadFileWithProgress(file, session, context, onProgress, onProcessing
       if (xhr.status < 200 || xhr.status >= 300 || !data?.success || data.status !== 'completed') {
         const uploadError = new Error(data?.error || data?.message || (isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed'));
         uploadError.status = xhr.status;
+        uploadError.code = data?.code;
         finish(reject, uploadError);
         return;
       }
@@ -31961,7 +32758,15 @@ function isRetryableUploadError(error) {
 
 // 独立的文件处理函数（供拖拽上传复用）
 async function processUploadedFile(file, options = {}) {
+  if (Array.from(String(file?.name || '')).length > 255) {
+    alert(isChineseLanguage(appState.language)
+      ? '文件名过长，无法上传。请先将文件重命名为 255 个字符以内的简短名称，再重新上传。'
+      : 'The filename is too long to upload. Rename the file to a shorter name (up to 255 characters), then upload it again.');
+    return false;
+  }
   const attachToComposer = options.attachToComposer !== false;
+  const composerGeneration = options.composerGeneration ?? attachmentComposerGeneration;
+  const context = captureUserAuthContext();
   if (!isUiAllowedUploadFile(file)) {
     showUiUploadRejected(file);
     return false;
@@ -32031,7 +32836,6 @@ async function processUploadedFile(file, options = {}) {
     localThumbnail = URL.createObjectURL(uploadFile);
   }
 
-  const context = captureUserAuthContext();
   if (!isUserAuthContextCurrent(context)) {
     if (localThumbnail) URL.revokeObjectURL(localThumbnail);
     showToast(isChineseLanguage(appState.language) ? '登录状态已变化，请重试' : 'Your session changed; please try again');
@@ -32084,9 +32888,7 @@ async function processUploadedFile(file, options = {}) {
     throw lastError || new Error('Upload failed');
   };
 
-  const uploadSequence = ++attachmentUploadSequence;
   const uploadTask = runUploadWithRetry();
-  if (attachToComposer) pendingAttachmentUpload = uploadTask;
 
   try {
     const data = await uploadTask;
@@ -32094,6 +32896,11 @@ async function processUploadedFile(file, options = {}) {
       const contextError = new Error('Upload account context changed');
       contextError.name = 'AbortError';
       throw contextError;
+    }
+    if (attachToComposer && (composerGeneration !== attachmentComposerGeneration || currentAttachments.length >= UI_MAX_CHAT_ATTACHMENTS)) {
+      if (localThumbnail) URL.revokeObjectURL(localThumbnail);
+      if (composerGeneration === attachmentComposerGeneration) showAttachmentLimit();
+      return false;
     }
     const uploadedAttachment = {
       type: attachmentType,
@@ -32112,8 +32919,9 @@ async function processUploadedFile(file, options = {}) {
       bytes: Number(uploadFile.size) || 0
     });
     if (attachToComposer) {
-      if (uploadSequence === attachmentUploadSequence) {
-        currentAttachment = uploadedAttachment;
+      if (composerGeneration === attachmentComposerGeneration) {
+        window.RaiWebSkills?.noteDraftChange?.();
+        currentAttachments.push(uploadedAttachment);
         updateAttachmentUI();
         updateNewChatModeSettingsUI();
       } else if (localThumbnail) {
@@ -32129,7 +32937,10 @@ async function processUploadedFile(file, options = {}) {
   } catch (error) {
     renderUploadProgress({ generation, fileName: uploadFile.name, state: 'failed', loaded: 0, total: uploadFile.size, attachToComposer });
     scheduleUploadProgressHide(generation, 4800);
-    if (error?.name === 'AbortError') return false;
+    if (error?.name === 'AbortError') {
+      if (localThumbnail) URL.revokeObjectURL(localThumbnail);
+      return false;
+    }
     console.error(' 文件上传失败:', {
       errorName: String(error?.name || 'Error').slice(0, 80),
       status: Number(error?.status || 0) || undefined,
@@ -32137,106 +32948,94 @@ async function processUploadedFile(file, options = {}) {
     });
     if (localThumbnail) URL.revokeObjectURL(localThumbnail);
     const fallback = isChineseLanguage(appState.language) ? '文件上传失败' : 'File upload failed';
-    alert(error?.message || fallback);
+    const filenameProblem = error?.code === 'FILE_NAME_TOO_LONG'
+      || /ENAMETOOLONG|file.?name.{0,15}too long|文件名.{0,10}过长/i.test(String(error?.message || ''));
+    alert(filenameProblem
+      ? (isChineseLanguage(appState.language) ? '文件名过长，无法上传。请先给文件改一个简短名称，再重新上传。'
+        : 'The filename is too long to upload. Rename the file to a shorter name and try again.')
+      : (error?.message || fallback));
     return false;
-  } finally {
-    if (attachToComposer && pendingAttachmentUpload === uploadTask) {
-      pendingAttachmentUpload = null;
-    }
   }
 }
 
 // 更新附件UI显示
 function updateAttachmentUI() {
-  let attachmentPreview = document.getElementById('attachmentPreview');
-
-  if (!currentAttachment) {
-    // 移除预览
-    if (attachmentPreview) {
-      attachmentPreview.remove();
-    }
-    return;
+  let previewList = document.getElementById('attachmentPreview');
+  if (!currentAttachments.length) { previewList?.remove(); return; }
+  if (!previewList) {
+    previewList = document.createElement('div');
+    previewList.id = 'attachmentPreview';
+    previewList.className = 'attachment-preview-list';
+    const container = document.getElementById('inputContainer');
+    container?.insertBefore(previewList, container.querySelector('.input-row'));
   }
-
-  // 创建或更新预览元素
-  if (!attachmentPreview) {
-    attachmentPreview = document.createElement('div');
-    attachmentPreview.id = 'attachmentPreview';
+  previewList.replaceChildren(...currentAttachments.map((attachment, index) => {
+    const attachmentPreview = document.createElement('div');
     attachmentPreview.className = 'attachment-preview';
+    let iconSvg = '';
+    let typeLabel = '';
 
-    // 插入到input-row之前
-    const inputContainer = document.getElementById('inputContainer');
-    if (inputContainer) {
-      const inputRow = inputContainer.querySelector('.input-row');
-      if (inputRow) {
-        inputContainer.insertBefore(attachmentPreview, inputRow);
-      } else {
-        // 如果找不到input-row，插入到inputContainer开头
-        inputContainer.insertBefore(attachmentPreview, inputContainer.firstChild);
-      }
+    switch (attachment.type) {
+      case 'image':
+        iconSvg = getSvgIcon('image', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '图片' : 'Image';
+        break;
+      case 'audio':
+        iconSvg = getSvgIcon('headphones', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '音频' : 'Audio';
+        break;
+      case 'video':
+        iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '视频' : 'Video';
+        break;
+      case 'text':
+        iconSvg = getSvgIcon('article', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '文本' : 'Text';
+        break;
+      case 'code':
+        iconSvg = getSvgIcon('code', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '代码' : 'Code';
+        break;
+      default:
+        iconSvg = getSvgIcon('description', 'attachment-icon', 20);
+        typeLabel = isChineseLanguage(appState.language) ? '文档' : 'Document';
     }
-  }
 
-  // 根据类型显示不同的预览
-  let iconSvg = '';
-  let typeLabel = '';
 
-  switch (currentAttachment.type) {
-    case 'image':
-      iconSvg = getSvgIcon('image', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '图片' : 'Image';
-      break;
-    case 'audio':
-      iconSvg = getSvgIcon('headphones', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '音频' : 'Audio';
-      break;
-    case 'video':
-      iconSvg = getSvgIcon('video_camera_front', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '视频' : 'Video';
-      break;
-    case 'text':
-      iconSvg = getSvgIcon('article', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '文本' : 'Text';
-      break;
-    case 'code':
-      iconSvg = getSvgIcon('code', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '代码' : 'Code';
-      break;
-    default:
-      iconSvg = getSvgIcon('description', 'attachment-icon', 20);
-      typeLabel = isChineseLanguage(appState.language) ? '文档' : 'Document';
-  }
-
-  attachmentPreview.innerHTML = `
-        <div class="attachment-info">
-          ${iconSvg}
-          <span class="attachment-type">${typeLabel}</span>
-          <span class="attachment-name">${escapeHtml(currentAttachment.fileName)}</span>
-          <span class="attachment-size">${escapeHtml(formatFileSize(Number(currentAttachment.size) || 0))}</span>
-        </div>
-        <button class="attachment-remove" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="removeAttachment()" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
-          ${getSvgIcon('close', 'remove-icon', 16)}
-        </button>
-      `;
-
-  // 如果是图片，显示本地缩略图（不发送到服务器）
-  const rawLocalThumbnail = String(currentAttachment.localThumbnail || '');
-  const safeLocalThumbnail = rawLocalThumbnail.startsWith('blob:')
-    ? rawLocalThumbnail.replace(/[<>"'`\\\r\n]/g, '')
-    : '';
-  if (currentAttachment.type === 'image' && safeLocalThumbnail && safeLocalThumbnail === rawLocalThumbnail) {
-    const thumbnail = document.createElement('img');
-    thumbnail.src = safeLocalThumbnail;
-    thumbnail.className = 'attachment-thumbnail';
-    attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
-  }
+    attachmentPreview.innerHTML = `
+      <div class="attachment-info">
+        ${iconSvg}
+        <span class="attachment-type">${typeLabel}</span>
+        <span class="attachment-name">${escapeHtml(attachment.fileName)}</span>
+        <span class="attachment-size">${escapeHtml(formatFileSize(Number(attachment.size) || 0))}</span>
+      </div>
+      <button type="button" class="attachment-remove" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="removeAttachment(${index})" title="${isChineseLanguage(appState.language) ? '移除' : 'Remove'}">
+        ${getSvgIcon('close', 'remove-icon', 16)}
+      </button>
+    `;
+    const rawLocalThumbnail = String(attachment.localThumbnail || '');
+    const safeLocalThumbnail = rawLocalThumbnail.startsWith('blob:')
+      ? rawLocalThumbnail.replace(/[<>"'\x60\\\r\n]/g, '')
+      : '';
+    if (attachment.type === 'image' && safeLocalThumbnail && safeLocalThumbnail === rawLocalThumbnail) {
+      const thumbnail = document.createElement('img');
+      thumbnail.src = safeLocalThumbnail;
+      thumbnail.className = 'attachment-thumbnail';
+      attachmentPreview.querySelector('.attachment-info').prepend(thumbnail);
+    }
+    return attachmentPreview;
+  }));
 }
 
-function removeAttachment() {
-  if (currentAttachment?.localThumbnail) {
-    URL.revokeObjectURL(currentAttachment.localThumbnail);
+function removeAttachment(index = null) {
+  window.RaiWebSkills?.noteDraftChange?.();
+  const removed = Number.isInteger(index)
+    ? currentAttachments.splice(index, 1)
+    : currentAttachments.splice(0);
+  if (!Number.isInteger(index)) attachmentComposerGeneration++;
+  for (const attachment of removed) {
+    if (attachment.localThumbnail) URL.revokeObjectURL(attachment.localThumbnail);
   }
-  currentAttachment = null;
   updateAttachmentUI();
 }
 
@@ -32292,7 +33091,7 @@ function initDragAndDrop() {
 
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      processUploadedFile(files[0]);
+      processUploadedFiles(files);
       console.log(' 拖拽上传文件:', {
         filenameLength: String(files[0].name || '').length,
         bytes: Number(files[0].size) || 0
@@ -32483,16 +33282,30 @@ function setActiveIndexLine(activeIdx, { timelineBehavior = 'auto', forceTimelin
 }
 // 显示横线悬浮提示
 function positionChatIndexFloatingTooltip(tooltip, rect) {
-  const opensFromRight = appState.handednessEnabled && appState.handedness === 'right';
-  tooltip.style.top = `${rect.top + rect.height / 2}px`;
-  if (opensFromRight) {
-    tooltip.style.right = `${window.innerWidth - rect.left + 16}px`;
-    tooltip.style.left = 'auto';
-  } else {
-    tooltip.style.left = `${rect.right + 16}px`;
-    tooltip.style.right = 'auto';
-  }
-  tooltip.style.transform = 'translateY(-50%)';
+  // Choose the side from the actual anchor, not an account's mobile handedness.
+  const viewport = window.visualViewport;
+  const margin = 8, gap = 16;
+  const viewportLeft = viewport?.offsetLeft || 0;
+  const viewportTop = viewport?.offsetTop || 0;
+  const viewportRight = viewportLeft + (viewport?.width || window.innerWidth);
+  const viewportBottom = viewportTop + (viewport?.height || window.innerHeight);
+  tooltip.style.boxSizing = 'border-box';
+  tooltip.style.maxWidth = Math.max(0, viewportRight - viewportLeft - margin * 2) + 'px';
+  if (tooltip.id === 'chatIndexTooltip') tooltip.style.maxWidth = Math.min(280, viewportRight - viewportLeft - margin * 2) + 'px';
+  tooltip.style.maxHeight = Math.max(0, viewportBottom - viewportTop - margin * 2) + 'px';
+  tooltip.style.overflow = 'hidden';
+  tooltip.style.whiteSpace = 'normal';
+  tooltip.style.right = 'auto';
+  tooltip.style.transform = 'none';
+  const size = tooltip.getBoundingClientRect();
+  const spaceLeft = rect.left - viewportLeft - margin - gap;
+  const spaceRight = viewportRight - rect.right - margin - gap;
+  const preferLeft = spaceLeft >= size.width || spaceLeft > spaceRight;
+  const desiredLeft = preferLeft ? rect.left - gap - size.width : rect.right + gap;
+  const left = Math.max(viewportLeft + margin, Math.min(desiredLeft, viewportRight - margin - size.width));
+  const top = Math.max(viewportTop + margin, Math.min(rect.top + rect.height / 2 - size.height / 2, viewportBottom - margin - size.height));
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
 }
 
 function showChatIndexTooltip(event, content) {
@@ -32957,7 +33770,7 @@ let userMembershipState = {
   points: 0,
   purchasedPoints: 0,
   totalPoints: 0,
-  image2Quota: { limit: 0, used: 0, remaining: 0, resetAt: null },
+  imageGeneration: { modelCosts: {}, maxDimension: 1024 },
   canCheckin: true,
   createdAt: null,
   tasks: {
@@ -33016,7 +33829,7 @@ function applyUserMembershipData(data = {}) {
     points: data.points || 0,
     purchasedPoints: data.purchasedPoints || 0,
     totalPoints: data.totalPoints || 0,
-    image2Quota: data.image2Quota || { limit: 0, used: 0, remaining: 0, resetAt: null },
+    imageGeneration: data.imageGeneration || { modelCosts: {}, maxDimension: 1024 },
     canCheckin: data.canCheckin,
     createdAt: data.createdAt,
     tasks: normalizeMembershipTasks(data.tasks)
@@ -33498,25 +34311,14 @@ function openGitHubStarTask() {
 
 function renderMembershipModelPricing() {
   const isZh = isChineseLanguage(appState.language);
-  const rows = [
-    ['GPT 5.6', 5],
-    ['Claude Sonnet 5', 10],
-    ['Gemini 3.6', 3],
-    ['DeepSeek', 1],
-    ['GPT Image 2', 20]
-  ];
-  return `
-    <div class="membership-model-pricing">
-      <div class="membership-model-pricing-heading">
-        <h3>${isZh ? '模型点数标价' : 'Model point pricing'}</h3>
-        <span>${isZh ? '按次扣除' : 'Per request'}</span>
-      </div>
-      <div class="membership-model-pricing-list">
-        ${rows.map(([name, points]) => `<div><span>${name}</span><strong>${isZh ? `${points} 点 / 次` : `${points} points / request`}</strong></div>`).join('')}
-      </div>
-      <small>${isZh ? 'Kolors Free 免费。点数不足时会提示并自动改用可用免费模型。' : 'Kolors Free is free. When points are insufficient, RAI explains the fallback and uses an available free model.'}</small>
-    </div>
-  `;
+  const rows = [['GPT 6 Astra', 3, 50, 80], ['GPT 6.1 Sol', 50, 100, 200]];
+  return `<div class="membership-model-pricing">
+    <h3>${isZh ? '滚动 24 小时对话额度' : 'Rolling 24-hour conversation allowance'}</h3>
+    <div class="membership-model-pricing-list"><div><span>${isZh ? '模型' : 'Model'}</span><strong>Free / Pro / MAX</strong></div>
+    ${rows.map(([name, free, pro, max]) => `<div><span>${name}</span><strong>${free} / ${pro} / ${max}</strong></div>`).join('')}</div>
+    <small>${isZh ? '用户提问且 AI 成功答完计 1 次；失败、取消及内部工具调用不重复扣次。同一账号 Web 与 CX RAI 共用额度，各模型独立按滚动 24 小时计算，到上限后等待恢复，不自动扣积分。DeepSeek V4.1 Flash 未设置本表对话次数上限。研究中使用的每个 GPT 模型每轮问答最多计 1 次。' : 'One user question plus a completed answer counts as one turn. Errors, cancellations and internal tool calls do not charge again. Web and CX RAI share account-wide, per-model rolling allowances. At the limit, wait for recovery; points are not debited. DeepSeek V4.1 Flash has no limit in this table. Each GPT used in research counts at most once per completed turn.'}</small>
+    <p>${isZh ? '四个模型均支持视觉；上下文统一 256k，包含输入、输出预留与安全余量；长历史自动摘要压缩，原始历史保留。' : 'All four models support vision. The shared 256k budget includes input, output reserve and safety margin. Long history is automatically summarized; original history is retained.'}</p>
+  </div>`;
 }
 
 function renderMembershipTasksSection({ compact = false } = {}) {
@@ -33800,12 +34602,13 @@ function updateSettingsMembership() {
   if (points) points.textContent = m.totalPoints;
   const mobilePoints = document.getElementById('settingsMobilePointsDisplay');
   if (mobilePoints) mobilePoints.textContent = m.totalPoints;
-  const image2Quota = document.getElementById('settingsImage2Quota');
-  if (image2Quota) {
-    const quota = m.image2Quota || {};
-    image2Quota.textContent = isChineseLanguage(appState.language)
-      ? `Image 2: ${Number(quota.used || 0)} / ${Number(quota.limit || 0)}，剩余 ${Number(quota.remaining || 0)}`
-      : `Image 2: ${Number(quota.used || 0)} / ${Number(quota.limit || 0)}, ${Number(quota.remaining || 0)} left`;
+  const imagePricing = document.getElementById('settingsImagePricing');
+  if (imagePricing) {
+    const costs = Object.entries(m.imageGeneration?.modelCosts || {});
+    const details = costs.map(([model, cost]) => `${model.replace('gpt-image-2.5', 'GPT Image 2.5')}: ${cost}`).join(' · ');
+    imagePricing.textContent = isChineseLanguage(appState.language)
+      ? `生图：${details || '每张 100–300 点'} · 仅 1K 及以下`
+      : `Images: ${details || '100–300 points each'} · up to 1K`;
   }
 
   // 更新签到按钮
@@ -33876,6 +34679,37 @@ const adminState = {
   currentTab: 'stats'
 };
 
+let developerVersionTaps = 0;
+let developerLastVersionTap = 0;
+function developerOptionsEnabled() {
+  return localStorage.getItem('raiDeveloperOptions') === 'true' || adminState.isLoggedIn;
+}
+function updateDeveloperOptionsUI() {
+  const enabled = developerOptionsEnabled();
+  const nav = document.getElementById('settingsDeveloperNav');
+  if (nav) { nav.hidden = !enabled; nav.classList.toggle('is-hidden', !enabled); }
+  const panel = document.getElementById('settingsPanel-developer');
+  if (panel) panel.hidden = !enabled;
+  const button = document.getElementById('settingsAdminEntry');
+  if (button) button.textContent = adminState.isLoggedIn
+    ? (isChineseLanguage(appState.language) ? '打开管理后台' : 'Open admin panel')
+    : i18nText('settings-admin-entry', 'Admin sign in');
+}
+function handleDeveloperVersionTap() {
+  const time = Date.now();
+  developerVersionTaps = time - developerLastVersionTap > 3000 ? 1 : developerVersionTaps + 1;
+  developerLastVersionTap = time;
+  if (developerVersionTaps < 7) return;
+  developerVersionTaps = 0;
+  localStorage.setItem('raiDeveloperOptions', 'true');
+  updateDeveloperOptionsUI();
+  switchSettingsSection('developer');
+}
+function openDeveloperAdmin() {
+  if (!developerOptionsEnabled() || !appState.settingsOpen || appState.activeSettingsSection !== 'developer') return;
+  if (adminState.isLoggedIn) openAdminPanel(); else openAdminLogin();
+}
+
 // 检查管理员登录状态
 function checkAdminLogin() {
   const token = localStorage.getItem('adminToken');
@@ -33903,6 +34737,7 @@ async function verifyAdminToken() {
       adminState.token = null;
       adminState.isLoggedIn = false;
     }
+    updateDeveloperOptionsUI();
   } catch (e) {
     console.log('Admin token verification failed');
   }
@@ -33921,14 +34756,16 @@ function createAdminLoginModal() {
   const adminLoginLabels = isChineseLanguage(appState.language)
       ? {
         title: '管理员登录',
-        username: '用户名',
+        username: '管理员用户名或邮箱',
+        usernameHint: '使用服务器配置的管理员账号，普通 RAI 账号不能直接用于管理后台。',
         password: '密码',
         totp: 'Authenticator 验证码',
         submit: '登录管理后台'
       }
     : {
         title: 'Admin Login',
-        username: 'Username',
+        username: 'Admin username or email',
+        usernameHint: 'Use the administrator account configured on the server. Regular RAI accounts do not grant admin access.',
         password: 'Password',
         totp: 'Authenticator code',
         submit: 'Log in to Admin'
@@ -33947,7 +34784,8 @@ function createAdminLoginModal() {
           <form id="adminLoginForm" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-submit="handleAdminLogin(event)">
             <div class="admin-input-group">
               <label>${adminLoginLabels.username}</label>
-              <input type="text" id="adminUsername" placeholder="admin" autocomplete="username" required>
+              <input type="text" id="adminUsername" placeholder="${adminLoginLabels.username}" autocomplete="username" aria-describedby="adminUsernameHint" required>
+              <small id="adminUsernameHint">${adminLoginLabels.usernameHint}</small>
             </div>
             <div class="admin-input-group">
               <label>${adminLoginLabels.password}</label>
@@ -33996,6 +34834,7 @@ async function handleAdminLogin(e) {
       adminState.token = data.token;
       adminState.isLoggedIn = true;
       localStorage.setItem('adminToken', data.token);
+      updateDeveloperOptionsUI();
       closeAdminLogin();
       openAdminPanel();
     } else {
@@ -34015,6 +34854,7 @@ function openAdminPanel() {
   createAdminPanel();
   document.getElementById('adminPanel').classList.add('active');
   loadAdminStats();
+  loadAdminTokenUsage();
 }
 
 // 创建管理面板
@@ -34077,9 +34917,25 @@ function createAdminPanel() {
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
               <span>会话管理</span>
             </button>
+            <button class="admin-tab" data-tab="activity" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="switchAdminTab('activity')">用户操作日志</button>
           </div>
 
           <div class="admin-panel-content">
+            <div id="adminActivityTab" class="admin-tab-content">
+              <h3>用户操作日志 · 保留最近 30 天</h3>
+              <p>时间精确到毫秒；客户端时间与服务器接收时间分别显示。包含账户、IP、环境、模型、技能及请求链路。</p>
+              <div class="admin-toolbar">
+                <input id="activityAccount" placeholder="用户名或邮箱" aria-label="用户名或邮箱">
+                <input id="activitySession" placeholder="对话 ID" aria-label="对话 ID">
+                <input id="activityRequest" placeholder="服务器请求 ID" aria-label="服务器请求 ID">
+                <input id="activityFrom" type="datetime-local" step="0.001" aria-label="开始时间">
+                <input id="activityTo" type="datetime-local" step="0.001" aria-label="结束时间">
+                <label><input id="activityErrors" type="checkbox">只看错误</label>
+                <button data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadAdminActivity()">查询</button>
+              </div>
+              <div id="adminActivityResults" aria-live="polite"></div>
+              <button id="activityMore" hidden data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-click="loadAdminActivity(true)">更早的记录</button>
+            </div>
             <div id="adminStatsTab" class="admin-tab-content active">
               <div class="admin-stats-grid" id="adminStatsGrid">
                 <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
@@ -34087,6 +34943,10 @@ function createAdminPanel() {
                 <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
                 <div class="admin-stat-card loading"><div class="admin-stat-skeleton"></div></div>
               </div>
+                <div class="admin-chart-card admin-token-usage-card">
+                  <h3>Token 用量 · 官方 Luna 额度</h3>
+                  <div id="adminTokenUsage" aria-live="polite"></div>
+                </div>
               <div class="admin-charts-row">
                 <div class="admin-chart-card">
                   <h3>每日消息趋势 (最近30天)</h3>
@@ -34177,9 +35037,69 @@ function switchAdminTab(tab) {
   else if (tab === 'announcements') loadAdminAnnouncements();
   else if (tab === 'broadcast') renderAdminBroadcastPanel();
   else if (tab === 'sessions') loadAdminSessions();
+  else if (tab === 'activity') loadAdminActivity();
+}
+
+let activityBefore = null;
+async function loadAdminActivity(more = false) {
+  const container = document.getElementById('adminActivityResults');
+  if (!container || !adminState.isLoggedIn) return;
+  const query = new URLSearchParams();
+  for (const [field, key] of [['activityAccount','account'],['activitySession','sessionId'],['activityRequest','requestId'],['activityFrom','from'],['activityTo','to']]) {
+    const value = document.getElementById(field).value.trim();
+    if (value) query.set(key, key === 'from' || key === 'to' ? new Date(value).toISOString() : value);
+  }
+  if (document.getElementById('activityErrors').checked) query.set('errorsOnly','true');
+  if (more && activityBefore) query.set('before', activityBefore);
+  try {
+    const response = await fetch(`${API_BASE}/admin/user-activity?${query}`, { headers: { 'X-Admin-Token': adminState.token } });
+    if (!response.ok) throw new Error('activity_unavailable');
+    const data = await response.json();
+    if (!more) container.replaceChildren();
+    if (!data.events.length && !more) container.textContent = '没有匹配的日志。此版本发布后的操作才会被记录。';
+    for (const event of data.events) {
+      const details = document.createElement('details'), summary = document.createElement('summary'), pre = document.createElement('pre');
+      summary.textContent = `${new Date(event.timeMs).toISOString()} · ${event.username} (${event.userId}) · ${event.source} · ${event.kind}/${event.action} · ${event.control || event.stage || ''} · ${event.sessionId || '无对话'}`;
+      pre.textContent = JSON.stringify(event, null, 2); details.append(summary, pre); container.append(details);
+    }
+    activityBefore = data.nextBefore;
+    document.getElementById('activityMore').hidden = !activityBefore;
+  } catch (_) { if (!more) container.textContent = '日志查询失败，请重试。'; }
 }
 
 // 加载统计数据
+async function loadAdminTokenUsage() {
+  const container = document.getElementById('adminTokenUsage');
+  if (!container || !adminState.isLoggedIn) return;
+  try {
+    const response = await fetch(`${API_BASE}/admin/token-usage`, { headers: { 'X-Admin-Token': adminState.token } });
+    if (!response.ok) throw new Error('token_usage_unavailable');
+    const data = await response.json(), quota = data.official;
+    const number = value => Number(value || 0).toLocaleString();
+    container.replaceChildren();
+    const lines = [
+      `官方 Luna：${data.officialConfigured ? '已配置' : '未配置'}；每日输入＋输出总额 ${number(quota.limit)}，保留 ${number(quota.safetyMargin)}。`,
+      `今日已用／预留 ${number(quota.usedOrReserved)}；可安排 ${number(quota.remaining)}；UTC 00:00（北京时间 08:00）重置。`,
+      data.averageDailyTokens === null ? '日均 Token：等待完整统计日。历史 Token 未保存，无法追溯精确值。'
+        : `最近 ${data.completeDays} 个完整统计日日均 ${number(data.averageDailyTokens)} Token；未完整计量请求 ${number(data.unmeasuredCalls)}。`,
+      '额度涵盖 RAI 已计量请求。组织中其他应用共享同一免费池时，应在服务端配置外部用量预留。',
+      '缓存读取和写入仅显示上游实际回传的 Token；未回传不记为 0。命中率只计算已回传缓存统计的输入。免费池额度仍按输入＋输出计算，不扣除缓存读取量。'
+    ];
+    for (const line of lines) { const paragraph = document.createElement('p'); paragraph.textContent = line; container.appendChild(paragraph); }
+    const table = document.createElement('table'); table.className = 'admin-table';
+    for (const values of [['UTC 日期', '服务／模型', '输入', '输出', '缓存读取', '缓存写入', '已测输入命中率', '计量请求'], ...(data.daily || []).slice(0, 60).map(row =>
+      [row.day, `${row.provider} / ${row.model}`, number(row.input_tokens), number(row.output_tokens),
+        row.cache_measured_calls ? `${number(row.cached_tokens)}（${row.cache_measured_calls}/${row.calls}）` : '未回传',
+        row.cache_write_measured_calls ? `${number(row.cache_write_tokens)}（${row.cache_write_measured_calls}/${row.calls}）` : '未回传',
+        row.cache_measured_input_tokens ? `${(100 * row.cached_tokens / row.cache_measured_input_tokens).toFixed(1)}%` : '—', `${row.measured_calls}/${row.calls}`])]) {
+      const row = document.createElement('tr');
+      for (const value of values) { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell); }
+      table.appendChild(row);
+    }
+    container.appendChild(table);
+  } catch (_) { container.textContent = 'Token 用量暂时无法加载。'; }
+}
+
 async function loadAdminStats() {
   try {
     const res = await fetch(`${API_BASE}/admin/stats`, {
@@ -34694,39 +35614,82 @@ async function loadAdminFeedback() {
   }
 }
 
+let adminModelsCache = [];
+
 async function loadAdminModels() {
   const container = document.getElementById('adminModelsPanel');
   if (!container) return;
-  container.innerHTML = `<div class="admin-loading">${isChineseLanguage(appState.language) ? '加载模型开关中...' : 'Loading model switches...'}</div>`;
-
+  container.textContent = isChineseLanguage(appState.language) ? '加载模型中…' : 'Loading models…';
   try {
-    const res = await fetch(`${API_BASE}/admin/models`, {
-      headers: { 'X-Admin-Token': adminState.token }
-    });
+    const res = await fetch(`${API_BASE}/admin/models`, { headers: { 'X-Admin-Token': adminState.token } });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '加载失败');
-
-    const models = data.models || [];
+    if (!res.ok) throw new Error(data.error || 'Load failed');
+    adminModelsCache = Array.isArray(data.models) ? data.models : [];
+    const zh = isChineseLanguage(appState.language);
     container.innerHTML = `
       <div class="admin-model-switch-list">
-        <div class="admin-model-switch-note">关闭后普通用户的模型列表会隐藏该模型；如果用户当前已选中该模型，前端会自动切回 智能模型。</div>
-        ${models.map((model) => `
+        <p class="admin-model-switch-note">${zh ? '关闭模型后会从用户列表隐藏。内置模型可关闭，自定义模型可删除。' : 'Disabled models disappear from user menus. Built-in models can be disabled; custom models can be deleted.'}</p>
+        ${adminModelsCache.map((model, index) => `
           <div class="admin-model-switch-item">
-            <div>
-              <div class="admin-model-switch-name">${escapeHtml(model.name || model.id)}</div>
-              <div class="admin-model-switch-meta">${escapeHtml(model.group || '模型')}</div>
+            <div><div class="admin-model-switch-name">${escapeHtml(model.name || model.id)}</div>
+              <div class="admin-model-switch-meta">${escapeHtml(model.id)} · ${escapeHtml(model.provider || '')} · ${model.builtin ? (zh ? '内置' : 'Built in') : (zh ? '自定义' : 'Custom')}</div></div>
+            <div class="admin-model-actions">
+              <label class="admin-switch"><input type="checkbox" aria-label="${escapeHtml(model.name || model.id)}" ${model.enabled ? 'checked' : ''} data-admin-model-toggle="${index}"><span></span></label>
+              ${model.builtin ? '' : `<button type="button" data-admin-model-delete="${index}">${zh ? '删除' : 'Delete'}</button>`}
             </div>
-            <label class="admin-switch">
-              <input type="checkbox" ${model.enabled ? 'checked' : ''} data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-change="toggleAdminModel('${escapeHtml(model.id)}', this.checked, this)">
-              <span></span>
-            </label>
-          </div>
-        `).join('')}
+          </div>`).join('')}
       </div>
-    `;
-  } catch (err) {
-    container.innerHTML = `<div class="admin-error">加载模型开关失败：${escapeHtml(err.message || 'unknown')}</div>`;
-  }
+      <form id="adminModelCreateForm" class="admin-model-create-form">
+        <h4>${zh ? '添加自定义模型' : 'Add a custom model'}</h4>
+        <div class="admin-limits-grid">
+          <label class="admin-limit-field"><span>Model ID</span><input name="id" required maxlength="160" autocomplete="off"></label>
+          <label class="admin-limit-field"><span>${zh ? '显示名称' : 'Display name'}</span><input name="name" required maxlength="120"></label>
+          <label class="admin-limit-field"><span>${zh ? '服务商' : 'Provider'}</span><select name="provider"><option value="rai_gpt_gateway">GPT gateway</option><option value="rai_fast_gateway">Fast gateway</option><option value="deepseek">DeepSeek</option></select></label>
+          <label class="admin-limit-field"><span>${zh ? '上下文窗口' : 'Context window'}</span><input type="number" name="contextWindow" min="1000" max="2000000" value="272000" required></label>
+          <label class="admin-limit-field"><span>${zh ? '自动压缩阈值' : 'Compression threshold'}</span><input type="number" name="compressionThreshold" min="1000" max="2000000" value="258000" required></label>
+          <label class="admin-limit-field"><span>${zh ? '每次积分' : 'Points per turn'}</span><input type="number" name="pointCost" min="0" max="10000" value="5" required></label>
+          ${['free','pro','max'].map(tier => `<label class="admin-limit-field"><span>${tier.toUpperCase()} ${zh ? '每日次数' : 'daily turns'}</span><input type="number" name="limit_${tier}" min="0" max="1000000" value="0" required></label>`).join('')}
+        </div>
+        <div class="admin-model-capabilities">
+          <label><input type="checkbox" name="vision"> ${zh ? '支持图片' : 'Vision'}</label>
+          <label><input type="checkbox" name="supportsThinking" checked> ${zh ? '支持思考' : 'Thinking'}</label>
+          <label><input type="checkbox" name="canDisableThinking"> ${zh ? '允许关闭思考' : 'Thinking can be disabled'}</label>
+          <label>${zh ? '支持档位' : 'Thinking levels'} <input name="thinkingProfiles" value="auto,low,medium,high,xhigh,max"></label>
+        </div>
+        <button type="submit">${zh ? '添加模型' : 'Add model'}</button><p role="status" id="adminModelFormStatus"></p>
+      </form>`;
+    container.querySelectorAll('[data-admin-model-toggle]').forEach(input => input.addEventListener('change', () => toggleAdminModel(adminModelsCache[Number(input.dataset.adminModelToggle)].id, input.checked, input)));
+    container.querySelectorAll('[data-admin-model-delete]').forEach(button => button.addEventListener('click', () => deleteAdminCustomModel(adminModelsCache[Number(button.dataset.adminModelDelete)].id)));
+    container.querySelector('#adminModelCreateForm').addEventListener('submit', submitAdminCustomModel);
+  } catch (error) { container.textContent = (isChineseLanguage(appState.language) ? '加载模型失败：' : 'Failed to load models: ') + error.message; }
+}
+
+async function submitAdminCustomModel(event) {
+  event.preventDefault();
+  const form = event.currentTarget, fields = new FormData(form);
+  const get = name => String(fields.get(name) || '').trim();
+  const payload = { id: get('id'), name: get('name'), provider: get('provider'), enabled: true,
+    vision: fields.has('vision'), supportsThinking: fields.has('supportsThinking'), canDisableThinking: fields.has('canDisableThinking'),
+    thinkingProfiles: get('thinkingProfiles').split(',').map(value => value.trim()).filter(Boolean),
+    contextWindow: Number(get('contextWindow')), compressionThreshold: Number(get('compressionThreshold')), pointCost: Number(get('pointCost')),
+    limits: Object.fromEntries(['free','pro','max'].map(tier => [tier, Number(get('limit_' + tier))])) };
+  const status = form.querySelector('[role="status"]');
+  const button = form.querySelector('[type="submit"]'); button.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE}/admin/models`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminState.token }, body: JSON.stringify(payload) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Save failed');
+    await fetchModelAvailability(); await loadAdminModels();
+    showToast(isChineseLanguage(appState.language) ? '模型已添加' : 'Model added');
+  } catch (error) { status.textContent = error.message; button.disabled = false; }
+}
+
+async function deleteAdminCustomModel(modelId) {
+  if (!confirm(isChineseLanguage(appState.language) ? '删除这个自定义模型？' : 'Delete this custom model?')) return;
+  try {
+    const response = await fetch(`${API_BASE}/admin/models/${encodeURIComponent(modelId)}`, { method: 'DELETE', headers: { 'X-Admin-Token': adminState.token } });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Delete failed');
+    await fetchModelAvailability(); await loadAdminModels();
+  } catch (error) { alert(error.message); }
 }
 
 async function toggleAdminModel(modelId, enabled, inputEl) {
@@ -34785,12 +35748,12 @@ async function loadAdminLimits() {
       .map(([id, m]) => ({ id, name: escapeHtml((m.displayName && m.displayName[appState.language]) || m.name || id) }));
     const visionCandidates = routingCandidates.filter((m) => MODELS[m.id]?.supportsVision === true);
     const selectionExplanationModelIds = new Set([
-      'deepseek-flash-siliconflow', 'deepseek-flash', 'deepseek-pro',
-      'gemini-3.6-flash-low', 'gpt-5.6-luna', 'kimi-k2.6',
+      'deepseek-flash-siliconflow', 'deepseek-v4.1-flash',
+      'gemini-3.6-flash-low', 'kimi-k2.6',
       'qwen3.6-35b-a3b', 'nemotron-3-ultra'
     ]);
     const selectionExplanationCandidates = [
-      { id: 'deepseek-flash-siliconflow', name: 'DeepSeek v4 Flash（硅基流动）' },
+      { id: 'deepseek-flash-siliconflow', name: 'DeepSeek V4.1 Flash（硅基流动）' },
       ...routingCandidates.filter((model) => selectionExplanationModelIds.has(model.id))
     ].filter((model, index, list) => list.findIndex((candidate) => candidate.id === model.id) === index);
     const modelSelectField = (key, label, candidates, current, hint = '') => {
@@ -34806,6 +35769,12 @@ async function loadAdminLimits() {
         </label>
       `;
     };
+    const profileSelectField = (key, label, modelId, current, fallback) => {
+      const model = MODELS[modelId] || {};
+      const profiles = [...(model.canDisableThinking !== false ? ['none'] : []), ...(model.thinkingProfiles || REASONING_PROFILE_ORDER)];
+      const chosen = profiles.includes(current) ? current : fallback;
+      return `<label class="admin-limit-field"><span>${label}</span><select data-admin-limit="${key}">${profiles.map(profile => `<option value="${escapeHtml(profile)}" ${profile === chosen ? 'selected' : ''}>${escapeHtml(profile === 'none' ? (isChineseLanguage(appState.language) ? '关闭' : 'Off') : i18nText('reasoning-' + profile, profile))}</option>`).join('')}</select></label>`;
+    };
 
     container.innerHTML = `
       <div class="admin-limits-panel">
@@ -34813,11 +35782,13 @@ async function loadAdminLimits() {
         <div class="admin-limits-section">
           <h4>模型路由</h4>
           <div class="admin-limits-grid admin-model-routing-grid">
-            ${modelSelectField('smart_default_model', '智能模型首选模型', routingCandidates, s.smart_default_model, '新对话默认智能模型，首选不可用时会自动回落备用链')}
-            ${modelSelectField('fast_default_model', '快速模型首选模型', routingCandidates, s.fast_default_model, '快速模型模式实际调用的模型')}
-            ${modelSelectField('thinking_default_model', '思考模型首选模型', routingCandidates, s.thinking_default_model, '思考模式实际调用的模型')}
-            ${modelSelectField('vision_fallback_model', '视觉备用路由模型', visionCandidates, s.vision_fallback_model, '纯文本模型遇到图片/多模态内容时自动切换到的多模态模型')}
-            ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek v4 Flash；4 秒无首字时自动切换备用模型')}
+            ${modelSelectField('smart_default_model', '智能模式默认模型', routingCandidates, s.smart_default_model || 'gpt-6-luna')}
+            ${profileSelectField('smart_reasoning_profile', '智能模式思考等级', s.smart_default_model || 'gpt-6-luna', s.smart_reasoning_profile, 'none')}
+            ${modelSelectField('fast_default_model', '关闭思考时默认模型', routingCandidates, s.fast_default_model || 'gpt-6-luna')}
+            ${profileSelectField('fast_reasoning_profile', '关闭思考时等级', s.fast_default_model || 'gpt-6-luna', s.fast_reasoning_profile, 'none')}
+            ${modelSelectField('thinking_default_model', '兼容思考模式默认模型', routingCandidates, s.thinking_default_model || 'gpt-6.1-sol')}
+            ${profileSelectField('thinking_reasoning_profile', '兼容思考模式等级', s.thinking_default_model || 'gpt-6.1-sol', s.thinking_reasoning_profile, 'auto')}
+            ${modelSelectField('selection_explanation_model', '划词解释首选模型', selectionExplanationCandidates, s.selection_explanation_model, '默认使用硅基流动 DeepSeek V4.1 Flash；4 秒无首字时自动切换备用模型')}
           </div>
           <div class="admin-model-switch-note">智能/快速/思考首选若被关闭、凭据缺失或上游失败，会自动回落到内置备用链；隐藏模型请在「模型管理」中关闭对应开关。</div>
         </div>
@@ -34853,6 +35824,15 @@ async function loadAdminLimits() {
         </div>
       </div>
     `;
+    for (const mode of ['smart', 'fast', 'thinking']) {
+      const modelSelect = container.querySelector(`[data-admin-limit="${mode}_default_model"]`);
+      modelSelect?.addEventListener('change', () => {
+        const profile = container.querySelector(`[data-admin-limit="${mode}_reasoning_profile"]`);
+        const holder = document.createElement('div');
+        holder.innerHTML = profileSelectField(`${mode}_reasoning_profile`, '', modelSelect.value, profile?.value, mode === 'fast' ? 'none' : 'auto');
+        profile?.replaceChildren(...holder.querySelector('select').childNodes);
+      });
+    }
   } catch (err) {
     container.innerHTML = `<div class="admin-error">加载限制配置失败：${escapeHtml(err.message || 'unknown')}</div>`;
   }
@@ -34883,6 +35863,7 @@ async function saveAdminLimits() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '保存失败');
     showToast('限制配置已保存');
+    await fetchModelAvailability();
     await loadAdminLimits();
   } catch (err) {
     alert(`保存限制配置失败：${err.message || 'unknown'}`);
@@ -35282,7 +36263,7 @@ document.addEventListener('keydown', (e) => {
     (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) ||
     (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey)
   );
-  if (adminShortcutPressed) {
+  if (adminShortcutPressed && developerOptionsEnabled() && appState.settingsOpen && appState.activeSettingsSection === 'developer') {
     e.preventDefault();
     console.log(' 管理员快捷键触发');
     if (adminState.isLoggedIn) {

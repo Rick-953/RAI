@@ -4,11 +4,11 @@
   else root.RaiDiagnostics = factory(root);
 })(typeof window === 'object' ? window : globalThis, function createDiagnostics(env) {
   'use strict';
-  const schema = 'rai.diagnostics.v1', version = '20260929-pwa-r8', storageSlot = 'rai_diagnostics_v1';
+  const schema = 'rai.diagnostics.v1', version = '20261107-stream-reasons', storageSlot = 'rai_diagnostics_v1';
   const cap = 500, responses = new WeakMap();
-  const models = new Set(['auto','fast','thinking','research','custom','deepseek-flash','deepseek-pro','gpt-5.6-sol','gpt-5.6-luna','gpt-6-sol','claude-sonnet-5','gemini-3.6-flash-low','gemini-3-flash','gemma','qwen3.6-35b-a3b','kimi-k2.6','chatgpt-gpt-oss-120b','nemotron-3-ultra','kolors-free','gpt-image-2']);
+  const models = new Set(['auto','fast','thinking','research','custom','deepseek-flash','gpt-6.1-sol','gpt-6-luna','claude-sonnet-5','gemini-3.6-flash-low','gemini-3-flash','gemma','qwen3.6-35b-a3b','kimi-k2.6','chatgpt-gpt-oss-120b','nemotron-3-ultra','kolors-free','gpt-image-2','gpt-image-2.5','gpt-image-2.5-flare','gpt-image-2.5-sunburst']);
   const labels = new Set(['http','stream','app','started','headers','completed','cancelled','error','incomplete','other','GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','chat','auth','files','sessions','user','shares','qr-login']);
-  const numbers = ['seq','count','status','durationMs','events','contentChars','reasoningChars','toolEvents','firstContentMs','firstReasoningMs','inputTokens','outputTokens','cachedTokens','skippedEvents'];
+  const numbers = ['seq','count','status','durationMs','events','contentChars','reasoningChars','toolEvents','firstContentMs','firstReasoningMs','inputTokens','outputTokens','cachedTokens','cacheWriteTokens','skippedEvents'];
   const id = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value) ? value.toLowerCase() : null;
   const chatId = value => typeof value === 'string' && /^req_[0-9]{13}_[a-f0-9]{16}$/.test(value) ? value : null;
   const label = value => labels.has(value) ? value : 'other';
@@ -78,7 +78,7 @@
     };
   }
   function startStream(response) {
-    return { fields: { ...(responses.get(response) || {}) }, start: now(), events: 0, contentChars: 0, reasoningChars: 0, toolEvents: 0, firstContentMs: -1, firstReasoningMs: -1, done: false, failed: false, ended: false };
+    return { fields: { ...(responses.get(response) || {}), ...(env.RaiUserActivity?.responseContext(response) || {}) }, start: now(), events: 0, contentChars: 0, reasoningChars: 0, toolEvents: 0, firstContentMs: -1, firstReasoningMs: -1, done: false, failed: false, ended: false };
   }
   function observeStream(state, event) {
     if (!state || state.ended || !event || typeof event !== 'object') return;
@@ -97,7 +97,12 @@
     state.reasoningChars += reasoning; if (reasoning && state.firstReasoningMs < 0) state.firstReasoningMs = Math.round(now() - state.start);
     const usage = event.usage;
     if (usage && typeof usage === 'object') {
-      for (const [key, value] of Object.entries({ inputTokens: usage.prompt_tokens ?? usage.input_tokens, outputTokens: usage.completion_tokens ?? usage.output_tokens, cachedTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens }))
+      if (env.RaiTokenBilling) state.tokenUsage = env.RaiTokenBilling.normalize(usage, { model: event.model || state.tokenUsage?.model, provider: 'rai' });
+      if (event.usage_scope === 'request')
+        for (const key of ['inputTokens', 'outputTokens', 'cachedTokens', 'cacheWriteTokens']) delete state[key];
+      for (const [key, value] of Object.entries({ inputTokens: usage.prompt_tokens ?? usage.input_tokens, outputTokens: usage.completion_tokens ?? usage.output_tokens,
+        cachedTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens,
+        cacheWriteTokens: usage.cache_write_tokens ?? usage.input_tokens_details?.cache_write_tokens }))
         if (Number.isSafeInteger(value) && value >= 0 && value <= 1e12) state[key] = value;
     }
   }
@@ -105,7 +110,9 @@
     if (!state || state.ended) return; state.ended = true;
     const action = state.cancelled ? 'cancelled' : state.failed ? 'error' : !state.done || (!state.contentChars && state.reasoningChars) ? 'incomplete' : 'completed';
     const fields = { ...state.fields, durationMs: Math.round(now() - state.start) };
+    if (state.tokenUsage) fields.tokenUsage = state.tokenUsage;
     for (const key of numbers) if (Number.isSafeInteger(state[key])) fields[key] = state[key];
+    try { env.RaiUserActivity?.diagnostic({ ...fields, category: 'stream', action }); } catch (_) { }
     write('stream', action, fields);
   }
   function reader(response) {
@@ -167,7 +174,7 @@
         url = env.URL.createObjectURL(blob); link = env.document.createElement('a');
         link.href = url; link.download = 'RAI-Web-diagnostics-' + new Date().toISOString().slice(0,10) + '.json';
         env.document.body.append(link); link.click();
-      } catch (_) { env.showToast?.('诊断导出未完成，请重试。'); }
+      } catch (_) { env.showToast?.(env.RAILocale?.getLanguage() === 'en' ? 'Diagnostics could not be exported. Please try again.' : '诊断导出未完成，请重试。'); }
       finally {
         link?.remove();
         if (url) env.setTimeout(() => env.URL.revokeObjectURL(url), 30000);

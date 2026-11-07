@@ -1,0 +1,12 @@
+.entry-language { margin: 16px 0; font-size: 13px; }
+.entry-language label { display: inline-block; margin: 0 10px 0 0; font-weight: 400; }
+.entry-language select { box-sizing: border-box; max-width: 100%; min-height: 44px; padding: 8px 10px; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; }
+.entry-language select:focus { outline: 2px solid currentColor; outline-offset: 3px; }
+.rai-share-page .entry-language { color: #6d6e65; }
+.rai-share-page .entry-language select { border: 0; border-radius: 12px; background: #eae9e2; }
+@media (prefers-color-scheme: dark) {
+  .entry-language select option { background: #1f201b; color: #ecece6; }
+  .rai-share-page .entry-language { color: #adafa2; }
+  .rai-share-page .entry-language select { background: #33342d; }
+}
+@media (-ms-high-contrast: active) { .entry-language select { border: 2px solid windowText; } }

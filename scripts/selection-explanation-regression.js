@@ -112,6 +112,7 @@ function buildFirstVisibleDeadlineHarness() {
   );
   const factory = new Function(
     'buildResearchRequest',
+    'fetchModelProvider',
     'researchModelLabel',
     'throwIfExternalRequestAborted',
     'readBoundedResponseText',
@@ -131,6 +132,7 @@ function buildFirstVisibleDeadlineHarness() {
       routing: { provider: 'test-provider' },
       isGeminiAPI: false
     }),
+    (...args) => fetch(...args),
     () => 'test-model',
     (signal) => {
       if (signal?.aborted) {
@@ -394,7 +396,7 @@ function testPointsNoThinkingAndFallback() {
     'every fresh explanation must have a fixed one-point cost');
   assert.match(server, /\bpoints\s+INTEGER\s+NOT NULL\s+DEFAULT\s+1\s+CHECK\s*\(points\s*=\s*1\)/,
     'the idempotency ledger must reject any explanation charge other than one point');
-  assert.match(server, /SELECTION_EXPLANATION_(?:MODEL|PREFERRED_MODEL)(?:_ID)?\s*=\s*['"]deepseek-flash-siliconflow['"]/,
+  assert.match(server, /SELECTION_EXPLANATION_(?:MODEL|PREFERRED_MODEL)(?:_ID)?\s*=\s*['"]deepseek-v4\.1-flash['"]/,
     'SiliconFlow DeepSeek V4 Flash must be the default explainer model');
   assert.match(server, /(?:reserve|deduct)[A-Za-z]*SelectionExplanation[A-Za-z]*Point/i,
     'the endpoint must reserve one point before provider work');
@@ -446,7 +448,7 @@ function testPointsNoThinkingAndFallback() {
     'admin runtime settings must persist the selection explanation route');
   assert.match(app, /modelSelectField\('selection_explanation_model',\s*'划词解释首选模型'/,
     'the admin routing panel must expose the selection explanation preferred model');
-  assert.match(app, /selectionExplanationModelIds\s*=\s*new Set\([\s\S]{0,500}deepseek-flash-siliconflow[\s\S]{0,500}routingCandidates\.filter\(\(model\)\s*=>\s*selectionExplanationModelIds\.has\(model\.id\)\)/,
+  assert.match(app, /selectionExplanationModelIds\s*=\s*new Set\([\s\S]{0,500}deepseek-v4\.1-flash[\s\S]{0,500}routingCandidates\.filter\(\(model\)\s*=>\s*selectionExplanationModelIds\.has\(model\.id\)\)/,
     'the admin explainer selector must show only backend-supported explanation routes');
   assert.match(server, /tag:\s*routeReportTag\('complete',\s*candidate\)[\s\S]{0,800}firstVisibleMs[\s\S]{0,300}responseHeadersMs[\s\S]{0,300}totalMs/,
     'successful explainer logs must retain response-header, first-visible, and total latency');

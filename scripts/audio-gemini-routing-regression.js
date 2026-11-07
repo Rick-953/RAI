@@ -11,11 +11,8 @@ const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 
 assert.match(server, /AUDIO_UNDERSTANDING_MAX_BYTES = 20 \* 1024 \* 1024/);
-assert.match(server, /AUDIO_UNDERSTANDING_MODEL_PREFERENCE = \['gemini-3-flash', 'gemini-3\.6-flash-low'\]/);
-assert.match(server, /async function resolveAudioUnderstandingModel\(\)[\s\S]{0,700}isRuntimeConfiguredModel/);
-assert.match(server, /const hasAudioAttachment = currentMessageMultimodal\.types\.includes\('audio'\)/);
-assert.match(server, /hasAudioAttachment[\s\S]{0,260}await resolveAudioUnderstandingModel\(\)/);
-assert.match(server, /音频附件强制路由到 Gemini/);
+assert.match(server, /async function resolveAudioUnderstandingModel\(\) \{ return resolveVisibleAutoModel\(\); \}/);
+assert.doesNotMatch(server, /音频附件强制路由到 Gemini/);
 
 const audioBuilderStart = server.indexOf('async function buildAttachmentAudioInput');
 const audioBuilder = server.slice(audioBuilderStart, audioBuilderStart + 3600);

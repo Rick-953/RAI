@@ -3513,6 +3513,20 @@ body.keyboard-open .chat-edge-blur-bottom {
   max-width: 200px;
 }
 
+.message.user .message-attachments {
+  justify-content: flex-end;
+}
+
+.message.user .message-attachment-item.image-attachment {
+  width: 112px;
+  height: 112px;
+}
+
+.message.user .message-attachment-item.media-attachment {
+  max-width: min(290px, 100%);
+  box-sizing: border-box;
+}
+
 .message-attachment-item.image-attachment img {
   width: 100%;
   height: 100%;
@@ -5524,6 +5538,36 @@ video.private-file-preview-media {
   min-width: 0;
 }
 
+.execution-process {
+  margin: 4px 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-secondary);
+}
+
+.execution-process > summary {
+  padding: 10px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.execution-process-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.execution-live-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-answer:empty {
+  display: none;
+}
+
 .stream-flow-event {
   margin: 0;
   min-height: 24px;
@@ -7472,6 +7516,15 @@ video.private-file-preview-media {
   pointer-events: none;
 }
 
+/* A closed floating menu must never hit-test, even if an expanded sub-panel
+   (e.g. .all-models-section.expanded) re-enables pointer-events on its rows.
+   Without this, the still-fading menu silently intercepts taps meant for the
+   other composer menu (the "+" 研究 switch), which reads as an unresponsive UI. */
+.model-dropdown-menu:not(.active):not(.closing),
+.model-dropdown-menu:not(.active):not(.closing) * {
+  pointer-events: none;
+}
+
 .model-menu-item {
   width: 100%;
   min-height: 56px;
@@ -7699,11 +7752,16 @@ video.private-file-preview-media {
 
 .all-models-section.expanded {
   visibility: visible;
-  pointer-events: auto;
   opacity: 1;
   transform: translateY(0);
   margin-top: 4px;
   transition-delay: 0s;
+}
+
+/* Only interactive while the picker itself is open; a closed picker must not let
+   its expanded sub-panel keep intercepting taps (the "+" menu sits underneath). */
+.model-dropdown-menu.active .all-models-section.expanded {
+  pointer-events: auto;
 }
 
 .all-models-section .model-menu-item {
@@ -8376,6 +8434,7 @@ video.private-file-preview-media {
 /* Toast 通知样式 */
 .toast-notification {
   position: fixed;
+  pointer-events: none;
   bottom: 100px;
   left: 50%;
   transform: translateX(-50%) translateY(20px) scale(0.98);
@@ -9327,9 +9386,10 @@ body.custom-api-mode .main-content {
   display: flex;
 }
 
-/* 登录界面底部：注册提示与精简语言选项共用一行 */
+/* Keep the four locale choices intact; wrap the group rather than splitting the sign-up prompt. */
 .auth-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -9340,6 +9400,8 @@ body.custom-api-mode .main-content {
 .auth-footer .auth-switch {
   margin: 0;
   min-width: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
   text-align: left;
   font-size: 12px;
   line-height: 1.5;
@@ -9351,6 +9413,7 @@ body.custom-api-mode .main-content {
   flex: 0 0 auto;
   gap: 1px;
   margin: 0;
+  margin-left: auto;
   padding: 2px;
   border: 0;
   border-radius: 8px;
@@ -9414,7 +9477,16 @@ html.hand-right .mobile-logo {
   order: -1;
 }
 
-html.hand-right .mobile-temp-chat-btn {
+html.hand-right .mobile-temp-chat-btn { order: 2; margin-left: auto; }
+html.hand-right .hamburger-btn { order: 3; }
+.mobile-qr-scan-btn { display: none; }
+@media (max-width: 720px) {
+  .mobile-qr-scan-btn { display: inline-flex; align-items: center; justify-content: center; }
+  html.hand-right .mobile-qr-scan-btn { order: 1; margin-left: auto; }
+  html.hand-right .mobile-temp-chat-btn { margin-left: 0; }
+  html.hand-left .mobile-qr-scan-btn { order: 0; }
+}
+.mobile-temp-chat-btn {
   order: 2;
   margin-left: auto;
 }
@@ -9634,12 +9706,6 @@ html.hand-right .mobile-center-controls {
 
   html.hand-right .sidebar.active {
     transform: translateX(0);
-  }
-
-  html.hand-left .input-toolbar > .send-btn,
-  html.hand-left .input-toolbar > .stop-btn {
-    order: -1;
-    margin-right: 4px;
   }
 
   .sidebar-header-fixed {
@@ -10623,6 +10689,11 @@ html.hand-left .chat-index-timeline {
   pointer-events: none;
 }
 
+.more-menu:not(.active),
+.more-menu:not(.active) * {
+  pointer-events: none;
+}
+
 .more-menu-item {
   width: 100%;
   min-height: 44px;
@@ -10877,21 +10948,27 @@ html.hand-left .chat-index-timeline {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 4px;
+  height: 20px;
+  margin: 0;
+  touch-action: none;
   border-radius: 999px;
   border: none;
   outline: none;
   cursor: pointer;
   background:
     radial-gradient(circle at 0 50%, var(--text-secondary) 0 2px, transparent 2.5px),
-    radial-gradient(circle at 33.3333% 50%, var(--text-secondary) 0 2px, transparent 2.5px),
-    radial-gradient(circle at 66.6667% 50%, var(--text-secondary) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 25% 50%, var(--text-secondary) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 50% 50%, var(--text-secondary) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 75% 50%, var(--text-secondary) 0 2px, transparent 2.5px),
     radial-gradient(circle at 100% 50%, var(--text-secondary) 0 2px, transparent 2.5px),
     linear-gradient(to right,
       var(--accent-color) 0%,
       var(--accent-color) var(--slider-progress, 0%),
       var(--border-color) var(--slider-progress, 0%),
       var(--border-color) 100%);
+  background-size: calc(100% - 14px) 4px;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .reasoning-profile-slider::-webkit-slider-thumb {
@@ -10943,6 +11020,57 @@ html.hand-left .chat-index-timeline {
 
 .reasoning-profile-labels span {
   white-space: nowrap;
+}
+
+#reasoningProfileChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+  padding-bottom: 10px;
+}
+
+.reasoning-profile-choice {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  min-width: 42px;
+  min-height: 32px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.reasoning-profile-choice[aria-pressed="true"] {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.reasoning-profile-choice:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.admin-model-create-form {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+.admin-model-capabilities, .admin-model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.admin-model-create-form input, .admin-model-create-form select {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .more-menu-item-toggle {
@@ -11329,6 +11457,20 @@ body > svg[id^="mermaid-"][aria-roledescription="error"] {
   .mermaid-fullscreen-code pre {
     font-size: 12px;
   }
+}
+
+/* Author display rules must not override the hidden developer controls. */
+#settingsDeveloperNav[hidden],
+#settingsPanel-developer[hidden] {
+  display: none !important;
+}
+.admin-token-usage-card {
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+#adminTokenUsage p {
+  margin: 8px 0;
+  line-height: 1.6;
 }
 
 /* ==================== 管理员与会员面板样式 ==================== */
@@ -14278,6 +14420,38 @@ body.chatflow-iframe-mode .message-content::selection {
   line-height: 1.45;
 }
 
+/* Diagnostics export lives in Advanced: one clear card, same visual language as other setting rows. */
+.settings-diagnostics-item {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-diagnostics-button {
+  justify-self: start;
+  margin-top: 4px;
+  padding: 0 18px;
+  min-height: 44px;
+  border-radius: 12px;
+  background: var(--settings-card-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings-diagnostics-button:hover,
+.settings-diagnostics-button:active {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+[data-theme="light"] .settings-diagnostics-button:hover,
+[data-theme="light"] .settings-diagnostics-button:active {
+  background: #d8d8d3;
+  color: #1f1f1f;
+}
+
 .setting-input,
 .system-prompt-input {
   width: 100%;
@@ -14382,6 +14556,42 @@ body.chatflow-iframe-mode .message-content::selection {
 .memory-add-input {
   flex: 1 1 auto;
   min-width: 0;
+  resize: vertical;
+}
+
+.memory-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.memory-backup-dialog {
+  width: min(680px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--settings-card-bg);
+  color: var(--text-primary);
+}
+
+.memory-backup-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.memory-backup-dialog select {
+  width: 100%;
+}
+
+.memory-backup-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50dvh;
+  overflow: auto;
+  font: inherit;
+  font-size: 14px;
 }
 
 .memory-list {
@@ -14886,6 +15096,23 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
   font-size: 11px;
   font-weight: 760;
   line-height: 1;
+}
+
+.settings-platform-badge[hidden] {
+  display: none;
+}
+
+/* Recommendations belong to their action, not a separate grid row. */
+#windowsSetupDownload {
+  gap: 8px;
+}
+
+.settings-download-recommended {
+  flex: 0 0 auto;
+  min-height: 20px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .settings-windows-actions {
@@ -18365,19 +18592,27 @@ html[data-client-platform="windows-mobile"] .settings-platform-download[data-cli
 
 .reasoning-profile-labels span:nth-child(1) {
   left: 0;
+  transform: translateX(0);
+  text-align: left;
 }
 
 .reasoning-profile-labels span:nth-child(2) {
-  left: 33.3333%;
+  left: 25%;
 }
 
 .reasoning-profile-labels span:nth-child(3) {
-  left: 66.6667%;
+  left: 50%;
 }
 
-.reasoning-profile-labels span:nth-child(4),
+.reasoning-profile-labels span:nth-child(4) {
+  left: 75%;
+}
+
+.reasoning-profile-labels span:nth-child(5),
 .research-mode-labels span:nth-child(2) {
   left: 100%;
+  transform: translateX(-100%);
+  text-align: right;
 }
 
 .send-hold-picker {
@@ -19689,3 +19924,26 @@ html.ios-standalone body.mobile-viewport-managed:not(.keyboard-open) .input-area
 html.ios-standalone body.mobile-viewport-managed .main-content::after,
 html.ios-standalone body.mobile-viewport-managed .chat-edge-blur-bottom { display: none !important; }
 @media (prefers-reduced-motion: reduce) { .rai-reasoning-content, .rai-reasoning-toggle, .tool-trace-item { transition: none !important; animation: none !important; } }
+
+/* Gesture side is independent of per-account adaptive holding preference. */
+@media (max-width: 768px) {
+  .sidebar, .sidebar .sidebar-scrollable, .mobile-overlay { touch-action: pan-y; }
+  .sidebar.swipe-from-right { left: auto; right: 0; transform: translateX(100%); border-radius: 24px 0 0 24px; touch-action: pan-y; }
+  .sidebar.swipe-from-right.active { transform: translateX(0); }
+  html.hand-right .sidebar:not(.swipe-from-right) { left: 0; right: auto; transform: translateX(-100%); border-radius: 0 24px 24px 0; touch-action: pan-y; }
+  html.hand-right .sidebar:not(.swipe-from-right).active { transform: translateX(0); }
+}
+.settings-windows-actions #windowsSetupRecommended { align-self: center; }
+
+/* Whole-row attachment activation and bounded, scrollable multi-file previews. */
+.attachment-upload-btn { width: 100%; text-align: left; min-height: 48px; }
+.attachment-upload-btn > * { pointer-events: none; }
+.attachment-preview-list { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; overscroll-behavior: contain; }
+.attachment-preview-list .attachment-preview { flex-shrink: 0; margin-bottom: 0; }
+
+@media (max-width: 768px) {
+  .chat-container { min-height: 0; -webkit-overflow-scrolling: touch; }
+  .message.assistant .message-text { touch-action: pan-y pinch-zoom; }
+  .message.assistant .message-text:has(pre, .table-wrapper) { touch-action: auto; }
+  .message-text pre, .message-text .table-wrapper { touch-action: pan-x pan-y pinch-zoom; }
+}
