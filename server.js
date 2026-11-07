@@ -1,5 +1,6 @@
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
+const { installPhotoWidgetRoutes } = require('./lib/photo-widget-routes');
 const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
 const express = require('express');
 const cors = require('cors');
@@ -12964,6 +12965,8 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
 
 installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync, withMainDbTransaction,
     buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, publicBaseUrl: PUBLIC_BASE_URL, audit });
+
+installPhotoWidgetRoutes({ app, authenticateToken, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
     const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
