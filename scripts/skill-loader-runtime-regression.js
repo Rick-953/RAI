@@ -148,6 +148,10 @@ function createProviderMock() {
       if (request.url.endsWith('/responses/input_tokens')) {
         const input = JSON.stringify(body.input || []);
         assert.equal(body.stream, undefined); assert.equal(body.max_output_tokens, undefined);
+        if (scenario === 'client-ppt-count-unavailable') {
+          response.writeHead(503, { 'Content-Type': 'application/json' });
+          response.end('{}'); return;
+        }
         const inputTokens = input.includes('scenario:client-ppt-context') ? 40745
           : Buffer.byteLength(input + JSON.stringify(body.tools || []), 'utf8');
         response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -178,7 +182,8 @@ function createProviderMock() {
         }
         return;
       }
-      if (['client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated', 'client-ppt-context'].includes(scenario)) {
+      const pptScenario = scenario === 'client-ppt-context' || scenario === 'client-ppt-count-unavailable';
+      if (pptScenario || ['client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario)) {
         const messages = body.messages || [];
         assert.ok(messages.filter(message => String(message.content || '').startsWith('[Earlier conversation summary')).length <= 1,
           'repeated compaction replaces the old summary instead of accumulating protected summaries');
@@ -196,7 +201,7 @@ function createProviderMock() {
           assert.match(result.content, /output omitted/);
           assert.match(result.content, /END_CHECKPOINT$/);
         }
-        if (scenario === 'client-ppt-context' && completed) {
+        if (pptScenario && completed) {
           assert.equal(latest.output, undefined, 'duplicate command output is removed only from model context');
           assert.equal(latest.success, true); assert.equal(latest.exit_code, 0);
           if (completed === 7) {
@@ -204,9 +209,9 @@ function createProviderMock() {
             if (!latest.context_truncated) assert.equal(Buffer.byteLength(latest.stdout), 173416);
           }
         }
-        const steps = scenario === 'client-long-word' ? 45 : scenario === 'client-ppt-context' ? 7 : ['client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario) ? 1 : 8;
+        const steps = scenario === 'client-long-word' ? 45 : pptScenario ? 7 : ['client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario) ? 1 : 8;
         if (completed < steps) writeSse(response, [openAiText('Report checkpoint in progress. ', null), { choices: [{ delta: { tool_calls: [{ index: 0, id: `word_${completed}`, type: 'function',
-          function: scenario === 'client-ppt-context'
+          function: pptScenario
             ? { name: 'sandbox_exec', arguments: JSON.stringify({ script: `PPT_CHECKPOINT=${completed + 1}`, output_path: 'ppt_workflow.txt' }) }
             : { name: 'read_code', arguments: JSON.stringify({ path: 'report.docx', offset: completed + 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
         else writeSse(response, [openAiText(FINAL_TEXT)]);
@@ -528,7 +533,8 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
 }
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
-  const officeScenario = ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated', 'client-ppt-context'].includes(scenario);
+  const pptScenario = scenario === 'client-ppt-context' || scenario === 'client-ppt-count-unavailable';
+  const officeScenario = pptScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -569,14 +575,14 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
         pending++;
         let result;
         if (officeScenario) {
-          assert.equal(event.tool, scenario === 'client-ppt-context' ? 'sandbox_exec' : 'read_code');
-          if (scenario === 'client-ppt-context') assert.equal(event.parameters.script, `PPT_CHECKPOINT=${pending}`, 'completed commands are never replayed');
+          assert.equal(event.tool, pptScenario ? 'sandbox_exec' : 'read_code');
+          if (pptScenario) assert.equal(event.parameters.script, `PPT_CHECKPOINT=${pending}`, 'completed commands are never replayed');
           else assert.equal(event.parameters.offset, pending, 'completed tools are never replayed');
           result = { success: true, path: 'fixture.txt', content: `${pending}: fixture`, revision: Buffer.alloc(32).toString('base64') };
           if (scenario === 'client-long-word') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(7000);
           if (scenario === 'client-large-context') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(80000);
           if (scenario === 'client-context-limit') result.content = `CHECKPOINT=${pending}\n` + 'x'.repeat(2200000) + 'END_CHECKPOINT';
-          if (scenario === 'client-ppt-context') {
+          if (pptScenario) {
             const size = [1135, 6049, 25025, 37444, 2991, 4597, 173416][pending - 1];
             const prefix = `CHECKPOINT=${pending}\n`, tail = 'END_CHECKPOINT';
             const stdout = prefix + 'x'.repeat(size - prefix.length - tail.length) + tail;
@@ -641,7 +647,8 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   if (scenario === 'client-pretruncated') assert.equal(truncated, 1, 'a result truncated by the client is reported once');
   if (scenario === 'client-paginated') assert.equal(truncated, 0, 'the ordinary pagination flag is not a context truncation');
   if (scenario === 'client-ppt-context') assert.equal(compressed, 0, 'provider counting preserves the prefix when byte-heavy PPT preparation still fits');
-  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : scenario === 'client-ppt-context' ? 7 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
+  if (scenario === 'client-ppt-count-unavailable') assert.ok(compressed > 0, 'unavailable counting reuses bounded conservative compaction');
+  assert.equal(pending, scenario === 'client-long-word' ? 45 : scenario === 'client-large-context' ? 8 : pptScenario ? 7 : scenario === 'client-rounds-retry' ? 10 : scenario === 'agent-activate' ? 3
     : ['client-context-limit', 'client-pretruncated', 'client-paginated', 'agent-denied', 'client-read', 'settings-list', 'settings-get', 'settings-fallback'].includes(scenario) ? 1 : 0);
 }
 
@@ -822,7 +829,15 @@ async function main() {
       await runClientChat(baseUrl, token, softwareKey, [], 'client-large-context');
       console.log('PASS eight large-result tool steps, bounded repeated compaction and no tool replay');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-ppt-context');
-      console.log('PASS seven PPT preparation commands, duplicate output removal and oversized latest result continuation');
+      const pptRequests = provider.observations.filter(item => item.scenario === 'client-ppt-context' && item.body.stream === true);
+      assert.equal(pptRequests.length, 8);
+      for (let index = 1; index < pptRequests.length; index++)
+        assert.deepEqual(pptRequests[index].body.messages.slice(0, pptRequests[index - 1].body.messages.length), pptRequests[index - 1].body.messages,
+          'provider-counted PPT continuations preserve every previous prefix byte');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-ppt-count-unavailable');
+      assert.equal(provider.observations.filter(item => item.scenario === 'client-ppt-count-unavailable' && item.url.endsWith('/responses/input_tokens')).length, 1,
+        'failed token counting is not retried');
+      console.log('PASS seven PPT commands, byte-identical counted prefixes and bounded fallback when counting is unavailable');
       const limitSession = 'context-limit-' + crypto.randomUUID();
       const limitDb = await openDatabase(databasePath);
       try {

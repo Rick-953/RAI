@@ -8,6 +8,7 @@ const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQu
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
 const { createGptPrimaryFetch } = require('./lib/gpt-provider-fallback');
 const { createLunaOfficialFetch, toResponsesBody } = require('./lib/luna-official-provider');
+const { estimateDeepSeekInputTokens } = require('./lib/deepseek-tokenizer');
 const { createProviderTokenStore, meterChatResponse } = require('./lib/provider-token-usage');
 const { installCxRemoteRoutes } = require('./lib/cx-remote-control');
 const { audit, requestDiagnostics } = require('./lib/request-diagnostics');
@@ -20690,7 +20691,9 @@ async function fetchModelProvider(url, options = {}) {
         const compressedBody = contextState?.hash === contextHash ? contextState.body : await enforceContextWindow(body, {
             policy: contextPolicyForModel(body.model, ADMIN_MODEL_CATALOG.find(item => item.id === body.model)),
             countTokens: async countBody => {
-                // DeepSeek relay counts do not match its tokenizer; keep its conservative estimate.
+                if (String(countBody.model).startsWith('deepseek')) {
+                    try { return estimateDeepSeekInputTokens(countBody); } catch (_) { return null; }
+                }
                 if (!gptProviderRequest && !lunaProviderRequest) return null;
                 const counter = lunaProviderRequest
                     ? (OPENAI_LUNA_API_KEY ? { base: OPENAI_LUNA_BASE_URL, key: OPENAI_LUNA_API_KEY }

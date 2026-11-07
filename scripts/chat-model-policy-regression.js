@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const sqlite3 = require('sqlite3');
 const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, createChatModelQuotaService } = require('../lib/chat-model-policy');
-const { estimateContextTokens, enforceContextWindow, toolResultForContext, truncateToolResult, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
+const { estimateContextTokens, enforceContextWindow, toolResultForContext, truncateToolResult, CONTEXT_POLICIES, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 async function main() {
@@ -54,7 +54,7 @@ async function main() {
         assert.equal(off.reasoning_effort,id.startsWith('gpt')?'low':undefined);
         if(id.startsWith('deepseek'))assert.equal(off.thinking.type,'disabled');
     }
-    let softSkipped=0; const softBody={model:'gpt-6.1-sol',max_tokens:8000,messages:[{role:'user',content:'x'.repeat(245000)}]};
+    let softSkipped=0; const softBody={model:'gpt-6.1-sol',max_tokens:2000,messages:[{role:'user',content:'x'.repeat(258000)}]};
     const softResult=await enforceContextWindow(softBody,{summarize:async()=>{throw Object.assign(new Error('test'),{code:'context_compression_failed'});},onDiagnostic:event=>{assert.equal(event.estimated,true);softSkipped++;}});
     assert.equal(softResult,softBody,'compression threshold is soft while hard output/context reserve remains available');assert.equal(softSkipped,1);
     let counts = 0;
@@ -68,6 +68,25 @@ async function main() {
     await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>null,summarize:async()=>''}),e=>e.code==='current_turn_context_too_large',
         'unavailable token counting preserves the existing conservative boundary');
     const original = { model:'gpt-6-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
+    for (const policy of Object.values(CONTEXT_POLICIES)) {
+        const thresholdBody = {...original,max_tokens:2000};
+        const thresholdInput = policy.compressionThreshold;
+        assert.equal(await enforceContextWindow(thresholdBody,{policy,countTokens:async()=>thresholdInput - 1}),thresholdBody,
+            'provider-counted input below the configured threshold leaves the prefix intact');
+        let triggered = 0;
+        await enforceContextWindow(thresholdBody,{policy,countTokens:async()=>thresholdInput,summarize:async()=> 'Previous goals and completed work.',onCompressed:event=>{
+            triggered++; assert.equal(event.beforeTokens,thresholdInput); assert.equal(event.tokenMeasurement,'provider_count');
+            assert.equal(event.beforeTotalEstimatedTokens,thresholdInput+2000+CONTEXT_SAFETY_TOKENS);
+        }});
+        assert.equal(triggered,1,'the configured GPT/DeepSeek threshold still triggers compression');
+    }
+    const maximumInput = CONTEXT_WINDOW_TOKENS - 8000 - CONTEXT_SAFETY_TOKENS;
+    assert.equal(await enforceContextWindow(byteHeavyBody,{countTokens:async()=>maximumInput}),byteHeavyBody,
+        'the maximum includes the explicit output and safety reserves');
+    let reserveTriggered = 0;
+    await enforceContextWindow(original,{countTokens:async()=>maximumInput + 1,summarize:async()=> 'Previous goals and completed work.',onCompressed:()=>reserveTriggered++});
+    assert.equal(reserveTriggered,1,'a large requested output triggers compression before the soft input threshold if required by the hard limit');
+    await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>maximumInput + 1}),e=>e.code==='current_turn_context_too_large');
     const snapshot=JSON.stringify(original);let notices=0, chunks=0;
     const compressed=await enforceContextWindow(original,{summarize:async text=>{chunks++;assert.ok(text.length<=24000);return 'Facts and pending task summary.';},onCompressed:()=>notices++});
     assert.equal(JSON.stringify(original),snapshot,'must not mutate persisted history');assert.equal(notices,1);assert.ok(chunks>1);
