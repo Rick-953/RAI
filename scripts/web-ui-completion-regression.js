@@ -86,6 +86,8 @@ const tableSamples = [
   if(developerShots)await page.screenshot({path:path.join(developerShots,'developer-options.png')});
   await page.locator('#settingsAdminEntry').click();
   assert.equal(await page.locator('#adminLoginModal').isVisible(), true, 'developer entry still requires separate administrator authentication');
+  assert.notEqual(await page.locator('#adminUsername').getAttribute('placeholder'), 'admin', 'the login must not suggest an administrator identity that differs from server configuration');
+  assert.match(await page.locator('#adminUsernameHint').textContent(), /服务器配置|configured on the server/, 'admin login explains which account to use');
   await page.evaluate(()=>{closeAdminLogin();closeSettings({skipHistory:true});});
   await page.locator('#settingsModal').waitFor({state:'hidden'});
   const rendered=await page.evaluate(samples=>{
