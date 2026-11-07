@@ -144,6 +144,7 @@ for (const [label, job] of [['primary build', packageJob], ['independent rebuild
   assert.match(job, /git archive --format=tar --prefix=/, `${label} must build from the checked-out Git object`);
   assert.match(job, /\.env\.example LICENSE README\.md README\.zh-CN\.md docs/, `${label} must use the documented release allowlist`);
   assert.match(job, /release_paths=\([\s\S]*?agent lib workers public scripts skills server\.js user-session-token\.js package\.json package-lock\.json[\s\S]*?\)/, `${label} must include the complete Web runtime and trusted skills allowlist`);
+  assert.match(job, /release_paths=\([\s\S]*?resources\/tokenizers\/deepseek-v4[\s\S]*?\)/, `${label} must include the tokenizer vocabulary required by the Web runtime`);
   assert.match(job, /git ls-files --error-unmatch "\$release_path"/, `${label} must fail closed when an allowlisted path is absent`);
   assert.doesNotMatch(job, /RAI文档\.txt|更新运维\.txt|docs\/readme/, `${label} must not reference retired release paths`);
   assert.match(job, /\| gzip -n >/, `${label} must suppress gzip timestamps`);
