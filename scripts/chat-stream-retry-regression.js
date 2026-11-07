@@ -7,8 +7,16 @@ const pending = { messages: [{ role: 'user', content: 'edit' },
 for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
     assert.equal(canRetryStream({ code: 'provider_stream_missing_terminal_signal' }, { attempt, cancelled: false, remainingMs: 5000 }), attempt < 3);
 }
-for (const status of [400, 401, 403, 404]) assert.equal(canRetryStream({ status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);
+for (const status of [400, 401, 402, 403, 404]) assert.equal(canRetryStream({ status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);
 for (const status of [408, 429, 500, 502, 503, 504]) assert.equal(canRetryStream({ status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), true);
+const unavailablePrimary = { status: 402, code: 'gpt_primary_temporarily_unavailable' };
+for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
+    assert.equal(canRetryStream(unavailablePrimary, { attempt, cancelled: false, remainingMs: 5000 }), attempt < MAX_STREAM_RETRIES);
+}
+assert.equal(canRetryStream(unavailablePrimary, { attempt: 0, cancelled: true, remainingMs: 5000 }), false);
+for (const remainingMs of [0, -1]) assert.equal(canRetryStream(unavailablePrimary, { attempt: 0, cancelled: false, remainingMs }), false);
+assert.equal(canRetryStream({ status: 401, code: unavailablePrimary.code }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);
+assert.equal(canRetryStream(providerStreamError({ code: unavailablePrimary.code, status: 402 }), { attempt: 0, cancelled: false, remainingMs: 5000 }), false, 'an upstream error payload cannot authorize original-model recovery');
 assert.equal(canRetryStream({ name: 'AbortError' }, { attempt: 0, cancelled: true, remainingMs: 5000 }), false);
 assert.equal(canRetryStream({ name: 'AbortError' }, { attempt: 0, cancelled: false, remainingMs: 0 }), false);
 assert.equal(canRetryStream({ code: 'invalid_tool_call' }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);

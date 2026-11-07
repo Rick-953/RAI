@@ -1,3 +1,9 @@
+## 0.13.48 - 2026-11-07
+
+- Preserve the actual HTTP status when a model continuation fails after useful output. A provider billing failure is explicit, partial work and completed tools remain saved, and reasoning-only finalization does not overwrite the cause.
+- Report a provider switch only after its streaming response succeeds; a rejected fallback cannot replace the actual model label.
+- When the original GPT route fails transiently and its fallback is unavailable for billing, reuse the existing bounded model retry budget. Direct billing/authentication failures remain terminal, and completed tools are not replayed.
+
 ## 0.13.47 - 2026-11-07
 
 - Count GPT input with the configured provider near the context threshold, and estimate DeepSeek V4 input with its official vocabulary. Compress at 258,000 input tokens for GPT and 400,000 for DeepSeek; keep input, output and safety reserves within their respective 272,000 and 1,000,000 hard limits. Conservative UTF-8 screening no longer rejects a normal GPT request without checking provider counts.

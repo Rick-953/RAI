@@ -19,7 +19,7 @@ const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
-const { writeIncompleteAnswer } = require('./lib/chat-stream-fallback');
+const { writeIncompleteAnswer, partialStreamWarning } = require('./lib/chat-stream-fallback');
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
@@ -20792,15 +20792,15 @@ async function fetchModelProvider(url, options = {}) {
         turn.actualModel = response.raiOfficialFallback ? 'deepseek-flash' : JSON.parse(options.body).model;
     }
     if (turn && protectedModel && response.ok && !response.raiOfficialFallback) turn.used.add(modelId);
-    if (response.raiMirroriumFallback && !response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
+    if (response.ok && parsedBody?.stream === true && response.raiMirroriumFallback && !response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
             provider: 'fast', reason: '主线路 6 秒内无有效首字或服务失败，已停止旧请求并切换备用线路' }) + '\n\n');
     }
-    if (response.raiProvider === 'mirrorium' && turn?.response && !turn.response.writableEnded && parsedBody?.stream === true) {
+    if (response.ok && response.raiProvider === 'mirrorium' && turn?.response && !turn.response.writableEnded && parsedBody?.stream === true) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: modelId, actualModel: modelId,
             provider: 'mirrorium', thinkingMode: true, reasoningProfile: turn.thinkingMode ? turn.reasoningProfile : 'low' }) + '\n\n');
     }
-    if (response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
+    if (response.ok && parsedBody?.stream === true && response.raiOfficialFallback && turn?.response && !turn.response.writableEnded) {
         turn.response.write('data: ' + JSON.stringify({ type: 'model_info', model: 'deepseek-v4.1-flash', actualModel: 'deepseek-flash', provider: 'deepseek_official', reason: 'Fast 20 秒内无首字或服务失败，已切换官方 DeepSeek；未使用 GPT 对话额度' }) + '\n\n');
     }
     return response;
@@ -22780,6 +22780,7 @@ if (clientFileExecution && systemPrompt) {
         // partial answer usable and persist it instead of turning it into an
         // unsaved client-side error.
         let streamDegraded = false;
+        let streamFailureWarning = null;
         let assistantVisibleStarted = false;
         let latestStructuredAssistantOutput = {
             visibleContent: '',
@@ -25851,10 +25852,11 @@ if (clientFileExecution && systemPrompt) {
                 if (!String(fullContent || '').trim() && !String(reasoningContent || '').trim()) throw fetchError;
                 streamDegraded = true;
                 console.warn(` 工具续传上下文未就绪，保留已生成内容: code=${fetchError.code}`);
-                res.write(`data: ${JSON.stringify({
+                streamFailureWarning = {
                     type: 'stream_warning', code: fetchError.code,
                     message: fetchError.message + ' 已保存本次已生成的内容和工具结果。'
-                })}\n\n`);
+                };
+                res.write(`data: ${JSON.stringify(streamFailureWarning)}\n\n`);
             } else if ((fetchError.name === 'AbortError' || fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT')
                 && (String(fullContent || '').trim() || String(reasoningContent || '').trim())) {
                 streamDegraded = true;
@@ -25872,13 +25874,8 @@ if (clientFileExecution && systemPrompt) {
                         reasoningLength: String(reasoningContent || '').length
                     }
                 });
-                res.write(`data: ${JSON.stringify({
-                    type: 'stream_warning',
-                    code: 'partial_stream_saved',
-                    message: hasVisibleContent
-                        ? '上游连接中断，已保存已生成的回答。'
-                        : '上游连接中断，已保存思考记录；请重新生成以获得完整回答。'
-                })}\n\n`);
+                streamFailureWarning = partialStreamWarning(fetchError, hasVisibleContent);
+                res.write(`data: ${JSON.stringify(streamFailureWarning)}\n\n`);
             } else if (fetchError.name === 'AbortError') {
                 console.error(` API请求超时 (${chatRequestBudget?.totalMs || 0}ms)`);
                 await sendFinalApiFailure('model_api_timeout', fetchError.message, {
@@ -25905,17 +25902,13 @@ if (clientFileExecution && systemPrompt) {
                         sessionId,
                         requestId,
                         errorName: fetchError.name,
+                        status: fetchError.status,
                         contentLength: String(fullContent || '').length,
                         reasoningLength: String(reasoningContent || '').length
                     }
                 });
-                res.write(`data: ${JSON.stringify({
-                    type: 'stream_warning',
-                    code: 'partial_stream_saved',
-                    message: hasVisibleContent
-                        ? '上游连接中断，已保存已生成的回答。'
-                        : '上游连接中断，已保存思考记录；请重新生成以获得完整回答。'
-                })}\n\n`);
+                streamFailureWarning = partialStreamWarning(fetchError, hasVisibleContent);
+                res.write(`data: ${JSON.stringify(streamFailureWarning)}\n\n`);
             } else {
                 console.error(' Fetch错误:', sanitizeReportContext(fetchError));
                 await sendFinalApiFailure('model_api_fetch_error', fetchError.message, {
@@ -25928,8 +25921,11 @@ if (clientFileExecution && systemPrompt) {
 
         if (!String(fullContent || '').trim() && String(reasoningContent || '').trim()) {
             streamDegraded = true;
-            res.write(`data: ${JSON.stringify({ type: 'stream_warning', code: 'reasoning_without_answer',
-                message: '思考已保存，但上游未生成正文。请重新生成；不会自动重放已执行的工具。' })}\n\n`);
+            if (!streamFailureWarning) {
+                streamFailureWarning = { type: 'stream_warning', code: 'reasoning_without_answer',
+                    message: '思考已保存，但上游未生成正文。请重新生成；不会自动重放已执行的工具。' };
+                res.write(`data: ${JSON.stringify(streamFailureWarning)}\n\n`);
+            }
             audit('stream_reasoning_without_answer', { requestId, model: finalModel, length: reasoningContent.length }, req);
         }
         audit('chat_completed', { requestId, model: finalModel, success: !streamDegraded,
@@ -26080,7 +26076,7 @@ if (clientFileExecution && systemPrompt) {
             }
 
             // 2. 提取并处理标题 / 画布Patch (如果存在)
-            let contentToSave = fullContent || (reasoningContent
+            let contentToSave = fullContent || streamFailureWarning?.message || (reasoningContent
                 ? (streamDegraded ? '上游连接中断，正文尚未生成。请点击重新生成。' : '(纯思考内容)')
                 : '(生成中断)');
             // 兜底清洗：避免工具调用标记残留到数据库
@@ -26113,6 +26109,7 @@ if (clientFileExecution && systemPrompt) {
                 tools: serverToolTrace,
                 flowSegments: serverFlowSegments.slice(-200),
                 finalAnswerOffset: serverFinalAnswerOffset,
+                failure: streamFailureWarning || undefined,
                 interrupted: streamDegraded || req._clientCancelled === true
             });
 
@@ -26233,7 +26230,7 @@ if (clientFileExecution && systemPrompt) {
         writeIncompleteAnswer(res, {
             degraded: streamDegraded,
             visibleContent: fullContent,
-            persistedContent: persistedIncompleteAnswer
+            persistedContent: persistedIncompleteAnswer || streamFailureWarning?.message
         });
 
         if (agentRuntime.enabled) {
