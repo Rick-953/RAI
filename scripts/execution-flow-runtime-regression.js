@@ -84,15 +84,16 @@ globalThis.emit=emitStructuredAssistantChunk;
       receive({ type: 'tool_status', tool_call_id: 'two', detail: 'Second command', status: 'running' });
       receive({ type: 'tool_status', tool_call_id: 'one', detail: 'First result', status: 'done' });
     });
-    assert.equal(await page.locator('.execution-process').evaluate(element => element.open), true);
-    assert.deepEqual(await page.locator('.execution-process-rows > *').allTextContents(),
+    assert.equal(await page.locator('.execution-process').count(), 0, 'Progress stays in the body until a final answer starts');
+    assert.deepEqual(await page.locator('.execution-live-rows > *').allTextContents(),
       ['First report\n', 'Read fileFirst result', 'Second report\n', 'Read fileSecond command']);
     await page.evaluate(() => receive({ type: 'answer_start', content_offset: fullContent.length }));
-    assert.equal(await page.locator('.execution-process').evaluate(element => element.open), true);
+    assert.equal(await page.locator('.execution-process').count(), 0);
     await page.evaluate(() => receive({ type: 'content', content: '\n ' }));
-    assert.equal(await page.locator('.execution-process').evaluate(element => element.open), true);
+    assert.equal(await page.locator('.execution-process').count(), 0, 'A marker or whitespace alone cannot hide progress');
     await page.evaluate(() => receive({ type: 'content', content: '总' }));
     assert.equal(await page.locator('.execution-process').evaluate(element => element.open), false);
+    assert.equal(await page.locator('.execution-live-rows').count(), 0);
     assert.equal((await page.locator('.execution-answer').textContent()).trim(), '总');
     await page.locator('.execution-process > summary').click();
     await page.locator('.stream-flow-event-toggle').first().click();
@@ -116,9 +117,16 @@ globalThis.emit=emitStructuredAssistantChunk;
       return [projectAssistantExecution(rows,-1,false),projectAssistantExecution(rows,-1,true),
         projectAssistantExecution([{kind:'content',text:'Report',content_offset:100},{kind:'tool'},{kind:'content',text:'Done',content_offset:106}],106,true)];
     });
-    assert.equal(fallback[0].finalStarted, false, 'Interrupted or unfinished work must stay expanded');
+    assert.equal(fallback[0].finalStarted, false, 'Interrupted or unfinished work must stay in the body');
     assert.equal(fallback[1].answer, 'Done', 'A model without a final marker falls back only at completion');
     assert.equal(fallback[2].answer, 'Done', 'Trace truncation must preserve absolute final offsets');
+    await page.evaluate(() => {
+      streamingEl.replaceChildren();
+      renderAssistantExecutionFlow(streamingEl, [{kind:'content',text:'Interrupted report'},{kind:'tool',title:'Read file',status:'running'}], {complete:false});
+    });
+    assert.equal(await page.locator('.execution-process').count(), 0, 'Reloading interrupted work must not hide it');
+    assert.match(await page.locator('.execution-live-rows').textContent(), /Interrupted report/);
+    assert.equal(await page.locator('.stream-flow-event').getAttribute('data-status'), 'unknown');
     console.log('PASS: production final parser/emitter and browser execution renderer: first character, ordering, correlated tools, expansion retention, reload, interruption and bounded trace');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

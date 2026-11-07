@@ -5558,6 +5558,12 @@ video.private-file-preview-media {
   padding: 0 12px 12px;
 }
 
+.execution-live-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .execution-answer:empty {
   display: none;
 }

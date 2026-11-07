@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.48-20261107-stream-reasons';
+const RAI_SW_VERSION = '0.13.49-20261107-stream-reasons';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
