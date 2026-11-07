@@ -18,6 +18,7 @@ const { buildCacheStableMessages } = require('./lib/prompt-prefix');
 const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
+const { installPhotoWidgetRoutes } = require('./lib/photo-widget-routes');
 const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer, partialStreamWarning } = require('./lib/chat-stream-fallback');
 const express = require('express');
@@ -12706,6 +12707,8 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
 
 installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync, withMainDbTransaction,
     buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, publicBaseUrl: PUBLIC_BASE_URL, audit });
+
+installPhotoWidgetRoutes({ app, authenticateToken, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
     const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
