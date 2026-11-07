@@ -1,6 +1,6 @@
 {
   "name": "rai",
-  "version": "0.13.46",
+  "version": "0.13.47",
   "packageManager": "npm@11.13.0",
   "engines": {
     "node": "24.16.0",
@@ -93,7 +93,7 @@
     "test:diagnostics": "node scripts/diagnostics-regression.js",
     "test:search-images": "node scripts/search-images-regression.js",
     "test:qr-scan-ux-browser": "node scripts/qr-scan-ux-browser-regression.js",
-    "test:chat-model-policy": "node scripts/chat-model-policy-regression.js",
+    "test:chat-model-policy": "node scripts/chat-model-policy-regression.js && npm run test:deepseek-tokenizer",
     "test:chat-model-runtime": "node scripts/chat-model-runtime-regression.js && node scripts/chat-model-runtime-regression.js --official && node scripts/chat-model-runtime-regression.js --official-luna",
     "test:composer-focus-runtime": "node scripts/composer-focus-runtime-regression.js",
     "test:model-ui-runtime": "node scripts/model-ui-runtime-regression.js",
@@ -115,9 +115,11 @@
     "test:user-activity": "node scripts/user-activity-regression.js",
     "test:token-billing": "node scripts/token-billing-regression.js",
     "test:custom-api-account": "node scripts/custom-api-sync-regression.js && node scripts/custom-api-account-runtime-regression.js",
-    "test:command-review": "node scripts/command-review-regression.js && node scripts/skill-loader-runtime-regression.js --agent-office-only"
+    "test:command-review": "node scripts/command-review-regression.js && node scripts/skill-loader-runtime-regression.js --agent-office-only",
+    "test:deepseek-tokenizer": "node scripts/deepseek-tokenizer-regression.js"
   },
   "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
     "@simplewebauthn/server": "14.0.3",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",

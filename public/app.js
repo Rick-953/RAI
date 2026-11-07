@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.46';
-const RAI_BUILD_ID = '20261105-execution-flow';
+const RAI_APP_VERSION = '0.13.47';
+const RAI_BUILD_ID = '20261107-context-budget';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],

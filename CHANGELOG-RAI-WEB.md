@@ -1,3 +1,10 @@
+## 0.13.47 - 2026-11-07
+
+- Count GPT input with the configured provider near the context threshold, and estimate DeepSeek V4 input with its official vocabulary. Compress at 258,000 input tokens for GPT and 400,000 for DeepSeek; keep input, output and safety reserves within their respective 272,000 and 1,000,000 hard limits. Conservative UTF-8 screening no longer rejects a normal GPT request without checking provider counts.
+- Remove identical output aliases only from newly appended model tool messages. Keep original client results and persisted history, stable prior prefixes and tool definitions, so large file reads do not duplicate their content in every continuation.
+- Bound an oversized latest tool result while preserving execution status, errors, paths, revisions and pagination metadata. Emit an explicit excerpt notice and continue without replaying completed operations; compact older complete exchanges within the current task as needed.
+- Cover the seven-tool PPT failure, token-count endpoint failure, threshold boundaries, parallel large results, Unicode excerpts and unchanged prefixes through actual HTTP/SSE/SQLite regressions.
+
 ## 0.13.46 - 2026-11-05
 
 - Interleave Agent progress reports and correlated tool calls in one ordered, expandable execution process. When the first visible final-answer character arrives, collapse prior work and stream the separate summary and delivery in the same render. Preserve manual expansion, final boundaries, results and interrupted progress across streaming and history reloads.
