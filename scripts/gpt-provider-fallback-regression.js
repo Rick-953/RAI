@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { createGptPrimaryFetch } = require('../lib/gpt-provider-fallback');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 const { createChatLatencyTrace, fetchWithLatency } = require('../lib/chat-latency');
+const { MAX_STREAM_RETRIES, canRetryStream, buildStreamRetryBody } = require('../lib/chat-stream-retry');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const encode = value => new TextEncoder().encode(value);
 const sse = delta => 'data: '+JSON.stringify({ choices: [{ delta }] })+'\n\n';
@@ -64,6 +65,101 @@ async function main() {
     let count=0;const fast=createDeepSeekProviderFetch({primaryUrl:fallbackUrl,primaryKey:'fixture',officialUrl:'https://official.test',officialKey:'fixture2',primaryModels:['gpt-6.1-sol'],fetchImpl:async()=>++count===1?new Response('down',{status:502}):new Response(sse({content:'official'}))});
     const chain=createGptPrimaryFetch({primaryUrl,primaryKey:'fixture',fallbackUrl,fetchImpl:async()=>new Response('down',{status:502}),fallbackFetch:fast});
     const chainResult=await chain(fallbackUrl,options());assert.equal(chainResult.raiOfficialFallback,true);assert.equal(chainResult.raiMirroriumFallback,true);assert.equal(chainResult.raiProvider,'deepseek_official');
-    console.log('gpt-provider-fallback PASS: M priority, 6s policy with short test deadlines, meaningful deltas, on/off reasoning, abort+cancel before fallback, user cancellation, no tool replay, raw timing and provenance');
+
+    const completedBody = { ...JSON.parse(options().body), messages: [
+        { role: 'user', content: 'Finish the document' },
+        { role: 'assistant', tool_calls: [{ id: 'completed-edit', type: 'function', function: { name: 'edit_file', arguments: '{"path":"fixture.txt"}' } }] },
+        { role: 'tool', tool_call_id: 'completed-edit', content: 'The edit is complete' }
+    ] };
+    for (const failure of ['no_headers', 'timeout', 'network', 408, 429, 500, 502, 503, 504]) {
+        let primaryCalls = 0, fallbackCalls = 0, billingCancelled = 0;
+        const events = [];
+        const recovering = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl, firstTokenTimeoutMs: 15,
+            fetchImpl: async (url, request) => {
+                assert.equal(url, primaryUrl);
+                const sent = JSON.parse(request.body);
+                assert.equal(sent.model, 'gpt-6.1-sol');
+                assert.deepEqual(sent.messages.filter(message => message.role === 'tool'), completedBody.messages.slice(-1));
+                assert.equal(sent.messages.filter(message => message.tool_calls).length, 1);
+                if (++primaryCalls > 1) return new Response(sse({ content: 'Original Sol continued.' }) + 'data: [DONE]\n\n');
+                if (failure === 'network') throw Object.assign(new TypeError('PRIVATE_NETWORK_ERROR'), { cause: { code: 'ECONNRESET' } });
+                if (failure === 'no_headers') return new Promise((resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+                if (failure === 'timeout') return new Response(new ReadableStream({ start(c) { c.enqueue(encode(': ping\n\n')); },
+                    async cancel() { events.push('primary-cancelling'); await delay(5); events.push('primary-cancelled'); } }));
+                return new Response(new ReadableStream({ cancel() { events.push('primary-cancelled'); } }), { status: failure });
+            }, fallbackFetch: async () => {
+                fallbackCalls++;
+                if (!['network', 'no_headers'].includes(failure)) assert.equal(events.at(-1), 'primary-cancelled', 'release the failed primary reader before fallback');
+                const rejected = new Response(new ReadableStream({ cancel() { billingCancelled++; } }), { status: 402 });
+                Object.defineProperty(rejected, 'raiOfficialFallback', { value: true });
+                return rejected;
+            } });
+        const request = { ...options(), body: JSON.stringify(buildStreamRetryBody(completedBody, 'Already generated. ')) };
+        let rejected;
+        try { await recovering(fallbackUrl, request); } catch (error) { rejected = error; }
+        assert.ok(rejected, `${failure}: an exhausted fallback must expose the temporary original-GPT failure`);
+        assert.equal(rejected.code, 'gpt_primary_temporarily_unavailable');
+        assert.equal(rejected.status, 402);
+        assert.doesNotMatch(rejected.message, /PRIVATE_/);
+        assert.equal(canRetryStream(rejected, { attempt: 0, cancelled: false, remainingMs: 5000 }), true);
+        const resumed = await recovering(fallbackUrl, request);
+        assert.equal(resumed.raiProvider, 'mirrorium');
+        assert.match(await resumed.text(), /Original Sol continued/);
+        assert.equal(primaryCalls, 2);
+        assert.equal(fallbackCalls, 1, 'a successful original-model stream must not be retried or fall back');
+        assert.equal(billingCancelled, 1, 'release the rejected official response before retry');
+        assert.equal(completedBody.messages.length, 3, 'completed tools remain authoritative without adding another tool call');
+    }
+    for (const stop of ['attempts', 'budget']) {
+        let primaryCalls = 0, remainingMs = 5000;
+        const unavailable = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl,
+            fetchImpl: async () => { primaryCalls++; return new Response('', { status: 503 }); },
+            fallbackFetch: async () => {
+                if (stop === 'budget') remainingMs = 0;
+                const rejected = new Response('', { status: 402 });
+                Object.defineProperty(rejected, 'raiOfficialFallback', { value: true });
+                return rejected;
+            } });
+        for (let attempt = 0; ; attempt++) {
+            try { await unavailable(fallbackUrl, { ...options(), body: JSON.stringify(completedBody) }); assert.fail('all original-model attempts must fail'); }
+            catch (error) {
+                assert.equal(error.code, 'gpt_primary_temporarily_unavailable');
+                if (!canRetryStream(error, { attempt, cancelled: false, remainingMs })) break;
+            }
+        }
+        assert.equal(primaryCalls, stop === 'budget' ? 1 : MAX_STREAM_RETRIES + 1, 'original-model recovery uses the existing request budget and retry limit');
+    }
+    for (const primaryStatus of [400, 401, 402, 403, 404]) {
+        const terminal = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl,
+            fetchImpl: async () => new Response('PRIVATE_PRIMARY_BODY', { status: primaryStatus }),
+            fallbackFetch: async () => {
+                const rejected = new Response('PRIVATE_BILLING_BODY', { status: 402 });
+                Object.defineProperty(rejected, 'raiOfficialFallback', { value: true });
+                return rejected;
+            } });
+        const response = await terminal(fallbackUrl, options());
+        assert.equal(response.status, 402);
+        assert.equal(canRetryStream({ status: response.status }, { attempt: 0, cancelled: false, remainingMs: 5000 }), false);
+        await response.body.cancel();
+    }
+    const directBilling = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl,
+        fetchImpl: async () => { throw new Error('must not call primary'); }, fallbackFetch: async () => new Response('', { status: 402 }) });
+    assert.equal((await directBilling('https://other.test', options())).status, 402);
+    const unmarkedBilling = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl,
+        fetchImpl: async () => new Response('', { status: 503 }), fallbackFetch: async () => new Response('', { status: 402 }) });
+    assert.equal((await unmarkedBilling(fallbackUrl, options())).status, 402, 'a direct Fast 402 does not carry the official-fallback retry marker');
+    const cancelController = new AbortController(), cancelReason = new Error('fixture cancellation during billing cleanup');
+    let cancelledBilling = 0;
+    const cancelledFallback = createGptPrimaryFetch({ primaryUrl, primaryKey: 'fixture', fallbackUrl,
+        fetchImpl: async () => new Response('', { status: 503 }), fallbackFetch: async () => {
+            const rejected = new Response(new ReadableStream({ async cancel() {
+                cancelledBilling++; cancelController.abort(cancelReason); await delay(5);
+            } }), { status: 402 });
+            Object.defineProperty(rejected, 'raiOfficialFallback', { value: true });
+            return rejected;
+        } });
+    await assert.rejects(cancelledFallback(fallbackUrl, options(true, cancelController.signal)), error => error === cancelReason);
+    assert.equal(cancelledBilling, 1);
+    console.log('gpt-provider-fallback PASS: M priority, effective deltas, on/off reasoning, cancellation and cleanup, bounded original-GPT recovery after official 402, terminal failures preserved, completed tools retained, raw timing and provenance');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

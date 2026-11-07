@@ -231,6 +231,20 @@ function createProviderMock() {
         return;
       }
 
+      if (scenario.startsWith('client-continuation-payment') || scenario === 'client-continuation-gpt-transient') {
+        if (hasToolResult) {
+          const primary = request.url.startsWith('/primary/');
+          const transient = scenario === 'client-continuation-gpt-transient';
+          const primaryAttempts = observations.filter(item => item.scenario === scenario && item.hasToolResult && item.url.startsWith('/primary/')).length;
+          if (transient && primary && primaryAttempts === 2) { writeSse(response, [openAiText(FINAL_TEXT)]); return; }
+          response.writeHead(transient && primary ? 503 : 402, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ error: 'PRIVATE_PROVIDER_BILLING_BODY' }));
+        } else writeSse(response, [scenario.endsWith('-reasoning') ? { choices: [{ delta: { reasoning_content: 'Checkpoint reasoning.' } }] }
+          : openAiText('Checkpoint retained. ', null), { choices: [{ delta: { tool_calls: [{ index: 0,
+          id: 'payment_checkpoint', type: 'function', function: { name: 'read_code', arguments: JSON.stringify({ path: 'fixture.txt', offset: 1, limit: 1 }) } }] }, finish_reason: 'tool_calls' }] }]);
+        return;
+      }
+
       if (scenario === 'client-rounds-retry') {
         const results = (body.messages || []).filter(item => item.role === 'tool');
         if (results.length === 5) {
@@ -534,7 +548,9 @@ async function runChat(baseUrl, token, { scenario, model, memoryMode = 'normal',
 
 async function runClientChat(baseUrl, token, softwareKey, selected, scenario, sessionId) {
   const pptScenario = scenario === 'client-ppt-context' || scenario === 'client-ppt-count-unavailable';
-  const officeScenario = pptScenario || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario);
+  const paymentScenario = scenario.startsWith('client-continuation-payment');
+  const transientFallback = scenario === 'client-continuation-gpt-transient';
+  const officeScenario = pptScenario || paymentScenario || transientFallback || ['client-rounds-retry', 'client-long-word', 'client-large-context', 'client-context-limit', 'client-pretruncated', 'client-paginated'].includes(scenario);
   const userContent = {
     'settings-navigation': '设置按钮在哪里？',
     'settings-navigation-en': 'Where is the settings button?',
@@ -554,6 +570,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
   assert.equal(response.status, 200, `client HTTP ${scenario}`);
   let buffer = '', visible = '', pending = 0, retries = 0, compressed = 0, truncated = 0, done = false, degraded = false;
   const warnings = [];
+  const modelInfos = [];
   const decoder = new TextDecoder();
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -570,6 +587,7 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
         if (event.truncatedToolResults > 0) { truncated++; assert.match(event.message, /截取/); }
       }
       if (event.type === 'stream_warning') warnings.push(event);
+      if (event.type === 'model_info') modelInfos.push(event);
       if (event.type === 'done') { done = true; degraded = event.degraded === true; }
       if (event.type === 'tool_pending_client') {
         pending++;
@@ -630,6 +648,20 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
       }
     }
   }
+  if (paymentScenario) {
+    assert.equal(done, true);
+    assert.equal(degraded, true, 'an upstream billing failure must never complete the task');
+    assert.match(visible, scenario.endsWith('-reasoning') ? /HTTP 402/ : /Checkpoint retained/);
+    assert.equal(pending, 1, 'the completed tool must not be replayed after HTTP 402');
+    assert.equal(retries, 0, 'billing failures are not transient transport retries');
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].status, 402);
+    assert.equal(warnings[0].code, 'provider_continuation_http_failed');
+    assert.match(warnings[0].message, /HTTP 402.*额度或计费不可用/);
+    assert.doesNotMatch(JSON.stringify(warnings), /PRIVATE_PROVIDER_BILLING_BODY/);
+    assert.ok(!modelInfos.some(info => info.provider === 'deepseek_official'), 'a rejected fallback must not claim that it took over generation');
+    return;
+  }
   if (scenario === 'client-context-limit') {
     assert.ok(visible.includes(FINAL_TEXT));
     assert.equal(degraded, false);
@@ -641,6 +673,12 @@ async function runClientChat(baseUrl, token, softwareKey, selected, scenario, se
     assert.deepEqual(warnings, []);
   }
   assert.equal(done, true);
+  if (transientFallback) {
+    assert.equal(retries, 1, 'retry the temporarily unavailable original GPT through the existing budget');
+    assert.equal(pending, 1, 'the completed client operation executes exactly once across model retries');
+    assert.ok(!modelInfos.some(info => info.provider === 'deepseek_official'), 'an HTTP 402 fallback never reports successful takeover');
+    return;
+  }
   if (scenario === 'client-rounds-retry') assert.equal(retries, 3);
   if (scenario === 'client-long-word') assert.equal(compressed, 1, 'a long Word turn compacts once and reuses the result');
   if (scenario === 'client-large-context') assert.ok(compressed > 0 && compressed < 8, 'large results compact only when needed');
@@ -769,12 +807,18 @@ async function runMemoryBatches(baseUrl, token, databasePath, provider) {
 }
 
 async function main() {
+  const continuationFallbackOnly = process.argv.includes('--continuation-fallback-only');
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rai-skill-runtime-'));
   const databasePath = path.join(tempRoot, 'ai_data.db');
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const provider = createProviderMock();
   const providerBase = await listen(provider.server);
+  const primaryServer = continuationFallbackOnly ? http.createServer((request, response) => {
+    request.url = '/primary' + request.url;
+    provider.server.emit('request', request, response);
+  }) : null;
+  const primaryBase = primaryServer ? await listen(primaryServer) : '';
   const gatewayKeyFile = path.join(tempRoot, 'gateway-key');
   fs.writeFileSync(gatewayKeyFile, randomSecret(), { mode: 0o600 });
   const logs = { value: '' };
@@ -795,6 +839,8 @@ async function main() {
         TAVILY_API_KEY: '', DEEPSEEK_API_KEY: randomSecret(), SILICONFLOW_API_KEY: randomSecret(),
         GOOGLE_GEMINI_API_KEY: randomSecret(), OPENROUTER_API_KEY: randomSecret(),
         RAI_GPT_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_GPT_GATEWAY_API_KEY_FILE: gatewayKeyFile,
+        RAI_GPT_PRIMARY_BASE_URL: continuationFallbackOnly ? `${primaryBase}/v1` : '',
+        RAI_GPT_PRIMARY_API_KEY_FILE: continuationFallbackOnly ? gatewayKeyFile : '',
         RAI_FAST_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_FAST_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_CLAUDE_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_CLAUDE_GATEWAY_API_KEY_FILE: gatewayKeyFile,
         RAI_LUNA_GATEWAY_BASE_URL: `${providerBase}/v1`, RAI_LUNA_GATEWAY_API_KEY_FILE: gatewayKeyFile,
@@ -823,9 +869,18 @@ async function main() {
     } finally { await closeDatabase(clientDb); }
 
     const settingsOnly = process.argv.includes('--native-settings-only');
+    if (continuationFallbackOnly) {
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-continuation-gpt-transient');
+      assert.deepEqual(provider.errors, []);
+      console.log('PASS transient GPT failure and rejected billing fallback retry the original model without replaying the completed tool');
+      return;
+    }
     if (process.argv.includes('--agent-office-only')) {
       await runCommandReviews(baseUrl, token, databasePath, provider);
       await runInterjection(baseUrl, token, softwareKey, databasePath, provider);
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-continuation-payment');
+      await runClientChat(baseUrl, token, softwareKey, [], 'client-continuation-payment-reasoning');
+      console.log('PASS upstream HTTP 402 remains explicit, degraded and does not replay a completed tool');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-large-context');
       console.log('PASS eight large-result tool steps, bounded repeated compaction and no tool replay');
       await runClientChat(baseUrl, token, softwareKey, [], 'client-ppt-context');
@@ -914,6 +969,7 @@ async function main() {
     throw new Error(`${error.stack || error.message}\n--- runtime log tail ---\n${logs.value}`);
   } finally {
     await stopChild(child);
+    if (primaryServer) await closeServer(primaryServer);
     await closeServer(provider.server);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

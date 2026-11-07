@@ -103,7 +103,19 @@ assert.match(app, /if \(receivedExplicitError\) \{[\s\S]{0,240}throw new Error\(
 // A temporary chat has no database session. The same terminal fallback must
 // produce a visible content event after half a reasoning stream, without
 // retrying any tool or pretending that the answer was complete.
-const { DEFAULT_INCOMPLETE_ANSWER, writeIncompleteAnswer } = require('../lib/chat-stream-fallback');
+const { DEFAULT_INCOMPLETE_ANSWER, writeIncompleteAnswer, partialStreamWarning } = require('../lib/chat-stream-fallback');
+for (const status of [401, 402, 429, 500, 503]) {
+    const warning = partialStreamWarning({ status, message: 'private upstream body' }, true);
+    assert.equal(warning.code, 'provider_continuation_http_failed');
+    assert.equal(warning.status, status);
+    assert.match(warning.message, new RegExp(`HTTP ${status}`));
+    assert.doesNotMatch(warning.message, /private upstream body|上游连接中断/);
+    assert.match(warning.message, /不会自动重放/);
+}
+assert.match(partialStreamWarning({ status: 402 }, false).message, /额度或计费不可用/);
+assert.match(partialStreamWarning({ status: 402, code: 'gpt_primary_temporarily_unavailable' }, true).message, /原模型线路暂时不可用.*备用线路返回 HTTP 402/);
+assert.equal(partialStreamWarning(new Error('socket closed'), true).code, 'partial_stream_saved');
+assert.match(partialStreamWarning(new Error('socket closed'), false).message, /思考记录/);
 const events = [];
 const response = { write(chunk) { events.push(JSON.parse(chunk.trim().slice(6))); } };
 assert.equal(writeIncompleteAnswer(response, { degraded: true, visibleContent: '', persistedContent: '' }), true);
