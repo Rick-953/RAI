@@ -8,6 +8,7 @@ const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, cre
 const { estimateContextTokens, enforceContextWindow, toolResultForContext, truncateToolResult, CONTEXT_POLICIES, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
+const { toResponsesBody } = require('../lib/luna-official-provider');
 async function main() {
     assert.deepEqual(CHAT_MODEL_IDS, ['deepseek-v4.1-flash','gpt-6.1-sol','gpt-6-luna','gpt-6-astra']);
     assert.deepEqual(require('../lib/chat-model-policy').CHAT_MODEL_CATALOG.map(x => x.thinkingProfiles), [['auto','high','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max'], ['auto','low','medium','high','xhigh','max']]);
@@ -65,8 +66,10 @@ async function main() {
     assert.equal(await enforceContextWindow(byteHeavyBody,{countTokens:async()=>{counts++;return 40745;}}),byteHeavyBody,
         'a conservative byte upper bound must not trigger early compression when provider tokens fit');
     assert.equal(counts,1);
-    await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>null,summarize:async()=>''}),e=>e.code==='current_turn_context_too_large',
+    let unavailableCounts = 0;
+    await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>{unavailableCounts++;return null;},summarize:async()=>''}),e=>e.code==='current_turn_context_too_large',
         'unavailable token counting preserves the existing conservative boundary');
+    assert.equal(unavailableCounts,1,'a failed count is not retried for later candidates in the same compression');
     const original = { model:'gpt-6-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
     for (const policy of Object.values(CONTEXT_POLICIES)) {
         const thresholdBody = {...original,max_tokens:2000};
@@ -74,7 +77,7 @@ async function main() {
         assert.equal(await enforceContextWindow(thresholdBody,{policy,countTokens:async()=>thresholdInput - 1}),thresholdBody,
             'provider-counted input below the configured threshold leaves the prefix intact');
         let triggered = 0;
-        await enforceContextWindow(thresholdBody,{policy,countTokens:async()=>thresholdInput,summarize:async()=> 'Previous goals and completed work.',onCompressed:event=>{
+        await enforceContextWindow(thresholdBody,{policy,countTokens:async candidate=>candidate===thresholdBody?thresholdInput:Math.ceil(estimateContextTokens(candidate)/3),summarize:async()=> 'Previous goals and completed work.',onCompressed:event=>{
             triggered++; assert.equal(event.beforeTokens,thresholdInput); assert.equal(event.tokenMeasurement,'provider_count');
             assert.equal(event.beforeTotalEstimatedTokens,thresholdInput+2000+CONTEXT_SAFETY_TOKENS);
         }});
@@ -84,9 +87,57 @@ async function main() {
     assert.equal(await enforceContextWindow(byteHeavyBody,{countTokens:async()=>maximumInput}),byteHeavyBody,
         'the maximum includes the explicit output and safety reserves');
     let reserveTriggered = 0;
-    await enforceContextWindow(original,{countTokens:async()=>maximumInput + 1,summarize:async()=> 'Previous goals and completed work.',onCompressed:()=>reserveTriggered++});
+    await enforceContextWindow(original,{countTokens:async candidate=>candidate===original?maximumInput+1:Math.ceil(estimateContextTokens(candidate)/3),summarize:async()=> 'Previous goals and completed work.',onCompressed:()=>reserveTriggered++});
     assert.equal(reserveTriggered,1,'a large requested output triggers compression before the soft input threshold if required by the hard limit');
     await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>maximumInput + 1}),e=>e.code==='current_turn_context_too_large');
+    const countChinese = candidate => candidate.messages.reduce((sum,message)=>sum+String(message.content||'').length,0)+100;
+    const chineseBody = latest => ({model:'gpt-6-luna',max_tokens:8000,messages:[
+        {role:'user',content:'中'.repeat(110000)},{role:'assistant',content:'ok'},...latest]});
+    const latestChineseUser = {role:'user',content:'中'.repeat(150000)};
+    const latestChineseTool = {role:'tool',tool_call_id:'chinese_tool',content:JSON.stringify({success:true,executed:true,exit_code:0,content:'中'.repeat(150000)})};
+    for (const latest of [[latestChineseUser],[{role:'user',content:'Finish the successful operation.'},
+        {role:'assistant',content:null,tool_calls:[{id:'chinese_tool',type:'function',function:{name:'read_file',arguments:'{}'}}]},latestChineseTool]]) {
+        const candidate = chineseBody(latest), before = JSON.stringify(candidate), events = [];
+        let summaries = 0;
+        const result = await enforceContextWindow(candidate,{countTokens:async value=>countChinese(value),summarize:async()=>{summaries++;return 'Old facts.';},onCompressed:event=>events.push(event)});
+        assert.ok(summaries>0,'byte-heavy old Chinese text is summarized while the current text fits its token budget');
+        assert.deepEqual(result.messages.at(-1),latest.at(-1),'current Chinese user/tool text remains byte-identical');
+        assert.equal(JSON.stringify(candidate),before,'candidate counting never mutates original history');
+        assert.equal(events.length,1);assert.equal(events[0].truncatedToolResults,undefined,'a fitting tool result is not truncated because of its UTF-8 size');
+        assert.equal(events[0].afterTokens,countChinese(result));assert.equal(events[0].afterTokenMeasurement,'provider_count');
+        assert.ok(events[0].afterUtf8UpperBound>maximumInput,'after diagnostics distinguish a measured token count from the byte upper bound');
+        assert.ok(countChinese(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    }
+    const chineseCurrent = chineseBody([latestChineseUser]);
+    await assert.rejects(enforceContextWindow(chineseCurrent,{countTokens:async candidate=>candidate.messages.some(message=>String(message.content).startsWith('[Earlier conversation summary'))?maximumInput+1:countChinese(candidate),summarize:async()=> 'Old facts.'}),
+        error=>error.code==='context_compression_insufficient','the final measured context still obeys the hard input/output reserve');
+    const aborted = Object.assign(new Error('fixture cancellation'),{name:'AbortError'});
+    for (const phase of ['initial','candidate','final']) {
+        await assert.rejects(enforceContextWindow(chineseCurrent,{countTokens:async candidate=>{
+            const isFinal = candidate.messages.some(message=>String(message.content).startsWith('[Earlier conversation summary'));
+            if (phase==='initial'&&candidate===chineseCurrent || phase==='candidate'&&candidate!==chineseCurrent&&!isFinal || phase==='final'&&isFinal) throw aborted;
+            return countChinese(candidate);
+        },summarize:async()=> 'Old facts.'}),error=>error===aborted,'count cancellation propagates during '+phase+' measurement');
+    }
+    const retainedItems = new Map(), retainedBody = {model:'gpt-6-luna',max_tokens:8000,messages:[{role:'user',content:'Finish the report.'}]};
+    for (let index=0;index<100;index++) {
+        const call_id='retained_'+index;
+        retainedBody.messages.push({role:'assistant',content:null,tool_calls:[{id:call_id,type:'function',function:{name:'read_file',arguments:'{}'}}]},
+            {role:'tool',tool_call_id:call_id,content:'ok'});
+        retainedItems.set(call_id,[{type:'message',role:'assistant',content:[{type:'output_text',text:'\u200b'.repeat(3000)}]},
+            {type:'function_call',call_id,name:'read_file',arguments:'{}'}]);
+    }
+    const responsesEstimate = candidate => {const payload=toResponsesBody(candidate,retainedItems);return estimateContextTokens({messages:payload.input,tools:payload.tools});};
+    const responsesCount = candidate => JSON.stringify(toResponsesBody(candidate,retainedItems).input).length;
+    assert.ok(estimateContextTokens(retainedBody)<258000,'plain Chat messages alone hide the retained Responses payload');
+    let retainedCounts=0, retainedSummaries=0;
+    const retainedSnapshot=JSON.stringify(retainedBody);
+    const boundedRetained = await enforceContextWindow(retainedBody,{estimateInputTokens:responsesEstimate,countTokens:async candidate=>{retainedCounts++;return responsesCount(candidate);},
+        summarize:async()=>{retainedSummaries++;return 'Earlier file operations completed; do not replay them.';}});
+    assert.ok(retainedCounts>0&&retainedSummaries>0,'the actual Responses input triggers bounded compaction');
+    assert.equal(JSON.stringify(retainedBody),retainedSnapshot);
+    assert.deepEqual(boundedRetained.messages.at(-1),retainedBody.messages.at(-1));
+    assert.ok(responsesCount(boundedRetained)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS,'hidden retained output obeys the total model budget');
     const snapshot=JSON.stringify(original);let notices=0, chunks=0;
     const compressed=await enforceContextWindow(original,{summarize:async text=>{chunks++;assert.ok(text.length<=24000);return 'Facts and pending task summary.';},onCompressed:()=>notices++});
     assert.equal(JSON.stringify(original),snapshot,'must not mutate persisted history');assert.equal(notices,1);assert.ok(chunks>1);
@@ -169,6 +220,8 @@ async function main() {
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);
+    const officialVisionEstimate=estimateContextTokens({messages:[{role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,'+'x'.repeat(100000)}]}]});
+    assert.ok(officialVisionEstimate>=16384&&officialVisionEstimate<20000,'Responses images keep the media reserve without counting Base64 as prose');
     let calls=[];
     const provider=createDeepSeekProviderFetch({primaryUrl:'https://fast.test/v1/chat/completions',primaryKey:'private-test',officialUrl:'https://official.test/v1/chat/completions',officialKey:'official-test',fetchImpl:async(url,options)=>{calls.push({url,options});return calls.length===1?new Response('down',{status:503}):new Response('{}',{status:200});}});
     const response=await provider('https://fast.test/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer private-test'},body:JSON.stringify({model:'deepseek-v4.1-flash',thinking:{type:'enabled'},reasoning_effort:'low'})});

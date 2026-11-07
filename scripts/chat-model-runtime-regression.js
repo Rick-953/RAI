@@ -47,7 +47,8 @@ async function main(){
   const chunks=[];for await(const part of req)chunks.push(part);let body;try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch(_){res.writeHead(400);res.end();return;}
   observations.push({url:req.url,host:req.headers.host,body});
   if(req.url==='/v1/responses/input_tokens'){
-   const inputTokens=body.model==='gpt-6.1-sol'&&JSON.stringify(body.input).includes('Old fact')?260000:1024;
+   const input=JSON.stringify(body.input);
+   const inputTokens=body.model==='gpt-6.1-sol'&&input.includes('Old fact')?Math.ceil(input.length*1.6):1024;
    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({input_tokens:inputTokens}));return;
   }
   if(req.url==='/v1/responses'){

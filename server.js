@@ -2,7 +2,7 @@ const { MESSAGE: FILE_NAME_TOO_LONG_MESSAGE, validateUploadFilename, isFileNameT
 const { normalizeAdminModelDefinition, validateReasoningProfile } = require('./lib/admin-model-catalog');
 const { registerChatModel, removeChatModel } = require('./lib/chat-model-policy');
 const { applyChatReasoningPolicy, officialDeepSeekBody } = require('./lib/chat-reasoning-policy');
-const { enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel, TOOL_TRUNCATION_MESSAGE, toolResultForContext, truncateToolResult } = require('./lib/context-window');
+const { enforceContextWindow, estimateContextTokens, CONTEXT_WINDOW_TOKENS, CONTEXT_POLICIES, contextPolicyForModel, TOOL_TRUNCATION_MESSAGE, toolResultForContext, truncateToolResult } = require('./lib/context-window');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { CHAT_MODEL_CATALOG, CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, createChatModelQuotaService } = require('./lib/chat-model-policy');
 const { createDeepSeekProviderFetch } = require('./lib/deepseek-provider-fallback');
@@ -20690,6 +20690,12 @@ async function fetchModelProvider(url, options = {}) {
         const contextHash = crypto.createHash('sha256').update(options.body).digest('hex');
         const compressedBody = contextState?.hash === contextHash ? contextState.body : await enforceContextWindow(body, {
             policy: contextPolicyForModel(body.model, ADMIN_MODEL_CATALOG.find(item => item.id === body.model)),
+            estimateInputTokens: lunaProviderRequest && OPENAI_LUNA_API_KEY ? candidate => {
+                try {
+                    const payload = toResponsesBody(candidate, turn?.lunaReasoningItems);
+                    return estimateContextTokens({ messages: payload.input, tools: payload.tools });
+                } catch (_) { return estimateContextTokens(candidate); }
+            } : undefined,
             countTokens: async countBody => {
                 if (String(countBody.model).startsWith('deepseek')) {
                     try { return estimateDeepSeekInputTokens(countBody); } catch (_) { return null; }
