@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const sqlite3 = require('sqlite3');
 const { CHAT_MODEL_IDS, CHAT_MODEL_LIMITS, CHAT_MODEL_WINDOW_MS, activeTier, createChatModelQuotaService } = require('../lib/chat-model-policy');
-const { estimateContextTokens, enforceContextWindow, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
+const { estimateContextTokens, enforceContextWindow, toolResultForContext, truncateToolResult, CONTEXT_WINDOW_TOKENS, CONTEXT_SAFETY_TOKENS } = require('../lib/context-window');
 const { applyChatReasoningPolicy } = require('../lib/chat-reasoning-policy');
 const { createDeepSeekProviderFetch } = require('../lib/deepseek-provider-fallback');
 async function main() {
@@ -57,6 +57,16 @@ async function main() {
     let softSkipped=0; const softBody={model:'gpt-6.1-sol',max_tokens:8000,messages:[{role:'user',content:'x'.repeat(245000)}]};
     const softResult=await enforceContextWindow(softBody,{summarize:async()=>{throw Object.assign(new Error('test'),{code:'context_compression_failed'});},onDiagnostic:event=>{assert.equal(event.estimated,true);softSkipped++;}});
     assert.equal(softResult,softBody,'compression threshold is soft while hard output/context reserve remains available');assert.equal(softSkipped,1);
+    let counts = 0;
+    const smallBody = {messages:[{role:'user',content:'small prompt'}]};
+    assert.equal(await enforceContextWindow(smallBody,{countTokens:async()=>{counts++;return 10;}}),smallBody);
+    assert.equal(counts,0,'ordinary requests do not need a provider counting round trip');
+    const byteHeavyBody = {model:'gpt-6-luna',messages:[{role:'user',content:'中'.repeat(180000)}]};
+    assert.equal(await enforceContextWindow(byteHeavyBody,{countTokens:async()=>{counts++;return 40745;}}),byteHeavyBody,
+        'a conservative byte upper bound must not trigger early compression when provider tokens fit');
+    assert.equal(counts,1);
+    await assert.rejects(enforceContextWindow(byteHeavyBody,{countTokens:async()=>null,summarize:async()=>''}),e=>e.code==='current_turn_context_too_large',
+        'unavailable token counting preserves the existing conservative boundary');
     const original = { model:'gpt-6-astra',max_tokens:8000,messages:[{role:'system',content:'SYSTEM_INTACT'},...Array.from({length:22},(_,i)=>({role:i%2?'assistant':'user',content:'history-'+i+' '+ '中'.repeat(8000)})),{role:'user',content:'LATEST_QUESTION'},{role:'assistant',content:null,tool_calls:[{id:'tool_1',type:'function',function:{name:'read_file',arguments:'{}'}}]},{role:'tool',tool_call_id:'tool_1',content:'LATEST_TOOL_RESULT'}]};
     const snapshot=JSON.stringify(original);let notices=0, chunks=0;
     const compressed=await enforceContextWindow(original,{summarize:async text=>{chunks++;assert.ok(text.length<=24000);return 'Facts and pending task summary.';},onCompressed:()=>notices++});
@@ -82,6 +92,61 @@ async function main() {
         for (const message of result.messages.filter(message=>message.role==='tool')) assert.ok(ids.has(message.tool_call_id),'large-turn compaction never orphans a tool result');
         assert.ok(estimateContextTokens(result)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
     }
+    const fileOutput = {success:true,path:'workflow.md',content:'complete workflow',output:'complete workflow'};
+    assert.deepEqual(toolResultForContext(fileOutput),{success:true,path:'workflow.md',content:'complete workflow'});
+    assert.equal(fileOutput.output,'complete workflow','model-only deduplication leaves the original result intact');
+    const commandOutput = {success:true,exit_code:0,stdout:'workflow\n',stderr:'warning\n',output:'workflow\n\n[stderr]\nwarning'};
+    assert.deepEqual(toolResultForContext(commandOutput),{success:true,exit_code:0,stdout:'workflow\n',stderr:'warning\n'});
+    const distinctOutput = {...commandOutput,output:'additional details'};
+    assert.equal(toolResultForContext(distinctOutput),distinctOutput,'distinct output is not removed');
+    const oversized = {model:'gpt-6-luna',max_tokens:8000,messages:[
+        {role:'user',content:'Complete the task without repeating the command.'},
+        {role:'assistant',content:null,tool_calls:[{id:'large_current',type:'function',function:{name:'sandbox_exec',arguments:'{}'}}]},
+        {role:'tool',tool_call_id:'large_current',content:JSON.stringify({content:'START\n'+'中😀'.repeat(160000)+'\nEND',success:true,executed:true,exit_code:0,path:'report.docx',revision:'original-revision'})}
+    ]};
+    const beforeOversized = JSON.stringify(oversized); const truncationEvents = [];
+    const clipped = await enforceContextWindow(oversized,{onCompressed:event=>truncationEvents.push(event)});
+    assert.equal(JSON.stringify(oversized),beforeOversized,'truncation only changes the model request');
+    assert.equal(clipped.messages.at(-1).tool_call_id,'large_current');
+    const clippedResult = JSON.parse(clipped.messages.at(-1).content);
+    assert.equal(clippedResult.success,true);assert.equal(clippedResult.executed,true);assert.equal(clippedResult.exit_code,0);
+    assert.equal(clippedResult.path,'report.docx');assert.equal(clippedResult.revision,'original-revision');
+    assert.equal(clippedResult.context_truncated,true);assert.match(clippedResult.context_truncation_notice,/do not repeat/i);
+    assert.match(clippedResult.content,/^START/);assert.match(clippedResult.content,/END$/);assert.match(clippedResult.content,/output omitted/);
+    assert.doesNotMatch(clippedResult.content,/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    assert.equal(truncationEvents.length,1);assert.equal(truncationEvents[0].truncatedToolResults,1);assert.match(truncationEvents[0].message,/截取/);
+    assert.ok(estimateContextTokens(clipped)+8000+CONTEXT_SAFETY_TOKENS<=CONTEXT_WINDOW_TOKENS);
+    const parallel = {model:'gpt-6-luna',messages:[{role:'user',content:'Run both commands.'},
+        {role:'assistant',content:null,tool_calls:['first','second'].map(id=>({id,type:'function',function:{name:'sandbox_exec',arguments:'{}'}}))},
+        ...['first','second'].map(id=>({role:'tool',tool_call_id:id,content:JSON.stringify({success:true,executed:true,output:id+'x'.repeat(500000)})}))]};
+    const parallelEvents = [];
+    const clippedParallel = await enforceContextWindow(parallel,{onCompressed:event=>parallelEvents.push(event)});
+    assert.deepEqual(clippedParallel.messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),['first','second']);
+    assert.equal(parallelEvents[0].truncatedToolResults,2);
+    for (const message of clippedParallel.messages.filter(m=>m.role==='tool')) assert.equal(JSON.parse(message.content).executed,true);
+    const status = {success:false,executed:false,retryable:false,exit_code:1,error:'PERMISSION_DENIED: '+'e'.repeat(480),permission_decision:'denied',
+        message:'m'.repeat(450),output:'o'.repeat(450),stdout:'s'.repeat(450),stderr:'t'.repeat(450),text:'q'.repeat(450),content:'c'.repeat(450)};
+    const statusResult = JSON.parse(truncateToolResult(JSON.stringify(status),2048));
+    for (const key of ['success','executed','retryable','exit_code','error','permission_decision']) assert.equal(statusResult[key],status[key],`${key} survives truncation`);
+    const structured = {success:true,results:Array.from({length:1000},(_,line)=>({line,content:'x'.repeat(100)}))};
+    const structuredResult = JSON.parse(truncateToolResult(JSON.stringify(structured),2048));
+    assert.ok(Array.isArray(structuredResult.results));assert.ok(structuredResult.results.length>0 && structuredResult.results.length<structured.results.length);
+    assert.equal(structuredResult.results[0].line,0);assert.equal(structuredResult.results.at(-1).line,999);assert.equal(structuredResult.context_truncated,true);
+    const nested = {success:false,result:{success:false,error:'access_denied',permission_decision:'denied',executed:false,output:'x'.repeat(10000)}};
+    const nestedResult = JSON.parse(truncateToolResult(JSON.stringify(nested),2048));
+    assert.equal(typeof nestedResult.result,'object');assert.equal(nestedResult.result.error,'access_denied');
+    assert.equal(nestedResult.result.permission_decision,'denied');assert.equal(nestedResult.result.executed,false);
+    const competing = {success:true,result:{success:false,error:'ACCESS_DENIED',permission_decision:'denied',executed:false,output:'x'.repeat(3000)},stdout:'y'.repeat(3000)};
+    const competingResult = JSON.parse(truncateToolResult(JSON.stringify(competing),2048));
+    assert.equal(competingResult.result.success,false);assert.equal(competingResult.result.error,'ACCESS_DENIED');
+    assert.equal(competingResult.result.permission_decision,'denied');assert.equal(competingResult.result.executed,false);
+    const normalizerSource = fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
+    const normalizerStart = normalizerSource.indexOf('const CLIENT_TOOL_RESULT_ALLOWED_KEYS =');
+    const normalizerEnd = normalizerSource.indexOf('\nfunction hasToolDefinition(',normalizerStart);
+    assert.ok(normalizerStart>=0 && normalizerEnd>normalizerStart);
+    const normalizeClientToolResult = vm.runInNewContext(`${normalizerSource.slice(normalizerStart,normalizerEnd)}\nnormalizeClientToolResult`,{truncateToolResult});
+    const statusOnly = normalizeClientToolResult({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',path:'x'.repeat(5000)},2048);
+    for (const [key,expected] of Object.entries({success:false,executed:false,retryable:false,exit_code:1,error:'access_denied',permission_decision:'denied',context_truncated:true})) assert.equal(statusOnly[key],expected);
     await assert.rejects(enforceContextWindow({messages:[{role:'user',content:'x'.repeat(300000)}]}, {summarize:async()=>''}),e=>e.code==='current_turn_context_too_large');
     await assert.rejects(enforceContextWindow(original,{summarize:async()=>''}),e=>e.code==='context_compression_failed');
     const vision={messages:[{role:'user',content:[{type:'text',text:'Look'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}]};assert.ok(estimateContextTokens(vision)>=16384);
