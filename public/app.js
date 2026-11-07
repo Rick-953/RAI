@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.47';
-const RAI_BUILD_ID = '20261107-context-budget';
+const RAI_APP_VERSION = '0.13.48';
+const RAI_BUILD_ID = '20261107-live-progress';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -17819,21 +17819,26 @@ function projectAssistantExecution(segments, finalOffset = -1, complete = false)
 function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [] } = {}) {
   const projection = projectAssistantExecution(segments, finalOffset, complete);
   let disclosure = container.querySelector(':scope > .execution-process');
-  let rows = disclosure?.querySelector('.execution-process-rows');
+  let rows = disclosure?.querySelector('.execution-process-rows') || container.querySelector(':scope > .execution-live-rows');
   if (projection.process.length) {
-    if (!disclosure) {
+    if (!rows) {
+      rows = document.createElement('div');
+      rows.className = 'execution-live-rows';
+      container.prepend(rows);
+    }
+    if (projection.finalStarted && !disclosure) {
       disclosure = document.createElement('details');
       disclosure.className = 'execution-process';
-      disclosure.open = true;
       const summary = document.createElement('summary');
       disclosure.appendChild(summary);
-      rows = document.createElement('div');
       rows.className = 'execution-process-rows';
       disclosure.appendChild(rows);
       container.prepend(disclosure);
     }
-    disclosure.querySelector('summary').textContent = isChineseLanguage(appState.language)
-      ? `执行过程 · ${projection.toolCount} 次工具调用` : `Execution · ${projection.toolCount} tool calls`;
+    if (disclosure) {
+      disclosure.querySelector('summary').textContent = isChineseLanguage(appState.language)
+        ? `执行过程 · ${projection.toolCount} 次工具调用` : `Execution · ${projection.toolCount} tool calls`;
+    }
     // Collapse once, in the same render as the first final character; later deltas keep the user's choice.
     if (projection.finalStarted && disclosure.dataset.finalStarted !== '1') {
       disclosure.open = false;
@@ -34751,14 +34756,16 @@ function createAdminLoginModal() {
   const adminLoginLabels = isChineseLanguage(appState.language)
       ? {
         title: '管理员登录',
-        username: '用户名',
+        username: '管理员用户名或邮箱',
+        usernameHint: '使用服务器配置的管理员账号，普通 RAI 账号不能直接用于管理后台。',
         password: '密码',
         totp: 'Authenticator 验证码',
         submit: '登录管理后台'
       }
     : {
         title: 'Admin Login',
-        username: 'Username',
+        username: 'Admin username or email',
+        usernameHint: 'Use the administrator account configured on the server. Regular RAI accounts do not grant admin access.',
         password: 'Password',
         totp: 'Authenticator code',
         submit: 'Log in to Admin'
@@ -34777,7 +34784,8 @@ function createAdminLoginModal() {
           <form id="adminLoginForm" data-rai-binding-token="${RAI_EVENT_BINDING_TOKEN}" data-rai-submit="handleAdminLogin(event)">
             <div class="admin-input-group">
               <label>${adminLoginLabels.username}</label>
-              <input type="text" id="adminUsername" placeholder="admin" autocomplete="username" required>
+              <input type="text" id="adminUsername" placeholder="${adminLoginLabels.username}" autocomplete="username" aria-describedby="adminUsernameHint" required>
+              <small id="adminUsernameHint">${adminLoginLabels.usernameHint}</small>
             </div>
             <div class="admin-input-group">
               <label>${adminLoginLabels.password}</label>
