@@ -26,7 +26,7 @@ function productionFunction(name) {
 }
 
 async function main() {
-    assert.deepEqual(Object.values(policy.IMAGE_MODEL_COSTS), [100, 200, 300]);
+    assert.deepEqual(Object.values(policy.IMAGE_MODEL_COSTS), [100, 200, 300, 100, 200, 300]);
     for (const size of ['2048x2048', '1024x1536', 'auto', '1K', '-1x1024'])
         assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', image_size: size }));
     assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', batch_size: 2 }));

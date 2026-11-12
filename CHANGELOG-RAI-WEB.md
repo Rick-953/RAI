@@ -1,3 +1,10 @@
+## 0.13.50 - 2026-11-12
+
+- Offer the newer GPT Image 2.6 family next to 2.5: `generate_image` now accepts `gpt-image-2.6`, `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` in the tool enum, model catalog, point deduction and the settings image price list, so the list mirrors what the image upstream actually serves.
+- Use `gpt-image-2.6` when a caller does not name a model (retired `auto`/`gpt-image-2`/`kolors-free` aliases resolve there too); 2.5 stays selectable.
+- Keep pricing unchanged and per-generation identical (100 / 200 / 300 points by tier); the upstream bills the same for every tier, one charge per image, and the 2.5 identifiers stay valid for released clients.
+- Update the trusted `image_generation` skill and its manifest hash, and advance the front-end build marker to 20261112-image-26.
+
 ## 0.13.48 - 2026-11-07
 
 - Preserve the actual HTTP status when a model continuation fails after useful output. A provider billing failure is explicit, partial work and completed tools remain saved, and reasoning-only finalization does not overwrite the cause.

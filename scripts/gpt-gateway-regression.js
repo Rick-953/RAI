@@ -36,7 +36,7 @@ async function close(server) {
 
 async function main() {
     assert.deepStrictEqual(GPT_GATEWAY_CHAT_MODELS, ['gpt-6.1-sol', 'gpt-6-astra']);
-    assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2.5');
+    assert.strictEqual(GPT_GATEWAY_IMAGE_MODEL, 'gpt-image-2.6');
     assert.strictEqual(normalizeGatewayBaseUrl('https://gateway.example/v1/'), 'https://gateway.example/v1');
     assert.strictEqual(joinGatewayEndpoint('https://gateway.example/v1', '/chat/completions'), 'https://gateway.example/v1/chat/completions');
     assert.throws(() => joinGatewayEndpoint('https://gateway.example/v1', '../chat/completions'), /invalid_gpt_gateway_endpoint/);
@@ -119,7 +119,7 @@ async function main() {
             const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
             received.push({ url: req.url, authorization: req.headers.authorization, body });
             res.setHeader('Content-Type', 'application/json');
-            if (body.model === 'gpt-image-2.5') {
+            if (req.url === '/v1/images/generations' || body.model === GPT_GATEWAY_IMAGE_MODEL) {
                 const encoded = Buffer.from('mock-png').toString('base64');
                 res.end(JSON.stringify({ data: [{ b64_json: encoded }] }));
                 return;

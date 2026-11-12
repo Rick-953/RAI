@@ -2413,8 +2413,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.49';
-const RAI_BUILD_ID = '20261107-stream-reasons';
+const RAI_APP_VERSION = '0.13.50';
+const RAI_BUILD_ID = '20261112-image-26';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -34605,7 +34605,7 @@ function updateSettingsMembership() {
   const imagePricing = document.getElementById('settingsImagePricing');
   if (imagePricing) {
     const costs = Object.entries(m.imageGeneration?.modelCosts || {});
-    const details = costs.map(([model, cost]) => `${model.replace('gpt-image-2.5', 'GPT Image 2.5')}: ${cost}`).join(' · ');
+    const details = costs.map(([model, cost]) => `${model.replace(/^gpt-image-([0-9.]+)/, 'GPT Image $1')}: ${cost}`).join(' · ');
     imagePricing.textContent = isChineseLanguage(appState.language)
       ? `生图：${details || '每张 100–300 点'} · 仅 1K 及以下`
       : `Images: ${details || '100–300 points each'} · up to 1K`;

@@ -2108,7 +2108,7 @@ const TOOL_DEFINITIONS = [{
                 name: { type: "string", description: "本张图片的简短具体名称，供展示、保存和后续引用。" },
                 model: {
                     type: "string", enum: Object.keys(IMAGE_MODEL_COSTS),
-                    description: "gpt-image-2.5: 100 点；gpt-image-2.5-flare: 200 点，日常高质量生成；gpt-image-2.5-sunburst: 300 点，精细控制。默认 100 点型号。"
+                    description: "gpt-image-2.5: 100 点；gpt-image-2.5-flare: 200 点，日常高质量生成；gpt-image-2.5-sunburst: 300 点，精细控制；gpt-image-2.6 / gpt-image-2.6-flare / gpt-image-2.6-sunburst 为新一代型号，点数与 2.5 对应档位相同（100/200/300）。未指定型号时默认 gpt-image-2.6（100 点）。"
                 },
                 image_size: {
                     type: "string",
@@ -22503,7 +22503,7 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”或找、看、展示真实网络图片，请至少调用一次 web_search 再回答。要看图片时，把搜索结果 images 中的真实 URL 用 ![简短描述](图片URL) 放在回复合适位置；客户端能显示，不能声称无法展示。涉及天气、新闻、股价、时效数据时也应按需调用。');
             }
             if (imageGenerationRequested) {
-                toolHints.push('用户正在请求生成图片。按需读取 image_generation 官方技能并调用 generate_image，提供明确 name、prompt、model 和不超过 1024 的 image_size，每次一张。gpt-image-2.5、gpt-image-2.5-flare、gpt-image-2.5-sunburst 分别消耗 100、200、300 点。余额不足时明确告知所需与当前点数，停止生成；不得重试或切换模型绕过扣点。禁止传 image、image_url、示例或上游临时 URL。图片已由服务端展示，后续简短说明并使用工具返回的真实名称和文件名。');
+                toolHints.push('用户正在请求生成图片。按需读取 image_generation 官方技能并调用 generate_image，提供明确 name、prompt、model 和不超过 1024 的 image_size，每次一张。gpt-image-2.5、gpt-image-2.5-flare、gpt-image-2.5-sunburst 与新一代 gpt-image-2.6、gpt-image-2.6-flare、gpt-image-2.6-sunburst 按档位分别消耗 100、200、300 点；未指定型号时用 gpt-image-2.6。余额不足时明确告知所需与当前点数，停止生成；不得重试或切换模型绕过扣点。禁止传 image、image_url、示例或上游临时 URL。图片已由服务端展示，后续简短说明并使用工具返回的真实名称和文件名。');
             }
             if (memoryToolsEnabled) {
                 toolHints.push('save_memory 与 delete_memory 已按需可用；严格遵守系统提示词顶部的记忆规则，不得为了使用工具而制造记忆。');

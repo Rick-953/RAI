@@ -1,6 +1,6 @@
 ---
 name: image_generation
-description: GPT Image 2.5: named images, 1K, 100-300 points.
+description: GPT Image 2.5/2.6: named images, 1K, 100-300 points.
 ---
 
 # Image generation
@@ -9,9 +9,12 @@ Use `generate_image` when the user asks to draw or create an image. Give each im
 
 Choose the model for the task:
 
-- `gpt-image-2.5`: 100 points per image; default for ordinary requests.
+- `gpt-image-2.5`: 100 points per image; previous generation, still selectable.
 - `gpt-image-2.5-flare`: 200 points per image; fast, high-quality everyday generation.
 - `gpt-image-2.5-sunburst`: 300 points per image; detailed composition and precision.
+- `gpt-image-2.6`: 100 points per image; default for ordinary requests.
+- `gpt-image-2.6-flare`: 200 points per image; newer generation, fast high-quality everyday work.
+- `gpt-image-2.6-sunburst`: 300 points per image; newer generation, detailed composition and precision.
 
 Call once per image (`batch_size=1`). Supported output sizes: `512x512`, `768x768`, `1024x1024`, `1024x768`, `768x1024`, `1024x640`, `640x1024`. Every edge is at most 1024 pixels. Do not request auto, 2K, 4K or a larger size. Do not pass reference image URLs.
 
