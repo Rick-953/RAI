@@ -23623,10 +23623,11 @@ async function sendMessage(message = null, options = {}) {
         }
       );
 
+      html = sanitizeRenderedHtml(html);
       const renderSignature = `${html}\u0000${JSON.stringify(streamingAskUserResult.prompts)}`;
       const contentChanged = renderSignature !== lastStreamingRenderSignature;
       if (contentChanged) {
-        streamingEl.innerHTML = sanitizeRenderedHtml(html);
+        streamingEl.innerHTML = html;
         hydrateRenderedImages(streamingEl);
         if (streamingAskUserResult.prompts.length > 0) {
           streamingAskUserResult.prompts.forEach((prompt) => {
