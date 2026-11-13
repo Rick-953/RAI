@@ -27,6 +27,12 @@ function productionFunction(name) {
 
 async function main() {
     assert.deepEqual(Object.values(policy.IMAGE_MODEL_COSTS), [100, 200, 300, 100, 200, 300]);
+    assert.equal(policy.inferImageGenerationSize('Generate a 2K image'), '2048x2048');
+    assert.equal(policy.inferImageGenerationSize('生成2K横版图片'), '2048x1152');
+    assert.equal(policy.inferImageGenerationSize('2k portrait image 9:16'), '1152x2048');
+    assert.equal(policy.inferImageGenerationSize('Create a 1024 × 768 image'), '1024x768');
+    assert.equal(policy.inferImageGenerationSize('Create a square image'), '1024x1024');
+    assert.throws(() => policy.inferImageGenerationSize('Create a 4096x4096 image'));
     for (const size of ['4096x4096', '1024x1536', 'auto', '1K', '-1x1024'])
         assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', image_size: size }));
     assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', batch_size: 2 }));
@@ -47,7 +53,7 @@ async function main() {
     await assert.rejects(policy.prepareGeneratedImage(Buffer.from('broken image')));
     const referenceId = '1763000000000-abcdef123456.png';
     const referenceContext = vm.createContext({
-        fs: { promises: { lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, size: oversized.length }), readFile: async () => oversized } },
+        fs: { constants: fs.constants, promises: { open: async () => ({ stat: async () => ({ isFile: () => true, size: oversized.length }), readFile: async () => oversized, close: async () => {} }) } },
         REFERENCE_IMAGE_MIME_TYPES: new Set(['image/png', 'image/jpeg', 'image/webp']),
         ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES: 20 * 1024 * 1024,
         validateGeneratedImageBuffer: require('../lib/generated-image-validation').validateGeneratedImageBuffer,

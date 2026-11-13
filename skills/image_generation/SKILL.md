@@ -1,6 +1,6 @@
 ---
 name: image_generation
-description: GPT Image 2.5/2.6: named images, 1K/2K, reference images, 100-300 points.
+description: 1K/2K images and reference edits, 100-300 points.
 ---
 
 # Image generation

@@ -121,7 +121,7 @@ const {
     readGatewayApiKeyFile,
     throwIfExternalRequestAborted
 } = require('./lib/gpt-gateway');
-const { IMAGE_MODEL_COSTS, IMAGE_GENERATION_SIZES, normalizeImageGenerationArgs, buildImageGenerationRequest, prepareGeneratedImage } = require('./lib/image-generation');
+const { IMAGE_MODEL_COSTS, IMAGE_GENERATION_SIZES, inferImageGenerationSize, normalizeImageGenerationArgs, buildImageGenerationRequest, prepareGeneratedImage } = require('./lib/image-generation');
 const {
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
@@ -398,7 +398,7 @@ function buildDefaultUsernameFromEmail(email) {
     const safe = localPart
         .replace(/[^\p{L}\p{N}._\- ]/gu, '_')
         .replace(/[_.\- ]+/g, '_')
-        .replace(/^_+|_+$/g, '')
+        .replace(/^_|_$/g, '')
         .slice(0, USERNAME_MAX_LENGTH);
     const normalized = normalizeUsernameForStorage(safe);
     return normalized.value || 'User';
@@ -1059,8 +1059,7 @@ function generateRecoveryCodes(count = 10) {
     const codes = new Set();
     while (codes.size < count) {
         let raw = '';
-        const bytes = crypto.randomBytes(12);
-        for (const byte of bytes) raw += RECOVERY_CODE_ALPHABET[byte % RECOVERY_CODE_ALPHABET.length];
+        for (let index = 0; index < 12; index += 1) raw += RECOVERY_CODE_ALPHABET[crypto.randomInt(RECOVERY_CODE_ALPHABET.length)];
         codes.add(`${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`);
     }
     return [...codes];
@@ -1881,17 +1880,20 @@ async function loadReferenceImageFiles(referenceImageFileIds = [], context = {})
         const source = await resolveOwnedWorkspaceSource({ fileId, userId, sessionId });
         const mimeType = String(source.mimeType || '').split(';', 1)[0].trim().toLowerCase();
         if (!REFERENCE_IMAGE_MIME_TYPES.has(mimeType)) throw new Error('reference_image_type_unsupported');
-        const stat = await fs.promises.lstat(source.path).catch(() => null);
-        if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('reference_image_missing');
-        if (stat.size <= 0 || stat.size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) throw new Error('reference_image_too_large');
-        const buffer = await fs.promises.readFile(source.path);
-        const sniffed = validateGeneratedImageBuffer(buffer, mimeType);
-        if (!REFERENCE_IMAGE_MIME_TYPES.has(sniffed.contentType)) throw new Error('reference_image_type_unsupported');
-        files.push({
-            buffer,
-            contentType: sniffed.contentType,
-            filename: `reference-${index + 1}.${sniffed.ext}`
-        });
+        const handle = await fs.promises.open(source.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+            .catch(() => { throw new Error('reference_image_missing'); });
+        try {
+            const stat = await handle.stat();
+            if (!stat.isFile()) throw new Error('reference_image_missing');
+            if (stat.size <= 0 || stat.size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) throw new Error('reference_image_too_large');
+            const buffer = await handle.readFile();
+            if (buffer.length > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) throw new Error('reference_image_too_large');
+            const sniffed = validateGeneratedImageBuffer(buffer, mimeType);
+            if (!REFERENCE_IMAGE_MIME_TYPES.has(sniffed.contentType)) throw new Error('reference_image_type_unsupported');
+            files.push({ buffer, contentType: sniffed.contentType, filename: `reference-${index + 1}.${sniffed.ext}` });
+        } finally {
+            await handle.close();
+        }
     }
     return files;
 }
@@ -2837,7 +2839,7 @@ function createClientToolPending({
         if (entry.resolved) return;
         entry.resolved = true;
         clientToolPending.delete(String(requestId));
-        console.warn(` 客户端文件工具执行超时: requestId=${requestId}, tool=${toolName}, sessionId=${sessionId}`);
+        console.warn(JSON.stringify([` 客户端文件工具执行超时: requestId=${requestId}, tool=${toolName}, sessionId=${sessionId}`]));
         appendRaiRuntimeReport({
             level: '报错',
             tag: 'client_tool_timeout',
@@ -4996,7 +4998,7 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
             });
 
             req.on('error', (err) => {
-                console.error(' Tavily网页搜索请求失败:', sanitizeReportContext(err));
+                console.error(JSON.stringify([' Tavily网页搜索请求失败:', sanitizeReportContext(err)]));
                 resolve({ results: [], images: [] });
             });
 
@@ -5119,7 +5121,7 @@ async function rewriteSearchImageUrls(imageUrls, maxImages = 5) {
         if (typeof value === 'string' && !unique.includes(value) && unique.length < maxImages) unique.push(value);
     }
     const cached = await Promise.all(unique.map(async (sourceUrl) => {
-        try { return await cacheSearchImage(sourceUrl); } catch (error) { console.warn('搜索图片缓存失败:', sanitizeReportContext(error)); return null; }
+        try { return await cacheSearchImage(sourceUrl); } catch (error) { console.warn(JSON.stringify(['搜索图片缓存失败:', sanitizeReportContext(error)])); return null; }
     }));
     return cached.filter(Boolean).map((entry) => entry.url);
 }
@@ -5528,7 +5530,7 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
         });
 
         req.on('error', (err) => {
-            console.error(' 工具调用请求失败:', sanitizeReportContext(err));
+            console.error(JSON.stringify([' 工具调用请求失败:', sanitizeReportContext(err)]));
             resolve({ finish_reason: 'error', tool_calls: null, content: null });
         });
 
@@ -10534,6 +10536,14 @@ function setSecurityHeaders(req, res) {
 
 // 中间件配置
 app.use(requestDiagnostics);
+// Cover public file handlers and APIs; tighter route limits still apply.
+app.use(rateLimit({
+    windowMs: 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: '请求过于频繁,请稍后再试' }
+}));
 app.use((req, res, next) => {
     setSecurityHeaders(req, res);
     next();
@@ -10741,14 +10751,7 @@ const apiLimiter = rateLimit({
     message: { error: '请求过于频繁,请稍后再试' }
 });
 
-// Cover API handlers without their own limiter; tighter route limits still apply.
-app.use('/api', rateLimit({
-    windowMs: 60 * 1000,
-    max: 1000,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: '请求过于频繁,请稍后再试' }
-}));
+
 
 const CHAT_USAGE_QUOTAS = [
     {
@@ -11131,8 +11134,8 @@ async function checkAndConsumeChatQuota(userId) {
 
 function getBearerToken(req) {
     const authHeader = String(req.headers.authorization || '').trim();
-    const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    return match ? match[1].trim() : '';
+    if (!/^Bearer[ \t]/i.test(authHeader)) return '';
+    return authHeader.slice(7).trim();
 }
 
 // JWT验证中间件
@@ -12335,7 +12338,7 @@ app.get('/api/quote/:symbol', financeQuoteLimiter, async (req, res) => {
         res.json(quote);
     } catch (error) {
         const publicError = buildPublicFinanceError(error);
-        console.warn(' 行情请求失败:', sanitizeReportContext(error));
+        console.warn(JSON.stringify([' 行情请求失败:', sanitizeReportContext(error)]));
         res.status(publicError.status).json({
             error: {
                 code: publicError.code,
@@ -15210,7 +15213,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
             );
         }
 
-        console.log(` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${safeConfig.system_prompt.length}, longMemory=${memory ? memory.enabled : 'unchanged'}`);
+        console.log(JSON.stringify([` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${safeConfig.system_prompt.length}, longMemory=${memory ? memory.enabled : 'unchanged'}`]));
         res.json({
             success: true,
             memory,
@@ -16368,7 +16371,7 @@ app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
         const deleteElapsedMs = Date.now() - deleteStartedAt;
         // 图像文件清理不阻塞响应（尽力而为，后台执行）
         setImmediate(() => { drainQueuedGeneratedImageDeletionsBestEffort().catch(() => null); });
-        console.log(` 删除会话成功: ${req.params.id}, elapsed=${deleteElapsedMs}ms`);
+        console.log(JSON.stringify([` 删除会话成功: ${req.params.id}, elapsed=${deleteElapsedMs}ms`]));
         return res.json({ success: true });
     } catch (error) {
         console.error(' 删除会话失败:', sanitizeReportContext(error));
@@ -17909,7 +17912,7 @@ app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, as
         if (result.notFound) return res.status(404).json({ error: '消息不存在' });
         await drainQueuedGeneratedImageDeletionsBestEffort();
         scheduleConversationIntegritySeal(sessionId, req.user.userId);
-        console.log(` 已删除消息 ID: ${messageId}`);
+        console.log(JSON.stringify([` 已删除消息 ID: ${messageId}`]));
         return res.json({ success: true, deletedId: messageId });
     } catch (error) {
         console.error(' 删除消息失败:', sanitizeReportContext(error));
@@ -17950,7 +17953,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
                     return res.status(404).json({ error: '消息不存在' });
                 }
 
-                console.log(` 已更新消息 ID: ${messageId}`);
+                console.log(JSON.stringify([` 已更新消息 ID: ${messageId}`]));
                 scheduleConversationIntegritySeal(sessionId, req.user.userId);
                 res.json({ success: true, updatedId: messageId, content });
             }
@@ -21163,7 +21166,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             ? String(agentTraceLevel)
             : 'invalid';
         quotaTurn.thinkingMode = thinkingMode;
-        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${!!internetMode}, agentMode=${!!agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${normalizeAgentPolicy(agentPolicy)}, quality=${normalizeQualityProfile(qualityProfile)}, trace=${normalizedTraceLogValue}, reasoningProfile=${normalizedReasoningProfile}`);
+        console.log(JSON.stringify([` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${!!internetMode}, agentMode=${!!agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${normalizeAgentPolicy(agentPolicy)}, quality=${normalizeQualityProfile(qualityProfile)}, trace=${normalizedTraceLogValue}, reasoningProfile=${normalizedReasoningProfile}`]));
         if (requestedModel !== model) {
             console.log(` 已归一化旧模型ID: ${formatPrivateLogFingerprint(requestedModel, 'requestedModel')}, normalized=${model}`);
         }
@@ -23744,7 +23747,7 @@ if (clientFileExecution && systemPrompt) {
             if (gptImageModelSelected) {
                 clearTimeout(timeoutId);
                 apiResponse = new Response(
-                    buildDirectImageToolCallSse(userContent, `direct_image_${requestId}`),
+                    buildDirectImageToolCallSse(userContent, `direct_image_${requestId}`, inferImageGenerationSize(userContent)),
                     {
                         status: 200,
                         headers: { 'Content-Type': 'text/event-stream; charset=utf-8' }
@@ -24689,6 +24692,7 @@ if (clientFileExecution && systemPrompt) {
                         name: 'generate_image',
                         arguments: JSON.stringify({
                             prompt: userContent,
+                            image_size: inferImageGenerationSize(userContent),
                             ...(defaultReferenceImageFileIds.length > 0
                                 ? { reference_image_file_ids: defaultReferenceImageFileIds }
                                 : {})
@@ -26508,7 +26512,7 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
                     if (err) {
                         return res.status(500).json({ error: '停止失败' });
                     }
-                    console.log(' 停止请求:', requestId);
+                    console.log(JSON.stringify([' 停止请求:', requestId]));
                     rejectClientToolPending(requestId, 'client_cancelled');
                     res.json({ success: true, message: '已发送停止信号' });
                 }
@@ -26970,7 +26974,7 @@ function getPasskeyRequestContext(req) {
 }
 
 function parseCookieHeader(req) {
-    const output = {};
+    const output = Object.create(null);
     String(req.headers.cookie || '').split(';').forEach((part) => {
         const separator = part.indexOf('=');
         if (separator <= 0) return;
@@ -29236,7 +29240,7 @@ app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
         }
 
         const snapshot = await getUserMembershipSnapshot(redemption.userId);
-        console.log(` 用户 ${redemption.userId} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`);
+        console.log(JSON.stringify([` 用户 ${redemption.userId} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`]));
         res.json({
             success: true,
             tier,
@@ -30208,7 +30212,7 @@ app.delete('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
         if (!result.success) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        console.log(` 管理员删除用户 ID: ${userId}`);
+        console.log(JSON.stringify([` 管理员删除用户 ID: ${userId}`]));
         return res.json({
             success: true,
             deletedUserId: result.deletedUserId,
@@ -30255,7 +30259,7 @@ app.put('/api/admin/users/:userId/membership', authenticateAdmin, (req, res) => 
         if (this.changes === 0) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        console.log(` 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`);
+        console.log(JSON.stringify([` 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`]));
         res.json({ success: true, membership, membershipStart, membershipEnd });
     });
 });
@@ -30292,7 +30296,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(` 管理员给用户 ${userId} 添加 ${points} 购买点数`);
+            console.log(JSON.stringify([` 管理员给用户 ${userId} 添加 ${points} 购买点数`]));
             res.json({ success: true, pointsAdded: points, type: 'purchased' });
         });
     } else {
@@ -30307,7 +30311,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(` 管理员给用户 ${userId} 添加 ${points} 每日点数`);
+            console.log(JSON.stringify([` 管理员给用户 ${userId} 添加 ${points} 每日点数`]));
             res.json({ success: true, pointsAdded: points, type: 'daily' });
         });
     }
@@ -30378,7 +30382,7 @@ app.delete('/api/admin/messages/:messageId', authenticateAdmin, async (req, res)
         });
         if (!deleted) return res.status(404).json({ error: '消息不存在' });
         await drainQueuedGeneratedImageDeletionsBestEffort();
-        console.log(` 管理员删除消息 ID: ${messageId}`);
+        console.log(JSON.stringify([` 管理员删除消息 ID: ${messageId}`]));
         return res.json({ success: true, deletedMessageId: messageId });
     } catch (error) {
         console.error(' 删除消息失败:', sanitizeReportContext(error));
@@ -30420,7 +30424,7 @@ app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, async (req, res)
             return res.status(404).json({ error: '会话不存在' });
         }
         await drainQueuedGeneratedImageDeletionsBestEffort();
-        console.log(` 管理员删除会话 ID: ${sessionId}`);
+        console.log(JSON.stringify([` 管理员删除会话 ID: ${sessionId}`]));
         return res.json({ success: true, deletedSessionId: sessionId });
     } catch (err) {
         console.error(' 删除会话失败:', sanitizeReportContext(err));

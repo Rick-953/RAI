@@ -147,6 +147,13 @@ async function main() {
         assert.equal(editCalls, 1, edited.raw + logs.slice(-1500)); assert.equal(await balance(), 400);
         const editedImage = toolResults.at(-1).images[0]; assert.equal(editedImage.width, 2048); assert.equal(editedImage.height, 2048);
         const storedEdit = await sharp(path.join(ROOT, 'uploads/generated-images', editedImage.filename)).metadata(); assert.equal(storedEdit.width, 2048);
+        await wallet(500);
+        const directEdit = await chat('gpt-image-2.6', false, { sessionId, messages: [{ role: 'user', content: 'Generate a 2K image using both reference images', attachments: referenceIds.map(fileId => ({ type: 'image', fileId })) }] });
+        assert.equal(editCalls, 2, directEdit.raw);
+        assert.equal(await balance(), 400);
+        const directFilename = directEdit.raw.match(/generated-\d+-[a-f0-9]+-1\.png/)?.[0];
+        assert.ok(directFilename, directEdit.raw);
+        assert.equal((await sharp(path.join(ROOT, 'uploads/generated-images', directFilename)).metadata()).width, 2048);
         requestedSize = '512x512';
         await wallet(99); const before = imageCalls; const directDenied = await chat('gpt-image-2.5');
         assert.equal(imageCalls, before); assert.equal(await balance(), 99); assert.match(directDenied.raw, /点数不足/);
