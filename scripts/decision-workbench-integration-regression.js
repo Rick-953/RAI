@@ -105,9 +105,11 @@ async function main() {
             const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
             if (req.url === '/emails') {
                 const code = String(body.text || '').match(/验证码\s*[:：]\s*(\d{6})\b/);
-                assert.ok(code, 'registration email must contain the real six-digit verification code');
-                for (const recipient of Array.isArray(body.to) ? body.to : [body.to]) {
-                    emails.set(recipient, code[1]);
+                if (String(body.subject || '').includes('验证码')) {
+                    assert.ok(code, 'registration email must contain the real six-digit verification code');
+                    for (const recipient of Array.isArray(body.to) ? body.to : [body.to]) {
+                        emails.set(recipient, code[1]);
+                    }
                 }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ id: crypto.randomUUID() }));
@@ -142,7 +144,7 @@ async function main() {
     try {
         // Match the isolated audit's source allowlist: never copy .env, databases or uploads.
         for (const entry of [
-            'server.js', 'package.json', 'sqlite-transaction.js', 'user-session-token.js',
+            'server.js', 'package.json', 'user-session-token.js',
             'agent', 'lib', 'public', 'skills', 'workers'
         ]) {
             fs.cpSync(path.join(ROOT, entry), path.join(tempRoot, entry), {

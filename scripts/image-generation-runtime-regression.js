@@ -105,7 +105,7 @@ async function main() {
         const chat = async (model, native = false, extra = {}) => {
             const response = await fetch(base + '/api/chat/stream', { method: 'POST', headers: { ...headers, ...(native ? { 'X-RAI-Client-Key': softwareKey } : {}) },
                 body: JSON.stringify({ model, thinkingMode: false, internetMode: false, memoryMode: 'off', messages: [{ role: 'user', content: '请生成一张蓝色圆形图片' }],
-                    ...(native ? { client_file_execution: true, workdir_configured: false, client_skills: { protocol: 1, catalog: [{ name: 'image_generation', description: 'Named images up to 1K' }], selected: [] } } : {}) }) });
+                    ...(native ? { client_file_execution: true, workdir_configured: false, client_skills: { protocol: 1, catalog: [{ name: 'image_generation', description: 'Named images up to 1K' }], selected: [] } } : {}), ...extra }) });
             const raw = await response.text(); assert.equal(response.status, 200, raw);
             return { raw, events: raw.split(/\r?\n/).filter(line => line.startsWith('data: ') && !line.includes('[DONE]')).map(line => JSON.parse(line.slice(6))) };
         };
@@ -143,7 +143,7 @@ async function main() {
             await run(db, 'INSERT INTO file_uploads (filename,user_id,original_name,mime_type,size) VALUES (?,?,?,?,?)', [filename, user.lastID, 'reference.png', 'image/png', png.length]);
         }
         requestedSize = '2048x2048'; requestedModel = 'gpt-image-2.6'; await wallet(500);
-        const edited = await chat('gpt-6.1-sol', false, { sessionId, messages: [{ role: 'user', content: '??????????2K??', attachments: referenceIds.map(fileId => ({ type: 'image', fileId, filename: fileId, fileName: 'reference.png', fileType: 'image/png', mimeType: 'image/png' })) }] });
+        const edited = await chat('gpt-6.1-sol', false, { sessionId, messages: [{ role: 'user', content: 'Generate a 2K image using both reference images', attachments: referenceIds.map(fileId => ({ type: 'image', fileId, filename: fileId, fileName: 'reference.png', fileType: 'image/png', mimeType: 'image/png' })) }] });
         assert.equal(editCalls, 1, edited.raw + logs.slice(-1500)); assert.equal(await balance(), 400);
         const editedImage = toolResults.at(-1).images[0]; assert.equal(editedImage.width, 2048); assert.equal(editedImage.height, 2048);
         const storedEdit = await sharp(path.join(ROOT, 'uploads/generated-images', editedImage.filename)).metadata(); assert.equal(storedEdit.width, 2048);
