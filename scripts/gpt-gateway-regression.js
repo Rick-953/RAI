@@ -16,6 +16,7 @@ const {
     joinGatewayEndpoint,
     normalizeGatewayBaseUrl,
     postGatewayJson,
+    postGatewayMultipart,
     readBoundedResponseText,
     readGatewayApiKeyFile,
 } = require('../lib/gpt-gateway');
@@ -116,6 +117,13 @@ async function main() {
         const chunks = [];
         req.on('data', (chunk) => chunks.push(chunk));
         req.on('end', () => {
+            if (req.url === '/v1/images/edits') {
+                const raw = Buffer.concat(chunks).toString('utf8');
+                received.push({ url: req.url, authorization: req.headers.authorization, multipart: raw, contentType: req.headers['content-type'] });
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ data: [{ b64_json: 'bW9jaw==' }] }));
+                return;
+            }
             const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
             received.push({ url: req.url, authorization: req.headers.authorization, body });
             res.setHeader('Content-Type', 'application/json');
@@ -132,6 +140,17 @@ async function main() {
     try {
         const port = await listen(server);
         const baseUrl = `http://127.0.0.1:${port}/v1`;
+        const editResponse = await postGatewayMultipart({ baseUrl, apiKey: testKey,
+            fields: { model: 'gpt-image-2.6', size: '2048x2048', prompt: 'reference test' },
+            files: [{ buffer: Buffer.from('reference-bytes-one'), filename: 'first.png', contentType: 'image/png' },
+                { buffer: Buffer.from('reference-bytes-two'), filename: 'second.png', contentType: 'image/png' }] });
+        assert.equal(editResponse.status, 200);
+        const edit = received.pop();
+        assert.equal(edit.url, '/v1/images/edits');
+        assert.equal(edit.authorization, 'Bearer ' + testKey);
+        assert.match(edit.contentType, /multipart\/form-data; boundary=/);
+        assert.equal((edit.multipart.match(/name="image\[\]"/g) || []).length, 2);
+        for (const value of ['2048x2048', 'gpt-image-2.6', 'reference-bytes-one', 'reference-bytes-two', 'first.png', 'second.png']) assert.ok(edit.multipart.includes(value));
         const multimodalBody = applyGatewayChatRequestPolicy({
             model: 'gpt-6.1-sol',
             messages: [{
@@ -250,7 +269,7 @@ async function main() {
     assert.match(serverSource, /let gptImageModelSelected = Object.hasOwn\(IMAGE_MODEL_COSTS, model\)/);
     assert.match(serverSource, /const imageGenerationRequested = gptImageModelSelected \|\| detectImageGenerationNeed/);
     assert.match(serverSource, /buildDirectImageToolCallSse\(userContent/);
-    assert.match(serverSource, /TOOL_EXECUTORS.generate_image\(args, \{ userId, sessionId, requestId, signal \}\)/);
+    assert.match(serverSource, /TOOL_EXECUTORS.generate_image\(args, \{[\s\S]{0,300}userId,[\s\S]{0,300}signal/);
     const imagePipeline = serverSource.slice(serverSource.indexOf('async function requestAndPersistGeneratedImages'), serverSource.indexOf('// 工具定义 -'));
     assert.match(imagePipeline, /endpoint: 'images\/generations'/);
     assert.match(imagePipeline, /refundPointDeduction\(context.userId, imagePoints\)/);

@@ -1,4 +1,4 @@
-const RAI_SW_VERSION = '0.13.50-20261112-image-26';
+const RAI_SW_VERSION = '0.13.52-20261113-decision-workbench-image2';
 const RAI_SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/+$/, '') || '';
 const RAI_SCOPE_KEY = RAI_SCOPE_PATH ? RAI_SCOPE_PATH.slice(1).replace(/[^a-z0-9]+/gi, '-') : 'root';
 const RAI_STATIC_CACHE_PREFIX = `rai-static-${RAI_SCOPE_KEY}-`;
@@ -13,24 +13,28 @@ const RAI_AVATAR_CACHE_NAME = `${RAI_AVATAR_CACHE_PREFIX}${RAI_SW_VERSION}`;
 const RAI_NAVIGATION_FALLBACK = appPath('index.html');
 const RAI_AVATAR_CACHE_MAX_ENTRIES = 80;
 const RAI_STATIC_ASSETS = [
-  'locale.js?v=20261112-image-26',
-  'web-skills.js?v=20261112-image-26', 'web-skills.css?v=20261112-image-26',
-  'third-party-notices.js?v=20261112-image-26', 'third-party-notices.css?v=20261112-image-26',
+  'interactive-visual-schema.js?v=20261113-decision-workbench-image2',
+  'interactive-visuals.js?v=20261113-decision-workbench-image2', 'interactive-visuals.css?v=20261113-decision-workbench-image2',
+  'message-details.js?v=20261113-decision-workbench-image2', 'message-details.css?v=20261113-decision-workbench-image2',
+  'decision-workbench.js?v=20261113-decision-workbench-image2', 'decision-workbench.css?v=20261113-decision-workbench-image2',
+  'locale.js?v=20261113-decision-workbench-image2',
+  'web-skills.js?v=20261113-decision-workbench-image2', 'web-skills.css?v=20261113-decision-workbench-image2',
+  'third-party-notices.js?v=20261113-decision-workbench-image2', 'third-party-notices.css?v=20261113-decision-workbench-image2',
   'third-party-notices.html', 'third-party-notices.js', 'third-party-notices.css', 'locale.js', 'licenses/manifest.json',
-  '', 'index.html', 'runtime-brand.js?v=20261112-image-26',
-  'rai-system-prompt.js?v=20261112-image-26', 'event-bindings.js?v=20261112-image-26',
-  'lib/jsQR.js?v=20261112-image-26', 'qr-scanner.js?v=20261112-image-26',
-  'secure-sharing.js?v=20261112-image-26', 'secure-sharing.css?v=20261112-image-26',
-  'diagnostics.js?v=20261112-image-26',
-  'user-activity.js?v=20261112-image-26',
-  'token-billing.js?v=20261112-image-26',
-  'app.js?v=20261112-image-26', 'styles.css?v=20261112-image-26',
-  'markdown-tables.js?v=20261112-image-26',
-  'cx-remote.js?v=20261112-image-26', 'local-agent.css?v=20261112-image-26',
-  'crf-ui.js?v=20261112-image-26',
-  'selection-explainer.js?v=20261112-image-26', 'selection-explainer.css?v=20261112-image-26',
-  'site.webmanifest?v=20261112-image-26', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
-  'pet-quotes.js?v=20261112-image-26',
+  '', 'index.html', 'runtime-brand.js?v=20261113-decision-workbench-image2',
+  'rai-system-prompt.js?v=20261113-decision-workbench-image2', 'event-bindings.js?v=20261113-decision-workbench-image2',
+  'lib/jsQR.js?v=20261113-decision-workbench-image2', 'qr-scanner.js?v=20261113-decision-workbench-image2',
+  'secure-sharing.js?v=20261113-decision-workbench-image2', 'secure-sharing.css?v=20261113-decision-workbench-image2',
+  'diagnostics.js?v=20261113-decision-workbench-image2',
+  'user-activity.js?v=20261113-decision-workbench-image2',
+  'token-billing.js?v=20261113-decision-workbench-image2',
+  'app.js?v=20261113-decision-workbench-image2', 'styles.css?v=20261113-decision-workbench-image2',
+  'markdown-tables.js?v=20261113-decision-workbench-image2',
+  'cx-remote.js?v=20261113-decision-workbench-image2', 'local-agent.css?v=20261113-decision-workbench-image2',
+  'crf-ui.js?v=20261113-decision-workbench-image2',
+  'selection-explainer.js?v=20261113-decision-workbench-image2', 'selection-explainer.css?v=20261113-decision-workbench-image2',
+  'site.webmanifest?v=20261113-decision-workbench-image2', 'icons/source-search.svg', 'icons/rai-app-icon.svg',
+  'pet-quotes.js?v=20261113-decision-workbench-image2',
   'images/pets/MasterTea1.webp', 'images/pets/MasterTea1-1.webp',
   'images/pets/MasterTea2.webp', 'images/pets/MasterTea2-1.webp',
   'images/pets/MasterTea3.webp', 'images/pets/MasterTea3-1.webp',
@@ -40,11 +44,11 @@ const RAI_STATIC_ASSETS = [
   'images/pets/MasterTeaDesktop.webp', 'images/pets/MasterTeaDesktop-1.webp',
   'icons/rai-app-icon-192.png', 'icons/rai-app-icon-512.png', 'images/onboarding-saturn.png',
   'icons/settings/notifications.svg', 'icons/settings/notifications_paused.svg', 'icons/settings/security.svg',
-  'lib/marked.min.js?v=20261112-image-26', 'lib/purify.min.js?v=20261112-image-26',
-  'lib/katex/katex.min.css?v=20261112-image-26', 'lib/katex/katex.min.js?v=20261112-image-26',
-  'lib/katex/contrib/auto-render.min.js?v=20261112-image-26',
-  'lib/highlight/styles/github-dark.min.css?v=20261112-image-26',
-  'lib/highlight/highlight.min.js?v=20261112-image-26'
+  'lib/marked.min.js?v=20261113-decision-workbench-image2', 'lib/purify.min.js?v=20261113-decision-workbench-image2',
+  'lib/katex/katex.min.css?v=20261113-decision-workbench-image2', 'lib/katex/katex.min.js?v=20261113-decision-workbench-image2',
+  'lib/katex/contrib/auto-render.min.js?v=20261113-decision-workbench-image2',
+  'lib/highlight/styles/github-dark.min.css?v=20261113-decision-workbench-image2',
+  'lib/highlight/highlight.min.js?v=20261113-decision-workbench-image2'
 ].map(appPath);
 
 function isAvatarRequest(url) {

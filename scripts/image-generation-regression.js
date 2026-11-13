@@ -27,23 +27,43 @@ function productionFunction(name) {
 
 async function main() {
     assert.deepEqual(Object.values(policy.IMAGE_MODEL_COSTS), [100, 200, 300, 100, 200, 300]);
-    for (const size of ['2048x2048', '1024x1536', 'auto', '1K', '-1x1024'])
+    for (const size of ['4096x4096', '1024x1536', 'auto', '1K', '-1x1024'])
         assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', image_size: size }));
     assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', batch_size: 2 }));
     assert.throws(() => policy.normalizeImageGenerationArgs({ prompt: 'draw', model: 'untrusted-model' }));
-    const oversized = await sharp({ create: { width: 1254, height: 1254, channels: 3, background: '#146baf' } }).png().toBuffer();
+    const oversized = await sharp({ create: { width: 2500, height: 2500, channels: 3, background: '#146baf' } }).png().toBuffer();
     for (const size of policy.IMAGE_GENERATION_SIZES) {
         const args = policy.normalizeImageGenerationArgs({ prompt: 'draw', image_size: size, name: '蓝色圆形' });
         const body = policy.buildImageGenerationRequest(args);
-        assert.ok(body.size.split('x').every(edge => Number(edge) <= 1024));
+        assert.ok(body.size.split('x').every(edge => Number(edge) <= 2048));
         assert.equal(body.n, 1);
         const prepared = await policy.prepareGeneratedImage(oversized, size);
         const metadata = await sharp(prepared.buffer).metadata();
-        assert.ok(metadata.width <= 1024 && metadata.height <= 1024);
+        assert.ok(metadata.width <= 2048 && metadata.height <= 2048);
         assert.ok(metadata.width <= Number(size.split('x')[0]) && metadata.height <= Number(size.split('x')[1]));
         assert.equal(metadata.format, 'png');
+        if (size === '2048x2048') assert.equal(metadata.width, 2048);
     }
     await assert.rejects(policy.prepareGeneratedImage(Buffer.from('broken image')));
+    const referenceId = '1763000000000-abcdef123456.png';
+    const referenceContext = vm.createContext({
+        fs: { promises: { lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, size: oversized.length }), readFile: async () => oversized } },
+        REFERENCE_IMAGE_MIME_TYPES: new Set(['image/png', 'image/jpeg', 'image/webp']),
+        ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES: 20 * 1024 * 1024,
+        validateGeneratedImageBuffer: require('../lib/generated-image-validation').validateGeneratedImageBuffer,
+        resolveOwnedWorkspaceSource: async ({ userId, sessionId }) => {
+            if (userId !== 1 || sessionId !== 'owned') throw Error('owner_rejected');
+            return { path: 'owned.png', mimeType: 'image/png' };
+        }
+    });
+    vm.runInContext(productionFunction('loadReferenceImageFiles'), referenceContext);
+    const referenceOptions = { userId: 1, sessionId: 'owned', allowedReferenceImageFileIds: [referenceId] };
+    const references = await referenceContext.loadReferenceImageFiles([referenceId], referenceOptions);
+    assert.equal(references[0].buffer, oversized);
+    assert.equal(references[0].contentType, 'image/png');
+    await assert.rejects(referenceContext.loadReferenceImageFiles([referenceId], { ...referenceOptions, allowedReferenceImageFileIds: [] }), /not_in_current_conversation/);
+    await assert.rejects(referenceContext.loadReferenceImageFiles([referenceId], { ...referenceOptions, userId: 2 }), /owner_rejected/);
+    await assert.rejects(referenceContext.loadReferenceImageFiles([referenceId], { ...referenceOptions, sessionId: '' }), /session_required/);
 
     const db = await new Promise((resolve, reject) => { const connection = new sqlite3.Database(':memory:', error => error ? reject(error) : resolve(connection)); });
     const run = (sql, params = []) => new Promise((resolve, reject) => db.run(sql, params, function(error) { error ? reject(error) : resolve(this); }));
@@ -101,11 +121,11 @@ async function main() {
         assert.equal(await total(), 300); assert.equal(calls, 1);
         await reset(300); const cancelled = new AbortController(); cancelled.abort();
         await assert.rejects(generate({}, { signal: cancelled.signal })); assert.equal(calls, 0); assert.equal(await total(), 300);
-        await assert.rejects(generate({ image_size: '2048x2048' })); assert.equal(calls, 0); assert.equal(await total(), 300);
+        await assert.rejects(generate({ image_size: '4096x4096' })); assert.equal(calls, 0); assert.equal(await total(), 300);
         context.GPT_IMAGE_CONFIGURED = false;
         assert.equal((await generate()).code, 'image_provider_unavailable'); assert.equal(await total(), 300);
     } finally { await new Promise(resolve => db.close(resolve)); }
     assert.doesNotMatch(source.slice(source.indexOf('async function generateImages('), source.indexOf('// 工具定义 -')), /siliconflow|fallbackRequest|reserveImage2Quota/);
-    console.log('image_generation_regression_ok: three prices, actual <=1K PNG, insufficient-points AI feedback, concurrent spending, split/expired pools, failure/cancellation refunds, no retry or free fallback');
+    console.log('image_generation_regression_ok: three prices, actual 2K PNG, insufficient-points AI feedback, concurrent spending, split/expired pools, failure/cancellation refunds, no retry or free fallback');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

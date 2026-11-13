@@ -2,10 +2,10 @@ name: Security gates
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, beta]
   merge_group:
     types: [checks_requested]
   schedule:
@@ -103,6 +103,11 @@ jobs:
           RAI_BROWSER_ENGINE=webkit npm run test:cx-remote-ui
           npm run test:custom-api-account
           RAI_BROWSER_ENGINE=webkit npm run test:custom-api-account
+          npm run test:message-details-browser
+          npm run test:decision-workbench-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-browser
+          npm run test:decision-workbench-app-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-app-browser
           npm run test:startup-auth-runtime
           RAI_BROWSER_ENGINE=webkit npm run test:startup-auth-runtime
           npm run test:composer-focus-runtime

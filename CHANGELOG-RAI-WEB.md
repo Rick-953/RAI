@@ -1,3 +1,14 @@
+## 0.13.52 - 2026-11-13
+
+- Support 2K output and conversation reference images in GPT Image 2.6; validate attachment ownership before charging, refund failed or cancelled requests.
+- Add message details with a first-use swipe guide.
+
+## 0.13.51 - 2026-11-13
+
+- Add a desktop decision workbench using the existing RAI theme and motion: conversation list 20%, chat 44%, pinned information 36%. Collapsing the list expands chat and workbench to 55% / 45%; there is no equal-thirds layout selector.
+- Pin message snapshots to the current conversation, keep source provenance and changed/deleted-source notices, and restore pins across reloads. Account and conversation boundaries are enforced on the server.
+- Render model-authored budget calculators, comparison charts, and interactive checklists from validated `rai_visual` data. Parameter changes stay local until the user adds them to the composer; original answers and quotes remain unchanged.
+
 ## 0.13.50 - 2026-11-12
 
 - Offer the newer GPT Image 2.6 family next to 2.5: `generate_image` now accepts `gpt-image-2.6`, `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` in the tool enum, model catalog, point deduction and the settings image price list, so the list mirrors what the image upstream actually serves.

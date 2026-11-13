@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const express = require('express');
