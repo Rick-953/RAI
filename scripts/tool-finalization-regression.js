@@ -125,8 +125,10 @@ async function agentLoop(rounds, toolsPerRound = 1) {
   assert.equal(result.content, output.join(''), 'Streaming and returned content agree');
   for (let index = 1; index <= rounds; index++) {
     const status = requests[index].messages.filter(m => m.name === 'rai_tool_round_status');
-    assert.equal(status.length, 1, 'Replace the single status message instead of accumulating stale system statuses');
-    assert.equal(status[0].content, buildToolRoundInstruction(index));
+    assert.equal(status.length, index, 'Round status appends without changing cached prefix bytes');
+    assert.equal(status.at(-1).content, buildToolRoundInstruction(index));
+    assert.deepEqual(requests[index].messages.slice(0, requests[index - 1].messages.length), requests[index - 1].messages,
+      'tool continuation preserves all previously sent prompt bytes');
     const lastAssistant = requests[index].messages.filter(m => m.role === 'assistant').at(-1);
     assert.equal(lastAssistant.content, `progress-${index - 1}\n`, 'Agent continuation must retain text already streamed');
   }
@@ -234,15 +236,15 @@ async function browserChecks() {
     const result = exerciseHandoff(Array.from({ length: count }, (_, index) => batch('r' + index)));
     assert.equal(result.completedToolRounds, count);
     const status = result.conversationMessages.filter(m => m.name === 'rai_tool_round_status');
-    assert.equal(status.length, 1);
-    assert.equal(status[0].content, buildToolRoundInstruction(count));
+    assert.equal(status.length, count);
+    assert.equal(status.at(-1).content, buildToolRoundInstruction(count));
     assert.equal(result.conversationMessages.filter(m => m.role === 'assistant').at(-1).content, 'Visible body before r' + (count - 1));
   }
   assert.equal(exerciseHandoff([{ results: Array.from({ length: 12 }, (_, n) => resultCall('same-' + n)), text: 'Already shown.' }]).completedToolRounds, 1);
   assert.equal(exerciseHandoff([{ results: [], interjection: true }, batch('r0'), { results: [], interjection: true }]).completedToolRounds, 1);
   assert.equal(exerciseHandoff([{ results: [resultCall('error', true)] }]).completedToolRounds, 1, 'Returned error is completed; thrown/unfinished calls have no handoff');
   assert.equal(exerciseHandoff([{ results: [] }]).completedToolRounds, 0);
-  checks.push('Actual Web handoff: 12 calls=1 round; 2/3/8/9 batches; no-result/interjection excluded; text retained; one current status');
+  checks.push('Actual Web handoff: 12 calls=1 round; 2/3/8/9 batches; no-result/interjection excluded; text retained; append-only round status');
   const gemini = vm.createContext({ messageContentAsText: content => content });
   vm.runInContext(between(server, 'function getCanonicalSystemInstruction(', 'function buildChatToolDefinitions(')
     + '\nglobalThis.convert=buildGeminiContinuationContents;globalThis.system=getCanonicalSystemInstruction;', gemini);
@@ -250,7 +252,7 @@ async function browserChecks() {
   const geminiParts = gemini.convert(continuedMessages)[0].parts;
   assert.equal(geminiParts[0].text, 'Visible body before gemini', 'Gemini must also retain streamed tool-call text');
   assert.equal(geminiParts[1].functionCall.name, 'read_file');
-  assert.match(gemini.system(continuedMessages), /1 completed tool rounds/);
+  assert.match(JSON.stringify(gemini.convert(continuedMessages)), /1 completed tool rounds/);
   checks.push('Actual Gemini converter: assistant text + functionCall and current completed-round instruction preserved');
 
   for (const count of [0, 2, 3, 8, 9]) {

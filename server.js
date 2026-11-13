@@ -6163,10 +6163,10 @@ async function callK2p5Stream({
 
         completedToolRounds += 1;
         conversationMessages = [
-            ...conversationMessages.filter(message => message.name !== 'rai_tool_round_status'),
+            ...conversationMessages,
             assistantToolCallMessage,
             ...executedToolMessages,
-            { role: 'system', name: 'rai_tool_round_status',
+            { role: 'user', name: 'rai_tool_round_status',
                 content: buildToolRoundInstruction(completedToolRounds) }
         ];
     }
@@ -25605,9 +25605,9 @@ if (clientFileExecution && systemPrompt) {
                                 finalSummaryMinimumOffset = rawAssistantStructuredBuffer.length;
                             }
                             conversationMessages = [
-                                ...conversationMessages.filter(message => message.name !== 'rai_tool_round_status'),
+                                ...conversationMessages,
                                 assistantToolCallMessage, ...toolResultMessages,
-                                { role: 'system', name: 'rai_tool_round_status',
+                                { role: 'user', name: 'rai_tool_round_status',
                                     content: buildToolRoundInstruction(completedToolRounds, uiLanguage) }
                             ];
                         }
