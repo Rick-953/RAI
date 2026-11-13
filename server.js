@@ -57,7 +57,7 @@ const net = require('net');
 const https = require('https');  // 用于网页搜索
 const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
-const { createAuthSessionStore } = require('./lib/auth-session-store');
+const { createAuthSessionStore, readRefreshTokenCookie } = require('./lib/auth-session-store');
 const { selectedRefreshToken, sessionRefreshCookie, clearSelectedRefreshCookie } = require('./lib/qr-refresh-cookie');
 const {
     SOFTWARE_CLIENT_SCOPE,
@@ -12456,6 +12456,25 @@ async function fetchZtx6dOpenApi(action, payload) {
     return data || {};
 }
 
+function ztx6dBrowserCookieName(req, phase) {
+    const basePath = new URL(resolvePublicBaseUrl(req)).pathname.replace(/\/+$/, '');
+    const scope = crypto.createHash('sha256').update(basePath).digest('hex').slice(0, 16);
+    return `__Host-rai_ztx6d_${phase}_${scope}`;
+}
+
+function setZtx6dBrowserCookie(req, res, phase, value = '') {
+    // __Host- requires Path=/; names isolate formal/beta and reject sibling-domain cookie planting.
+    res.cookie(ztx6dBrowserCookieName(req, phase), value, {
+        httpOnly: true, secure: true, sameSite: 'lax', path: '/',
+        maxAge: value ? (phase === 'rt' ? ZTX6D_RT_TTL_MS : ZTX6D_AUTH_CODE_TTL_MS) : 0
+    });
+    res.setHeader('Cache-Control', 'no-store');
+}
+
+function matchesZtx6dBrowserCookie(req, phase, value) {
+    return !!value && readRefreshTokenCookie(req.headers.cookie, ztx6dBrowserCookieName(req, phase)) === value;
+}
+
 async function cleanupExpiredZtx6dRt() {
     try {
         await dbRunAsync(
@@ -12716,6 +12735,8 @@ app.get('/api/auth/ztx6d/start', authLimiter, async (req, res) => {
             [rt, returnPath, Date.now(), Date.now() + ZTX6D_RT_TTL_MS]
         );
 
+        setZtx6dBrowserCookie(req, res, 'rt', rt);
+        setZtx6dBrowserCookie(req, res, 'code');
         const loginUrl = new URL(ZTX6D_LOGIN_URL);
         loginUrl.searchParams.set('rt', rt);
         res.redirect(loginUrl.toString());
@@ -12748,6 +12769,8 @@ app.post('/api/auth/ztx6d/bind/start', authenticateToken, authLimiter, async (re
             [rt, returnPath, Date.now(), Date.now() + ZTX6D_RT_TTL_MS, req.user.userId]
         );
 
+        setZtx6dBrowserCookie(req, res, 'rt', rt);
+        setZtx6dBrowserCookie(req, res, 'code');
         const loginUrl = new URL(ZTX6D_LOGIN_URL);
         loginUrl.searchParams.set('rt', rt);
         res.json({ success: true, redirectUrl: loginUrl.toString() });
@@ -12767,6 +12790,10 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
 
     if (!rt) {
         return res.redirect(redirectZtx6dError(req, returnPath, 'missing_rt'));
+    }
+
+    if (!matchesZtx6dBrowserCookie(req, 'rt', rt)) {
+        return res.redirect(redirectZtx6dError(req, returnPath, 'browser_mismatch'));
     }
 
     try {
@@ -12793,6 +12820,8 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
             ? await bindZtx6dUser(bindUserId, uid)
             : await findOrCreateZtx6dUser(uid);
         const authCode = await createZtx6dAuthCode(user, returnPath);
+        setZtx6dBrowserCookie(req, res, 'rt');
+        setZtx6dBrowserCookie(req, res, 'code', authCode);
 
         res.redirect(buildClientAuthRedirect(req, returnPath, {
             auth_code: authCode,
@@ -12817,6 +12846,10 @@ app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
         return res.status(400).json({ success: false, error: 'missing_auth_code' });
     }
 
+    if (!matchesZtx6dBrowserCookie(req, 'code', authCode)) {
+        return res.status(400).json({ success: false, error: 'invalid_or_expired_auth_code' });
+    }
+
     try {
         const codeRecord = await consumeZtx6dAuthCode(authCode);
         if (!codeRecord) {
@@ -12832,6 +12865,7 @@ app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
             additionalClaims: { provider: codeRecord.provider || 'ztx6d' }
         });
         res.setHeader('Set-Cookie', session.refreshCookie.header);
+        setZtx6dBrowserCookie(req, res, 'code');
 
         res.json({
             success: true,
