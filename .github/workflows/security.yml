@@ -296,6 +296,8 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: rai-agent
+      - name: Check Local Agent locked dependency graph
+        run: cargo check --locked --manifest-path rai-agent/Cargo.toml
 
   codeql:
     name: CodeQL JavaScript analysis
