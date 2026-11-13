@@ -1,11 +1,13 @@
 /* RAI surfaces and motion stay shared with the conversation and ChatFlow. */
 .decision-chat-toolbar,
+.decision-sidebar-rail,
 .decision-panel-toggle {
   display: none;
 }
 
 .decision-workbench-panel [hidden],
 .decision-chat-toolbar[hidden],
+.decision-sidebar-rail[hidden],
 .decision-panel-toggle[hidden] {
   display: none !important;
 }
@@ -94,6 +96,7 @@
 
 .decision-workbench-panel :is(button, a, input, select, textarea):focus-visible,
 .decision-sidebar-toggle:focus-visible,
+.decision-rail-action:focus-visible,
 .decision-panel-toggle:focus-visible {
   outline: 2px solid var(--color-saturn-yellow);
   outline-offset: 3px;
@@ -249,13 +252,12 @@
 
 @media (min-width: 769px) {
   .decision-workbench > .sidebar {
-    flex: 0 0 20%;
-    width: 20%;
+    flex: 0 0 var(--decision-sidebar-width, 260px);
+    width: var(--decision-sidebar-width, 260px);
     min-width: 0;
     overflow-x: hidden;
     transition: flex-basis var(--menu-motion-duration) var(--menu-motion-easing),
-      width var(--menu-motion-duration) var(--menu-motion-easing),
-      opacity var(--menu-motion-duration) var(--menu-motion-easing);
+      width var(--menu-motion-duration) var(--menu-motion-easing);
   }
 
   .decision-workbench .sidebar-header-top {
@@ -263,10 +265,38 @@
   }
 
   .decision-workbench.decision-sidebar-collapsed > .sidebar {
-    flex-basis: 0;
-    width: 0;
-    opacity: 0;
-    pointer-events: none;
+    flex-basis: 64px;
+    width: 64px;
+  }
+
+  .decision-sidebar-collapsed > .sidebar > :is(.sidebar-header-fixed, .sidebar-scrollable-wrapper, .sidebar-footer-fixed) {
+    display: none;
+  }
+
+  .decision-sidebar-collapsed .decision-sidebar-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+    min-height: 0;
+    padding: 12px 8px;
+    overflow-y: auto;
+  }
+
+  .decision-sidebar-rail .decision-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .decision-sidebar-rail :is(svg, img) {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  .decision-rail-action[data-rail-action="settings"] {
+    margin-top: auto;
   }
 
   .decision-workbench > .main-content {
@@ -280,8 +310,8 @@
 
   .decision-workbench:not(.decision-canvas-open) > .main-content:not(.canvas-open) > .chat-panel,
   .decision-workbench:not(.decision-canvas-open) > .main-content.canvas-closing > .chat-panel {
-    flex: 0 0 auto;
-    width: 55%;
+    flex: 1 1 0;
+    width: 0;
     min-width: 0;
     position: relative;
   }
@@ -290,8 +320,8 @@
     position: relative;
     z-index: 12;
     inset: auto;
-    flex: 0 0 45%;
-    width: 45%;
+    flex: 0 0 var(--decision-panel-width, 368px);
+    width: var(--decision-panel-width, 368px);
     height: 100%;
     border-radius: 24px 0 0 24px;
   }
@@ -317,67 +347,81 @@
     font-size: 12px;
   }
 
-  .decision-panel-close {
-    display: none;
-  }
-}
-
-@media (max-width: 768px) {
   .decision-workbench .decision-panel-toggle {
     display: inline-flex;
     position: relative;
   }
+}
 
-  .decision-mobile-count {
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    min-width: 15px;
-    height: 15px;
-    padding-inline: 3px;
-    border-radius: var(--radius-full);
-    font-size: 9px;
-    line-height: 15px;
-    background: var(--color-saturn-yellow);
-    color: var(--color-black);
-  }
-
-  .decision-workbench-panel {
-    position: fixed;
-    inset: 0 0 auto auto;
-    width: min(100%, 520px);
-    height: var(--app-height, 100dvh);
-    max-height: 100dvh;
-    border-radius: 24px 0 0 24px;
-  }
-
-  .decision-workbench-panel:modal {
-    animation: decision-panel-enter var(--menu-motion-duration) var(--menu-motion-easing);
-  }
-
-  .decision-workbench-panel::backdrop {
-    background: color-mix(in srgb, var(--color-black) 35%, transparent);
-  }
-
-  .decision-panel-header {
-    padding: max(20px, var(--safe-top, 0px)) 20px 18px;
-  }
-
-  .decision-panel-scroll {
-    padding: 0 16px calc(20px + var(--safe-bottom, 0px));
-  }
-
-  .decision-icon-button,
-  .decision-text-button {
-    min-width: 44px;
-    min-height: 44px;
+@media (max-width: 768px) {
+  .decision-workbench-panel,
+  .decision-workbench-panel[open],
+  .decision-panel-toggle,
+  .decision-pin-action,
+  .decision-resize-handle,
+  .message-workspace-link {
+    display: none !important;
   }
 }
 
-@keyframes decision-panel-enter {
-  from { opacity: 0; transform: translateX(32px); }
-  to { opacity: 1; transform: translateX(0); }
+.decision-auto-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
+.decision-auto-list:not(:empty) { margin-bottom: 14px; }
+.decision-auto-card > .decision-pin-visual { margin: 0; }
+.decision-auto-card > .decision-text-button { margin-top: 12px; }
+.decision-mobile-count {
+  margin-left: 3px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.decision-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 24;
+  cursor: col-resize;
+  touch-action: none;
+}
+.decision-resize-sidebar { right: 0; }
+.decision-resize-panel { left: 0; }
+.decision-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  bottom: 20%;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background var(--menu-motion-duration) var(--menu-motion-easing);
+}
+.decision-resize-handle:hover::after,
+.decision-resize-handle:focus-visible::after,
+.decision-resizing .decision-resize-handle::after { background: var(--color-saturn-yellow); }
+.decision-resize-handle:focus-visible { outline: 2px solid var(--color-saturn-yellow); outline-offset: -2px; }
+.decision-resize-handle[hidden] { display: none; }
+.decision-resizing { cursor: col-resize; user-select: none; }
+.decision-resizing > .sidebar { transition: none !important; }
+.message-workspace-link {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-full);
+  padding: 8px 12px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.message-workspace-link:hover { color: var(--text-primary); }
+.message-workspace-link:focus-visible { outline: 2px solid var(--color-saturn-yellow); outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
   .decision-workbench > .sidebar,

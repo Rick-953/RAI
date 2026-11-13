@@ -17,9 +17,9 @@ assert.ok(placementStart >= 0 && placementEnd > placementStart, 'use the product
 const placement = appSource.slice(placementStart, placementEnd);
 const scripts = [
   'lib/marked.min.js', 'lib/purify.min.js', 'interactive-visual-schema.js',
-  'interactive-visuals.js', 'decision-workbench.js'
+  'interactive-controls.js', 'interactive-visuals.js', 'decision-workbench.js'
 ];
-const scriptOrder = ['interactive-visual-schema.js', 'interactive-visuals.js', 'decision-workbench.js', 'app.js'];
+const scriptOrder = ['interactive-visual-schema.js', 'interactive-controls.js', 'interactive-visuals.js', 'decision-workbench.js', 'app.js'];
 assert.deepEqual([...scriptOrder].sort((a, b) => index.indexOf(`src="${a}?`) - index.indexOf(`src="${b}?`)), scriptOrder);
 const build = appSource.match(/const RAI_BUILD_ID = '([^']+)'/)?.[1];
 assert.ok(build);
@@ -209,29 +209,47 @@ async function geometry(page) {
   });
 }
 
-async function settleLayout(page, sidebarRatio, chatRatio) {
+async function settleLayout(page, sidebarWidth = 260, panelWidth = 0) {
+  await page.waitForFunction(([side, panel]) => {
+    const app = document.getElementById('appContainer').getBoundingClientRect();
+    return Math.abs(document.getElementById('sidebar').getBoundingClientRect().width - side) < 1 &&
+      Math.abs(document.getElementById('chatPanel').getBoundingClientRect().width - (app.width - side - panel)) < 1 &&
+      Math.abs(document.getElementById('decisionWorkbenchPanel').getBoundingClientRect().width - panel) < 1;
+  }, [sidebarWidth, panelWidth]);
   await page.waitForFunction(() => ['sidebar', 'chatPanel'].every(id =>
     document.getElementById(id).getAnimations().every(animation => animation.playState !== 'running')));
-  await page.waitForFunction(([side, chat]) => {
-    const width = document.getElementById('appContainer').getBoundingClientRect().width;
-    return Math.abs(document.getElementById('sidebar').getBoundingClientRect().width - width * side) < 1 &&
-      Math.abs(document.getElementById('chatPanel').getBoundingClientRect().width - width * chat) < 1;
-  }, [sidebarRatio, chatRatio]);
   const g = await geometry(page);
-  near(g.sidebar.width, g.app.width * sidebarRatio, 'sidebar ratio');
-  near(g.chat.width, g.app.width * chatRatio, 'chat ratio');
-  near(g.panel.width, g.app.width * (1 - sidebarRatio - chatRatio), 'pin column ratio');
+  near(g.sidebar.width, sidebarWidth, 'sidebar width');
+  near(g.chat.width, g.app.width - sidebarWidth - panelWidth, 'chat fills the remaining width');
+  near(g.panel.width, panelWidth, 'workspace width');
   assert.ok(g.input.right <= g.chat.right + 1 && g.box.right <= g.chat.right + 1,
     'the absolute composer stays entirely inside the chat column');
   assert.ok(g.input.x >= g.chat.x - 1 && g.overflow <= 1, 'no page overflow or composer escape');
   return g;
 }
 
+async function openPanel(page) {
+  if (await page.locator('#decisionPanelToggle').getAttribute('aria-expanded') !== 'true') {
+    await page.locator('#decisionPanelToggle').click();
+  }
+  assert.equal(await page.locator('#decisionWorkbenchPanel').evaluate(node => node.open && !node.inert && !node.matches(':modal')), true);
+}
+
 async function desktopChecks(browser) {
   const f = await fixture(browser, false);
   const { page } = f;
   try {
-    const metrics = { expanded: await settleLayout(page, .2, .44) };
+    const metrics = { closed: await settleLayout(page, 260, 0) };
+    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false, 'loaded manual pins do not open the workspace');
+    assert.equal(await page.locator('#decisionPanelToggle').getAttribute('aria-expanded'), 'false');
+    await openPanel(page);
+    metrics.expanded = await settleLayout(page, 260, 368);
+    await page.locator('.decision-resize-sidebar').focus();
+    for (let index = 0; index < 5; index += 1) await page.keyboard.press('ArrowRight');
+    await settleLayout(page, 340, 368);
+    assert.equal(await page.locator('.decision-resize-sidebar').getAttribute('aria-valuenow'), '340', 'rapid keys accumulate target widths and keep accessibility values current');
+    for (let index = 0; index < 5; index += 1) await page.keyboard.press('ArrowLeft');
+    await settleLayout(page, 260, 368);
     assert.equal(await page.locator('.decision-pin-card').count(), 3);
     assert.equal(await page.locator('.decision-pin-time').first().getAttribute('datetime'), '2026-11-13T08:00:00.000Z',
       'SQLite UTC timestamps are not interpreted as local time');
@@ -249,11 +267,14 @@ async function desktopChecks(browser) {
     await amount.fill('512.35');
     await page.evaluate(() => { window.savedBudgetNode = document.querySelector('.rai-visual-number[data-field="item-0"]'); });
     await page.locator('#decisionSidebarToggle').click();
-    metrics.collapsed = await settleLayout(page, 0, .55);
-    assert.equal(await page.locator('#sidebar').evaluate(node => node.inert), true);
+    metrics.collapsed = await settleLayout(page, 64, 368);
+    assert.equal(await page.locator('#sidebar').evaluate(node => node.inert), false);
+    assert.equal(await page.locator('.decision-sidebar-rail').isVisible(), true);
+    assert.equal(await page.locator('.sidebar-header-fixed').isVisible(), false);
+    assert.equal(await page.locator('.decision-resize-sidebar').isVisible(), false);
     assert.equal(await page.locator('#decisionSidebarToggle').getAttribute('aria-expanded'), 'false');
     await page.locator('#decisionSidebarToggle').press('Enter');
-    await settleLayout(page, .2, .44);
+    await settleLayout(page, 260, 368);
     assert.equal(await amount.inputValue(), '512.35');
     assert.equal(await page.evaluate(() => savedBudgetNode === document.querySelector('.rai-visual-number[data-field="item-0"]')), true);
 
@@ -267,9 +288,8 @@ async function desktopChecks(browser) {
       return fixture.controller.sync();
     });
     assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false, 'canvas closing never creates a fourth column');
-    await page.waitForFunction(() => Math.abs(document.getElementById('chatPanel').getBoundingClientRect().width - innerWidth * .44) < 1);
     await page.evaluate(() => fixture.setCanvas(false));
-    await settleLayout(page, .2, .44);
+    await settleLayout(page, 260, 368);
     assert.equal(await amount.inputValue(), '512.35');
     assert.equal(await page.evaluate(() => savedBudgetNode === document.querySelector('.rai-visual-number[data-field="item-0"]')), true);
 
@@ -373,6 +393,7 @@ async function desktopChecks(browser) {
     assert.ok((await page.locator('.decision-pin-list').textContent()).includes('第二个账户'));
     assert.equal(await page.evaluate(() => fixture.notices.length), notices, 'old account mutations cannot notify or populate the new account');
 
+    await openPanel(page);
     f.reject('GET', 'request_failed');
     await page.evaluate(() => fixture.controller.sync({ refresh: true }));
     assert.equal(await page.getByRole('button', { name: '重试', exact: true }).isVisible(), true);
@@ -393,12 +414,21 @@ async function desktopChecks(browser) {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     assert.equal(await page.locator('#sidebar').evaluate(node => getComputedStyle(node).transitionDuration), '0s');
     await page.locator('#decisionSidebarToggle').click();
-    await settleLayout(page, 0, .55);
+    await settleLayout(page, 64, 368);
     await page.screenshot({ path: path.join(output, engine.name() + '-desktop-light.png') });
     const stored = await page.evaluate(() => ({ ...localStorage }));
-    assert.deepEqual(stored, { 'rai-decision-sidebar-collapsed': '1' }, 'only a layout boolean is persisted');
+    assert.deepEqual(Object.keys(stored), ['rai-decision-layout:/'], 'only local layout preferences are persisted');
+    assert.deepEqual(JSON.parse(stored['rai-decision-layout:/']), { collapsed: true, sidebarWidth: 260, panelWidth: 368 });
     await f.initialize();
-    await settleLayout(page, 0, .55);
+    await settleLayout(page, 64, 0);
+    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false, 'reload restores widths and rail, not an open workspace');
+    await page.locator('#decisionSidebarToggle').press('Enter');
+    await settleLayout(page, 260, 0);
+    await openPanel(page);
+    await settleLayout(page, 260, 368);
+    await resizeChecks(page);
+    await page.locator('#decisionSidebarToggle').click();
+    await settleLayout(page, 64, 368);
     assert.equal(await page.locator('#decisionSidebarToggle').getAttribute('aria-expanded'), 'false');
     await page.evaluate(() => { fixture.controller.clear(); fixture.context.userId = null; });
     assert.equal(await page.locator('.decision-pin-card').count(), 0);
@@ -410,55 +440,80 @@ async function desktopChecks(browser) {
   }
 }
 
+async function resizeChecks(page) {
+  const side = page.locator('.decision-resize-sidebar');
+  const right = page.locator('.decision-resize-panel');
+  for (const [handle, target] of [[side, 'sidebar'], [right, 'decisionWorkbenchPanel']]) {
+    assert.equal(await handle.getAttribute('role'), 'separator');
+    assert.equal(await handle.getAttribute('aria-orientation'), 'vertical');
+    assert.equal(await handle.getAttribute('aria-controls'), target);
+    assert.ok(await handle.getAttribute('aria-label'));
+    assert.equal(await handle.getAttribute('tabindex'), '0');
+  }
+  await side.press('ArrowRight');
+  await settleLayout(page, 276, 368);
+  await side.press('Shift+ArrowLeft');
+  await settleLayout(page, 244, 368);
+  await side.press('Home');
+  await settleLayout(page, 200, 368);
+  await side.press('End');
+  await settleLayout(page, 420, 368);
+  await right.press('ArrowLeft');
+  await settleLayout(page, 420, 384);
+  await right.press('Shift+ArrowRight');
+  await settleLayout(page, 420, 352);
+  await right.press('End');
+  await settleLayout(page, 420, 560);
+  await right.press('Home');
+  await settleLayout(page, 420, 260);
+  async function drag(handle, dx) {
+    const box = await handle.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    assert.equal(await page.locator('#appContainer').evaluate(node => node.classList.contains('decision-resizing')), true);
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForFunction(() => !document.getElementById('appContainer').classList.contains('decision-resizing'));
+  }
+  await drag(side, -80);
+  await settleLayout(page, 340, 260);
+  await drag(right, -108);
+  await settleLayout(page, 340, 368);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('rai-decision-layout:/')));
+  assert.deepEqual(saved, { collapsed: false, sidebarWidth: 340, panelWidth: 368 });
+  // Restore the width used by the remaining fixture assertions through the real separator.
+  await drag(side, -80);
+  await settleLayout(page, 260, 368);
+  await page.locator('#decisionPanelToggle').click();
+  await settleLayout(page, 260, 0);
+  assert.equal(await right.isVisible(), false);
+  await openPanel(page);
+  await settleLayout(page, 260, 368);
+}
+
 async function mobileChecks(browser) {
   const f = await fixture(browser, true);
   const { page } = f;
   try {
-    const g = await geometry(page);
-    near(g.chat.width, 393, 'mobile chat keeps the full viewport');
-    assert.ok(g.input.right <= 394 && g.overflow <= 1);
-    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false);
-    assert.equal(await page.locator('#decisionSidebarToggle').isVisible(), false);
-    await page.locator('#decisionPanelToggle').tap();
-    assert.equal(await page.locator('#decisionWorkbenchPanel').evaluate(node => node.matches(':modal') && !node.inert), true);
-    assert.equal(await page.locator('#decisionPanelToggle').getAttribute('aria-expanded'), 'true');
-    assert.equal(await page.evaluate(() => {
-      document.getElementById('messageInput').focus();
-      return document.activeElement.id === 'messageInput';
-    }), false, 'mobile modal makes the background composer inert');
-    for (let i = 0; i < 4; i += 1) await page.keyboard.press('Shift+Tab');
-    assert.equal(await page.evaluate(() => document.activeElement.closest('#decisionWorkbenchPanel') !== null), true);
-    await page.keyboard.press('Escape');
-    assert.equal(await page.locator('#decisionPanelToggle').getAttribute('aria-expanded'), 'false');
-    assert.equal(await page.locator('#decisionWorkbenchPanel').evaluate(node => node.inert), true);
-    await page.locator('#decisionPanelToggle').tap();
-    await page.evaluate(() => document.getElementById('decisionWorkbenchPanel').close());
-    await page.waitForFunction(() => document.getElementById('decisionWorkbenchPanel').inert &&
-      document.getElementById('decisionPanelToggle').getAttribute('aria-expanded') === 'false');
-    await page.locator('#decisionPanelToggle').tap();
-    const amount = page.locator('.rai-visual-number[data-field="item-0"]').first();
-    await amount.fill('499.99');
-    await page.locator('.rai-visual-button[data-action="apply"]').first().tap();
-    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false);
-    assert.ok((await page.locator('#messageInput').inputValue()).includes('499.99'));
-    assert.equal(await page.locator('#messageInput').evaluate(node => node === document.activeElement), true);
-    await page.locator('#decisionPanelToggle').tap();
-    assert.equal(await amount.inputValue(), '499.99');
-    await page.locator('.decision-panel-scroll').evaluate(node => { node.scrollTop = 0; });
-    await page.waitForFunction(() => document.getElementById('decisionWorkbenchPanel').getAnimations()
-      .every(animation => animation.playState !== 'running'));
+    async function fullWidth(width) {
+      await page.waitForFunction(expected => Math.abs(document.getElementById('chatPanel').getBoundingClientRect().width - expected) < 1, width);
+      const g = await geometry(page);
+      near(g.chat.width, width, 'mobile chat keeps the full viewport');
+      assert.ok(g.input.right <= width + 1 && g.overflow <= 1);
+      for (const selector of ['#decisionWorkbenchPanel', '#decisionPanelToggle', '#decisionSidebarToggle', '.decision-resize-sidebar', '.decision-resize-panel', '.decision-sidebar-rail']) {
+        assert.equal(await page.locator(selector).isVisible(), false, selector + ' stays hidden on phones');
+      }
+      assert.equal(await page.locator('#sidebar').evaluate(node => node.inert), false);
+      assert.equal(await page.locator('#decisionWorkbenchPanel').evaluate(node => node.inert && !node.open && !node.matches(':modal')), true);
+    }
+    await fullWidth(393);
+    assert.equal(await page.evaluate(() => { document.getElementById('messageInput').focus(); return document.activeElement.id === 'messageInput'; }), true,
+      'no hidden workspace modal steals mobile composer focus');
     await page.screenshot({ path: path.join(output, engine.name() + '-mobile-dark.png') });
-    const sheet = await page.locator('#decisionWorkbenchPanel').boundingBox();
-    assert.ok(sheet.y >= 0 && sheet.y + sheet.height <= 853, 'sheet fits above the visible viewport bottom');
     await page.evaluate(() => fixture.setCanvas(true));
-    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false);
     assert.equal(await page.locator('#decisionPanelToggle').isVisible(), false);
     await page.evaluate(() => fixture.setCanvas(false));
-    await page.locator('#decisionPanelToggle').tap();
-    assert.equal(await amount.inputValue(), '499.99');
-    await page.locator('.decision-pin-card').first().getByRole('button', { name: '引用到输入框' }).tap();
-    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false);
-    assert.equal(f.requests.filter(item => item.method !== 'GET').length, 0, 'mobile quote/apply never sends a chat or saves trial values');
+    await fullWidth(393);
     await page.evaluate(() => {
       fixture.context.language = 'zh-TW';
       document.documentElement.dataset.theme = 'light';
@@ -467,27 +522,25 @@ async function mobileChecks(browser) {
       return fixture.controller.sync();
     });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.locator('#decisionPanelToggle').tap();
-    assert.equal(await page.locator('#decisionWorkbenchTitle').textContent(), '固定內容');
-    assert.equal(await page.locator('#decisionWorkbenchPanel').evaluate(node => getComputedStyle(node).animationName), 'none');
+    await fullWidth(393);
     await page.screenshot({ path: path.join(output, engine.name() + '-mobile-light.png') });
     await page.evaluate(() => document.documentElement.style.setProperty('--app-height', '500px'));
-    near((await page.locator('#decisionWorkbenchPanel').boundingBox()).height, 500, 'sheet follows managed keyboard viewport height');
-    await page.getByRole('button', { name: '關閉固定內容', exact: true }).tap();
+    await fullWidth(393);
     await page.setViewportSize({ width: 320, height: 568 });
     await page.evaluate(() => document.documentElement.style.setProperty('--app-height', '568px'));
-    await page.locator('#decisionPanelToggle').tap();
-    assert.ok((await geometry(page)).overflow <= 1, 'small phone does not overflow');
+    await fullWidth(320);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => document.documentElement.style.setProperty('--app-height', '900px'));
-    await settleLayout(page, .2, .44);
-    assert.equal(await page.locator('#decisionWorkbenchPanel').evaluate(node => node.matches(':modal')), false, 'desktop resize releases mobile modality');
+    await settleLayout(page, 260, 0);
+    await openPanel(page);
+    await settleLayout(page, 260, 368);
+    await page.locator('#decisionSidebarToggle').click();
+    await settleLayout(page, 64, 368);
     await page.setViewportSize({ width: 393, height: 852 });
-    await page.waitForFunction(() => !document.getElementById('decisionWorkbenchPanel').open);
-    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false);
-    assert.equal(await page.locator('#sidebar').evaluate(node => node.inert), false, 'desktop layout preference never disables mobile navigation');
+    await fullWidth(393);
+    assert.equal(f.requests.filter(item => item.method !== 'GET').length, 0, 'layout and breakpoint changes never mutate saved pins');
     assert.deepEqual(f.errors, []);
-    console.log(engine.name() + ' mobile: PASS (full-width chat, modal focus, draft only, canvas, safe-area, narrow phone, resize)');
+    console.log(engine.name() + ' mobile: PASS (full-width chat, no workspace UI/modal, safe-area, narrow phone, desktop/rail resize)');
   } finally {
     await f.browserContext.close();
   }

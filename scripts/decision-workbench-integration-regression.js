@@ -284,6 +284,14 @@ async function main() {
             } else {
                 assert.ok(!JSON.stringify(calls[0]).includes('rai_visual'), 'undeclared capability must not inject the visual protocol');
             }
+            const { validateState } = require('../public/interactive-visual-schema');
+            const state = capabilities?.interactiveVisuals === true ? validateState(capabilities.interactiveVisualState) : null;
+            const users = calls[0].messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
+            if (state?.length) {
+                assert.ok(users.includes(JSON.stringify(state)), 'validated current values reach the provider as user context');
+                assert.ok(users.includes('untrusted user data'));
+                assert.ok(!system.includes(JSON.stringify(state)), 'client state cannot become system authority');
+            } else assert.ok(!users.includes('Current local interactive component state'));
         }
         function expectError(result, status, code) {
             assert.equal(result.status, status, JSON.stringify(result.data));
@@ -317,6 +325,10 @@ async function main() {
         await chat(bob, bobSession, 'en');
         await chat(alice, aliceSession, 'en');
         await chat(bob, bobSession, 'en', { interactiveVisuals: false });
+        const localState = [{ type: 'checklist', id: 'confirmation', title: 'Confirm', items: [{ label: 'Dates checked', checked: true }] }];
+        await chat(alice, aliceChinese, 'zh-CN', { interactiveVisuals: true, interactiveVisualState: localState });
+        await chat(bob, bobSession, 'en', { interactiveVisuals: false, interactiveVisualState: localState });
+        await chat(bob, bobSession, 'en', { interactiveVisuals: true, interactiveVisualState: [{ ...localState[0], html: 'CLIENT_FORGED_STATE' }] });
         console.log('PASS real SSE completion and full visual prompt for en/zh; absent/false capability stays ordinary, including the same session');
 
         const messages = await request('GET', `/api/sessions/${aliceSession}/messages`, { token: alice.token });

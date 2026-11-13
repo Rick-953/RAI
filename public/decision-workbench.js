@@ -1,13 +1,14 @@
 (function () {
   'use strict';
 
-  const LAYOUT_KEY = 'rai-decision-sidebar-collapsed';
+  const LAYOUT_KEY = 'rai-decision-layout:' + new URL('.', document.baseURI).pathname;
   const copy = {
     'zh-CN': {
       title: '固定内容', chat: '对话', scope: '当前对话', empty: '固定一条消息，留在这里随时查看。',
       temporary: '临时对话不能保存固定内容。', unsaved: '请先保存当前对话，再固定消息。',
       loading: '正在加载固定内容…', loadFailed: '固定内容加载失败。', retry: '重试',
       collapse: '收起左侧栏', expand: '展开左侧栏', open: '打开固定内容', close: '关闭固定内容',
+      navigation: '主导航', newChat: '新对话', search: '搜索对话', files: '文件', settings: '设置',
       source: '查看原文', remove: '取消固定', removing: '正在取消…', quote: '引用到输入框',
       changed: '原消息已更新；这里保留固定时的内容。', missing: '原消息已删除；这里保留固定时的内容。',
       user: '你', assistant: 'RAI', reference: '引用固定消息', saved: '已固定到当前对话',
@@ -23,6 +24,7 @@
       temporary: '臨時對話不能儲存固定內容。', unsaved: '請先儲存目前對話，再固定訊息。',
       loading: '正在載入固定內容…', loadFailed: '固定內容載入失敗。', retry: '重試',
       collapse: '收起左側欄', expand: '展開左側欄', open: '開啟固定內容', close: '關閉固定內容',
+      navigation: '主導覽', newChat: '新對話', search: '搜尋對話', files: '檔案', settings: '設定',
       source: '查看原文', remove: '取消固定', removing: '正在取消…', quote: '引用到輸入框',
       changed: '原訊息已更新；這裡保留固定時的內容。', missing: '原訊息已刪除；這裡保留固定時的內容。',
       user: '你', assistant: 'RAI', reference: '引用固定訊息', saved: '已固定到目前對話',
@@ -38,6 +40,7 @@
       temporary: 'Temporary chats cannot save pins.', unsaved: 'Save this conversation before pinning messages.',
       loading: 'Loading pins…', loadFailed: 'Could not load pinned content.', retry: 'Retry',
       collapse: 'Collapse sidebar', expand: 'Expand sidebar', open: 'Open pinned content', close: 'Close pinned content',
+      navigation: 'Main navigation', newChat: 'New chat', search: 'Search chats', files: 'Files', settings: 'Settings',
       source: 'View source', remove: 'Unpin', removing: 'Unpinning…', quote: 'Quote in composer',
       changed: 'The source was edited. This is the pinned snapshot.', missing: 'The source was deleted. This is the pinned snapshot.',
       user: 'You', assistant: 'RAI', reference: 'Quote pinned message', saved: 'Pinned to this conversation',
@@ -84,8 +87,17 @@
       throw new Error('Initialize the decision workbench after ensureUnifiedCanvasPlacement.');
     }
     const desktop = matchMedia('(min-width: 769px)');
-    let collapsed = false;
-    try { collapsed = localStorage.getItem(LAYOUT_KEY) === '1'; } catch (_) { /* Layout storage is optional. */ }
+    let collapsed = false, sidebarWidth = 260, panelWidth = 368, panelOpen = false;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY));
+      collapsed = saved?.collapsed === true;
+      if (Number.isFinite(saved?.sidebarWidth)) sidebarWidth = Math.max(200, Math.min(420, saved.sidebarWidth));
+      if (Number.isFinite(saved?.panelWidth)) panelWidth = Math.max(260, Math.min(560, saved.panelWidth));
+    } catch (_) { /* Layout storage is optional. */ }
+    const saveLayout = () => {
+      try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ collapsed, sidebarWidth, panelWidth })); }
+      catch (_) { /* Optional device preference. */ }
+    };
 
     const toolbar = element('div', 'decision-chat-toolbar');
     const collapseButton = button('decision-icon-button decision-sidebar-toggle', 'sidebar');
@@ -95,17 +107,42 @@
     toolbar.append(collapseButton, chatLabel);
     chat.prepend(toolbar);
 
+    const rail = element('nav', 'decision-sidebar-rail');
+    rail.hidden = true;
+    sidebar.prepend(rail);
+    const railActions = [
+      ['newChat', '.new-chat-btn'], ['search', '.search-box'],
+      ['files', '#fileLibraryEntry'], ['settings', '#sidebarSettingsBtn']
+    ].map(([key, selector]) => {
+      const source = sidebar.querySelector(selector);
+      const control = button('decision-icon-button decision-rail-action');
+      control.dataset.railAction = key;
+      const icon = source.querySelector('svg, img').cloneNode(true);
+      icon.setAttribute('aria-hidden', 'true');
+      control.appendChild(icon);
+      control.addEventListener('click', () => {
+        if (key === 'search') {
+          collapseButton.click();
+          document.getElementById('searchInput').focus();
+        } else {
+          // Reuse the trusted sidebar action and its existing event binding.
+          source.click();
+        }
+      });
+      rail.appendChild(control);
+      return { key, control };
+    });
+
     const openButton = button('toolbar-btn decision-panel-toggle', 'pin');
     openButton.id = 'decisionPanelToggle';
     openButton.setAttribute('aria-controls', 'decisionWorkbenchPanel');
-    openButton.setAttribute('aria-haspopup', 'dialog');
     const mobileCount = element('span', 'decision-mobile-count', '0');
     mobileCount.setAttribute('aria-hidden', 'true');
     openButton.appendChild(mobileCount);
     const canvasButton = document.getElementById('canvasToggleBtn');
     composerToolbar.insertBefore(openButton, canvasButton?.nextSibling || null);
 
-    // The same cards live in a desktop column or a mobile modal, retaining trial inputs.
+    // Phones render interactive components inline; this workspace is desktop-only.
     const panel = element('dialog', 'decision-workbench-panel');
     panel.id = 'decisionWorkbenchPanel';
     panel.setAttribute('aria-labelledby', 'decisionWorkbenchTitle');
@@ -130,7 +167,8 @@
     const retryButton = button('decision-text-button');
     status.append(statusText, retryButton);
     const list = element('div', 'decision-pin-list');
-    scroll.append(status, list);
+    const autoList = element('div', 'decision-auto-list');
+    scroll.append(autoList, status, list);
     panel.append(header, scroll);
     main.appendChild(panel);
 
@@ -145,6 +183,10 @@
     let language = 'zh-CN';
     let pendingLoad = null;
     const cards = new Map();
+    const autoCards = new Map();
+    const visualStates = new Map();
+    const stateAliases = new Map();
+    let autoVisuals = [], lastVisualSignature = '';
     const adding = new Set();
     const removing = new Set();
 
@@ -161,58 +203,68 @@
     }
 
     function closePanel() {
-      if (panel.matches(':modal')) panel.close();
-      if (!desktop.matches) {
-        panel.inert = true;
-        openButton.setAttribute('aria-expanded', 'false');
-      }
+      panelOpen = false;
+      const hadFocus = panel.contains(document.activeElement);
+      applyLayout();
+      if (hadFocus && desktop.matches) openButton.focus({ preventScroll: true });
     }
 
     function applyLayout() {
       const active = !!context?.userId;
       const canvas = !!context?.canvasOpen;
+      const left = Math.min(sidebarWidth, Math.max(200, app.clientWidth - 400));
+      const right = Math.min(panelWidth, Math.max(260, app.clientWidth - 464));
+      const railMode = active && desktop.matches && (collapsed || (panelOpen && !canvas && app.clientWidth - left - right < 400));
+      app.style.setProperty('--decision-sidebar-width', left + 'px');
+      app.style.setProperty('--decision-panel-width', right + 'px');
+      const focused = document.activeElement;
+      const focusWasInRail = rail.contains(focused);
+      const focusWasInSidebar = sidebar.contains(focused);
+      const toggleContainer = railMode ? rail : toolbar;
+      const movingToggle = collapseButton.parentNode !== toggleContainer;
+      if (movingToggle) toggleContainer.prepend(collapseButton);
+      rail.hidden = !railMode;
       app.classList.toggle('decision-workbench', active);
-      app.classList.toggle('decision-sidebar-collapsed', active && collapsed);
+      app.classList.toggle('decision-sidebar-collapsed', railMode);
       app.classList.toggle('decision-canvas-open', active && canvas);
       toolbar.hidden = !active;
-      openButton.hidden = !active || canvas;
-      sidebar.inert = active && desktop.matches && collapsed;
-      if (sidebar.inert) sidebar.setAttribute('aria-hidden', 'true');
-      else sidebar.removeAttribute('aria-hidden');
-      collapseButton.setAttribute('aria-expanded', String(!collapsed));
-      labelButton(collapseButton, t(collapsed ? 'expand' : 'collapse'));
+      openButton.hidden = !active || canvas || !desktop.matches;
+      collapseButton.setAttribute('aria-expanded', String(!railMode));
+      labelButton(collapseButton, t(railMode ? 'expand' : 'collapse'));
+      rail.setAttribute('aria-label', t('navigation'));
+      railActions.forEach(({ key, control }) => labelButton(control, t(key)));
+      if (active && desktop.matches && ((movingToggle && focused === collapseButton) ||
+          (railMode && focusWasInSidebar && !focusWasInRail) || (!railMode && focusWasInRail))) {
+        collapseButton.focus({ preventScroll: true });
+      } else if (active && !desktop.matches && (focusWasInRail || focused === collapseButton)) {
+        document.querySelector('#mobileHeader .hamburger-btn').focus({ preventScroll: true });
+      }
       labelButton(openButton, t('open'));
       labelButton(closeButton, t('close'));
       chatLabel.textContent = t('chat');
       scopeLabel.textContent = t('scope');
       title.textContent = t('title');
       retryButton.textContent = t('retry');
-      if (desktop.matches) {
-        closePanel();
-        panel.setAttribute('role', 'complementary');
-        panel.removeAttribute('aria-modal');
-        // Non-modal desktop display must not move focus away from the composer.
-        panel.toggleAttribute('open', active && !canvas);
-      } else {
-        // A desktop non-modal dialog must close before it can become a modal sheet.
-        if (panel.open && !panel.matches(':modal')) panel.close();
-        panel.setAttribute('role', 'dialog');
-        panel.setAttribute('aria-modal', 'true');
-        if (!active || canvas) closePanel();
-      }
+      panel.setAttribute('role', 'complementary');
+      // Non-modal display keeps focus in the conversation when AI opens the workspace.
+      panel.toggleAttribute('open', active && desktop.matches && panelOpen && !canvas);
       panel.inert = !panel.open;
-      openButton.setAttribute('aria-expanded', String(!desktop.matches && panel.open));
+      openButton.setAttribute('aria-expanded', String(panel.open));
+      sideResize.hidden = !active || !desktop.matches || railMode;
+      rightResize.hidden = !panel.open;
+      updateSeparators();
     }
 
     function renderStatus() {
-      count.textContent = String(pins.length);
-      mobileCount.textContent = String(pins.length);
-      mobileCount.hidden = !pins.length;
+      const total = pins.length + autoVisuals.length;
+      count.textContent = String(total);
+      mobileCount.textContent = String(total);
+      mobileCount.hidden = !total;
       list.setAttribute('aria-busy', String(loading));
       const message = context?.temporary ? 'temporary'
         : loadFailed ? 'loadFailed'
           : loading && !pins.length ? 'loading'
-            : !pins.length ? 'empty' : '';
+            : !total ? 'empty' : '';
       status.hidden = !message;
       status.classList.toggle('is-error', loadFailed);
       statusText.textContent = message ? t(message) : '';
@@ -222,8 +274,92 @@
 
     async function usePin(epoch, callback) {
       if (!current(epoch)) return;
-      closePanel();
-      try { await callback(); } catch (_) { if (current(epoch)) notify(t('actionFailed')); }
+      try { return await callback(); } catch (_) { if (current(epoch)) notify(t('actionFailed')); return false; }
+    }
+
+    const stateKey = (spec, sourceId) => JSON.stringify([sourceId ?? null, spec]);
+    function visualOptions(spec, sourceId = null) {
+      const epoch = generation;
+      const signature = stateKey(spec, sourceId);
+      return {
+        language, current: visualStates.get(stateAliases.get(signature) || signature), onApply: text => usePin(epoch, () => stagePrompt(text)),
+        onChange: value => {
+          if (!current(epoch)) return;
+          const validated = window.RAIInteractiveVisualSchema.validate(value);
+          if (!validated) return;
+          visualStates.set(stateAliases.get(signature) || signature, validated);
+          while (visualStates.size > 128) visualStates.delete(visualStates.keys().next().value);
+        }
+      };
+    }
+
+    function renderAutoVisuals() {
+      const visuals = window.RAIInteractiveVisuals;
+      const present = new Set(desktop.matches ? autoVisuals.map(item => visuals.keyFor(item.spec)) : []);
+      for (const [key, entry] of autoCards) {
+        if (!present.has(key)) { entry.handle.destroy(); entry.node.remove(); autoCards.delete(key); }
+      }
+      if (!desktop.matches) return;
+      autoVisuals.forEach(({ spec, sourceId, sourceKey }, index) => {
+        const key = visuals.keyFor(spec);
+        const signature = JSON.stringify([language, spec, sourceId, sourceKey]);
+        let entry = autoCards.get(key);
+        if (!entry || entry.signature !== signature) {
+          entry?.handle.destroy();
+          entry?.node.remove();
+          const node = element('article', 'decision-pin-card decision-auto-card');
+          node.dataset.visualKey = key;
+          const host = element('div', 'decision-pin-visual');
+          node.appendChild(host);
+          const handle = visuals.mount(host, spec, visualOptions(spec, sourceKey));
+          if (sourceId) {
+            const source = button('decision-text-button');
+            source.textContent = t('source');
+            source.addEventListener('click', () => usePin(generation, () => locateSource(sourceId)));
+            node.appendChild(source);
+          }
+          entry = { node, handle, signature };
+          autoCards.set(key, entry);
+        }
+        if (autoList.children[index] !== entry.node) autoList.insertBefore(entry.node, autoList.children[index] || null);
+      });
+    }
+
+    function syncVisuals() {
+      const next = window.RAIInteractiveVisuals?.collectLatest(context?.messages, context?.messageKey) || [];
+      for (const item of next) {
+        const previous = autoVisuals.find(entry => window.RAIInteractiveVisuals.keyFor(entry.spec) === window.RAIInteractiveVisuals.keyFor(item.spec));
+        if (previous && previous.sourceId === null && item.sourceId !== null && JSON.stringify(previous.spec) === JSON.stringify(item.spec)) {
+          const from = stateKey(previous.spec, previous.sourceKey), to = stateKey(item.spec, item.sourceKey);
+          const saved = visualStates.get(stateAliases.get(from) || from);
+          if (from !== to) stateAliases.set(from, to);
+          if (saved) visualStates.set(to, saved);
+        }
+      }
+      const signature = JSON.stringify(next);
+      const changed = signature !== lastVisualSignature && (next.length !== autoVisuals.length || next.some((item, index) => {
+        const old = autoVisuals[index];
+        return !old || JSON.stringify(old.spec) !== JSON.stringify(item.spec) ||
+          (old.sourceKey !== item.sourceKey && !(old.sourceId === null && item.sourceId !== null));
+      }));
+      if (changed && next.length) panelOpen = true;
+      if (!next.length && autoVisuals.length && !pins.length) panelOpen = false;
+      autoVisuals = next;
+      lastVisualSignature = signature;
+      renderAutoVisuals();
+    }
+
+    function getVisualState() {
+      const state = autoVisuals.map(({ spec, sourceKey }) => visualStates.get(stateKey(spec, sourceKey)) || spec);
+      while (state.length && !window.RAIInteractiveVisualSchema.validateState(state)) state.shift();
+      return state;
+    }
+
+    function openVisual(key) {
+      if (!desktop.matches || !context?.userId || context.canvasOpen) return;
+      panelOpen = true;
+      applyLayout();
+      autoCards.get(key)?.node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
 
     function createCard(pin, epoch) {
@@ -319,6 +455,14 @@
       loadFailed = false;
       pins = [];
       cards.clear();
+      for (const entry of autoCards.values()) entry.handle.destroy();
+      autoCards.clear();
+      autoList.replaceChildren();
+      visualStates.clear();
+      stateAliases.clear();
+      autoVisuals = [];
+      lastVisualSignature = '';
+      panelOpen = false;
       adding.clear();
       removing.clear();
       list.replaceChildren();
@@ -373,6 +517,7 @@
       contextKey = nextKey;
       language = nextLanguage;
       if (changed) scopeController = new AbortController();
+      syncVisuals();
       applyLayout();
       if (languageChanged) renderPins();
       else renderStatus();
@@ -408,6 +553,8 @@
         if (!result?.pin || !Number.isSafeInteger(result.pin.id)) throw new Error('Invalid decision pin');
         requestSequence += 1;
         pins = [result.pin, ...pins.filter(pin => pin.id !== result.pin.id)];
+        panelOpen = true;
+        applyLayout();
         renderPins();
         const refreshed = await loadPins();
         if (current(epoch)) notify(t(refreshed === false ? 'savedRefreshFailed' : (result.created === false ? 'duplicate' : 'saved')));
@@ -462,36 +609,77 @@
       }
     }
 
+    function makeSeparator(kind, parent) {
+      const node = element('div', 'decision-resize-handle decision-resize-' + kind);
+      node.tabIndex = 0;
+      node.setAttribute('role', 'separator');
+      node.setAttribute('aria-orientation', 'vertical');
+      node.setAttribute('aria-controls', kind === 'sidebar' ? sidebar.id : panel.id);
+      parent.appendChild(node);
+      let drag = null;
+      const resize = value => {
+        if (kind === 'sidebar') sidebarWidth = Math.round(Math.max(200, Math.min(420, app.clientWidth - 400, value)));
+        else panelWidth = Math.round(Math.max(260, Math.min(560, app.clientWidth - 464, value)));
+        applyLayout();
+      };
+      node.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        drag = { x: event.clientX, width: kind === 'sidebar' ? sidebar.getBoundingClientRect().width : panel.getBoundingClientRect().width };
+        node.setPointerCapture(event.pointerId);
+        app.classList.add('decision-resizing');
+      });
+      node.addEventListener('pointermove', event => {
+        if (drag) resize(drag.width + (event.clientX - drag.x) * (kind === 'sidebar' ? 1 : -1));
+      });
+      const end = () => { if (drag) saveLayout(); drag = null; app.classList.remove('decision-resizing'); };
+      node.addEventListener('lostpointercapture', end);
+      node.addEventListener('pointerup', event => { if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId); });
+      node.addEventListener('pointercancel', end);
+      node.addEventListener('keydown', event => {
+        const step = event.shiftKey ? 32 : 16;
+        const width = kind === 'sidebar' ? sidebarWidth : panelWidth;
+        const delta = kind === 'sidebar' ? 1 : -1;
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        resize(event.key === 'Home' ? 0 : event.key === 'End' ? Infinity : width + (event.key === 'ArrowRight' ? step : -step) * delta);
+        saveLayout();
+      });
+      return node;
+    }
+    const sideResize = makeSeparator('sidebar', sidebar);
+    const rightResize = makeSeparator('panel', panel);
+    function updateSeparators() {
+      for (const [node, min, max, width, label] of [
+        [sideResize, 200, Math.min(420, app.clientWidth - 400), Math.min(sidebarWidth, app.clientWidth - 400), language === 'en' ? 'Sidebar width' : '左侧栏宽度'],
+        [rightResize, 260, Math.min(560, app.clientWidth - 464), Math.min(panelWidth, app.clientWidth - 464), language === 'en' ? 'Workspace width' : '固定栏宽度']
+      ]) {
+        labelButton(node, label);
+        node.setAttribute('aria-valuemin', String(min));
+        node.setAttribute('aria-valuemax', String(Math.max(min, max)));
+        node.setAttribute('aria-valuenow', String(Math.max(min, width)));
+      }
+    }
     collapseButton.addEventListener('click', () => {
-      collapsed = !collapsed;
-      try { localStorage.setItem(LAYOUT_KEY, collapsed ? '1' : '0'); } catch (_) { /* Optional preference. */ }
+      if (!collapsed && app.classList.contains('decision-sidebar-collapsed')) panelOpen = false;
+      else collapsed = !collapsed;
+      saveLayout();
       applyLayout();
     });
     openButton.addEventListener('click', () => {
-      if (!context?.userId || context.canvasOpen || desktop.matches) return;
-      panel.inert = false;
-      panel.showModal();
-      openButton.setAttribute('aria-expanded', 'true');
-      closeButton.focus();
+      if (!context?.userId || context.canvasOpen || !desktop.matches) return;
+      panelOpen = !panelOpen;
+      applyLayout();
     });
     closeButton.addEventListener('click', closePanel);
     panel.addEventListener('cancel', event => {
       event.preventDefault();
       closePanel();
     });
-    panel.addEventListener('close', () => {
-      panel.inert = !panel.open;
-      openButton.setAttribute('aria-expanded', String(!desktop.matches && panel.open));
-    });
-    panel.addEventListener('click', event => {
-      if (event.target !== panel || desktop.matches) return;
-      const rect = panel.getBoundingClientRect();
-      if (event.clientX < rect.left || event.clientX > rect.right ||
-          event.clientY < rect.top || event.clientY > rect.bottom) closePanel();
-    });
     retryButton.addEventListener('click', () => sync({ refresh: true }));
-    desktop.addEventListener('change', applyLayout);
-    instance = Object.freeze({ sync, addPin, clear });
+    desktop.addEventListener('change', () => { renderAutoVisuals(); applyLayout(); });
+    window.addEventListener('resize', applyLayout);
+    instance = Object.freeze({ sync, addPin, clear, visualOptions, getVisualState, openVisual });
     sync();
     return instance;
   }

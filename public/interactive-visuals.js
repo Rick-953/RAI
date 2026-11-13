@@ -1,8 +1,8 @@
 (function (root, factory) {
   'use strict';
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./interactive-visual-schema'));
-  else root.RAIInteractiveVisuals = factory(root.RAIInteractiveVisualSchema);
-})(typeof window === 'object' ? window : globalThis, function (schema) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./interactive-visual-schema'), require('./interactive-controls'));
+  else root.RAIInteractiveVisuals = factory(root.RAIInteractiveVisualSchema, root.RAIInteractiveControls);
+})(typeof window === 'object' ? window : globalThis, function (schema, formControls) {
   'use strict';
   let nextId = 0;
 
@@ -45,10 +45,41 @@
     return output + content.slice(start);
   }
 
+  function segments(content) {
+    const result = [];
+    let start = 0;
+    for (const block of scanBlocks(content)) {
+      if (block.start > start) result.push({ text: content.slice(start, block.start) });
+      result.push({ spec: block.spec });
+      start = block.end;
+    }
+    if (start < content.length) result.push({ text: content.slice(start) });
+    return result;
+  }
+
+  const keyFor = spec => spec.id || `${spec.type}:${spec.title}`;
+  function collectLatest(messages, messageKey) {
+    const result = new Map();
+    for (const message of messages || []) {
+      if (message.role !== 'assistant') continue;
+      for (const { spec } of parseBlocks(message.content)) {
+        const key = keyFor(spec);
+        result.delete(key);
+        if (spec.type !== 'remove') result.set(key, { spec, sourceId: message.id ?? null,
+          sourceKey: typeof messageKey === 'function' ? messageKey(message) : message.id ?? null });
+        while (result.size > schema.limits.maxBlocks) result.delete(result.keys().next().value);
+      }
+    }
+    return Array.from(result.values());
+  }
+
   function mount(container, input, options = {}) {
     if (!container?.ownerDocument || typeof container.appendChild !== 'function') {
       throw new TypeError('A DOM container is required');
     }
+    const validated = schema.validate(input);
+    if (validated?.type === 'form') return formControls.mount(container, validated, options);
+    if (validated?.type === 'remove') throw new TypeError('Removal directives are not visual cards');
     const document = container.ownerDocument;
     const language = typeof options.language === 'string' ? options.language : document.documentElement.lang;
     const english = /^en(?:[-_]|$)/i.test(language);
@@ -61,11 +92,15 @@
     };
     const root = element('section', 'rai-visual');
     root.lang = english ? 'en' : 'zh-CN';
-    const original = schema.validate(input);
+    const original = validated;
     const onApply = typeof options.onApply === 'function' ? options.onApply : null;
     let destroyed = false;
     const handle = {
       element: root,
+      getSpec: () => original ? schema.validate({ ...original,
+        ...(original.type === 'budget' ? { budget } : {}),
+        items: original.items.map((item, index) => ({ ...item,
+          [original.type === 'checklist' ? 'checked' : 'value']: current[index] })) }) : null,
       destroy() {
         destroyed = true;
         root.removeEventListener('input', onInput);
@@ -102,11 +137,16 @@
     const amount = value => formatter.format(value) + ' ' + original.unit;
     const quoted = value => JSON.stringify(value);
     const checkedLabel = value => value ? t('已勾选', 'checked') : t('未勾选', 'unchecked');
-    const current = original.items.map(item => original.type === 'checklist' ? item.checked : item.value);
-    let budget = original.budget, appliedSnapshot = null, applyFailed = false;
+    const restored = schema.validate(options.current);
+    const initial = restored && restored.type === original.type && restored.title === original.title
+      && restored.id === original.id && restored.unit === original.unit
+      && restored.items.length === original.items.length && restored.items.every((item, index) => item.label === original.items[index].label)
+      ? restored : original;
+    const current = initial.items.map(item => original.type === 'checklist' ? item.checked : item.value);
+    let budget = initial.budget, appliedSnapshot = null, applyFailed = false;
     const controls = [];
     const snapshot = () => JSON.stringify([budget ?? null, current]);
-    const initialSnapshot = snapshot();
+    const initialSnapshot = JSON.stringify([original.budget ?? null, original.items.map(item => original.type === 'checklist' ? item.checked : item.value)]);
     const status = element('p', 'rai-visual-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
@@ -142,7 +182,8 @@
     function amountControl(label, value, index, initialMax) {
       const row = element('div', 'rai-visual-amount-row');
       const description = element('div', 'rai-visual-amount-label');
-      description.append(element('span', '', label), element('small', 'rai-visual-original', t('原值：', 'Original: ') + amount(value)));
+      const originalValue = index === -1 ? original.budget : original.items[index].value;
+      description.append(element('span', '', label), element('small', 'rai-visual-original', t('原值：', 'Original: ') + amount(originalValue)));
       const numeric = element('input', 'rai-visual-number');
       const range = element('input', 'rai-visual-range');
       numeric.type = 'number';
@@ -165,7 +206,7 @@
     if (original.type === 'budget') {
       const total = schema.calculateBudget(budget, current).total;
       amountControl(t('总预算', 'Budget'), budget, -1, sliderMax(Math.max(budget, total, 1) * 2));
-      original.items.forEach((item, index) => amountControl(item.label, item.value, index, sliderMax(Math.max(budget, item.value * 2, 1))));
+      original.items.forEach((item, index) => amountControl(item.label, current[index], index, sliderMax(Math.max(budget, item.value * 2, 1))));
       const summary = element('div', 'rai-visual-summary');
       const totalGroup = element('div');
       totalNode = element('strong', 'rai-visual-metric');
@@ -209,7 +250,7 @@
         const row = element('label', 'rai-visual-check-row');
         const checkbox = element('input');
         checkbox.type = 'checkbox';
-        checkbox.checked = item.checked;
+        checkbox.checked = current[index];
         checkbox.setAttribute('aria-label', item.label);
         const label = element('span');
         label.append(element('span', '', item.label), element('small', 'rai-visual-original', t('初始：', 'Initially: ') + checkedLabel(item.checked)));
@@ -324,6 +365,7 @@
         }
       }
       refresh();
+      options.onChange?.(handle.getSpec());
     }
 
     function onClick(event) {
@@ -358,6 +400,7 @@
         } catch (_) { applyFailed = true; }
       }
       refresh();
+      if (target.dataset.action === 'reset') options.onChange?.(handle.getSpec());
     }
 
     root.addEventListener('input', onInput);
@@ -367,5 +410,5 @@
     return handle;
   }
 
-  return Object.freeze({ parseBlocks, stripBlocks, mount });
+  return Object.freeze({ parseBlocks, stripBlocks, segments, collectLatest, keyFor, mount });
 });
