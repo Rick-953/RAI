@@ -103,6 +103,7 @@ jobs:
           RAI_BROWSER_ENGINE=webkit npm run test:cx-remote-ui
           npm run test:custom-api-account
           RAI_BROWSER_ENGINE=webkit npm run test:custom-api-account
+          npm run test:message-details-browser
           npm run test:decision-workbench-browser
           RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-browser
           npm run test:decision-workbench-app-browser
