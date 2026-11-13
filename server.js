@@ -19,6 +19,8 @@ const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { installPhotoWidgetRoutes } = require('./lib/photo-widget-routes');
+const { installDecisionWorkbenchRoutes } = require('./lib/decision-workbench-routes');
+const { buildInteractiveVisualPrompt } = require('./lib/interactive-visual-prompt');
 const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer, partialStreamWarning } = require('./lib/chat-stream-fallback');
 const express = require('express');
@@ -114,6 +116,7 @@ const {
     joinGatewayEndpoint,
     normalizeGatewayBaseUrl,
     postGatewayJson,
+    postGatewayMultipart,
     readBoundedResponseText,
     readGatewayApiKeyFile,
     throwIfExternalRequestAborted
@@ -1859,6 +1862,40 @@ async function fetchGeneratedImageBuffer(sourceUrl, signal) {
     throw new Error('image_redirect_limit_exceeded');
 }
 
+const REFERENCE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+async function loadReferenceImageFiles(referenceImageFileIds = [], context = {}) {
+    const ids = Array.isArray(referenceImageFileIds) ? referenceImageFileIds : [];
+    if (ids.length === 0) return [];
+    const userId = Number(context.userId);
+    const sessionId = String(context.sessionId || '').trim();
+    const allowedIds = context.allowedReferenceImageFileIds instanceof Set
+        ? context.allowedReferenceImageFileIds
+        : new Set(Array.isArray(context.allowedReferenceImageFileIds) ? context.allowedReferenceImageFileIds : []);
+    if (!Number.isSafeInteger(userId) || userId <= 0 || !sessionId) throw new Error('reference_image_session_required');
+
+    const files = [];
+    for (let index = 0; index < ids.length; index += 1) {
+        const fileId = String(ids[index] || '').trim();
+        if (!allowedIds.has(fileId)) throw new Error('reference_image_not_in_current_conversation');
+        const source = await resolveOwnedWorkspaceSource({ fileId, userId, sessionId });
+        const mimeType = String(source.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+        if (!REFERENCE_IMAGE_MIME_TYPES.has(mimeType)) throw new Error('reference_image_type_unsupported');
+        const stat = await fs.promises.lstat(source.path).catch(() => null);
+        if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('reference_image_missing');
+        if (stat.size <= 0 || stat.size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) throw new Error('reference_image_too_large');
+        const buffer = await fs.promises.readFile(source.path);
+        const sniffed = validateGeneratedImageBuffer(buffer, mimeType);
+        if (!REFERENCE_IMAGE_MIME_TYPES.has(sniffed.contentType)) throw new Error('reference_image_type_unsupported');
+        files.push({
+            buffer,
+            contentType: sniffed.contentType,
+            filename: `reference-${index + 1}.${sniffed.ext}`
+        });
+    }
+    return files;
+}
+
 async function fetchSafeImageHead(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
     let currentUrl = String(imageUrl || '').trim();
     for (let redirectCount = 0; redirectCount <= SAFE_IMAGE_FETCH_MAX_REDIRECTS; redirectCount += 1) {
@@ -2005,7 +2042,7 @@ async function readBoundedImageProviderResponse(response, maxBytes, { parseJson 
     return parseJson ? JSON.parse(text) : text;
 }
 
-async function requestAndPersistGeneratedImages({ model, requestBody, args, context }) {
+async function requestAndPersistGeneratedImages({ model, requestBody, args, context, referenceImageFiles = [] }) {
     const externalSignal = context.signal;
     throwIfExternalRequestAborted(externalSignal);
     const controller = new AbortController();
@@ -2013,10 +2050,19 @@ async function requestAndPersistGeneratedImages({ model, requestBody, args, cont
     const timeoutId = setTimeout(() => controller.abort(), 120000);
     try {
         // One paid request. An upstream error never switches providers or replays it.
-        const response = await postGatewayJson({
-            baseUrl: GPT_IMAGE_BASE_URL, endpoint: 'images/generations',
-            apiKey: GPT_IMAGE_API_KEY, body: requestBody, signal: controller.signal
-        });
+        const response = referenceImageFiles.length > 0
+            ? await postGatewayMultipart({
+                baseUrl: GPT_IMAGE_BASE_URL,
+                endpoint: 'images/edits',
+                apiKey: GPT_IMAGE_API_KEY,
+                fields: requestBody,
+                files: referenceImageFiles,
+                signal: controller.signal
+            })
+            : await postGatewayJson({
+                baseUrl: GPT_IMAGE_BASE_URL, endpoint: 'images/generations',
+                apiKey: GPT_IMAGE_API_KEY, body: requestBody, signal: controller.signal
+            });
         if (!response.ok) {
             await response.body?.cancel?.().catch(() => null);
             throw new Error(`图片生成服务返回 HTTP ${response.status}`);
@@ -2029,7 +2075,11 @@ async function requestAndPersistGeneratedImages({ model, requestBody, args, cont
         if (!image?.url) throw new Error('图片保存失败');
         return {
             success: true, provider: 'rai_gpt_image', model, prompt: args.prompt,
-            parameters: { image_size: args.image_size, batch_size: 1 },
+            parameters: {
+                image_size: args.image_size,
+                batch_size: 1,
+                reference_image_count: referenceImageFiles.length
+            },
             images: [{ index: 1, name: args.name, ...image }],
             note: 'RAI already displayed the named image. Use its exact name and filename; never invent one.'
         };
@@ -2049,6 +2099,9 @@ async function generateImages(rawArgs = {}, context = {}) {
     throwIfExternalRequestAborted(externalSignal);
     if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('图片生成需要登录');
     if (!GPT_IMAGE_CONFIGURED) return { success: false, code: 'image_provider_unavailable', message: '图片生成服务暂不可用，本次未扣点。', images: [] };
+    const referenceImageFiles = args.reference_image_file_ids.length > 0
+        ? await loadReferenceImageFiles(args.reference_image_file_ids, context)
+        : [];
     const imagePoints = await checkAndDeductPoints(context.userId, args.model);
     if (imagePoints.useFreeModel) {
         return {
@@ -2060,7 +2113,8 @@ async function generateImages(rawArgs = {}, context = {}) {
     const requestId = String(context.requestId || `image_${crypto.randomUUID().replace(/-/g, '')}`);
     try {
         const result = await requestAndPersistGeneratedImages({ model: args.model,
-            requestBody: buildImageGenerationRequest(args), args, context: { ...context, requestId } });
+            requestBody: buildImageGenerationRequest(args), args, referenceImageFiles,
+            context: { ...context, requestId } });
         throwIfExternalRequestAborted(externalSignal);
         return { ...result, requestedModel: args.model, actualModel: args.model,
             pointsDeducted: imagePoints.pointsDeducted, remainingPoints: imagePoints.remainingPoints };
@@ -2095,7 +2149,7 @@ const TOOL_DEFINITIONS = [{
     type: "function",
     function: {
         name: "generate_image",
-        description: "生成一张有明确名称的图片，最长边不超过 1024。按模型消耗 100/200/300 点；点数不足会拒绝并返回当前余额，必须向用户说明。不要传参考图 URL。",
+        description: "Generate or edit one named image in a supported 1K or 2K size. Use conversation image attachments as references. Each image costs 100/200/300 points by model tier; stop on insufficient points and use the returned image name and URL.",
         parameters: {
             type: "object",
             required: ["prompt", "name"],
@@ -2108,12 +2162,17 @@ const TOOL_DEFINITIONS = [{
                 name: { type: "string", description: "本张图片的简短具体名称，供展示、保存和后续引用。" },
                 model: {
                     type: "string", enum: Object.keys(IMAGE_MODEL_COSTS),
-                    description: "gpt-image-2.5: 100 点；gpt-image-2.5-flare: 200 点，日常高质量生成；gpt-image-2.5-sunburst: 300 点，精细控制。默认 100 点型号。"
+                    description: "GPT Image 2.6 is the default. Both 2.5 and 2.6 families cost 100/200/300 points for base/flare/sunburst."
                 },
                 image_size: {
                     type: "string",
                     enum: IMAGE_GENERATION_SIZES,
-                    description: "图片尺寸，默认 1024x1024。"
+                    description: "Supported 1K and 2K output size; default 1024x1024."
+                },
+                reference_image_file_ids: {
+                    type: "array", maxItems: 9, uniqueItems: true,
+                    items: { type: "string" },
+                    description: "Image attachment IDs from this conversation to use as references."
                 },
                 batch_size: {
                     type: "integer",
@@ -3390,8 +3449,11 @@ const TOOL_EXECUTORS = {
         return await fetchYahooFinanceQuote({ ...args, range, interval });
     },
     generate_image: async (args, context = {}) => {
-        const safeArgs = normalizeImageGenerationArgs(args);
-        console.log(` 执行工具 generate_image: provider=rai_gpt_image, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
+        const requestedReferenceIds = Array.isArray(args?.reference_image_file_ids) && args.reference_image_file_ids.length > 0
+            ? args.reference_image_file_ids
+            : context.defaultReferenceImageFileIds;
+        const safeArgs = normalizeImageGenerationArgs({ ...args, reference_image_file_ids: requestedReferenceIds });
+        console.log(` execute generate_image: provider=rai_gpt_image, size=${safeArgs.image_size}, references=${safeArgs.reference_image_file_ids.length}`);
         return await generateImages(safeArgs, context);
     },
     save_memory: async (args, context = {}) => {
@@ -5787,6 +5849,8 @@ async function executeNormalizedToolCall({
     sessionId = null,
     requestId = null,
     userMessages = [],
+    allowedReferenceImageFileIds = [],
+    defaultReferenceImageFileIds = [],
     signal
 }) {
     const toolName = toolCall?.function?.name;
@@ -5820,7 +5884,12 @@ async function executeNormalizedToolCall({
     }
 
     if (toolName === 'generate_image') {
-        const imageResult = await TOOL_EXECUTORS.generate_image(args, { userId, sessionId, requestId, signal });
+        const imageResult = await TOOL_EXECUTORS.generate_image(args, {
+            userId, sessionId, requestId,
+            allowedReferenceImageFileIds,
+            defaultReferenceImageFileIds,
+            signal
+        });
         return {
             result: imageResult,
             sources: [],
@@ -6040,6 +6109,8 @@ async function callK2p5Stream({
                 sessionId,
                 requestId,
                 userMessages: messages.filter((message) => message?.role === 'user').map((message) => message.content),
+                allowedReferenceImageFileIds: [],
+                defaultReferenceImageFileIds: [],
                 signal
             });
             searchCount += Number(toolResult.searchCountInc || 0);
@@ -12709,6 +12780,7 @@ installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, db
     buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, publicBaseUrl: PUBLIC_BASE_URL, audit });
 
 installPhotoWidgetRoutes({ app, authenticateToken, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync });
+installDecisionWorkbenchRoutes({ app, authenticateToken, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
     const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
@@ -21251,6 +21323,9 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             skillCatalog: clientSkills ? [] : getSkillCatalog(),
             toolEnvironment: clientFileExecution ? (localAgentSession ? 'local-agent' : 'windows-client') : 'web-sandbox'
         });
+        if (req.body?.interactiveVisuals === true) {
+            systemPrompt += '\n\n' + buildInteractiveVisualPrompt(sessionPromptContext.promptLanguage);
+        }
         if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
         if (cxAgentEnabled) systemPrompt += '\n' + cxAgentTools.guidance;
         req.chatLatency?.mark('prompt_base_ready');
@@ -21362,6 +21437,13 @@ if (clientFileExecution && systemPrompt) {
             .filter((attachment, index, rows) => (
                 rows.findIndex((row) => row.file_id === attachment.file_id) === index
             ));
+        const availableReferenceImageFileIds = workspaceAttachmentCatalog
+            .filter((attachment) => String(attachment.mime_type || '').toLowerCase().startsWith('image/'))
+            .map((attachment) => attachment.file_id);
+        const defaultReferenceImageFileIds = (Array.isArray(lastUserMsg.attachments) ? lastUserMsg.attachments : [])
+            .filter((attachment) => String(attachment?.type || '').toLowerCase() === 'image')
+            .map((attachment) => String(attachment?.fileId || attachment?.filename || '').trim())
+            .filter((fileId, index, rows) => WORKSPACE_UPLOAD_FILENAME_RE.test(fileId) && rows.indexOf(fileId) === index);
         const lowLatencyRequest = lowLatencyMode === true || lowLatencyMode === 1 || lowLatencyMode === '1';
         const workspaceToolsEnabled = shouldEnableWorkspaceTools(userContent, workspaceAttachmentCatalog);
         // read_skill is a core protocol tool, not a memory feature. It must remain
@@ -21891,6 +21973,7 @@ if (clientFileExecution && systemPrompt) {
                     const processTraceJson = JSON.stringify({
                         version: agentTraceState.version,
                         mode: agentTraceState.mode,
+                        reasoning_profile: normalizedReasoningProfile,
                         policy: agentTraceState.policy,
                         qualityProfile: agentTraceState.qualityProfile,
                         plan: agentTraceState.plan,
@@ -22503,7 +22586,10 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”或找、看、展示真实网络图片，请至少调用一次 web_search 再回答。要看图片时，把搜索结果 images 中的真实 URL 用 ![简短描述](图片URL) 放在回复合适位置；客户端能显示，不能声称无法展示。涉及天气、新闻、股价、时效数据时也应按需调用。');
             }
             if (imageGenerationRequested) {
-                toolHints.push('用户正在请求生成图片。按需读取 image_generation 官方技能并调用 generate_image，提供明确 name、prompt、model 和不超过 1024 的 image_size，每次一张。gpt-image-2.5、gpt-image-2.5-flare、gpt-image-2.5-sunburst 分别消耗 100、200、300 点。余额不足时明确告知所需与当前点数，停止生成；不得重试或切换模型绕过扣点。禁止传 image、image_url、示例或上游临时 URL。图片已由服务端展示，后续简短说明并使用工具返回的真实名称和文件名。');
+                toolHints.push('Read image_generation as needed. Call generate_image once per image with a name, prompt, model and supported 1K/2K image_size. GPT Image 2.6 is the default; base/flare/sunburst cost 100/200/300 points. Insufficient points stop generation; failures and cancellations refund the charge. Use returned names and filenames.');
+            }
+            if (imageGenerationRequested && availableReferenceImageFileIds.length > 0) {
+                toolHints.push('Reference image attachment IDs in this conversation: ' + JSON.stringify(availableReferenceImageFileIds) + '. Pass selected IDs in reference_image_file_ids.');
             }
             if (memoryToolsEnabled) {
                 toolHints.push('save_memory 与 delete_memory 已按需可用；严格遵守系统提示词顶部的记忆规则，不得为了使用工具而制造记忆。');
@@ -23057,6 +23143,7 @@ if (clientFileExecution && systemPrompt) {
                     const processTraceJson = JSON.stringify({
                         version: researchTraceState.version,
                         mode: researchTraceState.mode,
+                        reasoning_profile: normalizedReasoningProfile,
                         researchMode: researchTraceState.researchMode,
                         discussionRounds: researchTraceState.discussion.rounds.length,
                         consensusReached: researchTraceState.discussion.consensusReached,
@@ -24284,6 +24371,11 @@ if (clientFileExecution && systemPrompt) {
                         let recoveryPayload = null;
                         try { recoveryPayload = recoveryText ? JSON.parse(recoveryText) : null; } catch (_) { recoveryPayload = null; }
                         emitStreamUsage('recovery', recoveryPayload);
+                        const recoveredToolCalls = recoveryPayload?.choices?.[0]?.message?.tool_calls;
+                        if (Array.isArray(recoveredToolCalls)) {
+                            accumulatedToolCalls.push(...recoveredToolCalls.filter(call =>
+                                call?.type === 'function' && typeof call.function?.name === 'string' && typeof call.function?.arguments === 'string'));
+                        }
                         const recovered = String(recoveryPayload?.choices?.[0]?.message?.content || '').trim();
                         if (recovered) {
                             const sanitizedRecovered = sanitizeStreamingContent(recovered);
@@ -24586,7 +24678,12 @@ if (clientFileExecution && systemPrompt) {
                     type: 'function',
                     function: {
                         name: 'generate_image',
-                        arguments: JSON.stringify({ prompt: userContent })
+                        arguments: JSON.stringify({
+                            prompt: userContent,
+                            ...(defaultReferenceImageFileIds.length > 0
+                                ? { reference_image_file_ids: defaultReferenceImageFileIds }
+                                : {})
+                        })
                     }
                 });
                 streamFinishReason = 'tool_calls';
@@ -25039,6 +25136,8 @@ if (clientFileExecution && systemPrompt) {
                                         requestId,
                                         requireGptGateway: gptImageModelSelected,
                                         requestedImageModel: gptImageModelSelected ? model : 'auto',
+                                        allowedReferenceImageFileIds: availableReferenceImageFileIds,
+                                        defaultReferenceImageFileIds,
                                         signal: controller.signal
                                     });
                                 } else {
@@ -26109,6 +26208,7 @@ if (clientFileExecution && systemPrompt) {
             const assistantProcessTraceJson = JSON.stringify({
                 ...(promptContextTrace || {}),
                 version: 3,
+                reasoning_profile: normalizedReasoningProfile,
                 tools: serverToolTrace,
                 flowSegments: serverFlowSegments.slice(-200),
                 finalAnswerOffset: serverFinalAnswerOffset,
@@ -28263,7 +28363,7 @@ app.get(['/api/model-availability', '/api/models/availability'], async (req, res
             models,
             disabledModels: models.filter((model) => !model.enabled).map((model) => model.id),
             conversationQuota: { windowHours: 24, limits: CHAT_MODEL_LIMITS, chargeOn: 'completed_answer', sharedAcrossClients: true },
-            imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 1024, maxBatchSize: 1 },
+            imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 2048, maxBatchSize: 1 },
             contextWindow: CONTEXT_WINDOW_TOKENS, contextEstimation: 'conservative_utf8_bytes', contextTokensEstimated: true, autoContextCompression: true,
             contextPolicies: { ...CONTEXT_POLICIES, ...Object.fromEntries(models.map(model => [model.id, { contextWindow: model.contextWindow, compressionThreshold: model.compressionThreshold, estimated: true }])) },
             uploadFileNameMaxCharacters: 255, smartDefaults: await resolveModeDefaults('smart'), fastDefaults: await resolveModeDefaults('fast'), thinkingDefaults: await resolveModeDefaults('thinking')
@@ -28884,7 +28984,7 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        res.json({ ...snapshot, imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 1024 } });
+        res.json({ ...snapshot, imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 2048 } });
     } catch (error) {
         console.error(' 获取会员状态失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取会员状态失败' });

@@ -1,3 +1,19 @@
+## 0.13.52 - 2026-11-13
+
+- Support 2K output and conversation reference images in GPT Image 2.6; validate attachment ownership before charging, refund failed or cancelled requests.
+- Add message details with a first-use swipe guide.
+
+## 0.13.50 - 2026-11-13
+
+- Add a desktop decision workbench using the existing RAI theme and motion: conversation list 20%, chat 44%, pinned information 36%. Collapsing the list expands chat and workbench to 55% / 45%; there is no equal-thirds layout selector.
+- Pin message snapshots to the current conversation, keep source provenance and changed/deleted-source notices, and restore pins across reloads. Account and conversation boundaries are enforced on the server.
+- Render model-authored budget calculators, comparison charts, and interactive checklists from validated `rai_visual` data. Parameter changes stay local until the user adds them to the composer; original answers and quotes remain unchanged.
+
+## 0.13.50 - 2026-11-12
+
+- Preserve the production image-model update: offer GPT Image 2.6, 2.6 Flare and 2.6 Sunburst alongside the existing 2.5 models, with the corresponding 100/200/300-point tiers.
+- Keep GPT Image 2.6 as the default, including retired aliases, and preserve the model catalog, billing, diagnostics and trusted image skill changes.
+
 ## 0.13.48 - 2026-11-07
 
 - Preserve the actual HTTP status when a model continuation fails after useful output. A provider billing failure is explicit, partial work and completed tools remain saved, and reasoning-only finalization does not overwrite the cause.

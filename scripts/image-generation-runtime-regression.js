@@ -30,16 +30,25 @@ async function main() {
     const database = path.join(temp, 'test.sqlite');
     const key = path.join(temp, 'key');
     fs.writeFileSync(key, secret(), { mode: 0o600 });
-    const png = await sharp({ create: { width: 1254, height: 1254, channels: 3, background: '#4488cc' } }).png().toBuffer();
+    const png = await sharp({ create: { width: 2500, height: 2500, channels: 3, background: '#4488cc' } }).png().toBuffer();
+    let requestedSize = '512x512', editCalls = 0;
     let imageCalls = 0, mode = 'ok', requestedModel = 'gpt-image-2.5', child, db, ownedUserId = 0, logs = '';
     const toolResults = [], createdFiles = [];
     const provider = http.createServer(async (req, res) => {
         let text = ''; for await (const chunk of req) text += chunk;
+        if (req.url === '/v1/images/edits') {
+            imageCalls++; editCalls++;
+            assert.match(req.headers['content-type'], /multipart\/form-data; boundary=/);
+            assert.ok(text.includes('2048x2048'));
+            assert.equal((text.match(/name="image\[\]"/g) || []).length, 2);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })); return;
+        }
         const body = JSON.parse(text);
         if (req.url === '/v1/images/generations') {
             imageCalls++;
             assert.ok(Object.hasOwn(IMAGE_MODEL_COSTS, body.model));
-            assert.ok(body.size.split('x').every(edge => Number(edge) <= 1024));
+            assert.ok(body.size.split('x').every(edge => Number(edge) <= 2048));
             if (mode === 'failure') { res.writeHead(502); res.end('{}'); return; }
             if (mode === 'cancel') return; // Hold the real upstream request until the client abort propagates.
             res.setHeader('Content-Type', 'application/json');
@@ -49,7 +58,7 @@ async function main() {
         const tool = body.messages?.findLast(message => message.role === 'tool');
         if (!tool) {
             res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'image_runtime', type: 'function',
-                function: { name: 'generate_image', arguments: JSON.stringify({ prompt: 'Draw a blue circle', name: '蓝色圆形', model: requestedModel, image_size: '512x512' }) } }] }, finish_reason: 'tool_calls' }] }) + '\n\n');
+                function: { name: 'generate_image', arguments: JSON.stringify({ prompt: 'Draw a blue circle', name: '蓝色圆形', model: requestedModel, image_size: requestedSize }) } }] }, finish_reason: 'tool_calls' }] }) + '\n\n');
         } else {
             const result = JSON.parse(tool.content); toolResults.push(result);
             res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: result.code === 'insufficient_points'
@@ -93,7 +102,7 @@ async function main() {
         const softwareKey = (await createSoftwareClientAuth({ db }).create({ name: 'Image QA', platform: 'windows' })).rawKey;
         const balance = async () => (await get(db, 'SELECT points+purchased_points AS total FROM users WHERE id=?', [user.lastID])).total;
         const wallet = amount => run(db, 'UPDATE users SET points=?,purchased_points=0 WHERE id=?', [amount, user.lastID]);
-        const chat = async (model, native = false) => {
+        const chat = async (model, native = false, extra = {}) => {
             const response = await fetch(base + '/api/chat/stream', { method: 'POST', headers: { ...headers, ...(native ? { 'X-RAI-Client-Key': softwareKey } : {}) },
                 body: JSON.stringify({ model, thinkingMode: false, internetMode: false, memoryMode: 'off', messages: [{ role: 'user', content: '请生成一张蓝色圆形图片' }],
                     ...(native ? { client_file_execution: true, workdir_configured: false, client_skills: { protocol: 1, catalog: [{ name: 'image_generation', description: 'Named images up to 1K' }], selected: [] } } : {}) }) });
@@ -125,6 +134,20 @@ async function main() {
         assert.equal(generated.name, '蓝色圆形'); assert.equal(generated.width, 512); assert.equal(generated.height, 512);
         const file = path.join(ROOT, 'uploads/generated-images', generated.filename);
         const imageMetadata = await sharp(file).metadata(); assert.equal(imageMetadata.width, 512); assert.equal(imageMetadata.height, 512);
+        const sessionResponse = await fetch(base + '/api/sessions', { method: 'POST', headers, body: JSON.stringify({ title: 'References', model: 'gpt-image-2.6' }) });
+        const { sessionId } = await sessionResponse.json(); assert.ok(sessionId);
+        const referenceIds = [0, 1].map(() => Date.now() + '-' + crypto.randomBytes(6).toString('hex') + '.png');
+        for (const filename of referenceIds) {
+            const referencePath = path.join(ROOT, 'uploads', filename);
+            fs.writeFileSync(referencePath, png); createdFiles.push(referencePath);
+            await run(db, 'INSERT INTO file_uploads (filename,user_id,original_name,mime_type,size) VALUES (?,?,?,?,?)', [filename, user.lastID, 'reference.png', 'image/png', png.length]);
+        }
+        requestedSize = '2048x2048'; requestedModel = 'gpt-image-2.6'; await wallet(500);
+        const edited = await chat('gpt-6.1-sol', false, { sessionId, messages: [{ role: 'user', content: '??????????2K??', attachments: referenceIds.map(fileId => ({ type: 'image', fileId, filename: fileId, fileName: 'reference.png', fileType: 'image/png', mimeType: 'image/png' })) }] });
+        assert.equal(editCalls, 1, edited.raw + logs.slice(-1500)); assert.equal(await balance(), 400);
+        const editedImage = toolResults.at(-1).images[0]; assert.equal(editedImage.width, 2048); assert.equal(editedImage.height, 2048);
+        const storedEdit = await sharp(path.join(ROOT, 'uploads/generated-images', editedImage.filename)).metadata(); assert.equal(storedEdit.width, 2048);
+        requestedSize = '512x512';
         await wallet(99); const before = imageCalls; const directDenied = await chat('gpt-image-2.5');
         assert.equal(imageCalls, before); assert.equal(await balance(), 99); assert.match(directDenied.raw, /点数不足/);
         assert.doesNotMatch(directDenied.raw, /稍后重试/);
@@ -140,7 +163,7 @@ async function main() {
         for (let tick = 0; tick < 200 && await balance() !== 300; tick++) await delay(25);
         assert.equal(await balance(), 300, 'client cancellation refunds the actual wallet');
         assert.equal(imageCalls, callsBeforeCancel + 1, 'cancel cannot retry');
-        console.log('image HTTP runtime PASS: Web/native skill catalogs, three prices, one charge, 1K bytes, exact name, insufficient-points AI continuation, failure/cancellation refunds, no fallback');
+        console.log('image HTTP runtime PASS: Web/native skill catalogs, three prices, one charge, 2K bytes and two reference images, exact name, insufficient-points AI continuation, failure/cancellation refunds, no fallback');
     } finally {
         if (child && child.exitCode === null) { child.kill('SIGTERM'); for (let tick = 0; tick < 100 && child.exitCode === null; tick++) await delay(50); if (child.exitCode === null) child.kill('SIGKILL'); }
         if (db) {
@@ -151,7 +174,7 @@ async function main() {
             await new Promise(resolve => db.close(resolve));
         }
         await close(provider);
-        for (const file of createdFiles) if (path.dirname(file) === path.join(ROOT, 'uploads/generated-images')) fs.rmSync(file, { force: true });
+        for (const file of createdFiles) if ([path.join(ROOT, 'uploads/generated-images'), path.join(ROOT, 'uploads')].includes(path.dirname(file))) fs.rmSync(file, { force: true });
         fs.rmSync(temp, { recursive: true, force: true });
     }
 }
