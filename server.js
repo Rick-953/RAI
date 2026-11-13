@@ -6162,11 +6162,12 @@ async function callK2p5Stream({
         }
 
         completedToolRounds += 1;
+        // Append run state without changing fixed system text or the user's task boundary.
         conversationMessages = [
             ...conversationMessages,
             assistantToolCallMessage,
             ...executedToolMessages,
-            { role: 'user', name: 'rai_tool_round_status',
+            { role: 'assistant', name: 'rai_tool_round_status',
                 content: buildToolRoundInstruction(completedToolRounds) }
         ];
     }
@@ -25607,7 +25608,7 @@ if (clientFileExecution && systemPrompt) {
                             conversationMessages = [
                                 ...conversationMessages,
                                 assistantToolCallMessage, ...toolResultMessages,
-                                { role: 'user', name: 'rai_tool_round_status',
+                                { role: 'assistant', name: 'rai_tool_round_status',
                                     content: buildToolRoundInstruction(completedToolRounds, uiLanguage) }
                             ];
                         }

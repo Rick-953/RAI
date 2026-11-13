@@ -129,7 +129,7 @@ async function agentLoop(rounds, toolsPerRound = 1) {
     assert.equal(status.at(-1).content, buildToolRoundInstruction(index));
     assert.deepEqual(requests[index].messages.slice(0, requests[index - 1].messages.length), requests[index - 1].messages,
       'tool continuation preserves all previously sent prompt bytes');
-    const lastAssistant = requests[index].messages.filter(m => m.role === 'assistant').at(-1);
+    const lastAssistant = requests[index].messages.filter(m => m.role === 'assistant' && m.name !== 'rai_tool_round_status').at(-1);
     assert.equal(lastAssistant.content, `progress-${index - 1}\n`, 'Agent continuation must retain text already streamed');
   }
   return { rounds, toolsPerRound, providerRequests: requests.length };
@@ -238,7 +238,7 @@ async function browserChecks() {
     const status = result.conversationMessages.filter(m => m.name === 'rai_tool_round_status');
     assert.equal(status.length, count);
     assert.equal(status.at(-1).content, buildToolRoundInstruction(count));
-    assert.equal(result.conversationMessages.filter(m => m.role === 'assistant').at(-1).content, 'Visible body before r' + (count - 1));
+    assert.equal(result.conversationMessages.filter(m => m.role === 'assistant' && m.name !== 'rai_tool_round_status').at(-1).content, 'Visible body before r' + (count - 1));
   }
   assert.equal(exerciseHandoff([{ results: Array.from({ length: 12 }, (_, n) => resultCall('same-' + n)), text: 'Already shown.' }]).completedToolRounds, 1);
   assert.equal(exerciseHandoff([{ results: [], interjection: true }, batch('r0'), { results: [], interjection: true }]).completedToolRounds, 1);
