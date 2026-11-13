@@ -553,14 +553,19 @@ const ADMIN_JWT_SECRET = requireSecretEnv('ADMIN_JWT_SECRET', 32);
 function readRestrictedSecretFile(filePath, label = 'secret') {
     const resolved = path.resolve(cleanEnvValue(filePath));
     if (!resolved || !cleanEnvValue(filePath)) return '';
-    const stat = fs.lstatSync(resolved);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024) {
-        throw new Error(`invalid_${label}_file`);
+    const fd = fs.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1024) {
+            throw new Error(`invalid_${label}_file`);
+        }
+        if (IS_PRODUCTION && (stat.mode & 0o077) !== 0) {
+            throw new Error(`${label}_file_permissions_must_be_0600`);
+        }
+        return cleanEnvValue(fs.readFileSync(fd, 'utf8'));
+    } finally {
+        fs.closeSync(fd);
     }
-    if (IS_PRODUCTION && (stat.mode & 0o077) !== 0) {
-        throw new Error(`${label}_file_permissions_must_be_0600`);
-    }
-    return cleanEnvValue(fs.readFileSync(resolved, 'utf8'));
 }
 const GPT_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_GPT_GATEWAY_BASE_URL) || 'https://fast.000339.xyz/v1', {
     production: IS_PRODUCTION
@@ -8194,13 +8199,19 @@ async function buildAttachmentImageDataUrl(attachment = {}, userId = null) {
         if (!allowed) return '';
     }
 
-    const stats = await fs.promises.stat(filePath).catch(() => null);
-    if (!stats || !stats.isFile() || stats.size <= 0 || stats.size > 12 * 1024 * 1024) return '';
-
     const mimeType = resolveImageMimeType(attachment, filename);
     if (!mimeType.startsWith('image/')) return '';
-    const buffer = await fs.promises.readFile(filePath);
-    return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)).catch(() => null);
+    if (!handle) return '';
+    try {
+        const stats = await handle.stat();
+        if (!stats.isFile() || stats.size <= 0 || stats.size > 12 * 1024 * 1024) return '';
+        const buffer = await handle.readFile();
+        if (buffer.length > 12 * 1024 * 1024) return '';
+        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } finally {
+        await handle.close();
+    }
 }
 
 function resolveAudioMimeType(attachment = {}, filename = '') {
@@ -11383,15 +11394,18 @@ app.get(`${SEARCH_IMAGE_CACHE_PUBLIC_PREFIX}/:filename`, async (req, res) => {
     const rootPath = path.resolve(SEARCH_IMAGE_CACHE_DIR);
     const filePath = path.resolve(rootPath, filename);
     if (!filePath.startsWith(`${rootPath}${path.sep}`)) return res.status(404).end();
+    let handle;
     try {
-        const stat = await fs.promises.lstat(filePath);
-        if (!stat.isFile() || stat.isSymbolicLink()) return res.status(404).end();
+        handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+        const stat = await handle.stat();
+        if (!stat.isFile()) return res.status(404).end();
         const age = Date.now() - stat.mtimeMs;
         if (age < 0 || age >= SEARCH_IMAGE_CACHE_TTL_MS || stat.size <= 0 || stat.size > MAX_SEARCH_IMAGE_BYTES) {
             await fs.promises.unlink(filePath).catch(() => null);
             return res.status(404).end();
         }
-        const bytes = await fs.promises.readFile(filePath);
+        const bytes = await handle.readFile();
+        if (bytes.length > MAX_SEARCH_IMAGE_BYTES) return res.status(404).end();
         const image = sniffImageBuffer(bytes);
         if (!image) return res.status(404).end();
         const etag = `"${crypto.createHash('sha256').update(bytes).digest('hex')}"`;
@@ -11403,6 +11417,8 @@ app.get(`${SEARCH_IMAGE_CACHE_PUBLIC_PREFIX}/:filename`, async (req, res) => {
         return res.status(200).send(bytes);
     } catch (_) {
         return res.status(404).end();
+    } finally {
+        if (handle) await handle.close();
     }
 });
 app.get(`${GENERATED_IMAGE_PUBLIC_PREFIX}/:filename`, authenticateToken, async (req, res) => {
@@ -13791,7 +13807,7 @@ app.post('/api/auth/passkeys/authentication/options', authLimiter, async (req, r
         await cleanupPasskeyEphemeralState();
 
         const cookies = parseCookieHeader(req);
-        const previousToken = String(cookies[PASSKEY_LOGIN_COOKIE] || '');
+        const previousToken = String(cookies.get(PASSKEY_LOGIN_COOKIE) || '');
         if (previousToken) {
             await runPasskeySerialized(() => passkeyDbRunAsync(
                 `UPDATE webauthn_challenges
@@ -13828,7 +13844,7 @@ app.post('/api/auth/passkeys/authentication/verify', authLimiter, async (req, re
         setPasskeyNoStore(res);
         clearPasskeyLoginCookie(res, context.secure, req);
 
-        const token = String(parseCookieHeader(req)[PASSKEY_LOGIN_COOKIE] || '');
+        const token = String(parseCookieHeader(req).get(PASSKEY_LOGIN_COOKIE) || '');
         const response = req.body?.response;
         if (!token) {
             throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_authentication_invalid');
@@ -26974,7 +26990,7 @@ function getPasskeyRequestContext(req) {
 }
 
 function parseCookieHeader(req) {
-    const output = Object.create(null);
+    const output = new Map();
     String(req.headers.cookie || '').split(';').forEach((part) => {
         const separator = part.indexOf('=');
         if (separator <= 0) return;
@@ -26982,9 +26998,9 @@ function parseCookieHeader(req) {
         const value = part.slice(separator + 1).trim();
         if (!key) return;
         try {
-            output[key] = decodeURIComponent(value);
+            output.set(key, decodeURIComponent(value));
         } catch (error) {
-            output[key] = value;
+            output.set(key, value);
         }
     });
     return output;

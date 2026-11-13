@@ -8,6 +8,7 @@ Downloaded source archives stay in the OS temporary directory, outside Git.
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures
 import hashlib
 import io
@@ -88,17 +89,34 @@ def add_npm() -> None:
         if not location or entry.get('dev') or entry.get('link'):
             continue
         directory = ROOT / location
-        package = json.loads((directory / 'package.json').read_text(encoding='utf-8'))
+        legal_files = []
+        if (directory / 'package.json').is_file():
+            package = json.loads((directory / 'package.json').read_text(encoding='utf-8'))
+            for directory_name, children, files in os.walk(directory):
+                children[:] = sorted(child for child in children if child not in ('node_modules', '.git', 'build', 'test', 'tests', 'examples', 'prebuilds'))
+                for filename in sorted(files):
+                    if LEGAL.match(filename):
+                        file = Path(directory_name) / filename
+                        legal_files.append(notice(file.relative_to(directory).as_posix(), file.read_bytes()))
+        elif entry.get('optional'):
+            # npm omits binaries for other platforms. Inventory their pinned
+            # archives without installing or executing foreign native packages.
+            raw = download(entry['resolved'])
+            algorithm, expected = entry['integrity'].split('-', 1)
+            actual = base64.b64encode(hashlib.new(algorithm, raw).digest()).decode('ascii')
+            if actual != expected:
+                raise ValueError(f'npm archive integrity mismatch: {location}')
+            with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as archive:
+                package = json.loads(archive.extractfile('package/package.json').read().decode('utf-8'))
+                for member in archive.getmembers():
+                    relative = Path(member.name).relative_to('package')
+                    if member.isfile() and LEGAL.match(relative.name) and not any(part in ('node_modules', 'test', 'tests', 'examples') for part in relative.parts[:-1]):
+                        legal_files.append(notice(relative.as_posix(), archive.extractfile(member).read()))
+        else:
+            raise ValueError(f'npm ci required; package missing: {location}')
         name, version = package['name'], entry['version']
         if package['version'] != version:
             raise ValueError(f'npm ci required; version mismatch: {location}')
-        legal_files = []
-        for directory_name, children, files in os.walk(directory):
-            children[:] = sorted(child for child in children if child not in ('node_modules', '.git', 'build', 'test', 'tests', 'examples', 'prebuilds'))
-            for filename in sorted(files):
-                if LEGAL.match(filename):
-                    file = Path(directory_name) / filename
-                    legal_files.append(notice(file.relative_to(directory).as_posix(), file.read_bytes()))
         if name.startswith('@img/sharp-'):
             # libvips npm binaries publish their legal inventory in the source
             # release README rather than a LICENSE file. Include that upstream

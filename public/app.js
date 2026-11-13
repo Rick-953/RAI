@@ -23626,7 +23626,7 @@ async function sendMessage(message = null, options = {}) {
       const renderSignature = `${html}\u0000${JSON.stringify(streamingAskUserResult.prompts)}`;
       const contentChanged = renderSignature !== lastStreamingRenderSignature;
       if (contentChanged) {
-        streamingEl.innerHTML = html;
+        streamingEl.innerHTML = sanitizeRenderedHtml(html);
         hydrateRenderedImages(streamingEl);
         if (streamingAskUserResult.prompts.length > 0) {
           streamingAskUserResult.prompts.forEach((prompt) => {
