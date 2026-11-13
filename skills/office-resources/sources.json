@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "archives": [
+    {
+      "name": "presentations",
+      "archive": "presentations.zip",
+      "sha256": "8974eea584bb303bd4a86911cbb5b39e4ce282ec8c52585eb8dab84d600bed96",
+      "fileCount": 13055,
+      "components": [
+        {
+          "name": "ppt-master",
+          "source": "https://github.com/hugohe3/ppt-master",
+          "commit": "4a68cddaf40dc87891e6b64c6a69ef46adc1110c",
+          "license": "MIT"
+        }
+      ]
+    },
+    {
+      "name": "documents",
+      "archive": "documents.zip",
+      "sha256": "53cd3abc231129ba27bcd5fb27129dd069c6407e58a1c265ad12ad31effcbc7a",
+      "fileCount": 9,
+      "components": [
+        {
+          "name": "docx-cli",
+          "source": "https://github.com/kklimuk/docx-cli",
+          "commit": "22e3e2f2b4d09a5b1641ffea66b47c4cdf13190e",
+          "license": "MIT"
+        }
+      ]
+    },
+    {
+      "name": "spreadsheets",
+      "archive": "spreadsheets.zip",
+      "sha256": "fe0e6b4782631ca737e16e5455190d429ea4cd1d640f80ab94f3f3f17886dd33",
+      "fileCount": 25,
+      "components": [
+        {
+          "name": "hermes-office",
+          "source": "https://github.com/NousResearch/hermes-agent",
+          "commit": "71736c9f32597bbca9d89cede5aa136e55946b2f",
+          "license": "MIT"
+        },
+        {
+          "name": "bread",
+          "source": "https://github.com/Bread-Technologies/Bread_Excel_Agent",
+          "commit": "3766fe9e270c38ac34a10dd869b731a6f0d51d0e",
+          "license": "MIT"
+        }
+      ]
+    }
+  ],
+  "docxRuntime": {
+    "version": "0.28.0",
+    "platform": "windows-x64",
+    "source": "https://github.com/kklimuk/docx-cli/releases/download/v0.28.0/docx-windows-x64.exe",
+    "sha256": "48a652079f6838ff3dc3fc613481e8a545fd9f0acd4d620f2cc03a80872378d3"
+  }
+}

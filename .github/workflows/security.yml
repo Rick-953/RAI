@@ -2,10 +2,10 @@ name: Security gates
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, beta]
   merge_group:
     types: [checks_requested]
   schedule:
@@ -71,6 +71,8 @@ jobs:
         run: |
           test "$(node --version)" = "v${NODE_VERSION}"
           test "$(npm --version)" = "$NPM_VERSION"
+      - name: Verify release version and channel contract
+        run: node scripts/local-agent-release-regression.js
       - name: Install Tauri check prerequisites
         run: |
           sudo apt-get update
@@ -79,8 +81,67 @@ jobs:
         run: npm ci
       - name: Validate isolated harness syntax
         run: node --check scripts/security-smoke-harness.js
+      - name: Verify online CX relay protocol
+        run: npm run test:cx-remote
       - name: Run formal audit suite
         run: npm run test:formal-audit
+      - name: Install pinned browser test engines
+        run: npx --no-install playwright install --with-deps chromium webkit
+      - name: Verify PWA viewport and remember preference in Chromium and WebKit
+        run: |
+          npm run test:attachment-composer-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:attachment-composer-browser
+          npm run test:locale-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:locale-runtime
+          npm run test:web-skills-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:web-skills-browser
+          npm run test:share-import-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:share-import-browser
+          npm run test:composer-menu-stability
+          RAI_BROWSER_ENGINE=webkit npm run test:composer-menu-stability
+          npm run test:cx-remote-ui
+          RAI_BROWSER_ENGINE=webkit npm run test:cx-remote-ui
+          npm run test:custom-api-account
+          RAI_BROWSER_ENGINE=webkit npm run test:custom-api-account
+          npm run test:message-details-browser
+          npm run test:markdown-security-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:markdown-security-browser
+          npm run test:decision-workbench-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-browser
+          npm run test:decision-workbench-app-browser
+          RAI_BROWSER_ENGINE=webkit npm run test:decision-workbench-app-browser
+          npm run test:startup-auth-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:startup-auth-runtime
+          npm run test:composer-focus-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:composer-focus-runtime
+          npm run test:model-ui-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:model-ui-runtime
+          npm run test:execution-flow-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:execution-flow-runtime
+          npm run test:web-ui-completion
+          npm run test:ios-standalone-runtime
+          RAI_BROWSER_ENGINE=webkit npm run test:ios-standalone-runtime
+          npm run test:qr-scan-ux-browser
+          RAI_QR_BROWSER_ENGINE=webkit npm run test:qr-scan-ux-browser
+          npm run test:qr-scanner-browser
+
+  office-runtime:
+    name: Office sandbox runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Provision pinned Office runtime
+        run: sudo sh scripts/setup-office-runtime.sh
+      - name: Verify real files, native revisions, rendering and sandbox isolation
+        run: sudo "$(command -v node)" scripts/office-sandbox-smoke.js
 
   isolated-security-smoke:
     name: Isolated runtime security smoke
@@ -164,7 +225,7 @@ jobs:
       - name: Generate vendored browser SBOM before OSV scan
         run: npm run sbom:vendored-web
       - name: Scan lockfiles and vendored browser SBOM
-        uses: google/osv-scanner-action/osv-scanner-action@8dc09193bb540e09b23da07ad7e30bd33bf87018 # v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@8ac9e5ce44cc7178e0e04229a91bdcc003166e57 # v2.3.8
         continue-on-error: true
         with:
           scan-args: |-
@@ -173,7 +234,7 @@ jobs:
             --recursive
             ./
       - name: Enforce OSV result and produce SARIF
-        uses: google/osv-scanner-action/osv-reporter-action@8dc09193bb540e09b23da07ad7e30bd33bf87018 # v2.3.8
+        uses: google/osv-scanner-action/osv-reporter-action@8ac9e5ce44cc7178e0e04229a91bdcc003166e57 # v2.3.8
         with:
           scan-args: |-
             --output=osv-results.sarif
@@ -193,7 +254,7 @@ jobs:
           retention-days: 30
       - name: Publish OSV SARIF
         if: always() && hashFiles('osv-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: osv-results.sarif
 
@@ -217,7 +278,7 @@ jobs:
           working-directory: src-tauri
           # Mirrors the documented, expiring upstream exceptions in
           # src-tauri/osv-scanner.toml. OSV expiry keeps this list from becoming permanent.
-          ignore: RUSTSEC-2024-0370,RUSTSEC-2024-0411,RUSTSEC-2024-0412,RUSTSEC-2024-0413,RUSTSEC-2024-0414,RUSTSEC-2024-0415,RUSTSEC-2024-0416,RUSTSEC-2024-0417,RUSTSEC-2024-0418,RUSTSEC-2024-0419,RUSTSEC-2024-0420,RUSTSEC-2024-0429,RUSTSEC-2025-0075,RUSTSEC-2025-0080,RUSTSEC-2025-0081,RUSTSEC-2025-0098,RUSTSEC-2025-0100
+          ignore: RUSTSEC-2024-0370,RUSTSEC-2024-0411,RUSTSEC-2024-0412,RUSTSEC-2024-0413,RUSTSEC-2024-0414,RUSTSEC-2024-0415,RUSTSEC-2024-0416,RUSTSEC-2024-0417,RUSTSEC-2024-0418,RUSTSEC-2024-0419,RUSTSEC-2024-0420,RUSTSEC-2024-0429
 
   rustsec-local-agent:
     name: RustSec Local Agent audit
@@ -237,6 +298,8 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: rai-agent
+      - name: Check Local Agent locked dependency graph
+        run: cargo check --locked --manifest-path rai-agent/Cargo.toml
 
   codeql:
     name: CodeQL JavaScript analysis
@@ -251,12 +314,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: javascript-typescript
           queries: security-extended
       - name: Analyze
-        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:javascript-typescript
 
@@ -281,13 +344,14 @@ jobs:
   security-gate-summary:
     name: Security gate summary
     if: always()
-    needs: [formal-tests, isolated-security-smoke, dependency-audit, osv-audit, rustsec-audit, rustsec-local-agent, codeql, secret-scan]
+    needs: [formal-tests, office-runtime, isolated-security-smoke, dependency-audit, osv-audit, rustsec-audit, rustsec-local-agent, codeql, secret-scan]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every security gate to succeed
         env:
           FORMAL_TESTS: ${{ needs.formal-tests.result }}
+          OFFICE_RUNTIME: ${{ needs.office-runtime.result }}
           ISOLATED_SECURITY_SMOKE: ${{ needs.isolated-security-smoke.result }}
           DEPENDENCY_AUDIT: ${{ needs.dependency-audit.result }}
           OSV_AUDIT: ${{ needs.osv-audit.result }}
@@ -298,6 +362,7 @@ jobs:
         run: |
           for result in \
             "$FORMAL_TESTS" \
+            "$OFFICE_RUNTIME" \
             "$ISOLATED_SECURITY_SMOKE" \
             "$DEPENDENCY_AUDIT" \
             "$OSV_AUDIT" \
@@ -330,7 +395,8 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           release_paths=(
             .env.example LICENSE README.md README.zh-CN.md docs
-            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json
+            resources/tokenizers/deepseek-v4
+            agent lib workers public scripts skills server.js user-session-token.js package.json package-lock.json
           )
           for release_path in "${release_paths[@]}"; do
             git ls-files --error-unmatch "$release_path" >/dev/null
@@ -372,7 +438,8 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           release_paths=(
             .env.example LICENSE README.md README.zh-CN.md docs
-            agent lib workers public scripts server.js user-session-token.js package.json package-lock.json
+            resources/tokenizers/deepseek-v4
+            agent lib workers public scripts skills server.js user-session-token.js package.json package-lock.json
           )
           for release_path in "${release_paths[@]}"; do
             git ls-files --error-unmatch "$release_path" >/dev/null
@@ -470,7 +537,7 @@ jobs:
           name: rai-web-release-verified
           path: release-artifacts
       - name: Attest Web release artifact
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-artifacts/rai-web-*.tar.gz
 
@@ -497,12 +564,12 @@ jobs:
           name: security-reports
           path: security-artifacts
       - name: Attest npm SBOM against the Web release artifact
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-artifacts/rai-web-*.tar.gz
           sbom-path: security-artifacts/rai-sbom.cdx.json
       - name: Attest vendored browser SBOM against the Web release artifact
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-artifacts/rai-web-*.tar.gz
           sbom-path: security-artifacts/rai-vendored-web-sbom.cdx.json

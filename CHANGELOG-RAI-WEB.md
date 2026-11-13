@@ -1,0 +1,368 @@
+## 0.13.52 - 2026-11-13
+
+- Support 2K output and conversation reference images in GPT Image 2.6; validate attachment ownership before charging, refund failed or cancelled requests.
+- Add message details with a first-use swipe guide.
+
+## 0.13.51 - 2026-11-13
+
+- Add a desktop decision workbench using the existing RAI theme and motion: conversation list 20%, chat 44%, pinned information 36%. Collapsing the list expands chat and workbench to 55% / 45%; there is no equal-thirds layout selector.
+- Pin message snapshots to the current conversation, keep source provenance and changed/deleted-source notices, and restore pins across reloads. Account and conversation boundaries are enforced on the server.
+- Render model-authored budget calculators, comparison charts, and interactive checklists from validated `rai_visual` data. Parameter changes stay local until the user adds them to the composer; original answers and quotes remain unchanged.
+
+## 0.13.50 - 2026-11-12
+
+- Offer the newer GPT Image 2.6 family next to 2.5: `generate_image` now accepts `gpt-image-2.6`, `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` in the tool enum, model catalog, point deduction and the settings image price list, so the list mirrors what the image upstream actually serves.
+- Use `gpt-image-2.6` when a caller does not name a model (retired `auto`/`gpt-image-2`/`kolors-free` aliases resolve there too); 2.5 stays selectable.
+- Keep pricing unchanged and per-generation identical (100 / 200 / 300 points by tier); the upstream bills the same for every tier, one charge per image, and the 2.5 identifiers stay valid for released clients.
+- Update the trusted `image_generation` skill and its manifest hash, and advance the front-end build marker to 20261112-image-26.
+
+## 0.13.48 - 2026-11-07
+
+- Preserve the actual HTTP status when a model continuation fails after useful output. A provider billing failure is explicit, partial work and completed tools remain saved, and reasoning-only finalization does not overwrite the cause.
+- Report a provider switch only after its streaming response succeeds; a rejected fallback cannot replace the actual model label.
+- When the original GPT route fails transiently and its fallback is unavailable for billing, reuse the existing bounded model retry budget. Direct billing/authentication failures remain terminal, and completed tools are not replayed.
+
+## 0.13.47 - 2026-11-07
+
+- Count GPT input with the configured provider near the context threshold, and estimate DeepSeek V4 input with its official vocabulary. Compress at 258,000 input tokens for GPT and 400,000 for DeepSeek; keep input, output and safety reserves within their respective 272,000 and 1,000,000 hard limits. Conservative UTF-8 screening no longer rejects a normal GPT request without checking provider counts.
+- Remove identical output aliases only from newly appended model tool messages. Keep original client results and persisted history, stable prior prefixes and tool definitions, so large file reads do not duplicate their content in every continuation.
+- Bound an oversized latest tool result while preserving execution status, errors, paths, revisions and pagination metadata. Emit an explicit excerpt notice and continue without replaying completed operations; compact older complete exchanges within the current task as needed.
+- Cover the seven-tool PPT failure, token-count endpoint failure, threshold boundaries, parallel large results, Unicode excerpts and unchanged prefixes through actual HTTP/SSE/SQLite regressions.
+
+## 0.13.46 - 2026-11-05
+
+- Interleave Agent progress reports and correlated tool calls in one ordered, expandable execution process. When the first visible final-answer character arrives, collapse prior work and stream the separate summary and delivery in the same render. Preserve manual expansion, final boundaries, results and interrupted progress across streaming and history reloads.
+- Hide the internal final-answer protocol, including fragmented markers, on both product surfaces. Save content offsets so long, bounded histories retain the correct final answer.
+- Release completed chat concurrency slots before ending the HTTP response, keeping slower quota settlement and artifact cleanup from causing false concurrency-limit errors on the next request.
+- Compact large completed tool exchanges by their actual context size, including turns with fewer than six tool calls. Preserve the current task and latest complete results, reuse the summary on later calls, and report real context-limit failures without mislabeling them as upstream disconnections.
+- Filter standalone, mixed-case and partially streamed title markers from assistant replies on the server and in browser history/rendering, while preserving conversation title extraction.
+- Require Word reports to embed supplied pictures and verify their media and drawing relationships before claiming completion. Keep failed image insertion visible as an unfinished draft.
+
+## 0.13.45 - 2026-11-05
+
+- Add authenticated command review using api.000339.xyz's codex-auto-review. A valid allow/deny result costs one point; invalid results, unavailable providers and insufficient balance never authorize execution or charge points. Persist review IDs and payload hashes to prevent duplicate charges across retries.
+- Deliver and persist corrections sent during generation, including when the initial answer has no pending tools. Echo each accepted correction once and continue with it as a user message.
+- Compact completed tool exchanges inside a long Agent turn and reuse compacted history on later requests, preserving the current task and the latest four complete exchanges. Keep original account history and attachment references.
+- Summarize with Luna using no thinking, so long Word tasks do not depend on the DeepSeek account's availability. Record actual summary usage without spending completed-answer quota.
+- Replace minimal Office recipes with the same pinned PPT Master, docx-cli and Hermes/Bread resources shipped by CX RAI. Provision an offline, read-only Office runtime outside the deployed checkout; verify actual editable files, Word revisions/comments, spreadsheet formulas, PDF previews and sandbox isolation in Linux CI.
+- Save a real DOCX checkpoint before refining layout, and ask Agent tasks to report meaningful progress while working. Web tool workflows now share the 9999-round limit.
+- Include complete upstream Office licenses and notices with archive integrity checks.
+- Keep GPT and Luna routing separate when both configured gateways share a URL; preserve the selected model's provider policy.
+
+## 0.13.44 - 2026-11-04
+
+- Native Agent tasks allow up to 9999 tool rounds per request. Waiting for local tools pauses the actual shared model deadline.
+- Interrupted model streams retry up to three times with visible progress, preserving received text and completed tool results. Partial tool arguments are discarded, and cancellation or authorization failures stop retries.
+- Runtime regressions exercise three interruptions before recovery and ten client tool rounds without replaying completed operations.
+- Sync third-party model transcripts to the signed-in RAI account, including browser drafts, final/interrupted answers, reasoning and native tool context. Keep provider credentials local; use idempotent message IDs and reject stale edits atomically across devices.
+
+## 0.13.43 - signed-in custom models and cache billing (2026-11-04)
+
+- Manage custom API models from authenticated Settings; add models to the normal list without replacing the RAI account. Validate the RAI session before provider requests, isolate browser-session credentials by account, and keep keys and chat text away from RAI telemetry.
+- Record input/output, billed cache reads, cache writes by 30-minute/12-hour lifetime, token hit rate, requested OpenAI-only retention and separately sourced provider cost. Third-party cache counters retain their provider meaning. Preserve unknown counters and actual cache age as unknown.
+- Estimate official Standard-tier model costs with a dated rate snapshot and separate ordinary input, output, cache-read and write-lifetime components. Never double-charge cached input or write tokens; third-party rates and unrecognized service tiers remain unknown.
+- Preserve cache billing in provider attempts, SQLite usage records and client activity. Cover anonymous/revoked accounts, model-list integration, account changes, privacy, mixed cache lifetimes and cost arithmetic in executable/browser regressions.
+
+## 0.13.42 - native Agent tools and prompt cache accounting (2026-11-04)
+
+- Allow capable CX RAI clients to switch Chat into Agent mode with their authorized workspace and mode-specific skills. Preserve consent refusals and user-disabled skills on the client; older clients receive their existing tools.
+- Relay bounded code reads, glob/regex search and revision-checked edits to the native Windows client. Deduplicate skills returned by mode activation within the running turn.
+- Keep dynamic system instructions after conversation history so each new turn preserves more of the previous prompt prefix. Use a stable user/conversation cache key for official Luna Responses requests.
+- Preserve actual cache-read and cache-write usage end to end. Report missing counters as unreported, and calculate cache hit rates only over input with measured cache data. Keep official allowance admission based on input plus output tokens.
+- Persist authenticated user actions, millisecond client/receive times, conversation/request correlation, trusted IPv4/IPv6 provenance, system region/timezone/theme, selected and actual model/reasoning settings, skills and stream error metadata. Add administrator-only account/time/session/request queries with a 30-day retention window and idempotent batches; keep credentials and chat bodies out of telemetry and preserve the separate local diagnostic export.
+- Cover Chat activation, consent rejection, legacy capability boundaries, source revisions, append-only tool continuations, cache-key isolation and missing-usage semantics in regression tests. Real provider cache hits and billing require production usage verification.
+
+## 0.13.41 - GPT Image 2.5 with shared points (2026-11-04)
+
+- Replace the old image generation/fallback pipeline with GPT Image 2.5, Flare and Sunburst at 100/200/300 points per image.
+- Reject insufficient points with required/current balance in the tool result, enforce <=1024px on stored bytes, and refund failed/cancelled generation.
+- Add exact image names and filenames to the official Web/native skill and tool results; update the shared account pricing display.
+
+## 0.13.40 - official Luna allowance and private administration (2026-11-03)
+
+- Default Smart and thinking-off requests to GPT 6 Luna with effort `none`. Preserve saved per-user model and thinking preferences.
+- Prefer the official OpenAI Responses API for GPT 6 Luna. Keep search on RAI's existing function and provider; never enable OpenAI hosted search. Preserve encrypted reasoning between tool rounds in request memory only.
+- Share a daily 250,000-token limit across input and output, including reasoning. Keep a 10,000-token safety margin, count the exact input before admission and atomically reserve input plus maximum output. Fall back to the existing dedicated Luna gateway when the full request cannot fit or the official provider fails. Retain uncertain reservations across restarts; reset at UTC 00:00 and use the relay around the reset window.
+- Persist numeric provider usage for administrator daily totals and averages over complete measured days. Historical token totals remain unknown; account-wide traffic outside RAI requires a separate external-usage reserve.
+- Move administration into Developer options, hidden by default and absent from ordinary settings search. Tap the About version seven times to reveal it; existing administrator authentication is still required. Scope the old shortcut to that settings section.
+
+## 0.13.39 - direct streaming routes and configurable models (2026-11-02)
+
+- Prefer Mirrorium for GPT with a 6-second useful-first-delta deadline. Count reasoning when thinking is enabled, cancel the previous connection before fallback, and keep fixed-schema stage diagnostics without chat content. DeepSeek remains on its official route; ordinary questions no longer wait for speculative search.
+- Start Smart at Sol / low and retain the account's last model and thinking choice. Offer supported reasoning levels only, explain when thinking cannot be disabled, and restore GPT 6 Luna on its independent server-key-only route with explicit none support.
+- Configure Smart, fast output and thinking model/effort pairs atomically in administrator settings. Manage custom model definitions, visibility, capabilities, completed-answer quotas and points from Web and CX RAI.
+- Repair malformed Markdown tables before rendering. Place attachment cards above user bubbles with image previews, file-type icons, full-name tooltips and responsive wrapping. Report overlong filenames explicitly and use bounded server storage names.
+- Begin automatic compression at estimated 258k for GPT with a 272k hard budget, and 400k for DeepSeek with a 1m hard budget. Preserve complete conversation/tool turns and attachment references; retain source history on compression failure.
+
+## 0.13.38 - smart official routing and observable cache usage (2026-11-02)
+
+- Route Smart with thinking off, including an omitted thinking flag, directly to official DeepSeek Flash. Smart thinking always selects GPT 6.1 Sol with max reasoning; explicit model selections retain their requested tiers and local computer tools remain available with thinking enabled.
+- Request streaming usage on the supported chat providers and forward real prompt/cache/output counters to Web and CX RAI. Replace cumulative snapshots within each provider call and add independent tool continuations once; missing cache counters remain unreported.
+- Add default-collapsed third-party notices in About, including actual dependency versions, applicable license texts, copyright notices and upstream sources.
+- Validate the official and relay HTTP paths in isolated Linux, duplicate usage events, quota isolation, thinking plus local tool continuation, and composer controls in desktop/mobile Chromium and WebKit. Production deployment and physical-device acceptance are recorded separately.
+
+## 0.13.37 - official DeepSeek and importable shared conversations (2026-11-02)
+
+- Switch fast DeepSeek requests directly to the official API using a server-only key file. Retire GPT Luna from public selection and migrate legacy selections to DeepSeek.
+- Preview shared conversation snapshots without signing in, then sign in and explicitly import an independent copy to continue. Preserve source ownership, revocation and import idempotency.
+
+## 0.13.36 - memory batches, previous versions and native execution boundaries (2026-11-02)
+
+- Save or remove 1–500 memories per call from settings or model tools; reject invalid batches before writing, deduplicate saves and page collections larger than 500.
+- Snapshot the account's complete active memory state before every save, update, delete or clear. Commit the snapshot and mutation atomically; expose account-scoped version viewing and JSON export without a restore action.
+- Load detailed memory guidance as an on-demand skill. Clarification waits for the user's choice and then answers as needed; Windows/UWP prompts distinguish PowerShell and cmd.exe from Web sandbox execution.
+- Validate real SQLite rollback/concurrency/account isolation, 500-item HTTP/SSE tool continuation and native request payloads. Deploy the server before distributing the updated native client. Source changes remain pending prompt review; the separately authorized DeepSeek configuration now prioritizes xcmapi.org using a server-only key.
+
+## 0.13.35 - nine attachments and pasted-text files (2026-10-31)
+
+- Share a nine-attachment limit across images, supported files, picker selection, drag/drop, file-library selection and consecutive clipboard batches. Reject oversized chat requests explicitly and recheck the cap when an upload finishes.
+- Convert plain-text pastes over 4,000 characters into UTF-8 TXT attachments without changing the existing composer draft, Unicode, whitespace or line endings. Failed uploads and late completions after draft clearing keep the draft intact.
+- Treat multimodal media and its cached/file reference as the same attachment. Skip all three synthetic `list_files {}` fallbacks when the current user message contains attachments, while keeping genuine model-requested editing tools available.
+- Add server-policy and real Chromium/WebKit desktop/mobile paste/upload regressions, including multipart byte preservation, mixed batches, overflow, upload failure and draft-clear races. Live production deployment and physical-device acceptance require separate evidence.
+
+## 0.13.34 - real-version release preflight (2026-10-30)
+
+- Synchronize the browser extension, Web application, lockfile and cache build for the actual release. Keep the extension public key and stable extension identity unchanged.
+- Replace the obsolete 0.13.18 release fixture with the current package version. Exercise the real channel builder and reject both mismatched extension versions and mismatched tags.
+- Run the no-install release/channel preflight before security dependency installation and before all four Agent builds. Package and lockfile changes now trigger the Agent PR workflow, catching the 0.13.33 tag-only failure before a new tag is created.
+- Review the four updates from dependency PR #123: Express 5.3.0, ipaddr.js 2.5.0, Tauri CLI 2.12.4 and Playwright 1.64.1. Keep exact reviewed-version assertions and check the installed and locked versions, alongside real Express/query/body/error, network-address and QR-context regressions; no blanket version exemption is introduced. The locked Rust desktop graph and its documented exception scope are unchanged.
+- Preserve the existing failed v0.13.33 tag and its audit trail. Publish a new version only after complete PR, post-merge, tag, artifact/provenance and live deployment verification; do not move an existing tag or skip a gate.
+
+## 0.13.33 - dependency compatibility and reviewed security exceptions (2026-10-30)
+
+- Upgrade SimpleWebAuthn server to 14.0.3 and Express to 5.2.1. Replace the incompatible forced body-parser 1.x override with patched 2.4.0 and explicitly preserve Express 4 extended-query semantics.
+- Keep real Passkey registration/authentication, replay, concurrency, signature counter, Origin/RP-ID, TOTP and cleanup tests. Add framework query/prototype isolation, bounded JSON/form parsing and async-error coverage to the full formal gate; do not merely remove the old exact-version assertion.
+- Review all 17 old RustSec exceptions against current OSV metadata and the actual locked dependency paths. Remove 5 obsolete Unicode ignores; retain only 12 present-package IDs with individual reasons and a 2026-11-30 deadline. The separate block-buffer scope review still expires on 2026-11-11.
+- Correct stale upstream-version documentation and make exception reviews fail closed on changed Tauri/affected dependency graphs. Eleven unmaintained-crate advisories and one glib API soundness advisory remain accepted only for the short documented review window; they are not fixed by this change.
+- Update the application/cache build to `20261030-dependency-review`. Deployment is a separate step after all PR checks and independent CodeQL pass, only through `/opt/rai/deploy.sh formal`; a source merge does not prove the public service is updated.
+
+## 0.13.32 - bilingual entry and explicit Web skills (2026-10-30)
+
+- New visits follow browser language preferences: Chinese locales open in Simplified Chinese and English locales in English. Explicit choices win, legacy Traditional Chinese choices remain intact, and Auto mode continues following browser changes without saving an accidental override.
+- Complete English/Simplified Chinese sharing, QR confirmation and native registration pages, including accessible controls, validation, progress and errors. Language switches preserve entered form data and original shared content; share authorization, one-shot QR approval and registration-only behavior are unchanged.
+- Choose up to three server-provided skill guides with `@` or the composer's Skills menu in normal Web chat. Guidance is request-local, verified against the bundled registry and injected only into a cloned user message for the provider; it is not saved as ordinary history and does not grant tool permissions. Unsupported research, remote/native execution and mid-response combinations reject explicitly.
+- Temporarily remove the Web bring-your-own-key entry. Saved custom-API sessions no longer auto-enter the app; guarded entry/send functions do not issue provider requests. Existing stored session configuration is not deleted.
+- Refresh native download/remote-PC consent guidance and bilingual release history through 0.13.31. Distinguish scoped Web consent from full-trust command capabilities; a working folder is not a command sandbox.
+- Localize file-library errors and ChatFlow accessibility/default labels. Unknown file storage no longer pretends to be an empty 100 MB quota.
+- Refresh the hash-verified Web usage guide and include the required `skills/` files in both reproducible GitHub release archives; a deployed Git checkout and a downloadable archive must not have different runtime requirements.
+- Add locale-policy and browser regressions for regional locales, manual/automatic choices, denied locale storage, existing auth flows, disabled custom-key entry and mobile layout. Source/fixture checks do not replace live deployment or installed-device acceptance.
+
+## Native settings routing (2026-10-28)
+
+- Register and dispatch cxrai_setting only for the authenticated native client flow, using the existing action/name/value schema and normalization. Do not broaden remote/local-agent execution or bypass tool validation.
+- Answer settings-entry location questions without forcing a list operation. Explicit list/get requests and the existing fallback have registered tool definitions and a client-result continuation.
+- Add isolated Chinese/English navigation, list/get, fallback and synthetic continuation coverage. Node 24.16.0 targeted runtime and syntax checks passed; no real client settings were changed by the tests.
+- Historical status on October 28: deployment was pending because the then-configured production SSH connection closed before login. This note describes that earlier attempt, not the current service status; deployment evidence belongs to the release PR.
+
+## 0.13.31 — 2026-10-27
+
+- 增加版本化 CX 客户端技能协议：目录仅含有界名称与用途；默认可用不自动读取长正文，用户 @ 指定的正文只为当前请求临时提供，不写入普通对话历史。
+- 官方模型可通过客户端读取、列举或按用户要求安装技能；技能读取不要求本地工作目录，长正文按 offset 分页，正文仍在本轮时重复读取返回简短复用标记。
+- 本地技能使用客户端工具流程，不再误加载服务器沙箱的 Office 教程；保持服务器身份、确认与权限规则，客户端技能作为用户级参考数据而非 system 指令。
+- 基础提示包含简短 Markdown、时效搜索和技能按需使用规范；新增目录、显式选择、重复读取回归及隔离 HTTP 工具往返验证。字符预算不是供应商实际 token 或调用率测量。
+
+
+- 发布门禁依赖维护（2026-10-28）：multer 升至 2.5.0、body-parser 固定 1.20.9、undici 固定 6.29.1、qs 固定 6.16.1、Tokio 锁定 1.53.3、DOMPurify 升至官方 3.4.17 并更新 SRI/树哈希/声明。npm 审计未检出告警；block-buffer 0.10.4 的过宽版本告警有静态来源/校验和证据和至 2026-11-11 的逐项复核记录，未关闭扫描器或放宽其他门禁。同步遗漏的 diagnostics 构建标记。
+
+## 0.13.30 — 2026-10-13
+
+- 展开没有保存工具最终结果的旧对话卡片时，明确提示无法确认执行状态，并将原有进度文案标为「当时记录」。避免标题显示状态缺失、详情却仍像在实时执行。
+- 保留已有成功和失败状态、实时工具进度与原始回复；中英文提示均覆盖搜索和工具历史，诊断详情继续以纯文本展示。
+- 回归增加旧状态、实时进度、已有最终结果、空详情和纯文本诊断检查；沿用 0.13.29 的远程连接状态核验。
+## 0.13.25 — 2026-10-10
+
+- 修复移动端菜单恢复焦点及新对话延时聚焦覆盖新选区、抢走控件焦点；异步恢复只在原输入状态仍有效时执行，已聚焦时不重置光标。
+- 修复切换模型后 + 菜单/研究模式偶发无响应：关闭的展开模型面板不再参与点击命中，取消误吞快速独立点击的 160ms 时间门槛。
+- 修复研究流式回答收到响应后引用已删除的 effectiveSystemPrompt，导致前端异常并丢失正文的问题；回归验证完整 assistant 消息，而非只验证请求已发出。
+- 研究模型全部不可用或模型受会员限制时显示原因；诊断导出卡片完整移到设置 → 高级。
+- 远程电脑增加 helper 专用保活/唤醒提示协议，任务绑定原对话 ID；本机仍须明确批准连接及每次操作。
+- Web 顶部增加设备名与绿黄红文字状态，逐对话保存选择；刷新/同账号令牌续期后重新验证，失联时保留草稿并禁止悄悄改为云端文件操作。
+- 远控绑定发起端登录会话；注销/撤销直接取消任务，开始执行前重新检查登录状态。网络失败不丢撤销句柄，轮询不无故替换按钮。
+- 研究讨论/自定义 API 暂不支持远程工具组合，明确提示而非静默忽略。更新缓存版本并加入真实 HTTP 与 Chromium/WebKit 触屏回归。
+- helper 后台/冷启动和原目录真实文件修改仍须匹配新版客户端完成实机联合验收，不能由 Web fixture 代替。
+
+## 0.13.24 — 2026-10-10
+
+- 修复多轮工具调用期间插话不显示：非研究模式下插话立即出现在对话中，服务端在工具轮次把插话作为用户消息并入上下文，并通过事件回显。
+- 插话不再因为带附件被静默丢弃；生成中仅发送文字并明确提示。
+- 更多菜单与模型下拉的点击关闭改为按菜单矩形判定，圆角/覆盖层穿透不再误关菜单。
+- 更新 0.13.24 与服务线程资源标记。
+
+## 0.13.23 — 2026-10-10
+
+- 供应商首字超时改为按「首个有效 token（正文或思考）」计算，默认 20 秒；思考耗时不再被误判为卡死而提前切模型，避免浪费额度。
+- 流式回答若上游只给了思考、没给正文，会先在同供应商做一次非流式补答再落库，正常输出正文，不再出现 visibleChars=0 的截断。
+- 修复冷启动偶发显示登录页：会话刷新只在 refresh token 确实失效时清除 cookie，暂时性失败返回 503 且保留 cookie；客户端启动阶段做有界自动重试，无需手动刷新。
+- 路由提示文案同步为「20 秒无首字切官方」。
+- 更新 0.13.23 与服务线程资源标记。
+
+## 0.13.22 — 2026-10-09
+
+- 输入框空白区域统一即时聚焦，包括工具栏间隙与模型控件外层留白；仅排除实际按钮、菜单、滑条和内容预览。
+- pointerdown 用户手势内直接聚焦，保留 click 兼容兜底；删除 Android 重复延迟聚焦，不改发送位置、智能模型、路由或额度。
+- 开启思考默认自适应；上游请求不指定 reasoning_effort，由模型决定思考强度，不再用本地问题长度打分替代自适应。手动低/中/高/最大仍传对应档位。
+- 修复 max 被 normalizeReasoningProfile 重置为 low；兼容旧 mixed 迁移，中文最大 / English Max。
+- 普通与研究模型列表只显示模型名称，不把视觉、256k、档位和压缩提示当作选项文案。
+- 附件入口改为整行原生按钮；选择、拖放、粘贴支持多文件/多图片与追加批次，排队上传全部完成后发送，独立移除并隔离账号/新对话。
+- 移动端正文纵向触摸优先暂停自动跟随，取消待处理到底部任务；保留代码/表格滑动与左右侧栏手势。上传数量与服务器配置同步（默认每条 8 个），超限明确提示而非静默丢文件。
+- 新增 Chromium/WebKit 桌面、移动和 PWA 点击/轻触、文字选择、控件隔离与禁用输入回归。
+- 更新 0.13.22、时间轴与服务工作线程资源标记，避免旧缓存保留错误点击行为。实机输入法弹出仍需设备验收。
+- Fast 网关短请求实测：不传固定 reasoning_effort 的 GPT 6.1 Sol 正常返回（HTTP 200）；auto 字符串不在供应商支持枚举中，因此自适应使用省略固定强度而非发送非法枚举。未对 Astra 进行真实长上下文测试。
+
+## 0.13.20 — 2026-10-09
+
+- 将当前 Web 本地 Agent 入口替换为同账号在线 CX RAI 连接；手机无需扩展，电脑需 1.8.7+ 主动启用。
+- 随机设备身份、软件客户端校验、账号/对话隔离、安全码、本机连接授权和每次工具确认。一次性任务启动，忙碌不丢任务，退出/离线/到期撤销，结果不保存在中继内存。
+- 服务端等待本机确认时暂停模型总时限并发 SSE 心跳；回传工具结果续答，取消不重放。远程为文件/PowerShell 工具联动，不是无人值守桌面视频流。
+- 更新 PWA 缓存和时间轴，清理重新生成的遗留模型选项；协议 HTTP、真实认证/SQLite/聊天续答和 Chromium/WebKit 手机/电脑 UI 回归纳入门禁。
+
+## 0.13.19 — 2026-10-08
+
+- 公开对话及研究模型统一为 DeepSeek V4.1 Flash、GPT 6.1 Sol、GPT 6 Luna、GPT 6 Astra；标准 ID 两端一致，旧 ID 仅兼容迁移。
+- 四模型原生视觉，图片不触发旧 Qwen/Gemini/Kimi 视觉备用路由；管理员公开模型与默认路由仅接受四模型。
+- DeepSeek Fast 优先、现有官方备用，独立私密密钥文件；GPT 三模型使用 Fast 独立密钥文件，不将任何密钥下发客户端。
+- 服务端按账号、模型、滚动 24h 原子预占，成功答完后计 1 次；Free Astra/Sol/Luna 为 3/50/100，Pro 为 50/100/200，MAX 为 80/200/500。失败/取消释放，内部工具与供应商重试不重复扣次，达到上限返回明确错误而非偷偷扣积分或换 GPT。
+- 四模型统一 256000 上下文预算，包含保守输入估算、视觉预留、输出和安全余量。每次工具续传也检查；超限自动摘要旧完整轮次，保留系统指令、近期完整工具链及附件引用，原始历史不修改。压缩失败明确报错。
+- 低/中/高/max 思考两端对齐；Fast GPT 实测拒绝 none，关闭思考采用 low 并隐藏思考；DeepSeek 关闭使用 thinking.disabled，官方备用转换其支持的档位。
+- 模型路由规则：默认关闭思考的 GPT 6.1 Sol；快速 Fast DeepSeek V4.1 Flash；思考 GPT 6.1 Sol 根据问题自适应低/中/高/max。Fast 在 10 秒内无有效响应或服务失败时直接切官方 DeepSeek，不扣未完成的 GPT 额度。
+- 电脑端暂不启用适人握持，但不修改账号同步偏好；侧边栏默认支持双向滑动。Windows 下载程序标推荐，Mac/手机推荐网页应用。
+- 修复右侧问答索引横条及上下导航的悬浮预览越界：按实际锚点选择展开方向并限制在可视窗口内，不受账号移动端握持偏好影响。
+- 新增 SQLite 并发、滚动边界、会员到期、取消/崩溃租约、幂等扣次、思考、上下文与备用线路回归；发布前运行隔离 API、正式审计与客户端编译签名验证。
+- 真机 WP/桌面安装及 iPhone 实机验收需与源码/CI/安装包验证区分。
+
+# RAI Web 更新记录
+
+## 2026-09-29 - Installed iOS viewport and password-manager preference (feature/pwa-viewport-remember-20260929; not deployed)
+- The installed iOS app now paints its full layout viewport instead of fixing the root to WebKit's transient short visual viewport. The composer and settings surfaces extend to the physical bottom while controls retain home-indicator padding. Only a focused input uses the keyboard-sized visual viewport; blur, pageshow, and foreground transitions reconcile stale values without toggling the shell display. Ordinary Safari/Android/desktop sizing remains separate.
+- Sign-in and registration remember-password checkbox defaults on if no preference exists; explicit opt-out persists as a boolean shared with /UWP-SignUP. Browser/OS password managers handle credentials through autocomplete and, where supported, a guarded post-authentication PasswordCredential offer; never plaintext Web storage.
+- Bumped app, diagnostics, index resources and service-worker cache to `20260929-pwa-r8`; UWP signup CSS/JS cache URLs are `20260929-remember-r1`. Added real Chromium fixture coverage for standalone/Safari geometry, keyboard-close/background stale viewport, safe controls, and unset/false/true preference across Web and UWP registration. Physical iPhone Safari/PWA validation remains required.
+
+
+## 2026-09-28 — 开发中，未部署
+基线：正式服务器与 GitHub main 均为 c0433456e6675a62617d3e9db1047f66eeb1a8b3。
+- 扫码登录：3 秒旧码失效、独立领取凭据、设备/安全码确认、撤销与单次消费；新增轻量手机确认页。
+- 分享：7 天只读文本快照、撤销/轮换链接、网页回退、CX RAI 协议唤起。
+- 智能/思考默认采用 DeepSeek Flash，禁止自动备用链静默切到 Pro。
+- 思考请求预算与截断处理改进；不再把仅思考的断流当成功正文。
+- 思考和工具卡视觉更新；iOS 安全区背景延伸，保留按钮安全距离。
+- 元数据请求日志；不记录原始 URL、查询参数、请求正文或凭据。
+- Office 拆分 documents/spreadsheets/presentations；新增 rai-web-ui/cx-rai-ui。技能按需读取，重新校验哈希并固定 LF。
+- 常用主提示词保留简短作者说明和技能索引，详细指引不随每轮发送；用户时间/设备/持机手缩成 [ctx]。
+- 搜索结果放入当轮用户上下文，不改写系统前缀。
+
+已验证：npm run check；skill-loader、system-prompt-contract、prompt-cache、qr-login、stream-completion-recovery、ios-standalone-layout、tool-trace-ui 回归通过。
+提示词测量：测试配置主提示词 1119 字符，当轮 ctx 47 字符；这是字符数，不是实测 token 数或服务商缓存命中率。
+未完成：Linux 权限日志测试、接口端到端/真实模型缓存测试、设备渲染验收、完整功能差异补齐、正式部署。Windows 上 privacy-logging 的 0600 权限断言未通过，必须在 Linux 验证，不能删除断言掩盖问题。
+
+作者：RAI Web 由 Rick 全权构建。
+
+## 2026-09-29 — 文件入口与扫码会话边界（开发中，未部署）
+- 文件入口移入侧栏可滚动容器；统一文件页按钮、间距、移动安全区和 reduced-motion。
+- QR 授权在真实会话存储事务内复查有效期、撤销状态和账号会话版本，继承原始 auth_time，不提升敏感操作认证新鲜度。
+- 修复二维码关闭/创建竞态及 beta 子路径；更新缓存资源版本。
+- 新增扫码 HTTP 集成、QR 状态机、提示词缓存和 iOS 布局测试到 formal-audit 门禁。
+- 本机文件库回归通过；Windows 缺少 sqlite3 native binding，HTTP 集成测试必须在 Linux 测试副本执行。
+- 全量审计上次停于 fetch-url 的 LF 文本断言（测试副本 CRLF），将使用 Git 导出源码重跑；未降低断言。
+
+本批验证补充（2026-09-29）：
+- 修复 app.js / index / Service Worker 的构建标识不一致，统一为 20260928-secure-chat-r2。
+- 安全冒烟测试按固定技能注册表复制技能，修复拆分 Office 后启动时缺少 documents/SKILL.md。
+- 将旧版长持机手提示测试迁移到短 ctx；保留移动端开关、最后用户轮、旧格式持久化清理测试，并增加实际系统前缀不变性检查。
+- 新增 smart-model-routing 行为测试，直接执行真实路由函数，覆盖 Flash 首选/思考、旧 Pro 管理设置、不可用回退、去重和多模态限制。
+- Linux Node 24.16.0：check、formal-user-bugs 20/20、全部排在 desktop:check 之前的 formal-audit 回归和隔离安全冒烟通过；命令停在测试主机缺少 cargo，未删除此门禁，等待 GitHub CI 完整验证。
+- QR 状态机、真实会话 SQLite HTTP 集成、提示词缓存、iOS 布局契约及模型路由专项均单独通过。布局契约不是 iPhone 真机验收；路由测试不是供应商在线可用性或真实缓存命中率证明。
+- 浏览器实测文件入口 position:static，所属容器 overflow-y:auto；短窗口滚动 175px，按钮 y 从 214 变为 39，确认不固定在新建对话区。
+- 测试运行时代码树：3f13e31c4294ee0968bb7adc4afe10dbc9908898（后续仅补充日志）。正式服务仍为 c043345，未部署本功能分支。
+
+## 2026-09-29 — 发布门禁依赖修补（未部署）
+- GitHub 新运行发现 undici 6.28.0 命中 GHSA-3wwx-pv8p-q78v；依维护方公告升级最小补丁 6.28.1，未跨主版本。
+- 使用项目固定 Node 24.16.0 / npm 11.13.0 生成锁文件；只有 undici 的版本、来源和完整性哈希变化。
+- npm audit --audit-level=moderate 返回 0 漏洞；dependency-security 回归通过，新增 undici 锁定防回退断言。
+- 提交 111fd0e 的 GitHub Formal regression suite 与 Isolated runtime security smoke 均通过，证明包含 Cargo 的完整 formal-audit 已通过；该运行的依赖/OSV 门禁失败由此补丁修复，需新运行再次确认。
+
+## 2026-09-29 — 按需 UI 技能同步
+- Web/CX 界面技能同步文件入口的滚动位置、搜索/上传/文件操作路径，防止 RAI 指引用户寻找旧的固定入口。
+- 产品技能明确 CX RAI 才是 UWP 客户端，RAI Web 是浏览器/PWA，消除英文指代歧义；作者关系保持不变。
+- 技能保持 LF，更新固定 SHA-256；技能加载静态/运行时回归通过。主提示词字符数仍 1119，测试 ctx 仍 47 字符，不把详细界面指南塞回每轮 system。
+
+## 2026-09-29 — 分享链接事务隔离
+- 分享快照读取/轮换/撤销使用现有独立主数据库事务连接；并发创建只保留最后提交的链接，插入失败回滚后旧链接仍可用。
+- 新增 6 次并发创建、失败注入回滚和全部撤销的真实 SQLite HTTP 回归；已通过，check/系统提示词/技能加载运行时/formal-user-bugs/隔离安全冒烟均通过。
+- 恢复作者归属测试所约束的原英文句式，保留 CX UWP 与 Web/PWA 的明确区分，不放宽作者归属断言。
+
+## 2026-09-29 — 扫码/分享独立限流门禁（未上线）
+- PR工作流通过后独立CodeQL聚合检查仍报告6条新增高危限流告警；不以工作流success替代完整PR门禁，也不抑制规则。
+- 路由模块自身定义二维码创建、二维码刷新、授权/分享变更、匿名分享读取的独立IP限流，保留宿主既有限流；换宿主装载时也不会变成无限流接口。
+- 创建码12次/分钟，刷新120次/分钟，授权与分享变更60次/分钟，匿名分享读取120次/分钟。正常3秒轮换不使用密码登录的尝试预算。
+- 分享会话路由在限流前设置no-store/no-referrer，429也不缓存。
+- 真实HTTP+SQLite回归新增实际429、创建预算耗尽后已有二维码仍可刷新测试；连同并发分享原子轮换、失败回滚测试通过。待GitHub再次完整扫描后决定是否合并。
+
+- 跟进聚合扫描剩余的consume告警：领取凭据与cancel同样显式绑定本模块授权预算，HTTP回归验证429不签发新凭据。上一轮Formal回归仅在cargo拉取itoa时遇到HTTP/2网络错误，不修改/移除Cargo门禁。
+- 真实供应商小样本（2026-09-29，服务器现有DeepSeek配置，非生产用户会话）：Flash两次非流请求200，输入465token；第二次cache hit=256/miss=209（约55%，非长期指标）。Flash思考流200、正文22字符、思考229字符、finish=stop、[DONE]齐全。这证明该配置可用，不替代完整浏览器端到端验收。
+
+## 2026-09-29 — 正式部署与原生dialog实测修正
+- PR #72 已通过全部门禁，合并为e9939bf并用标准脚本部署正式版；服务active、工作树干净，三域名资源SHA256与服务器文件一致。线上已验证二维码生成/3.3秒换码/未登录确认401/未知分享404/取消后领取410。
+- 独立Chromium真实点击扫码入口正常，7秒70次采样中63次显示有效图片、3张不同二维码；未触发真实账号授权。Codex内置浏览器该次点击无响应，未将其等同于后端不可用。
+- 浏览器截图暴露全局margin:0使原生dialog靠左上角，修正为margin:auto；添加小视口滚动/安全区限制。二维码隐藏时保留方形位置，不因轮换反复改变弹窗高度。
+- 弹窗增加可访问标题关联；更新静态资源/Service Worker版本并纳入扫码脚本与样式预缓存。
+- 新增布局契约回归；真实浏览器居中、换码稳定性和移动尺寸另行验收，不拿正则检查代替渲染证据。
+
+
+## 2026-09-29 — 登录按钮排布与扫码Cookie隔离（待发布验证）
+- 按用户截图重排登录选择：桌面扫码/通行密钥并列、API Key独立一行；420px及以下纵向排列。三项共享无描边10px圆角按钮、10px间距，悬浮仅轻微变色、按下scale(0.97)、抬起恢复；无渐变/发光/装饰图案，保留仅键盘显示的焦点提示与减少动态效果偏好。
+- 扫码请求绑定原始API地址、账号epoch/token和持久化token；取消立即停止接收，迟到授权只撤销新签发会话，撤销绕过全局自动重试且credentials=omit，防止误撤销当前账号。
+- 浏览器扫码使用按会话命名的HttpOnly刷新Cookie，只有客户端接纳并保存的访问令牌才能选择对应Cookie进行刷新。迟到Cookie不覆盖普通登录Cookie、不被自动选中；缺失或错误作用域不回退到其他账号。CX继续原有rai_refresh契约。
+- 新增浏览器生命周期、Cookie选择及实际服务端签发/刷新/退出HTTP处理器+临时SQLite回归；最初回归复现了切换token后旧扫码覆盖新账号的错误。缓存版本更新为20260929-secure-chat-r4。
+- 当前尚未合并/部署；完整双设备、物理iOS和CX原生UI验收仍未完成。
+
+本批验证：
+- Linux暂存树c095e26599aaebc5d9b914e93b5e09449da8b61a：npm run check、qr-browser-lifecycle（含真实HTTP处理器+SQLite）、secure-sharing、auth-sessions、qr-login、secure-dialog-layout、formal-user-bugs全部通过。
+- Chromium本地隔离页面布局：桌面按钮44px高、10px间距、0px边框；390/320px纵向三项均无文本溢出。悬浮仅背景变化，按下matrix(0.97)，松开matrix(1)。本地刷新接口模拟401，仅作为UI证据，不冒充正式账号业务验收。
+
+## 2026-09-29 — 紧凑登录页、已登录设备扫码入口与待登录设备位置（验证中）
+- 语言切换缩为 简体 / 繁體 / EN，与注册/登录提示共用一横排；保持完整的无障碍名称与选中状态。三种语言 320 / 390 / 1280 px 实测均单行、垂直中心差 0、无水平溢出。
+- 已登录侧栏的 临时对话 旁加入 扫码授权登录，支持后置相机和本地图片解码。jsQR 1.4.0 精确固定、完整 Apache-2.0 许可、上游字节来源及 SHA-256 纳入供应链门禁；不依赖 iOS 尚不普遍支持的 BarcodeDetector。
+- 只接受当前服务器 origin 和正式/beta 对应路径的 RAI 登录二维码；不导航扫描出的任意网址、不上传相机画面或图片。
+- 每次识别仍需用户明确确认。确认页显示待登录设备、IP、大致位置；点击 确认登录 后原设备直接登录。核对码是两台设备间的辅助核对，无需输入，不代替明确确认。
+- IP 取创建二维码请求的 Express 已验证代理链地址，拒用客户端提交 IP/城市与未验证的 CDN 地理请求头；服务端固定版本 ip2region 2.3.0 离线解析，不外传 IP。数据库可能滞后、VPN/代理会影响位置；未知和局域网有明确回退。位置不是认证因素。
+- IP/位置只在短期内存授权记录中保存，仅返回给已登录扫码人；不写日志、不放入二维码、owner 轮询、分享或提示词。
+- 相机只在用户点击扫码入口后请求；页面隐藏、退出、关闭、身份变化、识别完成均停止。延迟授予的媒体流立即释放；确认请求绑定原账号，不经全局 401 重试改用别的账号。
+- Permissions-Policy 仅为同源相机开放，麦克风/定位仍禁止。补齐同版本离线资源；缓存构建号 20260929-auth-scanner-r5。
+- 更新按需 rai-web-ui 技能与哈希，不改主提示词前缀。
+- 本地验证：真实二维码编码→实际 jsQR 解码；扫码/授权竞态、来源限制、IP可信来源、离线数据库、相机权限拒绝、真实图片选择→显示设备/IP/位置→明确确认。浏览器在无真实账号/无真实授权的本地 mock 环境验证；iPhone 真机相机/PWA 仍需单独验收，不能用模拟宽度替代。
+- 完整 Linux 回归、GitHub 安全门禁、正式部署结果在后续记录补齐；本节不宣称已上线。
+
+本批发布前验证补充：
+- Linux Node 24.16.0：check、qr-scanner、qr-login、secure-sharing（真实 SQLite/HTTP）、qr-browser-lifecycle、secure-dialog-layout、vendor-integrity、vendor-provenance、skill-loader、csp-static、privacy-logging、dependency-security 全通过。
+- 真实 Chromium 本地隔离浏览器：拒绝相机权限、二维码图片、本地 canvas MediaStream 实际相机解码管线、识别后先停止流且不自动授权、点击确认/拒绝、关闭后延迟相机授权释放全通过，无页面异常。测试发现并修正了浏览器定时器未绑定导致的 Illegal invocation；纯 Node mock 无法代替此项。
+- 可复跑 `npm run test:qr-scanner-browser`（测试环境提供 Playwright；可用 NODE_PATH 指定测试工具，RAI_QR_BROWSER_EXECUTABLE 指定已安装浏览器，RAI_QR_BROWSER_ARTIFACTS 可选输出截图）。脚本自行启停回环地址测试站、仅使用假账号与测试二维码，不触碰正式登录或相机。
+- 相机 Permissions-Policy 进一步只对应用主页 / 与 /index.html 开放，其他文档仍禁用。
+
+## 2026-09-29 — 跨端脱敏诊断（feature 分支，未合并/上线）
+- 请求审计加入客户端/服务端/聊天关联 ID、固定端点及实际路由模型，客户端不发送日志到其他服务；保留已有扫码与分享安全边界。
+- 设置 > 关于新增本标签页最多500条白名单 JSON 导出。统一读取器仅旁观实际已读 SSE，记录完成/中断/取消、首字延迟、正文与思考字符数、工具事件和供应商真实 usage；不复制响应体或工具参数，不改变原重试/授权/流传输。
+- 恢复诊断 WIP stash 时对 index/app/sw 冲突逐项手工合并：以已上线 PR75 的语言栏、侧栏扫描器与本地扫码解码为基础，仅加入诊断脚本与导出；缓存整体升为 20260929-diagnostics-r6。原 stash 暂保留供审计。
+- 已通过本地诊断与扫码浏览器/布局回归；服务器/CI 全门禁、合并、标准正式部署与生产导出仍需另行验证。不得将 PR75 已上线或本段源码视作诊断已部署。
+
+### 脱敏诊断正式部署补记（2026-09-29）
+- PR #76 中本地 storage 槽名触发 Gitleaks 误报；未添加扫描例外、未强推，改由干净单提交 PR #77 取代。#77 全门禁含 Formal、Gitleaks、CodeQL、RustSec、独立 CodeQL 聚合和安全总结均通过。
+- PR #77 合并 commit c87dc45626f350f066b663c44a6aae615bede541；13:59（Asia/Singapore）经 `/opt/rai/deploy.sh formal` 正式部署。部署前已在线备份 SQLite、`quick_check=ok`、私密备份 .env；服务 active、部署树 clean。
+- 公网 index/app/sw/diagnostics/selection-explainer 的 SHA256 均与对应 Git blob 和服务器文件相同。新隔离 Chromium 正式站 HTTP 200、加载 rai.diagnostics.v1 / r6，无页面异常；本地实际“关于→导出”下载及隐私、流式关联测试通过。
+- 尚未在正式站真实登录账号中导出并核验生产会话、双设备扫码、物理 iOS PWA 或实际模型供应商 usage；不拿离线/模拟验证替代这些剩余验收。
+
+## 2026-09-29 — 临时对话思考中断兜底（待 PR/部署）
+- 修复临时对话没有数据库 sessionId 时，上游仅输出半段思考就中断、客户端收到 done 却没有正文的路径；现在与持久对话共用终止兜底，在 done 前显示明确的未完成提示，不自动重放可能有副作用的工具调用。
+- done 事件标明 degraded；Web 的生成时间线将这种终止标为未完成，而不是“生成完成”。有正文的正常回复不重复插入兜底文本。
+- 新增可执行 helper 回归，同时断言兜底位置位于有会话专属存储逻辑之外。Windows 本地 `npm run check`、stream-completion-recovery、tool-trace-ui、diagnostics 已通过；Linux 全部门禁、真实临时对话供应商流与线上验收仍待 PR/部署。
+- 前端 app/index 与 Service Worker 缓存标识统一升至 20260929-stream-r7；版本契约同步，确保已安装 PWA 更新流式脚本。
+
+### 临时对话兜底正式上线补记（2026-09-29）
+- PR #79 全部 Formal、独立 CodeQL、依赖、RustSec、Gitleaks、OSV 与安全汇总门禁通过，合并提交 d70e89201c0456ceadcc7f7435e259ed83013c88。
+- 16:50（Asia/Singapore）在私密在线 SQLite 备份 `quick_check=ok` 后，使用 `/opt/rai/deploy.sh formal` 部署；服务与 Nginx active，工作树 clean，公网健康检查 200。
+- 公网 index.html、app.js、sw.js 内容与 origin/main Git blob 哈希逐个一致，浏览器确实载入 20260929-stream-r7。隔离浏览器的未登录扫码弹窗正常；尚未用真实账号重演供应商断流、物理 iOS PWA 或 CX 原生双设备授权。
+
+### 2026-09-29 — PWA 修复集成验证
+- 复查补充：输入框保留焦点或连接硬件键盘时，不能只凭 focus 认定键盘打开；同宽视口保留聚焦前高度，必须同时检测实际收缩。
+- 新增锁定 Playwright 1.62.1 的 Chromium/WebKit CI 回归；不再仅依赖本机安装的测试工具。
+- 两种引擎本机模拟 393×852 屏幕实测：shell/composer/settings/content 的 bottom 均为 852，输入控件 bottom=808（含 34px 主屏幕指示条保护和 10px 间隔），不存在额外 59px 浏览器栏占位。覆盖残留短视口、键盘、保留焦点、前后台切换、Safari 分支及登录偏好 unset/false/true。
+- 物理 iPhone PWA 仍须用户复验；以上浏览器模拟不等于真机验证。Windows 的 sqlite3 原生绑定缺失限制仍保留，完整正式回归由 Linux PR 门禁验证。

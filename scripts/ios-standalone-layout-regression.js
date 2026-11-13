@@ -23,23 +23,24 @@ assert(/html,[\s\S]*?inset: 0;/.test(styles), 'fixed iOS document must be pinned
 assert(/html\.ios-standalone \.mobile-header[\s\S]*?height: calc\(64px \+ var\(--safe-top, 0px\)\)/.test(styles), 'standalone header must reserve the top safe area');
 assert(/html\.ios-standalone \.mobile-center-controls[\s\S]*?top: calc\(32px \+ var\(--safe-top, 0px\)\)/.test(styles), 'standalone model selector must be centered below the Dynamic Island');
 
-// Cold-start viewport lie: 100dvh/visualViewport.height under-report the top inset in
-// standalone mode; screen.height is used to correct the full-screen height.
-assert(/navigator\.standalone === true[\s\S]*?classList\.add\('standalone-viewport'\)/.test(runtimeBrand), 'runtime bootstrap must detect the standalone viewport');
-assert(/screenHeight > observedMax && screenHeight - observedMax <= 120/.test(runtimeBrand), 'standalone bootstrap must correct the full-screen height from screen.height');
-assert(/screenHeight > observedMax && screenHeight - observedMax <= 120/.test(app), 'standalone viewport sync must correct the full-screen height from screen.height');
-assert(/const keyboardOpen = Boolean\(this\.activeInput\) \|\| keyboardHeight > 120/.test(app), 'standalone keyboard detection must fall back to the focused input');
-assert(/keyboardOpen\s*\n?\s*\? `\$\{Math\.max\(320, viewportHeight\)\}px`/.test(app), 'standalone keyboard-open state must switch back to the visual viewport height');
+// The root document owns the standalone paint surface, not a clipped fixed
+// visual viewport. Focus plus a measured keyboard temporarily uses visualViewport.
+assert(/navigator\.standalone === true[\s\S]*?classList\.add\('standalone-viewport'\)/.test(runtimeBrand), 'bootstrap must detect installed app');
+assert(/screenHeight > observedMax && screenHeight - observedMax <= 120/.test(app), 'screen fallback is limited to a plausible installed-app inset');
+assert(/const keyboardOpen = Boolean\(this\.activeInput\)/.test(app), 'stale visual viewport must not impersonate an open keyboard');
+assert(/const appHeight = keyboardOpen \? Math\.max\(320, viewportHeight\) : Math\.max\(320, fullHeight\)/.test(app), 'unfocused shell must use full height');
+assert(/html\.ios-device\.standalone-viewport,[\s\S]*?position: relative/.test(styles), 'standalone document must not be fixed to visual viewport');
+assert(/html\.ios-device\.standalone-viewport \.auth-container[\s\S]*?height: var\(--app-height\)/.test(styles), 'auth surface must paint the whole installed app');
+assert(!/shell\.style\.display = 'none'/.test(app), 'do not flicker the shell to force WebKit reflow');
 
 // iOS scrolls the layout viewport when focusing the composer; the app must reset it.
 assert(/this\.visualViewport\.addEventListener\('scroll', this\.handleViewportChange\)/.test(app), 'standalone iOS must observe visualViewport scroll events');
 assert(/scheduleStandaloneLayoutScrollReset\(\)/.test(app) && /\[16, 50, 100, 200\]\.forEach/.test(app), 'focus transitions must schedule staggered layout-scroll resets');
 
-// Stuck-viewport healing: a display flip forces WebKit to re-measure the screen height.
-assert(/healStandaloneViewport\(\) \{[\s\S]*?screenHeight - currentHeight[\s\S]*?shell\.style\.display = 'none'/.test(app), 'standalone iOS must heal a stuck viewport');
-assert(/window\.setTimeout\(\(\) => this\.healStandaloneViewport\(\), 350\)/.test(app), 'viewport healing must run after startup');
-assert(/window\.mobileKeyboardHandler\?\.healStandaloneViewport\?\.\(\)/.test(app), 'viewport healing must run when the app becomes visible');
-assert(/installViewportDebugOverlay\(\)/.test(app) && /viewport-debug/.test(app), 'a viewport debug overlay must be available for on-device diagnosis');
+// Lifecycle reconciliation must not rely only on visualViewport resize.
+assert(/addEventListener\('pageshow', this\.handleViewportChange\)/.test(app));
+assert(/addEventListener\('visibilitychange'/.test(app));
+assert(/window\.mobileKeyboardHandler\?\.healStandaloneViewport\?\.\(\)/.test(app));
 
 // Full-screen surfaces must not stay position:fixed inside the lying viewport.
 assert(/\.sidebar \{[\s\S]*?position: absolute;[\s\S]*?height: var\(--app-height, 100dvh\)/.test(styles), 'mobile sidebar must fill the managed app height');
@@ -51,6 +52,7 @@ assert(/\.sidebar-footer-fixed \{[\s\S]*?padding-bottom: calc\(var\(--spacing-lg
 assert(/body\.mobile-viewport-managed \.input-area \{[\s\S]*?bottom: calc\(var\(--composer-bottom-gap, 0px\) \+ var\(--safe-bottom, 0px\)\)/.test(styles), 'composer must sit above the bottom safe area');
 assert(/body\.mobile-viewport-managed \.input-container \{[\s\S]*?padding-bottom: var\(--spacing-md\)/.test(styles), 'input box must keep a compact height without the safe-area padding');
 assert(/body\.mobile-viewport-managed\.keyboard-open \.input-area \{[\s\S]*?bottom: var\(--composer-bottom-gap, 0px\)/.test(styles), 'keyboard-open composer must drop the bottom safe-area offset');
+assert(/html\.ios-standalone body\.mobile-viewport-managed \{ --chat-content-bottom-clearance: calc\(var\(--composer-height, 200px\) \+ var\(--spacing-md\)\)/.test(styles), 'installed PWA composer height must own its inset only once');
 
 // Legacy 16:9 iPhones and iPads need a measured fallback when env() reports 0.
 assert(/ios-legacy-16-9/.test(runtimeBrand) && /ratio >= 1\.87/.test(runtimeBrand), 'runtime must classify legacy 16:9 iPhones');

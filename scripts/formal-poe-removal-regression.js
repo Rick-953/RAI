@@ -92,32 +92,30 @@ function extractConstDeclaration(source, name) {
 
 function buildModelHarness(serverSource) {
     const context = vm.createContext({
-        PUBLIC_MODEL_IDS: [
-            'deepseek-flash',
-            'deepseek-pro',
-            'qwen3.6-35b-a3b',
-            'kimi-k2.6',
-            'chatgpt-gpt-oss-120b',
-            'nemotron-3-ultra',
-            'anthropic/claude-sonnet-4.6',
-            'anthropic/claude-3-haiku',
-            'gemma'
-        ],
-        KOLORS_IMAGE_MODEL: 'Kwai-Kolors/Kolors'
+        PUBLIC_MODEL_IDS: require('../lib/chat-model-policy').CHAT_MODEL_IDS,
+        DEEPSEEK_FAST_API_KEY: '',
+
+        IMAGE_MODEL_COSTS: require('../lib/image-generation').IMAGE_MODEL_COSTS, KOLORS_IMAGE_MODEL: 'Kwai-Kolors/Kolors'
     });
     vm.runInContext([
         extractConstDeclaration(serverSource, 'LEGACY_MODEL_ALIASES'),
         extractConstDeclaration(serverSource, 'SUPPORTED_INCOMING_MODEL_IDS'),
         extractNamedFunction(serverSource, 'normalizeIncomingModelId'),
         extractConstDeclaration(serverSource, 'MODEL_ROUTING'),
-        extractConstDeclaration(serverSource, 'UNIVERSAL_RUNTIME_FALLBACK_MODELS'),
+        extractNamedFunction(serverSource, 'getRuntimeFallbackModelIds'),
+        extractNamedFunction(serverSource, 'clampNumber'),
+        extractNamedFunction(serverSource, 'clampInteger'),
+        extractNamedFunction(serverSource, 'normalizeReasoningProfile'),
+        extractNamedFunction(serverSource, 'sanitizeUserConfigPayload'),
         'globalThis.__normalize = normalizeIncomingModelId;',
+        'globalThis.__sanitize = sanitizeUserConfigPayload;',
         'globalThis.__supported = [...SUPPORTED_INCOMING_MODEL_IDS];',
         'globalThis.__routing = MODEL_ROUTING;',
-        'globalThis.__fallbacks = UNIVERSAL_RUNTIME_FALLBACK_MODELS;'
+        'globalThis.__fallbacks = getRuntimeFallbackModelIds("gpt-6-luna");'
     ].join('\n\n'), context, { filename: SERVER_PATH });
     return {
         normalize: context.__normalize,
+        sanitize: context.__sanitize,
         supported: Array.from(context.__supported),
         routing: context.__routing,
         fallbacks: Array.from(context.__fallbacks)
@@ -139,8 +137,10 @@ function testRetiredRequestsFallBackSafely(serverSource) {
     for (const unknownId of ['', 'unknown-provider-model', 'https://attacker.invalid/model']) {
         assert.equal(harness.normalize(unknownId), 'auto', `${unknownId || '(empty)'} must normalize to auto`);
     }
-    assert.equal(harness.normalize('deepseek-pro'), 'deepseek-pro');
-    assert.equal(harness.normalize('Qwen/Qwen3.6-35B-A3B'), 'qwen3.6-35b-a3b');
+    assert.equal(harness.normalize('deepseek-pro'), 'deepseek-v4.1-flash');
+    assert.equal(harness.normalize('gpt-5.6-sol'), 'gpt-6.1-sol');
+    assert.equal(harness.normalize('gpt-6-sol'), 'gpt-6.1-sol');
+    assert.equal(harness.normalize('Qwen/Qwen3.6-35B-A3B'), 'auto');
 
     assert.equal(harness.routing.auto?.isAutoMode, true, 'auto route must remain intact');
     for (const modelId of harness.supported) {
@@ -155,8 +155,16 @@ function testRetiredRequestsFallBackSafely(serverSource) {
 
 function testChatAndConfigUseGuardedNormalization(serverSource) {
     assert.match(serverSource, /let\s+model\s*=\s*normalizeIncomingModelId\(requestedModel\)/, 'chat requests must normalize retired and unknown IDs');
-    assert.match(serverSource, /const\s+safeDefaultModel\s*=\s*['"]auto['"]/, 'stored defaults must always reset to smart auto mode');
-    assert.match(serverSource, /else\s+if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
+    const { sanitize } = buildModelHarness(serverSource);
+    assert.equal(sanitize({}).default_model, null, 'omitted model must preserve the stored preference');
+    for (const modelId of ['auto', 'gpt-6.1-sol', 'gpt-6-luna', 'deepseek-v4.1-flash']) {
+        assert.equal(sanitize({ default_model: modelId }).default_model, modelId, 'valid model preference must be retained');
+    }
+    for (const modelId of ['poe-claude', 'poe-gpt', 'poe-gemini', 'poe-grok', 'unknown-provider-model', 'https://attacker.invalid/model']) {
+        assert.equal(sanitize({ default_model: modelId }).default_model, 'auto', 'retired or unknown model preference must use safe auto routing');
+    }
+    assert.equal(sanitize({ default_model: 'gpt-6-sol' }).default_model, 'gpt-6.1-sol', 'legacy aliases must retain a supported preference');
+    assert.match(serverSource, /if\s*\(model\s*===\s*['"]auto['"]\s*\|\|\s*model\s*===\s*['"]fast-auto['"]\s*\|\|\s*model\s*===\s*['"]think-auto['"]\)/,
         'normalized automatic requests must enter the safe automatic route');
 }
 

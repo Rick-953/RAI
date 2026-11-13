@@ -18,6 +18,9 @@
   // called from declarative bindings. Attribute text is parsed as a tiny data language and
   // is never passed to a JavaScript source-code compiler.
   const ALLOWED_ACTIONS = new Set([
+    'selectMemoryForBatch', 'selectFirstMemoryBatch', 'deleteSelectedUserMemories',
+    'handleDeveloperVersionTap', 'openDeveloperAdmin',
+    'showMemoryBackups', 'readSelectedMemoryBackup', 'closeMemoryBackups', 'exportSelectedMemoryBackup',
     'addManualMemory', 'addStickyNote', 'aiDecomposeSelected', 'applyPendingCanvasPatch',
     'autoLayoutNodes', 'autoResizeInput', 'bindZtx6dAccount',
     'cancelTwoFactorSetup', 'canvasResetView', 'canvasZoomIn', 'canvasZoomOut',
@@ -42,14 +45,14 @@
     'leaveCustomApiMode', 'loadMoreFileLibrary', 'loadSessionMessages', 'loginWithPasskey', 'logoutAllSecurityDevices', 'markRaiNotificationsRead',
     'navigateToResponse', 'openAdminPasswordEditor', 'openAvatarPicker', 'openBookmarkDomain',
     'openDesktopMainWindow', 'openDesktopQuickWindow', 'openFlow', 'openGitHubStarTask',
-    'openFileLibrary', 'openMembershipEditor', 'openMembershipPlans', 'openModelModal',
+    'loadAdminActivity', 'openFileLibrary', 'openMembershipEditor', 'openMembershipPlans', 'openModelModal',
     'openNotificationsFromSidebar', 'openPointsEditor', 'openSettings', 'openUserDetailModal',
     'redeemMembership', 'removeAttachment', 'removeQuote', 'renderAdminAnnouncements',
     'replayOnboarding', 'requestPasswordResetCode', 'resendAuthEmailCode',
     'saveAdminAnnouncement', 'saveAdminLimits', 'saveAdminUserPassword', 'saveSettings', 'searchFileLibrary',
     'selectModelFromMenu',
     'selectRaiModeFromMenu', 'selectSpace', 'sendAdminBroadcastAll', 'sendAdminBroadcastTest',
-    'setAuthLoginMethod', 'setCanvasTool', 'setFontPreference',
+    'setAuthLoginMethod', 'setRememberPasswordPreference', 'setCanvasTool', 'setFontPreference',
     'setLanguage', 'setNewChatDefaultModeFromSettings', 'setReasoningProfileFromSlider',
     'setResearchMasterModel', 'setResearchMode', 'setResearchModeFromSlider',
     'setSelectionExplanationDeleteMode', 'setTabTitleCustomTextFromSettings',
@@ -206,7 +209,14 @@
       if (typeof action !== 'function') {
         throw new Error(`RAI action is unavailable: ${actionName}`);
       }
-      return action(...argumentsList.map((argument) => resolveArgument(argument, event, element)));
+      if (event.type !== 'input' && event.type !== 'mousemove') globalThis.RaiUserActivity?.record('ui', actionName, { control: actionName, stage: event.type });
+      try {
+        const result = action(...argumentsList.map((argument) => resolveArgument(argument, event, element)));
+        return result;
+      } catch (error) {
+        globalThis.RaiUserActivity?.record('error', actionName, { stage: 'handler', errorType: error?.name || 'Error' });
+        throw error;
+      }
     };
   }
 

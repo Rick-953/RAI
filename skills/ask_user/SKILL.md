@@ -1,6 +1,6 @@
 ---
 name: ask_user
-description: Ask for a necessary user decision with the RAI ask-user block.
+description: Choice questions.
 ---
 
 # Ask user

@@ -209,7 +209,7 @@ function testLiveFeatureGuardAndSanitizer() {
     }
     assert.deepEqual(RESEARCH_AGENT_MODELS, [
         'gemma', 'qwen3.6-35b-a3b', 'kimi-k2.6', 'chatgpt-gpt-oss-120b',
-        'deepseek-pro', 'deepseek-flash', 'north-mini-code', 'nemotron-3-ultra',
+        'deepseek-flash', 'north-mini-code', 'nemotron-3-ultra',
         'gemini-3-flash'
     ]);
     assert.equal(RESEARCH_AGENT_MODELS.some((id) => /claude|anthropic/i.test(id)), false);
@@ -217,8 +217,8 @@ function testLiveFeatureGuardAndSanitizer() {
     assert.deepEqual([...batched].sort(), [...RESEARCH_AGENT_MODELS].sort());
     assert.ok(Object.values(RESEARCH_BATCHES).every((batch) => batch.length > 0 && batch.length <= 4));
     assert.equal(FEATURE_CASES.find((item) => item.feature === 'quick').requested, 'deepseek-flash');
-    assert.equal(FEATURE_CASES.find((item) => item.feature === 'expert').requested, 'deepseek-pro');
-    assert.equal(FEATURE_CASES.find((item) => item.feature === 'thinking').requested, 'deepseek-pro');
+    assert.equal(FEATURE_CASES.find((item) => item.feature === 'expert').requested, 'deepseek-flash');
+    assert.equal(FEATURE_CASES.find((item) => item.feature === 'thinking').requested, 'deepseek-flash');
     const deep = FEATURE_CASES.find((item) => item.feature === 'research_deep');
     const body = buildChatBody('selftest-session', deep.prompt, deep.patch);
     assert.equal(body.researchMode, 'deep');

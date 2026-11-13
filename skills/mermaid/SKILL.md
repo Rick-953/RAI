@@ -1,6 +1,6 @@
 ---
 name: mermaid
-description: Render supported diagrams using standalone Mermaid code blocks.
+description: Diagrams.
 ---
 
 # Mermaid
