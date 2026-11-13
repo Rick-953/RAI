@@ -1,5 +1,11 @@
 # block-buffer advisory scope review
 
+Re-reviewed: 2026-11-13 (Asia/Shanghai). The upstream GitHub advisory now limits the affected range to `>= 0.11.0, < 0.12.1`; both locked 0.10.4 versions are outside that range. Removed the expired GHSA ignore from both scanner configurations and its obsolete pin/expiry assertions. Scanners remain active for all versions and advisories.
+
+Source verified through GitHub Advisory API: https://api.github.com/advisories/GHSA-qwgh-2vcv-g2f7
+
+## Original review (historical)
+
 Reviewed: 2026-10-28 (Asia/Shanghai). Re-review by 2026-11-11.
 
 ## Decision and limits

@@ -61,10 +61,3 @@ reason = "gtk-sys@0.18.2: unmaintained transitive Tauri dependency, with no patc
 id = "RUSTSEC-2024-0370"
 ignoreUntil = 2026-11-30
 reason = "proc-macro-error@1.0.4: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
-
-# Static version-scope review: docs/block-buffer-advisory-scope-20261028.md.
-# The current 0.10.4 registry checksum is enforced by the expiry regression.
-[[IgnoredVulns]]
-id = "GHSA-qwgh-2vcv-g2f7"
-ignoreUntil = 2026-11-11
-reason = "Version-scope false positive for pinned block-buffer 0.10.4: cursor is a separate pos u8 field, not an inline buffer byte, and ReadBuffer is absent. Re-review if version/checksum changes."

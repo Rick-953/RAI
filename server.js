@@ -10741,6 +10741,15 @@ const apiLimiter = rateLimit({
     message: { error: '请求过于频繁,请稍后再试' }
 });
 
+// Cover API handlers without their own limiter; tighter route limits still apply.
+app.use('/api', rateLimit({
+    windowMs: 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: '请求过于频繁,请稍后再试' }
+}));
+
 const CHAT_USAGE_QUOTAS = [
     {
         type: 'minute',

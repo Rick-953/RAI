@@ -44,7 +44,7 @@ for (const block of blocks) {
     if (decision.kind === 'unmaintained') assert.deepEqual(decision.fixedVersions, [], `${id}: a new fix requires removing/reviewing the exception`);
     else assert.deepEqual(decision.fixedVersions, ['0.20.0'], 'changed glib fix metadata requires re-review');
   }
-  else assert.equal(id, 'GHSA-qwgh-2vcv-g2f7', 'unexpected advisory scope exception');
+  else assert.fail('unexpected advisory scope exception: ' + id);
 }
 assert.deepEqual([...documentedIds].sort(), [...reviewedIds].sort(), 'review and scanner must cover exactly the same advisory set');
 
@@ -70,21 +70,6 @@ for (const decision of review.entries) {
     const parent = nodes.get(decision.dependencyPath[index - 1]);
     assert.ok(parent.dependencies.some(dependency => dependency === node.name || dependency.startsWith(`${node.name} ${node.version}`)), `reviewed dependency edge changed: ${parent.name} -> ${node.name}`);
   }
-}
-
-// This decision is valid only for the exact older separate-cursor implementation.
-for (const directory of ['src-tauri', 'rai-agent']) {
-  const lock = fs.readFileSync(path.join(root, directory, 'Cargo.lock'), 'utf8');
-  const record = lock.split('[[package]]').find(block => /^\s*name = "block-buffer"$/m.test(block));
-  assert.ok(record, `${directory}: block-buffer record missing`);
-  assert.match(record, /^version = "0\.10\.4"$/m, 'changed block-buffer version needs a new scope review');
-  assert.match(record, /^checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"$/m,
-    'changed block-buffer source needs a new scope review');
-  const config = fs.readFileSync(path.join(root, directory, 'osv-scanner.toml'), 'utf8');
-  const decision = config.split('[[IgnoredVulns]]').find(block => /id = "GHSA-qwgh-2vcv-g2f7"/.test(block));
-  assert.ok(decision && /ignoreUntil = 2026-11-11/.test(decision) && /separate pos u8 field/.test(decision),
-    'advisory scope exception must be documented, narrow and expiring');
-  assert.ok(today <= new Date('2026-11-11T00:00:00Z'), 'block-buffer version-scope review expired');
 }
 
 const workflowIgnore = workflow.match(/^\s*ignore:\s*([^\n]+)$/m)?.[1] || '';

@@ -378,6 +378,14 @@ async function main() {
         assert.deepEqual(stubErrors, []);
         assert.ok(!logs.includes('decision_integration_external_network_blocked'), 'unexpected external request was blocked');
         console.log('PASS real session deletion cascades; all model/email requests stayed on the local stub');
+        let limited = false;
+        for (let batch = 0; batch < 55 && !limited; batch += 1) {
+            const responses = await Promise.all(Array.from({ length: 20 }, () => request('GET', '/api/version')));
+            limited = responses.some(response => response.status === 429);
+            assert.ok(responses.every(response => [200, 429].includes(response.status)));
+        }
+        assert.ok(limited, 'the shared API limit must also cover routes without a route-specific limiter');
+        console.log('PASS shared API limiter rejects an abusive request burst');
         console.log('decision-workbench integration PASS: real server.js + auth + HTTP/SSE + SQLite');
     } catch (error) {
         console.error('Isolated server log tail:\n' + logs.slice(-12000));
