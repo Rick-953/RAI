@@ -2415,8 +2415,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.52';
-const RAI_BUILD_ID = '20261113-decision-workbench-image2';
+const RAI_APP_VERSION = '0.13.53';
+const RAI_BUILD_ID = '20261113-adaptive-interactions';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -8506,6 +8506,11 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-13', version: 'v0.13.53 beta',
+    zh: { summary: '按任务展开的交互工作台。', details: ['默认优先显示对话，右侧按需展开；两侧可拖拽调宽，仅在当前设备记住布局。', 'AI 可选择表单、选项、滑块、日期和可点击卡片等交互，只固定需要持续参考的部分，并随对话更新。手机将交互融入正文。', '左栏收起后保留导航图标；短工具任务直接使用正常回答，超过八轮工具调用才重新生成任务总结。'] },
+    en: { summary: 'An interactive workspace that opens for the task.', details: ['Chat takes priority. Open the right workspace when needed, resize both sides and remember the layout on this device.', 'AI can choose forms, options, sliders, dates and selectable cards, keeping only useful components in the workspace and updating them throughout the conversation. Phones show components inline.', 'Collapsed navigation keeps an icon rail. Short tool tasks retain the normal answer; only tasks beyond eight tool rounds regenerate a final summary.'] }
+  },
   {
     date: '2026-11-13', version: 'v0.13.52',
     zh: { summary: '桌面对话优先三栏与可交互决策工作台。', details: ['左侧对话列表、中间聊天、右侧固定信息按 20% / 44% / 36% 排列；收起列表后按 55% / 45% 展开。', '固定消息按账户和对话保存，可查看来源、引用及取消固定，原文变化时保留旧快照。', 'AI 可生成预算试算、方案对比和任务清单；调整结果先放入输入框，发送后再继续讨论。'] },
@@ -17870,7 +17875,7 @@ function projectAssistantExecution(segments, finalOffset = -1, complete = false)
     toolCount: process.filter((row) => row.kind === 'tool' || row.kind === 'search').length };
 }
 
-function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [] } = {}) {
+function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [], sourceId = null } = {}) {
   const projection = projectAssistantExecution(segments, finalOffset, complete);
   let disclosure = container.querySelector(':scope > .execution-process');
   let rows = disclosure?.querySelector('.execution-process-rows') || container.querySelector(':scope > .execution-live-rows');
@@ -17944,6 +17949,10 @@ function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, c
     container.appendChild(answer);
   }
   const answerText = extractAskUserBlocks(sanitizeAssistantDisplayText(projection.answer)).text;
+  if (!live && window.RAIInteractiveVisuals?.parseBlocks(answerText).length) {
+    renderInteractiveAnswer(answer, answerText, sources, live, sourceId);
+    return;
+  }
   const text = window.RAIInteractiveVisuals?.stripBlocks(answerText) ?? answerText;
   let html = renderMarkdownWithMath(live ? stripIncompleteAskUserFence(text) : text, live);
   if (Array.isArray(sources) && sources.length) html = renderCitations(html, sources);
@@ -18030,6 +18039,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   );
   const finalizedHasReasoningBlock = !!finalizedContent.querySelector('.rai-reasoning-block');
   const preserveLiveFlow = !!(
+    !window.RAIInteractiveVisuals?.parseBlocks(message.content).length &&
     existingText?.classList?.contains('stream-flow') &&
     (finalizedText?.classList?.contains('stream-flow') || (
     !finalizedText?.classList?.contains('stream-flow') &&
@@ -18095,6 +18105,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
 
   applyMessageNodeMetadata(existingNode, message);
   window.RAIMessageDetails?.refresh(existingNode, message);
+  syncDecisionWorkbench();
   setTimeout(() => processCodeBlocks(existingNode), 0);
   setTimeout(() => renderMermaidCharts(), 0);
   setTimeout(() => renderChatIndexTimeline(), 0);
@@ -18158,7 +18169,9 @@ function syncDecisionWorkbench(options = {}) {
         sessionId: appState.currentSession?.id || null,
         language: appState.language,
         temporary: appState.currentSessionMemoryMode === 'classic-temp',
-        canvasOpen: chatFlowState.isOpen === true
+        canvasOpen: chatFlowState.isOpen === true,
+        messages: appState.messages,
+        messageKey: getMessageRenderKey
       }),
       request: async (path, options = {}) => {
         const response = await sessionApi(path, options);
@@ -18207,16 +18220,41 @@ function createDecisionPinAction(message) {
   return button;
 }
 
-function appendInteractiveMessageVisuals(container, text) {
+function renderInteractiveAnswer(container, text, sources, live = false, sourceId = null) {
   const visuals = window.RAIInteractiveVisuals;
-  if (!visuals) return;
-  visuals.parseBlocks(text).forEach(({ spec }) => {
-    const host = document.createElement('div');
-    host.className = 'message-interactive-visual';
-    container.appendChild(host);
-    visuals.mount(host, spec, { onApply: stageDecisionPrompt, language: appState.language });
-  });
+  const parts = visuals ? visuals.segments(text) : [{ text }];
+  container.replaceChildren();
+  for (const part of parts) {
+    if (part.text !== undefined) {
+      const prose = document.createElement('div');
+      prose.className = 'message-prose';
+      let html = renderMarkdownWithMath(live ? stripIncompleteAskUserFence(part.text) : part.text, live);
+      if (Array.isArray(sources) && sources.length) html = renderCitations(html, sources);
+      prose.innerHTML = sanitizeRenderedHtml(html);
+      container.appendChild(prose);
+    } else if (part.spec.type !== 'remove') {
+      if (matchMedia('(min-width: 769px)').matches) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'message-workspace-link';
+        link.textContent = part.spec.title + (isChineseLanguage(appState.language) ? ' · 在工作台查看 ↗' : ' · View in workspace ↗');
+        link.addEventListener('click', () => decisionWorkbenchController?.openVisual(visuals.keyFor(part.spec)));
+        container.appendChild(link);
+      } else {
+        const host = document.createElement('div');
+        host.className = 'message-interactive-visual';
+        container.appendChild(host);
+        visuals.mount(host, part.spec, decisionWorkbenchController?.visualOptions(part.spec, sourceId)
+          || { onApply: stageDecisionPrompt, language: appState.language });
+      }
+    }
+  }
+  hydrateRenderedImages(container);
 }
+
+matchMedia('(min-width: 769px)').addEventListener('change', () => {
+  if (appState.user) renderMessages({ forceFull: true, preserveScroll: true });
+});
 
 // 修复：改进renderMessages，防止事件处理中的undefined错误
 function renderMessages(options = {}) {
@@ -19628,6 +19666,7 @@ function createMessageElement(message) {
       complete: !message.is_live_stream && !processTrace.interrupted,
       live: !!message.is_live_stream,
       hideReasoning: shouldRenderReasoningTimeline,
+      sourceId: getMessageRenderKey(message),
       sources: flowSources
     });
     content.appendChild(flow);
@@ -19699,7 +19738,10 @@ function createMessageElement(message) {
     });
   }
 
-  if (message.role === 'assistant') appendInteractiveMessageVisuals(content, askUserResult.text);
+  if (message.role === 'assistant' && !hasInterleavedFlow && window.RAIInteractiveVisuals?.parseBlocks(askUserResult.text).length) {
+    renderInteractiveAnswer(textDiv, askUserResult.text, sources, false, getMessageRenderKey(message));
+    if (!textDiv.isConnected && textDiv.parentNode !== content) content.appendChild(textDiv);
+  }
 
   // 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
   if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
@@ -20279,6 +20321,7 @@ function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
     const hadMessages = container.children.length > 0;
     Array.from(container.children).forEach((node) => node.remove());
     appState.messages = [];
+    syncDecisionWorkbench();
     showWelcome();
     return hadMessages;
   }
@@ -20367,6 +20410,7 @@ function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
   });
 
   appState.messages = messages;
+  syncDecisionWorkbench();
   if (scrollElement && scrollAnchor) {
     stabilizeMessageScrollAnchor(container, scrollElement, scrollAnchor, changedNodes);
   }
@@ -20953,6 +20997,7 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     const canvasFlowId = chatFlowState.isOpen ? await ensureCanvasFlowForSend() : null;
     const streamPayload = {
       interactiveVisuals: true,
+      interactiveVisualState: decisionWorkbenchController?.getVisualState() || [],
       messages,
       model: getRequestModelIdForCurrentMode(),
       sessionId,
@@ -23369,6 +23414,7 @@ async function sendMessage(message = null, options = {}) {
     appState.pendingDomainMode = null;
     const chatRequestPayload = {
       interactiveVisuals: true,
+      interactiveVisualState: decisionWorkbenchController?.getVisualState() || [],
       selected_skill_names: selectedSkillNames,
       sessionId: appState.currentSession?.id || null,
       flowId: canvasFlowId,
@@ -31192,6 +31238,10 @@ async function loadSession(sessionId, options = {}) {
       title: isChineseLanguage(appState.language) ? '历史对话' : 'Previous chat',
       session_kind: 'chat'
     };
+    if (previousSessionId !== String(sessionId || '')) appState.messages = [];
+    appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
+      ? 'saved-temp'
+      : 'normal';
     syncDecisionWorkbench();
     if (/^(?:custom:|byok:)/.test(appState.currentSession.model || '')) {
       appState.selectedModel = appState.currentSession.model;
@@ -31200,9 +31250,6 @@ async function loadSession(sessionId, options = {}) {
       leaveCustomApiMode();
     }
     window.RAISelectionExplainer?.setConversationContext?.(sessionId);
-    appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
-      ? 'saved-temp'
-      : 'normal';
     const newlyCreated = options.newlyCreated === true;
     if (newlyCreated) window.RaiWebSkills?.bindCreatedSession?.(options.webSkillDraft);
     const cached = newlyCreated

@@ -20,7 +20,7 @@ const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-st
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { installPhotoWidgetRoutes } = require('./lib/photo-widget-routes');
 const { installDecisionWorkbenchRoutes } = require('./lib/decision-workbench-routes');
-const { buildInteractiveVisualPrompt } = require('./lib/interactive-visual-prompt');
+const { buildInteractiveVisualPrompt, appendInteractiveVisualState } = require('./lib/interactive-visual-prompt');
 const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer, partialStreamWarning } = require('./lib/chat-stream-fallback');
 const express = require('express');
@@ -143,7 +143,8 @@ const {
 } = require('./lib/memory-tool-policy');
 const { createMemoryVersionStore } = require('./lib/memory-version-store');
 const {
-    buildEffectiveSystemPrompt: buildCanonicalRaiSystemPrompt
+    buildEffectiveSystemPrompt: buildCanonicalRaiSystemPrompt,
+    buildToolRoundInstruction
 } = require('./public/rai-system-prompt');
 const {
     getSkillCatalog,
@@ -2975,6 +2976,7 @@ function buildGeminiContinuationContents(messages = []) {
                 try { args = JSON.parse(call?.function?.arguments || '{}'); } catch (_) {}
                 return { functionCall: { name, args } };
             });
+            if (typeof message.content === 'string' && message.content) parts.unshift({ text: message.content });
             return parts.length ? [{ role: 'model', parts }] : [];
         }
         if (message?.role === 'tool') {
@@ -5946,6 +5948,7 @@ async function callK2p5Stream({
     res,
     onContent,
     onReasoning,
+    onToolStart = null,
     userId = null,
     sessionId = null,
     requestId = null,
@@ -5955,6 +5958,7 @@ async function callK2p5Stream({
     let conversationMessages = [...messages];
     let aggregatedSources = [];
     let fullContent = '';
+    let completedToolRounds = 0;
     let reasoningContent = '';
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let searchCount = 0;
@@ -6021,6 +6025,7 @@ async function callK2p5Stream({
         let finishReason = null;
         const toolCalls = [];
         let roundReasoningContent = '';
+        let roundContent = '';
 
         try {
             while (true) {
@@ -6064,6 +6069,7 @@ async function callK2p5Stream({
 
                 if (delta.content) {
                     fullContent += delta.content;
+                    roundContent += delta.content;
                     if (onContent) onContent(delta.content);
                 }
 
@@ -6105,6 +6111,9 @@ async function callK2p5Stream({
 
         const executedToolMessages = [];
         for (const toolCall of normalizedCalls) {
+            throwIfExternalRequestAborted(signal);
+            // Dispatch can have side effects even if its result later throws.
+            onToolStart?.();
             const toolResult = await executeNormalizedToolCall({
                 toolCall,
                 taskKey,
@@ -6138,7 +6147,7 @@ async function callK2p5Stream({
 
         const assistantToolCallMessage = {
             role: 'assistant',
-            content: null,
+            content: roundContent || null,
             tool_calls: normalizedCalls.map((call) => ({
                 id: call.id,
                 type: 'function',
@@ -6152,10 +6161,13 @@ async function callK2p5Stream({
             assistantToolCallMessage.reasoning_content = roundReasoningContent || 'Tool call continuation reasoning.';
         }
 
+        completedToolRounds += 1;
         conversationMessages = [
-            ...conversationMessages,
+            ...conversationMessages.filter(message => message.name !== 'rai_tool_round_status'),
             assistantToolCallMessage,
-            ...executedToolMessages
+            ...executedToolMessages,
+            { role: 'system', name: 'rai_tool_round_status',
+                content: buildToolRoundInstruction(completedToolRounds) }
         ];
     }
 
@@ -7569,7 +7581,8 @@ async function runTrueParallelAgentMode({
     sessionId = null,
     requestId = null,
     signal,
-    onAgentEvent = null
+    onAgentEvent = null,
+    onProgressCommitted = null
 }) {
     const routing = MODEL_ROUTING['deepseek-v4.1-flash'];
     if (!routing) throw new Error('K2.6 路由缺失');
@@ -7603,14 +7616,20 @@ async function runTrueParallelAgentMode({
 
     const emitContentChunk = (chunk) => {
         if (!chunk) return;
+        onProgressCommitted?.();
         res.write(`data: ${JSON.stringify({ type: 'content', content: chunk })}\n\n`);
     };
     const emitReasoningChunk = (chunk) => {
         if (!chunk) return;
+        onProgressCommitted?.();
         res.write(`data: ${JSON.stringify({ type: 'reasoning', content: chunk })}\n\n`);
     };
 
     const emitAgentEventWithHook = (payload) => {
+        if ((payload.type === 'agent_draft_delta' && payload.delta)
+            || (payload.type === 'agent_draft' && (payload.content || payload.summary))) {
+            onProgressCommitted?.();
+        }
         emitAgentEvent(res, payload);
         if (typeof onAgentEvent === 'function') {
             try {
@@ -7681,6 +7700,7 @@ async function runTrueParallelAgentMode({
                 sessionId,
                 requestId,
                 signal,
+                onToolStart: onProgressCommitted,
                 searchBudget,
                 taskKey: 'planner',
                 res,
@@ -7761,6 +7781,7 @@ async function runTrueParallelAgentMode({
                 sessionId,
                 requestId,
                 signal,
+                onToolStart: onProgressCommitted,
                 searchBudget,
                 taskKey: `task-${task.agent_id || 0}`,
                 res,
@@ -7819,6 +7840,7 @@ async function runTrueParallelAgentMode({
                 sessionId,
                 requestId,
                 signal,
+                onToolStart: onProgressCommitted,
                 searchBudget,
                 taskKey: 'synthesis',
                 res,
@@ -16757,7 +16779,7 @@ function extractLegacyTrailingTitle(text = '') {
     };
 }
 
-function parseStructuredAssistantOutput(rawText = '') {
+function parseStructuredAssistantOutput(rawText = '', minimumFinalMarkerOffset = 0) {
     const source = String(rawText || '');
     const markerSource = source.replace(/\[\/?(?:title|rai_final)\]/gi, (marker) => marker.toUpperCase());
     let visibleContent = '';
@@ -16770,7 +16792,7 @@ function parseStructuredAssistantOutput(rawText = '') {
 
     while (cursor < source.length) {
         if (markerSource.startsWith(FINAL_ANSWER_TOKEN, cursor)) {
-            if (finalAnswerOffset < 0) finalAnswerOffset = visibleContent.length;
+            if (finalAnswerOffset < 0 && cursor >= minimumFinalMarkerOffset) finalAnswerOffset = visibleContent.length;
             cursor += FINAL_ANSWER_TOKEN.length;
             continue;
         }
@@ -21872,6 +21894,8 @@ if (clientFileExecution && systemPrompt) {
                 // 前置点数检查已判定回退，不再进入并行Agent调用
                 console.warn(' Agent模式已因点数/策略回退到单模型路径');
             } else {
+                let parallelAgentCommitted = false;
+                const agentRequestController = createChatAbortController();
                 try {
                     const agentTraceState = {
                         version: 1,
@@ -21995,11 +22019,13 @@ if (clientFileExecution && systemPrompt) {
                     };
 
                     console.log('\n 启用真并行 Multi-Agent 模式 (K2.6)\n');
-                    const agentRequestController = createChatAbortController();
+                    const agentUserMessage = req.body?.interactiveVisuals === true
+                        ? appendInteractiveVisualState([{ role: 'user', content: userContent }], req.body.interactiveVisualState)[0].content
+                        : userContent;
                     const agentResult = await runTrueParallelAgentMode({
                         res,
                         messages,
-                        userMessage: userContent,
+                        userMessage: agentUserMessage,
                         systemPrompt,
                         userIdentityInstruction,
                         domainInstruction: activeDomainInstruction,
@@ -22020,6 +22046,7 @@ if (clientFileExecution && systemPrompt) {
                         sessionId,
                         requestId,
                         signal: agentRequestController.signal,
+                        onProgressCommitted: () => { parallelAgentCommitted = true; },
                         onAgentEvent
                     });
 
@@ -22161,6 +22188,10 @@ if (clientFileExecution && systemPrompt) {
                     console.log('\n 真并行 Multi-Agent 处理完成\n');
                     return;
                 } catch (agentPipelineError) {
+                    agentRequestController.abort();
+                    // Once output or tool dispatch is committed, use the outer error finalizer.
+                    // Restarting as a single model could duplicate answers or repeat side effects.
+                    if (parallelAgentCommitted) throw agentPipelineError;
                     console.error(' 真并行Agent流程失败，回退单模型路径:', sanitizeReportContext(agentPipelineError));
                     emitAgentEvent(res, {
                         type: 'agent_status',
@@ -22600,6 +22631,9 @@ if (clientFileExecution && systemPrompt) {
 
         // 构建消息数组
         let finalMessages = [...messages];
+        if (req.body?.interactiveVisuals === true) {
+            finalMessages = appendInteractiveVisualState(finalMessages, req.body.interactiveVisualState);
+        }
 
         // 如果是多模态请求，转换消息格式为Omni格式
         if (isMultimodalRequest) {
@@ -22933,6 +22967,8 @@ if (clientFileExecution && systemPrompt) {
         let streamDegraded = false;
         let streamFailureWarning = null;
         let assistantVisibleStarted = false;
+        let completedToolRounds = 0;
+        let finalSummaryMinimumOffset = 0;
         let latestStructuredAssistantOutput = {
             visibleContent: '',
             extractedTitle: null,
@@ -22946,7 +22982,8 @@ if (clientFileExecution && systemPrompt) {
             if (!normalizedChunk) return '';
 
             rawAssistantStructuredBuffer += normalizedChunk;
-            latestStructuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer);
+            latestStructuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer,
+                completedToolRounds > 8 ? finalSummaryMinimumOffset : Infinity);
             const nextVisibleContent = sanitizeAssistantVisibleContent(latestStructuredAssistantOutput.visibleContent || '');
             if (!assistantVisibleStarted && shouldHoldAssistantVisibleContent(rawAssistantStructuredBuffer, nextVisibleContent)) {
                 return '';
@@ -22958,7 +22995,7 @@ if (clientFileExecution && systemPrompt) {
             const rawFinalOffset = latestStructuredAssistantOutput.finalAnswerOffset;
             const finalOffset = rawFinalOffset < 0 ? -1 : sanitizeAssistantVisibleContent(
                 latestStructuredAssistantOutput.visibleContent.slice(0, rawFinalOffset), true).length;
-            if (serverFinalAnswerOffset < 0 && finalOffset >= 0 && nextVisibleContent.slice(finalOffset).trim()) {
+            if (completedToolRounds > 8 && serverFinalAnswerOffset < 0 && finalOffset >= 0 && nextVisibleContent.slice(finalOffset).trim()) {
                 const prefixLength = Math.max(0, finalOffset - fullContent.length);
                 if (prefixLength > 0) {
                     const progress = visibleDelta.slice(0, prefixLength);
@@ -24863,8 +24900,9 @@ if (clientFileExecution && systemPrompt) {
 
                     while ((pendingToolCalls.length > 0 || activeRequestInterjections.get(requestId)?.length) && toolRound < maxToolRounds) {
                         toolRound += 1;
-                        if (!pendingToolCalls.length && fullContent.length > correctionAnswerStart) {
-                            conversationMessages.push({ role: 'assistant', content: fullContent.slice(correctionAnswerStart) });
+                        const toolRoundContent = fullContent.slice(correctionAnswerStart);
+                        if (!pendingToolCalls.length && toolRoundContent) {
+                            conversationMessages.push({ role: 'assistant', content: toolRoundContent });
                         }
                         correctionAnswerStart = fullContent.length;
                         let deliveredInterjection = false;
@@ -25533,10 +25571,10 @@ if (clientFileExecution && systemPrompt) {
                             break;
                         }
 
-                        // 将本轮工具调用 + 工具结果加入上下文，发起下一轮流式生成
+                        // Preserve text already shown to the user so the next round does not repeat it.
                         const assistantToolCallMessage = {
                             role: 'assistant',
-                            content: null,
+                            content: toolRoundContent || null,
                             tool_calls: executedToolResults.map(({ toolCall }) => ({
                                 id: toolCall.id,
                                 type: 'function',
@@ -25560,7 +25598,19 @@ if (clientFileExecution && systemPrompt) {
                             const turn = chatModelQuotaContext.getStore();
                             if (turn) turn.toolTruncationNotified = true;
                         }
-                        if (executedToolResults.length) conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
+                        if (executedToolResults.length) {
+                            // One completed batch is one round, including returned error results.
+                            completedToolRounds += 1;
+                            if (completedToolRounds === 9) {
+                                finalSummaryMinimumOffset = rawAssistantStructuredBuffer.length;
+                            }
+                            conversationMessages = [
+                                ...conversationMessages.filter(message => message.name !== 'rai_tool_round_status'),
+                                assistantToolCallMessage, ...toolResultMessages,
+                                { role: 'system', name: 'rai_tool_round_status',
+                                    content: buildToolRoundInstruction(completedToolRounds, uiLanguage) }
+                            ];
+                        }
 
                         // Include interjections typed during this round tool execution before the continuation call.
                         for (const interjection of collectRequestInterjections(requestId)) {

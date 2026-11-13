@@ -40,7 +40,7 @@ function visualContent() {
   return '先做预算，再决定方案。\n\n```rai_visual\n' + JSON.stringify({
     type: 'budget', title: '本次预算', unit: '元', budget: 1000,
     items: [{ label: '主机', value: 500 }, { label: '屏幕', value: 200 }]
-  }) + '\n```';
+  }) + '\n```\n\nConfirm the sources before deciding.';
 }
 
 function pinFor(sessionId, sourceMessageId) {
@@ -102,7 +102,7 @@ async function main() {
       && typeof syncDecisionWorkbench === 'function'
       && window.RAIInteractiveVisuals && window.RAIDecisionWorkbench);
 
-    await page.evaluate((content) => {
+    const bootstrap = () => page.evaluate((content) => {
       window.fixtureVisualContent = content;
       appState.token = 'decision-workbench-fixture';
       appState.user = { id: 7 };
@@ -117,71 +117,161 @@ async function main() {
       renderMessages({ forceFull: true });
       syncDecisionWorkbench({ refresh: true });
     }, visualContent());
+    await bootstrap();
 
-    await page.waitForFunction(() => document.querySelectorAll('.message-interactive-visual .rai-visual').length === 1);
-    await page.waitForTimeout(850);
-    const initial = await page.evaluate(() => {
-      const app = document.getElementById('appContainer').getBoundingClientRect();
-      const sidebar = document.getElementById('sidebar').getBoundingClientRect();
-      const chat = document.getElementById('chatPanel').getBoundingClientRect();
-      const panel = document.getElementById('decisionWorkbenchPanel').getBoundingClientRect();
-      return {
-        rawFenceVisible: document.querySelector('.message.assistant .message-text')?.textContent.includes('rai_visual'),
-        visualCount: document.querySelectorAll('.message-interactive-visual .rai-visual').length,
-        pinActions: document.querySelectorAll('.message.assistant .decision-pin-action').length,
-        sidebarRatio: sidebar.width / app.width,
-        chatRatio: chat.width / app.width,
-        panelRatio: panel.width / app.width
-      };
+    await page.waitForFunction(() => document.querySelectorAll('.decision-auto-card .rai-visual').length === 1);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const layout = () => page.evaluate(() => {
+      const width = id => document.getElementById(id).getBoundingClientRect().width;
+      return { app: width('appContainer'), sidebar: width('sidebar'), chat: width('chatPanel'), panel: width('decisionWorkbenchPanel') };
     });
-    assert.equal(initial.rawFenceVisible, false, 'valid visual fence stays out of ordinary Markdown');
-    assert.equal(initial.visualCount, 1);
-    assert.equal(initial.pinActions, 1);
-    assert.ok(Math.abs(initial.sidebarRatio - .20) < .01, JSON.stringify(initial));
-    assert.ok(Math.abs(initial.chatRatio - .44) < .02, JSON.stringify(initial));
-    assert.ok(Math.abs(initial.panelRatio - .36) < .02, JSON.stringify(initial));
+    const initial = await layout();
+    assert.equal(await page.locator('#messagesList .message-interactive-visual').count(), 0, 'desktop prose contains only compact workspace references');
+    assert.equal(await page.locator('#messagesList .message-workspace-link').count(), 1);
+    assert.ok(initial.chat > initial.panel && initial.chat > initial.sidebar, JSON.stringify(initial));
+    assert.equal(initial.sidebar, 260);
+    assert.equal(initial.panel, 368);
+    assert.equal(await page.locator('.decision-auto-card').count(), 1, 'AI pins only the component');
+    assert.ok(!(await page.locator('.decision-auto-card').textContent()).includes('先做预算'), 'long prose never becomes an automatic pin');
+    assert.ok(!(await page.locator('.message.assistant .message-text').textContent()).includes('rai_visual'));
+    const output = process.env.RAI_WORKBENCH_ARTIFACTS || path.join(require('node:os').tmpdir(), 'rai-decision-workbench-ui');
+    fs.mkdirSync(output, { recursive: true });
+    await page.screenshot({ path: path.join(output, engine.name() + '-adaptive-desktop.png') });
 
-    await page.locator('.message.assistant .decision-pin-action').click();
-    await page.waitForFunction(() => document.querySelectorAll('.decision-pin-card').length === 1);
-    assert.equal(requests.filter(request => request.method === 'POST' && request.path.endsWith('/decision-pins')).length, 1);
+    const amount = () => page.locator('.decision-auto-card .rai-visual-number[data-field="item-0"]');
+    await amount().fill('600');
+    await page.locator('.decision-auto-card [data-action="apply"]').click();
+    assert.match(await page.locator('#messageInput').inputValue(), /600/);
+    assert.equal(requests.some(request => request.path.endsWith('/chat/stream')), false);
+    assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 600);
+    assert.equal(await page.evaluate(() => appState.messages[1].content.includes('"value":500')), true);
 
-    const input = page.locator('.message-interactive-visual .rai-visual-number').nth(1);
-    await input.fill('600');
-    await page.locator('.message-interactive-visual [data-action="apply"]').click();
-    const draft = await page.locator('#messageInput').inputValue();
-    assert.match(draft, /600/);
-    assert.equal(requests.some(request => request.path.endsWith('/chat/stream')), false,
-      'visual confirmation only stages a composer draft');
-    assert.equal(await page.evaluate(() => appState.messages[1].content.includes('"type":"budget"')), true,
-      'the original model message remains unchanged');
+    await page.locator('.decision-panel-close').click();
+    await page.evaluate(() => syncDecisionWorkbench());
+    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false, 'same cards never reopen a user-closed workspace');
+    await page.locator('.message-workspace-link').click();
+    assert.equal(await amount().inputValue(), '600');
+    await page.locator('#messageInput').focus();
+    await page.evaluate(() => {
+      const spec = RAIInteractiveVisuals.parseBlocks(appState.messages[1].content)[0].spec;
+      appState.messages.push({ id: 13, role: 'assistant', content: 'The budget is updated.\n\n```rai_visual\n' + JSON.stringify({ ...spec, budget: 1200 }) + '\n```' });
+      renderMessages();
+    });
+    assert.equal(await page.locator('.decision-auto-card').count(), 1, 'same ID updates the existing task component');
+    assert.equal(await page.locator('.decision-auto-card .rai-visual-number[data-field="budget"]').inputValue(), '1200');
+    assert.equal(await page.locator('#messageInput').evaluate(node => document.activeElement === node), true, 'AI updates preserve composer focus');
+
+    await page.locator('.message.assistant .decision-pin-action').first().click();
+    await page.waitForFunction(() => document.querySelectorAll('.decision-pin-card:not(.decision-auto-card)').length === 1);
+    assert.equal(requests.filter(request => request.method === 'POST' && request.path.endsWith('/decision-pins')).length, 1, 'full-message pinning requires explicit user action');
+
+    const drag = async (selector, delta) => {
+      const rect = await page.locator(selector).boundingBox();
+      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(rect.x + rect.width / 2 + delta, rect.y + rect.height / 2, { steps: 5 });
+      await page.mouse.up();
+    };
+    await drag('.decision-resize-sidebar', 30);
+    await drag('.decision-resize-panel', -20);
+    const resized = await layout();
+    assert.ok(Math.abs(resized.sidebar - 290) <= 1, JSON.stringify(resized));
+    assert.ok(Math.abs(resized.panel - 388) <= 1, JSON.stringify(resized));
+    await page.locator('.decision-resize-sidebar').focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal((await layout()).sidebar, 306, 'keyboard resizing follows the same constraints');
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('rai-decision-layout:/')));
+    assert.equal(saved.sidebarWidth, 306);
+    assert.equal(saved.panelWidth, 388);
+    assert.deepEqual(Object.keys(saved).sort(), ['collapsed', 'panelWidth', 'sidebarWidth']);
+    assert.equal(requests.some(request => request.body?.sidebarWidth), false, 'device layout is never synchronized to the server');
+    await page.locator('#decisionSidebarToggle').click();
+    assert.equal((await layout()).sidebar, 64);
+    assert.equal(await page.locator('#sidebar').evaluate(node => node.inert), false);
+    assert.equal(await page.locator('.decision-sidebar-rail').isVisible(), true);
+    await page.locator('#decisionSidebarToggle').click();
+
+    await page.setViewportSize({ width: 393, height: 852 });
+    await page.waitForFunction(() => document.querySelectorAll('#messagesList .message-interactive-visual').length === 2);
+    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false);
+    assert.equal(await page.locator('#decisionPanelToggle').isVisible(), false);
+    assert.equal(await page.locator('.decision-pin-action').first().isVisible(), false);
+    const order = await page.locator('.message.assistant .message-text').first().evaluate(node => Array.from(node.children).map(child => child.className));
+    assert.deepEqual(order, ['message-prose', 'message-interactive-visual', 'message-prose'], 'mobile components keep their original position between paragraphs');
+    const inline = page.locator('#messagesList .message-interactive-visual').last();
+    await inline.locator('.rai-visual-number[data-field="item-0"]').fill('625');
+    await inline.locator('[data-action="apply"]').scrollIntoViewIfNeeded();
+    await inline.locator('[data-action="apply"]').click();
+    assert.match(await page.locator('#messageInput').inputValue(), /625/);
+    assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 625);
+    await page.locator('#messagesList .message-interactive-visual').first().locator('.rai-visual-number[data-field="item-0"]').fill('900');
+    assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 625,
+      'editing a historical card cannot overwrite the latest task state');
+    await page.evaluate(() => {
+      appState.messages.push({ role: 'assistant', content: window.fixtureVisualContent });
+      renderMessages({ forceFull: true });
+    });
+    const migrating = page.locator('#messagesList .message-interactive-visual').last();
+    await migrating.locator('.rai-visual-number[data-field="item-0"]').fill('630');
+    await page.evaluate(() => patchMessagesById(appState.messages.map((message, index) =>
+      index === appState.messages.length - 1 ? { ...message, id: 77 } : message)));
+    assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 630);
+    await migrating.locator('.rai-visual-number[data-field="item-0"]').fill('777');
+    assert.equal(await page.evaluate(() => decisionWorkbenchController.getVisualState()[0].items[0].value), 777,
+      'inline callbacks follow the database-ID migration after the DOM is preserved');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await page.locator('#messageInput').fill('');
+    await inline.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(output, engine.name() + '-adaptive-phone.png') });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForFunction(() => !!document.querySelector('.decision-auto-card .rai-visual-number'));
+    assert.equal(await amount().inputValue(), '777', 'breakpoint changes preserve current control values');
+    assert.equal(await page.locator('#messagesList .message-interactive-visual').count(), 0);
+    await page.evaluate(() => {
+      appState.messages.push({ ...appState.messages.at(-1), id: 14 });
+      renderMessages();
+    });
+    assert.equal(await amount().inputValue(), '500', 'an authoritative same-ID replacement resets values even when its definition repeats an earlier version');
 
     const streamed = await page.evaluate(() => {
-      const live = { id: 12, role: 'assistant', content: '正在生成', model: 'gpt-6-luna', is_live_stream: true };
+      const live = { id: 12, role: 'assistant', content: 'Generating', model: 'gpt-6-luna', is_live_stream: true };
       const node = prepareMessageElement(live, { animate: false });
       document.getElementById('messagesList').appendChild(node);
-      const final = { ...live, content: window.fixtureVisualContent };
-      finishMessageNodeInPlace(node, final, {
+      finishMessageNodeInPlace(node, { ...live, content: window.fixtureVisualContent, is_live_stream: false }, {
         sessionId: appState.currentSession.id, generation: appState.sessionNavigationGeneration
       });
-      return {
-        visualCount: node.querySelectorAll('.message-interactive-visual .rai-visual').length,
-        rawFenceVisible: node.querySelector('.message-text')?.textContent.includes('rai_visual')
-      };
+      return { links: node.querySelectorAll('.message-workspace-link').length, raw: node.querySelector('.message-text')?.textContent.includes('rai_visual') };
     });
-    assert.equal(streamed.visualCount, 1, 'completed streaming answer mounts its visual');
-    assert.equal(streamed.rawFenceVisible, false, 'completed streaming answer strips the protocol fence');
+    assert.equal(streamed.links, 1);
+    assert.equal(streamed.raw, false);
 
+    await page.reload();
+    await page.waitForFunction(() => typeof renderMessages === 'function');
+    await bootstrap();
+    await page.waitForFunction(() => document.querySelectorAll('.decision-auto-card').length === 1);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal((await layout()).sidebar, 306, 'device width survives reload');
+    assert.equal((await layout()).panel, 388);
     await page.evaluate(() => {
-      appState.currentSession = { id: 'chat-b', title: '另一个对话', model: 'gpt-6-luna', session_kind: 'chat' };
-      appState.messages = [];
-      syncDecisionWorkbench({ refresh: true });
+      window.originalCacheRead = RAIConversationCache.getConversation;
+      RAIConversationCache.getConversation = () => new Promise(resolve => { window.finishCacheRead = resolve; });
+      appState.sessions = [{ id: 'chat-b', title: 'Another chat', model: 'gpt-6-luna', session_kind: 'chat' }];
+      window.pendingNavigation = loadSession('chat-b');
+    });
+    await page.waitForFunction(() => typeof window.finishCacheRead === 'function');
+    assert.equal(await page.locator('.decision-auto-card').count(), 0, 'slow navigation never attaches previous conversation components to the next scope');
+    assert.deepEqual(await page.evaluate(() => decisionWorkbenchController.getVisualState()), []);
+    await page.evaluate(async () => {
+      finishCacheRead({ messages: [] });
+      await pendingNavigation;
+      RAIConversationCache.getConversation = originalCacheRead;
     });
     await page.waitForFunction(() => document.querySelectorAll('.decision-pin-card').length === 0);
-    assert.equal(await page.locator('.decision-pin-card').count(), 0,
-      'session switch clears private workbench cards');
+    assert.equal(await page.locator('#decisionWorkbenchPanel').isVisible(), false, 'ordinary chats start with a closed workspace');
+    assert.deepEqual(await page.evaluate(() => decisionWorkbenchController.getVisualState()), []);
     assert.deepEqual(pageErrors.filter(message => /decision|visual|workbench/i.test(message)), []);
     await context.close();
-    console.log(`decision-workbench app integration: PASS (${engine.name()}); full index/app renderer, ${initial.sidebarRatio.toFixed(2)} / ${initial.chatRatio.toFixed(2)} / ${initial.panelRatio.toFixed(2)} layout, pin, streaming visual and draft-only apply`);
+    console.log(`decision-workbench app integration: PASS (${engine.name()}); automatic partial pins, same-id updates, inline phone controls, draft state, resizing, device persistence, rail and stream finalization`);
   } finally {
     await browser?.close();
     await new Promise(resolve => server.close(resolve));

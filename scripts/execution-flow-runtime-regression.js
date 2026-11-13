@@ -29,7 +29,7 @@ ${between(server, 'function trimStructuredTokenPrefix(', 'function parseCanvasPa
 ${between(server, 'function extractLegacyTrailingTitle(', 'function sanitizeGeneratedConversationTitle(')}
 ${between(server, 'function sanitizeAssistantVisibleContent(', 'function shouldHoldAssistantVisibleContent(')}
 let rawAssistantStructuredBuffer='',latestStructuredAssistantOutput={},fullContent='',assistantVisibleStarted=false;
-let serverFinalAnswerOffset=-1,activeServerFlowContent=null,liveStreamState={assistantContent:''};
+let serverFinalAnswerOffset=-1,activeServerFlowContent=null,liveStreamState={assistantContent:''},completedToolRounds=9,finalSummaryMinimumOffset=0;
 ${between(server, 'const emitStructuredAssistantChunk =', 'const emitStructuredReasoningChunk =')}
 globalThis.emit=emitStructuredAssistantChunk;
 `, context);

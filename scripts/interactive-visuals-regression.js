@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const schema = require('../public/interactive-visual-schema');
 const visuals = require('../public/interactive-visuals');
-const { buildInteractiveVisualPrompt } = require('../lib/interactive-visual-prompt');
+const { buildInteractiveVisualPrompt, appendInteractiveVisualState } = require('../lib/interactive-visual-prompt');
 const root = path.resolve(__dirname, '..');
 const budget = { type: 'budget', title: 'Travel plan', unit: 'CNY', budget: 1000,
   items: [{ label: 'Transport', value: 350.25 }, { label: 'Stay', value: 500.5 }] };
@@ -119,19 +119,59 @@ function parserAndPromptCases() {
   assert.equal(visuals.stripBlocks(tooLong), tooLong);
   assert.deepEqual(visuals.parseBlocks(null), []);
   const context = vm.createContext({ window: {} });
-  for (const file of ['interactive-visual-schema.js', 'interactive-visuals.js']) {
+  for (const file of ['interactive-visual-schema.js', 'interactive-controls.js', 'interactive-visuals.js']) {
     vm.runInContext(fs.readFileSync(path.join(root, 'public', file), 'utf8'), context);
   }
   assert.equal(context.window.RAIInteractiveVisualSchema.parse(JSON.stringify(budget)).budget, budget.budget);
   assert.equal(context.window.RAIInteractiveVisuals.parseBlocks(raw)[0].raw, raw);
+  const form = { type: 'form', id: 'preferences', title: 'Preferences', submitLabel: 'Use', controls: [
+    { kind: 'slider', id: 'amount', label: 'Amount', min: 0, max: 100, step: 5, value: 50, unit: '%' }
+  ] };
+  assert.ok(schema.validate(form));
+  const invalidForms = [
+    { ...form, id: '../bad' }, { ...form, action: '/submit' }, { ...form, controls: [] },
+    { ...form, controls: Array(17).fill(form.controls[0]) },
+    { ...form, controls: [form.controls[0], form.controls[0]] },
+    { ...form, controls: [{ ...form.controls[0], value: 52 }] },
+    { ...form, controls: [{ ...form.controls[0], step: 0 }] },
+    { ...form, controls: [{ ...form.controls[0], max: 0 }] },
+    { ...form, controls: [{ ...form.controls[0], onChange: 'execute()' }] },
+    { ...form, controls: [{ kind: 'date', id: 'day', label: 'Day', value: '2026-02-30' }] },
+    { ...form, controls: [{ kind: 'input', id: 'name', label: 'Name', value: 'x'.repeat(1201), placeholder: '', required: false }] },
+    { ...form, controls: [{ kind: 'select', id: 'choice', label: 'Choice', options: [{ label: 'A', value: 'same' }, { label: 'B', value: 'same' }], value: 'same' }] }
+  ];
+  for (const value of invalidForms) assert.equal(schema.validate(value), null, 'reject executable, ambiguous, unbounded and invalid-calendar controls');
+  let stateGetterCalls = 0;
+  const accessorState = [form];
+  Object.defineProperty(accessorState, '0', { get() { stateGetterCalls += 1; return form; } });
+  assert.equal(schema.validateState(accessorState), null);
+  assert.equal(stateGetterCalls, 0);
   for (const language of ['zh-CN', 'en-US']) {
     const prompt = buildInteractiveVisualPrompt(language);
-    assert.ok(prompt.length < 2200, 'keep the per-request prompt concise');
-    assert.deepEqual(visuals.parseBlocks(prompt).map(block => block.spec.type), ['budget', 'comparison', 'checklist']);
+    assert.ok(prompt.length < 5000, 'bounded component protocol and examples');
+    assert.deepEqual(visuals.parseBlocks(prompt).map(block => block.spec.type), ['budget', 'comparison', 'checklist', 'form']);
     assert.ok(prompt.includes('Mermaid') && prompt.includes(String(schema.limits.maxValue)));
     assert.match(prompt, language === 'en-US' ? /user or verified results/ : /用户或已核实结果/);
     assert.match(prompt, language === 'en-US' ? /do not force visuals into every answer/ : /不要每个回答都强行可视化/);
   }
+  const updated = { ...budget, id: 'travel', budget: 1500 };
+  const messages = [
+    { role: 'assistant', id: 1, content: fence({ ...budget, id: 'travel' }) },
+    { role: 'user', content: fence(checklist) },
+    { role: 'assistant', id: 3, content: fence(updated) + '\n' + fence({ ...checklist, id: 'todo' }) }
+  ];
+  assert.deepEqual(visuals.collectLatest(messages), [{ spec: updated, sourceId: 3, sourceKey: 3 }, { spec: { ...checklist, id: 'todo' }, sourceId: 3, sourceKey: 3 }]);
+  assert.deepEqual(visuals.collectLatest([...messages, { role: 'assistant', content: fence({ type: 'remove', id: 'travel' }) }]),
+    [{ spec: { ...checklist, id: 'todo' }, sourceId: 3, sourceKey: 3 }], 'same-id updates and removals keep only relevant cards');
+  assert.deepEqual(visuals.segments('Before\n' + raw + '\nAfter').map(part => part.spec ? part.spec.type : part.text), ['Before\n', 'budget', '\nAfter']);
+  const payload = [{ role: 'system', content: 'System' }, { role: 'user', content: 'Continue' }];
+  const attached = appendInteractiveVisualState(payload, [updated]);
+  assert.deepEqual(attached[0], payload[0]);
+  assert.match(attached[1].content, /untrusted user data/);
+  assert.ok(attached[1].content.includes('1500'));
+  assert.equal(payload[1].content, 'Continue');
+  assert.equal(appendInteractiveVisualState(payload, [{ ...budget, html: 'bad' }]), payload);
+  assert.equal(schema.validateState(Array(9).fill(budget)), null);
   console.log('interactive-visuals: fenced-block parsing, streaming partials, invalid-text retention, bounds, UMD and bilingual prompt examples passed');
 }
 
@@ -154,6 +194,7 @@ async function browserCases() {
         await page.addStyleTag({ path: path.join(root, 'public/interactive-visuals.css') });
         await page.addStyleTag({ content: 'html,body{height:auto;overflow:auto}#fixture{width:100%;max-width:760px;margin:0 auto;padding:16px}#fixture .rai-visual{box-sizing:border-box}' });
         await page.addScriptTag({ path: path.join(root, 'public/interactive-visual-schema.js') });
+        await page.addScriptTag({ path: path.join(root, 'public/interactive-controls.js') });
         await page.addScriptTag({ path: path.join(root, 'public/interactive-visuals.js') });
         await page.evaluate(({ spec, language }) => {
           window.sourceSpec = spec;
