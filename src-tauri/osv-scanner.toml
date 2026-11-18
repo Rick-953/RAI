@@ -1,6 +1,11 @@
 # Reviewed 2026-10-30 against locked Tauri 2.12.1 and upstream 2.12.5.
 # Individual advisory paths, compatible-fix review and residual risk:
-# docs/rustsec-review-20261030.md and .json. Existing IDs only, 31-day deadline.
+# docs/rustsec-review-20261030.md and .json. Review deadline 2026-11-30.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+ignoreUntil = 2026-11-30
+reason = "chrono@0.4.45: serde_with optional dependency recorded in this lockfile, not enabled in any Tauri build. CI checks all targets and features; Local Agent removes chrono and remains fully scanned. Reviewed in docs/rustsec-review-20261030.md."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
@@ -61,10 +66,3 @@ reason = "gtk-sys@0.18.2: unmaintained transitive Tauri dependency, with no patc
 id = "RUSTSEC-2024-0370"
 ignoreUntil = 2026-11-30
 reason = "proc-macro-error@1.0.4: unmaintained transitive Tauri dependency, with no patched version in the advisory; replacement requires upstream graph migration. Reviewed in docs/rustsec-review-20261030.md."
-
-# Static version-scope review: docs/block-buffer-advisory-scope-20261028.md.
-# The current 0.10.4 registry checksum is enforced by the expiry regression.
-[[IgnoredVulns]]
-id = "GHSA-qwgh-2vcv-g2f7"
-ignoreUntil = 2026-11-11
-reason = "Version-scope false positive for pinned block-buffer 0.10.4: cursor is a separate pos u8 field, not an inline buffer byte, and ReadBuffer is absent. Re-review if version/checksum changes."

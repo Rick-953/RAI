@@ -8,7 +8,7 @@ The scope is RAI Tauri desktop, especially the Linux GTK3/WebKitGTK graph; it is
 
 - 5 obsolete ignores are removed because their packages no longer exist in Cargo.lock. 11 retained entries are unmaintained-crate advisories without a patched version in current OSV metadata. These are maintenance risks, not proof of an exploitable defect or proof of safety.
 - RUSTSEC-2024-0429 is a real glib iterator soundness advisory. OSV fixes it in 0.20.0, but the GTK3 dependency graph requires glib 0.18. A forced cross-major override is not a compatible remediation. RAI Rust sources do not directly use VariantStrIter, but indirect dependency reachability is not claimed absent.
-- Retain only 12 existing, present-package IDs until **2026-11-30**, a 31-day window, with per-advisory package/version and a concrete root-to-dependency path in the JSON review. No unrelated ignore is added.
+- The original review retains 12 existing, present-package IDs until **2026-11-30**, a 31-day window, with per-advisory package/version and a concrete root-to-dependency path in the JSON review.
 - Re-review when the Tauri/affected graph changes or a compatible fix/replacement appears. Prefer removing an exception when a patched compatible graph exists; migrate from GTK3 when upstream supports it. Do not fork or replace the GUI stack merely to silence the scanner.
 - CI verifies every ignore against this review, its actual locked dependency path, and its deadline. OSV, RustSec, npm audit, CodeQL and the independent CodeQL check remain enabled.
 
@@ -26,6 +26,10 @@ The scope is RAI Tauri desktop, especially the Linux GTK3/WebKitGTK graph; it is
 | [RUSTSEC-2024-0419](https://osv.dev/vulnerability/RUSTSEC-2024-0419) | gtk3-macros 0.18.2 | unmaintained | rai_desktop@0.11.43 -> tauri@2.12.1 -> gtk@0.18.2 -> gtk3-macros@0.18.2 |
 | [RUSTSEC-2024-0420](https://osv.dev/vulnerability/RUSTSEC-2024-0420) | gtk-sys 0.18.2 | unmaintained | rai_desktop@0.11.43 -> tauri@2.12.1 -> gtk@0.18.2 -> gtk-sys@0.18.2 |
 | [RUSTSEC-2024-0370](https://osv.dev/vulnerability/RUSTSEC-2024-0370) | proc-macro-error 1.0.4 | unmaintained | rai_desktop@0.11.43 -> tauri@2.12.1 -> gtk@0.18.2 -> gtk3-macros@0.18.2 -> proc-macro-error@1.0.4 |
+
+## Lockfile-only advisory (2026-11-18)
+
+[RUSTSEC-2026-0543](https://osv.dev/vulnerability/RUSTSEC-2026-0543) marks `chrono` unmaintained and has no patched version. The Local Agent drops its direct `chrono` dependency and keeps all advisories enabled. The Tauri lockfile records `chrono@0.4.45` through an optional `serde_with` feature that is not enabled: `cargo tree --locked --manifest-path src-tauri/Cargo.toml --all-features --target all --edges normal,build,dev --prefix none` contains no `chrono` package. CI fails if that changes. The exception is specific to `src-tauri` and expires on **2026-11-30**.
 
 ## Removed obsolete exceptions
 

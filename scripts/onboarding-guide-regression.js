@@ -176,15 +176,19 @@ function extractNestedFunction(container, name) {
 
 function testVersionConstants() {
   // 6a / 6i — version consistency across client, server and service worker.
+  const expectedVersion = String(packageJson.version || '').trim();
+  const buildMatch = /const\s+RAI_BUILD_ID\s*=\s*'([^']+)'\s*;/.exec(app);
+  assert.ok(expectedVersion, 'package.json must declare a release version');
+  assert.ok(buildMatch?.[1], 'app.js must declare a build ID');
+  const expectedBuild = buildMatch[1];
+  const escaped = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   assert.match(serverSource, /const\s+GUIDE_VERSION\s*=\s*1\s*;/, 'server GUIDE_VERSION must be 1');
   assert.match(app, /const\s+RAI_GUIDE_VERSION\s*=\s*1\s*;/, 'RAI_GUIDE_VERSION must be 1');
-  assert.match(app, /const\s+RAI_APP_VERSION\s*=\s*'0\.13\.18'\s*;/, 'RAI_APP_VERSION mismatch');
-  assert.match(app, /const\s+RAI_BUILD_ID\s*=\s*'20260929-pwa-r8'\s*;/, 'RAI_BUILD_ID mismatch');
-  assert.match(serviceWorker, /const\s+RAI_SW_VERSION\s*=\s*'0\.13\.18-20260929-pwa-r8'\s*;/, 'RAI_SW_VERSION mismatch');
-  const markers = (index.match(/20260929-pwa-r8/g) || []).length;
+  assert.match(app, new RegExp(`const\\s+RAI_APP_VERSION\\s*=\\s*'${escaped(expectedVersion)}'\\s*;`), 'RAI_APP_VERSION mismatch');
+  assert.match(serviceWorker, new RegExp(`const\\s+RAI_SW_VERSION\\s*=\\s*'${escaped(expectedVersion)}-${escaped(expectedBuild)}'\\s*;`), 'RAI_SW_VERSION mismatch');
+  const markers = (index.match(new RegExp(escaped(expectedBuild), 'g')) || []).length;
   assert.ok(markers >= 15, `index.html must carry >= 15 build markers, got ${markers}`);
-  assert.match(index, /v0\.13\.18/, 'index.html must show the matching app version');
-  assert.equal(packageJson.version, '0.13.18', 'package.json version mismatch');
+  assert.match(index, new RegExp(`v${escaped(expectedVersion)}`), 'index.html must show the matching app version');
 }
 
 function testGuideWiring() {

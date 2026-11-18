@@ -19,6 +19,8 @@ const cxAgentTools = require('./lib/cx-agent-tools');
 const { createChatStreamUsage, requestChatStreamUsage } = require('./lib/chat-stream-usage');
 const { installSecureSharingRoutes } = require('./lib/secure-sharing-routes');
 const { installPhotoWidgetRoutes } = require('./lib/photo-widget-routes');
+const { installDecisionWorkbenchRoutes } = require('./lib/decision-workbench-routes');
+const { buildInteractiveVisualPrompt, appendInteractiveVisualState } = require('./lib/interactive-visual-prompt');
 const { createCustomApiSyncHandler, clientMessageFields } = require('./lib/custom-api-sync');
 const { writeIncompleteAnswer, partialStreamWarning } = require('./lib/chat-stream-fallback');
 const express = require('express');
@@ -55,7 +57,7 @@ const net = require('net');
 const https = require('https');  // 用于网页搜索
 const packageInfo = require('./package.json');
 const { runAgentPipeline, normalizeUsage } = require('./agent/engine');
-const { createAuthSessionStore } = require('./lib/auth-session-store');
+const { createAuthSessionStore, readRefreshTokenCookie } = require('./lib/auth-session-store');
 const { selectedRefreshToken, sessionRefreshCookie, clearSelectedRefreshCookie } = require('./lib/qr-refresh-cookie');
 const {
     SOFTWARE_CLIENT_SCOPE,
@@ -114,11 +116,12 @@ const {
     joinGatewayEndpoint,
     normalizeGatewayBaseUrl,
     postGatewayJson,
+    postGatewayMultipart,
     readBoundedResponseText,
     readGatewayApiKeyFile,
     throwIfExternalRequestAborted
 } = require('./lib/gpt-gateway');
-const { IMAGE_MODEL_COSTS, IMAGE_GENERATION_SIZES, normalizeImageGenerationArgs, buildImageGenerationRequest, prepareGeneratedImage } = require('./lib/image-generation');
+const { IMAGE_MODEL_COSTS, IMAGE_GENERATION_SIZES, inferImageGenerationSize, normalizeImageGenerationArgs, buildImageGenerationRequest, prepareGeneratedImage } = require('./lib/image-generation');
 const {
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
@@ -140,7 +143,8 @@ const {
 } = require('./lib/memory-tool-policy');
 const { createMemoryVersionStore } = require('./lib/memory-version-store');
 const {
-    buildEffectiveSystemPrompt: buildCanonicalRaiSystemPrompt
+    buildEffectiveSystemPrompt: buildCanonicalRaiSystemPrompt,
+    buildToolRoundInstruction
 } = require('./public/rai-system-prompt');
 const {
     getSkillCatalog,
@@ -395,7 +399,7 @@ function buildDefaultUsernameFromEmail(email) {
     const safe = localPart
         .replace(/[^\p{L}\p{N}._\- ]/gu, '_')
         .replace(/[_.\- ]+/g, '_')
-        .replace(/^_+|_+$/g, '')
+        .replace(/^_|_$/g, '')
         .slice(0, USERNAME_MAX_LENGTH);
     const normalized = normalizeUsernameForStorage(safe);
     return normalized.value || 'User';
@@ -550,14 +554,19 @@ const ADMIN_JWT_SECRET = requireSecretEnv('ADMIN_JWT_SECRET', 32);
 function readRestrictedSecretFile(filePath, label = 'secret') {
     const resolved = path.resolve(cleanEnvValue(filePath));
     if (!resolved || !cleanEnvValue(filePath)) return '';
-    const stat = fs.lstatSync(resolved);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024) {
-        throw new Error(`invalid_${label}_file`);
+    const fd = fs.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1024) {
+            throw new Error(`invalid_${label}_file`);
+        }
+        if (IS_PRODUCTION && (stat.mode & 0o077) !== 0) {
+            throw new Error(`${label}_file_permissions_must_be_0600`);
+        }
+        return cleanEnvValue(fs.readFileSync(fd, 'utf8'));
+    } finally {
+        fs.closeSync(fd);
     }
-    if (IS_PRODUCTION && (stat.mode & 0o077) !== 0) {
-        throw new Error(`${label}_file_permissions_must_be_0600`);
-    }
-    return cleanEnvValue(fs.readFileSync(resolved, 'utf8'));
 }
 const GPT_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(cleanEnvValue(process.env.RAI_GPT_GATEWAY_BASE_URL) || 'https://fast.000339.xyz/v1', {
     production: IS_PRODUCTION
@@ -1056,8 +1065,7 @@ function generateRecoveryCodes(count = 10) {
     const codes = new Set();
     while (codes.size < count) {
         let raw = '';
-        const bytes = crypto.randomBytes(12);
-        for (const byte of bytes) raw += RECOVERY_CODE_ALPHABET[byte % RECOVERY_CODE_ALPHABET.length];
+        for (let index = 0; index < 12; index += 1) raw += RECOVERY_CODE_ALPHABET[crypto.randomInt(RECOVERY_CODE_ALPHABET.length)];
         codes.add(`${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`);
     }
     return [...codes];
@@ -1859,6 +1867,43 @@ async function fetchGeneratedImageBuffer(sourceUrl, signal) {
     throw new Error('image_redirect_limit_exceeded');
 }
 
+const REFERENCE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+async function loadReferenceImageFiles(referenceImageFileIds = [], context = {}) {
+    const ids = Array.isArray(referenceImageFileIds) ? referenceImageFileIds : [];
+    if (ids.length === 0) return [];
+    const userId = Number(context.userId);
+    const sessionId = String(context.sessionId || '').trim();
+    const allowedIds = context.allowedReferenceImageFileIds instanceof Set
+        ? context.allowedReferenceImageFileIds
+        : new Set(Array.isArray(context.allowedReferenceImageFileIds) ? context.allowedReferenceImageFileIds : []);
+    if (!Number.isSafeInteger(userId) || userId <= 0 || !sessionId) throw new Error('reference_image_session_required');
+
+    const files = [];
+    for (let index = 0; index < ids.length; index += 1) {
+        const fileId = String(ids[index] || '').trim();
+        if (!allowedIds.has(fileId)) throw new Error('reference_image_not_in_current_conversation');
+        const source = await resolveOwnedWorkspaceSource({ fileId, userId, sessionId });
+        const mimeType = String(source.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+        if (!REFERENCE_IMAGE_MIME_TYPES.has(mimeType)) throw new Error('reference_image_type_unsupported');
+        const handle = await fs.promises.open(source.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+            .catch(() => { throw new Error('reference_image_missing'); });
+        try {
+            const stat = await handle.stat();
+            if (!stat.isFile()) throw new Error('reference_image_missing');
+            if (stat.size <= 0 || stat.size > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) throw new Error('reference_image_too_large');
+            const buffer = await handle.readFile();
+            if (buffer.length > ATTACHMENT_UPLOAD_HARD_LIMIT_BYTES) throw new Error('reference_image_too_large');
+            const sniffed = validateGeneratedImageBuffer(buffer, mimeType);
+            if (!REFERENCE_IMAGE_MIME_TYPES.has(sniffed.contentType)) throw new Error('reference_image_type_unsupported');
+            files.push({ buffer, contentType: sniffed.contentType, filename: `reference-${index + 1}.${sniffed.ext}` });
+        } finally {
+            await handle.close();
+        }
+    }
+    return files;
+}
+
 async function fetchSafeImageHead(imageUrl, timeout = IMAGE_URL_HEAD_TIMEOUT_MS) {
     let currentUrl = String(imageUrl || '').trim();
     for (let redirectCount = 0; redirectCount <= SAFE_IMAGE_FETCH_MAX_REDIRECTS; redirectCount += 1) {
@@ -2005,7 +2050,7 @@ async function readBoundedImageProviderResponse(response, maxBytes, { parseJson 
     return parseJson ? JSON.parse(text) : text;
 }
 
-async function requestAndPersistGeneratedImages({ model, requestBody, args, context }) {
+async function requestAndPersistGeneratedImages({ model, requestBody, args, context, referenceImageFiles = [] }) {
     const externalSignal = context.signal;
     throwIfExternalRequestAborted(externalSignal);
     const controller = new AbortController();
@@ -2013,10 +2058,19 @@ async function requestAndPersistGeneratedImages({ model, requestBody, args, cont
     const timeoutId = setTimeout(() => controller.abort(), 120000);
     try {
         // One paid request. An upstream error never switches providers or replays it.
-        const response = await postGatewayJson({
-            baseUrl: GPT_IMAGE_BASE_URL, endpoint: 'images/generations',
-            apiKey: GPT_IMAGE_API_KEY, body: requestBody, signal: controller.signal
-        });
+        const response = referenceImageFiles.length > 0
+            ? await postGatewayMultipart({
+                baseUrl: GPT_IMAGE_BASE_URL,
+                endpoint: 'images/edits',
+                apiKey: GPT_IMAGE_API_KEY,
+                fields: requestBody,
+                files: referenceImageFiles,
+                signal: controller.signal
+            })
+            : await postGatewayJson({
+                baseUrl: GPT_IMAGE_BASE_URL, endpoint: 'images/generations',
+                apiKey: GPT_IMAGE_API_KEY, body: requestBody, signal: controller.signal
+            });
         if (!response.ok) {
             await response.body?.cancel?.().catch(() => null);
             throw new Error(`图片生成服务返回 HTTP ${response.status}`);
@@ -2029,7 +2083,11 @@ async function requestAndPersistGeneratedImages({ model, requestBody, args, cont
         if (!image?.url) throw new Error('图片保存失败');
         return {
             success: true, provider: 'rai_gpt_image', model, prompt: args.prompt,
-            parameters: { image_size: args.image_size, batch_size: 1 },
+            parameters: {
+                image_size: args.image_size,
+                batch_size: 1,
+                reference_image_count: referenceImageFiles.length
+            },
             images: [{ index: 1, name: args.name, ...image }],
             note: 'RAI already displayed the named image. Use its exact name and filename; never invent one.'
         };
@@ -2049,6 +2107,9 @@ async function generateImages(rawArgs = {}, context = {}) {
     throwIfExternalRequestAborted(externalSignal);
     if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('图片生成需要登录');
     if (!GPT_IMAGE_CONFIGURED) return { success: false, code: 'image_provider_unavailable', message: '图片生成服务暂不可用，本次未扣点。', images: [] };
+    const referenceImageFiles = args.reference_image_file_ids.length > 0
+        ? await loadReferenceImageFiles(args.reference_image_file_ids, context)
+        : [];
     const imagePoints = await checkAndDeductPoints(context.userId, args.model);
     if (imagePoints.useFreeModel) {
         return {
@@ -2060,7 +2121,8 @@ async function generateImages(rawArgs = {}, context = {}) {
     const requestId = String(context.requestId || `image_${crypto.randomUUID().replace(/-/g, '')}`);
     try {
         const result = await requestAndPersistGeneratedImages({ model: args.model,
-            requestBody: buildImageGenerationRequest(args), args, context: { ...context, requestId } });
+            requestBody: buildImageGenerationRequest(args), args, referenceImageFiles,
+            context: { ...context, requestId } });
         throwIfExternalRequestAborted(externalSignal);
         return { ...result, requestedModel: args.model, actualModel: args.model,
             pointsDeducted: imagePoints.pointsDeducted, remainingPoints: imagePoints.remainingPoints };
@@ -2095,7 +2157,7 @@ const TOOL_DEFINITIONS = [{
     type: "function",
     function: {
         name: "generate_image",
-        description: "生成一张有明确名称的图片，最长边不超过 1024。按模型消耗 100/200/300 点；点数不足会拒绝并返回当前余额，必须向用户说明。不要传参考图 URL。",
+        description: "Generate or edit one named image in a supported 1K or 2K size. Use conversation image attachments as references. Each image costs 100/200/300 points by model tier; stop on insufficient points and use the returned image name and URL.",
         parameters: {
             type: "object",
             required: ["prompt", "name"],
@@ -2108,12 +2170,17 @@ const TOOL_DEFINITIONS = [{
                 name: { type: "string", description: "本张图片的简短具体名称，供展示、保存和后续引用。" },
                 model: {
                     type: "string", enum: Object.keys(IMAGE_MODEL_COSTS),
-                    description: "gpt-image-2.5: 100 点；gpt-image-2.5-flare: 200 点，日常高质量生成；gpt-image-2.5-sunburst: 300 点，精细控制。默认 100 点型号。"
+                    description: "GPT Image 2.6 is the default. Both 2.5 and 2.6 families cost 100/200/300 points for base/flare/sunburst."
                 },
                 image_size: {
                     type: "string",
                     enum: IMAGE_GENERATION_SIZES,
-                    description: "图片尺寸，默认 1024x1024。"
+                    description: "Supported 1K and 2K output size; default 1024x1024."
+                },
+                reference_image_file_ids: {
+                    type: "array", maxItems: 9, uniqueItems: true,
+                    items: { type: "string" },
+                    description: "Image attachment IDs from this conversation to use as references."
                 },
                 batch_size: {
                     type: "integer",
@@ -2778,7 +2845,7 @@ function createClientToolPending({
         if (entry.resolved) return;
         entry.resolved = true;
         clientToolPending.delete(String(requestId));
-        console.warn(` 客户端文件工具执行超时: requestId=${requestId}, tool=${toolName}, sessionId=${sessionId}`);
+        console.warn(JSON.stringify([` 客户端文件工具执行超时: requestId=${requestId}, tool=${toolName}, sessionId=${sessionId}`]));
         appendRaiRuntimeReport({
             level: '报错',
             tag: 'client_tool_timeout',
@@ -2909,6 +2976,7 @@ function buildGeminiContinuationContents(messages = []) {
                 try { args = JSON.parse(call?.function?.arguments || '{}'); } catch (_) {}
                 return { functionCall: { name, args } };
             });
+            if (typeof message.content === 'string' && message.content) parts.unshift({ text: message.content });
             return parts.length ? [{ role: 'model', parts }] : [];
         }
         if (message?.role === 'tool') {
@@ -3390,8 +3458,11 @@ const TOOL_EXECUTORS = {
         return await fetchYahooFinanceQuote({ ...args, range, interval });
     },
     generate_image: async (args, context = {}) => {
-        const safeArgs = normalizeImageGenerationArgs(args);
-        console.log(` 执行工具 generate_image: provider=rai_gpt_image, size=${safeArgs.image_size}, batch=${safeArgs.batch_size}`);
+        const requestedReferenceIds = Array.isArray(args?.reference_image_file_ids) && args.reference_image_file_ids.length > 0
+            ? args.reference_image_file_ids
+            : context.defaultReferenceImageFileIds;
+        const safeArgs = normalizeImageGenerationArgs({ ...args, reference_image_file_ids: requestedReferenceIds });
+        console.log(` execute generate_image: provider=rai_gpt_image, size=${safeArgs.image_size}, references=${safeArgs.reference_image_file_ids.length}`);
         return await generateImages(safeArgs, context);
     },
     save_memory: async (args, context = {}) => {
@@ -4934,7 +5005,7 @@ async function performWebSearch(query, maxResults = 5, searchDepth = 'basic') {
             });
 
             req.on('error', (err) => {
-                console.error(' Tavily网页搜索请求失败:', sanitizeReportContext(err));
+                console.error(JSON.stringify([' Tavily网页搜索请求失败:', sanitizeReportContext(err)]));
                 resolve({ results: [], images: [] });
             });
 
@@ -5057,7 +5128,7 @@ async function rewriteSearchImageUrls(imageUrls, maxImages = 5) {
         if (typeof value === 'string' && !unique.includes(value) && unique.length < maxImages) unique.push(value);
     }
     const cached = await Promise.all(unique.map(async (sourceUrl) => {
-        try { return await cacheSearchImage(sourceUrl); } catch (error) { console.warn('搜索图片缓存失败:', sanitizeReportContext(error)); return null; }
+        try { return await cacheSearchImage(sourceUrl); } catch (error) { console.warn(JSON.stringify(['搜索图片缓存失败:', sanitizeReportContext(error)])); return null; }
     }));
     return cached.filter(Boolean).map((entry) => entry.url);
 }
@@ -5466,7 +5537,7 @@ async function callAPIWithTools(messages, model, providerConfig, tools) {
         });
 
         req.on('error', (err) => {
-            console.error(' 工具调用请求失败:', sanitizeReportContext(err));
+            console.error(JSON.stringify([' 工具调用请求失败:', sanitizeReportContext(err)]));
             resolve({ finish_reason: 'error', tool_calls: null, content: null });
         });
 
@@ -5787,6 +5858,8 @@ async function executeNormalizedToolCall({
     sessionId = null,
     requestId = null,
     userMessages = [],
+    allowedReferenceImageFileIds = [],
+    defaultReferenceImageFileIds = [],
     signal
 }) {
     const toolName = toolCall?.function?.name;
@@ -5820,7 +5893,12 @@ async function executeNormalizedToolCall({
     }
 
     if (toolName === 'generate_image') {
-        const imageResult = await TOOL_EXECUTORS.generate_image(args, { userId, sessionId, requestId, signal });
+        const imageResult = await TOOL_EXECUTORS.generate_image(args, {
+            userId, sessionId, requestId,
+            allowedReferenceImageFileIds,
+            defaultReferenceImageFileIds,
+            signal
+        });
         return {
             result: imageResult,
             sources: [],
@@ -5870,6 +5948,7 @@ async function callK2p5Stream({
     res,
     onContent,
     onReasoning,
+    onToolStart = null,
     userId = null,
     sessionId = null,
     requestId = null,
@@ -5879,6 +5958,7 @@ async function callK2p5Stream({
     let conversationMessages = [...messages];
     let aggregatedSources = [];
     let fullContent = '';
+    let completedToolRounds = 0;
     let reasoningContent = '';
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let searchCount = 0;
@@ -5945,6 +6025,7 @@ async function callK2p5Stream({
         let finishReason = null;
         const toolCalls = [];
         let roundReasoningContent = '';
+        let roundContent = '';
 
         try {
             while (true) {
@@ -5988,6 +6069,7 @@ async function callK2p5Stream({
 
                 if (delta.content) {
                     fullContent += delta.content;
+                    roundContent += delta.content;
                     if (onContent) onContent(delta.content);
                 }
 
@@ -6029,6 +6111,9 @@ async function callK2p5Stream({
 
         const executedToolMessages = [];
         for (const toolCall of normalizedCalls) {
+            throwIfExternalRequestAborted(signal);
+            // Dispatch can have side effects even if its result later throws.
+            onToolStart?.();
             const toolResult = await executeNormalizedToolCall({
                 toolCall,
                 taskKey,
@@ -6040,6 +6125,8 @@ async function callK2p5Stream({
                 sessionId,
                 requestId,
                 userMessages: messages.filter((message) => message?.role === 'user').map((message) => message.content),
+                allowedReferenceImageFileIds: [],
+                defaultReferenceImageFileIds: [],
                 signal
             });
             searchCount += Number(toolResult.searchCountInc || 0);
@@ -6060,7 +6147,7 @@ async function callK2p5Stream({
 
         const assistantToolCallMessage = {
             role: 'assistant',
-            content: null,
+            content: roundContent || null,
             tool_calls: normalizedCalls.map((call) => ({
                 id: call.id,
                 type: 'function',
@@ -6074,10 +6161,14 @@ async function callK2p5Stream({
             assistantToolCallMessage.reasoning_content = roundReasoningContent || 'Tool call continuation reasoning.';
         }
 
+        completedToolRounds += 1;
+        // Append run state without changing fixed system text or the user's task boundary.
         conversationMessages = [
             ...conversationMessages,
             assistantToolCallMessage,
-            ...executedToolMessages
+            ...executedToolMessages,
+            { role: 'assistant', name: 'rai_tool_round_status',
+                content: buildToolRoundInstruction(completedToolRounds) }
         ];
     }
 
@@ -7491,7 +7582,8 @@ async function runTrueParallelAgentMode({
     sessionId = null,
     requestId = null,
     signal,
-    onAgentEvent = null
+    onAgentEvent = null,
+    onProgressCommitted = null
 }) {
     const routing = MODEL_ROUTING['deepseek-v4.1-flash'];
     if (!routing) throw new Error('K2.6 路由缺失');
@@ -7525,14 +7617,20 @@ async function runTrueParallelAgentMode({
 
     const emitContentChunk = (chunk) => {
         if (!chunk) return;
+        onProgressCommitted?.();
         res.write(`data: ${JSON.stringify({ type: 'content', content: chunk })}\n\n`);
     };
     const emitReasoningChunk = (chunk) => {
         if (!chunk) return;
+        onProgressCommitted?.();
         res.write(`data: ${JSON.stringify({ type: 'reasoning', content: chunk })}\n\n`);
     };
 
     const emitAgentEventWithHook = (payload) => {
+        if ((payload.type === 'agent_draft_delta' && payload.delta)
+            || (payload.type === 'agent_draft' && (payload.content || payload.summary))) {
+            onProgressCommitted?.();
+        }
         emitAgentEvent(res, payload);
         if (typeof onAgentEvent === 'function') {
             try {
@@ -7603,6 +7701,7 @@ async function runTrueParallelAgentMode({
                 sessionId,
                 requestId,
                 signal,
+                onToolStart: onProgressCommitted,
                 searchBudget,
                 taskKey: 'planner',
                 res,
@@ -7683,6 +7782,7 @@ async function runTrueParallelAgentMode({
                 sessionId,
                 requestId,
                 signal,
+                onToolStart: onProgressCommitted,
                 searchBudget,
                 taskKey: `task-${task.agent_id || 0}`,
                 res,
@@ -7741,6 +7841,7 @@ async function runTrueParallelAgentMode({
                 sessionId,
                 requestId,
                 signal,
+                onToolStart: onProgressCommitted,
                 searchBudget,
                 taskKey: 'synthesis',
                 res,
@@ -8121,13 +8222,19 @@ async function buildAttachmentImageDataUrl(attachment = {}, userId = null) {
         if (!allowed) return '';
     }
 
-    const stats = await fs.promises.stat(filePath).catch(() => null);
-    if (!stats || !stats.isFile() || stats.size <= 0 || stats.size > 12 * 1024 * 1024) return '';
-
     const mimeType = resolveImageMimeType(attachment, filename);
     if (!mimeType.startsWith('image/')) return '';
-    const buffer = await fs.promises.readFile(filePath);
-    return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)).catch(() => null);
+    if (!handle) return '';
+    try {
+        const stats = await handle.stat();
+        if (!stats.isFile() || stats.size <= 0 || stats.size > 12 * 1024 * 1024) return '';
+        const buffer = await handle.readFile();
+        if (buffer.length > 12 * 1024 * 1024) return '';
+        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } finally {
+        await handle.close();
+    }
 }
 
 function resolveAudioMimeType(attachment = {}, filename = '') {
@@ -10463,6 +10570,14 @@ function setSecurityHeaders(req, res) {
 
 // 中间件配置
 app.use(requestDiagnostics);
+// Cover public file handlers and APIs; tighter route limits still apply.
+app.use(rateLimit({
+    windowMs: 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: '请求过于频繁,请稍后再试' }
+}));
 app.use((req, res, next) => {
     setSecurityHeaders(req, res);
     next();
@@ -10669,6 +10784,8 @@ const apiLimiter = rateLimit({
     max: 100,
     message: { error: '请求过于频繁,请稍后再试' }
 });
+
+
 
 const CHAT_USAGE_QUOTAS = [
     {
@@ -11051,8 +11168,8 @@ async function checkAndConsumeChatQuota(userId) {
 
 function getBearerToken(req) {
     const authHeader = String(req.headers.authorization || '').trim();
-    const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    return match ? match[1].trim() : '';
+    if (!/^Bearer[ \t]/i.test(authHeader)) return '';
+    return authHeader.slice(7).trim();
 }
 
 // JWT验证中间件
@@ -11300,15 +11417,18 @@ app.get(`${SEARCH_IMAGE_CACHE_PUBLIC_PREFIX}/:filename`, async (req, res) => {
     const rootPath = path.resolve(SEARCH_IMAGE_CACHE_DIR);
     const filePath = path.resolve(rootPath, filename);
     if (!filePath.startsWith(`${rootPath}${path.sep}`)) return res.status(404).end();
+    let handle;
     try {
-        const stat = await fs.promises.lstat(filePath);
-        if (!stat.isFile() || stat.isSymbolicLink()) return res.status(404).end();
+        handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+        const stat = await handle.stat();
+        if (!stat.isFile()) return res.status(404).end();
         const age = Date.now() - stat.mtimeMs;
         if (age < 0 || age >= SEARCH_IMAGE_CACHE_TTL_MS || stat.size <= 0 || stat.size > MAX_SEARCH_IMAGE_BYTES) {
             await fs.promises.unlink(filePath).catch(() => null);
             return res.status(404).end();
         }
-        const bytes = await fs.promises.readFile(filePath);
+        const bytes = await handle.readFile();
+        if (bytes.length > MAX_SEARCH_IMAGE_BYTES) return res.status(404).end();
         const image = sniffImageBuffer(bytes);
         if (!image) return res.status(404).end();
         const etag = `"${crypto.createHash('sha256').update(bytes).digest('hex')}"`;
@@ -11320,6 +11440,8 @@ app.get(`${SEARCH_IMAGE_CACHE_PUBLIC_PREFIX}/:filename`, async (req, res) => {
         return res.status(200).send(bytes);
     } catch (_) {
         return res.status(404).end();
+    } finally {
+        if (handle) await handle.close();
     }
 });
 app.get(`${GENERATED_IMAGE_PUBLIC_PREFIX}/:filename`, authenticateToken, async (req, res) => {
@@ -12255,7 +12377,7 @@ app.get('/api/quote/:symbol', financeQuoteLimiter, async (req, res) => {
         res.json(quote);
     } catch (error) {
         const publicError = buildPublicFinanceError(error);
-        console.warn(' 行情请求失败:', sanitizeReportContext(error));
+        console.warn(JSON.stringify([' 行情请求失败:', sanitizeReportContext(error)]));
         res.status(publicError.status).json({
             error: {
                 code: publicError.code,
@@ -12355,6 +12477,25 @@ async function fetchZtx6dOpenApi(action, payload) {
     }
 
     return data || {};
+}
+
+function ztx6dBrowserCookieName(req, phase) {
+    const basePath = new URL(resolvePublicBaseUrl(req)).pathname.replace(/\/+$/, '');
+    const scope = crypto.createHash('sha256').update(basePath).digest('hex').slice(0, 16);
+    return `__Host-rai_ztx6d_${phase}_${scope}`;
+}
+
+function setZtx6dBrowserCookie(req, res, phase, value = '') {
+    // __Host- requires Path=/; names isolate formal/beta and reject sibling-domain cookie planting.
+    res.cookie(ztx6dBrowserCookieName(req, phase), value, {
+        httpOnly: true, secure: true, sameSite: 'lax', path: '/',
+        maxAge: value ? (phase === 'rt' ? ZTX6D_RT_TTL_MS : ZTX6D_AUTH_CODE_TTL_MS) : 0
+    });
+    res.setHeader('Cache-Control', 'no-store');
+}
+
+function matchesZtx6dBrowserCookie(req, phase, value) {
+    return !!value && readRefreshTokenCookie(req.headers.cookie, ztx6dBrowserCookieName(req, phase)) === value;
 }
 
 async function cleanupExpiredZtx6dRt() {
@@ -12617,6 +12758,8 @@ app.get('/api/auth/ztx6d/start', authLimiter, async (req, res) => {
             [rt, returnPath, Date.now(), Date.now() + ZTX6D_RT_TTL_MS]
         );
 
+        setZtx6dBrowserCookie(req, res, 'rt', rt);
+        setZtx6dBrowserCookie(req, res, 'code');
         const loginUrl = new URL(ZTX6D_LOGIN_URL);
         loginUrl.searchParams.set('rt', rt);
         res.redirect(loginUrl.toString());
@@ -12649,6 +12792,8 @@ app.post('/api/auth/ztx6d/bind/start', authenticateToken, authLimiter, async (re
             [rt, returnPath, Date.now(), Date.now() + ZTX6D_RT_TTL_MS, req.user.userId]
         );
 
+        setZtx6dBrowserCookie(req, res, 'rt', rt);
+        setZtx6dBrowserCookie(req, res, 'code');
         const loginUrl = new URL(ZTX6D_LOGIN_URL);
         loginUrl.searchParams.set('rt', rt);
         res.json({ success: true, redirectUrl: loginUrl.toString() });
@@ -12668,6 +12813,10 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
 
     if (!rt) {
         return res.redirect(redirectZtx6dError(req, returnPath, 'missing_rt'));
+    }
+
+    if (!matchesZtx6dBrowserCookie(req, 'rt', rt)) {
+        return res.redirect(redirectZtx6dError(req, returnPath, 'browser_mismatch'));
     }
 
     try {
@@ -12694,6 +12843,8 @@ app.get('/api/auth/ztx6d/callback', authLimiter, async (req, res) => {
             ? await bindZtx6dUser(bindUserId, uid)
             : await findOrCreateZtx6dUser(uid);
         const authCode = await createZtx6dAuthCode(user, returnPath);
+        setZtx6dBrowserCookie(req, res, 'rt');
+        setZtx6dBrowserCookie(req, res, 'code', authCode);
 
         res.redirect(buildClientAuthRedirect(req, returnPath, {
             auth_code: authCode,
@@ -12709,12 +12860,17 @@ installSecureSharingRoutes({ app, authenticateToken, authLimiter, apiLimiter, db
     buildAuthenticatedUserPayload, buildAuthSessionDeviceMetadata, authSessionStartupReady, allowedCorsOrigins, publicBaseUrl: PUBLIC_BASE_URL, audit });
 
 installPhotoWidgetRoutes({ app, authenticateToken, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync });
+installDecisionWorkbenchRoutes({ app, authenticateToken, apiLimiter, dbRunAsync, dbGetAsync, dbAllAsync });
 
 app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
     const authCode = String(req.body?.auth_code || req.query?.auth_code || '').trim();
     const fingerprint = readAuthDeviceFingerprint(req);
     if (!authCode) {
         return res.status(400).json({ success: false, error: 'missing_auth_code' });
+    }
+
+    if (!matchesZtx6dBrowserCookie(req, 'code', authCode)) {
+        return res.status(400).json({ success: false, error: 'invalid_or_expired_auth_code' });
     }
 
     try {
@@ -12732,6 +12888,7 @@ app.post('/api/auth/ztx6d/exchange', authLimiter, async (req, res) => {
             additionalClaims: { provider: codeRecord.provider || 'ztx6d' }
         });
         res.setHeader('Set-Cookie', session.refreshCookie.header);
+        setZtx6dBrowserCookie(req, res, 'code');
 
         res.json({
             success: true,
@@ -13707,7 +13864,7 @@ app.post('/api/auth/passkeys/authentication/options', authLimiter, async (req, r
         await cleanupPasskeyEphemeralState();
 
         const cookies = parseCookieHeader(req);
-        const previousToken = String(cookies[PASSKEY_LOGIN_COOKIE] || '');
+        const previousToken = String(cookies.get(PASSKEY_LOGIN_COOKIE) || '');
         if (previousToken) {
             await runPasskeySerialized(() => passkeyDbRunAsync(
                 `UPDATE webauthn_challenges
@@ -13744,7 +13901,7 @@ app.post('/api/auth/passkeys/authentication/verify', authLimiter, async (req, re
         setPasskeyNoStore(res);
         clearPasskeyLoginCookie(res, context.secure, req);
 
-        const token = String(parseCookieHeader(req)[PASSKEY_LOGIN_COOKIE] || '');
+        const token = String(parseCookieHeader(req).get(PASSKEY_LOGIN_COOKIE) || '');
         const response = req.body?.response;
         if (!token) {
             throw buildPasskeyHttpError('无法验证通行密钥，请重试', 401, 'passkey_authentication_invalid');
@@ -15129,7 +15286,7 @@ app.put('/api/user/config', authenticateToken, async (req, res) => {
             );
         }
 
-        console.log(` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${safeConfig.system_prompt.length}, longMemory=${memory ? memory.enabled : 'unchanged'}`);
+        console.log(JSON.stringify([` 用户配置已保存: userId=${req.user.userId}, systemPromptLength=${safeConfig.system_prompt.length}, longMemory=${memory ? memory.enabled : 'unchanged'}`]));
         res.json({
             success: true,
             memory,
@@ -16287,7 +16444,7 @@ app.delete('/api/sessions/:id', authenticateToken, async (req, res) => {
         const deleteElapsedMs = Date.now() - deleteStartedAt;
         // 图像文件清理不阻塞响应（尽力而为，后台执行）
         setImmediate(() => { drainQueuedGeneratedImageDeletionsBestEffort().catch(() => null); });
-        console.log(` 删除会话成功: ${req.params.id}, elapsed=${deleteElapsedMs}ms`);
+        console.log(JSON.stringify([` 删除会话成功: ${req.params.id}, elapsed=${deleteElapsedMs}ms`]));
         return res.json({ success: true });
     } catch (error) {
         console.error(' 删除会话失败:', sanitizeReportContext(error));
@@ -16623,7 +16780,7 @@ function extractLegacyTrailingTitle(text = '') {
     };
 }
 
-function parseStructuredAssistantOutput(rawText = '') {
+function parseStructuredAssistantOutput(rawText = '', minimumFinalMarkerOffset = 0) {
     const source = String(rawText || '');
     const markerSource = source.replace(/\[\/?(?:title|rai_final)\]/gi, (marker) => marker.toUpperCase());
     let visibleContent = '';
@@ -16636,7 +16793,7 @@ function parseStructuredAssistantOutput(rawText = '') {
 
     while (cursor < source.length) {
         if (markerSource.startsWith(FINAL_ANSWER_TOKEN, cursor)) {
-            if (finalAnswerOffset < 0) finalAnswerOffset = visibleContent.length;
+            if (finalAnswerOffset < 0 && cursor >= minimumFinalMarkerOffset) finalAnswerOffset = visibleContent.length;
             cursor += FINAL_ANSWER_TOKEN.length;
             continue;
         }
@@ -17828,7 +17985,7 @@ app.delete('/api/sessions/:sessionId/messages/:messageId', authenticateToken, as
         if (result.notFound) return res.status(404).json({ error: '消息不存在' });
         await drainQueuedGeneratedImageDeletionsBestEffort();
         scheduleConversationIntegritySeal(sessionId, req.user.userId);
-        console.log(` 已删除消息 ID: ${messageId}`);
+        console.log(JSON.stringify([` 已删除消息 ID: ${messageId}`]));
         return res.json({ success: true, deletedId: messageId });
     } catch (error) {
         console.error(' 删除消息失败:', sanitizeReportContext(error));
@@ -17869,7 +18026,7 @@ app.put('/api/sessions/:sessionId/messages/:messageId', authenticateToken, (req,
                     return res.status(404).json({ error: '消息不存在' });
                 }
 
-                console.log(` 已更新消息 ID: ${messageId}`);
+                console.log(JSON.stringify([` 已更新消息 ID: ${messageId}`]));
                 scheduleConversationIntegritySeal(sessionId, req.user.userId);
                 res.json({ success: true, updatedId: messageId, content });
             }
@@ -21082,7 +21239,7 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             ? String(agentTraceLevel)
             : 'invalid';
         quotaTurn.thinkingMode = thinkingMode;
-        console.log(` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${!!internetMode}, agentMode=${!!agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${normalizeAgentPolicy(agentPolicy)}, quality=${normalizeQualityProfile(qualityProfile)}, trace=${normalizedTraceLogValue}, reasoningProfile=${normalizedReasoningProfile}`);
+        console.log(JSON.stringify([` 接收参数: model=${model}, thinking=${thinkingMode}, internet=${!!internetMode}, agentMode=${!!agentMode}, researchMode=${normalizedResearchMode}, researchMaxRounds=${normalizedResearchMaxRounds}, policy=${normalizeAgentPolicy(agentPolicy)}, quality=${normalizeQualityProfile(qualityProfile)}, trace=${normalizedTraceLogValue}, reasoningProfile=${normalizedReasoningProfile}`]));
         if (requestedModel !== model) {
             console.log(` 已归一化旧模型ID: ${formatPrivateLogFingerprint(requestedModel, 'requestedModel')}, normalized=${model}`);
         }
@@ -21251,6 +21408,9 @@ app.post('/api/chat/stream', apiLimiter, authenticateToken, async (req, res) => 
             skillCatalog: clientSkills ? [] : getSkillCatalog(),
             toolEnvironment: clientFileExecution ? (localAgentSession ? 'local-agent' : 'windows-client') : 'web-sandbox'
         });
+        if (req.body?.interactiveVisuals === true) {
+            systemPrompt += '\n\n' + buildInteractiveVisualPrompt(sessionPromptContext.promptLanguage);
+        }
         if (clientSkills) systemPrompt += '\n客户端技能以本轮末尾目录为准，未知技能用 list_skills；本地操作→local-tools，Office 只读本机对应技能，不读取云端 sandbox 教程。';
         if (cxAgentEnabled) systemPrompt += '\n' + cxAgentTools.guidance;
         req.chatLatency?.mark('prompt_base_ready');
@@ -21362,6 +21522,13 @@ if (clientFileExecution && systemPrompt) {
             .filter((attachment, index, rows) => (
                 rows.findIndex((row) => row.file_id === attachment.file_id) === index
             ));
+        const availableReferenceImageFileIds = workspaceAttachmentCatalog
+            .filter((attachment) => String(attachment.mime_type || '').toLowerCase().startsWith('image/'))
+            .map((attachment) => attachment.file_id);
+        const defaultReferenceImageFileIds = (Array.isArray(lastUserMsg.attachments) ? lastUserMsg.attachments : [])
+            .filter((attachment) => String(attachment?.type || '').toLowerCase() === 'image')
+            .map((attachment) => String(attachment?.fileId || attachment?.filename || '').trim())
+            .filter((fileId, index, rows) => WORKSPACE_UPLOAD_FILENAME_RE.test(fileId) && rows.indexOf(fileId) === index);
         const lowLatencyRequest = lowLatencyMode === true || lowLatencyMode === 1 || lowLatencyMode === '1';
         const workspaceToolsEnabled = shouldEnableWorkspaceTools(userContent, workspaceAttachmentCatalog);
         // read_skill is a core protocol tool, not a memory feature. It must remain
@@ -21728,6 +21895,8 @@ if (clientFileExecution && systemPrompt) {
                 // 前置点数检查已判定回退，不再进入并行Agent调用
                 console.warn(' Agent模式已因点数/策略回退到单模型路径');
             } else {
+                let parallelAgentCommitted = false;
+                const agentRequestController = createChatAbortController();
                 try {
                     const agentTraceState = {
                         version: 1,
@@ -21851,11 +22020,13 @@ if (clientFileExecution && systemPrompt) {
                     };
 
                     console.log('\n 启用真并行 Multi-Agent 模式 (K2.6)\n');
-                    const agentRequestController = createChatAbortController();
+                    const agentUserMessage = req.body?.interactiveVisuals === true
+                        ? appendInteractiveVisualState([{ role: 'user', content: userContent }], req.body.interactiveVisualState)[0].content
+                        : userContent;
                     const agentResult = await runTrueParallelAgentMode({
                         res,
                         messages,
-                        userMessage: userContent,
+                        userMessage: agentUserMessage,
                         systemPrompt,
                         userIdentityInstruction,
                         domainInstruction: activeDomainInstruction,
@@ -21876,6 +22047,7 @@ if (clientFileExecution && systemPrompt) {
                         sessionId,
                         requestId,
                         signal: agentRequestController.signal,
+                        onProgressCommitted: () => { parallelAgentCommitted = true; },
                         onAgentEvent
                     });
 
@@ -21891,6 +22063,7 @@ if (clientFileExecution && systemPrompt) {
                     const processTraceJson = JSON.stringify({
                         version: agentTraceState.version,
                         mode: agentTraceState.mode,
+                        reasoning_profile: normalizedReasoningProfile,
                         policy: agentTraceState.policy,
                         qualityProfile: agentTraceState.qualityProfile,
                         plan: agentTraceState.plan,
@@ -22016,6 +22189,10 @@ if (clientFileExecution && systemPrompt) {
                     console.log('\n 真并行 Multi-Agent 处理完成\n');
                     return;
                 } catch (agentPipelineError) {
+                    agentRequestController.abort();
+                    // Once output or tool dispatch is committed, use the outer error finalizer.
+                    // Restarting as a single model could duplicate answers or repeat side effects.
+                    if (parallelAgentCommitted) throw agentPipelineError;
                     console.error(' 真并行Agent流程失败，回退单模型路径:', sanitizeReportContext(agentPipelineError));
                     emitAgentEvent(res, {
                         type: 'agent_status',
@@ -22455,6 +22632,9 @@ if (clientFileExecution && systemPrompt) {
 
         // 构建消息数组
         let finalMessages = [...messages];
+        if (req.body?.interactiveVisuals === true) {
+            finalMessages = appendInteractiveVisualState(finalMessages, req.body.interactiveVisualState);
+        }
 
         // 如果是多模态请求，转换消息格式为Omni格式
         if (isMultimodalRequest) {
@@ -22503,7 +22683,10 @@ if (clientFileExecution && systemPrompt) {
                 toolHints.push('当前处于联网模式。若用户要求“最新/实时/文献/论文/来源/数据依据/研究结论”或找、看、展示真实网络图片，请至少调用一次 web_search 再回答。要看图片时，把搜索结果 images 中的真实 URL 用 ![简短描述](图片URL) 放在回复合适位置；客户端能显示，不能声称无法展示。涉及天气、新闻、股价、时效数据时也应按需调用。');
             }
             if (imageGenerationRequested) {
-                toolHints.push('用户正在请求生成图片。按需读取 image_generation 官方技能并调用 generate_image，提供明确 name、prompt、model 和不超过 1024 的 image_size，每次一张。gpt-image-2.5、gpt-image-2.5-flare、gpt-image-2.5-sunburst 分别消耗 100、200、300 点。余额不足时明确告知所需与当前点数，停止生成；不得重试或切换模型绕过扣点。禁止传 image、image_url、示例或上游临时 URL。图片已由服务端展示，后续简短说明并使用工具返回的真实名称和文件名。');
+                toolHints.push('Read image_generation as needed. Call generate_image once per image with a name, prompt, model and supported 1K/2K image_size. GPT Image 2.6 is the default; base/flare/sunburst cost 100/200/300 points. Insufficient points stop generation; failures and cancellations refund the charge. Use returned names and filenames.');
+            }
+            if (imageGenerationRequested && availableReferenceImageFileIds.length > 0) {
+                toolHints.push('Reference image attachment IDs in this conversation: ' + JSON.stringify(availableReferenceImageFileIds) + '. Pass selected IDs in reference_image_file_ids.');
             }
             if (memoryToolsEnabled) {
                 toolHints.push('save_memory 与 delete_memory 已按需可用；严格遵守系统提示词顶部的记忆规则，不得为了使用工具而制造记忆。');
@@ -22785,6 +22968,8 @@ if (clientFileExecution && systemPrompt) {
         let streamDegraded = false;
         let streamFailureWarning = null;
         let assistantVisibleStarted = false;
+        let completedToolRounds = 0;
+        let finalSummaryMinimumOffset = 0;
         let latestStructuredAssistantOutput = {
             visibleContent: '',
             extractedTitle: null,
@@ -22798,7 +22983,8 @@ if (clientFileExecution && systemPrompt) {
             if (!normalizedChunk) return '';
 
             rawAssistantStructuredBuffer += normalizedChunk;
-            latestStructuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer);
+            latestStructuredAssistantOutput = parseStructuredAssistantOutput(rawAssistantStructuredBuffer,
+                completedToolRounds > 8 ? finalSummaryMinimumOffset : Infinity);
             const nextVisibleContent = sanitizeAssistantVisibleContent(latestStructuredAssistantOutput.visibleContent || '');
             if (!assistantVisibleStarted && shouldHoldAssistantVisibleContent(rawAssistantStructuredBuffer, nextVisibleContent)) {
                 return '';
@@ -22810,7 +22996,7 @@ if (clientFileExecution && systemPrompt) {
             const rawFinalOffset = latestStructuredAssistantOutput.finalAnswerOffset;
             const finalOffset = rawFinalOffset < 0 ? -1 : sanitizeAssistantVisibleContent(
                 latestStructuredAssistantOutput.visibleContent.slice(0, rawFinalOffset), true).length;
-            if (serverFinalAnswerOffset < 0 && finalOffset >= 0 && nextVisibleContent.slice(finalOffset).trim()) {
+            if (completedToolRounds > 8 && serverFinalAnswerOffset < 0 && finalOffset >= 0 && nextVisibleContent.slice(finalOffset).trim()) {
                 const prefixLength = Math.max(0, finalOffset - fullContent.length);
                 if (prefixLength > 0) {
                     const progress = visibleDelta.slice(0, prefixLength);
@@ -23057,6 +23243,7 @@ if (clientFileExecution && systemPrompt) {
                     const processTraceJson = JSON.stringify({
                         version: researchTraceState.version,
                         mode: researchTraceState.mode,
+                        reasoning_profile: normalizedReasoningProfile,
                         researchMode: researchTraceState.researchMode,
                         discussionRounds: researchTraceState.discussion.rounds.length,
                         consensusReached: researchTraceState.discussion.consensusReached,
@@ -23648,7 +23835,7 @@ if (clientFileExecution && systemPrompt) {
             if (gptImageModelSelected) {
                 clearTimeout(timeoutId);
                 apiResponse = new Response(
-                    buildDirectImageToolCallSse(userContent, `direct_image_${requestId}`),
+                    buildDirectImageToolCallSse(userContent, `direct_image_${requestId}`, inferImageGenerationSize(userContent)),
                     {
                         status: 200,
                         headers: { 'Content-Type': 'text/event-stream; charset=utf-8' }
@@ -24284,6 +24471,11 @@ if (clientFileExecution && systemPrompt) {
                         let recoveryPayload = null;
                         try { recoveryPayload = recoveryText ? JSON.parse(recoveryText) : null; } catch (_) { recoveryPayload = null; }
                         emitStreamUsage('recovery', recoveryPayload);
+                        const recoveredToolCalls = recoveryPayload?.choices?.[0]?.message?.tool_calls;
+                        if (Array.isArray(recoveredToolCalls)) {
+                            accumulatedToolCalls.push(...recoveredToolCalls.filter(call =>
+                                call?.type === 'function' && typeof call.function?.name === 'string' && typeof call.function?.arguments === 'string'));
+                        }
                         const recovered = String(recoveryPayload?.choices?.[0]?.message?.content || '').trim();
                         if (recovered) {
                             const sanitizedRecovered = sanitizeStreamingContent(recovered);
@@ -24586,7 +24778,13 @@ if (clientFileExecution && systemPrompt) {
                     type: 'function',
                     function: {
                         name: 'generate_image',
-                        arguments: JSON.stringify({ prompt: userContent })
+                        arguments: JSON.stringify({
+                            prompt: userContent,
+                            image_size: inferImageGenerationSize(userContent),
+                            ...(defaultReferenceImageFileIds.length > 0
+                                ? { reference_image_file_ids: defaultReferenceImageFileIds }
+                                : {})
+                        })
                     }
                 });
                 streamFinishReason = 'tool_calls';
@@ -24703,8 +24901,9 @@ if (clientFileExecution && systemPrompt) {
 
                     while ((pendingToolCalls.length > 0 || activeRequestInterjections.get(requestId)?.length) && toolRound < maxToolRounds) {
                         toolRound += 1;
-                        if (!pendingToolCalls.length && fullContent.length > correctionAnswerStart) {
-                            conversationMessages.push({ role: 'assistant', content: fullContent.slice(correctionAnswerStart) });
+                        const toolRoundContent = fullContent.slice(correctionAnswerStart);
+                        if (!pendingToolCalls.length && toolRoundContent) {
+                            conversationMessages.push({ role: 'assistant', content: toolRoundContent });
                         }
                         correctionAnswerStart = fullContent.length;
                         let deliveredInterjection = false;
@@ -25039,6 +25238,8 @@ if (clientFileExecution && systemPrompt) {
                                         requestId,
                                         requireGptGateway: gptImageModelSelected,
                                         requestedImageModel: gptImageModelSelected ? model : 'auto',
+                                        allowedReferenceImageFileIds: availableReferenceImageFileIds,
+                                        defaultReferenceImageFileIds,
                                         signal: controller.signal
                                     });
                                 } else {
@@ -25371,10 +25572,10 @@ if (clientFileExecution && systemPrompt) {
                             break;
                         }
 
-                        // 将本轮工具调用 + 工具结果加入上下文，发起下一轮流式生成
+                        // Preserve text already shown to the user so the next round does not repeat it.
                         const assistantToolCallMessage = {
                             role: 'assistant',
-                            content: null,
+                            content: toolRoundContent || null,
                             tool_calls: executedToolResults.map(({ toolCall }) => ({
                                 id: toolCall.id,
                                 type: 'function',
@@ -25398,7 +25599,19 @@ if (clientFileExecution && systemPrompt) {
                             const turn = chatModelQuotaContext.getStore();
                             if (turn) turn.toolTruncationNotified = true;
                         }
-                        if (executedToolResults.length) conversationMessages = [...conversationMessages, assistantToolCallMessage, ...toolResultMessages];
+                        if (executedToolResults.length) {
+                            // One completed batch is one round, including returned error results.
+                            completedToolRounds += 1;
+                            if (completedToolRounds === 9) {
+                                finalSummaryMinimumOffset = rawAssistantStructuredBuffer.length;
+                            }
+                            conversationMessages = [
+                                ...conversationMessages,
+                                assistantToolCallMessage, ...toolResultMessages,
+                                { role: 'assistant', name: 'rai_tool_round_status',
+                                    content: buildToolRoundInstruction(completedToolRounds, uiLanguage) }
+                            ];
+                        }
 
                         // Include interjections typed during this round tool execution before the continuation call.
                         for (const interjection of collectRequestInterjections(requestId)) {
@@ -26109,6 +26322,7 @@ if (clientFileExecution && systemPrompt) {
             const assistantProcessTraceJson = JSON.stringify({
                 ...(promptContextTrace || {}),
                 version: 3,
+                reasoning_profile: normalizedReasoningProfile,
                 tools: serverToolTrace,
                 flowSegments: serverFlowSegments.slice(-200),
                 finalAnswerOffset: serverFinalAnswerOffset,
@@ -26399,7 +26613,7 @@ app.post('/api/chat/stop', authenticateToken, (req, res) => {
                     if (err) {
                         return res.status(500).json({ error: '停止失败' });
                     }
-                    console.log(' 停止请求:', requestId);
+                    console.log(JSON.stringify([' 停止请求:', requestId]));
                     rejectClientToolPending(requestId, 'client_cancelled');
                     res.json({ success: true, message: '已发送停止信号' });
                 }
@@ -26861,7 +27075,7 @@ function getPasskeyRequestContext(req) {
 }
 
 function parseCookieHeader(req) {
-    const output = {};
+    const output = new Map();
     String(req.headers.cookie || '').split(';').forEach((part) => {
         const separator = part.indexOf('=');
         if (separator <= 0) return;
@@ -26869,9 +27083,9 @@ function parseCookieHeader(req) {
         const value = part.slice(separator + 1).trim();
         if (!key) return;
         try {
-            output[key] = decodeURIComponent(value);
+            output.set(key, decodeURIComponent(value));
         } catch (error) {
-            output[key] = value;
+            output.set(key, value);
         }
     });
     return output;
@@ -28263,7 +28477,7 @@ app.get(['/api/model-availability', '/api/models/availability'], async (req, res
             models,
             disabledModels: models.filter((model) => !model.enabled).map((model) => model.id),
             conversationQuota: { windowHours: 24, limits: CHAT_MODEL_LIMITS, chargeOn: 'completed_answer', sharedAcrossClients: true },
-            imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 1024, maxBatchSize: 1 },
+            imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 2048, maxBatchSize: 1 },
             contextWindow: CONTEXT_WINDOW_TOKENS, contextEstimation: 'conservative_utf8_bytes', contextTokensEstimated: true, autoContextCompression: true,
             contextPolicies: { ...CONTEXT_POLICIES, ...Object.fromEntries(models.map(model => [model.id, { contextWindow: model.contextWindow, compressionThreshold: model.compressionThreshold, estimated: true }])) },
             uploadFileNameMaxCharacters: 255, smartDefaults: await resolveModeDefaults('smart'), fastDefaults: await resolveModeDefaults('fast'), thinkingDefaults: await resolveModeDefaults('thinking')
@@ -28884,7 +29098,7 @@ app.get('/api/user/membership', authenticateToken, async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        res.json({ ...snapshot, imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 1024 } });
+        res.json({ ...snapshot, imageGeneration: { modelCosts: IMAGE_MODEL_COSTS, maxDimension: 2048 } });
     } catch (error) {
         console.error(' 获取会员状态失败:', sanitizeReportContext(error));
         res.status(500).json({ error: '获取会员状态失败' });
@@ -29127,7 +29341,7 @@ app.post('/api/user/membership/redeem', authenticateToken, async (req, res) => {
         }
 
         const snapshot = await getUserMembershipSnapshot(redemption.userId);
-        console.log(` 用户 ${redemption.userId} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`);
+        console.log(JSON.stringify([` 用户 ${redemption.userId} 兑换会员成功: ${tier}, 扣除 ${config.redeemCost} 点`]));
         res.json({
             success: true,
             tier,
@@ -30099,7 +30313,7 @@ app.delete('/api/admin/users/:userId', authenticateAdmin, async (req, res) => {
         if (!result.success) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        console.log(` 管理员删除用户 ID: ${userId}`);
+        console.log(JSON.stringify([` 管理员删除用户 ID: ${userId}`]));
         return res.json({
             success: true,
             deletedUserId: result.deletedUserId,
@@ -30146,7 +30360,7 @@ app.put('/api/admin/users/:userId/membership', authenticateAdmin, (req, res) => 
         if (this.changes === 0) {
             return res.status(404).json({ error: '用户不存在' });
         }
-        console.log(` 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`);
+        console.log(JSON.stringify([` 管理员设置用户 ${userId} 会员为 ${membership}，时长 ${months || 0} 个月`]));
         res.json({ success: true, membership, membershipStart, membershipEnd });
     });
 });
@@ -30183,7 +30397,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(` 管理员给用户 ${userId} 添加 ${points} 购买点数`);
+            console.log(JSON.stringify([` 管理员给用户 ${userId} 添加 ${points} 购买点数`]));
             res.json({ success: true, pointsAdded: points, type: 'purchased' });
         });
     } else {
@@ -30198,7 +30412,7 @@ app.put('/api/admin/users/:userId/points', authenticateAdmin, (req, res) => {
             if (this.changes === 0) {
                 return res.status(404).json({ error: '用户不存在' });
             }
-            console.log(` 管理员给用户 ${userId} 添加 ${points} 每日点数`);
+            console.log(JSON.stringify([` 管理员给用户 ${userId} 添加 ${points} 每日点数`]));
             res.json({ success: true, pointsAdded: points, type: 'daily' });
         });
     }
@@ -30269,7 +30483,7 @@ app.delete('/api/admin/messages/:messageId', authenticateAdmin, async (req, res)
         });
         if (!deleted) return res.status(404).json({ error: '消息不存在' });
         await drainQueuedGeneratedImageDeletionsBestEffort();
-        console.log(` 管理员删除消息 ID: ${messageId}`);
+        console.log(JSON.stringify([` 管理员删除消息 ID: ${messageId}`]));
         return res.json({ success: true, deletedMessageId: messageId });
     } catch (error) {
         console.error(' 删除消息失败:', sanitizeReportContext(error));
@@ -30311,7 +30525,7 @@ app.delete('/api/admin/sessions/:sessionId', authenticateAdmin, async (req, res)
             return res.status(404).json({ error: '会话不存在' });
         }
         await drainQueuedGeneratedImageDeletionsBestEffort();
-        console.log(` 管理员删除会话 ID: ${sessionId}`);
+        console.log(JSON.stringify([` 管理员删除会话 ID: ${sessionId}`]));
         return res.json({ success: true, deletedSessionId: sessionId });
     } catch (err) {
         console.error(' 删除会话失败:', sanitizeReportContext(err));

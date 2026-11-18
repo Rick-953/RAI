@@ -80,7 +80,7 @@ impl AuditLog {
         if !self.path.exists() {
             return Ok(Vec::new());
         }
-        let cutoff = chrono::Utc::now().timestamp() - RETENTION_SECONDS;
+        let cutoff = crate::unix_timestamp() - RETENTION_SECONDS;
         let file = fs::File::open(&self.path)?;
         let mut entries = BufReader::new(file)
             .lines()

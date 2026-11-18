@@ -61,7 +61,7 @@ impl AgentConfig {
             grants: vec![Grant {
                 root: home,
                 actions: vec!["read".into(), "write".into(), "execute".into()],
-                created_at: chrono::Utc::now().timestamp(),
+                created_at: crate::unix_timestamp(),
             }],
             trusted_servers: Vec::new(),
         };

@@ -10,9 +10,14 @@ const prompts = promptPayload.prompts || {};
 
 function readKeyFile(filePath) {
   if (!filePath) return '';
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new Error('provider key file permissions are not restricted');
-  return fs.readFileSync(filePath, 'utf8').trim();
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 4096 || (stat.mode & 0o077) !== 0) throw new Error('provider key file permissions are not restricted');
+    return fs.readFileSync(fd, 'utf8').trim();
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function envKey(fileName, envName) {

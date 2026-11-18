@@ -1,3 +1,27 @@
+## 0.13.53 - adaptive interactions
+
+- Add 14 task-driven controls and stable-ID workspace updates. On desktop the right panel opens only as needed, and both sidebar widths are device-local. On phones controls stay inline.
+- After nine or more completed tool rounds, allow a final summary in the same continuation. Short turns keep one answer, and later failures do not replay tools.
+- Keep GPT Image 2.6 reference attachments and 2K output. Use an audited SQLite build dependency graph and keep the Local Agent free of `chrono`.
+
+## 0.13.52 - 2026-11-13
+
+- Support 2K output and conversation reference images in GPT Image 2.6; validate attachment ownership before charging, refund failed or cancelled requests.
+- Add message details with a first-use swipe guide.
+
+## 0.13.51 - 2026-11-13
+
+- Add a desktop decision workbench using the existing RAI theme and motion: conversation list 20%, chat 44%, pinned information 36%. Collapsing the list expands chat and workbench to 55% / 45%; there is no equal-thirds layout selector.
+- Pin message snapshots to the current conversation, keep source provenance and changed/deleted-source notices, and restore pins across reloads. Account and conversation boundaries are enforced on the server.
+- Render model-authored budget calculators, comparison charts, and interactive checklists from validated `rai_visual` data. Parameter changes stay local until the user adds them to the composer; original answers and quotes remain unchanged.
+
+## 0.13.50 - 2026-11-12
+
+- Offer the newer GPT Image 2.6 family next to 2.5: `generate_image` now accepts `gpt-image-2.6`, `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` in the tool enum, model catalog, point deduction and the settings image price list, so the list mirrors what the image upstream actually serves.
+- Use `gpt-image-2.6` when a caller does not name a model (retired `auto`/`gpt-image-2`/`kolors-free` aliases resolve there too); 2.5 stays selectable.
+- Keep pricing unchanged and per-generation identical (100 / 200 / 300 points by tier); the upstream bills the same for every tier, one charge per image, and the 2.5 identifiers stay valid for released clients.
+- Update the trusted `image_generation` skill and its manifest hash, and advance the front-end build marker to 20261112-image-26.
+
 ## 0.13.48 - 2026-11-07
 
 - Preserve the actual HTTP status when a model continuation fails after useful output. A provider billing failure is explicit, partial work and completed tools remain saved, and reasoning-only finalization does not overwrite the cause.

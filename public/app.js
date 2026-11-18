@@ -2359,6 +2359,8 @@ const ICON_PATHS = {
   //  Sparkle/星星闪烁图标 - 用于思考(Chain of Thought)UI的图标
   'sparkles': { viewBox: '0 -960 960 960', content: '<path d="m354-247 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-80l65-281L80-550l288-25 112-265 112 265 288 25-218 189 65 281-247-149L233-80Z"/>' },
 
+  'push_pin': '<path d="M16 9V4h1V2H7v2h1v5l-2 2v2h5v7l1 2 1-2v-7h5v-2l-2-2Zm-6 .83V4h4v5.83L15.17 11H8.83L10 9.83Z"/>',
+
   //  RAI 彩色Logo - 用于侧边栏品牌Logo、AI消息头像、欢迎页面
   'rai_logo_colored': {
     viewBox: '0 0 64 64',
@@ -2413,8 +2415,8 @@ function getRaiWebBasePath() {
 const RAI_WEB_BASE_PATH = getRaiWebBasePath();
 const API_BASE = RAI_IS_TAURI_DESKTOP ? `${RAI_PRODUCTION_ORIGIN}/api` : `${RAI_WEB_BASE_PATH}/api`;
 globalThis.RAI_API_BASE = API_BASE;
-const RAI_APP_VERSION = '0.13.49';
-const RAI_BUILD_ID = '20261107-stream-reasons';
+const RAI_APP_VERSION = '0.13.53';
+const RAI_BUILD_ID = '20261113-adaptive-interactions';
 const RAI_FONT_VERSION = 'v1';
 const RAI_FONT_ASSETS = [
   ['RAI Elms Sans', `fonts/elms-sans/${RAI_FONT_VERSION}/ElmsSans-VariableFont_wght.ttf`, { weight: '100 900', style: 'normal' }],
@@ -5839,6 +5841,29 @@ const i18n = {
     'message-model-badge-desc': '在模型回复下显示“模型名 定制版”标签。',
     'message-internet-badge-title': '联网标签',
     'message-internet-badge-desc': '在联网回复下显示“联网”标签。',
+    'message-detail-toggle': '查看消息详情',
+    'message-detail-toggle-close': '收起消息详情',
+    'message-detail-title': '消息详情',
+    'message-detail-time': '时间',
+    'message-detail-time-unknown': '未记录',
+    'message-detail-model': '模型',
+    'message-detail-model-unknown': '未记录',
+    'message-detail-thinking': '思考等级',
+    'message-detail-thinking-on': '已开启',
+    'message-detail-thinking-off': '关闭',
+    'message-detail-thinking-research': '深度研究',
+    'message-detail-network': '联网',
+    'message-detail-network-on': '已联网',
+    'message-detail-network-off': '未联网',
+    'message-detail-role': '消息类型',
+    'message-detail-user': '用户',
+    'message-detail-assistant': 'RAI',
+    'message-detail-hint': '向右滑动消息，查看时间、模型、思考和联网状态',
+    'message-detail-hint-dismiss': '知道了',
+    'onb-usage-workbench-title': '固定工作台',
+    'onb-usage-workbench-desc': '把预算、方案价格或关键结论固定到右侧，后续对话随时对照。',
+    'onb-usage-visual-title': '可视化交互',
+    'onb-usage-visual-desc': '预算、方案对比和清单会变成可操作卡片，调整后先生成草稿，再决定是否发送。',
     'settings-guide-mascot-label': '桌面宠物',
     'settings-guide-mascot-desc': '在聊天页显示可拖动、可互动的宠物。桌面端也可右键隐藏。',
     'settings-pet-picker-label': '选择宠物',
@@ -6557,6 +6582,29 @@ const i18n = {
     'message-model-badge-desc': 'Show a “Model name Custom Edition” label below model replies.',
     'message-internet-badge-title': 'Web label',
     'message-internet-badge-desc': 'Show a “Web” label below replies that used web search.',
+    'message-detail-toggle': 'View message details',
+    'message-detail-toggle-close': 'Hide message details',
+    'message-detail-title': 'Message details',
+    'message-detail-time': 'Time',
+    'message-detail-time-unknown': 'Not recorded',
+    'message-detail-model': 'Model',
+    'message-detail-model-unknown': 'Not recorded',
+    'message-detail-thinking': 'Thinking',
+    'message-detail-thinking-on': 'On',
+    'message-detail-thinking-off': 'Off',
+    'message-detail-thinking-research': 'Deep research',
+    'message-detail-network': 'Web',
+    'message-detail-network-on': 'Used web',
+    'message-detail-network-off': 'Off',
+    'message-detail-role': 'Message',
+    'message-detail-user': 'You',
+    'message-detail-assistant': 'RAI',
+    'message-detail-hint': 'Swipe a message right to see time, model, thinking and web status',
+    'message-detail-hint-dismiss': 'Got it',
+    'onb-usage-workbench-title': 'Decision workbench',
+    'onb-usage-workbench-desc': 'Pin budgets, prices, or key conclusions on the right so later messages stay easy to compare.',
+    'onb-usage-visual-title': 'Interactive visuals',
+    'onb-usage-visual-desc': 'Budgets, comparisons, and checklists can become editable cards. Adjust them first, then decide whether to send.',
     'settings-guide-mascot-label': 'Desktop pet',
     'settings-guide-mascot-desc': 'Show a draggable, interactive pet in chat. On desktop, right-click it to hide.',
     'settings-pet-picker-label': 'Choose a pet',
@@ -8458,6 +8506,16 @@ function createAttachmentListItem(att = {}) {
 }
 
 const RAI_UPDATE_TIMELINE = [
+  {
+    date: '2026-11-13', version: 'v0.13.53 beta',
+    zh: { summary: '按任务展开的交互工作台。', details: ['默认优先显示对话，右侧按需展开；两侧可拖拽调宽，仅在当前设备记住布局。', 'AI 可选择表单、选项、滑块、日期和可点击卡片等交互，只固定需要持续参考的部分，并随对话更新。手机将交互融入正文。', '左栏收起后保留导航图标；短工具任务直接使用正常回答，超过八轮工具调用才重新生成任务总结。'] },
+    en: { summary: 'An interactive workspace that opens for the task.', details: ['Chat takes priority. Open the right workspace when needed, resize both sides and remember the layout on this device.', 'AI can choose forms, options, sliders, dates and selectable cards, keeping only useful components in the workspace and updating them throughout the conversation. Phones show components inline.', 'Collapsed navigation keeps an icon rail. Short tool tasks retain the normal answer; only tasks beyond eight tool rounds regenerate a final summary.'] }
+  },
+  {
+    date: '2026-11-13', version: 'v0.13.52',
+    zh: { summary: '桌面对话优先三栏与可交互决策工作台。', details: ['左侧对话列表、中间聊天、右侧固定信息按 20% / 44% / 36% 排列；收起列表后按 55% / 45% 展开。', '固定消息按账户和对话保存，可查看来源、引用及取消固定，原文变化时保留旧快照。', 'AI 可生成预算试算、方案对比和任务清单；调整结果先放入输入框，发送后再继续讨论。'] },
+    en: { summary: 'Conversation-first desktop layout and an interactive decision workbench.', details: ['Conversation list, chat and pinned information use 20% / 44% / 36%. Collapsing the list expands chat and workbench to 55% / 45%.', 'Pin message snapshots within each account and conversation, revisit sources and quote or remove them without changing original messages.', 'AI answers can include budget calculators, comparisons and checklists. Add adjusted conditions to the composer before continuing the discussion.'] }
+  },
   {
     date: '2026-11-04', version: 'v0.13.41 · CX RAI 1.8.46',
     zh: { summary: '替换 GPT Image 2.5 生图，按张扣点，修复 Windows 启动和关闭残留。', details: ['三个图片型号每张消耗 100/200/300 点，点数不足会停止并向当前 AI 返回原因。', '生成图片提供准确名称与文件名，最长边限制 1024 像素。', 'Web 与 Windows 使用内置官方生图技能；失败或取消退还点数。', 'Windows 修复登录跳转异常、已登录启动闪退、扫码后导航及主窗口关闭残留；安装器增加桌面快捷方式。'] },
@@ -16011,6 +16069,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function showAuthScreen() {
+  decisionWorkbenchController?.clear();
   if (appState.customApiFormVisible) toggleCustomApiMode(false);
   appState.authState = 'anonymous';
   document.documentElement.dataset.raiAuthState = 'anonymous';
@@ -17816,7 +17875,7 @@ function projectAssistantExecution(segments, finalOffset = -1, complete = false)
     toolCount: process.filter((row) => row.kind === 'tool' || row.kind === 'search').length };
 }
 
-function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [] } = {}) {
+function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, complete = false, live = false, hideReasoning = false, sources = [], sourceId = null } = {}) {
   const projection = projectAssistantExecution(segments, finalOffset, complete);
   let disclosure = container.querySelector(':scope > .execution-process');
   let rows = disclosure?.querySelector('.execution-process-rows') || container.querySelector(':scope > .execution-live-rows');
@@ -17889,7 +17948,12 @@ function renderAssistantExecutionFlow(container, segments, { finalOffset = -1, c
     answer.className = 'execution-answer stream-flow-content';
     container.appendChild(answer);
   }
-  const text = extractAskUserBlocks(sanitizeAssistantDisplayText(projection.answer)).text;
+  const answerText = extractAskUserBlocks(sanitizeAssistantDisplayText(projection.answer)).text;
+  if (!live && window.RAIInteractiveVisuals?.parseBlocks(answerText).length) {
+    renderInteractiveAnswer(answer, answerText, sources, live, sourceId);
+    return;
+  }
+  const text = window.RAIInteractiveVisuals?.stripBlocks(answerText) ?? answerText;
   let html = renderMarkdownWithMath(live ? stripIncompleteAskUserFence(text) : text, live);
   if (Array.isArray(sources) && sources.length) html = renderCitations(html, sources);
   answer.innerHTML = sanitizeRenderedHtml(html);
@@ -17975,6 +18039,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   );
   const finalizedHasReasoningBlock = !!finalizedContent.querySelector('.rai-reasoning-block');
   const preserveLiveFlow = !!(
+    !window.RAIInteractiveVisuals?.parseBlocks(message.content).length &&
     existingText?.classList?.contains('stream-flow') &&
     (finalizedText?.classList?.contains('stream-flow') || (
     !finalizedText?.classList?.contains('stream-flow') &&
@@ -18014,7 +18079,7 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
     if (child.dataset?.raiFinalizedSupplement === '1') child.remove();
   });
   Array.from(finalizedContent.children).forEach((child) => {
-    if (child === finalizedText || child.classList?.contains('message-meta')) return;
+    if (child === finalizedText || child.classList?.contains('message-meta') || child.classList?.contains('message-details')) return;
     if (preserveLiveFlow && !finalizedHasReasoningBlock && (
       child.classList?.contains('thinking-timeline') ||
       child.classList?.contains('rai-reasoning-block')
@@ -18039,6 +18104,8 @@ function finishMessageNodeInPlace(existingNode, message, options = {}) {
   if (finalizedMeta) existingContent.appendChild(finalizedMeta);
 
   applyMessageNodeMetadata(existingNode, message);
+  window.RAIMessageDetails?.refresh(existingNode, message);
+  syncDecisionWorkbench();
   setTimeout(() => processCodeBlocks(existingNode), 0);
   setTimeout(() => renderMermaidCharts(), 0);
   setTimeout(() => renderChatIndexTimeline(), 0);
@@ -18059,9 +18126,140 @@ function bindAssistantStreamRequestId(response, message, element, { sessionId, g
   return requestId;
 }
 
+let decisionWorkbenchController = null;
+
+function stageDecisionPrompt(text) {
+  const input = document.getElementById('messageInput');
+  if (!input || typeof text !== 'string' || !text.trim()) return;
+  window.RaiWebSkills?.noteDraftChange?.();
+  input.value = [input.value.trimEnd(), text.trim()].filter(Boolean).join('\n\n');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
+}
+
+async function resolveDecisionMessageId(message) {
+  if (Number.isSafeInteger(Number(message?.id)) && Number(message.id) > 0) return Number(message.id);
+  const sessionId = appState.currentSession?.id;
+  const userId = appState.user?.id;
+  if (!sessionId || !userId) return null;
+  const response = await sessionApi(`/sessions/${encodeURIComponent(sessionId)}/messages`);
+  if (!response.ok) throw new Error(await getApiErrorMessage(response, `HTTP ${response.status}`));
+  const messages = await response.json();
+  if (appState.currentSession?.id !== sessionId || appState.user?.id !== userId) return null;
+  const matches = Array.isArray(messages) ? messages.filter(item =>
+    item.role === message.role && item.content === message.content &&
+    (!message.request_id || item.request_id === message.request_id)
+  ) : [];
+  // Identical replies must not silently resolve to a different source message.
+  if (matches.length !== 1) return null;
+  message.id = matches[0].id;
+  const node = Array.from(document.querySelectorAll('#messagesList .message'))
+    .find(element => element.__raiMessage === message);
+  if (node) applyMessageNodeMetadata(node, message);
+  return message.id;
+}
+
+function syncDecisionWorkbench(options = {}) {
+  if (!window.RAIDecisionWorkbench) return;
+  if (!decisionWorkbenchController) {
+    ensureUnifiedCanvasPlacement();
+    decisionWorkbenchController = window.RAIDecisionWorkbench.init({
+      getContext: () => ({
+        userId: appState.user?.id || null,
+        sessionId: appState.currentSession?.id || null,
+        language: appState.language,
+        temporary: appState.currentSessionMemoryMode === 'classic-temp',
+        canvasOpen: chatFlowState.isOpen === true,
+        messages: appState.messages,
+        messageKey: getMessageRenderKey
+      }),
+      request: async (path, options = {}) => {
+        const response = await sessionApi(path, options);
+        if (!response.ok) throw new Error(await getApiErrorMessage(response, `HTTP ${response.status}`));
+        return response.status === 204 ? null : response.json();
+      },
+      renderMarkdown: text => sanitizeRenderedHtml(renderMarkdownWithMath(stripTrailingTitleMarker(text))),
+      resolveMessageId: resolveDecisionMessageId,
+      locateSource: messageId => {
+        const target = Array.from(document.querySelectorAll('#messagesList .message[data-message-id]'))
+          .find(element => element.dataset.messageId === String(messageId));
+        if (!target) {
+          showToast(isChineseLanguage(appState.language) ? '来源消息尚未加载，请在对话中向上查看' : 'Load earlier messages to view this source');
+          return;
+        }
+        setScrollFollowMode('pausedByUser');
+        target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      },
+      stagePrompt: stageDecisionPrompt,
+      notify: text => showToast(text)
+    });
+  }
+  decisionWorkbenchController.sync(options);
+}
+
+function createDecisionPinAction(message) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'action-btn decision-pin-action';
+  const label = isChineseLanguage(appState.language) ? '固定到工作台' : 'Pin to workbench';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = getSvgIcon('push_pin', 'material-symbols-outlined', 16);
+  button.addEventListener('click', async () => {
+    syncDecisionWorkbench();
+    if (!decisionWorkbenchController) return;
+    button.disabled = true;
+    try {
+      await decisionWorkbenchController.addPin(message);
+    } catch (error) {
+      showToast(error.message || (isChineseLanguage(appState.language) ? '固定失败，请重试' : 'Could not pin this message'));
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+function renderInteractiveAnswer(container, text, sources, live = false, sourceId = null) {
+  const visuals = window.RAIInteractiveVisuals;
+  const parts = visuals ? visuals.segments(text) : [{ text }];
+  container.replaceChildren();
+  for (const part of parts) {
+    if (part.text !== undefined) {
+      const prose = document.createElement('div');
+      prose.className = 'message-prose';
+      let html = renderMarkdownWithMath(live ? stripIncompleteAskUserFence(part.text) : part.text, live);
+      if (Array.isArray(sources) && sources.length) html = renderCitations(html, sources);
+      prose.innerHTML = sanitizeRenderedHtml(html);
+      container.appendChild(prose);
+    } else if (part.spec.type !== 'remove') {
+      if (matchMedia('(min-width: 769px)').matches) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'message-workspace-link';
+        link.textContent = part.spec.title + (isChineseLanguage(appState.language) ? ' · 在工作台查看 ↗' : ' · View in workspace ↗');
+        link.addEventListener('click', () => decisionWorkbenchController?.openVisual(visuals.keyFor(part.spec)));
+        container.appendChild(link);
+      } else {
+        const host = document.createElement('div');
+        host.className = 'message-interactive-visual';
+        container.appendChild(host);
+        visuals.mount(host, part.spec, decisionWorkbenchController?.visualOptions(part.spec, sourceId)
+          || { onApply: stageDecisionPrompt, language: appState.language });
+      }
+    }
+  }
+  hydrateRenderedImages(container);
+}
+
+matchMedia('(min-width: 769px)').addEventListener('change', () => {
+  if (appState.user) renderMessages({ forceFull: true, preserveScroll: true });
+});
+
 // 修复：改进renderMessages，防止事件处理中的undefined错误
 function renderMessages(options = {}) {
   window.RaiWebSkills?.syncContext?.();
+  syncDecisionWorkbench();
   const container = document.getElementById('messagesList');
   const welcome = document.getElementById('welcomeScreen');
   const preserveScroll = options.preserveScroll === true;
@@ -18077,6 +18275,7 @@ function renderMessages(options = {}) {
   if (appState.messages.length === 0) {
     container.replaceChildren();
     container.dataset.raiSessionId = sessionRenderKey;
+    window.RAIMessageDetails?.syncHint({ container, userId: appState.user?.id || appState.user?.email || '' });
     showWelcome();
     return;
   }
@@ -18097,6 +18296,7 @@ function renderMessages(options = {}) {
       setScrollFollowMode('following');
       scrollToBottom(true);
     }
+    window.RAIMessageDetails?.syncHint({ container, userId: appState.user?.id || appState.user?.email || '' });
     return;
   }
   container.replaceChildren();
@@ -18109,6 +18309,7 @@ function renderMessages(options = {}) {
     }
   });
   container.appendChild(fragment);
+  window.RAIMessageDetails?.syncHint({ container, userId: appState.user?.id || appState.user?.email || '' });
 
   if (preserveScroll && scrollElement) {
     scrollElement.scrollTop = previousScrollTop;
@@ -19465,6 +19666,7 @@ function createMessageElement(message) {
       complete: !message.is_live_stream && !processTrace.interrupted,
       live: !!message.is_live_stream,
       hideReasoning: shouldRenderReasoningTimeline,
+      sourceId: getMessageRenderKey(message),
       sources: flowSources
     });
     content.appendChild(flow);
@@ -19478,7 +19680,10 @@ function createMessageElement(message) {
     ? extractAskUserBlocks(cleanContent)
     : { text: cleanContent, prompts: [] };
   // 使用renderMarkdownWithMath渲染Markdown和数学公式
-  let renderedContent = renderMarkdownWithMath(askUserResult.text);
+  const visualText = message.role === 'assistant'
+    ? (window.RAIInteractiveVisuals?.stripBlocks(askUserResult.text) ?? askUserResult.text)
+    : askUserResult.text;
+  let renderedContent = renderMarkdownWithMath(visualText);
 
   // 解析 sources：可能是 JSON 字符串（从数据库加载）或数组对象（流式响应）
   let sources = message.sources;
@@ -19533,6 +19738,10 @@ function createMessageElement(message) {
     });
   }
 
+  if (message.role === 'assistant' && !hasInterleavedFlow && window.RAIInteractiveVisuals?.parseBlocks(askUserResult.text).length) {
+    renderInteractiveAnswer(textDiv, askUserResult.text, sources, false, getMessageRenderKey(message));
+    if (!textDiv.isConnected && textDiv.parentNode !== content) content.appendChild(textDiv);
+  }
 
   // 渲染来源列表（在消息文本后）- 使用已解析的 sources 变量
   if (message.role === 'assistant' && sources && Array.isArray(sources) && sources.length > 0) {
@@ -19641,6 +19850,7 @@ function createMessageElement(message) {
 
     metaDiv.appendChild(copyBtn);
     metaDiv.appendChild(createCanvasMessageAction(message));
+    metaDiv.appendChild(createDecisionPinAction(message));
     metaDiv.appendChild(createMessageFeedbackButton(message, 'up'));
     metaDiv.appendChild(createMessageFeedbackButton(message, 'down'));
 
@@ -19710,12 +19920,15 @@ function createMessageElement(message) {
     quoteBtn.addEventListener('click', () => quoteMessage(message));
     userMetaDiv.appendChild(quoteBtn);
     userMetaDiv.appendChild(createCanvasMessageAction(message));
+    userMetaDiv.appendChild(createDecisionPinAction(message));
 
     content.appendChild(userMetaDiv);
   }
 
 
   div.appendChild(content);
+
+  window.RAIMessageDetails?.decorate(div, message);
 
   return div;
 }
@@ -19932,8 +20145,8 @@ async function saveEditMessage(message, newContent, messageDiv, editContainer, t
 
     // 移除编辑容器，更新显示
     editContainer.remove();
-    textDiv.style.display = '';
-    textDiv.innerHTML = renderMarkdownWithMath(newContent);
+    renderMessages({ preserveScroll: true });
+    syncDecisionWorkbench({ refresh: true });
 
     // 如果是用户消息，自动触发AI重新回复
     if (message.role === 'user') {
@@ -20036,6 +20249,7 @@ async function deleteMessageFromDB(message) {
     }
 
     console.log(' 消息已从数据库删除');
+    syncDecisionWorkbench({ refresh: true });
     return true;
   } catch (error) {
     console.error(' 删除消息失败:', error);
@@ -20107,6 +20321,7 @@ function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
     const hadMessages = container.children.length > 0;
     Array.from(container.children).forEach((node) => node.remove());
     appState.messages = [];
+    syncDecisionWorkbench();
     showWelcome();
     return hadMessages;
   }
@@ -20195,6 +20410,7 @@ function patchMessagesById(nextMessages, { preserveScroll = true } = {}) {
   });
 
   appState.messages = messages;
+  syncDecisionWorkbench();
   if (scrollElement && scrollAnchor) {
     stabilizeMessageScrollAnchor(container, scrollElement, scrollAnchor, changedNodes);
   }
@@ -20780,6 +20996,8 @@ async function streamAIResponse(messages, aiMsg, options = {}) {
     await ensureCurrentSessionPromptIdentity();
     const canvasFlowId = chatFlowState.isOpen ? await ensureCanvasFlowForSend() : null;
     const streamPayload = {
+      interactiveVisuals: true,
+      interactiveVisualState: decisionWorkbenchController?.getVisualState() || [],
       messages,
       model: getRequestModelIdForCurrentMode(),
       sessionId,
@@ -23195,6 +23413,8 @@ async function sendMessage(message = null, options = {}) {
     const selectedDomainMode = appState.pendingDomainMode || null;
     appState.pendingDomainMode = null;
     const chatRequestPayload = {
+      interactiveVisuals: true,
+      interactiveVisualState: decisionWorkbenchController?.getVisualState() || [],
       selected_skill_names: selectedSkillNames,
       sessionId: appState.currentSession?.id || null,
       flowId: canvasFlowId,
@@ -23404,7 +23624,8 @@ async function sendMessage(message = null, options = {}) {
       if (!streamingEl || !displayedContent) return;
 
       const streamingAskUserResult = extractAskUserBlocks(sanitizeAssistantDisplayText(stripTrailingTitleMarker(displayedContent)));
-      const contentToDisplay = stripIncompleteAskUserFence(streamingAskUserResult.text).trim();
+      const visualText = window.RAIInteractiveVisuals?.stripBlocks(streamingAskUserResult.text) ?? streamingAskUserResult.text;
+      const contentToDisplay = stripIncompleteAskUserFence(visualText).trim();
       let html = renderMarkdownWithMath(contentToDisplay, true);
 
       // 处理 citations（如果有 sources）
@@ -23448,6 +23669,7 @@ async function sendMessage(message = null, options = {}) {
         }
       );
 
+      html = sanitizeRenderedHtml(html);
       const renderSignature = `${html}\u0000${JSON.stringify(streamingAskUserResult.prompts)}`;
       const contentChanged = renderSignature !== lastStreamingRenderSignature;
       if (contentChanged) {
@@ -24311,6 +24533,7 @@ async function sendMessage(message = null, options = {}) {
       content: cleanContent,
       request_id: streamRequestId || null,
       reasoning_content: finalReasoningContent || null,
+      reasoning_profile: requestConfig.reasoningProfile,
       model: actualRequestModel,
       enable_search: appState.internetMode,
       internet_mode: appState.internetMode,
@@ -24845,6 +25068,7 @@ async function verifyToken({ allowRefresh = true } = {}) {
 }
 
 function clearAuthenticatedAppState() {
+  decisionWorkbenchController?.clear();
   window.RaiWebSkills?.reset?.({ clearCatalog: true });
   exitCustomApiMode();
   for (const [id, model] of Object.entries(MODELS)) if (model.byok) delete MODELS[id];
@@ -26297,6 +26521,7 @@ function showApp() {
   document.documentElement.dataset.raiAuthState = 'authenticated';
   document.getElementById('authContainer').classList.remove('active');
   document.getElementById('appContainer').style.display = 'flex';
+  syncDecisionWorkbench();
   syncGuideMascotVisibility();
   requestMascotPosition();
   focusEntryTextInput('app-screen', { delay: 80 });
@@ -27621,6 +27846,7 @@ function setUnifiedCanvasVisibility(open) {
     document.body.classList.toggle('canvas-open', shouldOpen);
     layout.workspace.classList.remove('canvas-enter');
     layout.divider.classList.remove('canvas-enter');
+    syncDecisionWorkbench();
   };
 
   if (shouldOpen) {
@@ -27646,6 +27872,7 @@ function setUnifiedCanvasVisibility(open) {
   }
   updateCanvasToggleUi();
   applyUnifiedCanvasLayout();
+  syncDecisionWorkbench();
 
   if (chatFlowState.isOpen && !chatFlowState.isInitialized) {
     initChatFlowCanvas();
@@ -31011,6 +31238,11 @@ async function loadSession(sessionId, options = {}) {
       title: isChineseLanguage(appState.language) ? '历史对话' : 'Previous chat',
       session_kind: 'chat'
     };
+    if (previousSessionId !== String(sessionId || '')) appState.messages = [];
+    appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
+      ? 'saved-temp'
+      : 'normal';
+    syncDecisionWorkbench();
     if (/^(?:custom:|byok:)/.test(appState.currentSession.model || '')) {
       appState.selectedModel = appState.currentSession.model;
       updateSelectedModelText(appState.selectedModel); updateModelControls();
@@ -31018,9 +31250,6 @@ async function loadSession(sessionId, options = {}) {
       leaveCustomApiMode();
     }
     window.RAISelectionExplainer?.setConversationContext?.(sessionId);
-    appState.currentSessionMemoryMode = String(appState.currentSession?.session_kind || '') === 'temporary_saved'
-      ? 'saved-temp'
-      : 'normal';
     const newlyCreated = options.newlyCreated === true;
     if (newlyCreated) window.RaiWebSkills?.bindCreatedSession?.(options.webSkillDraft);
     const cached = newlyCreated
@@ -31505,7 +31734,7 @@ function initSwipeGestures() {
   const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
   const getSidebarWidth = () => sidebar.getBoundingClientRect().width || sidebar.offsetWidth || window.innerWidth * 0.85;
   const isGestureBlockedTarget = (target) => Boolean(target?.closest(
-    '.message-text pre, .message-text .table-wrapper, .rai-reasoning-content, .input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
+    '.message-details-swipeable, #decisionWorkbenchPanel, .rai-visual, .message-text pre, .message-text .table-wrapper, .rai-reasoning-content, .input-area, textarea, input, select, [contenteditable=\"true\"], .model-dropdown-menu, .more-menu, .thinking-budget-modal, .settings-modal, .settings-content, .header-controls, .hamburger-btn, .control-btn, .mobile-model-selector'
   ));
 
   const setOverlayProgress = (progress, dragging = false) => {
@@ -34605,10 +34834,10 @@ function updateSettingsMembership() {
   const imagePricing = document.getElementById('settingsImagePricing');
   if (imagePricing) {
     const costs = Object.entries(m.imageGeneration?.modelCosts || {});
-    const details = costs.map(([model, cost]) => `${model.replace('gpt-image-2.5', 'GPT Image 2.5')}: ${cost}`).join(' · ');
+    const details = costs.map(([model, cost]) => `${model.replace(/^gpt-image-([0-9.]+)/, 'GPT Image $1')}: ${cost}`).join(' · ');
     imagePricing.textContent = isChineseLanguage(appState.language)
-      ? `生图：${details || '每张 100–300 点'} · 仅 1K 及以下`
-      : `Images: ${details || '100–300 points each'} · up to 1K`;
+      ? `生图：${details || '每张 100–300 点'} · 支持 2K 与参考图`
+      : `Images: ${details || '100–300 points each'} · up to 2K with reference images`;
   }
 
   // 更新签到按钮
