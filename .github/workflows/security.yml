@@ -34,7 +34,7 @@ jobs:
   formal-tests:
     name: Formal regression suite
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +75,7 @@ jobs:
         run: node scripts/local-agent-release-regression.js
       - name: Install Tauri check prerequisites
         run: |
+          sudo sed -i -E 's@http://[a-z0-9.-]+\.ec2\.archive\.ubuntu\.com/ubuntu@https://archive.ubuntu.com/ubuntu@g' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Install locked dependencies
@@ -139,7 +140,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Provision pinned Office runtime
-        run: sudo sh scripts/setup-office-runtime.sh
+        run: |
+          sudo sed -i -E 's@http://[a-z0-9.-]+\.ec2\.archive\.ubuntu\.com/ubuntu@https://archive.ubuntu.com/ubuntu@g' /etc/apt/sources.list.d/ubuntu.sources
+          sudo sh scripts/setup-office-runtime.sh
       - name: Verify real files, native revisions, rendering and sandbox isolation
         run: sudo "$(command -v node)" scripts/office-sandbox-smoke.js
 
